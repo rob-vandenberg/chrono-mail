@@ -438,3 +438,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **What landed**
 - ARCHITECTURE.md section 8 and D-048; ROADMAP tasks 2.1 to 2.5. Documents only.
 
+## 2026-10-10 Task 2.1: the IMAP client (version 0.0.28)
+
+**What landed**
+- `protocols/imap.py` (own client, caps on lines, literals, tokens and nesting; modified UTF-7 folder names; LOGIN and AUTHENTICATE PLAIN; TLS and STARTTLS; list, select, search, fetch, store, copy, move, expunge, append, folder create, rename, delete, subscribe).
+- `tests/fakeimap.py` (stateful fake server) and 60 client tests; 5 live tests against `mail.technova.us` (all pass, folders of their own are created and removed).
+
+**Still open**
+- IDLE, CONDSTORE (CHANGEDSINCE is supported in the call but not yet used), and the sync itself (tasks 2.2 to 2.5).
+

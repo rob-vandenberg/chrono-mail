@@ -47,7 +47,7 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 
 | # | Task | Status |
 |---|---|---|
-| 2.1 | `protocols.imap`: own client, fake-server and live tests. | todo |
+| 2.1 | `protocols.imap`: own client, fake-server and live tests. | done |
 | 2.2 | `sync`: state file, folder list, download of new messages, flags and removals from the server. | todo |
 | 2.3 | Local changes sent to the server (flags, move, delete, append of sent mail). | todo |
 | 2.4 | Engine and interface: IMAP account type, sync in `mail.fetch`, folder commands on the server. | todo |

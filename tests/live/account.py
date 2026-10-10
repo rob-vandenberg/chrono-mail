@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Any  # tomllib returns untyped dictionaries
 
 # --- Version ------------------------------------------------------------
-__version__ = "account.py 0.0.3"
+__version__ = "account.py 0.0.28"
 
 # --- Version history ----------------------------------------------------
+# v0.0.28: IMAP ports
 # v0.0.3: Initial live account loader
 
 ACCOUNT_FILE: Path = Path(__file__).resolve().parent / "account.local.toml"
@@ -25,6 +26,8 @@ class LiveAccount:
     smtp_ssl_port: int
     pop3_port: int
     pop3_ssl_port: int
+    imap_port: int = 143
+    imap_ssl_port: int = 993
 
 
 def _text(settings: dict[str, Any], key: str, variable: str) -> str:
@@ -61,4 +64,6 @@ def load_live_account() -> LiveAccount:
         smtp_ssl_port=_number(settings, "smtp_ssl_port", 465),
         pop3_port=_number(settings, "pop3_port", 110),
         pop3_ssl_port=_number(settings, "pop3_ssl_port", 995),
+        imap_port=_number(settings, "imap_port", 143),
+        imap_ssl_port=_number(settings, "imap_ssl_port", 993),
     )

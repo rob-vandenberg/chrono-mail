@@ -7,9 +7,10 @@ from types import TracebackType
 from typing import Self
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeserver.py 0.0.13"
+__version__ = "fakeserver.py 0.0.28"
 
 # --- Version history ----------------------------------------------------
+# v0.0.28: read_exactly for IMAP literals
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.10: Initial scripted test server
 
@@ -43,6 +44,20 @@ class Conversation:
         line = bytes(self._buffer[:position])
         del self._buffer[: position + 1]
         return line.rstrip(b"\r")
+
+    def read_exactly(self, count: int) -> bytes | None:
+        """The next count bytes (a literal), or None when the client is gone."""
+        while len(self._buffer) < count:
+            try:
+                chunk = self.connection.recv(65536)
+            except OSError:
+                return None
+            if not chunk:
+                return None
+            self._buffer += chunk
+        data = bytes(self._buffer[:count])
+        del self._buffer[:count]
+        return data
 
     def start_tls(self, context: ssl.SSLContext) -> None:
         self.connection = context.wrap_socket(self.connection, server_side=True)
