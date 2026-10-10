@@ -14,9 +14,10 @@ from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.26"
+__version__ = "test_ui_window.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: Junk and unread navigation
 # v0.0.26: Version number in the About dialog
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.18: Conversations: counts, grouped list, conversation bar
@@ -659,3 +660,53 @@ def test_the_about_text_names_the_program_and_its_version(world: World, qtbot: Q
     world.window.act_about.trigger()
     assert len(shown) == 1 and shown[0].startswith("About Chrono Mail|")
     assert f"version {program_version()}" in shown[0] and program_version()[0].isdigit() and "AGPL" in shown[0]
+
+
+# --- junk and unread navigation (0.0.34) -----------------------------------------------------------------------------------------------
+
+
+def test_mark_as_junk_and_not_junk(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    select(world.window, 0)
+    world.window.act_junk.trigger()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
+    assert world.call("message.list", account=world.account_id, folder="Junk").total == 1
+    open_folder(world, qtbot, "Junk", 1)
+    assert not world.window.act_junk.isEnabled() and world.window.act_not_junk.isEnabled()
+    select(world.window, 0)
+    world.window.act_not_junk.trigger()
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Junk").total == 0)
+    open_folder(world, qtbot, "Inbox", 3)
+    assert world.window.act_junk.isEnabled() and not world.window.act_not_junk.isEnabled()
+
+
+def test_next_and_previous_unread_inside_the_list(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    world.window._mark_read_timer.stop()  # noqa: SLF001 - reading a message would mark it read after a moment
+    first, second, third = (row_of(world.window, position).message_id for position in range(3))
+    world.call("message.flag", account=world.account_id, folder="Inbox", message=second, seen=True)
+    world.window.list_model.reload()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3 and row_of(world.window, 1) is not None)
+    select(world.window, 0)
+    assert world.window.go_to_unread(1) and world.window.list_view.currentIndex().row() == 2  # the read one in the middle is skipped
+    assert world.window.go_to_unread(-1) and world.window.list_view.currentIndex().row() == 0
+    assert first and third
+
+
+def test_next_unread_goes_on_to_the_next_folder_with_unread_mail(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    world.window._mark_read_timer.stop()  # noqa: SLF001
+    for position in range(3):
+        world.call("message.flag", account=world.account_id, folder="Inbox", message=row_of(world.window, position).message_id, seen=True)  # the Inbox has nothing unread
+    junked = world.call("message.list", account=world.account_id, folder="Inbox").messages[0]
+    world.call("message.junk", account=world.account_id, folder="Inbox", message=junked.message_id)
+    world.call("message.flag", account=world.account_id, folder="Junk", message=junked.message_id, seen=False)
+    world.window.reload_accounts(select_saved=False)
+    wait(qtbot, lambda: any(label.strip().startswith("Junk  (1)") for label in tree_labels(world.window)))
+    world.window.list_model.reload()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 2 and row_of(world.window, 0) is not None)
+    select(world.window, 0)
+    assert world.window.go_to_unread(1) is True  # nothing unread below: on to the Junk folder
+    wait(qtbot, lambda: world.window._folder == "Junk" and world.window.list_view.currentIndex().isValid())  # noqa: SLF001
+    assert world.window.list_view.currentIndex().row() == 0
+    assert world.window.go_to_unread(1) is False  # and nothing more after that

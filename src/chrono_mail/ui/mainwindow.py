@@ -40,6 +40,7 @@ from chrono_mail.ui.models import (
     FOLDER_PATH_ROLE,
     FOLDER_ROLE_ROLE,
     KIND_ROLE,
+    UNREAD_ROLE,
     FolderTreeModel,
     MessageListModel,
     ViewSpec,
@@ -54,9 +55,10 @@ from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.33"
+__version__ = "mainwindow.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: Junk and unread navigation
 # v0.0.33: Rules
 # v0.0.32: IMAP IDLE: new mail pushed to the window
 # v0.0.26: Version number in the About dialog
@@ -115,6 +117,7 @@ class MainWindow(QMainWindow):
         self._watching: set[str] = set()  # accounts with a wait for new mail in progress
         self._no_push: set[str] = set()  # accounts whose server cannot tell about new mail
         self._quitting_for_good: bool = False
+        self._first_unread_on_load: int = 0  # after the next folder has loaded: select its first (or last) unread message
         self._sort: str = str(settings.value("sort", "date"))
         self._oldest_first: bool = bool_setting(settings, "oldest_first", False)
         self._reselect: str | None = None
@@ -246,6 +249,11 @@ class MainWindow(QMainWindow):
         self.act_save_as = self._action("Save as…", self.save_selected_as, "Ctrl+Shift+S", "document-save-as")
         self.act_source = self._action("View source", self.view_source, "Ctrl+U")
         self.act_print = self._action("Print…", self.print_selected, "Ctrl+P", "document-print")
+        self.act_junk = self._action("Mark as junk", lambda: self.junk_selected(True), "Ctrl+J", "mail-mark-junk")
+        self.act_not_junk = self._action("Not junk", lambda: self.junk_selected(False), "Ctrl+Shift+J", "mail-mark-notjunk")
+        self.act_not_junk.setEnabled(False)
+        self.act_next_unread = self._action("Next unread message", lambda: self.go_to_unread(1), "Ctrl+Shift+Down")
+        self.act_previous_unread = self._action("Previous unread message", lambda: self.go_to_unread(-1), "Ctrl+Shift+Up")
         self.act_archive = self._action("Archive", self.archive_selected, "Ctrl+E", "mail-archive")
         self.act_mark_all_read = self._action("Mark all as read", self.mark_folder_read, icon="mail-mark-read")
         self.act_empty_folder = self._action("Empty folder…", self.empty_folder, icon="edit-clear")
@@ -335,7 +343,12 @@ class MainWindow(QMainWindow):
             message_menu.addAction(action)
         message_menu.addSeparator()
         message_menu.addAction(self.act_archive)
+        message_menu.addAction(self.act_junk)
+        message_menu.addAction(self.act_not_junk)
         message_menu.addAction(self.act_delete)
+        message_menu.addSeparator()
+        message_menu.addAction(self.act_next_unread)
+        message_menu.addAction(self.act_previous_unread)
         message_menu.addSeparator()
         for action in (self.act_save_as, self.act_print, self.act_source):
             message_menu.addAction(action)
@@ -745,6 +758,8 @@ class MainWindow(QMainWindow):
         self._folder = str(current.data(FOLDER_PATH_ROLE)) if kind == "folder" else None
         self._folder_role = str(current.data(FOLDER_ROLE_ROLE) or "other")
         self.act_empty_folder.setEnabled(kind == "folder" and self._folder_role in ("trash", "junk"))
+        self.act_junk.setEnabled(self._folder_role != "junk")
+        self.act_not_junk.setEnabled(kind == "folder" and self._folder_role == "junk")
         self.act_mark_all_read.setEnabled(kind == "folder")
         self._select_quick_filters_for(kind)
         self._advanced = None
@@ -907,7 +922,20 @@ class MainWindow(QMainWindow):
         account, folder, message_id = self._shown
         self._set_flags([(folder, message_id)], {"seen": True}, account)
 
+    def _select_unread_after_load(self) -> None:
+        step, self._first_unread_on_load = self._first_unread_on_load, 0
+        if not step:
+            return
+        count = self.list_model.rowCount()
+        positions = range(count) if step > 0 else range(count - 1, -1, -1)
+        for position in positions:
+            row = self.list_model.row_at(position)
+            if row is not None and "seen" not in getattr(row, "flags"):
+                self.list_view.setCurrentIndex(self.list_model.index(position))
+                return
+
     def _restore_row_selection(self) -> None:
+        self._select_unread_after_load()
         pending = getattr(self, "_reselect", None)
         if not pending:
             return
@@ -987,6 +1015,62 @@ class MainWindow(QMainWindow):
             self.backend.call("message.archive", {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not archive", error), owner=self)
         if remaining == 0:
             self.show_status("The selected message(s) are in the archive already")
+
+    def junk_selected(self, junk: bool) -> None:
+        """Move the selected messages to the Junk folder, or (in Junk) back to the Inbox."""
+        rows = self._selected_rows()
+        if not rows or self._account_id is None:
+            return
+        account, command = self._account_id, "message.junk" if junk else "message.not-junk"
+        remaining = len(rows)
+
+        def done(result: object) -> None:
+            nonlocal remaining
+            remaining -= 1
+            if remaining == 0:
+                self._after_change(f"Moved {len(rows)} message(s) to Junk" if junk else f"Moved {len(rows)} message(s) back to the Inbox")
+
+        def failed(error: ChronoMailError) -> None:
+            nonlocal remaining
+            remaining -= 1
+            self._report("Could not move", error)
+
+        for row in rows:
+            self.backend.call(command, {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+
+    def go_to_unread(self, step: int) -> bool:
+        """Select the next (or previous) unread message of the list; at the end of the list, the first unread one of the next folder that has some."""
+        count = self.list_model.rowCount()
+        current = self.list_view.currentIndex().row() if self.list_view.currentIndex().isValid() else (-1 if step > 0 else count)
+        position = current + step
+        while 0 <= position < count:
+            row = self.list_model.row_at(position)
+            if row is not None and "seen" not in getattr(row, "flags"):
+                self.list_view.setCurrentIndex(self.list_model.index(position))
+                self.list_view.scrollTo(self.list_model.index(position))
+                return True
+            position += step
+        return self._unread_in_another_folder(step)
+
+    def _unread_in_another_folder(self, step: int) -> bool:
+        account_index = self.tree_model.index(0, 0)
+        for position in range(self.tree_model.rowCount()):
+            if str(self.tree_model.index(position, 0).data(ACCOUNT_ROLE)) == (self._account_id or ""):
+                account_index = self.tree_model.index(position, 0)
+        folders = [
+            self.tree_model.index(row, 0, account_index) for row in range(self.tree_model.rowCount(account_index))
+            if self.tree_model.index(row, 0, account_index).data(KIND_ROLE) == "folder"
+        ]
+        keys = [self._key_of(index) for index in folders]
+        selected = self._selection_key()
+        here = keys.index(selected) if selected is not None and selected in keys else (-1 if step > 0 else len(folders))
+        order = range(here + step, len(folders), step) if step > 0 else range(here + step, -1, step)
+        for position in order:
+            if int(folders[position].data(UNREAD_ROLE) or 0) > 0:
+                self._first_unread_on_load = step
+                self.tree.setCurrentIndex(folders[position])
+                return True
+        return False
 
     def mark_folder_read(self) -> None:
         """Mark every message of the folder being shown as read."""
@@ -1221,6 +1305,7 @@ class MainWindow(QMainWindow):
         self._fill_move_menu()
         menu.addMenu(self.move_menu).setText("Move to")
         menu.addAction(self.act_archive)
+        menu.addAction(self.act_not_junk if self._folder_role == "junk" else self.act_junk)
         menu.addAction(self.act_delete)
         menu.addSeparator()
         for action in (self.act_save_as, self.act_print, self.act_source):

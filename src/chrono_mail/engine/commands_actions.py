@@ -7,9 +7,10 @@ from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_actions.py 0.0.17"
+__version__ = "commands_actions.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: junk and not junk
 # v0.0.17: Initial bulk actions: archive, mark a whole folder as read, empty Trash or Junk
 
 ARCHIVE_NAME: str = "Archive"
@@ -43,6 +44,34 @@ def message_archive(engine: Engine, parameters: MessageParameters) -> ArchiveRes
             raise UsageError("The message is already in the archive")
         moved = mailbox.move(reference, target.path)
         return ArchiveResult(moved.store_id, "/".join(target.path), created)
+
+
+@dataclass(frozen=True, slots=True)
+class JunkResult:
+    message_id: str
+    folder: str
+
+
+def message_junk(engine: Engine, parameters: MessageParameters) -> JunkResult:
+    """Move a message to the Junk folder."""
+    with open_mailbox(engine, parameters.account) as mailbox:
+        reference = mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message))
+        junk = mailbox.role_folder(FolderRole.JUNK)
+        if reference.folder_path == junk:
+            raise UsageError("The message is in the Junk folder already")
+        moved = mailbox.move(reference, junk)
+        return JunkResult(moved.store_id, "/".join(junk))
+
+
+def message_not_junk(engine: Engine, parameters: MessageParameters) -> JunkResult:
+    """Take a message out of the Junk folder: back to the Inbox."""
+    with open_mailbox(engine, parameters.account) as mailbox:
+        reference = mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message))
+        if reference.folder_path != mailbox.role_folder(FolderRole.JUNK):
+            raise UsageError("The message is not in the Junk folder")
+        inbox = mailbox.role_folder(FolderRole.INBOX)
+        moved = mailbox.move(reference, inbox)
+        return JunkResult(moved.store_id, "/".join(inbox))
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +119,8 @@ def folder_empty(engine: Engine, parameters: FolderActionParameters) -> EmptyRes
 
 
 def register(registry: CommandRegistry) -> None:
+    registry.register("message.junk", "Move a message to the Junk folder", MessageParameters, message_junk)
+    registry.register("message.not-junk", "Move a message from the Junk folder back to the Inbox", MessageParameters, message_not_junk)
     registry.register("message.archive", "Move a message to the Archive folder", MessageParameters, message_archive)
     registry.register("folder.mark-read", "Mark every message of a folder as read", FolderActionParameters, folder_mark_read)
     registry.register("folder.empty", "Delete everything in Trash or Junk for good", FolderActionParameters, folder_empty, destructive=True)

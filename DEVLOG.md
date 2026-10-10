@@ -492,3 +492,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Rules for outgoing mail, rules on other folders as mail arrives there, and "reply with a template" actions.
 
+## 2026-10-10 Step 13 of the autonomous work: junk and unread navigation (version 0.0.34)
+
+**What landed**
+- `message.junk`, `message.not-junk`; Mark as junk / Not junk; next and previous unread message (D-054). Tests: engine (1), window (3).
+

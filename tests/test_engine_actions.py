@@ -8,9 +8,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_actions.py 0.0.17"
+__version__ = "test_engine_actions.py 0.0.34"
 
 # --- Version history ----------------------------------------------------
+# v0.0.34: Junk and unread navigation
 # v0.0.17: Initial tests of archive, mark folder as read, empty Trash and Junk
 
 
@@ -79,3 +80,15 @@ def test_other_folders_cannot_be_emptied(setup: Setup) -> None:
     assert len(rows(setup, "Inbox")) == 3
     with pytest.raises(UsageError):
         call(setup.engine, "folder.empty", account=setup.account_id, folder="Nowhere")
+
+
+def test_junk_and_not_junk(setup: Setup) -> None:
+    inbox = fetched(setup)
+    moved = call(setup.engine, "message.junk", account=setup.account_id, folder="Inbox", message=inbox[0].message_id)
+    assert moved.folder == "Junk" and len(rows(setup, "Junk")) == 1 and len(rows(setup, "Inbox")) == 2
+    with pytest.raises(UsageError, match="already"):
+        call(setup.engine, "message.junk", account=setup.account_id, folder="Junk", message=moved.message_id)
+    with pytest.raises(UsageError, match="not in the Junk"):
+        call(setup.engine, "message.not-junk", account=setup.account_id, folder="Inbox", message=inbox[1].message_id)
+    back = call(setup.engine, "message.not-junk", account=setup.account_id, folder="Junk", message=moved.message_id)
+    assert back.folder == "Inbox" and rows(setup, "Junk") == [] and len(rows(setup, "Inbox")) == 3
