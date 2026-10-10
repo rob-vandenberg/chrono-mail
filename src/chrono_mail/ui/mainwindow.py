@@ -53,9 +53,10 @@ from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.22"
+__version__ = "mainwindow.py 0.0.24"
 
 # --- Version history ----------------------------------------------------
+# v0.0.24: Rich text composing
 # v0.0.22: Save as .eml, view source, print
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Settings window, account editing, signatures
@@ -504,6 +505,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.backend, GeneralSettings(
             self.act_auto.isChecked(), self._auto_minutes(), self.act_conversations.isChecked(),
             bool_setting(self.settings, "notifications", True), bool_setting(self.settings, "tray", True), bool_setting(self.settings, "close_to_tray", False),
+            bool_setting(self.settings, "compose_html", False),
         ), self.tray.available, self)
         dialog.add_account_requested.connect(lambda: self.add_account(after=dialog.reload))
         dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False))
@@ -514,6 +516,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("notifications", wanted.notifications)
         self.settings.setValue("tray", wanted.tray)
         self.settings.setValue("close_to_tray", wanted.close_to_tray)
+        self.settings.setValue("compose_html", wanted.compose_html)
         self.tray.set_visible(wanted.tray)
         if wanted.auto_check and self.act_auto.isChecked():
             self._timer.start(wanted.auto_check_minutes * 60 * 1000)  # a new interval
@@ -1009,7 +1012,7 @@ class MainWindow(QMainWindow):
         self._open_composer(self._account_id, None, None)
 
     def _open_composer(self, account_id: str, draft: object | None, source: tuple[str, str] | None, to: str = "", resume: tuple[str, str] | None = None) -> ComposeWindow:
-        window = ComposeWindow(self.backend, self._accounts, account_id, draft, source, resume)
+        window = ComposeWindow(self.backend, self._accounts, account_id, draft, source, resume, bool_setting(self.settings, "compose_html", False))
         if to:
             window.to.setText(to)
         window.sent.connect(self._after_sent)

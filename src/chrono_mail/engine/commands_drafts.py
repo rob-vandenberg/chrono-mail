@@ -10,9 +10,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, OutgoingMessage, build_message, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_drafts.py 0.0.16"
+__version__ = "commands_drafts.py 0.0.24"
 
 # --- Version history ----------------------------------------------------
+# v0.0.24: Rich text composing
 # v0.0.16: Initial draft commands
 
 DraftKind = Literal["new", "reply", "reply_all", "forward"]
@@ -27,6 +28,7 @@ class DraftSaveParameters:
     bcc: tuple[str, ...] = field(default=(), metadata=option("A blind copy recipient (repeat for more)"))
     subject: str = field(default="", metadata=option("The subject"))
     body: str = field(default="", metadata=option("The text"))
+    html: str | None = field(default=None, metadata=option("An HTML version of the body (a rich text draft)"))
     attach: tuple[str, ...] = field(default=(), metadata=option("A file to attach (repeat for more)"))
     keep_attachments: tuple[str, ...] = field(default=(), metadata=option("The position of an attachment of the earlier version of this draft to keep (repeat for more)"))
     kind: DraftKind = field(default="new", metadata=option("What the draft is: new, reply, reply_all or forward"))
@@ -65,6 +67,7 @@ def draft_save(engine: Engine, parameters: DraftSaveParameters) -> DraftSaveResu
             bcc_addresses=_addresses(parameters.bcc),
             subject=parameters.subject,
             text_body=parameters.body,
+            html_body=parameters.html,
             attachments=(*kept_attachments(previous_raw, parameters.keep_attachments), *(_attachment(path) for path in parameters.attach)),
             in_reply_to=parameters.in_reply_to,
             references=parameters.references,
@@ -108,6 +111,7 @@ class DraftOpenResult:
     references: tuple[str, ...]
     source_folder: str | None
     source_message: str | None
+    html: str | None = None  # the HTML version, when the draft is a rich text message
 
 
 def draft_open(engine: Engine, parameters: DraftOpenParameters) -> DraftOpenResult:
@@ -138,6 +142,7 @@ def draft_open(engine: Engine, parameters: DraftOpenParameters) -> DraftOpenResu
             parsed.references,
             source_folder,
             source_message,
+            parsed.html_body,
         )
 
 

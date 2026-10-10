@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -27,11 +28,13 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.addresscompleter import AddressCompleter
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon
+from chrono_mail.ui.richeditor import RichEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.23"
+__version__ = "composer.py 0.0.24"
 
 # --- Version history ----------------------------------------------------
+# v0.0.24: Rich text composing
 # v0.0.23: address completion
 # v0.0.20: Settings window, account editing, signatures
 # v0.0.16: drafts: save, autosave, resume, keep attachments, save/discard/cancel on close
@@ -116,6 +119,7 @@ class ComposeWindow(QMainWindow):
         draft: object | None = None,
         source: tuple[str, str] | None = None,
         resume: tuple[str, str] | None = None,
+        rich: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -152,7 +156,11 @@ class ComposeWindow(QMainWindow):
         form.addRow("Subject", self.subject)
         layout.addLayout(form)
         self.body = QPlainTextEdit(central)
-        layout.addWidget(self.body, 1)
+        self.rich = RichEditor(central)
+        self.editor_stack = QStackedWidget(central)
+        self.editor_stack.addWidget(self.body)
+        self.editor_stack.addWidget(self.rich)
+        layout.addWidget(self.editor_stack, 1)
 
         files = QHBoxLayout()
         self.attachments = QListWidget(central)
@@ -172,9 +180,13 @@ class ComposeWindow(QMainWindow):
 
         buttons = QHBoxLayout()
         self.status = QLabel("", central)
+        self.rich_button = QPushButton("Rich text", central)
+        self.rich_button.setCheckable(True)
+        self.rich_button.setToolTip("Write with bold, italic, lists and links. The message is sent as text and as HTML.")
         self.save_button = QPushButton("Save draft", central)
         self.send_button = QPushButton("Send", central)
         self.send_button.setDefault(True)
+        buttons.addWidget(self.rich_button)
         buttons.addWidget(self.status, 1)
         buttons.addWidget(self.save_button)
         buttons.addWidget(self.send_button)
@@ -203,6 +215,11 @@ class ComposeWindow(QMainWindow):
             self.body.setPlainText(with_signature(self.body.toPlainText(), self._signature))
         self.body.moveCursor(self.body.textCursor().MoveOperation.Start)
         self.body.document().setModified(False)
+        stored_html = getattr(draft, "html", None) if draft is not None else None
+        if stored_html:  # a rich text draft comes back as rich text
+            self.set_rich(True, str(stored_html))
+        elif rich:
+            self.set_rich(True)
         self._saved_snapshot: tuple[object, ...] = self._snapshot()
 
         for text, shortcut, handler in (("Send", "Ctrl+Return", self._send_clicked), ("Save draft", "Ctrl+S", self._save_clicked)):
@@ -211,6 +228,7 @@ class ComposeWindow(QMainWindow):
             action.triggered.connect(handler)
             self.addAction(action)
         self.from_box.currentIndexChanged.connect(self._account_changed)
+        self.rich_button.clicked.connect(self._rich_clicked)
         self.send_button.clicked.connect(self._send_clicked)
         self.save_button.clicked.connect(self._save_clicked)
         self.attach_button.clicked.connect(self._choose_files)
@@ -232,6 +250,9 @@ class ComposeWindow(QMainWindow):
     def _account_changed(self) -> None:
         """Another sender was chosen: the signature of the first one is replaced by the signature of the new one."""
         new = self._signature_of(str(self.from_box.currentData()))
+        if self.is_rich():  # swapping would flatten the formatting: in rich text the signature stays as it is
+            self._signature = new
+            return
         old, body = signature_block(self._signature), self.body.toPlainText()
         if new != self._signature:
             if old and old in body:
@@ -240,12 +261,46 @@ class ComposeWindow(QMainWindow):
                 self.body.setPlainText(with_signature(body, new))
         self._signature = new
 
+    def is_rich(self) -> bool:
+        return self.editor_stack.currentWidget() is self.rich
+
+    def _text(self) -> str:
+        """The text of the message, whichever editor is in use."""
+        return self.rich.toPlainText() if self.is_rich() else self.body.toPlainText()
+
+    def set_rich(self, on: bool, html: str | None = None) -> None:
+        """Switch between plain text and rich text. The text stays; going back to plain text drops the formatting."""
+        if on == self.is_rich():
+            if on and html is not None:
+                self.rich.set_html(html)
+            return
+        if on:
+            if html is not None:
+                self.rich.set_html(html)
+            else:
+                self.rich.setPlainText(self.body.toPlainText())
+            self.editor_stack.setCurrentWidget(self.rich)
+        else:
+            self.body.setPlainText(self.rich.toPlainText())
+            self.editor_stack.setCurrentWidget(self.body)
+        self.rich_button.setChecked(on)
+        (self.rich if on else self.body).setFocus()
+
+    def _rich_clicked(self, checked: bool) -> None:
+        if not checked and self.is_rich() and self.rich.has_formatting():
+            answer = QMessageBox.question(self, "Plain text", "Changing to plain text removes the formatting (bold, lists, links). Continue?")
+            if answer != QMessageBox.StandardButton.Yes:
+                self.rich_button.setChecked(True)
+                return
+        self.set_rich(checked)
+
     def stored_as(self) -> tuple[str, str] | None:
         """The folder and id of the saved version of this message, if there is one."""
         return self._stored
 
     def _fields(self) -> tuple[str, str, str, str, str]:
-        return (self.to.text(), self.cc.text(), self.bcc.text(), self.subject.text(), self.body.toPlainText())
+        body = self.rich.snapshot() if self.is_rich() else self.body.toPlainText()
+        return (self.to.text(), self.cc.text(), self.bcc.text(), self.subject.text(), body)
 
     def _snapshot(self) -> tuple[object, ...]:
         return (self._fields(), tuple((self.attachments.item(row).data(ROLE_PATH), self.attachments.item(row).data(ROLE_KEPT)) for row in range(self.attachments.count())), str(self.from_box.currentData()))
@@ -293,11 +348,13 @@ class ComposeWindow(QMainWindow):
         values: dict[str, object] = {
             "account": str(self.from_box.currentData()),
             "subject": self.subject.text(),
-            "body": self.body.toPlainText(),
+            "body": self._text(),
             "attach": self.attached_paths(),
             "keep_attachments": self.kept_positions(),
             "kind": self._kind,
         }
+        if self.is_rich():
+            values["html"] = self.rich.outgoing_html()
         for name, value in (("to", to), ("cc", cc), ("bcc", bcc)):
             if value:
                 values[name] = value
@@ -374,7 +431,7 @@ class ComposeWindow(QMainWindow):
     def _autosave(self) -> None:
         if self._finished or self._sending or self._saving or not self.is_modified():
             return
-        if not (self.to.text().strip() or self.cc.text().strip() or self.bcc.text().strip() or self.subject.text().strip() or self.body.toPlainText().strip() or self.attachments.count()):
+        if not (self.to.text().strip() or self.cc.text().strip() or self.bcc.text().strip() or self.subject.text().strip() or self._text().strip() or self.attachments.count()):
             return  # nothing worth saving yet
         self.save_draft(quiet=True)
 
@@ -399,9 +456,11 @@ class ComposeWindow(QMainWindow):
             "account": str(self.from_box.currentData()),
             "to": to,
             "subject": self.subject.text(),
-            "body": self.body.toPlainText(),
+            "body": self._text(),
             "attach": self.attached_paths(),
         }
+        if self.is_rich():
+            values["html"] = self.rich.outgoing_html()
         if cc:
             values["cc"] = cc
         if bcc:
@@ -424,7 +483,7 @@ class ComposeWindow(QMainWindow):
 
     def _set_sending(self, sending: bool) -> None:
         self._sending = sending
-        for widget in (self.send_button, self.save_button, self.to, self.cc, self.bcc, self.subject, self.body, self.from_box, self.attach_button, self.remove_button):
+        for widget in (self.send_button, self.save_button, self.to, self.cc, self.bcc, self.subject, self.editor_stack, self.rich_button, self.from_box, self.attach_button, self.remove_button):
             widget.setEnabled(not sending)
         self.status.setText("Sending…" if sending else "")
 

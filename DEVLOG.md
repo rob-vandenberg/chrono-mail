@@ -411,3 +411,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Not measured on the 500,000-message mailbox. A real address book (contacts) is a later milestone.
 
+## 2026-10-10 Step 10 of the autonomous work: rich text composing (version 0.0.24)
+
+**What landed**
+- `ui/richeditor.py`, rich mode in the composer, `html` in `draft.save` and `draft.open` (D-045), a setting for the default.
+- Tests: engine (3), interface (11 in `test_ui_richtext.py`).
+
+**Still open**
+- No inline pictures, colours or tables when writing.
+

@@ -37,6 +37,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12f | Tray icon, new mail notifications, unread count in the title (0.0.21). | done |
 | 1.12g | Save as .eml, view source, print (0.0.22). | done |
 | 1.12h | Address completion in the composer, from the addresses in the mail (0.0.23, index schema 4). | done |
+| 1.12i | Rich text (HTML) composing (0.0.24). | done |
 | 1.13 | Packaging: Flatpak for Fedora and Kubuntu; test on GNOME. | todo |
 | 1.14 | Windows test run on DEVELOPMENT. | todo |
 

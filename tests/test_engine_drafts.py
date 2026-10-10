@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, first_id, setup  # noqa: F40
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_drafts.py 0.0.16"
+__version__ = "test_engine_drafts.py 0.0.24"
 
 # --- Version history ----------------------------------------------------
+# v0.0.24: Rich text composing
 # v0.0.16: Initial draft command tests
 
 
@@ -166,3 +167,33 @@ def test_a_message_can_be_sent_with_the_attachments_of_a_stored_draft(setup: Set
         call(setup.engine, "mail.send", account=setup.account_id, to="a@example.com", keep_attachments="0")
     with pytest.raises(UsageError):
         call(setup.engine, "mail.send", account=setup.account_id, to="a@example.com", keep_folder="Inbox", keep_message="0" * 32, keep_attachments="x")
+
+
+# --- rich text drafts (0.0.24) ---------------------------------------------------------------------------------------------------
+
+
+HTML = "<html><body><p>Hello <b>bold</b> and <i>slanted</i></p></body></html>"
+
+
+def test_a_rich_text_draft_keeps_both_versions_and_opens_with_the_html(setup: Setup) -> None:
+    saved = call(setup.engine, "draft.save", account=setup.account_id, to="a@example.com", subject="Rich", body="Hello bold and slanted", html=HTML)
+    opened = call(setup.engine, "draft.open", account=setup.account_id, message=saved.message_id)
+    assert opened.body.strip() == "Hello bold and slanted" and opened.html is not None and "<b>bold</b>" in opened.html
+    plain = call(setup.engine, "draft.save", account=setup.account_id, subject="Plain", body="only text", replace_message=saved.message_id)
+    assert call(setup.engine, "draft.open", account=setup.account_id, message=plain.message_id).html is None
+
+
+def test_a_rich_text_draft_with_an_attachment_survives_a_second_save(setup: Setup, tmp_path: Path) -> None:
+    attachment = tmp_path / "a.txt"
+    attachment.write_text("data")
+    first = call(setup.engine, "draft.save", account=setup.account_id, subject="Rich", body="x", html=HTML, attach=[str(attachment)])
+    second = call(setup.engine, "draft.save", account=setup.account_id, subject="Rich", body="x", html=HTML, keep_attachments=["0"], replace_message=first.message_id)
+    opened = call(setup.engine, "draft.open", account=setup.account_id, message=second.message_id)
+    assert [item.name for item in opened.attachments] == ["a.txt"] and "<b>bold</b>" in (opened.html or "")
+
+
+def test_a_rich_text_message_is_sent_as_text_and_html(setup: Setup) -> None:
+    result = call(setup.engine, "mail.send", account=setup.account_id, to="you@example.com", subject="Rich", body="Hello bold and slanted", html=HTML)
+    assert result.sent
+    data = setup.smtp.received[0].data
+    assert b"multipart/alternative" in data and b"text/plain" in data and b"text/html" in data and b"<b>bold</b>" in data

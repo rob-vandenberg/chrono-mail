@@ -23,9 +23,10 @@ from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.21"
+__version__ = "settingsdialog.py 0.0.24"
 
 # --- Version history ----------------------------------------------------
+# v0.0.24: Rich text composing
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Initial settings window
 
@@ -40,6 +41,7 @@ class GeneralSettings:
     notifications: bool = True
     tray: bool = True
     close_to_tray: bool = False
+    compose_html: bool = False
 
 
 class SettingsDialog(QDialog):
@@ -71,6 +73,9 @@ class SettingsDialog(QDialog):
         form.addRow(self.auto_check)
         form.addRow("Check every", self.interval)
         form.addRow(self.conversations)
+        self.compose_html = QCheckBox("Write new messages as rich text (bold, lists, links; sent as text and HTML)", page)
+        self.compose_html.setChecked(general.compose_html)
+        form.addRow(self.compose_html)
         self.notifications = QCheckBox("Show a notification when new mail arrives (only the number, never the content)", page)
         self.notifications.setChecked(general.notifications)
         self.tray = QCheckBox("Show an icon in the notification area", page)
@@ -125,7 +130,7 @@ class SettingsDialog(QDialog):
     def general(self) -> GeneralSettings:
         return GeneralSettings(
             self.auto_check.isChecked(), self.interval.value(), self.conversations.isChecked(),
-            self.notifications.isChecked(), self.tray.isChecked(), self.close_to_tray.isChecked(),
+            self.notifications.isChecked(), self.tray.isChecked(), self.close_to_tray.isChecked(), self.compose_html.isChecked(),
         )
 
     # --- accounts -----------------------------------------------------------------------------------------
