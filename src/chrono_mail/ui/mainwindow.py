@@ -42,11 +42,13 @@ from chrono_mail.ui.models import (
 )
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
+from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.14"
+__version__ = "mainwindow.py 0.0.15"
 
 # --- Version history ----------------------------------------------------
+# v0.0.15: the encryption key is checked at the start and can be restored
 # v0.0.14: window icon, shared icon helpers
 # v0.0.13: Initial main window
 
@@ -194,6 +196,7 @@ class MainWindow(QMainWindow):
         self.act_unflag = self._action("Remove flag", lambda: self.mark_selected(flagged=False))
         self.act_add_account = self._action("Add an account…", lambda: self.add_account(), icon="list-add")
         self.act_recovery = self._action("Back up the encryption key…", self.show_recovery)
+        self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
         self.act_quit = self._action("Quit", self.close, "Ctrl+Q", "application-exit")
         self.act_search = self._action("Search", self._focus_search, "Ctrl+F")
         self.act_auto = QAction("Check for mail automatically", self)
@@ -253,6 +256,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.act_add_account)
         file_menu.addAction(self.act_recovery)
+        file_menu.addAction(self.act_restore_key)
         file_menu.addSeparator()
         file_menu.addAction(self.act_quit)
         message_menu = bar.addMenu("&Message")
@@ -357,8 +361,38 @@ class MainWindow(QMainWindow):
     # --- accounts and folders ----------------------------------------------------------------------------
 
     def start(self) -> None:
-        """Called once the window is shown: load the accounts (or ask for the first one), then check for mail."""
-        self.reload_accounts(select_saved=True, then=self.check_mail if bool_setting(self.settings, "check_on_start", True) else None)
+        """Called once the window is shown: make sure the key is there, load the accounts (or ask for the
+        first one), then check for mail."""
+        check = self.check_mail if bool_setting(self.settings, "check_on_start", True) else None
+        self._with_key(lambda: self.reload_accounts(select_saved=True, then=check))
+
+    def _with_key(self, then: Callable[[], None]) -> None:
+        """Continue when the encryption key can be read; otherwise ask for it first."""
+
+        def got(status: object) -> None:
+            if getattr(status, "key_id") is not None and not getattr(status, "in_credential_store"):
+                self._ask_for_key(then)
+            else:
+                then()
+
+        def failed(error: ChronoMailError) -> None:
+            self._report("Could not check the encryption key", error)
+            then()
+
+        self.backend.call("key.status", {}, got, failed, owner=self)
+
+    def _ask_for_key(self, then: Callable[[], None]) -> None:
+        dialog = RestoreKeyDialog(self.backend, self)
+        if dialog.exec() == RestoreKeyDialog.DialogCode.Accepted:
+            self.backend.engine.forget_keys()
+            self.show_status("The encryption key is back.")
+            then()
+        else:
+            self.show_status("The encryption key is missing, so your mail cannot be read yet. Use File > Restore the encryption key.", error=True)
+
+    def restore_key(self) -> None:
+        """File > Restore the encryption key: ask for the key and, when it is back, load everything."""
+        self._ask_for_key(lambda: self.reload_accounts(select_saved=True))
 
     def reload_accounts(self, select_saved: bool = False, then: Callable[[], None] | None = None) -> None:
         def listed(result: object) -> None:

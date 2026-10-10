@@ -289,3 +289,15 @@ Every design decision, with its reason and the alternatives that were rejected. 
 - The program announces itself to the desktop as `chrono-mail`; the portal looks up a launcher file by that name (without one it reports "App info not found").
 - The interface language stays English while dates follow the system language; translating the interface is a later decision.
 **Reason:** the first look at the program on a real screen with real mail.
+
+## D-034 Autonomous development while the user is away
+*2026-10-10*
+
+**Decision:** on 2026-10-10 the user asked for development to continue without confirmation and without questions while they are away until the next day, with every step pushed to GitHub. The rules of DEVELOPMENT-RULES.md stay in force, with these consequences: every step gets its own version number and tag (no force-push, so any step can be returned to); a step is pushed only when the whole gate is green (offline tests, Pyrefly strict, layer check, and the live tests when the server is involved); decisions are made by the agent and written down here with their reasons; the user's real mailbox, wallet entries and data directories are never touched (tests use temporary directories, fake servers and the test account); no system packages are installed. The queue of steps is in STATUS.md.
+**Reason:** the user's instruction; keeping every step reversible and every decision visible is how that trust is kept.
+
+## D-035 The key can be restored from inside the program
+*2026-10-10*
+
+**Decision:** at start-up the program checks whether the encryption key is in the credential store (`key.status`). If it is not (new computer, reset or locked wallet), a dialog explains that the mail is safe and offers: the recovery code, a recovery file with its passphrase, or "try again" (for a wallet that was only locked). "Not now" leaves the program running with a red message in the status bar; File > Restore the encryption key does the same later. Nothing is asked when no account uses a key or the account is unencrypted. A wrong code, a mistyped code, a wrong passphrase and the key of another installation are each explained without repeating the secret. This completes task 1.12.
+**Reason:** a lost key means lost mail (AGENTS.md section 4.1.5); before this, a missing key showed up as an error message in the status bar.

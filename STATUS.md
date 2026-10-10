@@ -4,18 +4,37 @@
 
 ## Where we are
 
-- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-033).
-- **Milestone 0 is done** (0.4, GitHub Actions, is optional and not started). **Milestone 1: tasks 1.1 to 1.11 are done.** Open in milestone 1: 1.12 (tested key recovery procedure; the pieces exist and the interface shows the recovery code when the key is created), 1.13 (Flatpak) and 1.14 (Windows run).
+- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-035).
+- **Milestone 0 is done** (0.4, GitHub Actions, is optional and not started). **Milestone 1: tasks 1.1 to 1.12 are done.** Open in milestone 1: 1.13 (Flatpak) and 1.14 (Windows run); 1.12 (key recovery) is done.
 - **There is a working graphical program to test**: `chrono-mail` (see below). Three-pane window in the style of eM Client 9 and 10: folders, message list, reading pane; get mail, read, reply, reply all, forward, new message, attachments (save and send), flag, mark read or unread, move, delete (Trash), folders (create, rename, delete), search with quick filters, first-run account setup with a connection test and the key recovery code screen. HTML mail is shown locked down (no scripts, remote content blocked until allowed per message).
 - The headless client still works: `chrono-mail-cli` (26 commands).
 - Verified against the real DirectAdmin server `mail.technova.us` through the engine and the CLI. The graphical program has been tested without a screen, with fake servers, and (one live test) against the real server through the window: compose, send, fetch, read, delete. **Nobody has used it on a real screen yet**: the first real use is the next step.
-- Project version 0.0.14. About 8,100 lines in `src/` (2,500 of them the interface), 8,300 in `tests/`; 915 offline tests, 31 live tests (one drives the window against the real server), 1 credential-store test, 1 performance test.
-- GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main`. The last push is recorded in DEVLOG.md (version 0.0.12); the interface work (0.0.13) was pushed; the polish after the first real use (0.0.14) is **not pushed yet**. The test account password (`chronomail@bccbox.com` on `mail.technova.us`) is only in the ignored `tests/live/account.local.toml`; it is still to be changed once the user decides POP3 and SMTP are proven.
+- Project version 0.0.15. About 8,100 lines in `src/` (2,500 of them the interface), 8,300 in `tests/`; 926 offline tests, 31 live tests (one drives the window against the real server), 1 credential-store test, 1 performance test.
+- GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main`. The last push is recorded in DEVLOG.md (version 0.0.12); the interface work (0.0.13) was pushed; everything up to 0.0.14 was pushed; later versions are pushed as they are finished (see the queue). The test account password (`chronomail@bccbox.com` on `mail.technova.us`) is only in the ignored `tests/live/account.local.toml`; it is still to be changed once the user decides POP3 and SMTP are proven.
 - KDEV is the development machine (Kubuntu 26). The project folder is `/home/rob/python/chrono-mail`.
 
-## Next task
+## Autonomous work queue (the user is away until 2026-10-11; see D-034)
 
-**The user tries the program** (`/home/rob/python/chrono-mail/.venv/bin/chrono-mail`) and reports what is wrong or missing. Then, in this order of likely value: fix what the real use shows; drafts; the recovery procedure end to end (1.12); HTML composing; conversation view; drag and drop; Flatpak (1.13); the Windows run (1.14).
+Each step: tests, full gate, new version and tag, documents, push. Done steps are struck through in the log (DEVLOG.md), not here.
+
+1. DONE (0.0.15) Key recovery in the interface (task 1.12).
+2. Drafts: save and auto-save to the Drafts folder, resume editing, remove after sending.
+3. Message actions: drag and drop to folders, Archive, mark all as read, empty Trash and Junk, richer context menus.
+4. Conversation view (threads in the list and in the reading pane).
+5. Advanced search dialog, with "does not contain" and "or".
+6. Settings window and account management (edit, remove), signatures.
+7. Desktop notifications and a tray icon.
+8. Save as .eml, print, view source.
+9. Address autocomplete in the composer.
+10. HTML composing.
+11. IMAP (milestone 2): design first, then implementation against the test account.
+Also when time allows: re-measure the 500,000-message performance (index schema 3), and the language of the interface (a later decision).
+
+If a step cannot be made green it is not pushed; the reason is written in STATUS.md under "Problems".
+
+## Problems
+
+None so far.
 
 How to run the checks:
 - Offline gate: `.venv/bin/pytest`, `.venv/bin/pyrefly check`, `.venv/bin/lint-imports` (the layer check is also part of pytest). The interface tests need no screen (Qt offscreen).

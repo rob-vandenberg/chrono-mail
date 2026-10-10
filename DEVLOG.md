@@ -321,3 +321,15 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **What happened**
 - The polish after the first real use (version 0.0.14) was committed and pushed with `release "Polish after first real use"`.
 - Before the push: full gate (915 offline, 31 live, 1 credential-store tests; Pyrefly strict 0 errors, 0 warnings, 0 suppressions; layer contracts kept) and a scan of the files to be staged for secrets and private files (none).
+
+## 2026-10-10 Step 1 of the autonomous work: key recovery (task 1.12, version 0.0.15)
+
+**What landed**
+- `ui/restorekeydialog.py` and the start-up check in the main window (D-035); File menu entry; 11 end-to-end scenarios in `tests/ui/test_ui_key_recovery.py` (no dialog when the key is there, restore by code, by file, wrong and mistyped code, wrong passphrase, key of another installation, locked wallet that is unlocked later, "not now" then later from the menu, no account, unencrypted account, the menu action).
+- Tests: 926 offline (+11), Pyrefly strict 0 errors, layers kept.
+
+**Still open**
+- A backup nudge for users who have not saved a recovery file (the code is shown at account creation, but nothing checks that it was kept).
+
+**Push**
+- Pushed as version 0.0.15 with `release "Key recovery in the interface (task 1.12)"` after the full gate and the secret scan.

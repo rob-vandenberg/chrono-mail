@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from PySide6.QtCore import QSettings, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine import Engine, build_registry
@@ -18,9 +18,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 0.0.13"
+__version__ = "world.py 0.0.15"
 
 # --- Version history ----------------------------------------------------
+# v0.0.15: Key recovery
 # v0.0.13: Initial ui test world
 
 REGISTRY = build_registry()
@@ -74,6 +75,22 @@ def answer_save_file(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
         return str(path), ""
 
     monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(get_save_file_name))
+
+
+def answer_open_file(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    def get_open_file_name(*args: object, **kwargs: object) -> tuple[str, str]:
+        return str(path), ""
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(get_open_file_name))
+
+
+def reject_dialog(monkeypatch: pytest.MonkeyPatch, dialog_class: type) -> None:
+    """A modal dialog that is closed at once without an answer."""
+
+    def exec_rejected(self: object) -> int:
+        return int(QDialog.DialogCode.Rejected)
+
+    monkeypatch.setattr(dialog_class, "exec", exec_rejected)
 
 
 def record_opened_urls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
