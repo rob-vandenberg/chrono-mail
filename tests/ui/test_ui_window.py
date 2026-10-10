@@ -14,9 +14,10 @@ from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.46"
+__version__ = "test_ui_window.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.34: Junk and unread navigation
 # v0.0.26: Version number in the About dialog
@@ -727,3 +728,55 @@ def test_the_favorites_show_the_same_folder_of_every_mailbox_and_can_be_switched
     world.window.settings.setValue("show_favorites", False)
     world.window.apply_preferences()
     assert world.window.tree_model.index(0, 0).data() == "me@example.com"
+
+
+def test_a_pinned_folder_and_a_group_show_in_the_folder_list(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    world.call("favorite.pin", account=world.account_id, folder="Sent")
+    group = world.call("group.add", name="Work", account=(world.account_id,)).groups[0]
+    world.window.reload_accounts(select_saved=False)
+    wait(qtbot, lambda: "Work" in tree_labels(world.window))
+    labels = tree_labels(world.window)
+    assert labels[0] == "Favorites" and labels[9] == "  Sent"  # the pinned folder follows the standard favorites
+    assert labels[10:14] == ["Work", "  All Inboxes  (3)", "  me@example.com", "    Unread"]
+    inbox = next(world.window.tree_model.index(row, 0, world.window.tree_model.index(1, 0)) for row in range(2) if world.window.tree_model.index(row, 0, world.window.tree_model.index(1, 0)).data(KIND_ROLE) == "groupinbox")
+    world.window.tree.setCurrentIndex(inbox)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
+    assert world.window._combined_accounts == (world.account_id,)  # noqa: SLF001
+    world.window.search_box.setText("Message 2")  # a search stays inside the combined view
+    world.window.search_box.returnPressed.emit()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
+    pinned = world.window.tree_model.index(8, 0, world.window.tree_model.index(0, 0))
+    assert pinned.data(KIND_ROLE) == "pinlink"
+    world.window.tree.setCurrentIndex(pinned)
+    wait(qtbot, lambda: world.window._folder == "Sent")  # noqa: SLF001
+    world.call("group.remove", group=group.group_id)
+    world.call("favorite.show", view="trash", visible=False)
+    world.window.reload_accounts(select_saved=False)
+    wait(qtbot, lambda: "Work" not in tree_labels(world.window))
+    assert "  Trash" not in tree_labels(world.window)[:10]
+
+
+def test_the_folder_list_menu_offers_favorites_and_groups(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QMenu
+
+    started(qtbot, world)
+    account = account_node(world.window)
+    inbox = world.window.tree_model.index(2, 0, account)  # Unread, Flagged, Inbox
+    assert inbox.data() == "Inbox  (3)"
+
+    def offered(index: QModelIndex) -> list[str]:
+        menu = QMenu()
+        world.window._tree_extras(menu, index)  # noqa: SLF001
+        return [action.text() for action in menu.actions() if action.text()]
+
+    assert offered(inbox) == ["Add to Favorites"]
+    assert "Put in group" in offered(account) and "Take out of its group" not in offered(account)
+    world.window._sidebar_call("favorite.pin", {"account": world.account_id, "folder": "Inbox"})  # noqa: SLF001
+    wait(qtbot, lambda: any(pin.folder == "Inbox" for pin in world.call("sidebar.show").pins))
+    wait(qtbot, lambda: "  Inbox  (3)" in tree_labels(world.window)[:12] and offered(world.window.tree_model.index(2, 0, account_node(world.window))) == [])
+    pinned = world.window.tree_model.index(8, 0, world.window.tree_model.index(0, 0))
+    assert pinned.data(KIND_ROLE) == "pinlink" and offered(pinned)[0] == "Remove from Favorites" and offered(pinned)[-2:] == ["Move up", "Move down"]
+    standard = world.window.tree_model.index(2, 0, world.window.tree_model.index(0, 0))
+    assert offered(standard) == ["Hide from Favorites", "New group…"]
+    assert offered(world.window.tree_model.index(0, 0)) == ["New group…"]

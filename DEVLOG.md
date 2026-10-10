@@ -562,3 +562,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - Pinning other folders, renaming and reordering favorites, account groups, search inside a combined view.
+
+## 2026-10-10 Pinned favorites and groups (version 0.0.47)
+
+**What landed**
+- `config/sidebar.py` and `sidebar.json`, `commands_sidebar.py` (nine commands), pins and groups in the folder list with a context menu, query and account list for `message.combined`.
+- 6 engine tests and 2 window tests; 1,400 offline tests, Pyrefly 0 errors.
+
+**Still open**
+- Dragging to reorder favorites (Move up and Move down exist), dragging accounts into groups.

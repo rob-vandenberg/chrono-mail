@@ -14,9 +14,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.46"
+__version__ = "models.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.41: columns
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
@@ -32,6 +33,8 @@ ACCOUNT_ROLE: int = Qt.ItemDataRole.UserRole + 3
 KIND_ROLE: int = Qt.ItemDataRole.UserRole + 4
 UNREAD_ROLE: int = Qt.ItemDataRole.UserRole + 5
 FOLDER_ROLE_ROLE: int = Qt.ItemDataRole.UserRole + 6
+GROUP_ROLE: int = Qt.ItemDataRole.UserRole + 7
+PIN_ROLE: int = Qt.ItemDataRole.UserRole + 8
 ROW_PLACEHOLDER: None = None
 
 
@@ -58,6 +61,7 @@ class ViewSpec:
     maximum_size: int | None = None
     conversations: bool = False  # only the newest message of each conversation (a plain folder view only)
     combined: str | None = None  # a favorite: the same kind of folder in every mailbox (message.combined)
+    combined_accounts: tuple[str, ...] = ()  # ... of these accounts only (a group)
 
     @property
     def kind(self) -> ViewKind:
@@ -289,7 +293,10 @@ class MessageListModel(QAbstractTableModel):
 
     def _values(self, spec: ViewSpec, offset: int) -> dict[str, object]:
         if spec.combined is not None:
-            return {"view": spec.combined, "offset": offset, "limit": PAGE_SIZE}
+            combined: dict[str, object] = {"view": spec.combined, "query": spec.query, "offset": offset, "limit": PAGE_SIZE}
+            if spec.combined_accounts:
+                combined["accounts"] = list(spec.combined_accounts)
+            return combined
         if spec.kind is ViewKind.FOLDER:
             return {"account": spec.account, "folder": spec.folder, "sort": spec.sort, "oldest_first": spec.oldest_first, "offset": offset, "limit": PAGE_SIZE}
         values: dict[str, object] = {"account": spec.account, "query": spec.query, "offset": offset, "limit": PAGE_SIZE}
@@ -380,6 +387,12 @@ class FolderTreeModel(QStandardItemModel):
     show_inboxes: bool = True
     show_local_folders: bool = True
 
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.pins: list[tuple[str, str, str, str]] = []  # pin id, account, folder, name
+        self.groups: list[tuple[str, str, tuple[str, ...]]] = []  # group id, name, account ids
+        self.hidden: set[str] = set()  # standard favorites that are switched off
+
     def populate(self, accounts: list[object], folders: dict[str, list[object]]) -> None:
         """Rebuild the tree. accounts: AccountSummary results; folders: account id -> FolderInfo results."""
         self.clear()
@@ -395,37 +408,69 @@ class FolderTreeModel(QStandardItemModel):
         real = [account for account in places if str(getattr(account, "kind", "pop3")) != "local"]
         if len(real) >= 2 and self.show_inboxes:
             self._inboxes(root, real, folders)
+        members = {member for _, _, accounts_of in self.groups for member in accounts_of}
+        shown = {str(getattr(account, "account_id")): account for account in places}
+        for group_id, name, member_ids in self.groups:
+            present = [shown[member] for member in member_ids if member in shown]
+            if not present and not any(member in {str(getattr(a, "account_id")) for a in accounts} for member in member_ids):
+                continue
+            self._group(root, group_id, name, present, member_ids, folders)
         for account in places:
-            account_id = str(getattr(account, "account_id"))
-            top = QStandardItem("Local Folders" if str(getattr(account, "kind", "pop3")) == "local" else str(getattr(account, "email_address")))
-            top.setEditable(False)
-            top.setIcon(folder_icon("account"))
-            top.setData("account", KIND_ROLE)
-            top.setData(account_id, ACCOUNT_ROLE)
-            root.appendRow(top)
-            nodes: dict[tuple[str, ...], QStandardItem] = {}
-            ordered = sorted(folders.get(account_id, []), key=lambda info: (_order(str(getattr(info, "role"))), str(getattr(info, "path")).lower()))
-            for kind, label in (("unread", "Unread"), ("flagged", "Flagged")):
-                item = QStandardItem(label)
-                item.setEditable(False)
-                item.setIcon(folder_icon(kind))
-                item.setData(kind, KIND_ROLE)
-                item.setData(account_id, ACCOUNT_ROLE)
-                top.appendRow(item)
-            for info in ordered:
-                path = tuple(str(getattr(info, "path")).split("/"))
-                for depth in range(1, len(path)):  # parents that exist only as part of a path
-                    if path[:depth] not in nodes:
-                        nodes[path[:depth]] = self._folder_item(account_id, path[:depth], "other", 0)
-                        (nodes[path[:depth - 1]] if depth > 1 else top).appendRow(nodes[path[:depth]])
-                item = nodes.get(path) or self._folder_item(account_id, path, str(getattr(info, "role")), int(getattr(info, "unread")))
-                item.setData(str(getattr(info, "role")), FOLDER_ROLE_ROLE)
-                item.setData(int(getattr(info, "unread")), UNREAD_ROLE)
-                self._label(item, path[-1], int(getattr(info, "unread")))
-                item.setIcon(folder_icon("outbox" if path == ("Outbox",) else str(getattr(info, "role"))))  # a parent that was made earlier takes its real role now
-                if path not in nodes:
-                    nodes[path] = item
-                    (nodes[path[:-1]] if len(path) > 1 else top).appendRow(item)
+            if str(getattr(account, "account_id")) not in members:
+                self._account_node(root, account, folders)
+
+    def _group(self, root: QStandardItem, group_id: str, name: str, present: list[object], member_ids: tuple[str, ...], folders: dict[str, list[object]]) -> None:
+        """A named set of accounts: one combined inbox, then the accounts."""
+        node = self._section(root, name, "group")
+        node.setData(group_id, GROUP_ROLE)
+        node.setIcon(folder_icon("account"))
+        unread = sum(
+            int(getattr(info, "unread")) for member in member_ids for info in folders.get(member, []) if str(getattr(info, "role")) == "inbox"
+        )
+        inbox = QStandardItem("All Inboxes")
+        inbox.setEditable(False)
+        inbox.setIcon(folder_icon("inbox"))
+        inbox.setData("groupinbox", KIND_ROLE)
+        inbox.setData("", ACCOUNT_ROLE)
+        inbox.setData(group_id, FOLDER_PATH_ROLE)  # tells the groups' inboxes apart in the selection
+        inbox.setData(group_id, GROUP_ROLE)
+        inbox.setData("inbox", FOLDER_ROLE_ROLE)
+        self._label(inbox, "All Inboxes", unread)
+        node.appendRow(inbox)
+        for account in present:
+            self._account_node(node, account, folders)
+
+    def _account_node(self, parent: QStandardItem, account: object, folders: dict[str, list[object]]) -> None:
+        account_id = str(getattr(account, "account_id"))
+        top = QStandardItem("Local Folders" if str(getattr(account, "kind", "pop3")) == "local" else str(getattr(account, "email_address")))
+        top.setEditable(False)
+        top.setIcon(folder_icon("account"))
+        top.setData("account", KIND_ROLE)
+        top.setData(account_id, ACCOUNT_ROLE)
+        parent.appendRow(top)
+        nodes: dict[tuple[str, ...], QStandardItem] = {}
+        ordered = sorted(folders.get(account_id, []), key=lambda info: (_order(str(getattr(info, "role"))), str(getattr(info, "path")).lower()))
+        for kind, label in (("unread", "Unread"), ("flagged", "Flagged")):
+            item = QStandardItem(label)
+            item.setEditable(False)
+            item.setIcon(folder_icon(kind))
+            item.setData(kind, KIND_ROLE)
+            item.setData(account_id, ACCOUNT_ROLE)
+            top.appendRow(item)
+        for info in ordered:
+            path = tuple(str(getattr(info, "path")).split("/"))
+            for depth in range(1, len(path)):  # parents that exist only as part of a path
+                if path[:depth] not in nodes:
+                    nodes[path[:depth]] = self._folder_item(account_id, path[:depth], "other", 0)
+                    (nodes[path[:depth - 1]] if depth > 1 else top).appendRow(nodes[path[:depth]])
+            item = nodes.get(path) or self._folder_item(account_id, path, str(getattr(info, "role")), int(getattr(info, "unread")))
+            item.setData(str(getattr(info, "role")), FOLDER_ROLE_ROLE)
+            item.setData(int(getattr(info, "unread")), UNREAD_ROLE)
+            self._label(item, path[-1], int(getattr(info, "unread")))
+            item.setIcon(folder_icon("outbox" if path == ("Outbox",) else str(getattr(info, "role"))))  # a parent that was made earlier takes its real role now
+            if path not in nodes:
+                nodes[path] = item
+                (nodes[path[:-1]] if len(path) > 1 else top).appendRow(item)
 
     @staticmethod
     def _section(root: QStandardItem, title: str, kind: str) -> QStandardItem:
@@ -443,6 +488,8 @@ class FolderTreeModel(QStandardItemModel):
         """The same folder of every mailbox in one list: all inboxes, all unread messages and so on."""
         section = self._section(root, "Favorites", "section")
         for view, label, icon in FAVORITES:
+            if view in self.hidden:
+                continue
             unread = 0
             for account in mailboxes:
                 for info in folders.get(str(getattr(account, "account_id")), []):
@@ -459,6 +506,25 @@ class FolderTreeModel(QStandardItemModel):
             item.setData(_FAVORITE_ROLE.get(view, "other"), FOLDER_ROLE_ROLE)
             item.setData(unread, UNREAD_ROLE)
             self._label(item, label, unread)
+            section.appendRow(item)
+        known = {str(getattr(account, "account_id")) for account in mailboxes}
+        for pin_id, account_id, folder, name in self.pins:
+            if account_id not in known:
+                continue
+            info = next((i for i in folders.get(account_id, []) if str(getattr(i, "path")) == folder), None)
+            if info is None:
+                continue  # the folder is gone: the pin stays in the file, but there is nothing to show
+            unread = int(getattr(info, "unread"))
+            item = QStandardItem()
+            item.setEditable(False)
+            item.setIcon(folder_icon("outbox" if folder == "Outbox" else str(getattr(info, "role"))))
+            item.setData("pinlink", KIND_ROLE)
+            item.setData(account_id, ACCOUNT_ROLE)
+            item.setData(folder, FOLDER_PATH_ROLE)
+            item.setData(str(getattr(info, "role")), FOLDER_ROLE_ROLE)
+            item.setData(pin_id, PIN_ROLE)
+            item.setData(unread, UNREAD_ROLE)
+            self._label(item, name or folder.rsplit("/", 1)[-1], unread)
             section.appendRow(item)
 
     def _inboxes(self, root: QStandardItem, accounts: list[object], folders: dict[str, list[object]]) -> None:

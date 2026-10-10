@@ -46,7 +46,9 @@ from chrono_mail.ui.models import (
     ACCOUNT_ROLE,
     FOLDER_PATH_ROLE,
     FOLDER_ROLE_ROLE,
+    GROUP_ROLE,
     KIND_ROLE,
+    PIN_ROLE,
     UNREAD_ROLE,
     FolderTreeModel,
     MessageListModel,
@@ -64,9 +66,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.46"
+__version__ = "mainwindow.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: Folder choices, roles and check interval per account
@@ -98,6 +101,9 @@ SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Date"), ("subject", "Subj
 _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-outbox", "drafts": "document-edit", "trash": "user-trash", "junk": "mail-mark-junk", "archive": "folder-archive", "other": "folder"}
 
 
+SIDEBAR_KEY: str = "sidebar"  # stands for the sidebar answer among the folder lists that are awaited
+
+
 def bool_setting(settings: QSettings, key: str, default: bool) -> bool:
     """QSettings may hand back the text 'true' or 'false' from an ini file."""
     value = settings.value(key, default)
@@ -126,6 +132,9 @@ class MainWindow(QMainWindow):
         self._folder_role: str = "other"
         self._tree_kind: str = "folder"
         self._tree_key_kind: str = "folder"  # the kind of the item in the tree: "inboxlink" is a folder shown under the Inboxes heading
+        self._tree_path: str = ""  # the folder, favorite or group of the item that is selected in the tree
+        self._combined_accounts: tuple[str, ...] = ()  # the accounts of the group whose inbox is shown
+        self._sidebar: object | None = None  # the answer of sidebar.show: pinned folders and groups
         self._combined: str | None = None  # the favorite that is shown (all inboxes, unread, ...), or None
         self._expanded: set[str] | None = None  # accounts whose folders are open in the tree
         self._shown: tuple[str, str, str] | None = None  # account, folder, message id of what the reader shows
@@ -504,7 +513,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("oldest_first", self._oldest_first)
         self.settings.setValue("auto_check", self.act_auto.isChecked())
         self.settings.setValue("last_account", self._account_id or "")
-        self.settings.setValue("last_folder", self._folder or self._combined or "")
+        self.settings.setValue("last_folder", self._tree_path)
         self.settings.setValue("last_kind", self._tree_key_kind)
         self._quitting_for_good = True
         self.backend.engine.stop_event.set()  # waits for new mail end now
@@ -878,19 +887,35 @@ class MainWindow(QMainWindow):
         self.backend.call("account.list", {}, listed, lambda error: self._report("Accounts", error), owner=self)
 
     def _load_folders(self, select_saved: bool, then: Callable[[], None] | None = None) -> None:
-        remaining = {str(getattr(account, "account_id")) for account in self._accounts}
+        remaining = {str(getattr(account, "account_id")) for account in self._accounts} | {SIDEBAR_KEY}
         collected: dict[str, list[object]] = {}
+
+        def sidebar_done(result: object) -> None:
+            self._sidebar = result
+            remaining.discard(SIDEBAR_KEY)
+            if not remaining:
+                finish_loading()
+
+        def sidebar_failed(error: ChronoMailError) -> None:
+            self._sidebar = None
+            remaining.discard(SIDEBAR_KEY)
+            self._report("Favorites and groups", error)
+            if not remaining:
+                finish_loading()
+
+        def finish_loading() -> None:
+            self._folders = collected
+            self._populate_tree(select_saved)
+            self._update_unread_summary()
+            if then is not None:
+                then()
 
         def make_done(account_id: str) -> Callable[[object], None]:
             def done(result: object) -> None:
                 collected[account_id] = list(result) if isinstance(result, (tuple, list)) else []
                 remaining.discard(account_id)
                 if not remaining:
-                    self._folders = collected
-                    self._populate_tree(select_saved)
-                    self._update_unread_summary()
-                    if then is not None:
-                        then()
+                    finish_loading()
 
             return done
 
@@ -900,13 +925,19 @@ class MainWindow(QMainWindow):
                 remaining.discard(account_id)
                 self._report("Folders", error)
                 if not remaining:
-                    self._folders = collected
-                    self._populate_tree(select_saved)
+                    finish_loading()
 
             return failed
 
-        for account_id in list(remaining):
+        self.backend.call("sidebar.show", {}, sidebar_done, sidebar_failed, owner=self)
+        for account_id in list(remaining - {SIDEBAR_KEY}):
             self.backend.call("folder.list", {"account": account_id}, make_done(account_id), make_failed(account_id), owner=self)
+
+    def _group_accounts(self, group_id: str) -> tuple[str, ...]:
+        for group in getattr(self._sidebar, "groups", ()):
+            if str(getattr(group, "group_id")) == group_id:
+                return tuple(str(member) for member in getattr(group, "accounts"))
+        return ()
 
     def _selection_key(self) -> tuple[str, str, str] | None:
         index = self.tree.currentIndex()
@@ -924,9 +955,12 @@ class MainWindow(QMainWindow):
         if keep is None and select_saved:
             saved_account, saved_folder = str(self.settings.value("last_account", "")), str(self.settings.value("last_folder", ""))
             saved_kind = str(self.settings.value("last_kind", "folder"))
-            keep = (saved_account, saved_kind, saved_folder) if saved_folder and (saved_account or saved_kind == "favorite") else None
+            keep = (saved_account, saved_kind, saved_folder) if saved_folder and (saved_account or saved_kind in ("favorite", "groupinbox")) else None
         self._updating_tree = True
         self._remember_expanded()
+        self.tree_model.pins = [(str(getattr(pin, "pin_id")), str(getattr(pin, "account")), str(getattr(pin, "folder")), str(getattr(pin, "name"))) for pin in getattr(self._sidebar, "pins", ())]
+        self.tree_model.groups = [(str(getattr(group, "group_id")), str(getattr(group, "name")), tuple(str(m) for m in getattr(group, "accounts"))) for group in getattr(self._sidebar, "groups", ())]
+        self.tree_model.hidden = {str(view) for view in getattr(self._sidebar, "hidden", ())}
         self.tree_model.show_favorites = bool_setting(self.settings, "show_favorites", True)
         self.tree_model.show_inboxes = bool_setting(self.settings, "show_inboxes", True)
         self.tree_model.show_local_folders = bool_setting(self.settings, "show_local_folders", True)
@@ -938,7 +972,7 @@ class MainWindow(QMainWindow):
         if target is not None and target.isValid():
             self.tree.setCurrentIndex(target)
         self._updating_tree = False
-        if target is not None and target.isValid() and self._key_of(target) != (self._account_id, self._tree_key_kind, self._folder or self._combined or ""):
+        if target is not None and target.isValid() and self._key_of(target) != (self._account_id, self._tree_key_kind, self._tree_path):
             self._tree_changed(target, QModelIndex())
 
     def _remember_expanded(self) -> None:
@@ -990,11 +1024,13 @@ class MainWindow(QMainWindow):
         if self._updating_tree or not current.isValid():
             return
         kind = str(current.data(KIND_ROLE))
-        if kind in ("account", "section"):
+        if kind in ("account", "section", "group"):
             return
         self._tree_key_kind = kind
-        self._combined = str(current.data(FOLDER_PATH_ROLE)) if kind == "favorite" else None
-        if kind == "inboxlink":
+        self._tree_path = str(current.data(FOLDER_PATH_ROLE) or "")
+        self._combined = "inboxes" if kind == "groupinbox" else (str(current.data(FOLDER_PATH_ROLE)) if kind == "favorite" else None)
+        self._combined_accounts = self._group_accounts(str(current.data(GROUP_ROLE))) if kind == "groupinbox" else ()
+        if kind in ("inboxlink", "pinlink"):
             kind = "folder"
         self._account_id = str(current.data(ACCOUNT_ROLE))  # "" in a favorite: the rows say which account they belong to
         self._tree_kind = kind
@@ -1070,7 +1106,7 @@ class MainWindow(QMainWindow):
         if self._account_id is None:
             return None
         if self._combined is not None:
-            return ViewSpec("", combined=self._combined)
+            return ViewSpec("", None, self.search_box.text().strip(), combined=self._combined, combined_accounts=self._combined_accounts)
         query = self.search_box.text().strip()
         unread = True if self.filter_unread.isChecked() else None
         flagged = True if self.filter_flagged.isChecked() else None
@@ -1696,7 +1732,99 @@ class MainWindow(QMainWindow):
 
     # --- folders ----------------------------------------------------------------------------------------------------
 
+    def _sidebar_call(self, command: str, values: dict[str, object]) -> None:
+        self.backend.call(command, values, lambda result: self._load_folders(select_saved=False), lambda error: self._report("Could not change the folder list", error), owner=self)
+
+    def _ask_name(self, title: str, label: str, text: str = "") -> str | None:
+        name, ok = QInputDialog.getText(self, title, label, text=text)
+        return name.strip() if ok and (name.strip() or text) else None
+
+    def _pin_order(self) -> list[str]:
+        return [str(getattr(pin, "pin_id")) for pin in getattr(self._sidebar, "pins", ())]
+
+    def _tree_extras(self, menu: QMenu, index: QModelIndex) -> None:
+        """What the clicked item of the folder list offers about Favorites and groups."""
+        kind = str(index.data(KIND_ROLE)) if index.isValid() else ""
+        account = str(index.data(ACCOUNT_ROLE) or "")
+        if kind in ("folder", "inboxlink"):
+            folder = str(index.data(FOLDER_PATH_ROLE))
+            pinned = any(str(getattr(pin, "account")) == account and str(getattr(pin, "folder")) == folder for pin in getattr(self._sidebar, "pins", ()))
+            if not pinned:
+                menu.addSeparator()
+                menu.addAction("Add to Favorites", lambda: self._sidebar_call("favorite.pin", {"account": account, "folder": folder}))
+        elif kind == "pinlink":
+            pin = str(index.data(PIN_ROLE))
+            order = self._pin_order()
+            position = order.index(pin) if pin in order else -1
+            menu.addSeparator()
+            menu.addAction("Remove from Favorites", lambda: self._sidebar_call("favorite.unpin", {"pin": pin}))
+            menu.addAction("Rename…", lambda: self._rename_pin(pin, str(index.data(Qt.ItemDataRole.DisplayRole))))
+            up = menu.addAction("Move up", lambda: self._move_pin(order, position, -1))
+            up.setEnabled(position > 0)
+            down = menu.addAction("Move down", lambda: self._move_pin(order, position, 1))
+            down.setEnabled(0 <= position < len(order) - 1)
+        elif kind == "favorite":
+            view = str(index.data(FOLDER_PATH_ROLE))
+            menu.addSeparator()
+            menu.addAction("Hide from Favorites", lambda: self._sidebar_call("favorite.show", {"view": view, "visible": False}))
+        elif kind == "account" and str(index.data(ACCOUNT_ROLE)) and not self._is_local(account):
+            self._group_menu(menu, account)
+        elif kind == "group":
+            group = str(index.data(GROUP_ROLE))
+            menu.addSeparator()
+            menu.addAction("Rename group…", lambda: self._rename_group(group, str(index.data(Qt.ItemDataRole.DisplayRole))))
+            menu.addAction("Remove group", lambda: self._sidebar_call("group.remove", {"group": group}))
+        if kind in ("section", "favorite") or not kind:
+            hidden = [str(view) for view in getattr(self._sidebar, "hidden", ())]
+            if kind == "section" and hidden:
+                shown = menu.addMenu("Show again")
+                for view in hidden:
+                    shown.addAction(view.capitalize(), lambda chosen=view: self._sidebar_call("favorite.show", {"view": chosen, "visible": True}))
+            menu.addSeparator()
+            menu.addAction("New group…", self._new_group)
+
+    def _is_local(self, account: str) -> bool:
+        return any(str(getattr(item, "account_id")) == account and str(getattr(item, "kind", "pop3")) == "local" for item in self._accounts)
+
+    def _group_menu(self, menu: QMenu, account: str) -> None:
+        menu.addSeparator()
+        groups = list(getattr(self._sidebar, "groups", ()))
+        submenu = menu.addMenu("Put in group")
+        current = next((str(getattr(group, "group_id")) for group in groups if account in getattr(group, "accounts")), None)
+        for group in groups:
+            group_id = str(getattr(group, "group_id"))
+            action = submenu.addAction(str(getattr(group, "name")), lambda chosen=group_id: self._sidebar_call("group.assign", {"account": account, "group": chosen}))
+            action.setCheckable(True)
+            action.setChecked(group_id == current)
+        submenu.addAction("New group…", lambda: self._new_group(account))
+        if current is not None:
+            menu.addAction("Take out of its group", lambda: self._sidebar_call("group.assign", {"account": account}))
+
+    def _new_group(self, account: str = "") -> None:
+        name = self._ask_name("New group", "Name of the group:")
+        if name:
+            self._sidebar_call("group.add", {"name": name, **({"account": [account]} if account else {})})
+
+    def _rename_group(self, group: str, current: str) -> None:
+        name = self._ask_name("Rename group", "New name:", current)
+        if name:
+            self._sidebar_call("group.rename", {"group": group, "name": name})
+
+    def _rename_pin(self, pin: str, current: str) -> None:
+        name = self._ask_name("Rename favorite", "New name (empty: the name of the folder):", re.sub(r"\s+\(\d+\)$", "", current))
+        if name is not None:
+            self._sidebar_call("favorite.rename", {"pin": pin, "name": name})
+
+    def _move_pin(self, order: list[str], position: int, step: int) -> None:
+        target = position + step
+        if 0 <= position < len(order) and 0 <= target < len(order):
+            order[position], order[target] = order[target], order[position]
+            self._sidebar_call("favorite.reorder", {"pin": order})
+
     def _tree_menu(self, position: QPoint) -> None:
+        clicked = self.tree.indexAt(position)
+        if clicked.isValid() and clicked != self.tree.currentIndex():
+            self.tree.setCurrentIndex(clicked)
         menu = QMenu(self)
         menu.addAction(self.act_new_folder)
         if self._tree_kind == "folder":
@@ -1706,6 +1834,7 @@ class MainWindow(QMainWindow):
             menu.addAction(self.act_mark_all_read)
             if self._folder_role in ("trash", "junk"):
                 menu.addAction(self.act_empty_folder)
+        self._tree_extras(menu, clicked)
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
     def _list_menu(self, position: QPoint) -> None:
@@ -1759,6 +1888,7 @@ class MainWindow(QMainWindow):
         self.show_status(text)
         self._folder = None
         self._tree_kind = "account"
+        self._tree_key_kind = "account"
         self._load_folders(select_saved=False)
 
     # --- attachments and links ----------------------------------------------------------------------------------------

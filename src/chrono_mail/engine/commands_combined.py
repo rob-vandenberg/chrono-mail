@@ -9,9 +9,10 @@ from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import SearchFilter
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 0.0.46"
+__version__ = "commands_combined.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Initial combined views over the mailboxes of all accounts (Favorites)
 
 VIEWS: tuple[str, ...] = ("inboxes", "unread", "flagged", "outbox", "sent", "drafts", "junk", "trash")
@@ -22,6 +23,7 @@ _ROLE_OF_VIEW: dict[str, FolderRole] = {"inboxes": FolderRole.INBOX, "sent": Fol
 class CombinedParameters:
     view: Literal["inboxes", "unread", "flagged", "outbox", "sent", "drafts", "junk", "trash"] = field(metadata=option("inboxes, unread, flagged, outbox, sent, drafts, junk or trash"))
     accounts: tuple[str, ...] = field(default=(), metadata=option("Only the mailboxes of these accounts (default: all)"))
+    query: str = field(default="", metadata=option("Words to find in these messages (as in message.search)"))
     offset: int = field(default=0, metadata=option("How many results to skip"))
     limit: int = field(default=50, metadata=option("How many results to show"))
 
@@ -55,7 +57,7 @@ def message_combined(engine: Engine, parameters: CombinedParameters) -> tuple[Me
                 else:
                     chosen = folder.role not in (FolderRole.TRASH, FolderRole.JUNK) and folder.path != OUTBOX
                 if chosen:
-                    found.extend(replace(row, account=account) for row in _rows(mailbox, mailbox.index.search("", folder.path, filters, 0, want)))
+                    found.extend(replace(row, account=account) for row in _rows(mailbox, mailbox.index.search(parameters.query, folder.path, filters, 0, want)))
     found.sort(key=lambda row: row.date.timestamp() if row.date else 0.0, reverse=True)
     return tuple(found[parameters.offset:want])
 

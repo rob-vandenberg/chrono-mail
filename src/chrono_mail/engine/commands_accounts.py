@@ -5,6 +5,8 @@ from pathlib import Path
 from typing import Literal
 
 from chrono_mail.config import (
+    load_sidebar,
+    save_sidebar,
     AccountSettings,
     Pop3DeletePolicy,
     Pop3Options,
@@ -38,9 +40,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.45"
+__version__ = "commands_accounts.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.45: storage of an account (own folders or Local Folders)
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.43: Certificate exceptions
@@ -280,6 +283,12 @@ def account_remove(engine: Engine, parameters: AccountParameters) -> AccountRemo
     if settings.account.kind is AccountKind.LOCAL and any(item.storage == "local" for item in config.accounts):
         raise UsageError("Accounts still keep their mail in Local Folders: give them folders of their own first")
     engine.save_config(config.without_account(account_id))
+    try:  # pinned folders and group memberships of the account are forgotten; a damaged sidebar file is reported when it is used
+        sidebar = load_sidebar(engine.directories.sidebar_file)
+        if any(item.account == account_id for item in sidebar.pins) or any(account_id in item.accounts for item in sidebar.groups):
+            save_sidebar(engine.directories.sidebar_file, sidebar.without_account(account_id))
+    except ConfigurationError:
+        pass
     engine.passwords.delete(account_id, ServerRole.INCOMING)
     engine.passwords.delete(account_id, ServerRole.OUTGOING)
     return AccountRemoveResult(account_id, str(engine.directories.account_directory(account_id)))

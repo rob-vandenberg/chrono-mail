@@ -19,9 +19,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 0.0.46"
+__version__ = "test_engine_local.py 0.0.47"
 
 # --- Version history ----------------------------------------------------
+# v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Initial Local Folders tests
 
@@ -313,3 +314,10 @@ def test_combined_views_merge_the_mailboxes_and_count_shared_mail_once(two: Two)
     sent = call(two.engine, "mail.send", account=two.a, to="you@example.com", subject="S", body="x")
     assert [row.subject for row in call(two.engine, "message.combined", view="sent")] == ["S"] and sent.sent
     assert call(two.engine, "message.combined", view="outbox") == ()
+
+
+def test_combined_views_can_be_searched_and_limited_to_some_accounts(two: Two) -> None:
+    call(two.engine, "mail.fetch", account=two.a)
+    call(two.engine, "mail.fetch", account=two.b)
+    assert [row.subject for row in call(two.engine, "message.combined", view="inboxes", query="body 3")] == ["Message 3"]
+    assert call(two.engine, "message.combined", view="inboxes", query="nothingatall") == ()
