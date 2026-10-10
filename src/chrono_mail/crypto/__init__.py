@@ -2,7 +2,7 @@
 
 from chrono_mail.crypto.cipher import decrypt_message, encrypt_message, read_key_id
 from chrono_mail.crypto.keys import DataKey, generate_data_key
-from chrono_mail.crypto.keystore import CredentialBackend, InMemoryKeyStore, KeyringKeyStore, KeyStore
+from chrono_mail.crypto.keystore import InMemoryKeyStore, KeyringKeyStore, KeyStore
 from chrono_mail.crypto.recovery import (
     key_from_recovery_code,
     recovery_code_for,
@@ -11,14 +11,14 @@ from chrono_mail.crypto.recovery import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 0.0.6"
+__version__ = "__init__.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: CredentialBackend moved to core
 # v0.0.6: Export the cipher, the data key, the key stores and the recovery primitives
 # v0.0.2: Initial skeleton
 
 __all__ = [
-    "CredentialBackend",
     "DataKey",
     "InMemoryKeyStore",
     "KeyStore",

@@ -5,30 +5,17 @@ from typing import Protocol
 import keyring
 import keyring.errors
 
-from chrono_mail.core import CryptoError
+from chrono_mail.core import CredentialBackend, CryptoError
 from chrono_mail.crypto.keys import DataKey
 
 # --- Version ------------------------------------------------------------
-__version__ = "keystore.py 0.0.6"
+__version__ = "keystore.py 0.0.9"
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: CredentialBackend lives in core
 # v0.0.6: Initial key stores
 
 SERVICE_NAME: str = "chrono-mail"
-
-
-class CredentialBackend(Protocol):
-    """What KeyringKeyStore needs from a credential store. Every keyring backend provides it.
-
-    A protocol, not a KeyringBackend subclass: keyring registers every subclass globally,
-    which would let a test double leak into the real credential store lookup.
-    """
-
-    def get_password(self, service: str, username: str) -> str | None: ...
-
-    def set_password(self, service: str, username: str, password: str) -> None: ...
-
-    def delete_password(self, service: str, username: str) -> None: ...
 
 
 class KeyStore(Protocol):

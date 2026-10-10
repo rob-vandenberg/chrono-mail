@@ -1,7 +1,35 @@
 """The rebuildable search and list index."""
 
+from chrono_mail.index.entry import entry_from_raw, unreadable_entry
+from chrono_mail.index.index import Index, IndexBuilder, match_expression
+from chrono_mail.index.model import (
+    UNREADABLE_SUBJECT,
+    IndexedMessage,
+    IndexEntry,
+    SearchFilter,
+    SortField,
+)
+from chrono_mail.index.text import MAXIMUM_BODY_CHARACTERS, html_to_text, searchable_body
+
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 0.0.2"
+__version__ = "__init__.py 0.0.8"
 
 # --- Version history ----------------------------------------------------
+# v0.0.8: Export the index
 # v0.0.2: Initial skeleton
+
+__all__ = [
+    "MAXIMUM_BODY_CHARACTERS",
+    "UNREADABLE_SUBJECT",
+    "Index",
+    "IndexBuilder",
+    "IndexEntry",
+    "IndexedMessage",
+    "SearchFilter",
+    "SortField",
+    "entry_from_raw",
+    "html_to_text",
+    "match_expression",
+    "searchable_body",
+    "unreadable_entry",
+]

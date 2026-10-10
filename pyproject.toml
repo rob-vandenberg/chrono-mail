@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chrono-mail"
-version = "0.0.6"
+version = "0.0.12"
 description = "An open-source desktop email client for Linux, inspired by eM Client."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -13,6 +13,7 @@ license-files = ["LICENSE"]
 dependencies = [
     "cryptography>=50",
     "keyring>=25.7",
+    "platformdirs>=4.3",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +23,9 @@ dev = [
     "pytest>=9.1",
     "import-linter>=2.15",
 ]
+
+[project.scripts]
+chrono-mail-cli = "chrono_mail.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -37,10 +41,11 @@ search-path = ["src", "."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not live and not oskeyring'"
+addopts = "-m 'not live and not oskeyring and not perf'"
 markers = [
     "live: talks to a real mail server (opt-in: pytest -m live)",
     "oskeyring: uses the real operating system credential store (opt-in: pytest -m oskeyring)",
+    "perf: generates and measures a 500,000-message mailbox (opt-in: pytest -m perf -s)",
 ]
 
 [tool.importlinter]

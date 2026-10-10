@@ -1,6 +1,8 @@
 import random
 from pathlib import Path
 
+from chrono_mail.core import MessageFormatError
+
 from chrono_mail.mime import (
     Address,
     Attachment,
@@ -80,3 +82,50 @@ def test_random_bytes_never_raise() -> None:
     generator = random.Random(SEED + 1)
     for _ in range(500):
         assert isinstance(parse_message(generator.randbytes(generator.randint(0, 2000))), ParsedMessage)
+
+
+# --- the builder with hostile text (AGENTS.md section 4.2: input of any kind, never a crash) -----------------------
+
+ALPHABET: str = (
+    "abcXYZ019 .,;:<>()[]@\"'\\/-_=+*&%$#!?\t\r\n\x00\x07\x1b\x7f"
+    "éüß中文م\U0001f600​‮﻿𐏿"
+)
+
+
+TAME: str = "abcdefghij ABCDEFGHIJ0123456789.-_\u00e9\u00fc\u4e2d\u0645"
+
+
+def random_text(generator: random.Random, limit: int = 40) -> str:
+    """Mostly hostile text, sometimes plain text, so that the builder both succeeds and refuses."""
+    alphabet = TAME if generator.random() < 0.75 else ALPHABET
+    return "".join(generator.choice(alphabet) for _ in range(generator.randint(0, limit)))
+
+
+def test_builder_never_fails_in_any_way_but_message_format_error() -> None:
+    generator = random.Random(SEED + 2)
+    built = rejected = 0
+    for _ in range(3000):
+        outgoing = OutgoingMessage(
+            from_address=Address(random_text(generator), generator.choice(["a@example.com", "a@example.com", "b.c@example.org", random_text(generator, 12) + "@example.com", random_text(generator, 12)])),
+            to_addresses=tuple(Address(random_text(generator, 20), generator.choice(["b@example.com", "c@example.com", random_text(generator, 12)])) for _ in range(generator.randint(0, 3))),
+            subject=random_text(generator),
+            text_body=random_text(generator, 300),
+            html_body=generator.choice([None, random_text(generator, 300)]),
+            attachments=tuple(
+                Attachment(generator.choice([None, random_text(generator, 15)]), generator.choice(["text/plain", "image/png", random_text(generator, 10), ""]), generator.choice([None, random_text(generator, 10)]), generator.random() < 0.5, generator.randbytes(generator.randint(0, 50)))
+                for _ in range(generator.randint(0, 2))
+            ),
+            in_reply_to=generator.choice([None, random_text(generator, 20)]),
+            references=tuple(random_text(generator, 10) for _ in range(generator.randint(0, 2))),
+        )
+        try:
+            raw = build_message(outgoing)
+        except MessageFormatError:
+            rejected += 1
+            continue
+        built += 1
+        header_section = raw.split(b"\r\n\r\n", 1)[0]
+        assert header_section.isascii(), "header text must be encoded"
+        assert b"\r\nBcc:" not in header_section and not header_section.lower().startswith(b"bcc:")
+        assert isinstance(parse_message(raw), ParsedMessage)
+    assert built > 300 and rejected > 300  # both outcomes are really exercised

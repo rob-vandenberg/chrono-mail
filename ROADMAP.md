@@ -20,12 +20,12 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.1 | `core`: data model (Account, Folder, MessageRef, Flags, errors). | done |
 | 1.2 | `mime`: parse and build messages; never crashes on malformed input; fuzz-style tests. | done |
 | 1.3 | `crypto`: key generation, storage in the OS credential store, encrypt/decrypt message files. | done |
-| 1.4 | `store`: encrypted Maildir; atomic writes, random file names, flag renames, Windows-safe separator, folder create/rename/delete; interruption tests. | todo |
-| 1.5 | `index`: SQLite index with full-text search; incremental updates; full rebuild from the store; 500,000-message generated test mailbox and measurements. | todo |
-| 1.6 | `config`: settings and account definitions; credentials in the OS credential store. | todo |
-| 1.7 | `protocols.pop3` + `sync`: POP3 over plain, STLS and TLS; UIDL tracking; leave-on-server options; delete from server only after verified local storage. | todo |
-| 1.8 | `protocols.smtp`: sending over plain, STARTTLS and TLS; store sent messages in Sent. | todo |
-| 1.9 | `engine` + `cli`: command registry; headless CLI for every command. | todo |
+| 1.4 | `store`: encrypted Maildir; atomic writes, random file names, flag renames, Windows-safe separator, folder create/rename/delete; interruption tests. | done |
+| 1.5 | `index`: SQLite index with full-text search; incremental updates; full rebuild from the store; 500,000-message generated test mailbox and measurements. | done |
+| 1.6 | `config`: settings and account definitions; credentials in the OS credential store. | done |
+| 1.7 | `protocols.pop3` + `sync`: POP3 over plain, STLS and TLS; UIDL tracking; leave-on-server options; delete from server only after verified local storage. Also the offline scripted and fake test servers for hostile server behaviour. | done |
+| 1.8 | `protocols.smtp`: sending over plain, STARTTLS and TLS; store sent messages in Sent. | done |
+| 1.9 | `engine` + `cli`: command registry; headless CLI for every command. | done |
 | 1.10 | `ui`: main window, folder tree, virtualized message list, reading pane (plain text and safe HTML). | todo |
 | 1.11 | `ui`: composer (new, reply, reply all, forward), attachments. | todo |
 | 1.12 | Key backup and recovery procedure, tested end to end. | todo |

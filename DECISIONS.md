@@ -173,3 +173,76 @@ Every design decision, with its reason and the alternatives that were rejected. 
 **Reason:** AGENTS.md sections 4.1.5 and 4.6. Per-file keys avoid the limit on random nonces under one key; scrypt needs no extra dependency; the settings in the file keep old files readable when the defaults change.
 **Rejected:** a single key with random nonces (works at 500,000 messages, but leaves no margin and no per-file separation), Argon2 (extra dependency), plain files for the key (AGENTS.md section 4.6).
 **Open consequences:** the end-to-end recovery procedure is task 1.12; a key change (re-encrypting the store) needs an interruption-safe design and its own task; master-password mode is not built.
+
+## D-024 Store layout
+*2026-10-10*
+
+**Decision:**
+- The Maildir info separator is `!` on every platform, instead of `:`. Two programs use `!` (OfflineIMAP, Evolution's Camel); no agreed standard exists. Our files are encrypted and randomly named, so other clients cannot read them anyway.
+- Folders are directories with random names (`f-<12 hex>`) holding `tmp`, `new`, `cur` and a `folder.json` with the folder path and role. The folder hierarchy exists only in the paths, never on disk. Renaming a folder is one atomic rewrite of `folder.json`; no folder name needs encoding, and names that differ only in case, contain `/`, `:` or are reserved on Windows are all safe.
+- Renaming a subtree rewrites one `folder.json` per folder, deepest first. After an interruption a folder may lack its parent (a "virtual parent"); the tree stays valid and repeating the rename finishes it.
+- Deleting a folder moves it to `.deleted/` in one rename; the files are removed only by an explicit `purge_deleted_folders()`.
+- Message files: random 128-bit id as 32 lower-case hex characters. New mail goes to `new/<id>`; a flag change moves it to `cur/<id>!2,<letters>` (letters in ASCII order). Letters the app does not model (for example `P`) are preserved on every flag change.
+- `store.json` records the format, the account id, whether the store is encrypted and the key id. Encryption off is per account (the store is per account); switching a store between encrypted and plain is a migration and is not built.
+- Delivery writes to `tmp` (exclusive create, flush, fsync), renames into `new` or `cur`, fsyncs the directory, and with `verify` reads the message back, decrypts it and compares it with the input. A failed verification removes the copy and raises, so the caller keeps the server copy.
+- Leftover `tmp` files are removed only when older than 36 hours (the Maildir convention), because another process may still be writing.
+- `durable=False` (no fsync) exists for benchmarks and bulk test generation only.
+**Reason:** AGENTS.md section 4.1 (never lose mail) and D-004.
+**Rejected:** nested directories per folder (names need encoding; a rename moves directories), encoded folder names (case-insensitive file systems, reserved names), hard-link or copy-based moves.
+
+## D-025 Index design
+*2026-10-10*
+
+**Decision:**
+- One SQLite database per account, WAL mode, with an FTS5 table (`unicode61 remove_diacritics 2`, contentless with deletes, so SQLite 3.43 or newer is required) for subject, sender, recipients and body. The messages table keeps the folder, the relative path hint, flags as a bit mask, the date as UTC seconds, size, subject, sender, recipients, message id, a thread key and an attachment flag; sorting by date, subject, sender and size has an index per folder.
+- Body text for search is the plain text, or the visible text of the HTML when there is no plain part, with whitespace collapsed and capped at 100,000 characters per message.
+- The thread key is simplified: the first Reference, else In-Reply-To, else the message's own id. Proper threading (JWZ) is a later task.
+- Search words match as prefixes, quotes make phrases, and `from:`, `to:`, `subject:`, `body:` limit a word to one field. The expression is always built from quoted terms, so no input can inject FTS syntax. Results are newest first.
+- Paging uses LIMIT and OFFSET (random access for a scroll bar).
+- A rebuild writes a complete new database next to the old one and replaces it with one rename; a failure or an interruption leaves the old index untouched. An unreadable message appears as a "(damaged message)" placeholder instead of vanishing. `reconcile_index` repairs the index after an interruption by comparing it with directory listings of the store; the store is the truth.
+- `index` and `store` are siblings in layer L2 and may not import each other, so rebuild and reconcile live in `sync` (L3).
+**Reason:** D-005 and AGENTS.md section 4.1.3; 500,000 messages.
+**Open:** the measured performance is in DEVLOG.md; threading and encrypting the index are later options.
+
+## D-026 Configuration, paths and credentials
+*2026-10-10*
+
+**Decision:**
+- Settings are one JSON file, written atomically with owner-only permissions, in the platform's configuration directory (platformdirs); data (stores, indexes, POP3 state) is in the platform's data directory. Unknown settings are ignored; a damaged file is copied to `config.json.bad` and reported, never overwritten silently.
+- Account ids are random 128-bit hex strings and are validated against that pattern everywhere, because they are used in directory names (no path traversal from a settings file).
+- The default POP3 policy is KEEP: the server copy is never deleted unless the user chooses otherwise.
+- Passwords live only in the operating system's credential store, per account and direction (incoming, outgoing). There is one data key per installation (one backup); the settings file holds only its id.
+- `CredentialBackend` moved to `core`, because `config` and `crypto` are same-layer siblings that both need it. The small atomic-write code exists once in `store` and once, simplified, in `config` for the same reason.
+**Reason:** AGENTS.md sections 4.1.5, 4.4 and 4.6.
+
+## D-027 POP3 client, state and delete policies
+*2026-10-10*
+
+**Decision:**
+- An own POP3 client instead of `poplib`, which rejects every line over 2,048 bytes, message bodies included (verified); real mail has longer lines. Caps: line 1 MiB, message 256 MiB (enforced while receiving), 1,000,000 messages, connect and read timeouts. Certificates are always verified; STLS is never silently skipped; data that arrives before the TLS handshake is refused; a server `-ERR` to USER or PASS is an AuthenticationError, everything else a ProtocolError. Text from the server is made printable before it reaches an error message; the password never appears in one.
+- Deletions are marked with DELE and only committed with QUIT; a session that ends without QUIT drops them.
+- Download order: retrieve, store and verify (the store reads the file back and compares), append to the state log with fsync, and only then delete on the server. The state is an append-only text file (`D` and `X` lines); a line cut off by a crash is ignored. A crash between storing and logging can produce a duplicate on the next run, never a loss.
+- Policies: KEEP; DELETE_AFTER_DOWNLOAD; DELETE_AFTER_DAYS (the local copy must still exist and decrypt); DELETE_WHEN_DELETED_LOCALLY (the message is no longer anywhere in the store, judged from directory listings, not from the index; moving to Trash is not deleting). Deletion is blocked, and reported, when the store has no folders, a damaged folder, or (at ten or more candidates) when more than half the downloaded messages are missing, which looks like a wrong mount or a wiped disk.
+- A problem with one message (refused, too large, cannot be stored safely) is reported and the message stays on the server; a connection failure ends the run, keeps what is done, and is reported as `aborted`.
+**Reason:** AGENTS.md sections 4.1.2 and 4.2.
+
+## D-028 SMTP client and sending order
+*2026-10-10*
+
+**Decision:**
+- `protocols.smtp` wraps `smtplib` (its limits apply only to replies) with a reply reader that caps the number of lines (200) and bytes (64 KiB), because `smtplib` would read an endless `250-` reply for ever. Plain, STARTTLS and TLS; STARTTLS that is not offered is an error, never a fallback to plain; the login is only sent after the secure connection; addresses are checked (ASCII, one `@`, no spaces, brackets, quotes or control characters) before anything is sent; the size the server advertises and 8-bit data are checked first.
+- Sending: build the message, store a verified copy in the Outbox, send, then move the copy to Sent with the Seen flag. A message that fails stays in the Outbox and nothing resends it by itself (a crash after the server accepted it would send it twice). The Sent copy is exactly what was sent (without Bcc).
+**Reason:** AGENTS.md section 4.1 and 4.2.
+
+## D-029 Engine, command registry and command line
+*2026-10-10*
+
+**Decision:**
+- A command is a typed parameter dataclass plus a handler; the registry derives the parameter specification (kind, default, choices, help, secret) from the dataclass. Allowed parameter types: text, whole number, true/false, list of text, choices (`Literal`), and optional versions. The CLI is generated from the registry, so there is one definition of every action. Results are dataclasses and become JSON with `to_data`.
+- 26 commands cover accounts and keys, folders, fetching, sending, listing, showing, searching, flagging, moving, copying, deleting, and index and store maintenance.
+- Secrets are never taken from the command line: `--<name>-stdin` or a prompt on a terminal. Commands that delete need `--yes` (account.remove, folder.delete, message.delete). Exit codes are stable: 0 ok, 1 other error, 2 usage, 3 authentication, 4 network or protocol, 5 storage or crypto, 6 configuration, 7 message format, 130 interrupted.
+- `account.add` saves the key in the credential store and reads it back before creating an encrypted store, writes the store, and saves the settings last (the commit point); a failure removes what was made. `account.remove` forgets the account and its passwords but keeps the mail on disk. `folder.delete` keeps the files in `.deleted`. The standard folders (Inbox, Sent, Drafts, Trash, Junk, Outbox) cannot be deleted.
+- At the command level a folder name cannot contain `/` (it is the separator). An account is found by its id, the start of its id (6 or more characters) or its e-mail address.
+- A missing or damaged index is rebuilt automatically when an account is opened.
+- An Engine is used from one thread at a time; a UI runs commands in a worker with its own index connection.
+**Reason:** AGENTS.md sections 4.3 and 4.6; a UI and agents must be able to do everything the CLI can.
