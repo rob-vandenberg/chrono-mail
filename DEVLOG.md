@@ -393,3 +393,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Not tried on a real desktop with a tray (only with a pretended one in the offscreen test platform). Under XRDP the tray may not exist.
 
+## 2026-10-10 Step 8 of the autonomous work: save as, source, print (version 0.0.22)
+
+**What landed**
+- Engine: `message.export`, `message.source`, `message.text` (`engine/commands_export.py`, D-043). Interface: Save as, Print, View source (`ui/sourcedialog.py`, `ui/printing.py`).
+- Tests: engine (8), interface (8, including a real PDF produced through the print path).
+
+**Still open**
+- Printing the HTML layout of a message (only the text is printed); saving several messages at once.
+

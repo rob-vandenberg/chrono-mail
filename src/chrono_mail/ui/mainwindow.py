@@ -1,3 +1,4 @@
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import override
@@ -46,13 +47,16 @@ from chrono_mail.ui.models import (
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
+from chrono_mail.ui.printing import print_message
 from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
+from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.21"
+__version__ = "mainwindow.py 0.0.22"
 
 # --- Version history ----------------------------------------------------
+# v0.0.22: Save as .eml, view source, print
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Settings window, account editing, signatures
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
@@ -228,6 +232,9 @@ class MainWindow(QMainWindow):
         self.act_forward = self._action("Forward", lambda: self.compose_from_selection("forward"), "Ctrl+L", "mail-forward")
         self.act_edit_draft = self._action("Edit draft", self.edit_draft, "Return", "document-edit")
         self.act_delete = self._action("Delete", self.delete_selected, "Delete", "edit-delete")
+        self.act_save_as = self._action("Save as…", self.save_selected_as, "Ctrl+Shift+S", "document-save-as")
+        self.act_source = self._action("View source", self.view_source, "Ctrl+U")
+        self.act_print = self._action("Print…", self.print_selected, "Ctrl+P", "document-print")
         self.act_archive = self._action("Archive", self.archive_selected, "Ctrl+E", "mail-archive")
         self.act_mark_all_read = self._action("Mark all as read", self.mark_folder_read, icon="mail-mark-read")
         self.act_empty_folder = self._action("Empty folder…", self.empty_folder, icon="edit-clear")
@@ -317,6 +324,9 @@ class MainWindow(QMainWindow):
         message_menu.addSeparator()
         message_menu.addAction(self.act_archive)
         message_menu.addAction(self.act_delete)
+        message_menu.addSeparator()
+        for action in (self.act_save_as, self.act_print, self.act_source):
+            message_menu.addAction(action)
         folder_menu = bar.addMenu("F&older")
         for action in (self.act_new_folder, self.act_rename_folder, self.act_delete_folder):
             folder_menu.addAction(action)
@@ -1148,6 +1158,9 @@ class MainWindow(QMainWindow):
         menu.addMenu(self.move_menu).setText("Move to")
         menu.addAction(self.act_archive)
         menu.addAction(self.act_delete)
+        menu.addSeparator()
+        for action in (self.act_save_as, self.act_print, self.act_source):
+            menu.addAction(action)
         menu.exec(self.list_view.viewport().mapToGlobal(position))
 
     def new_folder(self) -> None:
@@ -1199,6 +1212,54 @@ class MainWindow(QMainWindow):
             lambda error: self._report("Could not save the attachment", error),
             owner=self,
         )
+
+    def _selected_message(self) -> tuple[str, str, str, str] | None:
+        """(account, folder, message id, subject) of the message in the list, if there is one."""
+        row = self._current_row()
+        if row is None or self._account_id is None:
+            return None
+        return self._account_id, str(getattr(row, "folder")), str(getattr(row, "message_id")), str(getattr(row, "subject"))
+
+    def save_selected_as(self) -> None:
+        """Message > Save as: a copy of the message as an .eml file."""
+        chosen = self._selected_message()
+        if chosen is None:
+            return
+        account, folder, message_id, subject = chosen
+        name = re.sub(r"[^\w\- ]+", "", subject).strip()[:60] or "message"
+        downloads = Path.home() / "Downloads"
+        start = str((downloads if downloads.is_dir() else Path.home()) / f"{name}.eml")
+        path, _ = QFileDialog.getSaveFileName(self, "Save message as", start, "E-mail messages (*.eml);;All files (*)")
+        if not path:
+            return
+        self.backend.call(
+            "message.export", {"account": account, "folder": folder, "message": message_id, "path": path, "overwrite": True},
+            lambda result: self.show_status(f"Saved {getattr(result, 'path')}"),
+            lambda error: self._report("Could not save the message", error), owner=self,
+        )
+
+    def view_source(self) -> None:
+        chosen = self._selected_message()
+        if chosen is None:
+            return
+        account, folder, message_id, subject = chosen
+
+        def shown(result: object) -> None:
+            SourceDialog(subject, result, self).exec()
+
+        self.backend.call("message.source", {"account": account, "folder": folder, "message": message_id}, shown, lambda error: self._report("Could not read the message", error), owner=self)
+
+    def print_selected(self) -> None:
+        chosen = self._selected_message()
+        if chosen is None:
+            return
+        account, folder, message_id, _ = chosen
+
+        def ready(result: object) -> None:
+            if print_message(self, result):
+                self.show_status("Sent to the printer")
+
+        self.backend.call("message.text", {"account": account, "folder": folder, "message": message_id}, ready, lambda error: self._report("Could not print the message", error), owner=self)
 
     def _open_link(self, url: QUrl) -> None:
         if url.scheme() == "mailto":

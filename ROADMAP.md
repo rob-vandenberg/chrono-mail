@@ -35,6 +35,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12d | Advanced search: OR, NOT, dates, sizes, dialog (0.0.19). | done |
 | 1.12e | Settings window, account editing and removal, signatures (0.0.20). | done |
 | 1.12f | Tray icon, new mail notifications, unread count in the title (0.0.21). | done |
+| 1.12g | Save as .eml, view source, print (0.0.22). | done |
 | 1.13 | Packaging: Flatpak for Fedora and Kubuntu; test on GNOME. | todo |
 | 1.14 | Windows test run on DEVELOPMENT. | todo |
 

@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_actions, commands_drafts, commands_folders, commands_mail
+from chrono_mail.engine import commands_accounts, commands_actions, commands_drafts, commands_export, commands_folders, commands_mail
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 0.0.17"
+__version__ = "catalog.py 0.0.22"
 
 # --- Version history ----------------------------------------------------
+# v0.0.22: export commands
 # v0.0.17: bulk action commands
 # v0.0.16: draft commands
 # v0.0.12: Initial command catalog
@@ -18,4 +19,5 @@ def build_registry() -> CommandRegistry:
     commands_mail.register(registry)
     commands_drafts.register(registry)
     commands_actions.register(registry)
+    commands_export.register(registry)
     return registry
