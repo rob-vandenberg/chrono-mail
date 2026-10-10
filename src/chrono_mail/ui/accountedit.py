@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
@@ -18,11 +19,13 @@ from PySide6.QtWidgets import (
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.accountdialog import POLICIES, SECURITY_CHOICES
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.certificatedialog import inspect_and_ask
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 0.0.31"
+__version__ = "accountedit.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: accepted certificates
 # v0.0.31: IMAP accounts have no server copies tab
 # v0.0.20: Initial dialog for changing an account
 
@@ -75,6 +78,15 @@ class AccountEditDialog(QDialog):
         servers_layout.addWidget(self._group("Outgoing mail (SMTP)", self.outgoing_host, self.outgoing_port, int(getattr(account, "outgoing_port")), self.outgoing_security, self.outgoing_username, self.outgoing_password))
         self.test_button = QPushButton("Test connection", servers)
         servers_layout.addWidget(self.test_button)
+        self.trusted: list[str] = list(getattr(account, "trusted_certificates", ()))
+        self.certificates_label = QLabel("", servers)
+        self.certificates_label.setWordWrap(True)
+        self.incoming_certificate_button = QPushButton("Look at the incoming server's certificate…", servers)
+        self.outgoing_certificate_button = QPushButton("Look at the outgoing server's certificate…", servers)
+        self.forget_certificates_button = QPushButton("Forget the accepted certificates", servers)
+        for widget in (self.certificates_label, self.incoming_certificate_button, self.outgoing_certificate_button, self.forget_certificates_button):
+            servers_layout.addWidget(widget)
+        self._show_certificates()
         servers_layout.addStretch(1)
         self.tabs.addTab(servers, "Servers")
 
@@ -104,6 +116,9 @@ class AccountEditDialog(QDialog):
         layout.addWidget(buttons)
         self.signature.textChanged.connect(self._count_signature)
         self.test_button.clicked.connect(self._test)
+        self.incoming_certificate_button.clicked.connect(lambda: self._look_at("incoming"))
+        self.outgoing_certificate_button.clicked.connect(lambda: self._look_at("outgoing"))
+        self.forget_certificates_button.clicked.connect(self._forget_certificates)
         self.policy.currentIndexChanged.connect(self._policy_changed)
         self._policy_changed()
         self._count_signature()
@@ -175,6 +190,45 @@ class AccountEditDialog(QDialog):
             values["outgoing_password"] = self.outgoing_password.text()
         return values
 
+    def _show_certificates(self) -> None:
+        count = len(self.trusted)
+        self.certificates_label.setText(
+            f"{count} server certificate(s) accepted for this account. Only exactly those certificates are trusted; a different one is refused until you look at it again."
+            if count else "No server certificate was accepted for this account: the usual checks apply."
+        )
+        self.forget_certificates_button.setEnabled(count > 0)
+
+    def _look_at(self, which: str) -> None:
+        if which == "incoming":
+            host, port, security = self.incoming_host.text().strip(), self.incoming_port.value(), str(self.incoming_security.currentData())
+            kind = "imap" if str(getattr(self._account, "kind", "pop3")) == "imap" else "pop3"
+        else:
+            host, port, security, kind = self.outgoing_host.text().strip(), self.outgoing_port.value(), str(self.outgoing_security.currentData()), "smtp"
+
+        def accepted(fingerprint: str) -> None:
+            def done(result: object) -> None:
+                self.trusted = list(getattr(result, "trusted_certificates"))
+                self._show_certificates()
+                self.result_label.setText("The certificate was accepted.")
+
+            self._backend.call("account.trust-certificate", {"account": str(getattr(self._account, "account_id")), "fingerprint": fingerprint}, done, self._certificate_failed, owner=self)
+
+        inspect_and_ask(self._backend, self, host, port, security, kind, accepted)
+
+    def _certificate_failed(self, error: ChronoMailError) -> None:
+        self.result_label.setText(f"<span style='{RED}'>{error}</span>")
+
+    def _forget_certificates(self) -> None:
+        if QMessageBox.question(self, "Accepted certificates", "Forget every accepted certificate of this account? Servers with such certificates can no longer be reached until you accept them again.") != QMessageBox.StandardButton.Yes:
+            return
+
+        def done(result: object) -> None:
+            self.trusted = []
+            self._show_certificates()
+            self.result_label.setText("The accepted certificates were forgotten.")
+
+        self._backend.call("account.forget-certificates", {"account": str(getattr(self._account, "account_id"))}, done, self._certificate_failed, owner=self)
+
     def _test(self) -> None:
         if not self.password.text():
             self.result_label.setText("Type the password in the Incoming section to test the connection.")
@@ -186,6 +240,8 @@ class AccountEditDialog(QDialog):
             "incoming_host": self.incoming_host.text().strip(), "incoming_port": self.incoming_port.value(), "incoming_security": str(self.incoming_security.currentData()),
             "outgoing_host": self.outgoing_host.text().strip(), "outgoing_port": self.outgoing_port.value(), "outgoing_security": str(self.outgoing_security.currentData()),
             "outgoing_username": self.outgoing_username.text().strip() or self.username.text().strip(),
+            "kind": str(getattr(self._account, "kind", "pop3")),
+            "trusted_certificate": list(self.trusted),
         }
         if self.outgoing_password.text():
             values["outgoing_password"] = self.outgoing_password.text()

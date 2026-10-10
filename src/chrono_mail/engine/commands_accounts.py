@@ -31,14 +31,16 @@ from chrono_mail.crypto import (
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
+from chrono_mail.protocols.tls import context_for, inspect_certificate, valid_fingerprint
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.31"
+__version__ = "commands_accounts.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Certificate exceptions
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.20: Settings window, account editing, signatures
 # v0.0.31: IMAP accounts
@@ -68,6 +70,7 @@ class AccountAddParameters:
     delete_policy: Policy = field(default="keep", metadata=option("What happens to a message on the server after it was downloaded and verified"))
     delete_days: int = field(default=30, metadata=option("Days before deleting, for delete_after_days"))
     kind: Kind = field(default="pop3", metadata=option("pop3 (mail is downloaded) or imap (the mail stays on the server and is kept in step)"))
+    trusted_certificate: tuple[str, ...] = field(default=(), metadata=option("The SHA-256 fingerprint of a server certificate to accept (repeat for more); see certificate.inspect"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +78,18 @@ class AccountAddResult:
     account_id: str
     key_created: bool
     folders: tuple[str, ...]
+
+
+def _fingerprints(values: tuple[str, ...]) -> tuple[str, ...]:
+    """Fingerprints as typed (with or without colons, any case), checked and without repeats."""
+    found: list[str] = []
+    for value in values:
+        text = value.replace(":", "").replace(" ", "").lower()
+        if not valid_fingerprint(text):
+            raise UsageError("A certificate fingerprint is the SHA-256 value: 64 hexadecimal characters")
+        if text not in found:
+            found.append(text)
+    return tuple(found)
 
 
 def _security(value: str) -> ConnectionSecurity:
@@ -97,7 +112,10 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
         ServerSettings(parameters.incoming_host.strip(), parameters.incoming_port, _security(parameters.incoming_security), parameters.username),
         ServerSettings(parameters.outgoing_host.strip(), parameters.outgoing_port, _security(parameters.outgoing_security), parameters.outgoing_username or parameters.username),
     )
-    settings = AccountSettings(account, Pop3Options(Pop3DeletePolicy(parameters.delete_policy), parameters.delete_days), parameters.encrypted)
+    settings = AccountSettings(
+        account, Pop3Options(Pop3DeletePolicy(parameters.delete_policy), parameters.delete_days), parameters.encrypted,
+        trusted_certificates=_fingerprints(parameters.trusted_certificate),
+    )
     key: DataKey | None = None
     key_created = False
     new_config = config
@@ -140,6 +158,7 @@ class AccountCheckParameters:
     outgoing_username: str | None = field(default=None, metadata=option("The SMTP user name, when it differs from the incoming one"))
     outgoing_password: str | None = field(default=None, metadata=option("The SMTP password, when it differs from the incoming one", secret=True))
     kind: Kind = field(default="pop3", metadata=option("pop3 or imap"))
+    trusted_certificate: tuple[str, ...] = field(default=(), metadata=option("The SHA-256 fingerprint of a server certificate to accept (repeat for more)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,18 +171,19 @@ class AccountCheckResult:
 
 def account_check(engine: Engine, parameters: AccountCheckParameters) -> AccountCheckResult:
     """Try to connect and log in to both servers, before an account is created. Nothing is stored or sent."""
+    context = context_for(frozenset(_fingerprints(parameters.trusted_certificate)))
     try:
         incoming = ServerSettings(parameters.incoming_host.strip(), parameters.incoming_port, _security(parameters.incoming_security), parameters.username)
         if parameters.kind == "imap":
-            ImapClient(incoming, parameters.password, ImapLimits(connect_timeout_seconds=15, read_timeout_seconds=20)).connect()
+            ImapClient(incoming, parameters.password, ImapLimits(connect_timeout_seconds=15, read_timeout_seconds=20), context).connect()
         else:
-            Pop3Client(incoming, parameters.password, Pop3Limits(connect_timeout_seconds=15, read_timeout_seconds=20)).connect()
+            Pop3Client(incoming, parameters.password, Pop3Limits(connect_timeout_seconds=15, read_timeout_seconds=20), context).connect()
         incoming_ok, incoming_message = True, "Connected and logged in"
     except ChronoMailError as error:
         incoming_ok, incoming_message = False, str(error)
     try:
         outgoing = ServerSettings(parameters.outgoing_host.strip(), parameters.outgoing_port, _security(parameters.outgoing_security), parameters.outgoing_username or parameters.username)
-        check_login(outgoing, parameters.outgoing_password or parameters.password, SmtpLimits(timeout_seconds=20))
+        check_login(outgoing, parameters.outgoing_password or parameters.password, SmtpLimits(timeout_seconds=20), context)
         outgoing_ok, outgoing_message = True, "Connected and logged in"
     except ChronoMailError as error:
         outgoing_ok, outgoing_message = False, str(error)
@@ -195,6 +215,7 @@ class AccountSummary:
     outgoing_port: int = 0
     outgoing_security: str = ""
     outgoing_username: str = ""
+    trusted_certificates: tuple[str, ...] = ()
 
 
 def _summary(item: AccountSettings) -> AccountSummary:
@@ -217,6 +238,7 @@ def _summary(item: AccountSettings) -> AccountSummary:
         item.account.outgoing.port,
         item.account.outgoing.security.value,
         item.account.outgoing.username,
+        item.trusted_certificates,
     )
 
 
@@ -426,7 +448,64 @@ def key_restore_code(engine: Engine, parameters: KeyRestoreCodeParameters) -> Ke
     return _restore(engine, key_from_recovery_code(parameters.code))
 
 
+@dataclass(frozen=True, slots=True)
+class CertificateParameters:
+    host: str = field(metadata=option("The server"))
+    port: int = field(metadata=option("Its port"))
+    security: Security = field(default="tls", metadata=option("tls (implicit TLS) or starttls"))
+    kind: Literal["pop3", "imap", "smtp"] = field(default="imap", metadata=option("Which kind of server it is: pop3, imap or smtp"))
+
+
+@dataclass(frozen=True, slots=True)
+class CertificateResult:
+    fingerprint: str
+    subject: str
+    issuer: str
+    names: tuple[str, ...]
+    not_before: str
+    not_after: str
+    expired: bool
+    accepted_by_default: bool  # would the usual checks accept it? (then there is nothing to accept)
+    problem: str | None
+
+
+def certificate_inspect(engine: Engine, parameters: CertificateParameters) -> CertificateResult:
+    """Look at the certificate a server presents, without logging in. Nothing is trusted by looking."""
+    info = inspect_certificate(parameters.host.strip(), parameters.port, _security(parameters.security), parameters.kind)
+    return CertificateResult(info.fingerprint, info.subject, info.issuer, info.names, info.not_before, info.not_after, info.expired, info.verified, info.problem)
+
+
+@dataclass(frozen=True, slots=True)
+class TrustParameters:
+    account: str = field(metadata=option("The account"))
+    fingerprint: str = field(metadata=option("The SHA-256 fingerprint of the certificate to accept, as shown by certificate.inspect"))
+
+
+def account_trust_certificate(engine: Engine, parameters: TrustParameters) -> AccountSummary:
+    """Accept one server certificate for an account, on the person's explicit say-so. Only that exact certificate is trusted."""
+    config = engine.config()
+    settings = engine.resolve_account(parameters.account, config)
+    (new,) = _fingerprints((parameters.fingerprint,))
+    if new in settings.trusted_certificates:
+        return _summary(settings)
+    changed = replace(settings, trusted_certificates=(*settings.trusted_certificates, new))
+    engine.save_config(config.with_account(changed))
+    return _summary(changed)
+
+
+def account_forget_certificates(engine: Engine, parameters: AccountParameters) -> AccountSummary:
+    """Take back every accepted certificate of an account: the usual checks apply again."""
+    config = engine.config()
+    settings = engine.resolve_account(parameters.account, config)
+    changed = replace(settings, trusted_certificates=())
+    engine.save_config(config.with_account(changed))
+    return _summary(changed)
+
+
 def register(registry: CommandRegistry) -> None:
+    registry.register("certificate.inspect", "Look at the certificate of a server (nothing is accepted by looking)", CertificateParameters, certificate_inspect)
+    registry.register("account.trust-certificate", "Accept a server certificate for an account (by its fingerprint)", TrustParameters, account_trust_certificate)
+    registry.register("account.forget-certificates", "Forget the accepted certificates of an account", AccountParameters, account_forget_certificates)
     registry.register("account.add", "Add a POP3/SMTP account and create its (encrypted) message store", AccountAddParameters, account_add)
     registry.register("account.check", "Test the connection and login to both servers before creating an account", AccountCheckParameters, account_check)
     registry.register("account.edit", "Change the name, address, servers, passwords, signature or server-copy policy of an account", AccountEditParameters, account_edit)

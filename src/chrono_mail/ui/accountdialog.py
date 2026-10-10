@@ -19,11 +19,13 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.certificatedialog import inspect_and_ask
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 0.0.31"
+__version__ = "accountdialog.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: accepted certificates
 # v0.0.31: IMAP accounts
 # v0.0.16: Drafts
 # v0.0.13: Initial account dialog
@@ -47,6 +49,8 @@ class AccountDialog(QDialog):
     def __init__(self, backend: Backend, first_account: bool = False, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
+        self.trusted: list[str] = []  # fingerprints of server certificates the person accepted in this dialog
+        self._cert_servers: list[str] = []
         self.created_account_id: str | None = None
         self.key_created: bool = False
         self.setWindowTitle("Add an account")
@@ -100,6 +104,9 @@ class AccountDialog(QDialog):
         self.result_label.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self.result_label)
 
+        self.certificate_button = QPushButton("Look at the server's certificate…", self)
+        self.certificate_button.hide()
+        layout.addWidget(self.certificate_button)  # not in the button box: the box shows every button it holds
         buttons = QDialogButtonBox(self)
         self.test_button = QPushButton("Test connection", self)
         self.add_button = QPushButton("Add account", self)
@@ -119,6 +126,7 @@ class AccountDialog(QDialog):
         self.outgoing_port.setValue(OUTGOING_PORTS["starttls"])
         self.outgoing_security.setCurrentIndex(1)
         self.email.textEdited.connect(self._guess_from_address)
+        self.certificate_button.clicked.connect(self._look_at_certificates)
         self.test_button.clicked.connect(self._test)
         self.add_button.clicked.connect(self._add)
 
@@ -163,6 +171,33 @@ class AccountDialog(QDialog):
             self._last_guess_host = f"mail.{domain}"
         self._last_guess_user = text
 
+    def _certificate_trouble(self, *messages: tuple[str, str]) -> None:
+        """When a server's certificate was the problem, offer to look at it (and accept it, if the person knows it is theirs)."""
+        self._cert_servers = [name for name, message in messages if "certificate" in message.lower()]
+        self.certificate_button.setVisible(bool(self._cert_servers))
+
+    def _look_at_certificates(self) -> None:
+        servers = list(self._cert_servers)
+
+        def ask_next() -> None:
+            if not servers:
+                self._test()  # try again with what was accepted
+                return
+            which = servers.pop(0)
+            if which == "incoming":
+                host, port, security, kind = self.incoming_host.text().strip(), self.incoming_port.value(), str(self.incoming_security.currentData()), str(self.kind.currentData())
+            else:
+                host, port, security, kind = self.outgoing_host.text().strip(), self.outgoing_port.value(), str(self.outgoing_security.currentData()), "smtp"
+
+            def accepted(fingerprint: str) -> None:
+                if fingerprint not in self.trusted:
+                    self.trusted.append(fingerprint)
+                ask_next()
+
+            inspect_and_ask(self._backend, self, host, port, security, kind, accepted)
+
+        ask_next()
+
     _last_guess_user: str = ""
     _last_guess_host: str = ""
 
@@ -171,6 +206,7 @@ class AccountDialog(QDialog):
     def _values(self) -> dict[str, object]:
         return {
             "kind": str(self.kind.currentData()),
+            "trusted_certificate": list(self.trusted),
             "username": self.username.text().strip(),
             "password": self.password.text(),
             "incoming_host": self.incoming_host.text().strip(),
@@ -200,6 +236,7 @@ class AccountDialog(QDialog):
         def done(result: object) -> None:
             self._busy(False)
             self.result_label.setText(self._describe(result))
+            self._certificate_trouble(("incoming", str(getattr(result, "incoming_message"))), ("outgoing", str(getattr(result, "outgoing_message"))))
 
         def failed(error: ChronoMailError) -> None:
             self._busy(False)
@@ -239,6 +276,7 @@ class AccountDialog(QDialog):
         def failed(error: ChronoMailError) -> None:
             self._busy(False)
             self.result_label.setText(f"<span style='color:#c0392b'>The account could not be added: {error}</span>")
+            self._certificate_trouble(("incoming", str(error)))
 
         self._backend.call("account.add", values, done, failed, owner=self)
 

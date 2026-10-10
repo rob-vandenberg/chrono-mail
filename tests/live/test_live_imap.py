@@ -10,9 +10,10 @@ from chrono_mail.protocols.imap import ImapClient, ImapLimits
 from tests.live.account import LiveAccount
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_imap.py 0.0.32"
+__version__ = "test_live_imap.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Certificate exceptions
 # v0.0.32: IMAP IDLE: new mail pushed to the window
 # v0.0.30: IMAP sync, store to server
 # v0.0.29: IMAP sync, server to store
@@ -285,3 +286,11 @@ def test_idle_sees_a_new_message_on_the_real_server(live_account: LiveAccount, i
             imap.select("INBOX", read_only=True)
         with suppress(Exception):
             imap.delete_folder(folder_name)
+
+
+def test_the_real_servers_certificate_is_trusted_by_the_usual_checks(live_account: LiveAccount) -> None:
+    from chrono_mail.protocols.tls import inspect_certificate, valid_fingerprint
+
+    for kind, port, security in (("imap", live_account.imap_ssl_port, ConnectionSecurity.TLS), ("imap", live_account.imap_port, ConnectionSecurity.STARTTLS), ("pop3", live_account.pop3_ssl_port, ConnectionSecurity.TLS), ("smtp", live_account.smtp_ssl_port, ConnectionSecurity.TLS)):
+        info = inspect_certificate(live_account.host, port, security, kind)
+        assert info.verified and info.problem is None and not info.expired and valid_fingerprint(info.fingerprint), (kind, port)

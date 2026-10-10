@@ -5,15 +5,17 @@ from enum import Enum
 from chrono_mail.core import Account, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.20"
+__version__ = "model.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: accepted certificates per account
 # v0.0.20: signature per account
 # v0.0.9: Initial configuration model
 
 ACCOUNT_ID_PATTERN: re.Pattern[str] = re.compile(r"[0-9a-f]{32}")  # used in directory names: nothing else may pass
 MAXIMUM_DELETE_AFTER_DAYS: int = 3650
 MAXIMUM_SIGNATURE_CHARACTERS: int = 4000
+MAXIMUM_TRUSTED_CERTIFICATES: int = 10
 
 
 class Pop3DeletePolicy(Enum):
@@ -41,10 +43,15 @@ class AccountSettings:
     pop3: Pop3Options = Pop3Options()
     encrypted: bool = True
     signature: str = ""  # plain text, added to new messages
+    trusted_certificates: tuple[str, ...] = ()  # SHA-256 fingerprints of server certificates the person accepted
 
     def __post_init__(self) -> None:
         if len(self.signature) > MAXIMUM_SIGNATURE_CHARACTERS:
             raise ConfigurationError(f"A signature may have at most {MAXIMUM_SIGNATURE_CHARACTERS} characters")
+        if len(self.trusted_certificates) > MAXIMUM_TRUSTED_CERTIFICATES or len(set(self.trusted_certificates)) != len(self.trusted_certificates):
+            raise ConfigurationError("Too many accepted certificates (or one twice)")
+        if any(len(item) != 64 or any(character not in "0123456789abcdef" for character in item) for item in self.trusted_certificates):
+            raise ConfigurationError("An accepted certificate is a SHA-256 fingerprint: 64 lower-case hexadecimal characters")
 
 
 @dataclass(frozen=True, slots=True)

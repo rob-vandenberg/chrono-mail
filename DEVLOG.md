@@ -532,3 +532,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Certificate exceptions, per-account check intervals, which IMAP folders are shown, folder mapping.
 
+## 2026-10-10 Certificate exceptions (version 0.0.43)
+
+**What landed**
+- `protocols/tls.py` (pinned context, certificate inspection for POP3, IMAP and SMTP), accepted certificates per account in the settings, `certificate.inspect`, `account.trust-certificate`, `account.forget-certificates`, windows to look at and accept a certificate in the account dialog and the account editor (D-058). Tests: engine (15), interface (5), live (1: the real server's certificate passes the usual checks).
+
+**Still open**
+- A connection that fails in the main window because of a certificate only shows the error; accepting is done in Settings > Accounts > Change > Servers.
+

@@ -24,9 +24,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.42"
+__version__ = "commands_mail.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Certificate exceptions
 # v0.0.42: Settings window with pages for everything
 # v0.0.35: Send later and snooze
 # v0.0.33: Rules
@@ -107,7 +108,7 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
             return _imap_fetch(engine, mailbox, password)
         state = Pop3State(engine.directories.pop3_state_file(mailbox.account_id), durable=engine.durable)
         inbox = mailbox.role_folder(FolderRole.INBOX)
-        with Pop3Client(settings.account.incoming, password, Pop3Limits(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES)) as client:
+        with Pop3Client(settings.account.incoming, password, Pop3Limits(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES), engine.tls_context(settings)) as client:
             report = fetch_pop3(
                 client, mailbox.store, mailbox.index, state, inbox, settings.pop3, MAXIMUM_MESSAGE_BYTES, engine.clock,
                 progress=lambda done, total: engine.progress("Downloading", done, total),
@@ -128,7 +129,7 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
 def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str) -> FetchResult:
     """mail.fetch for an IMAP account: the two-way sync of store and server."""
     state = ImapState(engine.directories.imap_state_file(mailbox.account_id), durable=engine.durable)
-    with ImapClient(mailbox.settings.account.incoming, password) as client:
+    with ImapClient(mailbox.settings.account.incoming, password, ssl_context=engine.tls_context(mailbox.settings)) as client:
         report = sync_imap(
             client, mailbox.store, mailbox.index, state, ImapSyncOptions(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES),
             progress=lambda folder, done, total: engine.progress(f"Downloading {folder}", done, total),
@@ -272,7 +273,7 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
         )
         if parameters.send_at:
             return _schedule(engine, mailbox, outgoing, parameters)
-        outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT))
+        outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings))
         if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
             try:
                 source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))

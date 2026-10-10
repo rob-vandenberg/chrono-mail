@@ -1,3 +1,4 @@
+import ssl
 import threading
 import time
 from collections.abc import Callable
@@ -15,13 +16,15 @@ from chrono_mail.config import (
 from chrono_mail.core import ConfigurationError, CryptoError, FolderRole, StorageError
 from chrono_mail.crypto import DataKey, KeyStore
 from chrono_mail.index import Index
+from chrono_mail.protocols.tls import context_for
 from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.32"
+__version__ = "session.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: tls_context for accepted certificates
 # v0.0.32: stop_event for long waits
 # v0.0.13: key cache, safe for concurrent commands
 # v0.0.12: Initial engine session
@@ -61,6 +64,10 @@ class Engine:
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)  # set when the program is ending: long waits stop
     _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)
     _cache_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def tls_context(self, settings: AccountSettings) -> ssl.SSLContext | None:
+        """The TLS context for an account that has accepted certificates; None means the usual checks apply."""
+        return context_for(frozenset(settings.trusted_certificates))
 
     # --- configuration -------------------------------------------------------------------------
 

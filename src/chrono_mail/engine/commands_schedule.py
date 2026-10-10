@@ -13,9 +13,10 @@ from chrono_mail.mime import Address, OutgoingMessage, ParsedMessage, parse_mess
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 0.0.34"
+__version__ = "commands_schedule.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Certificate exceptions
 # v0.0.34: Initial send later and snooze
 
 SEND_AT: str = "x-chrono-mail-send-at"
@@ -119,7 +120,7 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                 try:
                     outcome = send_and_file(
                         mailbox.store, mailbox.index, mailbox.settings.account.outgoing, password, _outgoing(mailbox, parsed), OUTBOX,
-                        mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference),
+                        mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference), ssl_context=engine.tls_context(mailbox.settings),
                     )
                 except ChronoMailError as error:
                     failed.append(f"{parsed.subject}: {error}")

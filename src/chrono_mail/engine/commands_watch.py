@@ -7,9 +7,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.protocols.imap import ImapClient, ImapRefused
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_watch.py 0.0.32"
+__version__ = "commands_watch.py 0.0.43"
 
 # --- Version history ----------------------------------------------------
+# v0.0.43: Certificate exceptions
 # v0.0.32: Initial mail.wait (IMAP IDLE)
 
 MAXIMUM_WAIT_SECONDS: int = 29 * 60  # servers may drop an IDLE after 30 minutes
@@ -37,7 +38,7 @@ def mail_wait(engine: Engine, parameters: WaitParameters) -> WaitResult:
     if password is None:
         raise ConfigurationError("No password is stored for this account")
     seconds = max(1, min(parameters.seconds, MAXIMUM_WAIT_SECONDS))
-    with ImapClient(settings.account.incoming, password) as client:
+    with ImapClient(settings.account.incoming, password, ssl_context=engine.tls_context(settings)) as client:
         if "IDLE" not in client.capabilities:
             return WaitResult(False, False)
         try:
