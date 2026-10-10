@@ -3,13 +3,14 @@ from PySide6.QtWidgets import QDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui.ruleedit import ActionRow, ConditionRow, RuleEditDialog
-from chrono_mail.ui.rulesdialog import RulesDialog
+from chrono_mail.ui.rulespanel import RulesPanel
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rules.py 0.0.49"
+__version__ = "test_ui_rules.py 0.0.50"
 
 # --- Version history ----------------------------------------------------
+# v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rules window tests
 
@@ -143,8 +144,8 @@ def test_a_rule_is_changed_in_the_editor(world: World, qtbot: QtBot) -> None:
     assert rule.name == "New" and rule.accounts == () and rule.rule_id == created.rule_id
 
 
-def open_rules(world: World, qtbot: QtBot, count: int) -> RulesDialog:
-    dialog = RulesDialog(world.backend, accounts(world), lambda: ["Inbox", "Archive"], lambda: (world.account_id, "Inbox"))
+def open_rules(world: World, qtbot: QtBot, count: int) -> RulesPanel:
+    dialog = RulesPanel(world.backend, accounts(world), lambda: ["Inbox", "Archive"], lambda: (world.account_id, "Inbox"))
     qtbot.addWidget(dialog)
     dialog.show()
     wait(qtbot, lambda: dialog.list.count() == count)
@@ -186,18 +187,22 @@ def test_with_no_rules_the_buttons_that_need_one_are_off(world: World, qtbot: Qt
     assert not any(button.isEnabled() for button in (dialog.edit_button, dialog.delete_button, dialog.up_button, dialog.down_button, dialog.run_button)) and dialog.new_button.isEnabled()
 
 
-def test_the_window_opens_the_rules(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_rules_are_a_page_of_the_settings(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
-    seen: list[RulesDialog] = []
+    seen: list[SettingsDialog] = []
 
-    def fake_exec(self: RulesDialog) -> QDialog.DialogCode:
+    def fake_exec(self: SettingsDialog) -> QDialog.DialogCode:
         seen.append(self)
-        assert self._current() == (world.account_id, "Inbox") and "Inbox" in self._folders()  # noqa: SLF001
-        self.ran = True
-        return QDialog.DialogCode.Accepted
+        assert self.pages.currentWidget() is self.rules_panel  # the key for the rules opens the settings at that page
+        assert self.rules_panel._current() == (world.account_id, "Inbox") and "Inbox" in self.rules_panel._folders()  # noqa: SLF001
+        self.rules_panel.ran = True
+        return QDialog.DialogCode.Rejected  # cancelled: what the rules did stays
 
-    monkeypatch.setattr(RulesDialog, "exec", fake_exec)
+    monkeypatch.setattr(SettingsDialog, "exec", fake_exec)
     world.window.act_rules.trigger()
-    assert len(seen) == 1
+    assert len(seen) == 1 and [seen[0].sidebar.item(row).text() for row in range(seen[0].sidebar.count())][-4:-2] == ["Rules", "Scheduled messages"]
     wait(qtbot, lambda: "Rules applied" in world.window.status_label.text())
+    assert "Tools" not in [action.text().replace("&", "") for action in world.window.menuBar().actions()]

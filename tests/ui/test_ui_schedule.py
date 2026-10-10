@@ -5,15 +5,16 @@ import pytest
 from PySide6.QtWidgets import QDialog
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.ui.scheduleddialog import ScheduledDialog
+from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.whendialog import WhenDialog, presets
 from tests.ui.test_ui_composer import fill, new_composer
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 0.0.34"
+__version__ = "test_ui_schedule.py 0.0.50"
 
 # --- Version history ----------------------------------------------------
+# v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.34: Initial send later and snooze window tests
 
 
@@ -107,7 +108,7 @@ def test_the_scheduled_window_sends_now_and_takes_back(world: World, qtbot: QtBo
     real_clock(world)
     first = world.call("mail.send", account=world.account_id, to="you@example.com", subject="One", body="x", send_at=in_hours(4))
     world.call("mail.send", account=world.account_id, to="you@example.com", subject="Two", body="x", send_at=in_hours(8))
-    dialog = ScheduledDialog(world.backend)
+    dialog = ScheduledPanel(world.backend)
     qtbot.addWidget(dialog)
     dialog.show()
     wait(qtbot, lambda: dialog.list.count() == 2)
@@ -123,7 +124,7 @@ def test_a_snoozed_message_can_be_brought_back_from_the_window(world: World, qtb
     real_clock(world)
     target = world.call("message.list", account=world.account_id, folder="Inbox").messages[0]
     world.call("message.snooze", account=world.account_id, folder="Inbox", message=target.message_id, until=in_hours(6))
-    dialog = ScheduledDialog(world.backend)
+    dialog = ScheduledPanel(world.backend)
     qtbot.addWidget(dialog)
     dialog.show()
     wait(qtbot, lambda: dialog.list.count() == 1)

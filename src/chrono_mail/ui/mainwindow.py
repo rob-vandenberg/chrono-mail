@@ -58,18 +58,19 @@ from chrono_mail.ui.models import (
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
-from chrono_mail.ui.rulesdialog import RulesDialog
+from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.printing import print_message
-from chrono_mail.ui.scheduleddialog import ScheduledDialog
+from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.settingsdialog import SettingsDialog
 from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.48"
+__version__ = "mainwindow.py 0.0.50"
 
 # --- Version history ----------------------------------------------------
+# v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.48: Dragging messages shows a small badge, not the selected rows
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -329,7 +330,7 @@ class MainWindow(QMainWindow):
         self.act_add_account = self._action("Add an account…", lambda: self.add_account(), icon="list-add")
         self.act_recovery = self._action("Back up the encryption key…", self.show_recovery)
         self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
-        self.act_settings = self._action("Settings…", self.open_settings, "Ctrl+,", "configure")
+        self.act_settings = self._action("Settings…", lambda: self.open_settings(), "Ctrl+,", "configure")
         self.act_scheduled = self._action("Scheduled and snoozed messages…", self.open_scheduled)
         self.act_snooze = self._action("Snooze…", self.snooze_selected, "Ctrl+Shift+Z", "appointment-soon")
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
@@ -426,9 +427,6 @@ class MainWindow(QMainWindow):
         folder_menu.addSeparator()
         folder_menu.addAction(self.act_mark_all_read)
         folder_menu.addAction(self.act_empty_folder)
-        tools_menu = bar.addMenu("&Tools")
-        tools_menu.addAction(self.act_rules)
-        tools_menu.addAction(self.act_scheduled)
         view_menu = bar.addMenu("&View")
         view_menu.addAction(self.act_search)
         view_menu.addAction(self.act_columns)
@@ -701,10 +699,8 @@ class MainWindow(QMainWindow):
         self.backend.call("mail.send-due", {}, sent, lambda error: self._report("Scheduled messages", error), owner=self)
 
     def open_scheduled(self) -> None:
-        dialog = ScheduledDialog(self.backend, self)
-        dialog.exec()
-        if dialog.changed:
-            self._after_change("Scheduled messages changed")
+        """Settings > Scheduled messages (also reachable by a key chosen for it)."""
+        self.open_settings("Scheduled messages")
 
     def snooze_selected(self) -> None:
         rows = self._selected_rows()
@@ -731,32 +727,36 @@ class MainWindow(QMainWindow):
             self.backend.call("message.snooze", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "until": until}, done, failed, owner=self)
 
     def open_rules(self) -> None:
-        """Tools > Rules: what is done with mail as it arrives."""
+        """Settings > Rules: what is done with mail as it arrives (also reachable by a key chosen for it)."""
+        self.open_settings("Rules")
 
-        def folders() -> list[str]:
-            return sorted({str(getattr(info, "path")) for infos in self._folders.values() for info in infos})
+    def _rule_folders(self) -> list[str]:
+        return sorted({str(getattr(info, "path")) for infos in self._folders.values() for info in infos})
 
-        def current() -> tuple[str, str] | None:
-            return (self._account_id, self._folder) if self._account_id is not None and self._folder is not None and self._tree_kind == "folder" else None
-
-        dialog = RulesDialog(self.backend, self._mail_accounts(), folders, current, self)
-        dialog.exec()
-        if dialog.ran:
-            self._after_change("Rules applied")
+    def _rule_folder_now(self) -> tuple[str, str] | None:
+        return (self._account_id, self._folder) if self._account_id is not None and self._folder is not None and self._tree_kind == "folder" else None
 
     def _shortcut_registry(self) -> dict[str, tuple[str, str]]:
         """Every action that can be given keys: its name, the text, and the standard keys."""
         return {name[4:]: (action.text(), self._default_shortcuts.get(name, "")) for name, action in vars(self).items() if name.startswith("act_") and isinstance(action, QAction)}
 
-    def open_settings(self) -> None:
-        """File > Settings: the way the program behaves, how it looks, writing, the accounts, the keys and the safety of the mail."""
-        dialog = SettingsDialog(self.backend, self.settings, self.tray.available, self._shortcut_registry(), self)
+    def open_settings(self, page: str | None = None) -> None:
+        """File > Settings: the way the program behaves, how it looks, writing, the accounts, rules, scheduled messages, the keys and the safety of the mail."""
+        dialog = SettingsDialog(
+            self.backend, self.settings, self.tray.available, self._shortcut_registry(), self,
+            accounts=self._mail_accounts(), folders=self._rule_folders, current_folder=self._rule_folder_now,
+        )
+        if page is not None:
+            dialog.show_page(page)
         dialog.add_account_requested.connect(lambda: self.add_account(after=dialog.reload))
         dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False))
         dialog.restore_key_requested.connect(self.restore_key)
-        dialog.rules_requested.connect(self.open_rules)
-        dialog.scheduled_requested.connect(self.open_scheduled)
-        if dialog.exec() != SettingsDialog.DialogCode.Accepted:
+        accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted
+        if dialog.rules_panel.ran:  # rules and scheduled messages act at once, also when the settings are cancelled
+            self._after_change("Rules applied")
+        elif dialog.scheduled_panel.changed:
+            self._after_change("Scheduled messages changed")
+        if not accepted:
             return
         dialog.save()
         self.apply_preferences()

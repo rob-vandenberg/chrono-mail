@@ -581,3 +581,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **What landed**
 - Rules without conditions for one account, in the engine (`rule.add`, `rule.edit --no-conditions`) and in the editor; a test with two accounts that share Local Folders and a rule that files one account's mail in a folder and stops.
+
+## 2026-10-10 Rules and scheduled messages in Settings (version 0.0.50)
+
+**What landed**
+- `ui/rulespanel.py` and `ui/scheduledpanel.py` (the former dialogs as pages), the Tools menu removed, the two buttons on the General page removed; tests changed.

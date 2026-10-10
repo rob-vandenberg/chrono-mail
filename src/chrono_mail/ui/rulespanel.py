@@ -1,9 +1,10 @@
 from collections.abc import Callable
 
+from typing import override
+
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -19,16 +20,17 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.ruleedit import RuleEditDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "rulesdialog.py 0.0.33"
+__version__ = "rulespanel.py 0.0.50"
 
 # --- Version history ----------------------------------------------------
+# v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.33: Initial rules window
 
 ROLE_RULE: int = 256
 
 
-class RulesDialog(QDialog):
-    """The rules, in the order they are applied: switch on and off, add, change, remove, reorder, and apply to a folder now."""
+class RulesPanel(QWidget):
+    """The rules, in the order they are applied: switch on and off, add, change, remove, reorder, and apply to a folder now. A page of the settings."""
 
     def __init__(self, backend: Backend, accounts: list[object], folders: Callable[[], list[str]], current: Callable[[], tuple[str, str] | None], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -37,8 +39,6 @@ class RulesDialog(QDialog):
         self._folders: Callable[[], list[str]] = folders
         self._current: Callable[[], tuple[str, str] | None] = current
         self.ran: bool = False  # the rules were applied to a folder: the message list is out of date
-        self.setWindowTitle("Rules")
-        self.setMinimumSize(620, 380)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Rules are applied in this order to new mail as it arrives in the Inbox. A rule with “Stop processing rules” ends the rules for that message.", self))
         body = QHBoxLayout()
@@ -59,9 +59,6 @@ class RulesDialog(QDialog):
         self.status = QLabel("", self)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        box.rejected.connect(self.reject)
-        layout.addWidget(box)
         self.new_button.clicked.connect(self.new_rule)
         self.edit_button.clicked.connect(self.edit_selected)
         self.delete_button.clicked.connect(self.delete_selected)
@@ -74,6 +71,11 @@ class RulesDialog(QDialog):
         self._loading = False
         self._selection_changed()  # nothing is selected until the rules have been listed
         self.reload()
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self.reload()  # rules may have been changed elsewhere since the page was made
 
     # --- the list -----------------------------------------------------------------------------------------------
 

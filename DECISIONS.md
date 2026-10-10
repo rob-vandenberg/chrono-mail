@@ -475,3 +475,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** a rule needs at least one condition, unless it is limited to one or more accounts; then it acts on all the mail of those accounts ("mail that arrives through this account"). In the editor, a condition row in which nothing was typed is left out, and all condition rows can be removed. A rule with no conditions and no account is refused, because it would act on all mail. The account of a rule is the account that downloaded the mail, also when its mail is kept in Local Folders; a folder in a move action is a folder of the place where that account keeps its mail.
 **Reason:** the user could not write "everything from rob@bccbox.com goes to its own folder in Local Folders, and stop": the editor demanded a condition with a value.
+
+## D-065 Rules and scheduled messages are pages of the Settings window
+*2026-10-10*
+
+**Decision:** Rules and Scheduled messages are pages of the Settings window (between Accounts and Security and storage), not windows opened from the Tools menu. The Tools menu is gone. The two actions remain for keyboard shortcuts and open Settings at their page. Rules and scheduled messages act at once, so what they did (rules applied to a folder, messages sent or taken back) is shown in the message list when Settings is closed, also when it is cancelled.
+**Reason:** the user asked for it: settings belong in one place, and the Tools entries only existed because they were built before the Settings window.

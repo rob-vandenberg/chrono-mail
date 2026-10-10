@@ -34,11 +34,14 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import DEFAULT_COLUMNS, valid_columns
 from chrono_mail.ui.columnsdialog import DATE_STYLES, LAYOUTS, READING_PANES, ColumnsDialog, ListChoice
 from chrono_mail.ui.recoverydialog import RecoveryDialog
+from chrono_mail.ui.rulespanel import RulesPanel
+from chrono_mail.ui.scheduledpanel import ScheduledPanel
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.46"
+__version__ = "settingsdialog.py 0.0.50"
 
 # --- Version history ----------------------------------------------------
+# v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: links from the settings
@@ -71,11 +74,10 @@ class SettingsDialog(QDialog):
     accounts_changed = Signal()
     add_account_requested = Signal()
     restore_key_requested = Signal()
-    rules_requested = Signal()
-    scheduled_requested = Signal()
 
     def __init__(
-        self, backend: Backend, settings: QSettings, tray_available: bool = True, shortcut_actions: dict[str, tuple[str, str]] | None = None, parent: QWidget | None = None
+        self, backend: Backend, settings: QSettings, tray_available: bool = True, shortcut_actions: dict[str, tuple[str, str]] | None = None, parent: QWidget | None = None,
+        accounts: list[object] | None = None, folders: Callable[[], list[str]] | None = None, current_folder: Callable[[], tuple[str, str] | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -104,6 +106,10 @@ class SettingsDialog(QDialog):
         self._add_page("Reading", self._reading_page())
         self._add_page("Writing", self._writing_page())
         self._add_page("Accounts", self._accounts_page())
+        self.rules_panel = RulesPanel(backend, accounts or [], folders or (lambda: []), current_folder or (lambda: None), self)
+        self._add_page("Rules", self.rules_panel)
+        self.scheduled_panel = ScheduledPanel(backend, self)
+        self._add_page("Scheduled messages", self.scheduled_panel)
         self._add_page("Security and storage", self._security_page())
         self._add_page("Keyboard", self._keyboard_page())
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
@@ -149,15 +155,6 @@ class SettingsDialog(QDialog):
             for widget in (self.tray, self.close_to_tray, self.notifications):
                 widget.setEnabled(False)
             form.addRow(QLabel("This desktop has no notification area, so there are no icon and no notifications.", page))
-        tools = QHBoxLayout()
-        self.rules_button = QPushButton("Rules…", page)
-        self.scheduled_button = QPushButton("Scheduled and snoozed messages…", page)
-        tools.addWidget(self.rules_button)
-        tools.addWidget(self.scheduled_button)
-        tools.addStretch(1)
-        form.addRow("Also", tools)
-        self.rules_button.clicked.connect(self.rules_requested)
-        self.scheduled_button.clicked.connect(self.scheduled_requested)
         form.addRow(QLabel("Language: the program is in English; dates and times follow the language of the system.", page))
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())

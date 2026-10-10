@@ -1,28 +1,29 @@
 from collections.abc import Callable
+from typing import override
 
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QShowEvent
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "scheduleddialog.py 0.0.34"
+__version__ = "scheduledpanel.py 0.0.50"
 
 # --- Version history ----------------------------------------------------
+# v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.34: Initial window for scheduled and snoozed messages
 
 ROLE_INFO: int = 256
 
 
-class ScheduledDialog(QDialog):
+class ScheduledPanel(QWidget):
     """The messages waiting to be sent at a time, and the messages snoozed until a time: send or bring back now, or take back."""
 
     def __init__(self, backend: Backend, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
         self.changed: bool = False
-        self.setWindowTitle("Scheduled and snoozed messages")
-        self.setMinimumSize(560, 360)
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Waiting to be sent, and put away until a time:", self))
         self.list = QListWidget(self)
@@ -37,14 +38,16 @@ class ScheduledDialog(QDialog):
         self.status = QLabel("", self)
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
-        box.rejected.connect(self.reject)
-        layout.addWidget(box)
         self.now_button.clicked.connect(self.now)
         self.back_button.clicked.connect(self.take_back)
         self.list.currentItemChanged.connect(self._selection_changed)
         self._selection_changed()
         self.reload()
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self.reload()  # messages may have been scheduled since the page was made
 
     def reload(self) -> None:
         entries: list[tuple[int, str, object]] = []

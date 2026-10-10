@@ -17,9 +17,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.0.44"
+__version__ = "test_ui_preferences.py 0.0.50"
 
 # --- Version history ----------------------------------------------------
+# v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.44: links from the settings
 # v0.0.42: Initial tests of the preferences and their effects
 
@@ -59,7 +60,7 @@ def test_the_preference_helpers_cope_with_bad_values(tmp_path: Path) -> None:
 def test_every_page_exists_and_the_values_round_trip(world: World, qtbot: QtBot) -> None:
     dialog = SettingsDialog(world.backend, settings_of(world), True, world.window._shortcut_registry())  # noqa: SLF001
     qtbot.addWidget(dialog)
-    assert [dialog.sidebar.item(row).text() for row in range(dialog.sidebar.count())] == ["General", "Message list", "Reading", "Writing", "Accounts", "Security and storage", "Keyboard"]
+    assert [dialog.sidebar.item(row).text() for row in range(dialog.sidebar.count())] == ["General", "Message list", "Reading", "Writing", "Accounts", "Rules", "Scheduled messages", "Security and storage", "Keyboard"]
     values = dialog.values()
     assert set(values) >= set(prefs.DEFAULTS)
     dialog.save()
@@ -317,21 +318,11 @@ def test_keys_can_be_changed_checked_for_clashes_and_reset(world: World, qtbot: 
     assert window.act_rules.shortcut().toString() == "Ctrl+Alt+R"
 
 
-def test_rules_and_scheduled_messages_can_be_opened_from_the_settings(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    opened: list[str] = []
-
-    def rules() -> None:
-        opened.append("rules")
-
-    def scheduled() -> None:
-        opened.append("scheduled")
-
-    monkeypatch.setattr(world.window, "open_rules", rules)
-    monkeypatch.setattr(world.window, "open_scheduled", scheduled)
-
-    def press(dialog: SettingsDialog) -> None:
-        dialog.rules_button.click()
-        dialog.scheduled_button.click()
-
-    edit_settings(world, qtbot, monkeypatch, press)
-    assert opened == ["rules", "scheduled"]
+def test_rules_and_scheduled_messages_are_pages_of_the_settings(world: World, qtbot: QtBot) -> None:
+    dialog = SettingsDialog(world.backend, settings_of(world), True, None, None, [], lambda: [], lambda: None)
+    qtbot.addWidget(dialog)
+    titles = [dialog.sidebar.item(row).text() for row in range(dialog.sidebar.count())]
+    assert "Rules" in titles and "Scheduled messages" in titles
+    dialog.show_page("Scheduled messages")
+    assert dialog.pages.currentWidget() is dialog.scheduled_panel
+    assert not hasattr(dialog, "rules_button")
