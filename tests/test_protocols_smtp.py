@@ -6,15 +6,16 @@ from pathlib import Path
 import pytest
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
-from chrono_mail.protocols.smtp import SendResult, SmtpLimits, send_message
+from chrono_mail.protocols.smtp import SendResult, SmtpLimits, check_login, send_message
 from tests.certs import make_certificate
 from tests.fakeserver import Conversation, ScriptedServer
 from tests.fakesmtp import FakeSmtpServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_protocols_smtp.py 0.0.10"
+__version__ = "test_protocols_smtp.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.10: Initial SMTP client tests
 
 MESSAGE = b"From: a@example.com\r\nTo: b@example.com\r\nSubject: hi\r\n\r\nHello.\r\n.A line that starts with a dot\r\n"
@@ -251,3 +252,35 @@ def test_connection_refused_and_unknown_host() -> None:
         send_message(settings(1), "x", "a@example.com", ("b@example.com",), MESSAGE, FAST)
     with pytest.raises(ProtocolError):
         send_message(ServerSettings("no-such-host.invalid", 25, ConnectionSecurity.NONE, "u"), "x", "a@example.com", ("b@example.com",), MESSAGE, FAST)
+
+
+# --- the connection test ---------------------------------------------------------------------------------
+
+
+def test_check_login_logs_in_and_sends_nothing() -> None:
+    with FakeSmtpServer() as server:
+        check_login(settings(server.port), "secret", FAST, None, "client.example")
+        assert server.received == [] and not any(command.startswith(("MAIL", "RCPT", "DATA")) for command in server.commands)
+        assert server.commands[-1].upper() == "QUIT" and any(command.startswith("AUTH") for command in server.commands)
+
+
+def test_check_login_with_a_wrong_password_and_without_authentication() -> None:
+    with FakeSmtpServer(password="right") as server, pytest.raises(AuthenticationError):
+        check_login(settings(server.port), "wrong", FAST)
+    with FakeSmtpServer(offer_auth=False) as server, pytest.raises(ProtocolError, match="authentication"):
+        check_login(settings(server.port), "secret", FAST)
+
+
+def test_check_login_over_tls_and_with_an_untrusted_certificate(tmp_path: Path) -> None:
+    server_context, client_context = make_certificate(tmp_path)
+    with FakeSmtpServer(implicit_tls=server_context) as server:
+        check_login(settings(server.port, ConnectionSecurity.TLS), "secret", FAST, client_context)
+        with pytest.raises(ProtocolError, match="certificate"):
+            check_login(settings(server.port, ConnectionSecurity.TLS), "secret", FAST)
+
+
+def test_check_login_with_a_broken_server() -> None:
+    with ScriptedServer(script_of(b"garbage\r\n")) as server, pytest.raises(ProtocolError):
+        check_login(settings(server.port), "secret", FAST)
+    with pytest.raises(ProtocolError):
+        check_login(settings(1), "secret", FAST)

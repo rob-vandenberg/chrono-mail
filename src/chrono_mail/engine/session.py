@@ -1,3 +1,4 @@
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -18,9 +19,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.12"
+__version__ = "session.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: key cache, safe for concurrent commands
 # v0.0.12: Initial engine session
 
 OUTBOX: tuple[str, ...] = ("Outbox",)
@@ -43,7 +45,8 @@ def _no_progress(what: str, done: int, total: int | None) -> None:
 class Engine:
     """One session of the application: where its files are, how secrets are kept, and the clock.
 
-    An Engine is used from one thread at a time. Every command receives it, and everything a
+    An Engine can run commands from several threads at once (a UI does): it keeps no per-command
+    state except the key cache, which is locked. Every command receives it, and everything a
     command does goes through it, so a test (or an agent) can run the whole application
     without a screen, with in-memory key and password stores.
     """
@@ -54,6 +57,8 @@ class Engine:
     clock: Callable[[], float] = time.time
     durable: bool = True
     progress: Progress = field(default=_no_progress)
+    _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)
+    _cache_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     # --- configuration -------------------------------------------------------------------------
 
@@ -81,9 +86,23 @@ class Engine:
     # --- keys ----------------------------------------------------------------------------------
 
     def data_key(self, config: AppConfig) -> DataKey:
+        """The data key. It is asked from the credential store once and then kept for the session."""
         if config.key_id is None:
             raise CryptoError("No data key has been created yet")
-        return self.keys.load(bytes.fromhex(config.key_id))
+        key_id = bytes.fromhex(config.key_id)
+        with self._cache_lock:
+            cached = self._cached_keys.get(key_id)
+        if cached is not None:
+            return cached
+        key = self.keys.load(key_id)
+        with self._cache_lock:
+            self._cached_keys[key_id] = key
+        return key
+
+    def forget_keys(self) -> None:
+        """Drop the cached key (it is fetched from the credential store again when it is next needed)."""
+        with self._cache_lock:
+            self._cached_keys.clear()
 
     # --- opening an account --------------------------------------------------------------------
 

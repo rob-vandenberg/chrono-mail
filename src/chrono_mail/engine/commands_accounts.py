@@ -30,12 +30,15 @@ from chrono_mail.crypto import (
 )
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
+from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
+from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.12"
+__version__ = "commands_accounts.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: account.check
 # v0.0.12: Initial account and key commands
 
 Security = Literal["tls", "starttls", "none"]
@@ -116,6 +119,45 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
         shutil.rmtree(engine.directories.account_directory(account_id), ignore_errors=True)
         raise
     return AccountAddResult(account_id, key_created, tuple("/".join(path) for path, _ in STANDARD_FOLDERS))
+
+
+@dataclass(frozen=True, slots=True)
+class AccountCheckParameters:
+    username: str = field(metadata=option("The user name for the incoming server (and the outgoing server unless given separately)"))
+    password: str = field(metadata=option("The password", secret=True))
+    incoming_host: str = field(metadata=option("The POP3 server"))
+    outgoing_host: str = field(metadata=option("The SMTP server"))
+    incoming_port: int = field(default=995, metadata=option("The POP3 port"))
+    incoming_security: Security = field(default="tls", metadata=option("tls, starttls or none"))
+    outgoing_port: int = field(default=587, metadata=option("The SMTP port"))
+    outgoing_security: Security = field(default="starttls", metadata=option("tls, starttls or none"))
+    outgoing_username: str | None = field(default=None, metadata=option("The SMTP user name, when it differs from the incoming one"))
+    outgoing_password: str | None = field(default=None, metadata=option("The SMTP password, when it differs from the incoming one", secret=True))
+
+
+@dataclass(frozen=True, slots=True)
+class AccountCheckResult:
+    incoming_ok: bool
+    incoming_message: str
+    outgoing_ok: bool
+    outgoing_message: str
+
+
+def account_check(engine: Engine, parameters: AccountCheckParameters) -> AccountCheckResult:
+    """Try to connect and log in to both servers, before an account is created. Nothing is stored or sent."""
+    try:
+        incoming = ServerSettings(parameters.incoming_host.strip(), parameters.incoming_port, _security(parameters.incoming_security), parameters.username)
+        Pop3Client(incoming, parameters.password, Pop3Limits(connect_timeout_seconds=15, read_timeout_seconds=20)).connect()
+        incoming_ok, incoming_message = True, "Connected and logged in"
+    except ChronoMailError as error:
+        incoming_ok, incoming_message = False, str(error)
+    try:
+        outgoing = ServerSettings(parameters.outgoing_host.strip(), parameters.outgoing_port, _security(parameters.outgoing_security), parameters.outgoing_username or parameters.username)
+        check_login(outgoing, parameters.outgoing_password or parameters.password, SmtpLimits(timeout_seconds=20))
+        outgoing_ok, outgoing_message = True, "Connected and logged in"
+    except ChronoMailError as error:
+        outgoing_ok, outgoing_message = False, str(error)
+    return AccountCheckResult(incoming_ok, incoming_message, outgoing_ok, outgoing_message)
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,6 +334,7 @@ def key_restore_code(engine: Engine, parameters: KeyRestoreCodeParameters) -> Ke
 
 def register(registry: CommandRegistry) -> None:
     registry.register("account.add", "Add a POP3/SMTP account and create its (encrypted) message store", AccountAddParameters, account_add)
+    registry.register("account.check", "Test the connection and login to both servers before creating an account", AccountCheckParameters, account_check)
     registry.register("account.list", "List the accounts", NoParameters, account_list)
     registry.register("account.remove", "Forget an account and its passwords (the mail on disk is kept)", AccountParameters, account_remove, destructive=True)
     registry.register("account.policy", "Set what happens to messages on the POP3 server after download", AccountPolicyParameters, account_policy)

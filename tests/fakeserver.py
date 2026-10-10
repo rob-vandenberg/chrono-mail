@@ -7,9 +7,10 @@ from types import TracebackType
 from typing import Self
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeserver.py 0.0.10"
+__version__ = "fakeserver.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.10: Initial scripted test server
 
 
@@ -20,6 +21,7 @@ class Conversation:
         self.connection: socket.socket = connection
         self._buffer: bytearray = bytearray()
         self.connection.settimeout(10)
+        self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # many small writes must not wait for an ACK (Nagle)
 
     def send(self, data: bytes) -> None:
         self.connection.sendall(data)

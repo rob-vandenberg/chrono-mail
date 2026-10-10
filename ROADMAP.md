@@ -26,8 +26,8 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.7 | `protocols.pop3` + `sync`: POP3 over plain, STLS and TLS; UIDL tracking; leave-on-server options; delete from server only after verified local storage. Also the offline scripted and fake test servers for hostile server behaviour. | done |
 | 1.8 | `protocols.smtp`: sending over plain, STARTTLS and TLS; store sent messages in Sent. | done |
 | 1.9 | `engine` + `cli`: command registry; headless CLI for every command. | done |
-| 1.10 | `ui`: main window, folder tree, virtualized message list, reading pane (plain text and safe HTML). | todo |
-| 1.11 | `ui`: composer (new, reply, reply all, forward), attachments. | todo |
+| 1.10 | `ui`: main window, folder tree, virtualized message list, reading pane (plain text and safe HTML). | done |
+| 1.11 | `ui`: composer (new, reply, reply all, forward), attachments. First version: plain text only, no drafts. | done |
 | 1.12 | Key backup and recovery procedure, tested end to end. | todo |
 | 1.13 | Packaging: Flatpak for Fedora and Kubuntu; test on GNOME. | todo |
 | 1.14 | Windows test run on DEVELOPMENT. | todo |

@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.8"
+__version__ = "model.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: preview
 # v0.0.8: Initial index model
 
 FLAG_BITS: dict[MessageFlag, int] = {
@@ -18,6 +19,7 @@ FLAG_BITS: dict[MessageFlag, int] = {
     MessageFlag.DRAFT: 16,
 }
 UNREADABLE_SUBJECT: str = "(damaged message)"
+PREVIEW_CHARACTERS: int = 160
 
 
 def flags_to_bits(flags: frozenset[MessageFlag]) -> int:
@@ -52,6 +54,7 @@ class IndexEntry:
     thread_key: str
     has_attachments: bool
     body: str
+    preview: str = ""  # the first characters of the body, for the message list
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +71,7 @@ class IndexedMessage:
     message_id: str | None
     thread_key: str
     has_attachments: bool
+    preview: str = ""
 
 
 @dataclass(frozen=True, slots=True)

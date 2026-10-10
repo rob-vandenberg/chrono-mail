@@ -5,9 +5,10 @@ from chrono_mail.index import UNREADABLE_SUBJECT, IndexEntry, entry_from_raw, un
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_entry.py 0.0.8"
+__version__ = "test_index_entry.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.8: Initial index entry tests
 
 REF = MessageRef("account1", ("Inbox",), "a" * 32)
@@ -30,6 +31,16 @@ def test_fields_come_from_the_message() -> None:
     assert result.body == "the quarterly plan"
     assert result.has_attachments is False
     assert (result.store_id, result.folder, result.path) == (REF.store_id, REF.folder_path, "cur/x")
+
+
+def test_preview_is_the_start_of_the_body() -> None:
+    long_body = ("word " * 100).strip()
+    result = entry(raw_message(body=long_body + "\n"))
+    assert result.preview == long_body[:160] and len(result.preview) == 160
+    assert entry(raw_message(body="short\n")).preview == "short"
+    assert entry(raw_message(body="", html="<p>only <b>html</b></p>")).preview == "only html"
+    assert entry(b"").preview == ""
+    assert unreadable_entry(REF, "cur/x", FLAGS, 1).preview == ""
 
 
 def test_attachment_flag() -> None:
@@ -61,3 +72,18 @@ def test_control_characters_are_removed_from_list_fields() -> None:
 def test_unreadable_placeholder() -> None:
     placeholder = unreadable_entry(REF, "cur/x", FLAGS, 123)
     assert placeholder.subject == UNREADABLE_SUBJECT and placeholder.size == 123 and placeholder.date is None
+
+
+def test_messages_with_raw_utf8_headers_can_be_indexed(tmp_path: object) -> None:
+    from pathlib import Path
+
+    from chrono_mail.index import Index
+
+    raw = "From: Ünï Cödé <u@x.org>\r\nTo: 日本 <j@x.jp>\r\nSubject: 🙂 emoji ☕\r\n\r\n𝔘𝔫𝔦𝔠𝔬𝔡𝔢 body\r\n".encode()
+    result = entry(raw)
+    assert result.subject == "🙂 emoji ☕" and result.sender == "Ünï Cödé <u@x.org>"
+    index = Index(Path(str(tmp_path)) / "index.sqlite")
+    index.add(result)  # raised UnicodeEncodeError before the parser cleaned its output
+    assert index.search("emoji")[0].subject == "🙂 emoji ☕" and index.search("Ünï")[0].sender.startswith("Ünï")
+    bad = entry(b"Subject: caf\xe9 \xff\r\nFrom: a@x.org\r\n\r\nx")
+    index.add(bad)

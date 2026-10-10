@@ -1,12 +1,13 @@
 from chrono_mail.core import MessageFlag, MessageRef
-from chrono_mail.index.model import UNREADABLE_SUBJECT, IndexEntry
+from chrono_mail.index.model import PREVIEW_CHARACTERS, UNREADABLE_SUBJECT, IndexEntry
 from chrono_mail.index.text import searchable_body
 from chrono_mail.mime import Address, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "entry.py 0.0.8"
+__version__ = "entry.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: preview
 # v0.0.8: Initial index entries
 
 _ALLOWED_CONTROL: frozenset[str] = frozenset("\t\n")
@@ -26,6 +27,7 @@ def entry_from_raw(
 ) -> IndexEntry:
     """Build the index entry for a raw message. Never raises: a bad message still gets an entry."""
     message = parse_message(raw)
+    body = searchable_body(message.text_body, message.html_body)
     recipients = ", ".join(_display(address) for address in (*message.to_addresses, *message.cc_addresses))
     sender = _display(message.from_addresses[0]) if message.from_addresses else ""
     own_id = message.message_id or None
@@ -50,7 +52,8 @@ def entry_from_raw(
         message_id=own_id,
         thread_key=thread_key,
         has_attachments=any(not attachment.inline for attachment in message.attachments),
-        body=searchable_body(message.text_body, message.html_body),
+        body=body,
+        preview=body[:PREVIEW_CHARACTERS],
     )
 
 

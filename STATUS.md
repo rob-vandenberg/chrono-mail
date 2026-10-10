@@ -1,25 +1,24 @@
 # STATUS.md
 
-*Last updated: 2026-10-10, after task 1.9 (the headless client works end to end).*
+*Last updated: 2026-10-10, after the first testable user interface (tasks 1.10 and 1.11).*
 
 ## Where we are
 
-- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-029).
-- **Milestone 0 is done** (0.4, GitHub Actions, is optional and not started). **Milestone 1: tasks 1.1 to 1.9 are done**: `core`, `mime`, `crypto`, `store`, `index`, `config`, POP3 client and `sync`, SMTP client, `engine` and the command line. The application can be driven completely without a screen: `chrono-mail-cli` (26 commands) creates an account, fetches and sends mail, searches, moves, flags and deletes, verifies the store, and exports and restores the data key.
-- Verified against the real DirectAdmin server `mail.technova.us` (Dovecot and Exim, test account): POP3 over TLS and STLS, SMTP over STARTTLS and TLS, a full CLI session, with a clean mailbox afterwards.
-- Measured with a generated mailbox of 500,000 messages: folder pages under 10 ms, search 0.5 to 113 ms, flag change 0.13 ms; the full index rebuild takes about an hour (see DEVLOG.md, task 1.5, for all numbers and caveats).
-- Project version 0.0.12 (`pyproject.toml`). About 5,200 lines in `src/`; 681 offline tests, 30 live tests, 1 credential-store test, 1 performance test.
-- GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main`. The last push is recorded in DEVLOG.md. The test account password (`chronomail@bccbox.com` on `mail.technova.us`) is only in the ignored `tests/live/account.local.toml`; it is still to be changed once the user decides POP3 and SMTP are proven.
+- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-032).
+- **Milestone 0 is done** (0.4, GitHub Actions, is optional and not started). **Milestone 1: tasks 1.1 to 1.11 are done.** Open in milestone 1: 1.12 (tested key recovery procedure; the pieces exist and the interface shows the recovery code when the key is created), 1.13 (Flatpak) and 1.14 (Windows run).
+- **There is a working graphical program to test**: `chrono-mail` (see below). Three-pane window in the style of eM Client 9 and 10: folders, message list, reading pane; get mail, read, reply, reply all, forward, new message, attachments (save and send), flag, mark read or unread, move, delete (Trash), folders (create, rename, delete), search with quick filters, first-run account setup with a connection test and the key recovery code screen. HTML mail is shown locked down (no scripts, remote content blocked until allowed per message).
+- The headless client still works: `chrono-mail-cli` (26 commands).
+- Verified against the real DirectAdmin server `mail.technova.us` through the engine and the CLI. The graphical program has been tested without a screen, with fake servers, and (one live test) against the real server through the window: compose, send, fetch, read, delete. **Nobody has used it on a real screen yet**: the first real use is the next step.
+- Project version 0.0.13. About 8,100 lines in `src/` (2,500 of them the interface), 8,300 in `tests/`; 894 offline tests, 31 live tests (one drives the window against the real server), 1 credential-store test, 1 performance test.
+- GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main`. The last push is recorded in DEVLOG.md (version 0.0.12); the interface work (0.0.13) is **not pushed yet**. The test account password (`chronomail@bccbox.com` on `mail.technova.us`) is only in the ignored `tests/live/account.local.toml`; it is still to be changed once the user decides POP3 and SMTP are proven.
 - KDEV is the development machine (Kubuntu 26). The project folder is `/home/rob/python/chrono-mail`.
 
 ## Next task
 
-**1.10 `ui`** (main window, folder tree, virtualized message list, reading pane with plain text and safe HTML) is next, and it needs the user: the interface can only be judged by looking at it. Decide with the user first: what the main window should look like and how it should behave, and whether to show a mock-up or a first version early. The UI must contain no business logic: it calls the 26 engine commands, in worker threads with their own Engine and index connection (an Engine is for one thread).
-
-Tasks 1.11 (composer), 1.12 (tested key recovery procedure), 1.13 (Flatpak) and 1.14 (Windows run) follow. Task 1.11 needs three commands that do not exist yet: save an attachment, save and send drafts, reply and forward.
+**The user tries the program** (`/home/rob/python/chrono-mail/.venv/bin/chrono-mail`) and reports what is wrong or missing. Then, in this order of likely value: fix what the real use shows; drafts; the recovery procedure end to end (1.12); HTML composing; conversation view; drag and drop; Flatpak (1.13); the Windows run (1.14).
 
 How to run the checks:
-- Offline gate: `.venv/bin/pytest`, `.venv/bin/pyrefly check`, `.venv/bin/lint-imports` (the layer check is also part of pytest).
+- Offline gate: `.venv/bin/pytest`, `.venv/bin/pyrefly check`, `.venv/bin/lint-imports` (the layer check is also part of pytest). The interface tests need no screen (Qt offscreen).
 - Against the real server: `.venv/bin/pytest -m live` (needs `tests/live/account.local.toml`, see `account.example.toml`).
 - Real credential store (creates and removes one entry in the user's wallet): `.venv/bin/pytest -m oskeyring`.
 - 500,000-message performance test (about an hour, 3 to 4 GB in `~/chrono-mail-perf`, which the test recreates): `.venv/bin/pytest -m perf -s`.
@@ -27,8 +26,8 @@ How to run the checks:
 
 ## Open questions
 
-1. Count unread takes 454 ms in a folder of 300,000 messages; fine once, too slow for every folder on every refresh. A counter or a partial index when the UI needs it.
-2. The index rebuild time without other load was not measured (the 59 minutes were partly under load).
+1. The index rebuild time without other load was not measured (the 59 minutes were partly under load), and not since the index got previews (schema 2).
+2. Drafts, HTML composing, conversation view, drag and drop, a window icon and a settings dialog are not built (D-030).
 3. Master-password mode, key rotation and key change are not built (D-023); the end-to-end recovery procedure is task 1.12.
 4. Switching a store between encrypted and plain is a migration and is not built (D-024).
 5. Certificate exceptions for servers with self-signed certificates: the clients refuse an untrusted certificate (AGENTS.md section 4.6 allows an explicit user exception; not built).

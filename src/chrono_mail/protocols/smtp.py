@@ -1,15 +1,17 @@
 import smtplib
 import ssl
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import override
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "smtp.py 0.0.10"
+__version__ = "smtp.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: check_login; shared connection and error mapping
 # v0.0.10: Initial SMTP client
 
 _MAXIMUM_REPLY_LINES: int = 200
@@ -89,6 +91,68 @@ def _check_address(address: str, what: str) -> None:
         raise ProtocolError(f"The {what} address is not valid")
 
 
+@contextmanager
+def _mapped_errors() -> Generator[None]:
+    """Turn what smtplib and the network raise into AuthenticationError and ProtocolError (text made safe)."""
+    try:
+        yield
+    except smtplib.SMTPAuthenticationError as error:
+        raise AuthenticationError(f"The server refused the login: {_printable(error.smtp_error)}") from None
+    except smtplib.SMTPRecipientsRefused as error:
+        details = "; ".join(f"{address}: {code} {_printable(text)}" for address, (code, text) in error.recipients.items())
+        raise ProtocolError(f"The server refused every recipient: {details}") from None
+    except smtplib.SMTPResponseException as error:
+        raise ProtocolError(f"The server answered {error.smtp_code}: {_printable(error.smtp_error)}") from None
+    except smtplib.SMTPException as error:
+        raise ProtocolError(f"Sending failed: {type(error).__name__}") from None
+    except ssl.SSLCertVerificationError as error:
+        raise ProtocolError(f"The server's certificate could not be verified: {error.verify_message}") from None
+    except (OSError, ssl.SSLError) as error:
+        raise ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}") from None
+
+
+def _open(
+    settings: ServerSettings, password: str, limits: SmtpLimits, context: ssl.SSLContext, local_hostname: str | None
+) -> smtplib.SMTP:
+    """Connect, secure the connection and log in. The caller closes the connection."""
+    if settings.security is ConnectionSecurity.TLS:
+        connection: smtplib.SMTP = _SmtpSsl(settings.host, settings.port, local_hostname, timeout=limits.timeout_seconds, context=context)
+    else:
+        connection = _Smtp(settings.host, settings.port, local_hostname, timeout=limits.timeout_seconds)
+    try:
+        connection.ehlo()
+        if settings.security is ConnectionSecurity.STARTTLS:
+            if not connection.has_extn("starttls"):
+                raise ProtocolError("The server does not offer STARTTLS")
+            connection.starttls(context=context)
+            connection.ehlo()
+        if settings.username:
+            if not connection.has_extn("auth"):
+                raise ProtocolError("The server does not offer authentication")
+            connection.login(settings.username, password)
+    except BaseException:
+        connection.close()
+        raise
+    return connection
+
+
+def check_login(
+    settings: ServerSettings,
+    password: str,
+    limits: SmtpLimits = SmtpLimits(),
+    ssl_context: ssl.SSLContext | None = None,
+    local_hostname: str | None = None,
+) -> None:
+    """Connect and log in without sending anything (a connection test). Raises like send_message."""
+    context = ssl_context if ssl_context is not None else ssl.create_default_context()
+    with _mapped_errors():
+        connection = _open(settings, password, limits, context, local_hostname)
+        try:
+            connection.quit()
+        finally:
+            connection.close()
+
+
 def send_message(
     settings: ServerSettings,
     password: str,
@@ -114,50 +178,23 @@ def send_message(
     if len(raw) > limits.maximum_message_bytes:
         raise ProtocolError("The message is larger than the limit")
     context = ssl_context if ssl_context is not None else ssl.create_default_context()
-    connection: smtplib.SMTP | None = None
-    try:
-        if settings.security is ConnectionSecurity.TLS:
-            connection = _SmtpSsl(settings.host, settings.port, local_hostname, timeout=limits.timeout_seconds, context=context)
-        else:
-            connection = _Smtp(settings.host, settings.port, local_hostname, timeout=limits.timeout_seconds)
-        connection.ehlo()
-        if settings.security is ConnectionSecurity.STARTTLS:
-            if not connection.has_extn("starttls"):
-                raise ProtocolError("The server does not offer STARTTLS")
-            connection.starttls(context=context)
-            connection.ehlo()
-        if settings.username:
-            if not connection.has_extn("auth"):
-                raise ProtocolError("The server does not offer authentication")
-            connection.login(settings.username, password)
-        if connection.has_extn("size"):
-            advertised = connection.esmtp_features.get("size", "")
-            if advertised.isdigit() and 0 < int(advertised) < len(raw):
-                raise ProtocolError("The message is larger than the server accepts")
-        options: list[str] = []
-        if not raw.isascii():
-            if not connection.has_extn("8bitmime"):
-                raise ProtocolError("The message contains 8-bit data and the server does not accept it")
-            options.append("BODY=8BITMIME")
-        refused = connection.sendmail(sender, list(recipients), raw, mail_options=options)
-        connection.quit()
-        return SendResult(
-            tuple(recipient for recipient in recipients if recipient not in refused),
-            tuple(Refusal(address, code, _printable(text)) for address, (code, text) in refused.items()),
-        )
-    except smtplib.SMTPAuthenticationError as error:
-        raise AuthenticationError(f"The server refused the login: {_printable(error.smtp_error)}") from None
-    except smtplib.SMTPRecipientsRefused as error:
-        details = "; ".join(f"{address}: {code} {_printable(text)}" for address, (code, text) in error.recipients.items())
-        raise ProtocolError(f"The server refused every recipient: {details}") from None
-    except smtplib.SMTPResponseException as error:
-        raise ProtocolError(f"The server answered {error.smtp_code}: {_printable(error.smtp_error)}") from None
-    except smtplib.SMTPException as error:
-        raise ProtocolError(f"Sending failed: {type(error).__name__}") from None
-    except ssl.SSLCertVerificationError as error:
-        raise ProtocolError(f"The server's certificate could not be verified: {error.verify_message}") from None
-    except (OSError, ssl.SSLError) as error:
-        raise ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}") from None
-    finally:
-        if connection is not None:
+    with _mapped_errors():
+        connection = _open(settings, password, limits, context, local_hostname)
+        try:
+            if connection.has_extn("size"):
+                advertised = connection.esmtp_features.get("size", "")
+                if advertised.isdigit() and 0 < int(advertised) < len(raw):
+                    raise ProtocolError("The message is larger than the server accepts")
+            options: list[str] = []
+            if not raw.isascii():
+                if not connection.has_extn("8bitmime"):
+                    raise ProtocolError("The message contains 8-bit data and the server does not accept it")
+                options.append("BODY=8BITMIME")
+            refused = connection.sendmail(sender, list(recipients), raw, mail_options=options)
+            connection.quit()
+            return SendResult(
+                tuple(recipient for recipient in recipients if recipient not in refused),
+                tuple(Refusal(address, code, _printable(text)) for address, (code, text) in refused.items()),
+            )
+        finally:
             connection.close()

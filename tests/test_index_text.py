@@ -1,9 +1,10 @@
 from chrono_mail.index import MAXIMUM_BODY_CHARACTERS, html_to_text, searchable_body
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_text.py 0.0.8"
+__version__ = "test_index_text.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.8: Initial index text tests
 
 
@@ -33,3 +34,11 @@ def test_body_is_capped() -> None:
 
 def test_huge_html_is_handled_in_reasonable_time() -> None:
     assert len(searchable_body(None, "<div>" * 500_000)) <= MAXIMUM_BODY_CHARACTERS
+
+
+def test_html_to_text_can_keep_the_lines() -> None:
+    html = "<html><head><title>T</title></head><body><p>First  <b>para</b></p><p>Second</p><ul><li>one</li><li>two</li></ul>a<br>b<script>x()</script></body></html>"
+    assert html_to_text(html, keep_lines=True) == "First para\n\nSecond\n\none\ntwo\n\na\nb"
+    assert searchable_body(None, html) == "First para Second one two a b"  # the default, used for searching, is unchanged
+    for broken in ["<", "<p", "<p><p><p>", "<br>" * 50, "&#x110000;", "\x00<p>\x00"]:
+        assert isinstance(html_to_text(broken, keep_lines=True), str)

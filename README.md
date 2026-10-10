@@ -15,6 +15,17 @@ An open-source desktop email client for Linux, inspired by eM Client.
 
 Python, Qt 6 (PySide6), strict static type checking with Pyrefly.
 
+## Try it
+
+```bash
+git clone https://github.com/rob-vandenberg/chrono-mail && cd chrono-mail
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/chrono-mail          # the graphical program
+.venv/bin/chrono-mail-cli --help   # the command line (the same actions, without a screen)
+```
+
+On the first start the program asks for your first account (POP3 and SMTP) and shows the recovery code for the key that encrypts your stored mail. Keep that code: without the key the mail cannot be read.
+
 ## For contributors and AI agents
 
 Start with [`AGENTS.md`](AGENTS.md), then [`DEVELOPMENT-RULES.md`](DEVELOPMENT-RULES.md) and [`STATUS.md`](STATUS.md).

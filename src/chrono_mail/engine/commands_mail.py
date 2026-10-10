@@ -1,4 +1,6 @@
+import base64
 import mimetypes
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parseaddr
@@ -6,24 +8,28 @@ from pathlib import Path
 from typing import Literal
 
 from chrono_mail.config import ServerRole
-from chrono_mail.core import ConfigurationError, FolderRole, MessageFlag
+from chrono_mail.core import ChronoMailError, ConfigurationError, FolderRole, MessageFlag
 from chrono_mail.engine.commands_accounts import AccountParameters
-from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.engine.compose import ComposeKind, build_draft, suggest_filename
+from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
-from chrono_mail.mime import Address, Attachment, OutgoingMessage, parse_message
+from chrono_mail.mime import Address, Attachment, OutgoingMessage, ParsedMessage, parse_message
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import Pop3State, fetch_pop3, send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.12"
+__version__ = "commands_mail.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: previews, inline images, attachment save, compose, reply marks
 # v0.0.12: Initial message commands
 
 MAXIMUM_ATTACHMENT_BYTES: int = 100 * 1024 * 1024
 MAXIMUM_MESSAGE_BYTES: int = 256 * 1024 * 1024
+MAXIMUM_INLINE_IMAGE_BYTES: int = 5 * 1024 * 1024
+MAXIMUM_INLINE_IMAGES_TOTAL_BYTES: int = 20 * 1024 * 1024
 _FLAG_NAMES: dict[MessageFlag, str] = {
     MessageFlag.SEEN: "seen",
     MessageFlag.REPLIED: "replied",
@@ -47,10 +53,12 @@ class MessageRow:
     size: int
     flags: tuple[str, ...]
     attachments: bool
+    preview: str
+    recipients: str
 
 
 def _row(message: IndexedMessage) -> MessageRow:
-    return MessageRow(message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, _flag_names(message.flags), message.has_attachments)
+    return MessageRow(message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, _flag_names(message.flags), message.has_attachments, message.preview, message.recipients)
 
 
 # --- fetching and sending -----------------------------------------------------------------------
@@ -116,7 +124,7 @@ def _attachment(path_text: str) -> Attachment:
 @dataclass(frozen=True, slots=True)
 class SendParameters:
     account: str = field(metadata=option("The account to send from"))
-    to: tuple[str, ...] = field(metadata=option("A recipient (repeat for more)"))
+    to: tuple[str, ...] = field(default=(), metadata=option("A recipient (repeat for more)"))
     subject: str = field(default="", metadata=option("The subject"))
     body: str = field(default="", metadata=option("The text of the message"))
     cc: tuple[str, ...] = field(default=(), metadata=option("A copy recipient (repeat for more)"))
@@ -124,6 +132,11 @@ class SendParameters:
     html: str | None = field(default=None, metadata=option("An HTML version of the body"))
     attach: tuple[str, ...] = field(default=(), metadata=option("A file to attach (repeat for more)"))
     in_reply_to: str | None = field(default=None, metadata=option("The Message-ID this is a reply to"))
+    references: tuple[str, ...] = field(default=(), metadata=option("A Message-ID of the conversation (repeat for more)"))
+    source_folder: str | None = field(default=None, metadata=option("The folder of the message this answers or forwards"))
+    source_message: str | None = field(default=None, metadata=option("The id of the message this answers or forwards"))
+    include_source_attachments: bool = field(default=False, metadata=option("Forward: take the attachments of the source message along"))
+    mark_replied: bool = field(default=False, metadata=option("Reply: mark the source message as replied to once sent"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +149,20 @@ class SendResult:
     warning: str | None
 
 
+def _source_attachments(mailbox: Mailbox, parameters: "SendParameters") -> tuple[Attachment, ...]:
+    """The attachments of the message being forwarded, when asked for."""
+    if not parameters.include_source_attachments:
+        return ()
+    if not parameters.source_folder or not parameters.source_message:
+        raise UsageError("Taking attachments along needs the source message")
+    source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
+    parsed = parse_message(mailbox.store.read(source, hint=mailbox.hint(source.store_id)))
+    return tuple(attachment for attachment in parsed.attachments if not attachment.inline)
+
+
 def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
+    if not (parameters.to or parameters.cc or parameters.bcc):
+        raise UsageError("There is no recipient")
     with open_mailbox(engine, parameters.account) as mailbox:
         settings = mailbox.settings
         password = engine.passwords.get(settings.account.account_id, ServerRole.OUTGOING)
@@ -150,11 +176,17 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
             subject=parameters.subject,
             text_body=parameters.body,
             html_body=parameters.html,
-            attachments=tuple(_attachment(path) for path in parameters.attach),
+            attachments=(*(_attachment(path) for path in parameters.attach), *_source_attachments(mailbox, parameters)),
             in_reply_to=parameters.in_reply_to,
-            references=(parameters.in_reply_to,) if parameters.in_reply_to else (),
+            references=parameters.references or ((parameters.in_reply_to,) if parameters.in_reply_to else ()),
         )
         outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT))
+        if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
+            try:
+                source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
+                mailbox.set_flags(source, frozenset({*mailbox.current_flags(source), MessageFlag.REPLIED}))
+            except ChronoMailError:
+                pass  # the reply was sent; failing to mark the original is not worth an error
         return SendResult(
             outcome.sent,
             outcome.reference.store_id,
@@ -207,6 +239,14 @@ class AttachmentInfo:
     content_type: str
     size: int
     inline: bool
+    suggested_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class InlineImage:
+    content_id: str  # without the angle brackets, as referenced by cid: in the HTML
+    content_type: str
+    data_base64: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +264,8 @@ class ShowResult:
     html_body: str | None
     attachments: tuple[AttachmentInfo, ...]
     problems: tuple[str, ...]
+    inline_images: tuple[InlineImage, ...]
+    reply_to: tuple[str, ...]
 
 
 def _check_id(message_id: str) -> str:
@@ -234,6 +276,20 @@ def _check_id(message_id: str) -> str:
 
 def _shown(addresses: tuple[Address, ...]) -> tuple[str, ...]:
     return tuple(f"{a.name} <{a.address}>" if a.name else a.address for a in addresses)
+
+
+def _inline_images(parsed: ParsedMessage) -> tuple[InlineImage, ...]:
+    """Images the HTML refers to with cid:, small enough to be embedded in the page as data."""
+    found: list[InlineImage] = []
+    total = 0
+    for attachment in parsed.attachments:
+        if not attachment.content_id or not attachment.content_type.startswith("image/") or len(attachment.data) > MAXIMUM_INLINE_IMAGE_BYTES:
+            continue
+        total += len(attachment.data)
+        if total > MAXIMUM_INLINE_IMAGES_TOTAL_BYTES:
+            break
+        found.append(InlineImage(attachment.content_id.strip("<>"), attachment.content_type, base64.b64encode(attachment.data).decode("ascii")))
+    return tuple(found)
 
 
 def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
@@ -254,8 +310,10 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
             parsed.message_id,
             parsed.text_body,
             parsed.html_body,
-            tuple(AttachmentInfo(a.filename, a.content_type, len(a.data), a.inline) for a in parsed.attachments),
+            tuple(AttachmentInfo(a.filename, a.content_type, len(a.data), a.inline, suggest_filename(a.filename, a.content_type, position)) for position, a in enumerate(parsed.attachments)),
             parsed.defects,
+            _inline_images(parsed),
+            _shown(parsed.reply_to_addresses),
         )
 
 
@@ -357,12 +415,80 @@ def message_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult
         return DeleteResult(reference.store_id, mailbox.delete(reference, parameters.permanent))
 
 
+@dataclass(frozen=True, slots=True)
+class AttachmentSaveParameters:
+    account: str = field(metadata=option("The account"))
+    folder: str = field(metadata=option("The folder the message is in"))
+    message: str = field(metadata=option("The message id"))
+    index: int = field(metadata=option("Which attachment: its position in the list shown by message.show, starting at 0"))
+    path: str = field(metadata=option("Where to save it"))
+    overwrite: bool = field(default=False, metadata=option("Replace an existing file"))
+
+
+@dataclass(frozen=True, slots=True)
+class AttachmentSaveResult:
+    path: str
+    size: int
+    content_type: str
+
+
+def message_attachment_save(engine: Engine, parameters: AttachmentSaveParameters) -> AttachmentSaveResult:
+    with open_mailbox(engine, parameters.account) as mailbox:
+        reference = mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message))
+        parsed = parse_message(mailbox.store.read(reference, hint=mailbox.hint(reference.store_id)))
+        if not 0 <= parameters.index < len(parsed.attachments):
+            raise UsageError("The message has no such attachment")
+        attachment = parsed.attachments[parameters.index]
+        target = Path(parameters.path)
+        if target.exists() and not parameters.overwrite:
+            raise UsageError("The file exists; use overwrite to replace it")
+        temporary = target.with_name(f".{target.name}.{os.urandom(4).hex()}.part")
+        try:
+            temporary.write_bytes(attachment.data)
+            temporary.replace(target)
+        except OSError as error:
+            temporary.unlink(missing_ok=True)
+            raise UsageError(f"The file cannot be written: {error.strerror}") from None
+        return AttachmentSaveResult(str(target), len(attachment.data), attachment.content_type)
+
+
+@dataclass(frozen=True, slots=True)
+class ComposeParameters:
+    account: str = field(metadata=option("The account"))
+    folder: str = field(metadata=option("The folder the message is in"))
+    message: str = field(metadata=option("The message to reply to or forward"))
+    kind: ComposeKind = field(default="reply", metadata=option("reply, reply_all or forward"))
+
+
+@dataclass(frozen=True, slots=True)
+class ComposeResult:
+    kind: str
+    to: tuple[str, ...]
+    cc: tuple[str, ...]
+    subject: str
+    body: str
+    in_reply_to: str | None
+    references: tuple[str, ...]
+    attachment_names: tuple[str, ...]
+
+
+def message_compose(engine: Engine, parameters: ComposeParameters) -> ComposeResult:
+    """The starting point of a reply, a reply to all, or a forward (nothing is stored or sent)."""
+    with open_mailbox(engine, parameters.account) as mailbox:
+        reference = mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message))
+        parsed = parse_message(mailbox.store.read(reference, hint=mailbox.hint(reference.store_id)))
+        draft = build_draft(parsed, parameters.kind, mailbox.settings.account.email_address)
+        return ComposeResult(draft.kind, draft.to, draft.cc, draft.subject, draft.body, draft.in_reply_to, draft.references, draft.attachment_names)
+
+
 def register(registry: CommandRegistry) -> None:
     registry.register("mail.fetch", "Download new messages from the POP3 server", AccountParameters, mail_fetch)
     registry.register("mail.send", "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send)
     registry.register("message.list", "List the messages of a folder", ListParameters, message_list)
     registry.register("message.show", "Show one message", MessageParameters, message_show)
     registry.register("message.search", "Search messages", SearchParameters, message_search)
+    registry.register("message.attachment.save", "Save one attachment of a message to a file", AttachmentSaveParameters, message_attachment_save)
+    registry.register("message.compose", "Prepare a reply, a reply to all, or a forward of a message", ComposeParameters, message_compose)
     registry.register("message.flag", "Change the read, flagged or replied marks of a message", FlagParameters, message_flag)
     registry.register("message.move", "Move a message to another folder", TransferParameters, message_move)
     registry.register("message.copy", "Copy a message to another folder", TransferParameters, message_copy)

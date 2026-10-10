@@ -10,9 +10,10 @@ from chrono_mail.index import Index, IndexedMessage, IndexEntry, SearchFilter, S
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.0.8"
+__version__ = "test_index_index.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.8: Initial index tests
 
 INBOX = ("Inbox",)
@@ -247,6 +248,34 @@ def test_damaged_index_is_reported_not_trusted(tmp_path: Path) -> None:
         Path(f"{path}{suffix}").unlink(missing_ok=True)
     with pytest.raises(StorageError, match="rebuild"):
         Index(path)
+
+
+def test_the_old_schema_without_previews_is_reported_so_that_it_gets_rebuilt(tmp_path: Path) -> None:
+    path = tmp_path / "index.sqlite"
+    filled(tmp_path, 1).close()
+    connection = sqlite3.connect(path)
+    connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema'")
+    connection.commit()
+    connection.close()
+    with pytest.raises(StorageError, match="rebuild"):
+        Index(path)
+
+
+def test_rows_carry_the_preview(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    index.add(make_entry(1, body="the quick brown fox\n"))
+    assert index.page(INBOX)[0].preview == "the quick brown fox"
+    assert index.search("quick")[0].preview == "the quick brown fox"
+    assert index.get(f"{1:032x}") is not None
+
+
+def test_unread_counts_use_the_partial_index(tmp_path: Path) -> None:
+    # Measured with 300,000 messages in one folder: 454 ms without the partial index, 0.5 ms with it.
+    index = filled(tmp_path, 50)
+    plan = " | ".join(str(row[3]) for row in index._connection.execute(  # noqa: SLF001
+        "EXPLAIN QUERY PLAN SELECT count(*) FROM messages m WHERE m.folder = ? AND (m.flags & 1) = 0", ("Inbox",)))
+    assert "messages_unread" in plan, plan
+    assert index.count(INBOX, unread_only=True) == 25
 
 
 def test_unknown_schema_version_is_reported(tmp_path: Path) -> None:

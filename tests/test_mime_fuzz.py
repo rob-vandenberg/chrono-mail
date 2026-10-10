@@ -3,6 +3,7 @@ from pathlib import Path
 
 from chrono_mail.core import MessageFormatError
 
+from tests.test_mime_parse import all_text, has_surrogates
 from chrono_mail.mime import (
     Address,
     Attachment,
@@ -13,9 +14,10 @@ from chrono_mail.mime import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mime_fuzz.py 0.0.5"
+__version__ = "test_mime_fuzz.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.5: Initial fuzz-style tests
 
 CORPUS: Path = Path(__file__).resolve().parent / "data" / "mime"
@@ -73,6 +75,7 @@ def test_mutated_messages_never_raise() -> None:
             message = parse_message(candidate)
             assert isinstance(message, ParsedMessage)
             assert isinstance(message.subject, str)
+            assert not any(has_surrogates(text) for text in all_text(message)), "a lone surrogate leaked out of the parser"
             assert all(isinstance(attachment.data, bytes) for attachment in message.attachments)
             count += 1
     assert count >= 2000
@@ -81,7 +84,8 @@ def test_mutated_messages_never_raise() -> None:
 def test_random_bytes_never_raise() -> None:
     generator = random.Random(SEED + 1)
     for _ in range(500):
-        assert isinstance(parse_message(generator.randbytes(generator.randint(0, 2000))), ParsedMessage)
+        message = parse_message(generator.randbytes(generator.randint(0, 2000)))
+        assert isinstance(message, ParsedMessage) and not any(has_surrogates(text) for text in all_text(message))
 
 
 # --- the builder with hostile text (AGENTS.md section 4.2: input of any kind, never a crash) -----------------------

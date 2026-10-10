@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 
+from chrono_mail.core import StorageError
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.mailbox import open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
@@ -7,9 +8,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.sync import rebuild_index, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 0.0.12"
+__version__ = "commands_folders.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.12: Initial folder and maintenance commands
 
 
@@ -66,6 +68,7 @@ class FolderDeleteParameters:
     account: str = field(metadata=option("The account"))
     folder: str = field(metadata=option("The folder to delete"))
     with_messages: bool = field(default=False, metadata=option("Also delete the folder when it still holds messages"))
+    include_subfolders: bool = field(default=False, metadata=option("Delete the folders below it as well"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,17 +76,28 @@ class FolderDeleteResult:
     folder: str
     messages_removed: int
     kept_in: str
+    folders_removed: int = 1
 
 
 def folder_delete(engine: Engine, parameters: FolderDeleteParameters) -> FolderDeleteResult:
-    """Take the folder out of the store. Its files are kept in the store's .deleted directory, not erased."""
+    """Take the folder (and with include_subfolders everything below it) out of the store.
+    The files are kept in the store's .deleted directory, not erased."""
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder)
         if folder[0].lower() in ("inbox", "sent", "drafts", "trash", "junk", "outbox") and len(folder) == 1:
             raise UsageError("The standard folders cannot be deleted")
-        mailbox.store.delete_folder(folder, require_empty=not parameters.with_messages)
-        removed = mailbox.index.remove_folder(folder)
-        return FolderDeleteResult("/".join(folder), removed, str(mailbox.store.root / ".deleted"))
+        targets = [folder]
+        if parameters.include_subfolders:
+            targets = sorted((info.path for info in mailbox.folders() if info.path[: len(folder)] == folder), key=len, reverse=True)
+        if not parameters.with_messages:
+            for path in targets:
+                if mailbox.store.list_messages(path):
+                    raise StorageError("The folder is not empty")
+        removed = 0
+        for path in targets:  # the deepest folders first, so that no folder is ever left without its parent
+            mailbox.store.delete_folder(path, require_empty=not parameters.with_messages)
+            removed += mailbox.index.remove_folder(path)
+        return FolderDeleteResult("/".join(folder), removed, str(mailbox.store.root / ".deleted"), len(targets))
 
 
 # --- maintenance -------------------------------------------------------------------------------------------

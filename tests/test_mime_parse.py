@@ -1,11 +1,14 @@
+import pytest
+
 from datetime import UTC, datetime, timedelta, timezone
 
 from chrono_mail.mime import Address, ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mime_parse.py 0.0.5"
+__version__ = "test_mime_parse.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.5: Initial parser tests
 
 
@@ -136,3 +139,41 @@ def test_garbled_address_header_keeps_the_original_text() -> None:
     assert ("to", "<<<@@@") in message.raw_address_headers
     assert "invalid-address-header-to" in message.defects
     assert message.text_body == "body\n"
+
+
+def has_surrogates(text: str) -> bool:
+    return any("\ud800" <= character <= "\udfff" for character in text)
+
+
+def all_text(message: ParsedMessage) -> list[str]:
+    texts = [message.subject, message.message_id or "", message.in_reply_to or "", *message.references, *message.defects, message.text_body or "", message.html_body or ""]
+    texts += [text for _, text in message.raw_address_headers]
+    for address in (*message.from_addresses, *message.to_addresses, *message.cc_addresses, *message.reply_to_addresses):
+        texts += [address.name, address.address]
+    for attachment in message.attachments:
+        texts += [attachment.filename or "", attachment.content_type, attachment.content_id or ""]
+    return texts
+
+
+def test_raw_utf8_in_headers_is_read_as_text() -> None:
+    # Many mailers send headers as raw UTF-8. Python's parser returns such bytes as lone surrogates,
+    # which cannot be stored in the index (this crashed indexing before).
+    raw = "From: Ünï Cödé <u@x.org>\r\nTo: 日本 <j@x.jp>\r\nSubject: 🙂 emoji ☕ 日本語 العربية\r\nMessage-ID: <é@x>\r\n\r\nbody\r\n".encode()
+    message = parse_message(raw)
+    assert message.subject == "🙂 emoji ☕ 日本語 العربية"
+    assert message.from_addresses == (Address("Ünï Cödé", "u@x.org"),) and message.to_addresses == (Address("日本", "j@x.jp"),)
+    assert message.message_id == "<é@x>" and not any(has_surrogates(text) for text in all_text(message))
+
+
+@pytest.mark.parametrize("subject", [b"caf\xe9", b"\xff\xfe", b"\xc3", b"ok \xed\xa0\x80 surrogate in utf-8", b"\x80" * 50, b"mixed \xc3\xa9 and \xe9"])
+def test_invalid_bytes_in_headers_become_replacement_characters(subject: bytes) -> None:
+    message = parse_message(b"Subject: " + subject + b"\r\nFrom: a@x.org\r\n\r\nx")
+    assert isinstance(message.subject, str) and not any(has_surrogates(text) for text in all_text(message))
+    message.subject.encode("utf-8")  # must be storable
+
+
+def test_raw_bytes_in_an_attachment_name_and_content_id() -> None:
+    raw = (b"From: a@x.org\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=B\r\n\r\n--B\r\nContent-Type: text/plain\r\n\r\nx\r\n"
+           b"--B\r\nContent-Type: image/png; name=\"caf\xc3\xa9\xff.png\"\r\nContent-ID: <\xc3\xa9\xff@x>\r\nContent-Disposition: attachment; filename=\"caf\xc3\xa9\xff.png\"\r\n\r\ndata\r\n--B--\r\n")
+    message = parse_message(raw)
+    assert not any(has_surrogates(text) for text in all_text(message)) and message.attachments

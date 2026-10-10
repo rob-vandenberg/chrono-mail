@@ -246,3 +246,34 @@ Every design decision, with its reason and the alternatives that were rejected. 
 - A missing or damaged index is rebuilt automatically when an account is opened.
 - An Engine is used from one thread at a time; a UI runs commands in a worker with its own index connection.
 **Reason:** AGENTS.md sections 4.3 and 4.6; a UI and agents must be able to do everything the CLI can.
+
+## D-030 The user interface
+*2026-10-10*
+
+**Decision:**
+- Qt widgets (PySide6), a three-pane main window in the style of eM Client 9 and 10 (checked against its official 10.0 documentation, as a reference only; nothing is copied): folder tree on the left, message list in the middle, reading pane on the right, a top toolbar with the actions and a search field, and quick filters above the list. The look is the platform's own (palette, light and dark, theme icons); eM Client's colours and artwork are not used.
+- The interface contains no mail logic. A `Backend` runs engine commands on a thread pool and delivers each answer on the GUI thread, dropping answers for objects that no longer exist. A view that changes (another folder, a new search) makes every older answer obsolete; so does any change to the store while a message is being opened.
+- The message list is a model that knows its size from the first page and fetches 100 rows at a time when a row is needed (folders); searches and quick filters grow as the list is scrolled. Unread counts adjust locally when a flag changes.
+- A row shows an avatar with initials in a colour taken from the sender, sender or (in Sent, Drafts and Outbox) recipient, date, subject, a line of preview and marks for flags and attachments. Unread rows are bold with a marker in the margin.
+- HTML mail is shown in a Qt WebEngine view that: runs no JavaScript, plug-ins or local storage; is off the record (nothing on disk); follows no link and opens no window by itself (a clicked link is reported and only web and mail addresses are ever offered, after a question); blocks every request that would leave the computer until the person allows remote content for that one message; and shows pictures that came with the message by embedding them as data. Subject and header lines are never interpreted as markup. Plain-text mail is shown as text with clickable links.
+- Folder deletion in the interface removes the folder, its subfolders and their messages from the store, but the files stay in `.deleted`. Delete moves to Trash; deleting from Trash asks first.
+- The program checks for mail when it starts and every 5 minutes (switchable); sending keeps the message in the Outbox on failure and says so.
+- UI tests run without a screen (Qt `offscreen`, pytest-qt). The web view cannot be captured by `grab()` in that mode; its rendering is checked through a PDF export, its security through a local web server that counts the requests that really arrive.
+**Reason:** the user's goal is an eM Client for Linux; the rules in AGENTS.md sections 4.3 and 4.6.
+**Open:** drafts, HTML composing, drag and drop, conversation view, a window icon and the Flatpak packaging (task 1.13).
+
+## D-031 What the interface needed from the engine
+*2026-10-10*
+
+**Decision:**
+- Index schema 2: a preview (the first 160 characters of the body) per message, and a partial index for unread counts. Unread count in a folder of 300,000 messages: 454 ms before, 0.5 ms with 3 percent unread and 13 ms with every message unread, measured on a synthetic folder. An index with another schema is rebuilt automatically when an account is opened.
+- New commands: `message.attachment.save` (safe suggested file names), `message.compose` (reply, reply all and forward drafts; Re: and Fwd: only once; the quoted text of an HTML message keeps its paragraphs), `account.check` (connection test of both servers before the account exists, nothing stored or sent). `message.show` returns the pictures the HTML refers to with cid: (at most 5 MiB each, 20 MiB together). `mail.send` accepts a message with only a blind-copy recipient, the source message to take attachments from, the references of the conversation, and marks the original as replied when the reply was sent. `folder.delete` can include subfolders.
+- The engine keeps the data key for the session after the first read from the credential store (a UI runs many commands) and is safe for concurrent commands. SQLite waits up to 30 seconds for another writer.
+- `protocols.smtp` has a connection test (`check_login`) that shares its connection and error handling with `send_message`.
+**Reason:** a responsive interface; AGENTS.md section 4.5.
+
+## D-032 Text from mail is always valid Unicode
+*2026-10-10*
+
+**Decision:** the parser never returns a lone surrogate character. Python's email package returns raw 8-bit bytes in a header as surrogate-escaped characters; the parser recovers the bytes and reads them as UTF-8 (so a header sent as raw UTF-8 reads correctly), and replaces whatever is invalid with U+FFFD. The composer reads recipient fields address by address with its own splitter, because `getaddresses()` of Python 3.14 silently returns nothing for the whole field when one part is malformed.
+**Reason:** AGENTS.md section 4.2; both bugs were found by the interface tests (see DEVLOG.md). Headers sent as raw UTF-8 are common, so before this fix such a message crashed indexing and with it the download.

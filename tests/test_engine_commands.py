@@ -2,23 +2,24 @@ import json
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any  # command results are command-specific dataclasses; the tests check their fields
+from typing import Any, override  # command results are command-specific dataclasses; the tests check their fields
 
 import pytest
 
 from chrono_mail.config import ServerRole
 from chrono_mail.core import AuthenticationError, ConfigurationError, CryptoError, MessageFormatError, ProtocolError, StorageError
 from chrono_mail.engine import Engine, UsageError, build_registry
-from chrono_mail.crypto import InMemoryKeyStore
+from chrono_mail.crypto import DataKey, InMemoryKeyStore
 from tests.enginefactory import make_engine
 from tests.fakepop3 import FakePop3Server
 from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.0.12"
+__version__ = "test_engine_commands.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.12: Initial engine command tests
 
 REGISTRY = build_registry()
@@ -152,6 +153,8 @@ def test_key_status_export_and_restore_cycle(setup: Setup, tmp_path: Path) -> No
     assert isinstance(setup.engine.keys, InMemoryKeyStore)
     setup.engine.keys.delete(bytes.fromhex(str(setup.engine.config().key_id)))
     assert getattr(call(setup.engine, "key.status"), "in_credential_store") is False
+    assert len(getattr(call(setup.engine, "message.list", account=setup.account_id), "messages")) == 3  # a running session keeps its key
+    setup.engine.forget_keys()  # a restart
     with pytest.raises(CryptoError):
         call(setup.engine, "folder.list", account=setup.account_id)
     with pytest.raises(CryptoError):
@@ -159,6 +162,7 @@ def test_key_status_export_and_restore_cycle(setup: Setup, tmp_path: Path) -> No
     call(setup.engine, "key.restore-file", path=str(target), passphrase="a good passphrase")
     assert len(getattr(call(setup.engine, "message.list", account=setup.account_id), "messages")) == 3  # the mail reads again
     setup.engine.keys.delete(bytes.fromhex(str(setup.engine.config().key_id)))
+    setup.engine.forget_keys()
     with pytest.raises(CryptoError):
         call(setup.engine, "key.restore-code", code="AAAA-BBBB")
     call(setup.engine, "key.restore-code", code=code)
@@ -402,3 +406,176 @@ def test_the_whole_set_of_results_can_be_turned_into_json(setup: Setup) -> None:
     ]
     for command, values in cases:
         json.dumps(to_data(call(setup.engine, command, **values)))
+
+
+# --- what the interface needs (v0.0.13) --------------------------------------------------------------------------
+
+
+def with_attachments(count: int = 1) -> bytes:
+    import base64
+
+    parts = [b"From: Alice <alice@example.com>\r\nTo: me@example.com\r\nCc: bob@example.com, me@example.com\r\nSubject: Photos\r\nMessage-ID: <photos@x>\r\nReferences: <root@x>\r\nDate: Thu, 08 Oct 2026 10:30:00 +0000\r\nMIME-Version: 1.0\r\nContent-Type: multipart/related; boundary=B\r\n\r\n",
+             b"--B\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>Look: <img src=\"cid:logo@x\"></p>\r\n",
+             b"--B\r\nContent-Type: image/png\r\nContent-ID: <logo@x>\r\nContent-Disposition: inline\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.encodebytes(b"\x89PNG-data") + b"\r\n"]
+    for number in range(count):
+        parts.append(b"--B\r\nContent-Type: application/pdf\r\nContent-Disposition: attachment; filename=\"../../etc/re:port?.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.encodebytes(b"%PDF-" + str(number).encode()) + b"\r\n")
+    parts.append(b"--B--\r\n")
+    return b"".join(parts)
+
+
+@pytest.fixture
+def rich(tmp_path: Path) -> Generator[Setup]:
+    engine = make_engine(tmp_path)
+    with FakePop3Server({"rich": with_attachments(2)}) as pop, FakeSmtpServer() as smtp:
+        account = add_account(engine, pop, smtp)
+        call(engine, "mail.fetch", account=account)
+        yield Setup(engine, pop, smtp, account)
+
+
+def rich_id(setup: Setup) -> str:
+    return first_id(setup)
+
+
+def test_list_rows_have_a_preview(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    rows = getattr(call(setup.engine, "message.list", account=setup.account_id), "messages")
+    assert all(row.preview.startswith("body number") for row in rows)
+    assert all(row.preview == "body number 1" for row in call(setup.engine, "message.search", account=setup.account_id, query="number 1"))
+
+
+def test_show_gives_inline_images_and_safe_names(rich: Setup) -> None:
+    shown = call(rich.engine, "message.show", account=rich.account_id, folder="Inbox", message=rich_id(rich))
+    (image,) = getattr(shown, "inline_images")
+    assert image.content_id == "logo@x" and image.content_type == "image/png"
+    import base64
+    assert base64.b64decode(image.data_base64) == b"\x89PNG-data"
+    attachments = getattr(shown, "attachments")
+    assert [a.inline for a in attachments] == [True, False, False]
+    assert attachments[1].suggested_name == "re_port_.pdf"  # no path, no reserved characters
+    assert getattr(shown, "reply_to") == ()
+
+
+@pytest.mark.parametrize(("name", "content_type", "expected"), [("", "application/pdf", "attachment-3.pdf"), (None, "image/png", "attachment-3.png"), ("a/b\\c.txt", "text/plain", "c.txt"), ("..", "x/y", "attachment-3.bin"), ("x" * 400, "text/plain", "x" * 150), ("CON:.txt\x00", "text/plain", "CON_.txt_"), ("  .hidden", "text/plain", "hidden")])
+def test_suggested_file_names(name: str | None, content_type: str, expected: str) -> None:
+    from chrono_mail.engine.compose import suggest_filename
+
+    assert suggest_filename(name, content_type, 2) == expected
+
+
+def test_save_an_attachment(rich: Setup, tmp_path: Path) -> None:
+    message = rich_id(rich)
+    target = tmp_path / "saved.pdf"
+    result = call(rich.engine, "message.attachment.save", account=rich.account_id, folder="Inbox", message=message, index=2, path=str(target))
+    assert target.read_bytes() == b"%PDF-1" and getattr(result, "size") == 6 and getattr(result, "content_type") == "application/pdf"
+    with pytest.raises(UsageError, match="exists"):
+        call(rich.engine, "message.attachment.save", account=rich.account_id, folder="Inbox", message=message, index=1, path=str(target))
+    call(rich.engine, "message.attachment.save", account=rich.account_id, folder="Inbox", message=message, index=1, path=str(target), overwrite=True)
+    assert target.read_bytes() == b"%PDF-0"
+    for bad in (-1, 3, 99):
+        with pytest.raises(UsageError, match="no such attachment"):
+            call(rich.engine, "message.attachment.save", account=rich.account_id, folder="Inbox", message=message, index=bad, path=str(tmp_path / "x"))
+    with pytest.raises(UsageError, match="cannot be written"):
+        call(rich.engine, "message.attachment.save", account=rich.account_id, folder="Inbox", message=message, index=1, path=str(tmp_path / "no" / "such" / "dir" / "x"))
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith(".")] == []  # no half-written file left behind
+
+
+def test_compose_reply_reply_all_and_forward(rich: Setup) -> None:
+    message = rich_id(rich)
+    reply = call(rich.engine, "message.compose", account=rich.account_id, folder="Inbox", message=message)
+    assert getattr(reply, "to") == ("Alice <alice@example.com>",) and getattr(reply, "cc") == ()
+    assert getattr(reply, "subject") == "Re: Photos" and getattr(reply, "in_reply_to") == "<photos@x>"
+    assert getattr(reply, "references") == ("<root@x>", "<photos@x>")
+    assert "wrote:" in getattr(reply, "body") and "> Look:" in getattr(reply, "body")
+    everyone = call(rich.engine, "message.compose", account=rich.account_id, folder="Inbox", message=message, kind="reply_all")
+    assert getattr(everyone, "to") == ("Alice <alice@example.com>",) and getattr(everyone, "cc") == ("bob@example.com",)  # not myself
+    forward = call(rich.engine, "message.compose", account=rich.account_id, folder="Inbox", message=message, kind="forward")
+    assert getattr(forward, "subject") == "Fwd: Photos" and getattr(forward, "to") == ()
+    assert "Forwarded message" in getattr(forward, "body")
+    assert getattr(forward, "attachment_names") == ("re_port_.pdf", "re_port_.pdf")
+    with pytest.raises(UsageError):
+        call(rich.engine, "message.compose", account=rich.account_id, folder="Inbox", message=message, kind="shout")
+
+
+def test_forward_sends_the_attachments_and_a_reply_marks_the_original(rich: Setup) -> None:
+    message = rich_id(rich)
+    call(rich.engine, "mail.send", account=rich.account_id, to="you@example.com", subject="Fwd: Photos", body="see below", source_folder="Inbox", source_message=message, include_source_attachments=True)
+    (received,) = rich.smtp.received
+    assert received.data.count(b"Content-Disposition: attachment") == 2
+    call(rich.engine, "mail.send", account=rich.account_id, to="alice@example.com", subject="Re: Photos", body="thanks", in_reply_to="<photos@x>", references=("<root@x>", "<photos@x>"), source_folder="Inbox", source_message=message, mark_replied=True)
+    assert b"References: <root@x> <photos@x>" in rich.smtp.received[1].data
+    shown = call(rich.engine, "message.show", account=rich.account_id, folder="Inbox", message=message)
+    assert "replied" in getattr(shown, "flags")
+    with pytest.raises(UsageError, match="source"):
+        call(rich.engine, "mail.send", account=rich.account_id, to="a@example.com", include_source_attachments=True)
+
+
+def test_a_failed_reply_is_not_marked_as_replied(rich: Setup) -> None:
+    from chrono_mail.config import ServerRole
+
+    rich.engine.passwords.set(rich.account_id, ServerRole.OUTGOING, "wrong")
+    message = rich_id(rich)
+    result = call(rich.engine, "mail.send", account=rich.account_id, to="alice@example.com", subject="Re: Photos", source_folder="Inbox", source_message=message, mark_replied=True)
+    assert getattr(result, "sent") is False
+    assert "replied" not in getattr(call(rich.engine, "message.show", account=rich.account_id, folder="Inbox", message=message), "flags")
+
+
+def test_account_check(setup: Setup) -> None:
+    good = dict(username="user", password="secret", incoming_host="127.0.0.1", incoming_port=setup.pop.port, incoming_security="none", outgoing_host="127.0.0.1", outgoing_port=setup.smtp.port, outgoing_security="none")
+    result = call(setup.engine, "account.check", **good)
+    assert (getattr(result, "incoming_ok"), getattr(result, "outgoing_ok")) == (True, True)
+    assert not any(command.startswith(("MAIL", "DELE")) for command in setup.smtp.commands + setup.pop.commands)
+    bad = call(setup.engine, "account.check", **{**good, "password": "wrong-password-xyz"})
+    assert (getattr(bad, "incoming_ok"), getattr(bad, "outgoing_ok")) == (False, False)
+    assert "wrong-password-xyz" not in getattr(bad, "incoming_message") + getattr(bad, "outgoing_message")
+    unreachable = call(setup.engine, "account.check", **{**good, "incoming_port": 1, "outgoing_host": "no-such-host.invalid"})
+    assert getattr(unreachable, "incoming_ok") is False and getattr(unreachable, "outgoing_ok") is False
+    invalid = call(setup.engine, "account.check", **{**good, "incoming_port": 70000, "outgoing_port": 0})
+    assert getattr(invalid, "incoming_ok") is False and "port" in getattr(invalid, "incoming_message")
+    assert len(setup.engine.config().accounts) == 1  # nothing was created
+
+
+def test_the_key_is_fetched_from_the_credential_store_once(setup: Setup) -> None:
+    class Counting(InMemoryKeyStore):
+        loads = 0
+
+        @override
+        def load(self, key_id: bytes) -> DataKey:
+            Counting.loads += 1
+            return super().load(key_id)
+
+    source = setup.engine.keys
+    assert isinstance(source, InMemoryKeyStore)
+    counting = Counting()
+    counting.save(setup.engine.data_key(setup.engine.config()))
+    setup.engine.keys = counting
+    setup.engine.forget_keys()
+    for _ in range(5):
+        call(setup.engine, "message.list", account=setup.account_id)
+    assert Counting.loads == 1
+
+
+def test_a_message_with_only_a_blind_copy_recipient(setup: Setup) -> None:
+    result = call(setup.engine, "mail.send", account=setup.account_id, bcc="hidden@example.com", subject="Undisclosed", body="x")
+    assert getattr(result, "sent") is True
+    (received,) = setup.smtp.received
+    assert received.recipients == ("hidden@example.com",) and b"hidden@example.com" not in received.data
+    with pytest.raises(UsageError, match="no recipient"):
+        call(setup.engine, "mail.send", account=setup.account_id, subject="Nobody")
+
+
+def test_deleting_a_folder_with_its_subfolders(setup: Setup) -> None:
+    for path in ("Work", "Work/Alpha", "Work/Alpha/Deep", "Workshop"):
+        call(setup.engine, "folder.create", account=setup.account_id, folder=path)
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    message = first_id(setup)
+    call(setup.engine, "message.move", account=setup.account_id, folder="Inbox", message=message, target="Work/Alpha/Deep")
+    with pytest.raises(StorageError):
+        call(setup.engine, "folder.delete", account=setup.account_id, folder="Work", include_subfolders=True)  # not empty below
+    plain = call(setup.engine, "folder.delete", account=setup.account_id, folder="Work/Alpha/Deep", with_messages=True)
+    assert getattr(plain, "folders_removed") == 1 and getattr(plain, "messages_removed") == 1
+    call(setup.engine, "folder.create", account=setup.account_id, folder="Work/Alpha/Deep")
+    call(setup.engine, "message.move", account=setup.account_id, folder="Inbox", message=first_id(setup), target="Work/Alpha/Deep")
+    result = call(setup.engine, "folder.delete", account=setup.account_id, folder="Work", with_messages=True, include_subfolders=True)
+    assert getattr(result, "folders_removed") == 3 and getattr(result, "messages_removed") == 1
+    paths = [item.path for item in call(setup.engine, "folder.list", account=setup.account_id)]
+    assert "Workshop" in paths and not any(path == "Work" or path.startswith("Work/") for path in paths)  # a folder with a similar name stays

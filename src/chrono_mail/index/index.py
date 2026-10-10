@@ -18,12 +18,13 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.0.8"
+__version__ = "index.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: preview, unread index, busy timeout
 # v0.0.8: Initial message index
 
-_COLUMNS: str = "m.store_id, m.folder, m.path, m.flags, m.date, m.size, m.subject, m.sender, m.recipients, m.message_id, m.thread_key, m.has_attachments"
+_COLUMNS: str = "m.store_id, m.folder, m.path, m.flags, m.date, m.size, m.subject, m.sender, m.recipients, m.message_id, m.thread_key, m.has_attachments, m.preview"
 _SORT_COLUMN: dict[SortField, str] = {
     SortField.DATE: "m.date",
     SortField.SUBJECT: "m.subject COLLATE NOCASE",
@@ -51,7 +52,7 @@ def _moment(epoch: int | None) -> datetime | None:
 
 
 def _row(values: tuple[object, ...]) -> IndexedMessage:
-    store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, attachments = values
+    store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, attachments, preview = values
     return IndexedMessage(
         str(store_id),
         _folder_path(str(folder)),
@@ -65,6 +66,7 @@ def _row(values: tuple[object, ...]) -> IndexedMessage:
         None if message_id is None else str(message_id),
         str(thread_key),
         bool(attachments),
+        str(preview),
     )
 
 
@@ -93,7 +95,7 @@ class Index:
             raise StorageError(f"SQLite {sqlite3.sqlite_version} is too old; 3.43 or newer is needed")
         self.path: Path = path
         try:
-            self._connection: sqlite3.Connection = sqlite3.connect(path, isolation_level=None)
+            self._connection: sqlite3.Connection = sqlite3.connect(path, isolation_level=None, timeout=30)  # waits for another writer
             self._connection.execute("PRAGMA journal_mode = WAL")
             self._connection.execute("PRAGMA synchronous = NORMAL")
             self._connection.execute("PRAGMA temp_store = MEMORY")
@@ -131,8 +133,8 @@ class Index:
         self._connection.execute("DELETE FROM text WHERE rowid IN (SELECT id FROM messages WHERE store_id = ?)", (entry.store_id,))
         self._connection.execute("DELETE FROM messages WHERE store_id = ?", (entry.store_id,))
         cursor = self._connection.execute(
-            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 entry.store_id,
                 _folder_key(entry.folder),
@@ -146,6 +148,7 @@ class Index:
                 entry.message_id,
                 entry.thread_key,
                 int(entry.has_attachments),
+                entry.preview,
             ),
         )
         self._connection.execute(

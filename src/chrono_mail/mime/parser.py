@@ -16,15 +16,30 @@ from chrono_mail.mime.limits import (
 from chrono_mail.mime.model import Address, Attachment, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "parser.py 0.0.5"
+__version__ = "parser.py 0.0.13"
 
 # --- Version history ----------------------------------------------------
+# v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.5: Initial message parser
 
 _ID_PATTERN: re.Pattern[str] = re.compile(r"<[^<>\s]+>")
 _ADDRESS_HEADERS: tuple[str, ...] = ("from", "to", "cc", "reply-to")
 _CAMEL_BOUNDARY: re.Pattern[str] = re.compile(r"(?<!^)(?=[A-Z])")
 _FOLDING: re.Pattern[str] = re.compile(r"\r?\n[ \t]")
+
+
+def scrub(text: str) -> str:
+    """Text that is always valid Unicode.
+
+    Python's email parser hands raw 8-bit bytes in a header back as lone surrogate characters
+    (surrogateescape). Those must not leave the parser: they cannot be stored or encoded. The original
+    bytes are recovered and read as UTF-8, so a header sent as raw UTF-8 comes out as the real text;
+    whatever is not valid becomes U+FFFD.
+    """
+    try:
+        return text.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+    except UnicodeEncodeError:  # a surrogate that is not one of the escaped bytes
+        return "".join("\ufffd" if "\ud800" <= character <= "\udfff" else character for character in text)
 
 
 class _Collector:
@@ -91,7 +106,7 @@ def _header_text(part: MIMEPart, name: str, collector: _Collector) -> str | None
     decoded: str | None = None
     try:
         value = part[name]
-        decoded = None if value is None else str(value)
+        decoded = None if value is None else scrub(str(value))
     except Exception:
         collector.add(f"header-unreadable-{name.lower()}")
     raw_text = _raw_header(part, name.lower(), collector)
@@ -107,7 +122,7 @@ def _raw_header(part: MIMEPart, name: str, collector: _Collector) -> str | None:
         for raw_name, raw_value in part.raw_items():
             if raw_name.lower() == name:
                 text = _FOLDING.sub(" ", str(raw_value))
-                return text.encode("utf-8", "replace").decode("utf-8", "replace").strip()
+                return scrub(text).strip()
     except Exception:
         collector.add(f"header-lost-{name}")
     return None
@@ -127,7 +142,7 @@ def _addresses(part: MIMEPart, name: str, collector: _Collector) -> tuple[Addres
         for entry in value.addresses:
             try:
                 if entry.addr_spec and entry.addr_spec != "<>":
-                    found.append(Address(entry.display_name, entry.addr_spec))
+                    found.append(Address(scrub(entry.display_name), scrub(entry.addr_spec)))
             except Exception:
                 collector.add(f"invalid-address-{name.lower()}")
         return tuple(found)
@@ -171,7 +186,8 @@ def _decode_text(part: MIMEPart, data: bytes, collector: _Collector) -> str:
 
 def _filename(part: MIMEPart, collector: _Collector) -> str | None:
     try:
-        return part.get_filename()
+        filename = part.get_filename()
+        return None if filename is None else scrub(filename)
     except Exception:
         collector.add("invalid-filename")
         return None
@@ -210,7 +226,7 @@ def _embedded_message_data(part: MIMEPart, collector: _Collector) -> bytes:
 
 def _content_type(part: MIMEPart) -> str:
     try:
-        return part.get_content_type()
+        return scrub(part.get_content_type())
     except Exception:
         return "application/octet-stream"
 
@@ -236,7 +252,7 @@ def _extract(root: MIMEPart, collector: _Collector, with_body: bool) -> ParsedMe
         text_body, html_body, attachments = _extract_body(root, collector)
 
     message_id_text = _header_text(root, "Message-ID", collector)
-    message_id = (message_id_text or "").strip() or None
+    message_id = scrub(message_id_text or "").strip() or None
     return ParsedMessage(
         subject=_header_text(root, "Subject", collector) or "",
         from_addresses=_addresses(root, "From", collector),
@@ -304,7 +320,7 @@ def _extract_body(root: MIMEPart, collector: _Collector) -> tuple[str | None, st
                 Attachment(
                     filename,
                     content_type,
-                    str(content_id).strip() if content_id else None,
+                    scrub(str(content_id)).strip() if content_id else None,
                     disposition == "inline" or is_body_candidate,
                     data,
                 )
