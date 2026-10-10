@@ -1,5 +1,6 @@
 import html
 import re
+from email.utils import parseaddr
 from typing import override
 
 from PySide6.QtCore import Qt, QUrl, Signal
@@ -26,9 +27,10 @@ from PySide6.QtWidgets import (
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 0.0.13"
+__version__ = "reader.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: settings: remote content per sender, plain text first, zoom
 # v0.0.13: Initial reading pane
 
 # Mail may contain anything. The page that shows HTML mail runs no JavaScript, follows no link by
@@ -144,6 +146,7 @@ class ReaderWidget(QWidget):
 
     attachment_save_requested = Signal(int, str)  # position in the message, suggested file name
     link_activated = Signal(QUrl)
+    sender_allowed = Signal(str)  # the person chose to always show remote content from this address
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -189,8 +192,10 @@ class ReaderWidget(QWidget):
         banner_layout = QHBoxLayout(self._banner)
         self._banner_label = QLabel("Pictures and other content from the internet are not shown, to protect your privacy.", self._banner)
         self._load_remote = QPushButton("Show remote content", self._banner)
+        self._always_remote = QPushButton("Always for this sender", self._banner)
         banner_layout.addWidget(self._banner_label, 1)
         banner_layout.addWidget(self._load_remote)
+        banner_layout.addWidget(self._always_remote)
         self._banner.hide()
         layout.addWidget(self._banner)
 
@@ -213,6 +218,12 @@ class ReaderWidget(QWidget):
         self._page.loadFinished.connect(self._after_load)
         self._current_html: str = ""
         self._images: dict[str, tuple[str, str]] = {}
+        self.always_remote: bool = False  # show remote content without asking (a setting)
+        self.allowed_senders: set[str] = set()  # addresses (lower case) whose remote content is shown without asking
+        self.prefer_plain: bool = False  # show the text part of a message that has both
+        self._sender: str = ""
+        self._zoom: int = 100
+        self._always_remote.clicked.connect(self._allow_sender)
         self.clear()
 
     # --- showing --------------------------------------------------------------------------------
@@ -248,9 +259,13 @@ class ReaderWidget(QWidget):
         html_body = getattr(shown, "html_body")
         text_body = getattr(shown, "text_body")
         self._banner.hide()
+        self._sender = parseaddr(who)[1].lower() if senders else ""
+        self._always_remote.setVisible(bool(self._sender))
+        if html_body and self.prefer_plain and text_body:
+            html_body = None  # the person prefers the plain text part
         if html_body:
             self._current_html = embed_inline_images(str(html_body), self._images)
-            self._blocker.allow_remote = False
+            self._blocker.allow_remote = self.always_remote or (bool(self._sender) and self._sender in self.allowed_senders)
             self._blocker.blocked = 0
             self._stack.setCurrentWidget(self._web)
             self._page.setHtml(self._current_html)
@@ -281,6 +296,24 @@ class ReaderWidget(QWidget):
     def _after_load(self, ok: bool) -> None:
         if ok and self._blocker.blocked and not self._blocker.allow_remote:
             self._banner.show()
+
+    def set_zoom(self, percent: int) -> None:
+        """The size of the text of the message, in percent (50 to 300)."""
+        self._zoom = max(50, min(300, percent))
+        self._web.setZoomFactor(self._zoom / 100)
+        font = QFont(self.font())
+        font.setPointSizeF(max(6.0, font.pointSizeF() * self._zoom / 100) if font.pointSizeF() > 0 else 10.0 * self._zoom / 100)
+        self._text.setFont(font)
+
+    @property
+    def zoom(self) -> int:
+        return self._zoom
+
+    def _allow_sender(self) -> None:
+        if self._sender:
+            self.allowed_senders.add(self._sender)
+            self.sender_allowed.emit(self._sender)
+        self._show_remote_content()
 
     def _show_remote_content(self) -> None:
         self._blocker.allow_remote = True

@@ -1,138 +1,428 @@
-from dataclasses import dataclass
+import json
+from collections.abc import Callable
+from typing import override
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QSettings, Qt, Signal
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
+    QKeySequenceEdit,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
-    QTabWidget,
+    QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.ui import prefs
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.columns import DEFAULT_COLUMNS, valid_columns
+from chrono_mail.ui.columnsdialog import DATE_STYLES, LAYOUTS, READING_PANES, ColumnsDialog, ListChoice
+from chrono_mail.ui.recoverydialog import RecoveryDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.31"
+__version__ = "settingsdialog.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: pages for the message list, reading, composing, security and storage and the keyboard
 # v0.0.31: the account type is shown
 # v0.0.24: Rich text composing
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Initial settings window
 
 ROLE_ACCOUNT: int = 256
+MARK_READ_LABELS: tuple[tuple[str, str], ...] = (
+    ("delay", "A moment after I select it"), ("window", "Only when I open it in a window of its own"), ("never", "Never by itself (I mark messages)"),
+)
+QUOTE_LABELS: tuple[tuple[str, str], ...] = (("above", "My answer above the quoted text"), ("below", "My answer below the quoted text"), ("none", "Do not quote the original"))
+DENSITY_LABELS: tuple[tuple[str, str], ...] = (("compact", "Compact"), ("normal", "Normal"), ("roomy", "Roomy"))
 
 
-@dataclass(frozen=True, slots=True)
-class GeneralSettings:
-    auto_check: bool = True
-    auto_check_minutes: int = 5
-    conversations: bool = False
-    notifications: bool = True
-    tray: bool = True
-    close_to_tray: bool = False
-    compose_html: bool = False
+def _combo(parent: QWidget, choices: tuple[tuple[str, str], ...], current: str) -> QComboBox:
+    box = QComboBox(parent)
+    for value, label in choices:
+        box.addItem(label, value)
+    box.setCurrentIndex(max(0, box.findData(current)))
+    return box
 
 
 class SettingsDialog(QDialog):
-    """The settings window: how the program behaves (General) and the accounts (add, change, remove)."""
+    """The settings window: pages for how the program behaves, how the list and the messages look, writing, the accounts,
+    the safety of the stored mail and the keyboard. Nothing is changed until OK; OK writes everything to the settings."""
 
     accounts_changed = Signal()
     add_account_requested = Signal()
+    restore_key_requested = Signal()
 
-    def __init__(self, backend: Backend, general: GeneralSettings, tray_available: bool = True, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, backend: Backend, settings: QSettings, tray_available: bool = True, shortcut_actions: dict[str, tuple[str, str]] | None = None, parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
+        self._settings: QSettings = settings
+        self._columns: tuple[str, ...] = valid_columns([part for part in str(settings.value("columns", "")).split(",") if part])
+        self._shortcut_actions: dict[str, tuple[str, str]] = shortcut_actions or {}
         self.setWindowTitle("Settings")
-        self.setMinimumSize(520, 380)
-        layout = QVBoxLayout(self)
-        self.tabs = QTabWidget(self)
-        layout.addWidget(self.tabs)
-
-        page = QWidget(self)
-        form = QFormLayout(page)
-        self.auto_check = QCheckBox("Check for new mail automatically", page)
-        self.auto_check.setChecked(general.auto_check)
-        self.interval = QSpinBox(page)
-        self.interval.setRange(1, 240)
-        self.interval.setSuffix(" minutes")
-        self.interval.setValue(general.auto_check_minutes)
-        self.interval.setEnabled(general.auto_check)
-        self.conversations = QCheckBox("Show messages grouped as conversations", page)
-        self.conversations.setChecked(general.conversations)
-        form.addRow(self.auto_check)
-        form.addRow("Check every", self.interval)
-        form.addRow(self.conversations)
-        self.compose_html = QCheckBox("Write new messages as rich text (bold, lists, links; sent as text and HTML)", page)
-        self.compose_html.setChecked(general.compose_html)
-        form.addRow(self.compose_html)
-        self.notifications = QCheckBox("Show a notification when new mail arrives (only the number, never the content)", page)
-        self.notifications.setChecked(general.notifications)
-        self.tray = QCheckBox("Show an icon in the notification area", page)
-        self.tray.setChecked(general.tray and tray_available)
-        self.close_to_tray = QCheckBox("Closing the window keeps Chrono Mail running in the notification area", page)
-        self.close_to_tray.setChecked(general.close_to_tray and tray_available)
-        for widget in (self.notifications, self.tray, self.close_to_tray):
-            form.addRow(widget)
-        if not tray_available:
-            self.tray.setEnabled(False)
-            self.close_to_tray.setEnabled(False)
-            self.notifications.setEnabled(False)
-            form.addRow(QLabel("This desktop has no notification area, so there are no icon and no notifications.", page))
-        self.tray.toggled.connect(self._tray_toggled)
-        self._tray_toggled(self.tray.isChecked())
-        self.auto_check.toggled.connect(self.interval.setEnabled)
-        self.tabs.addTab(page, "General")
-
-        accounts_page = QWidget(self)
-        accounts_layout = QHBoxLayout(accounts_page)
-        self.accounts = QListWidget(accounts_page)
-        accounts_layout.addWidget(self.accounts, 1)
-        side = QVBoxLayout()
-        self.add_button = QPushButton("Add…", accounts_page)
-        self.edit_button = QPushButton("Change…", accounts_page)
-        self.remove_button = QPushButton("Remove…", accounts_page)
-        for button in (self.add_button, self.edit_button, self.remove_button):
-            side.addWidget(button)
-        side.addStretch(1)
-        accounts_layout.addLayout(side)
-        self.tabs.addTab(accounts_page, "Accounts")
+        self.setMinimumSize(760, 520)
+        outer = QVBoxLayout(self)
+        body = QHBoxLayout()
+        self.sidebar = QListWidget(self)
+        self.sidebar.setFixedWidth(190)
+        self.pages = QStackedWidget(self)
+        body.addWidget(self.sidebar)
+        body.addWidget(self.pages, 1)
+        outer.addLayout(body, 1)
         self.status = QLabel("", self)
-        layout.addWidget(self.status)
-
+        self.status.setWordWrap(True)
+        outer.addWidget(self.status)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self.add_button.clicked.connect(self.add_account_requested)
-        self.edit_button.clicked.connect(self.edit_selected)
-        self.remove_button.clicked.connect(self.remove_selected)
-        self.accounts.itemDoubleClicked.connect(self._double_clicked)
-        self.accounts.currentItemChanged.connect(self._selection_changed)
+        outer.addWidget(buttons)
+        self._add_page("General", self._general_page(tray_available))
+        self._add_page("Message list", self._list_page())
+        self._add_page("Reading", self._reading_page())
+        self._add_page("Writing", self._writing_page())
+        self._add_page("Accounts", self._accounts_page())
+        self._add_page("Security and storage", self._security_page())
+        self._add_page("Keyboard", self._keyboard_page())
+        self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.sidebar.setCurrentRow(0)
         self.reload()
+
+    def _add_page(self, title: str, page: QWidget) -> None:
+        self.sidebar.addItem(QListWidgetItem(title))
+        self.pages.addWidget(page)
+
+    def show_page(self, title: str) -> None:
+        for row in range(self.sidebar.count()):
+            if self.sidebar.item(row).text() == title:
+                self.sidebar.setCurrentRow(row)
+
+    # --- the pages --------------------------------------------------------------------------------------------------
+
+    def _general_page(self, tray_available: bool) -> QWidget:
+        s = self._settings
+        page = QWidget(self)
+        form = QFormLayout(page)
+        self.check_on_start = QCheckBox("Check for new mail when the program starts", page)
+        self.check_on_start.setChecked(prefs.get_bool(s, "check_on_start"))
+        self.auto_check = QCheckBox("Check for new mail automatically", page)
+        self.auto_check.setChecked(prefs.get_bool(s, "auto_check"))
+        self.interval = QSpinBox(page)
+        self.interval.setRange(1, 240)
+        self.interval.setSuffix(" minutes")
+        self.interval.setValue(prefs.get_int(s, "auto_check_minutes", 1, 240))
+        self.interval.setEnabled(self.auto_check.isChecked())
+        self.notifications = QCheckBox("Show a notification when new mail arrives (only the number, never the content)", page)
+        self.notifications.setChecked(prefs.get_bool(s, "notifications"))
+        self.tray = QCheckBox("Show an icon in the notification area", page)
+        self.tray.setChecked(prefs.get_bool(s, "tray") and tray_available)
+        self.close_to_tray = QCheckBox("Closing the window keeps Chrono Mail running in the notification area", page)
+        self.close_to_tray.setChecked(prefs.get_bool(s, "close_to_tray") and tray_available)
+        for widget in (self.check_on_start, self.auto_check):
+            form.addRow(widget)
+        form.addRow("Check every", self.interval)
+        for widget in (self.notifications, self.tray, self.close_to_tray):
+            form.addRow(widget)
+        if not tray_available:
+            for widget in (self.tray, self.close_to_tray, self.notifications):
+                widget.setEnabled(False)
+            form.addRow(QLabel("This desktop has no notification area, so there are no icon and no notifications.", page))
+        form.addRow(QLabel("Language: the program is in English; dates and times follow the language of the system.", page))
+        self.tray.toggled.connect(self._tray_toggled)
+        self._tray_toggled(self.tray.isChecked())
+        self.auto_check.toggled.connect(self.interval.setEnabled)
+        return page
 
     def _tray_toggled(self, on: bool) -> None:
         if not on:
             self.close_to_tray.setChecked(False)
         self.close_to_tray.setEnabled(on and self.tray.isEnabled())
 
-    def general(self) -> GeneralSettings:
-        return GeneralSettings(
-            self.auto_check.isChecked(), self.interval.value(), self.conversations.isChecked(),
-            self.notifications.isChecked(), self.tray.isChecked(), self.close_to_tray.isChecked(), self.compose_html.isChecked(),
+    def _list_page(self) -> QWidget:
+        s = self._settings
+        page = QWidget(self)
+        form = QFormLayout(page)
+        self.layout_box = _combo(page, LAYOUTS, prefs.get_text(s, "list_layout", ("columns", "cards")))
+        self.pane_box = _combo(page, READING_PANES, prefs.get_text(s, "reading_pane", ("right", "bottom", "off")))
+        self.date_box = _combo(page, DATE_STYLES, prefs.get_text(s, "date_style", ("short", "full", "iso")))
+        self.density_box = _combo(page, DENSITY_LABELS, prefs.get_text(s, "list_density", prefs.DENSITIES))
+        self.list_font = QSpinBox(page)
+        self.list_font.setRange(0, 24)
+        self.list_font.setSpecialValueText("System size")
+        self.list_font.setSuffix(" pt")
+        self.list_font.setValue(prefs.get_int(s, "list_font_size", 0, 24))
+        self.conversations = QCheckBox("Show messages grouped as conversations", page)
+        self.conversations.setChecked(prefs.get_bool(s, "conversations"))
+        self.columns_label = QLabel("", page)
+        self.columns_button = QPushButton("Choose the columns…", page)
+        form.addRow("Layout", self.layout_box)
+        form.addRow("Reading pane", self.pane_box)
+        form.addRow("Dates", self.date_box)
+        form.addRow("Row height", self.density_box)
+        form.addRow("Text size in the list", self.list_font)
+        form.addRow(self.conversations)
+        form.addRow("Columns", self.columns_label)
+        form.addRow("", self.columns_button)
+        self.columns_button.clicked.connect(self._choose_columns)
+        self._show_columns()
+        return page
+
+    def _show_columns(self) -> None:
+        from chrono_mail.ui.columns import BY_ID
+
+        self.columns_label.setText(", ".join(BY_ID[column_id].label for column_id in self._columns))
+
+    def _choose_columns(self) -> None:
+        dialog = ColumnsDialog(
+            ListChoice(str(self.layout_box.currentData()), self._columns, str(self.pane_box.currentData()), str(self.date_box.currentData())), self
         )
+        if dialog.exec() == ColumnsDialog.DialogCode.Accepted:
+            choice = dialog.choice()
+            self._columns = choice.columns
+            self.layout_box.setCurrentIndex(max(0, self.layout_box.findData(choice.layout)))
+            self.pane_box.setCurrentIndex(max(0, self.pane_box.findData(choice.reading_pane)))
+            self.date_box.setCurrentIndex(max(0, self.date_box.findData(choice.date_style)))
+            self._show_columns()
+
+    def _reading_page(self) -> QWidget:
+        s = self._settings
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        form = QFormLayout()
+        self.mark_read_box = _combo(page, MARK_READ_LABELS, prefs.get_text(s, "mark_read", prefs.MARK_READ))
+        self.mark_read_delay = QSpinBox(page)
+        self.mark_read_delay.setRange(0, 10_000)
+        self.mark_read_delay.setSingleStep(100)
+        self.mark_read_delay.setSuffix(" ms")
+        self.mark_read_delay.setValue(prefs.get_int(s, "mark_read_delay_ms", 0, 10_000))
+        self.zoom = QSpinBox(page)
+        self.zoom.setRange(50, 300)
+        self.zoom.setSuffix(" %")
+        self.zoom.setValue(prefs.get_int(s, "reader_zoom", 50, 300))
+        self.prefer_plain = QCheckBox("Show the plain text of a message that has both text and HTML", page)
+        self.prefer_plain.setChecked(prefs.get_bool(s, "prefer_plain"))
+        self.links_ask = QCheckBox("Ask before opening a link in the web browser", page)
+        self.links_ask.setChecked(prefs.get_bool(s, "links_ask"))
+        form.addRow("Mark a message as read", self.mark_read_box)
+        form.addRow("…after", self.mark_read_delay)
+        form.addRow("Text size of messages", self.zoom)
+        form.addRow(self.prefer_plain)
+        form.addRow(self.links_ask)
+        layout.addLayout(form)
+        privacy = QGroupBox("Pictures and other content from the internet", page)
+        privacy_layout = QVBoxLayout(privacy)
+        self.remote_always = QCheckBox("Always show it, for every sender (tells senders that you read their message)", privacy)
+        self.remote_always.setChecked(prefs.get_bool(s, "remote_always"))
+        privacy_layout.addWidget(self.remote_always)
+        privacy_layout.addWidget(QLabel("Senders whose content is always shown (one address per line):", privacy))
+        self.remote_senders = QPlainTextEdit(privacy)
+        self.remote_senders.setPlainText("\n".join(sorted(prefs.allowed_senders(s))))
+        privacy_layout.addWidget(self.remote_senders)
+        self.forget_senders_button = QPushButton("Forget all allowed senders", privacy)
+        privacy_layout.addWidget(self.forget_senders_button)
+        self.forget_senders_button.clicked.connect(self.remote_senders.clear)
+        layout.addWidget(privacy, 1)
+        self.mark_read_box.currentIndexChanged.connect(self._mark_read_changed)
+        self._mark_read_changed()
+        return page
+
+    def _mark_read_changed(self) -> None:
+        self.mark_read_delay.setEnabled(str(self.mark_read_box.currentData()) == "delay")
+
+    def _writing_page(self) -> QWidget:
+        s = self._settings
+        page = QWidget(self)
+        form = QFormLayout(page)
+        self.default_account = QComboBox(page)
+        self.default_account.addItem("The account of the folder I am in", "")
+        self.compose_html = QCheckBox("Write new messages as rich text (bold, lists, links; sent as text and HTML)", page)
+        self.compose_html.setChecked(prefs.get_bool(s, "compose_html"))
+        self.reply_quote_box = _combo(page, QUOTE_LABELS, prefs.get_text(s, "reply_quote", prefs.REPLY_QUOTES))
+        self.autosave = QSpinBox(page)
+        self.autosave.setRange(0, 600)
+        self.autosave.setSpecialValueText("Never")
+        self.autosave.setSuffix(" seconds")
+        self.autosave.setValue(prefs.get_int(s, "autosave_seconds", 0, 600))
+        self.warn_no_subject = QCheckBox("Ask before sending a message without a subject", page)
+        self.warn_no_subject.setChecked(prefs.get_bool(s, "warn_no_subject"))
+        self.compose_font = QSpinBox(page)
+        self.compose_font.setRange(0, 24)
+        self.compose_font.setSpecialValueText("System size")
+        self.compose_font.setSuffix(" pt")
+        self.compose_font.setValue(prefs.get_int(s, "compose_font_size", 0, 24))
+        form.addRow("New messages are sent from", self.default_account)
+        form.addRow(self.compose_html)
+        form.addRow("Replies", self.reply_quote_box)
+        form.addRow("Save a draft every", self.autosave)
+        form.addRow(self.warn_no_subject)
+        form.addRow("Text size when writing", self.compose_font)
+        form.addRow(QLabel("The signature of each account is set under Accounts.", page))
+        return page
+
+    def _accounts_page(self) -> QWidget:
+        page = QWidget(self)
+        layout = QHBoxLayout(page)
+        self.accounts = QListWidget(page)
+        layout.addWidget(self.accounts, 1)
+        side = QVBoxLayout()
+        self.add_button = QPushButton("Add…", page)
+        self.edit_button = QPushButton("Change…", page)
+        self.remove_button = QPushButton("Remove…", page)
+        for button in (self.add_button, self.edit_button, self.remove_button):
+            side.addWidget(button)
+        side.addStretch(1)
+        layout.addLayout(side)
+        self.add_button.clicked.connect(self.add_account_requested)
+        self.edit_button.clicked.connect(self.edit_selected)
+        self.remove_button.clicked.connect(self.remove_selected)
+        self.accounts.itemDoubleClicked.connect(self._double_clicked)
+        self.accounts.currentItemChanged.connect(self._selection_changed)
+        return page
+
+    def _security_page(self) -> QWidget:
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        directories = self._backend.engine.directories
+        self.key_label = QLabel("", page)
+        self.key_label.setWordWrap(True)
+        layout.addWidget(QLabel(f"Your mail is stored encrypted in:<br><b>{directories.data_directory}</b><br>Settings: <b>{directories.config_directory}</b>", page))
+        layout.addWidget(self.key_label)
+        row = QHBoxLayout()
+        self.recovery_button = QPushButton("Show the recovery code…", page)
+        self.restore_button = QPushButton("Restore the key…", page)
+        row.addWidget(self.recovery_button)
+        row.addWidget(self.restore_button)
+        row.addStretch(1)
+        layout.addLayout(row)
+        maintenance = QGroupBox("Maintenance", page)
+        maintenance_layout = QVBoxLayout(maintenance)
+        self.verify_button = QPushButton("Check that all stored mail can be read", maintenance)
+        self.rebuild_button = QPushButton("Rebuild the search index", maintenance)
+        self.maintenance_label = QLabel("", maintenance)
+        self.maintenance_label.setWordWrap(True)
+        for widget in (self.verify_button, self.rebuild_button, self.maintenance_label):
+            maintenance_layout.addWidget(widget)
+        layout.addWidget(maintenance)
+        layout.addStretch(1)
+        self.recovery_button.clicked.connect(lambda: RecoveryDialog(self._backend, self).exec())
+        self.restore_button.clicked.connect(self.restore_key_requested)
+        self.verify_button.clicked.connect(lambda: self._maintain("store.verify", "Checking"))
+        self.rebuild_button.clicked.connect(lambda: self._maintain("index.rebuild", "Rebuilding"))
+        self._backend.call("key.status", {}, self._key_status, lambda error: self.key_label.setText(str(error)), owner=self)
+        return page
+
+    def _key_status(self, result: object) -> None:
+        if getattr(result, "key_id") is None:
+            self.key_label.setText("No account uses an encryption key.")
+        elif getattr(result, "in_credential_store"):
+            self.key_label.setText("The encryption key is in this computer's credential store. Keep a copy of the recovery code somewhere safe: without the key the mail cannot be read.")
+        else:
+            self.key_label.setText("<span style='color:#c0392b'>The encryption key is NOT in the credential store. Use “Restore the key…”.</span>")
+
+    def _maintain(self, command: str, verb: str) -> None:
+        self.verify_button.setEnabled(False)
+        self.rebuild_button.setEnabled(False)
+        self.maintenance_label.setText(f"{verb}…")
+        report: list[str] = []
+
+        def finished() -> None:
+            self.verify_button.setEnabled(True)
+            self.rebuild_button.setEnabled(True)
+            self.maintenance_label.setText("<br>".join(report) or "No accounts.")
+
+        def listed(result: object) -> None:
+            accounts = [str(getattr(account, "account_id")) for account in (result if isinstance(result, (tuple, list)) else [])]
+            names = {str(getattr(account, "account_id")): str(getattr(account, "email_address")) for account in (result if isinstance(result, (tuple, list)) else [])}
+            if not accounts:
+                finished()
+                return
+            remaining = list(accounts)
+
+            def make_done(account: str) -> Callable[[object], None]:
+                def done(outcome: object) -> None:
+                    if command == "store.verify":
+                        damaged = tuple(getattr(outcome, "damaged"))
+                        report.append(f"{names[account]}: {getattr(outcome, 'checked')} messages checked, " + (f"<span style='color:#c0392b'>{len(damaged)} damaged</span>" if damaged else "all can be read"))
+                    else:
+                        report.append(f"{names[account]}: {getattr(outcome, 'messages')} messages indexed")
+                    remaining.remove(account)
+                    if not remaining:
+                        finished()
+
+                return done
+
+            def make_failed(account: str) -> Callable[[ChronoMailError], None]:
+                def failed(error: ChronoMailError) -> None:
+                    report.append(f"{names[account]}: <span style='color:#c0392b'>{error}</span>")
+                    remaining.remove(account)
+                    if not remaining:
+                        finished()
+
+                return failed
+
+            for account in accounts:
+                self._backend.call(command, {"account": account}, make_done(account), make_failed(account), owner=self)
+
+        self._backend.call("account.list", {}, listed, lambda error: finished(), owner=self)
+
+    def _keyboard_page(self) -> QWidget:
+        page = QWidget(self)
+        layout = QVBoxLayout(page)
+        layout.addWidget(QLabel("Click a key field and press the keys you want; Backspace or Delete empties it.", page))
+        self.shortcut_table = QTableWidget(len(self._shortcut_actions), 2, page)
+        self.shortcut_table.setHorizontalHeaderLabels(["Action", "Keys"])
+        self.shortcut_table.verticalHeader().hide()
+        self.shortcut_table.horizontalHeader().setStretchLastSection(True)
+        self.shortcut_table.setColumnWidth(0, 300)
+        self.shortcut_edits: dict[str, QKeySequenceEdit] = {}
+        chosen = prefs.shortcuts(self._settings)
+        for row, (action_id, (label, default)) in enumerate(sorted(self._shortcut_actions.items(), key=lambda item: item[1][0].lower())):
+            item = QTableWidgetItem(label.replace("&", ""))
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            item.setData(Qt.ItemDataRole.UserRole, action_id)
+            self.shortcut_table.setItem(row, 0, item)
+            edit = QKeySequenceEdit(QKeySequence(chosen.get(action_id, default)), self.shortcut_table)
+            self.shortcut_table.setCellWidget(row, 1, edit)
+            self.shortcut_edits[action_id] = edit
+        layout.addWidget(self.shortcut_table, 1)
+        self.shortcut_note = QLabel("", page)
+        layout.addWidget(self.shortcut_note)
+        self.reset_keys_button = QPushButton("Standard keys", page)
+        layout.addWidget(self.reset_keys_button)
+        self.reset_keys_button.clicked.connect(self._reset_keys)
+        return page
+
+    def _reset_keys(self) -> None:
+        for action_id, edit in self.shortcut_edits.items():
+            edit.setKeySequence(QKeySequence(self._shortcut_actions[action_id][1]))
+
+    def shortcut_values(self) -> dict[str, str]:
+        return {action_id: edit.keySequence().toString() for action_id, edit in self.shortcut_edits.items()}
+
+    def shortcut_conflicts(self) -> list[str]:
+        """Keys given to more than one action."""
+        used: dict[str, list[str]] = {}
+        for action_id, keys in self.shortcut_values().items():
+            if keys:
+                used.setdefault(keys, []).append(self._shortcut_actions[action_id][0].replace("&", ""))
+        return [f"{keys}: {', '.join(names)}" for keys, names in used.items() if len(names) > 1]
 
     # --- accounts -----------------------------------------------------------------------------------------
 
@@ -142,13 +432,18 @@ class SettingsDialog(QDialog):
 
         def listed(result: object) -> None:
             self.accounts.clear()
+            keep = str(self.default_account.currentData() or self._settings.value("default_account", ""))
+            self.default_account.clear()
+            self.default_account.addItem("The account of the folder I am in", "")
             for account in list(result) if isinstance(result, (tuple, list)) else []:
                 kind = "IMAP" if str(getattr(account, "kind", "pop3")) == "imap" else "POP3"
                 item = QListWidgetItem(f"{getattr(account, 'display_name')}  <{getattr(account, 'email_address')}>  ({kind})")
                 item.setData(ROLE_ACCOUNT, account)
                 self.accounts.addItem(item)
+                self.default_account.addItem(str(getattr(account, "email_address")), str(getattr(account, "account_id")))
                 if str(getattr(account, "account_id")) == selected:
                     self.accounts.setCurrentItem(item)
+            self.default_account.setCurrentIndex(max(0, self.default_account.findData(keep)))
             if self.accounts.count() and self.accounts.currentRow() < 0:
                 self.accounts.setCurrentRow(0)
             self._selection_changed()
@@ -204,3 +499,36 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "Remove account", f"The account could not be removed: {error}")
 
         self._backend.call("account.remove", {"account": str(getattr(account, "account_id"))}, done, failed, owner=self)
+
+    # --- saving -----------------------------------------------------------------------------------------------------
+
+    def values(self) -> dict[str, object]:
+        """Every setting of the dialog under its key in the settings file."""
+        senders = sorted({line.strip().lower() for line in self.remote_senders.toPlainText().splitlines() if "@" in line})
+        return {
+            "check_on_start": self.check_on_start.isChecked(), "auto_check": self.auto_check.isChecked(), "auto_check_minutes": self.interval.value(),
+            "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
+            "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
+            "list_density": str(self.density_box.currentData()), "list_font_size": self.list_font.value(), "conversations": self.conversations.isChecked(),
+            "columns": ",".join(self._columns or DEFAULT_COLUMNS),
+            "mark_read": str(self.mark_read_box.currentData()), "mark_read_delay_ms": self.mark_read_delay.value(), "reader_zoom": self.zoom.value(),
+            "prefer_plain": self.prefer_plain.isChecked(), "remote_always": self.remote_always.isChecked(), "remote_senders": "\n".join(senders),
+            "links_ask": self.links_ask.isChecked(),
+            "default_account": str(self.default_account.currentData() or ""), "compose_html": self.compose_html.isChecked(),
+            "reply_quote": str(self.reply_quote_box.currentData()), "autosave_seconds": self.autosave.value(),
+            "warn_no_subject": self.warn_no_subject.isChecked(), "compose_font_size": self.compose_font.value(),
+            "shortcuts": json.dumps({action_id: keys for action_id, keys in self.shortcut_values().items() if keys != self._shortcut_actions[action_id][1]}),
+        }
+
+    def save(self) -> None:
+        for key, value in self.values().items():
+            self._settings.setValue(key, value)
+
+    @override
+    def accept(self) -> None:
+        conflicts = self.shortcut_conflicts()
+        if conflicts:
+            self.show_page("Keyboard")
+            self.shortcut_note.setText("<span style='color:#c0392b'>The same keys are used twice: " + "; ".join(conflicts) + "</span>")
+            return
+        super().accept()

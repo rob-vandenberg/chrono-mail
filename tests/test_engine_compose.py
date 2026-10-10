@@ -6,9 +6,10 @@ from chrono_mail.engine.compose import ComposeKind, build_draft, subject_for
 from chrono_mail.mime import Address, Attachment, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_compose.py 0.0.13"
+__version__ = "test_engine_compose.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Settings window with pages for everything
 # v0.0.13: Initial reply and forward draft tests
 
 ME = "me@example.com"
@@ -95,3 +96,15 @@ def test_hostile_text_does_not_break_the_draft() -> None:
     nasty = "\x00\r\n> ".join(["a" * 5000] * 3)
     draft = build_draft(message(text_body=nasty, subject="x\x00y"), "reply", ME)
     assert isinstance(draft.body, str) and draft.subject == "Re: x\x00y"
+
+
+def test_the_quote_style_of_a_reply() -> None:
+    original = message(text_body="line one\nline two\n")
+    above = build_draft(original, "reply", "me@example.com")
+    below = build_draft(original, "reply", "me@example.com", "below")
+    none = build_draft(original, "reply", "me@example.com", "none")
+    assert above.body.startswith("\n\n") and "> line one" in above.body and above.body == build_draft(original, "reply", "me@example.com", "above").body
+    assert not below.body.startswith("\n") and below.body.endswith("\n\n\n") and "> line two" in below.body
+    assert none.body == "\n\n" and "> " not in none.body
+    forward = build_draft(original, "forward", "me@example.com", "none")
+    assert "Forwarded message" in forward.body  # the style is for replies only

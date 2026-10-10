@@ -5,20 +5,23 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.config import ServerRole
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.accountedit import AccountEditDialog
-from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
+from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 0.0.31"
+__version__ = "test_ui_settings.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Settings window with pages for everything
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Initial settings window tests
 
 
-def open_settings(world: World, qtbot: QtBot, general: GeneralSettings | None = None) -> SettingsDialog:
-    dialog = SettingsDialog(world.backend, general or GeneralSettings())
+def open_settings(world: World, qtbot: QtBot, **chosen: object) -> SettingsDialog:
+    for key, value in chosen.items():
+        world.window.settings.setValue(key, value)
+    dialog = SettingsDialog(world.backend, world.window.settings)
     qtbot.addWidget(dialog)
     dialog.show()
     wait(qtbot, lambda: dialog.accounts.count() == 1)
@@ -26,13 +29,14 @@ def open_settings(world: World, qtbot: QtBot, general: GeneralSettings | None = 
 
 
 def test_the_settings_list_the_accounts_and_return_the_general_choices(world: World, qtbot: QtBot) -> None:
-    dialog = open_settings(world, qtbot, GeneralSettings(False, 12, True))
+    dialog = open_settings(world, qtbot, auto_check=False, auto_check_minutes=12, conversations=True)
     assert "me@example.com" in dialog.accounts.item(0).text()
     assert dialog.accounts.currentRow() == 0 and dialog.edit_button.isEnabled() and dialog.remove_button.isEnabled()
     assert not dialog.auto_check.isChecked() and not dialog.interval.isEnabled() and dialog.interval.value() == 12 and dialog.conversations.isChecked()
     dialog.auto_check.setChecked(True)
     dialog.interval.setValue(30)
-    assert dialog.interval.isEnabled() and dialog.general() == GeneralSettings(True, 30, True)
+    values = dialog.values()
+    assert dialog.interval.isEnabled() and values["auto_check"] is True and values["auto_check_minutes"] == 30 and values["conversations"] is True
 
 
 def test_changing_an_account_sends_only_the_differences(world: World, qtbot: QtBot) -> None:
@@ -146,7 +150,7 @@ def test_adding_an_account_from_the_settings_runs_the_normal_dialog(world: World
         return QDialog.DialogCode.Rejected
 
     monkeypatch.setattr(AccountDialog, "exec", fake_add_exec)
-    dialog = SettingsDialog(world.backend, GeneralSettings(), True, world.window)
+    dialog = SettingsDialog(world.backend, world.window.settings, True, None, world.window)
     qtbot.addWidget(dialog)
     dialog.add_account_requested.connect(lambda: world.window.add_account(after=dialog.reload))
     dialog.add_button.click()

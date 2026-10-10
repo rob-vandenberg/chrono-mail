@@ -8,6 +8,7 @@ from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, 
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QHeaderView,
     QStyledItemDelegate,
     QComboBox,
@@ -34,7 +35,8 @@ from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import BY_ID, CARD, DEFAULT_COLUMNS, column_widths, valid_columns
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
-from chrono_mail.ui.composer import ComposeWindow
+from chrono_mail.ui import prefs
+from chrono_mail.ui.composer import ComposeOptions, ComposeWindow
 from chrono_mail.ui.conversationbar import ConversationBar
 from chrono_mail.ui.delegate import MessageDelegate
 from chrono_mail.ui.foldertree import FolderTree
@@ -56,15 +58,16 @@ from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from chrono_mail.ui.rulesdialog import RulesDialog
 from chrono_mail.ui.printing import print_message
 from chrono_mail.ui.scheduleddialog import ScheduledDialog
-from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
+from chrono_mail.ui.settingsdialog import SettingsDialog
 from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.41"
+__version__ = "mainwindow.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Settings window with pages for everything
 # v0.0.41: Message list as columns, column editor, reading pane position, message windows
 # v0.0.35: Send later and snooze
 # v0.0.34: Junk and unread navigation
@@ -88,7 +91,6 @@ AUTO_CHECK_MINUTES: int = 5
 DUE_CHECK_MS: int = 60_000
 WATCH_SECONDS: int = 300
 WATCH_RETRY_MS: int = 60_000
-MARK_READ_DELAY_MS: int = 700
 SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Date"), ("subject", "Subject"), ("sender", "Sender"), ("size", "Size"))
 _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-outbox", "drafts": "document-edit", "trash": "user-trash", "junk": "mail-mark-junk", "archive": "folder-archive", "other": "folder"}
 
@@ -135,11 +137,15 @@ class MainWindow(QMainWindow):
         self._checking: bool = False
         self._build_widgets()
         self._build_actions()
+        self._default_shortcuts: dict[str, str] = {name: action.shortcut().toString() for name, action in vars(self).items() if name.startswith("act_") and isinstance(action, QAction)}
         self._build_toolbar()
         self._build_menus()
         self._build_status()
         self._apply_list_layout()
+        self._apply_list_look()
         self._apply_reading_pane()
+        self._apply_reader_preferences()
+        self._apply_shortcuts()
         self._wire()
         self._restore_state()
         self._quitting: bool = False
@@ -444,6 +450,7 @@ class MainWindow(QMainWindow):
         self.list_view.header().sectionClicked.connect(self._header_clicked)
         self.list_view.header().sectionMoved.connect(self._columns_moved)
         self.list_view.header().sectionResized.connect(self._column_resized)
+        self.reader.sender_allowed.connect(self._sender_allowed)
         self.list_view.header().customContextMenuRequested.connect(self._header_menu)
         self.list_model.counts_changed.connect(self._counts_changed)
         self.list_model.load_failed.connect(self._load_failed)
@@ -521,8 +528,8 @@ class MainWindow(QMainWindow):
                 return
             self._shown = (account, folder, message_id)
             self.reader.show_message(result)
-            if not seen:
-                self._mark_read_timer.start(MARK_READ_DELAY_MS)
+            if not seen and self._mark_read_mode() == "delay":
+                self._mark_read_timer.start(prefs.get_int(self.settings, "mark_read_delay_ms", 0, 10_000))
 
         def failed(error: ChronoMailError) -> None:
             if request == self._show_request:
@@ -689,28 +696,74 @@ class MainWindow(QMainWindow):
         if dialog.ran:
             self._after_change("Rules applied")
 
+    def _shortcut_registry(self) -> dict[str, tuple[str, str]]:
+        """Every action that can be given keys: its name, the text, and the standard keys."""
+        return {name[4:]: (action.text(), self._default_shortcuts.get(name, "")) for name, action in vars(self).items() if name.startswith("act_") and isinstance(action, QAction)}
+
     def open_settings(self) -> None:
-        """File > Settings: the way the program behaves, and the accounts."""
-        dialog = SettingsDialog(self.backend, GeneralSettings(
-            self.act_auto.isChecked(), self._auto_minutes(), self.act_conversations.isChecked(),
-            bool_setting(self.settings, "notifications", True), bool_setting(self.settings, "tray", True), bool_setting(self.settings, "close_to_tray", False),
-            bool_setting(self.settings, "compose_html", False),
-        ), self.tray.available, self)
+        """File > Settings: the way the program behaves, how it looks, writing, the accounts, the keys and the safety of the mail."""
+        dialog = SettingsDialog(self.backend, self.settings, self.tray.available, self._shortcut_registry(), self)
         dialog.add_account_requested.connect(lambda: self.add_account(after=dialog.reload))
         dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False))
+        dialog.restore_key_requested.connect(self.restore_key)
         if dialog.exec() != SettingsDialog.DialogCode.Accepted:
             return
-        wanted = dialog.general()
-        self.settings.setValue("auto_check_minutes", wanted.auto_check_minutes)
-        self.settings.setValue("notifications", wanted.notifications)
-        self.settings.setValue("tray", wanted.tray)
-        self.settings.setValue("close_to_tray", wanted.close_to_tray)
-        self.settings.setValue("compose_html", wanted.compose_html)
-        self.tray.set_visible(wanted.tray)
-        if wanted.auto_check and self.act_auto.isChecked():
-            self._timer.start(wanted.auto_check_minutes * 60 * 1000)  # a new interval
-        self.act_auto.setChecked(wanted.auto_check)
-        self.act_conversations.setChecked(wanted.conversations)
+        dialog.save()
+        self.apply_preferences()
+
+    def apply_preferences(self) -> None:
+        """Take the settings (as they are in the settings file now) into use."""
+        settings = self.settings
+        self.tray.set_visible(prefs.get_bool(settings, "tray"))
+        minutes = self._auto_minutes()
+        auto = prefs.get_bool(settings, "auto_check")
+        if auto and self.act_auto.isChecked():
+            self._timer.start(minutes * 60 * 1000)  # a new interval
+        self.act_auto.setChecked(auto)
+        self.act_conversations.setChecked(prefs.get_bool(settings, "conversations"))
+        self._layout = prefs.get_text(settings, "list_layout", ("columns", "cards"))
+        self._columns = valid_columns([part for part in str(settings.value("columns", "")).split(",") if part])
+        self._date_style = prefs.get_text(settings, "date_style", ("short", "full", "iso"))
+        self._apply_list_layout()
+        self._apply_list_look()
+        self.set_reading_pane(prefs.get_text(settings, "reading_pane", ("right", "bottom", "off")))
+        self._apply_reader_preferences()
+        self._apply_shortcuts()
+
+    def _apply_list_look(self) -> None:
+        size = prefs.get_int(self.settings, "list_font_size", 0, 24)
+        font = QApplication.font()
+        if size > 0:
+            font.setPointSize(size)
+        self.list_view.setFont(font)
+        padding = {"compact": 0, "normal": 2, "roomy": 6}[prefs.get_text(self.settings, "list_density", prefs.DENSITIES)]
+        self.list_view.setStyleSheet(f"QTreeView::item {{ padding-top: {padding}px; padding-bottom: {padding}px; }}")
+
+    def _apply_reader_preferences(self) -> None:
+        for reader in (self.reader, *(window.reader for window in self._message_windows)):
+            reader.always_remote = prefs.get_bool(self.settings, "remote_always")
+            reader.allowed_senders = prefs.allowed_senders(self.settings)
+            reader.prefer_plain = prefs.get_bool(self.settings, "prefer_plain")
+            reader.set_zoom(prefs.get_int(self.settings, "reader_zoom", 50, 300))
+
+    def _sender_allowed(self, address: str) -> None:
+        senders = prefs.allowed_senders(self.settings) | {address.lower()}
+        self.settings.setValue("remote_senders", "\n".join(sorted(senders)))
+
+    def _apply_shortcuts(self) -> None:
+        chosen = prefs.shortcuts(self.settings)
+        for name, action in vars(self).items():
+            if name.startswith("act_") and isinstance(action, QAction) and name in self._default_shortcuts:
+                action.setShortcut(QKeySequence(chosen.get(name[4:], self._default_shortcuts[name])))
+
+    def _mark_read_mode(self) -> str:
+        return prefs.get_text(self.settings, "mark_read", prefs.MARK_READ)
+
+    def _compose_options(self) -> ComposeOptions:
+        return ComposeOptions(
+            prefs.get_int(self.settings, "autosave_seconds", 0, 600), prefs.get_bool(self.settings, "warn_no_subject"),
+            prefs.get_int(self.settings, "compose_font_size", 0, 24), prefs.get_text(self.settings, "reply_quote", prefs.REPLY_QUOTES) == "below",
+        )
 
     # --- status ---------------------------------------------------------------------------------------
 
@@ -1028,8 +1081,8 @@ class MainWindow(QMainWindow):
                 self._load_conversation(account, folder, message_id, request)
             else:
                 self.conversation_bar.clear()
-            if "seen" not in getattr(row, "flags"):
-                self._mark_read_timer.start(MARK_READ_DELAY_MS)
+            if "seen" not in getattr(row, "flags") and self._mark_read_mode() == "delay":
+                self._mark_read_timer.start(prefs.get_int(self.settings, "mark_read_delay_ms", 0, 10_000))
 
         def failed(error: ChronoMailError) -> None:
             if request == self._show_request:  # an answer for a message that is no longer the one being opened is of no interest
@@ -1275,10 +1328,12 @@ class MainWindow(QMainWindow):
     def new_message(self) -> None:
         if self._account_id is None:
             return
-        self._open_composer(self._account_id, None, None)
+        wanted = str(self.settings.value("default_account", ""))
+        known = {str(getattr(account, "account_id")) for account in self._accounts}
+        self._open_composer(wanted if wanted in known else self._account_id, None, None)
 
     def _open_composer(self, account_id: str, draft: object | None, source: tuple[str, str] | None, to: str = "", resume: tuple[str, str] | None = None) -> ComposeWindow:
-        window = ComposeWindow(self.backend, self._accounts, account_id, draft, source, resume, bool_setting(self.settings, "compose_html", False))
+        window = ComposeWindow(self.backend, self._accounts, account_id, draft, source, resume, bool_setting(self.settings, "compose_html", False), self._compose_options())
         if to:
             window.to.setText(to)
         window.sent.connect(self._after_sent)
@@ -1306,7 +1361,9 @@ class MainWindow(QMainWindow):
             self._message_windows.append(window)
             window.destroyed.connect(lambda: self._message_windows.remove(window) if window in self._message_windows else None)
             window.show()
-            self._set_flags([(folder, message_id)], {"seen": True}, account)
+            if self._mark_read_mode() != "never":
+                self._set_flags([(folder, message_id)], {"seen": True}, account)
+            self._apply_reader_preferences()
 
         self.backend.call("message.show", {"account": account, "folder": folder, "message": message_id}, shown, lambda error: self._report("Could not open the message", error), owner=self)
 
@@ -1314,7 +1371,10 @@ class MainWindow(QMainWindow):
         def drafted(result: object) -> None:
             self._open_composer(account, result, (folder, message_id))
 
-        self.backend.call("message.compose", {"account": account, "folder": folder, "message": message_id, "kind": kind}, drafted, lambda error: self._report("Could not start the message", error), owner=self)
+        self.backend.call(
+            "message.compose", {"account": account, "folder": folder, "message": message_id, "kind": kind, "quote": prefs.get_text(self.settings, "reply_quote", prefs.REPLY_QUOTES)},
+            drafted, lambda error: self._report("Could not start the message", error), owner=self,
+        )
 
     # --- the message list: layout, columns, reading pane -----------------------------------------------------------
 
@@ -1462,7 +1522,10 @@ class MainWindow(QMainWindow):
         def drafted(result: object) -> None:
             self._open_composer(account, result, (folder, message_id))
 
-        self.backend.call("message.compose", {"account": account, "folder": folder, "message": message_id, "kind": kind}, drafted, lambda error: self._report("Could not start the message", error), owner=self)
+        self.backend.call(
+            "message.compose", {"account": account, "folder": folder, "message": message_id, "kind": kind, "quote": prefs.get_text(self.settings, "reply_quote", prefs.REPLY_QUOTES)},
+            drafted, lambda error: self._report("Could not start the message", error), owner=self,
+        )
 
     def _after_sent(self, account_id: str = "") -> None:
         self._load_folders(select_saved=False)
@@ -1679,6 +1742,9 @@ class MainWindow(QMainWindow):
                 self._open_composer(self._account_id, None, None, to=url.path())
             return
         if url.scheme() not in ("http", "https"):
+            return
+        if not prefs.get_bool(self.settings, "links_ask"):
+            QDesktopServices.openUrl(url)
             return
         answer = QMessageBox.question(self, "Open link", f"Open this link in your web browser?\n\n{url.toString()}\n\nLinks in e-mail can lead to harmful sites. Only open it if you trust the sender.")
         if answer == QMessageBox.StandardButton.Yes:

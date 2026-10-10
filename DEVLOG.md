@@ -524,3 +524,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Column widths are saved per column id, not per folder; no per-folder layouts.
 
+## 2026-10-10 Settings pages (version 0.0.42)
+
+**What landed**
+- `ui/prefs.py`, a settings window with seven pages (D-057), `apply_preferences`, remote content per sender, plain text first, zoom, mark-as-read modes, link confirmation, default account, reply quote styles, autosave interval, subject warning, font sizes, key checks and rebuild from the window, editable keyboard shortcuts. `message.compose --quote`. Tests: 16 new.
+
+**Still open**
+- Certificate exceptions, per-account check intervals, which IMAP folders are shown, folder mapping.
+

@@ -24,9 +24,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.35"
+__version__ = "commands_mail.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Settings window with pages for everything
 # v0.0.35: Send later and snooze
 # v0.0.33: Rules
 # v0.0.31: IMAP accounts in the engine and the interface
@@ -587,6 +588,7 @@ class ComposeParameters:
     folder: str = field(metadata=option("The folder the message is in"))
     message: str = field(metadata=option("The message to reply to or forward"))
     kind: ComposeKind = field(default="reply", metadata=option("reply, reply_all or forward"))
+    quote: Literal["above", "below", "none"] = field(default="above", metadata=option("Replies: my text above the quote, below it, or no quote at all"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -606,7 +608,7 @@ def message_compose(engine: Engine, parameters: ComposeParameters) -> ComposeRes
     with open_mailbox(engine, parameters.account) as mailbox:
         reference = mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message))
         parsed = parse_message(mailbox.store.read(reference, hint=mailbox.hint(reference.store_id)))
-        draft = build_draft(parsed, parameters.kind, mailbox.settings.account.email_address)
+        draft = build_draft(parsed, parameters.kind, mailbox.settings.account.email_address, parameters.quote)
         return ComposeResult(draft.kind, draft.to, draft.cc, draft.subject, draft.body, draft.in_reply_to, draft.references, draft.attachment_names)
 
 

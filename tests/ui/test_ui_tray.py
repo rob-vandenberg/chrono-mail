@@ -5,15 +5,16 @@ from PySide6.QtWidgets import QDialog, QSystemTrayIcon
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui.mainwindow import MainWindow
-from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
+from chrono_mail.ui.settingsdialog import SettingsDialog
 from chrono_mail.ui.tray import TrayController
 from tests.mailfactory import raw_message
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tray.py 0.0.21"
+__version__ = "test_ui_tray.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Settings window with pages for everything
 # v0.0.21: Initial tray and notification tests
 
 
@@ -146,10 +147,10 @@ def test_the_settings_carry_the_tray_choices(shown: list[tuple[str, str]], world
 
 
 def test_the_settings_dialog_explains_a_missing_tray(world: World, qtbot: QtBot) -> None:
-    dialog = SettingsDialog(world.backend, GeneralSettings(True, 5, False, True, True, True), tray_available=False)
+    dialog = SettingsDialog(world.backend, world.window.settings, tray_available=False)
     qtbot.addWidget(dialog)
     assert not dialog.tray.isEnabled() and not dialog.tray.isChecked() and not dialog.close_to_tray.isChecked() and not dialog.notifications.isEnabled()
-    available = SettingsDialog(world.backend, GeneralSettings(True, 5, False, True, True, True))
+    available = SettingsDialog(world.backend, world.window.settings)
     qtbot.addWidget(available)
     available.tray.setChecked(False)
     assert not available.close_to_tray.isChecked() and not available.close_to_tray.isEnabled()

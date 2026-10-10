@@ -8,9 +8,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "compose.py 0.0.13"
+__version__ = "compose.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: Settings window with pages for everything
 # v0.0.13: Initial reply and forward drafts
 
 ComposeKind = Literal["reply", "reply_all", "forward"]
@@ -76,7 +77,7 @@ def subject_for(subject: str, kind: ComposeKind) -> str:
     return subject if _REPLY_PREFIX.match(subject) else f"Re: {subject}"
 
 
-def build_draft(message: ParsedMessage, kind: ComposeKind, own_address: str) -> Draft:
+def build_draft(message: ParsedMessage, kind: ComposeKind, own_address: str, quote: str = "above") -> Draft:
     """The starting point of a reply, a reply to all, or a forward of this message."""
     own = own_address.lower()
     sender = message.from_addresses[0] if message.from_addresses else None
@@ -107,4 +108,10 @@ def build_draft(message: ParsedMessage, kind: ComposeKind, own_address: str) -> 
     if kind == "reply_all":
         cc = _unique([*message.to_addresses, *message.cc_addresses], {own, *(a.address.lower() for a in main)})
     intro = f"On {_when(message.date)}, {sender_text} wrote:"
-    return Draft(kind, to, cc, subject_for(message.subject, kind), f"\n\n{intro}\n{_quote(_text_of(message))}\n", in_reply_to, references, ())
+    if quote == "none":
+        body = "\n\n"
+    elif quote == "below":
+        body = f"{intro}\n{_quote(_text_of(message))}\n\n\n"  # the answer goes under the quote
+    else:
+        body = f"\n\n{intro}\n{_quote(_text_of(message))}\n"
+    return Draft(kind, to, cc, subject_for(message.subject, kind), body, in_reply_to, references, ())

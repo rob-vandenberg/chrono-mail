@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from email.utils import formataddr, parseaddr
 from pathlib import Path
@@ -32,9 +33,10 @@ from chrono_mail.ui.richeditor import RichEditor
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.35"
+__version__ = "composer.py 0.0.42"
 
 # --- Version history ----------------------------------------------------
+# v0.0.42: settings: autosave interval, subject warning, font size, reply under the quote
 # v0.0.35: Send later and snooze
 # v0.0.24: Rich text composing
 # v0.0.23: address completion
@@ -88,13 +90,27 @@ def signature_block(signature: str) -> str:
     return SIGNATURE_MARK + signature.strip("\n") if signature.strip() else ""
 
 
-def with_signature(body: str, signature: str) -> str:
-    """The body of a new message, a reply or a forward with the signature before any quoted text."""
+@dataclass(frozen=True, slots=True)
+class ComposeOptions:
+    """What the settings say about writing: how often to save, whether to warn about a missing subject, the font size
+    of the editor (0 is the system's) and whether replies are written under the quote."""
+
+    autosave_seconds: int = AUTOSAVE_SECONDS
+    warn_no_subject: bool = True
+    font_size: int = 0
+    reply_below: bool = False
+
+
+def with_signature(body: str, signature: str, below: bool = False) -> str:
+    """The body of a new message, a reply or a forward with the signature before any quoted text
+    (after the whole text when the answer is written under the quote)."""
     block = signature_block(signature)
     if not block:
         return body
     if not body.strip():
         return f"\n\n{block}\n"
+    if below:
+        return f"{body.rstrip(chr(10))}\n\n{block}\n"
     rest = body[2:] if body.startswith("\n\n") else body
     return f"\n\n{block}\n\n{rest}"
 
@@ -122,10 +138,12 @@ class ComposeWindow(QMainWindow):
         source: tuple[str, str] | None = None,
         resume: tuple[str, str] | None = None,
         rich: bool = False,
+        options: ComposeOptions = ComposeOptions(),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
+        self._options: ComposeOptions = options
         resumed_source = (str(getattr(draft, "source_folder")), str(getattr(draft, "source_message"))) if getattr(draft, "source_message", None) else None
         self._source: tuple[str, str] | None = source or resumed_source
         self._kind: str = str(getattr(draft, "kind")) if draft is not None else "new"
@@ -216,9 +234,14 @@ class ComposeWindow(QMainWindow):
         self._accounts: list[object] = accounts
         self._signature: str = self._signature_of(account_id)
         if resume is None and self._signature:
-            self.body.setPlainText(with_signature(self.body.toPlainText(), self._signature))
-        self.body.moveCursor(self.body.textCursor().MoveOperation.Start)
+            self.body.setPlainText(with_signature(self.body.toPlainText(), self._signature, below=options.reply_below and self._kind in ("reply", "reply_all")))
+        self.body.moveCursor(self.body.textCursor().MoveOperation.End if options.reply_below and self._kind in ("reply", "reply_all") and resume is None else self.body.textCursor().MoveOperation.Start)
         self.body.document().setModified(False)
+        if options.font_size > 0:
+            for editor in (self.body, self.rich.edit):
+                font = editor.font()
+                font.setPointSize(options.font_size)
+                editor.setFont(font)
         stored_html = getattr(draft, "html", None) if draft is not None else None
         if stored_html:  # a rich text draft comes back as rich text
             self.set_rich(True, str(stored_html))
@@ -240,7 +263,8 @@ class ComposeWindow(QMainWindow):
         self.remove_button.clicked.connect(self._remove_selected)
         self.autosave_timer = QTimer(self)
         self.autosave_timer.timeout.connect(self._autosave)
-        self.autosave_timer.start(AUTOSAVE_SECONDS * 1000)
+        if options.autosave_seconds > 0:
+            self.autosave_timer.start(options.autosave_seconds * 1000)
         self.completers = [AddressCompleter(backend, field) for field in (self.to, self.cc, self.bcc)]
         self.to.setFocus()
 
@@ -462,7 +486,7 @@ class ComposeWindow(QMainWindow):
         if not (to or cc or bcc):
             QMessageBox.warning(self, "Send", "Add at least one recipient.")
             return
-        if not self.subject.text().strip():
+        if not self.subject.text().strip() and self._options.warn_no_subject:
             answer = QMessageBox.question(self, "Send", "This message has no subject. Send it anyway?")
             if answer != QMessageBox.StandardButton.Yes:
                 return

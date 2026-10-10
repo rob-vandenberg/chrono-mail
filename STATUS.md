@@ -4,7 +4,7 @@
 
 ## Where we are
 
-- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-056).
+- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-057).
 - **Milestone 0 is done** (0.4, GitHub Actions, is optional and not started). **Milestone 1: tasks 1.1 to 1.12 are done.** Open in milestone 1: 1.13 (Flatpak) and 1.14 (Windows run); 1.12 (key recovery) is done.
 - **There is a working graphical program to test**: `chrono-mail` (see below). Three-pane window: folders, message list, reading pane; get mail, read, reply, reply all, forward, new message, attachments (save and send), flag, mark read or unread, move, delete (Trash), folders (create, rename, delete), search with quick filters, first-run account setup with a connection test and the key recovery code screen. HTML mail is shown locked down (no scripts, remote content blocked until allowed per message).
 - The headless client still works: `chrono-mail-cli` (26 commands).
@@ -28,7 +28,7 @@ Each step: tests, full gate, new version and tag, documents, push. Done steps ar
 9. DONE (0.0.23) Address autocomplete in the composer.
 10. DONE (0.0.24) HTML composing.
 11. DONE (0.0.27 to 0.0.32) IMAP (milestone 2): design (ARCHITECTURE.md section 8, D-048), client, sync both ways, engine and window, IDLE (tasks 2.1 to 2.5 in ROADMAP.md). The real server's IMAP works (live tests pass); it adds the marks \\Recent and $HasNoAttachment, which the sync ignores.
-17. DONE (0.0.41) The message list as columns with a column editor, the reading pane at the right, below or off, messages in windows of their own. NEXT: the settings window grows pages for everything (reading, message list, composing, accounts and servers incl. certificate exceptions, security and storage, shortcuts), as the user asked ("all of it").
+17. DONE (0.0.41) The message list as columns with a column editor, the reading pane at the right, below or off, messages in windows of their own. 18. DONE (0.0.42) The settings window with pages for everything (D-057). NEXT: certificate exceptions (accept a server certificate explicitly and remember its fingerprint), then the rest of the asked-for settings (per-account check interval, IMAP folder choice, folder mapping).
 12. DONE (0.0.33) Rules (filters): conditions and actions on incoming mail, applied after every check and on request.
 13. DONE (0.0.34) Junk and navigation: mark as junk, next unread message.
 14. DONE (0.0.35) Send later and snooze.
