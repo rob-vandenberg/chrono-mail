@@ -14,9 +14,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.41"
+__version__ = "models.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.41: columns
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.18: Conversations: counts, grouped list, conversation bar
@@ -56,9 +57,12 @@ class ViewSpec:
     minimum_size: int | None = None
     maximum_size: int | None = None
     conversations: bool = False  # only the newest message of each conversation (a plain folder view only)
+    combined: str | None = None  # a favorite: the same kind of folder in every mailbox (message.combined)
 
     @property
     def kind(self) -> ViewKind:
+        if self.combined is not None:
+            return ViewKind.QUERY
         searching = self.conversations or self.date_from is not None or self.date_to is not None or self.minimum_size is not None or self.maximum_size is not None or bool(self.query) or self.unread is not None or self.flagged is not None or self.has_attachments is not None or self.folder is None
         return ViewKind.QUERY if searching else ViewKind.FOLDER
 
@@ -203,11 +207,17 @@ class MessageListModel(QAbstractTableModel):
     def mimeData(self, indexes: Sequence[QModelIndex]) -> QMimeData:
         """The messages being dragged: where they are, never their content."""
         messages: list[tuple[str, str]] = []
+        account = self._spec.account if self._spec is not None else ""
         for index in indexes:
             row = self.row_at(index.row())
-            if row is not None:
+            if row is None:
+                continue
+            owner = str(getattr(row, "account", "") or account)
+            if not messages:
+                account = owner
+            if owner == account:  # in a combined view the rows of other accounts cannot go along: one drag, one account
                 messages.append((str(getattr(row, "folder")), str(getattr(row, "message_id"))))
-        return messages_mime_data(self._spec.account if self._spec is not None else "", messages)
+        return messages_mime_data(account, messages)
 
     @override
     def canFetchMore(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> bool:
@@ -278,6 +288,8 @@ class MessageListModel(QAbstractTableModel):
     # --- fetching -----------------------------------------------------------------------------
 
     def _values(self, spec: ViewSpec, offset: int) -> dict[str, object]:
+        if spec.combined is not None:
+            return {"view": spec.combined, "offset": offset, "limit": PAGE_SIZE}
         if spec.kind is ViewKind.FOLDER:
             return {"account": spec.account, "folder": spec.folder, "sort": spec.sort, "oldest_first": spec.oldest_first, "offset": offset, "limit": PAGE_SIZE}
         values: dict[str, object] = {"account": spec.account, "query": spec.query, "offset": offset, "limit": PAGE_SIZE}
@@ -342,22 +354,50 @@ class MessageListModel(QAbstractTableModel):
             self._rows.loading_more = False
             self._failed(error)
 
-        self._backend.call("message.search", self._values(spec, offset), arrived, failed, owner=self)
+        self._backend.call("message.combined" if spec.combined is not None else "message.search", self._values(spec, offset), arrived, failed, owner=self)
 
     def _failed(self, error: ChronoMailError) -> None:
         self.load_failed.emit(str(error))
 
 
+FAVORITES: tuple[tuple[str, str, str], ...] = (  # view id (message.combined), label, icon
+    ("inboxes", "All Inboxes", "inbox"),
+    ("unread", "Unread", "unread"),
+    ("flagged", "Flagged", "flagged"),
+    ("outbox", "Outbox", "outbox"),
+    ("sent", "Sent", "sent"),
+    ("drafts", "Drafts", "drafts"),
+    ("junk", "Junk", "junk"),
+    ("trash", "Trash", "trash"),
+)
+_FAVORITE_ROLE: dict[str, str] = {"inboxes": "inbox", "sent": "sent", "drafts": "drafts", "junk": "junk", "trash": "trash"}
+
+
 class FolderTreeModel(QStandardItemModel):
-    """Accounts and their folders, with the number of unread messages."""
+    """Favorites, the inboxes of all accounts, and then the accounts with their folders and the number of unread messages."""
+
+    show_favorites: bool = True
+    show_inboxes: bool = True
+    show_local_folders: bool = True
 
     def populate(self, accounts: list[object], folders: dict[str, list[object]]) -> None:
         """Rebuild the tree. accounts: AccountSummary results; folders: account id -> FolderInfo results."""
         self.clear()
         root = self.invisibleRootItem()
-        for account in accounts:
+        # Accounts that keep their mail in Local Folders have no folders of their own: Local Folders shows them (and counts them once).
+        places = [account for account in accounts if str(getattr(account, "storage", "own")) != "local"]
+        places.sort(key=lambda account: str(getattr(account, "kind", "pop3")) == "local")  # Local Folders last
+        if not self.show_local_folders:
+            places = [account for account in places if str(getattr(account, "kind", "pop3")) != "local"]
+        mailboxes = places
+        if mailboxes and self.show_favorites:
+            self._favorites(root, mailboxes, folders)
+        real = [account for account in places if str(getattr(account, "kind", "pop3")) != "local"]
+        if len(real) >= 2 and self.show_inboxes:
+            self._inboxes(root, real, folders)
+        for account in places:
             account_id = str(getattr(account, "account_id"))
-            top = QStandardItem(str(getattr(account, "email_address")))
+            top = QStandardItem("Local Folders" if str(getattr(account, "kind", "pop3")) == "local" else str(getattr(account, "email_address")))
             top.setEditable(False)
             top.setIcon(folder_icon("account"))
             top.setData("account", KIND_ROLE)
@@ -386,6 +426,58 @@ class FolderTreeModel(QStandardItemModel):
                 if path not in nodes:
                     nodes[path] = item
                     (nodes[path[:-1]] if len(path) > 1 else top).appendRow(item)
+
+    @staticmethod
+    def _section(root: QStandardItem, title: str, kind: str) -> QStandardItem:
+        section = QStandardItem(title)
+        section.setEditable(False)
+        section.setData(kind, KIND_ROLE)
+        section.setData("", ACCOUNT_ROLE)
+        font = section.font()
+        font.setBold(True)
+        section.setFont(font)
+        root.appendRow(section)
+        return section
+
+    def _favorites(self, root: QStandardItem, mailboxes: list[object], folders: dict[str, list[object]]) -> None:
+        """The same folder of every mailbox in one list: all inboxes, all unread messages and so on."""
+        section = self._section(root, "Favorites", "section")
+        for view, label, icon in FAVORITES:
+            unread = 0
+            for account in mailboxes:
+                for info in folders.get(str(getattr(account, "account_id")), []):
+                    if (view in _FAVORITE_ROLE and str(getattr(info, "role")) == _FAVORITE_ROLE[view]) or (view == "outbox" and str(getattr(info, "path")) == "Outbox"):
+                        unread += int(getattr(info, "unread"))
+                    elif view == "unread" and str(getattr(info, "role")) not in ("trash", "junk") and str(getattr(info, "path")) != "Outbox":
+                        unread += int(getattr(info, "unread"))
+            item = QStandardItem(label)
+            item.setEditable(False)
+            item.setIcon(folder_icon(icon))
+            item.setData("favorite", KIND_ROLE)
+            item.setData("", ACCOUNT_ROLE)
+            item.setData(view, FOLDER_PATH_ROLE)
+            item.setData(_FAVORITE_ROLE.get(view, "other"), FOLDER_ROLE_ROLE)
+            item.setData(unread, UNREAD_ROLE)
+            self._label(item, label, unread)
+            section.appendRow(item)
+
+    def _inboxes(self, root: QStandardItem, accounts: list[object], folders: dict[str, list[object]]) -> None:
+        """The inbox of every account under one heading, so that many accounts do not need their trees open."""
+        section = self._section(root, "Inboxes", "section")
+        for account in accounts:
+            account_id = str(getattr(account, "account_id"))
+            inbox = next((info for info in folders.get(account_id, []) if str(getattr(info, "role")) == "inbox"), None)
+            unread = int(getattr(inbox, "unread")) if inbox is not None else 0
+            item = QStandardItem(str(getattr(account, "email_address")))
+            item.setEditable(False)
+            item.setIcon(folder_icon("inbox"))
+            item.setData("inboxlink", KIND_ROLE)
+            item.setData(account_id, ACCOUNT_ROLE)
+            item.setData(str(getattr(inbox, "path")) if inbox is not None else "Inbox", FOLDER_PATH_ROLE)
+            item.setData("inbox", FOLDER_ROLE_ROLE)
+            item.setData(unread, UNREAD_ROLE)
+            self._label(item, str(getattr(account, "email_address")), unread)
+            section.appendRow(item)
 
     @staticmethod
     def _label(item: QStandardItem, name: str, unread: int) -> None:

@@ -11,9 +11,10 @@ from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from tests.ui.world import World, answer_input, answer_open_file, reject_dialog, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_key_recovery.py 0.0.15"
+__version__ = "test_ui_key_recovery.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.15: Initial key recovery tests
 
 # Task 1.12: the key recovery procedure, end to end, through the real window. Losing the key means losing
@@ -199,7 +200,7 @@ def test_an_unencrypted_account_never_asks_for_a_key(tmp_path: Path, qtbot: QtBo
         shown = drive(monkeypatch, qtbot, lambda dialog: dialog.reject())
         world.window.start()
         qtbot.wait(500)
-        assert shown == [] and world.window.tree_model.rowCount() == 1
+        assert shown == [] and world.window.tree_model.rowCount() == 2  # Favorites and the account
 
 
 def test_the_menu_has_the_action(world: World) -> None:

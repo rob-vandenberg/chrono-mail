@@ -9,9 +9,10 @@ from chrono_mail.ui.models import FolderTreeModel
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_icons.py 0.0.14"
+__version__ = "test_ui_icons.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.14: Initial icon tests
 
 
@@ -57,6 +58,7 @@ def test_the_tree_asks_for_the_icon_of_each_kind(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr(models, "folder_icon", record)
     model = FolderTreeModel()
+    model.show_favorites = model.show_inboxes = False
     model.populate([Account()], {"a" * 32: [Info("Inbox", "inbox"), Info("Sent", "sent"), Info("Outbox", "other"), Info("Trash", "trash"), Info("Mine/Sub", "other")]})
     assert asked[:3] == ["account", "unread", "flagged"]
     assert {"inbox", "sent", "outbox", "trash", "other"} <= set(asked)

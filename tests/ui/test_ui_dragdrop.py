@@ -4,18 +4,19 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data, read_messages_mime_data
 from chrono_mail.ui.models import FOLDER_PATH_ROLE
-from tests.ui.world import World, row_of, wait
+from tests.ui.world import account_node, World, row_of, wait
 from tests.ui.test_ui_window import started
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dragdrop.py 0.0.17"
+__version__ = "test_ui_dragdrop.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.17: Initial drag and drop tests
 
 
 def folder_point(world: World, name: str) -> QPoint:
-    account = world.window.tree_model.index(0, 0)
+    account = account_node(world.window)
     for row in range(world.window.tree_model.rowCount(account)):
         index = world.window.tree_model.index(row, 0, account)
         if index.data(FOLDER_PATH_ROLE) == name:

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtCore import QModelIndex, QSettings, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 from pytestqt.qtbot import QtBot
@@ -12,15 +12,17 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.engine import Engine, build_registry
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.mainwindow import MainWindow
+from chrono_mail.ui.models import KIND_ROLE
 from tests.enginefactory import make_engine
 from tests.fakepop3 import FakePop3Server
 from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 0.0.15"
+__version__ = "world.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.15: Key recovery
 # v0.0.13: Initial ui test world
 
@@ -164,3 +166,12 @@ def build_world(tmp_path: Path, qtbot: QtBot, dialogs: Dialogs, messages: dict[s
 @pytest.fixture
 def world(tmp_path: Path, qtbot: QtBot, dialogs: Dialogs) -> Generator[World]:
     yield from build_world(tmp_path, qtbot, dialogs)
+
+
+def account_node(window: MainWindow) -> QModelIndex:
+    """The first account in the folder tree (the Favorites come before it)."""
+    for row in range(window.tree_model.rowCount()):
+        index = window.tree_model.index(row, 0)
+        if index.data(KIND_ROLE) == "account":
+            return index
+    raise AssertionError("no account in the tree")

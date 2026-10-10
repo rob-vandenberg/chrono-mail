@@ -10,12 +10,13 @@ from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog, 
 from chrono_mail.ui.models import ViewKind, ViewSpec
 from tests.mailfactory import raw_message
 from tests.ui.test_ui_window import select, subjects
-from tests.ui.world import World, wait
+from tests.ui.world import account_node, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_advancedsearch.py 0.0.19"
+__version__ = "test_ui_advancedsearch.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.19: Initial advanced search tests
 
 
@@ -99,7 +100,7 @@ def test_changing_folder_drops_the_advanced_dates(world: World, qtbot: QtBot, mo
     monkeypatch.setattr(AdvancedSearchDialog, "exec", fake_exec)
     world.window.act_advanced.trigger()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 0 and not world.window.filter_chip.isHidden())
-    account = world.window.tree_model.index(0, 0)
+    account = account_node(world.window)
     world.window.tree.setCurrentIndex(world.window.tree_model.index(1, 0, account))  # Flagged
     world.window.tree.setCurrentIndex(world.window.tree_model.index(2, 0, account))  # Inbox again
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3 and world.window.filter_chip.isHidden())

@@ -24,9 +24,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.45"
+__version__ = "commands_mail.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: replies are sent from the account the message was addressed to
 # v0.0.43: Certificate exceptions
 # v0.0.42: Settings window with pages for everything
@@ -69,6 +70,7 @@ class MessageRow:
     preview: str
     recipients: str
     thread_size: int = 1  # messages in the conversation, in all folders
+    account: str = ""  # only filled in the combined views (message.combined): the account the row belongs to
 
 
 def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage]) -> tuple[MessageRow, ...]:

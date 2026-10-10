@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.0.42"
+__version__ = "prefs.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.42: Initial preferences (the keys of the settings file and their standard values)
 
 DEFAULTS: dict[str, object] = {
@@ -23,6 +24,9 @@ DEFAULTS: dict[str, object] = {
     "list_density": "normal",
     "list_font_size": 0,
     "conversations": False,
+    "show_favorites": True,
+    "show_inboxes": True,
+    "show_local_folders": True,
     # reading
     "mark_read": "delay",  # delay: after a moment, never: only when I mark it, window: only when opened in a window of its own
     "mark_read_delay_ms": 700,

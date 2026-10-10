@@ -19,9 +19,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 0.0.45"
+__version__ = "test_engine_local.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Initial Local Folders tests
 
 
@@ -290,3 +291,25 @@ def test_local_folders_cannot_be_removed_while_accounts_use_it_and_the_settings_
     data["accounts"][0]["storage"] = 5
     with pytest.raises(ConfigurationError, match="storage"):
         parse_config(json.dumps(data))
+
+
+def test_combined_views_merge_the_mailboxes_and_count_shared_mail_once(two: Two) -> None:
+    call(two.engine, "mail.fetch", account=two.a)
+    call(two.engine, "mail.fetch", account=two.b)
+    everything = call(two.engine, "message.combined", view="inboxes")
+    assert len(everything) == 4 and {row.account for row in everything} == {two.a, two.b}
+    dates = [row.date for row in everything if row.date]
+    assert dates == sorted(dates, reverse=True)
+    assert [row.account for row in call(two.engine, "message.combined", view="inboxes", accounts=(two.b,))] == [two.b, two.b]
+    first = call(two.engine, "message.combined", view="inboxes", offset=0, limit=3)
+    rest = call(two.engine, "message.combined", view="inboxes", offset=3, limit=3)
+    assert len(first) == 3 and len(rest) == 1 and {row.message_id for row in first}.isdisjoint(row.message_id for row in rest)
+    call(two.engine, "message.flag", account=two.a, folder="Inbox", message=everything[0].message_id if everything[0].account == two.a else next(r for r in everything if r.account == two.a).message_id, flagged=True)
+    assert len(call(two.engine, "message.combined", view="flagged")) == 1
+    assert len(call(two.engine, "message.combined", view="unread")) == 4
+    call(two.engine, "account.set-storage", account=two.a, storage="local")
+    call(two.engine, "account.set-storage", account=two.b, storage="local")
+    assert len(call(two.engine, "message.combined", view="inboxes")) == 4  # one shared Inbox, not one per account
+    sent = call(two.engine, "mail.send", account=two.a, to="you@example.com", subject="S", body="x")
+    assert [row.subject for row in call(two.engine, "message.combined", view="sent")] == ["S"] and sent.sent
+    assert call(two.engine, "message.combined", view="outbox") == ()

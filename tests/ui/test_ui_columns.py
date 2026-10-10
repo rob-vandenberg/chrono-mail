@@ -8,12 +8,13 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS, cell_text, column_widths, date_text, valid_columns
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
 from chrono_mail.ui.messagewindow import MessageWindow
-from tests.ui.world import World, row_of, settle, wait
+from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.0.41"
+__version__ = "test_ui_columns.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.41: Initial tests of the columns, the reading pane and message windows
 
 
@@ -174,7 +175,7 @@ def test_in_the_sent_folder_the_from_to_column_shows_the_recipient(world: World,
     world.call("mail.send", account=world.account_id, to="Dora <dora@example.org>", subject="Out", body="x")
     world.window.start()
     settle(qtbot, world, 3)
-    account = world.window.tree_model.index(0, 0)
+    account = account_node(world.window)
     for position in range(world.window.tree_model.rowCount(account)):
         index = world.window.tree_model.index(position, 0, account)
         if index.data(256 + 2) == "Sent":

@@ -11,12 +11,13 @@ from chrono_mail.config import ServerRole
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
-from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
+from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.34"
+__version__ = "test_ui_window.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.34: Junk and unread navigation
 # v0.0.26: Version number in the About dialog
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
@@ -92,7 +93,7 @@ def test_first_start_without_an_account_asks_for_one(empty_world: World, qtbot: 
 
 def test_tree_shows_the_account_and_its_folders_with_unread_counts(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
-    assert tree_labels(world.window) == ["me@example.com", "  Unread", "  Flagged", "  Inbox  (3)", "  Drafts", "  Sent", "  Outbox", "  Junk", "  Trash"]
+    assert tree_labels(world.window) == ["Favorites", "  All Inboxes  (3)", "  Unread  (3)", "  Flagged", "  Outbox", "  Sent", "  Drafts", "  Junk", "  Trash", "me@example.com", "  Unread", "  Flagged", "  Inbox  (3)", "  Drafts", "  Sent", "  Outbox", "  Junk", "  Trash"]
     assert world.window.count_label.text() == "3 messages, 3 unread"
     assert world.window.sort_button.text() == "Sorted by Date ▾"
     assert world.window.windowTitle() == "Chrono Mail (3 unread)"
@@ -172,8 +173,8 @@ def test_the_tree_has_unread_and_flagged_views(world: World, qtbot: QtBot) -> No
     started(qtbot, world)
     first = row_of(world.window, 0)
     world.call("message.flag", account=world.account_id, folder="Inbox", message=first.message_id, flagged=True)
-    for row in range(world.window.tree_model.rowCount(world.window.tree_model.index(0, 0))):
-        index = world.window.tree_model.index(row, 0, world.window.tree_model.index(0, 0))
+    for row in range(world.window.tree_model.rowCount(account_node(world.window))):
+        index = world.window.tree_model.index(row, 0, account_node(world.window))
         if index.data(KIND_ROLE) == "flagged":
             world.window.tree.setCurrentIndex(index)
     wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
@@ -351,8 +352,8 @@ def test_reply_opens_a_prefilled_composer(world: World, qtbot: QtBot) -> None:
 def test_a_draft_is_edited_from_the_drafts_folder_and_sent(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     world.call("draft.save", account=world.account_id, to=["you@example.com"], subject="Half done", body="first part")
-    for row in range(world.window.tree_model.rowCount(world.window.tree_model.index(0, 0))):
-        index = world.window.tree_model.index(row, 0, world.window.tree_model.index(0, 0))
+    for row in range(world.window.tree_model.rowCount(account_node(world.window))):
+        index = world.window.tree_model.index(row, 0, account_node(world.window))
         if index.data(FOLDER_PATH_ROLE) == "Drafts":
             world.window.tree.setCurrentIndex(index)
     wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
@@ -500,7 +501,7 @@ def test_a_background_check_keeps_the_message_being_read_selected(world: World, 
 
 
 def open_folder(world: World, qtbot: QtBot, name: str, rows: int) -> None:
-    account = world.window.tree_model.index(0, 0)
+    account = account_node(world.window)
     for row in range(world.window.tree_model.rowCount(account)):
         index = world.window.tree_model.index(row, 0, account)
         if index.data(FOLDER_PATH_ROLE) == name:
@@ -710,3 +711,19 @@ def test_next_unread_goes_on_to_the_next_folder_with_unread_mail(world: World, q
     wait(qtbot, lambda: world.window._folder == "Junk" and world.window.list_view.currentIndex().isValid())  # noqa: SLF001
     assert world.window.list_view.currentIndex().row() == 0
     assert world.window.go_to_unread(1) is False  # and nothing more after that
+
+
+def test_the_favorites_show_the_same_folder_of_every_mailbox_and_can_be_switched_off(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    favorites = world.window.tree_model.index(0, 0)
+    assert favorites.data() == "Favorites" and world.window.tree_model.index(0, 0, favorites).data() == "All Inboxes  (3)"
+    world.window.tree.setCurrentIndex(world.window.tree_model.index(0, 0, favorites))
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
+    row = world.window.list_model.row_at(0)
+    assert getattr(row, "account") == world.account_id
+    select(world.window, 0)
+    wait(qtbot, lambda: "seen" in getattr(world.window.list_model.row_at(0), "flags"))  # reading it from here marks it in its own account
+    assert seen_count(world) == 1
+    world.window.settings.setValue("show_favorites", False)
+    world.window.apply_preferences()
+    assert world.window.tree_model.index(0, 0).data() == "me@example.com"

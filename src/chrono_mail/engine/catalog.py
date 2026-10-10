@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_actions, commands_contacts, commands_drafts, commands_export, commands_folders, commands_imap, commands_local, commands_mail, commands_rules, commands_schedule, commands_watch
+from chrono_mail.engine import commands_accounts, commands_actions, commands_combined, commands_contacts, commands_drafts, commands_export, commands_folders, commands_imap, commands_local, commands_mail, commands_rules, commands_schedule, commands_watch
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 0.0.45"
+__version__ = "catalog.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.35: Send later and snooze
@@ -33,6 +34,7 @@ def build_registry() -> CommandRegistry:
     commands_watch.register(registry)
     commands_rules.register(registry)
     commands_imap.register(registry)
+    commands_combined.register(registry)
     commands_local.register(registry)
     commands_schedule.register(registry)
     return registry

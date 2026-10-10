@@ -553,3 +553,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - The sidebar still shows Local Folders as a plain node; account groups, collapsible accounts, unified views and the Favorites and Inboxes sections follow in 0.0.46 and later.
+
+## 2026-10-10 Favorites (version 0.0.46)
+
+**What landed**
+- `message.combined` (eight views over all mailboxes, shared Local Folders counted once), `account` on message rows, the Favorites and Inboxes headings and the Local Folders node in the folder list, accounts that are opened only when in use, three switches in the settings, message actions that use the account of each row.
+- New tests in test_engine_local.py, test_ui_models.py and test_ui_window.py.
+
+**Still open**
+- Pinning other folders, renaming and reordering favorites, account groups, search inside a combined view.

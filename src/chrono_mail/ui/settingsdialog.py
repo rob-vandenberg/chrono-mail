@@ -36,9 +36,10 @@ from chrono_mail.ui.columnsdialog import DATE_STYLES, LAYOUTS, READING_PANES, Co
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.45"
+__version__ = "settingsdialog.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: links from the settings
 # v0.0.42: pages for the message list, reading, composing, security and storage and the keyboard
@@ -183,6 +184,12 @@ class SettingsDialog(QDialog):
         self.list_font.setValue(prefs.get_int(s, "list_font_size", 0, 24))
         self.conversations = QCheckBox("Show messages grouped as conversations", page)
         self.conversations.setChecked(prefs.get_bool(s, "conversations"))
+        self.show_favorites = QCheckBox("Show Favorites at the top of the folder list (all inboxes, unread, flagged, sent …)", page)
+        self.show_favorites.setChecked(prefs.get_bool(s, "show_favorites"))
+        self.show_inboxes = QCheckBox("Show the Inboxes of all accounts under one heading (with two or more accounts)", page)
+        self.show_inboxes.setChecked(prefs.get_bool(s, "show_inboxes"))
+        self.show_local_folders = QCheckBox("Show Local Folders in the folder list", page)
+        self.show_local_folders.setChecked(prefs.get_bool(s, "show_local_folders"))
         self.columns_label = QLabel("", page)
         self.columns_button = QPushButton("Choose the columns…", page)
         form.addRow("Layout", self.layout_box)
@@ -191,6 +198,9 @@ class SettingsDialog(QDialog):
         form.addRow("Row height", self.density_box)
         form.addRow("Text size in the list", self.list_font)
         form.addRow(self.conversations)
+        form.addRow(self.show_favorites)
+        form.addRow(self.show_inboxes)
+        form.addRow(self.show_local_folders)
         form.addRow("Columns", self.columns_label)
         form.addRow("", self.columns_button)
         self.columns_button.clicked.connect(self._choose_columns)
@@ -525,6 +535,7 @@ class SettingsDialog(QDialog):
             "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_font_size": self.list_font.value(), "conversations": self.conversations.isChecked(),
+            "show_favorites": self.show_favorites.isChecked(), "show_inboxes": self.show_inboxes.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
             "columns": ",".join(self._columns or DEFAULT_COLUMNS),
             "mark_read": str(self.mark_read_box.currentData()), "mark_read_delay_ms": self.mark_read_delay.value(), "reader_zoom": self.zoom.value(),
             "prefer_plain": self.prefer_plain.isChecked(), "remote_always": self.remote_always.isChecked(), "remote_senders": "\n".join(senders),

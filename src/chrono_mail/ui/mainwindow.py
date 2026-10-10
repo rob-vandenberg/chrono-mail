@@ -64,9 +64,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.45"
+__version__ = "mainwindow.py 0.0.46"
 
 # --- Version history ----------------------------------------------------
+# v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.42: Settings window with pages for everything
@@ -124,6 +125,9 @@ class MainWindow(QMainWindow):
         self._folder: str | None = None
         self._folder_role: str = "other"
         self._tree_kind: str = "folder"
+        self._tree_key_kind: str = "folder"  # the kind of the item in the tree: "inboxlink" is a folder shown under the Inboxes heading
+        self._combined: str | None = None  # the favorite that is shown (all inboxes, unread, ...), or None
+        self._expanded: set[str] | None = None  # accounts whose folders are open in the tree
         self._shown: tuple[str, str, str] | None = None  # account, folder, message id of what the reader shows
         self._show_request: int = 0
         self._updating_tree: bool = False
@@ -500,7 +504,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("oldest_first", self._oldest_first)
         self.settings.setValue("auto_check", self.act_auto.isChecked())
         self.settings.setValue("last_account", self._account_id or "")
-        self.settings.setValue("last_folder", self._folder or "")
+        self.settings.setValue("last_folder", self._folder or self._combined or "")
+        self.settings.setValue("last_kind", self._tree_key_kind)
         self._quitting_for_good = True
         self.backend.engine.stop_event.set()  # waits for new mail end now
         self._due_timer.stop()
@@ -596,6 +601,10 @@ class MainWindow(QMainWindow):
         except ValueError:
             return AUTO_CHECK_MINUTES
         return minutes if 1 <= minutes <= 240 else AUTO_CHECK_MINUTES
+
+    def _account_of(self, row: object) -> str:
+        """The account a row of the list belongs to: rows of the combined views say so themselves."""
+        return str(getattr(row, "account", "") or self._account_id or "")
 
     def _mail_accounts(self) -> list[object]:
         """The accounts that have servers: Local Folders is a place to keep mail, not an account to check or send from."""
@@ -708,7 +717,7 @@ class MainWindow(QMainWindow):
             self._report("Could not snooze", error)
 
         for row in rows:
-            self.backend.call("message.snooze", {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "until": until}, done, failed, owner=self)
+            self.backend.call("message.snooze", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "until": until}, done, failed, owner=self)
 
     def open_rules(self) -> None:
         """Tools > Rules: what is done with mail as it arrives."""
@@ -759,6 +768,8 @@ class MainWindow(QMainWindow):
         self.set_reading_pane(prefs.get_text(settings, "reading_pane", ("right", "bottom", "off")))
         self._apply_reader_preferences()
         self._apply_shortcuts()
+        if self._accounts:
+            self._populate_tree()  # the sections of the folder list follow the settings
 
     def _apply_list_look(self) -> None:
         size = prefs.get_int(self.settings, "list_font_size", 0, 24)
@@ -912,18 +923,44 @@ class MainWindow(QMainWindow):
         keep = self._selection_key()
         if keep is None and select_saved:
             saved_account, saved_folder = str(self.settings.value("last_account", "")), str(self.settings.value("last_folder", ""))
-            keep = (saved_account, "folder", saved_folder) if saved_account and saved_folder else None
+            saved_kind = str(self.settings.value("last_kind", "folder"))
+            keep = (saved_account, saved_kind, saved_folder) if saved_folder and (saved_account or saved_kind == "favorite") else None
         self._updating_tree = True
+        self._remember_expanded()
+        self.tree_model.show_favorites = bool_setting(self.settings, "show_favorites", True)
+        self.tree_model.show_inboxes = bool_setting(self.settings, "show_inboxes", True)
+        self.tree_model.show_local_folders = bool_setting(self.settings, "show_local_folders", True)
         self.tree_model.populate(self._accounts, self._folders)
-        self.tree.expandAll()
         target = self._find_tree_item(keep) if keep is not None else None
         if target is None:
             target = self._first_inbox()
+        self._restore_expanded(target)
         if target is not None and target.isValid():
             self.tree.setCurrentIndex(target)
         self._updating_tree = False
-        if target is not None and target.isValid() and self._key_of(target) != (self._account_id, self._tree_kind, self._folder or ""):
+        if target is not None and target.isValid() and self._key_of(target) != (self._account_id, self._tree_key_kind, self._folder or self._combined or ""):
             self._tree_changed(target, QModelIndex())
+
+    def _remember_expanded(self) -> None:
+        """Which accounts are open in the tree: with many accounts only the ones in use stay open."""
+        if not self.tree_model.rowCount():
+            return
+        self._expanded = {
+            str(index.data(ACCOUNT_ROLE)) for row in range(self.tree_model.rowCount())
+            for index in (self.tree_model.index(row, 0),) if index.data(KIND_ROLE) == "account" and self.tree.isExpanded(index)
+        }
+
+    def _restore_expanded(self, selected: QModelIndex | None) -> None:
+        chosen = str(selected.data(ACCOUNT_ROLE)) if selected is not None and selected.isValid() else ""
+        accounts = [self.tree_model.index(row, 0) for row in range(self.tree_model.rowCount()) if self.tree_model.index(row, 0).data(KIND_ROLE) == "account"]
+        for row in range(self.tree_model.rowCount()):
+            index = self.tree_model.index(row, 0)
+            if index.data(KIND_ROLE) == "section":
+                self.tree.expand(index)
+        for index in accounts:
+            account = str(index.data(ACCOUNT_ROLE))
+            opened = account in self._expanded if self._expanded is not None else len(accounts) <= 3
+            self.tree.setExpanded(index, opened or account == chosen)
 
     def _find_tree_item(self, key: tuple[str, str, str]) -> QModelIndex | None:
         def walk(parent: QModelIndex) -> QModelIndex | None:
@@ -941,6 +978,8 @@ class MainWindow(QMainWindow):
     def _first_inbox(self) -> QModelIndex | None:
         for row in range(self.tree_model.rowCount(QModelIndex())):
             account = self.tree_model.index(row, 0, QModelIndex())
+            if account.data(KIND_ROLE) != "account":
+                continue
             for child in range(self.tree_model.rowCount(account)):
                 index = self.tree_model.index(child, 0, account)
                 if index.data(FOLDER_ROLE_ROLE) == "inbox":
@@ -951,9 +990,13 @@ class MainWindow(QMainWindow):
         if self._updating_tree or not current.isValid():
             return
         kind = str(current.data(KIND_ROLE))
-        if kind == "account":
+        if kind in ("account", "section"):
             return
-        self._account_id = str(current.data(ACCOUNT_ROLE))
+        self._tree_key_kind = kind
+        self._combined = str(current.data(FOLDER_PATH_ROLE)) if kind == "favorite" else None
+        if kind == "inboxlink":
+            kind = "folder"
+        self._account_id = str(current.data(ACCOUNT_ROLE))  # "" in a favorite: the rows say which account they belong to
         self._tree_kind = kind
         self._folder = str(current.data(FOLDER_PATH_ROLE)) if kind == "folder" else None
         self._folder_role = str(current.data(FOLDER_ROLE_ROLE) or "other")
@@ -1026,6 +1069,8 @@ class MainWindow(QMainWindow):
     def view_spec(self) -> ViewSpec | None:
         if self._account_id is None:
             return None
+        if self._combined is not None:
+            return ViewSpec("", combined=self._combined)
         query = self.search_box.text().strip()
         unread = True if self.filter_unread.isChecked() else None
         flagged = True if self.filter_flagged.isChecked() else None
@@ -1045,7 +1090,7 @@ class MainWindow(QMainWindow):
         )
 
     def _apply_view(self) -> None:
-        self.delegate.show_recipients = self._folder_role in ("sent", "drafts") or self._folder == "Outbox"
+        self.delegate.show_recipients = self._folder_role in ("sent", "drafts") or self._folder == "Outbox" or self._combined == "outbox"
         self.list_model.recipients_first = self.delegate.show_recipients
         self.list_model.show(self.view_spec())
 
@@ -1097,11 +1142,11 @@ class MainWindow(QMainWindow):
                 self._shown = None
             return
         folder, message_id = str(getattr(row, "folder")), str(getattr(row, "message_id"))
-        if self._shown == (self._account_id, folder, message_id):
+        account = self._account_of(row)
+        if self._shown == (account, folder, message_id):
             return
         self._show_request += 1
         request = self._show_request
-        account = self._account_id
 
         def shown(result: object) -> None:
             if request != self._show_request:
@@ -1177,7 +1222,9 @@ class MainWindow(QMainWindow):
             values["seen"] = seen
         if flagged is not None:
             values["flagged"] = flagged
-        self._set_flags([(str(getattr(row, "folder")), str(getattr(row, "message_id"))) for row in self._selected_rows()], values)
+        rows = self._selected_rows()
+        for account in dict.fromkeys(self._account_of(row) for row in rows):  # the combined views mix accounts
+            self._set_flags([(str(getattr(row, "folder")), str(getattr(row, "message_id"))) for row in rows if self._account_of(row) == account], values, account)
 
     def delete_selected(self) -> None:
         rows = self._selected_rows()
@@ -1196,7 +1243,7 @@ class MainWindow(QMainWindow):
                 self._after_change(f"Deleted {len(rows)} message(s)" if in_trash else f"Moved {len(rows)} message(s) to Trash")
 
         for row in rows:
-            self.backend.call("message.delete", {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not delete", error), owner=self)
+            self.backend.call("message.delete", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not delete", error), owner=self)
 
     def archive_selected(self) -> None:
         rows = self._selected_rows()
@@ -1217,7 +1264,7 @@ class MainWindow(QMainWindow):
             if str(getattr(row, "folder")) == "Archive":
                 remaining -= 1  # already there
                 continue
-            self.backend.call("message.archive", {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not archive", error), owner=self)
+            self.backend.call("message.archive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not archive", error), owner=self)
         if remaining == 0:
             self.show_status("The selected message(s) are in the archive already")
 
@@ -1241,7 +1288,7 @@ class MainWindow(QMainWindow):
             self._report("Could not move", error)
 
         for row in rows:
-            self.backend.call(command, {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+            self.backend.call(command, {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
 
     def go_to_unread(self, step: int) -> bool:
         """Select the next (or previous) unread message of the list; at the end of the list, the first unread one of the next folder that has some."""
@@ -1340,7 +1387,7 @@ class MainWindow(QMainWindow):
                 self._after_change(f"Moved {len(rows)} message(s) to {target}")
 
         for row in rows:
-            self.backend.call("message.move", {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target}, done, lambda error: self._report("Could not move", error), owner=self)
+            self.backend.call("message.move", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target}, done, lambda error: self._report("Could not move", error), owner=self)
 
     def _after_change(self, text: str) -> None:
         """Something changed in the store: show the same folder again and update the counts."""
@@ -1536,7 +1583,7 @@ class MainWindow(QMainWindow):
         row = self._current_row()
         if row is None or self._account_id is None or not self._in_drafts():
             return
-        account, folder, message_id = self._account_id, str(getattr(row, "folder")), str(getattr(row, "message_id"))
+        account, folder, message_id = self._account_of(row), str(getattr(row, "folder")), str(getattr(row, "message_id"))
         for window in self._composers:
             if window.stored_as() == (folder, message_id):
                 window.raise_()
@@ -1552,7 +1599,7 @@ class MainWindow(QMainWindow):
         row = self._current_row()
         if row is None or self._account_id is None:
             return
-        account, folder, message_id = self._account_id, str(getattr(row, "folder")), str(getattr(row, "message_id"))
+        account, folder, message_id = self._account_of(row), str(getattr(row, "folder")), str(getattr(row, "message_id"))
 
         def drafted(result: object) -> None:
             self._open_composer(str(getattr(result, "from_account", None) or account), result, (folder, message_id))
@@ -1684,7 +1731,7 @@ class MainWindow(QMainWindow):
         menu.exec(self.list_view.viewport().mapToGlobal(position))
 
     def new_folder(self) -> None:
-        if self._account_id is None:
+        if not self._account_id:
             return
         start = f"{self._folder}/" if self._folder and self._tree_kind == "folder" else ""
         name, ok = QInputDialog.getText(self, "New folder", "Path of the new folder (use / for a subfolder, for example Archive/2026):", text=start)
@@ -1738,7 +1785,7 @@ class MainWindow(QMainWindow):
         row = self._current_row()
         if row is None or self._account_id is None:
             return None
-        return self._account_id, str(getattr(row, "folder")), str(getattr(row, "message_id")), str(getattr(row, "subject"))
+        return self._account_of(row), str(getattr(row, "folder")), str(getattr(row, "message_id")), str(getattr(row, "subject"))
 
     def save_selected_as(self) -> None:
         """Message > Save as: a copy of the message as an .eml file."""

@@ -59,7 +59,7 @@ def test_send_receive_read_and_delete_through_the_window(live_window: tuple[Main
     token = f"live-ui-{int(time.time())}-{id(window) % 10000}"
     try:
         window.start()
-        wait(qtbot, lambda: window.tree_model.rowCount() == 1 and window._account_id == account_id)  # noqa: SLF001
+        wait(qtbot, lambda: window.tree_model.rowCount() >= 1 and window._account_id == account_id)  # noqa: SLF001
         listed = backend.run_now("account.list", {})
         accounts: list[object] = list(listed) if isinstance(listed, tuple) else []
         composer = ComposeWindow(backend, accounts, account_id)
