@@ -1,13 +1,15 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from PySide6.QtGui import QColor
 
 from chrono_mail.ui.formatting import avatar_colour, display_name, file_size, initials, long_date, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_formatting.py 0.0.13"
+__version__ = "test_ui_formatting.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Initial UI formatting tests
 
 
@@ -31,7 +33,7 @@ def test_initials(name: str, expected: str) -> None:
 def test_avatar_colour_is_stable_and_case_insensitive() -> None:
     assert avatar_colour("alice@example.com") == avatar_colour("Alice@Example.COM")
     assert avatar_colour("a@x.org").isValid()
-    assert len({avatar_colour(f"person{n}@example.com").name() for n in range(200)}) > 6  # real variety
+    assert len({avatar_colour(f"person{n}@example.com").name() for n in range(300)}) > 40  # real variety (72 hues)
 
 
 def test_short_date_for_each_age() -> None:
@@ -53,3 +55,20 @@ def test_long_date() -> None:
 @pytest.mark.parametrize(("size", "expected"), [(0, "0 B"), (1023, "1023 B"), (1024, "1.0 KB"), (1536, "1.5 KB"), (5 * 1024 * 1024, "5.0 MB"), (3 * 1024**3, "3.0 GB"), (10 * 1024**4, "10240.0 GB")])
 def test_file_size(size: int, expected: str) -> None:
     assert file_size(size) == expected
+
+
+def contrast_with_white(colour: QColor) -> float:
+    def channel(value: float) -> float:
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+    luminance = 0.2126 * channel(colour.redF()) + 0.7152 * channel(colour.greenF()) + 0.0722 * channel(colour.blueF())
+    return 1.05 / (luminance + 0.05)
+
+
+def test_every_avatar_colour_takes_white_initials_readably() -> None:
+    from chrono_mail.ui.formatting import AVATAR_HUES, AVATAR_LIGHTNESS, AVATAR_SATURATION
+
+    for hue in range(AVATAR_HUES):  # every colour that can ever be chosen
+        colour = QColor.fromHslF(hue / AVATAR_HUES, AVATAR_SATURATION, AVATAR_LIGHTNESS)
+        assert contrast_with_white(colour) >= 4.5, hue
+    assert all(contrast_with_white(avatar_colour(f"sender{n}@example.org")) >= 4.5 for n in range(500))

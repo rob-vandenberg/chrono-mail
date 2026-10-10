@@ -1,11 +1,12 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 0.0.13"
+__version__ = "schema.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: Schema 3: previews are cleaned (older indexes are rebuilt)
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 2
+SCHEMA_VERSION: int = 3
 MINIMUM_SQLITE_VERSION: tuple[int, int, int] = (3, 43, 0)  # contentless FTS5 tables that allow deletes
 FOLDER_SEPARATOR: str = "\x1f"
 

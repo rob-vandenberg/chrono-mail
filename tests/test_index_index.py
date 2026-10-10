@@ -10,9 +10,10 @@ from chrono_mail.index import Index, IndexedMessage, IndexEntry, SearchFilter, S
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.0.13"
+__version__ = "test_index_index.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.8: Initial index tests
 
@@ -250,11 +251,12 @@ def test_damaged_index_is_reported_not_trusted(tmp_path: Path) -> None:
         Index(path)
 
 
-def test_the_old_schema_without_previews_is_reported_so_that_it_gets_rebuilt(tmp_path: Path) -> None:
+@pytest.mark.parametrize("old", ["1", "2"])
+def test_an_older_schema_is_reported_so_that_it_gets_rebuilt(tmp_path: Path, old: str) -> None:
     path = tmp_path / "index.sqlite"
     filled(tmp_path, 1).close()
     connection = sqlite3.connect(path)
-    connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema'")
+    connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (old,))
     connection.commit()
     connection.close()
     with pytest.raises(StorageError, match="rebuild"):

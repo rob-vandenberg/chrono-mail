@@ -8,13 +8,16 @@ from chrono_mail.ui.formatting import avatar_colour, display_name, initials, sho
 from chrono_mail.ui.models import ROW_ROLE
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.0.13"
+__version__ = "delegate.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: secondary text on a selected row has more contrast
 # v0.0.13: Initial message row painting
 
 ROW_HEIGHT: int = 74
 AVATAR_SIZE: int = 40
+QUIET_ALPHA: int = 170
+QUIET_ALPHA_SELECTED: int = 255  # on the highlight, secondary text is as strong as the main text: the theme's own pairing is the limit
 MARGIN: int = 12
 
 
@@ -57,7 +60,7 @@ class MessageDelegate(QStyledItemDelegate):
         painter.fillRect(full, background)
         text = palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
         quiet = QColor(text)
-        quiet.setAlpha(170)
+        quiet.setAlpha(QUIET_ALPHA_SELECTED if selected else QUIET_ALPHA)  # secondary text must stay readable on the highlight
         if row is None:  # the page with this row is still on its way
             painter.setPen(quiet)
             painter.drawText(full.adjusted(MARGIN * 2 + AVATAR_SIZE, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter, "…")

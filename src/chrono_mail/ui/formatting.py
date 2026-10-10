@@ -4,15 +4,15 @@ from datetime import UTC, datetime, timedelta
 from PySide6.QtGui import QColor
 
 # --- Version ------------------------------------------------------------
-__version__ = "formatting.py 0.0.13"
+__version__ = "formatting.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: avatar colours from 72 hues with guaranteed contrast
 # v0.0.13: Initial display helpers
 
-_AVATAR_COLOURS: tuple[str, ...] = (
-    "#c0392b", "#d35400", "#b9770e", "#7d8c00", "#1e8449", "#117a65",
-    "#1f77b4", "#2e4a9e", "#6c3483", "#a0305f", "#5d6d7e", "#8a5a44",
-)
+AVATAR_HUES: int = 72  # one colour per 5 degrees of the colour wheel
+AVATAR_SATURATION: float = 0.55
+AVATAR_LIGHTNESS: float = 0.30  # dark enough for white initials: contrast 4.7 or better on every hue
 
 
 def display_name(sender: str) -> str:
@@ -34,9 +34,10 @@ def initials(name: str) -> str:
 
 
 def avatar_colour(text: str) -> QColor:
-    """The same colour for the same sender every time."""
+    """The same colour for the same sender every time, from 72 hues that all take white initials well."""
     digest = hashlib.sha256(text.lower().encode("utf-8", "replace")).digest()
-    return QColor(_AVATAR_COLOURS[digest[0] % len(_AVATAR_COLOURS)])
+    hue = int.from_bytes(digest[:2], "big") % AVATAR_HUES
+    return QColor.fromHslF(hue / AVATAR_HUES, AVATAR_SATURATION, AVATAR_LIGHTNESS)
 
 
 def short_date(moment: datetime | None, now: datetime | None = None) -> str:

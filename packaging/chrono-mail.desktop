@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Chrono Mail
+GenericName=E-mail client
+Comment=Read and send e-mail
+Exec=chrono-mail
+Icon=chrono-mail
+Terminal=false
+Categories=Network;Email;
+Keywords=mail;email;e-mail;pop3;smtp;
+StartupWMClass=chrono-mail

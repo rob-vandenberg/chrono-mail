@@ -8,11 +8,13 @@ from PySide6.QtGui import QStandardItem, QStandardItemModel
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.13"
+__version__ = "models.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: icons in the folder tree
 # v0.0.13: Initial folder and message list models
 
 PAGE_SIZE: int = 100
@@ -264,6 +266,7 @@ class FolderTreeModel(QStandardItemModel):
             account_id = str(getattr(account, "account_id"))
             top = QStandardItem(str(getattr(account, "email_address")))
             top.setEditable(False)
+            top.setIcon(folder_icon("account"))
             top.setData("account", KIND_ROLE)
             top.setData(account_id, ACCOUNT_ROLE)
             root.appendRow(top)
@@ -272,6 +275,7 @@ class FolderTreeModel(QStandardItemModel):
             for kind, label in (("unread", "Unread"), ("flagged", "Flagged")):
                 item = QStandardItem(label)
                 item.setEditable(False)
+                item.setIcon(folder_icon(kind))
                 item.setData(kind, KIND_ROLE)
                 item.setData(account_id, ACCOUNT_ROLE)
                 top.appendRow(item)
@@ -285,6 +289,7 @@ class FolderTreeModel(QStandardItemModel):
                 item.setData(str(getattr(info, "role")), FOLDER_ROLE_ROLE)
                 item.setData(int(getattr(info, "unread")), UNREAD_ROLE)
                 self._label(item, path[-1], int(getattr(info, "unread")))
+                item.setIcon(folder_icon("outbox" if path == ("Outbox",) else str(getattr(info, "role"))))  # a parent that was made earlier takes its real role now
                 if path not in nodes:
                     nodes[path] = item
                     (nodes[path[:-1]] if len(path) > 1 else top).appendRow(item)
@@ -306,6 +311,7 @@ class FolderTreeModel(QStandardItemModel):
         item.setData("/".join(path), FOLDER_PATH_ROLE)
         item.setData(role, FOLDER_ROLE_ROLE)
         item.setData(unread, UNREAD_ROLE)
+        item.setIcon(folder_icon("outbox" if path == ("Outbox",) else role))
         FolderTreeModel._label(item, path[-1], unread)
         return item
 

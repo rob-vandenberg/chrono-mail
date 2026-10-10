@@ -277,3 +277,15 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** the parser never returns a lone surrogate character. Python's email package returns raw 8-bit bytes in a header as surrogate-escaped characters; the parser recovers the bytes and reads them as UTF-8 (so a header sent as raw UTF-8 reads correctly), and replaces whatever is invalid with U+FFFD. The composer reads recipient fields address by address with its own splitter, because `getaddresses()` of Python 3.14 silently returns nothing for the whole field when one part is malformed.
 **Reason:** AGENTS.md section 4.2; both bugs were found by the interface tests (see DEVLOG.md). Headers sent as raw UTF-8 are common, so before this fix such a message crashed indexing and with it the download.
+
+## D-033 Polish after the first real use
+*2026-10-10*
+
+**Decision:**
+- The preview line of a message has web addresses, rows of dashes and link leftovers removed (newsletters start with things like `[<https://tracker...>` and `------ HELLO`). Index schema 3; an older index is rebuilt automatically when the account is opened. The searchable body is not changed.
+- Avatar colours come from 72 hues (one per 5 degrees) at saturation 0.55 and lightness 0.30, which keeps white initials at a contrast of 4.7:1 or better on every hue (checked for all of them in a test).
+- On a selected row secondary text is as strong as the main text. The theme's own pairing of white on a light blue highlight is only 2.2:1 and is not overridden.
+- The program has an icon (an envelope with a clock, `ui/resources/chrono-mail.svg`, our own design), used for the windows and, through the launcher file `packaging/chrono-mail.desktop`, for the menu and the taskbar. The folder tree has theme icons (freedesktop names, best match first, nothing when the theme lacks one).
+- The program announces itself to the desktop as `chrono-mail`; the portal looks up a launcher file by that name (without one it reports "App info not found").
+- The interface language stays English while dates follow the system language; translating the interface is a later decision.
+**Reason:** the first look at the program on a real screen with real mail.

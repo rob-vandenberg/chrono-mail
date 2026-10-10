@@ -5,9 +5,10 @@ from chrono_mail.index import UNREADABLE_SUBJECT, IndexEntry, entry_from_raw, un
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_entry.py 0.0.13"
+__version__ = "test_index_entry.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.8: Initial index entry tests
 
@@ -40,6 +41,7 @@ def test_preview_is_the_start_of_the_body() -> None:
     assert entry(raw_message(body="short\n")).preview == "short"
     assert entry(raw_message(body="", html="<p>only <b>html</b></p>")).preview == "only html"
     assert entry(b"").preview == ""
+    assert entry(raw_message(body="[<https://tracker.example/x?id=1>\n------ HELLO Rob\n")).preview == "HELLO Rob"
     assert unreadable_entry(REF, "cur/x", FLAGS, 1).preview == ""
 
 

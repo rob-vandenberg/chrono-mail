@@ -13,9 +13,10 @@ from chrono_mail.ui.models import FOLDER_ROLE_ROLE, KIND_ROLE, PAGE_SIZE, ROW_RO
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.0.13"
+__version__ = "test_ui_models.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Initial list model, tree model and delegate tests
 
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
@@ -245,3 +246,44 @@ def test_rows_in_the_sent_folder_show_the_recipients(world: World, qtbot: QtBot)
     qtbot.wait(100)
     view.viewport().grab().save(str(SHOTS / "rows-sent.png"))
     assert view.sizeHintForRow(0) == ROW_HEIGHT
+
+
+def contrast(first: QColor, second: QColor) -> float:
+    def luminance(colour: QColor) -> float:
+        def channel(value: float) -> float:
+            return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+        return 0.2126 * channel(colour.redF()) + 0.7152 * channel(colour.greenF()) + 0.0722 * channel(colour.blueF())
+
+    light, dark = sorted((luminance(first), luminance(second)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def test_the_preview_of_the_selected_row_stays_readable(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.delegate import QUIET_ALPHA, QUIET_ALPHA_SELECTED
+
+    assert QUIET_ALPHA_SELECTED > QUIET_ALPHA
+    view = QListView()
+    qtbot.addWidget(view)
+    model = MessageListModel(world.backend)
+    view.setModel(model)
+    view.setItemDelegate(MessageDelegate())
+    view.setUniformItemSizes(True)
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#3daee9"))  # the highlight of KDE's Breeze
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("white"))
+    view.setPalette(palette)
+    view.resize(480, ROW_HEIGHT * 5)
+    view.show()
+    model.show(ViewSpec(world.account_id, "Inbox"))
+    wait(qtbot, lambda: model.rowCount() > 0 and model.row_at(0) is not None)
+    view.setCurrentIndex(model.index(0))
+    qtbot.wait(150)
+    image = view.viewport().grab().toImage()
+    background = image.pixelColor(image.width() - 12, 5)
+    assert background.name() == "#3daee9"
+    third_line = range(ROW_HEIGHT // 2 + 8, ROW_HEIGHT - 8)  # the preview
+    first_line = range(8, 26)  # the sender
+    best = max(contrast(image.pixelColor(x, y), background) for x in range(60, 300) for y in third_line)
+    main = max(contrast(image.pixelColor(x, y), background) for x in range(60, 300) for y in first_line)
+    assert best >= 0.9 * main and best >= 2.0, (best, main)  # the preview is as readable as the sender; the theme's white on light blue sets the limit

@@ -16,9 +16,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.0.13"
+__version__ = "test_engine_commands.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.12: Initial engine command tests
 
@@ -579,3 +580,21 @@ def test_deleting_a_folder_with_its_subfolders(setup: Setup) -> None:
     assert getattr(result, "folders_removed") == 3 and getattr(result, "messages_removed") == 1
     paths = [item.path for item in call(setup.engine, "folder.list", account=setup.account_id)]
     assert "Workshop" in paths and not any(path == "Work" or path.startswith("Work/") for path in paths)  # a folder with a similar name stays
+
+
+def test_an_index_with_an_older_schema_is_rebuilt_automatically(tmp_path: Path) -> None:
+    import sqlite3
+
+    engine = make_engine(tmp_path)
+    messages = {"u": raw_message(subject="Newsletter", body="[<https://tracker.example/x>\n------ HELLO Rob\n", message_id="<n@x>")}
+    with FakePop3Server(messages) as pop, FakeSmtpServer() as smtp:
+        account_id = add_account(engine, pop, smtp)
+        call(engine, "mail.fetch", account=account_id)
+        index_file = engine.directories.index_file(account_id)
+        connection = sqlite3.connect(index_file)
+        connection.execute("UPDATE meta SET value = '2' WHERE key = 'schema'")
+        connection.execute("UPDATE messages SET preview = '[<https://tracker.example/x> ------ HELLO Rob'")
+        connection.commit()
+        connection.close()
+        listing = call(engine, "message.list", account=account_id)  # opens the account: the old index is rebuilt
+        assert getattr(listing, "total") == 1 and getattr(listing, "messages")[0].preview == "HELLO Rob"

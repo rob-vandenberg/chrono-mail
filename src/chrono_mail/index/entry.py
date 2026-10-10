@@ -1,12 +1,13 @@
 from chrono_mail.core import MessageFlag, MessageRef
 from chrono_mail.index.model import PREVIEW_CHARACTERS, UNREADABLE_SUBJECT, IndexEntry
-from chrono_mail.index.text import searchable_body
+from chrono_mail.index.text import clean_preview, searchable_body
 from chrono_mail.mime import Address, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "entry.py 0.0.13"
+__version__ = "entry.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: the preview is cleaned of web addresses and decoration
 # v0.0.13: preview
 # v0.0.8: Initial index entries
 
@@ -53,7 +54,7 @@ def entry_from_raw(
         thread_key=thread_key,
         has_attachments=any(not attachment.inline for attachment in message.attachments),
         body=body,
-        preview=body[:PREVIEW_CHARACTERS],
+        preview=clean_preview(body, PREVIEW_CHARACTERS),
     )
 
 

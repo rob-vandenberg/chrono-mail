@@ -3,15 +3,20 @@ from html.parser import HTMLParser
 from typing import override
 
 # --- Version ------------------------------------------------------------
-__version__ = "text.py 0.0.13"
+__version__ = "text.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: clean_preview
 # v0.0.13: html_to_text can keep lines
 # v0.0.8: Initial text extraction for the index
 
 MAXIMUM_BODY_CHARACTERS: int = 100_000  # per message, for full-text search (D-025)
 _WHITESPACE: re.Pattern[str] = re.compile(r"\s+")
 _SPACES: re.Pattern[str] = re.compile(r"[ \t\r\f\v]+")
+_WEB_ADDRESS: re.Pattern[str] = re.compile(r"(?:https?|ftp)://\S+|www\.\S+", re.IGNORECASE)
+_LINK_LEFTOVERS: re.Pattern[str] = re.compile(r"\[\s*(?:<\s*>)?\s*\]|<\s*>|\[\s*\]|\(\s*\)")
+_DECORATION: re.Pattern[str] = re.compile(r"[-_=*#~+.|:]{3,}")
+_BRACKETS: re.Pattern[str] = re.compile(r"[\[\]<>]+")
 _SKIPPED_TAGS: frozenset[str] = frozenset({"script", "style", "head", "title"})
 _PARAGRAPH_TAGS: frozenset[str] = frozenset({"p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "pre", "table", "ul", "ol", "hr"})
 _LINE_TAGS: frozenset[str] = frozenset({"div", "li", "tr"})
@@ -79,6 +84,19 @@ def html_to_text(html: str, keep_lines: bool = False) -> str:
     if not keep_lines:
         return " ".join(extractor.parts)
     return "\n".join(_SPACES.sub(" ", line).strip() for line in "".join(extractor.parts).split("\n")).strip("\n")
+
+
+def clean_preview(body: str, limit: int = 160) -> str:
+    """The start of a message for the list: no web addresses, no rows of dashes, no link leftovers.
+
+    Newsletters start with things like '[<https://tracker.example/x?id=1>' and '------ HELLO' which say
+    nothing about the message.
+    """
+    text = _WEB_ADDRESS.sub(" ", body)
+    text = _LINK_LEFTOVERS.sub(" ", text)
+    text = _DECORATION.sub(" ", text)
+    text = _BRACKETS.sub(" ", text)
+    return _WHITESPACE.sub(" ", text).strip()[:limit]
 
 
 def searchable_body(text_body: str | None, html_body: str | None) -> str:

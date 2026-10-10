@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QIcon, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -30,6 +30,7 @@ from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.composer import ComposeWindow
 from chrono_mail.ui.delegate import MessageDelegate
+from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.models import (
     ACCOUNT_ROLE,
     FOLDER_PATH_ROLE,
@@ -43,19 +44,16 @@ from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.13"
+__version__ = "mainwindow.py 0.0.14"
 
 # --- Version history ----------------------------------------------------
+# v0.0.14: window icon, shared icon helpers
 # v0.0.13: Initial main window
 
 AUTO_CHECK_MINUTES: int = 5
 MARK_READ_DELAY_MS: int = 700
 SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Date"), ("subject", "Subject"), ("sender", "Sender"), ("size", "Size"))
 _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-outbox", "drafts": "document-edit", "trash": "user-trash", "junk": "mail-mark-junk", "archive": "folder-archive", "other": "folder"}
-
-
-def theme_icon(name: str) -> QIcon:
-    return QIcon.fromTheme(name)
 
 
 def bool_setting(settings: QSettings, key: str, default: bool) -> bool:
@@ -75,6 +73,7 @@ class MainWindow(QMainWindow):
         self.backend: Backend = backend
         self.settings: QSettings = settings
         self.setWindowTitle("Chrono Mail")
+        self.setWindowIcon(application_icon())
         self.resize(1280, 800)
         self._accounts: list[object] = []
         self._folders: dict[str, list[object]] = {}
