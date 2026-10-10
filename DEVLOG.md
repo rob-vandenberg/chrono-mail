@@ -516,3 +516,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 - The first run found a YAML error (a colon in a step name), a test that wrote into a path that exists only on this machine, and a crash of Qt WebEngine while the process shuts down after all tests passed; the last is avoided by ending the process right after the results when `CHRONO_MAIL_FAST_EXIT` is set (the workflow sets it).
 
+## 2026-10-10 Message list as columns (version 0.0.41)
+
+**What landed**
+- `ui/columns.py`, `ui/columnsdialog.py`, `ui/messagewindow.py`; the list model is a table model; the list view a tree view without decoration; sortable, movable, resizable columns that are remembered; reading pane right, below or off; Open (Enter, double click) in a window of its own (D-056). Tests: 11 new.
+
+**Still open**
+- Column widths are saved per column id, not per folder; no per-folder layouts.
+

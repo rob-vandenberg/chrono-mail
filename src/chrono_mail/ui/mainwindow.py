@@ -1,3 +1,4 @@
+import json
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -7,13 +8,14 @@ from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, 
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHeaderView,
+    QStyledItemDelegate,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListView,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -30,11 +32,14 @@ from chrono_mail.core import ChronoMailError, program_version
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.columns import BY_ID, CARD, DEFAULT_COLUMNS, column_widths, valid_columns
+from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
 from chrono_mail.ui.composer import ComposeWindow
 from chrono_mail.ui.conversationbar import ConversationBar
 from chrono_mail.ui.delegate import MessageDelegate
 from chrono_mail.ui.foldertree import FolderTree
 from chrono_mail.ui.icons import application_icon, theme_icon
+from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.models import (
     ACCOUNT_ROLE,
     FOLDER_PATH_ROLE,
@@ -57,9 +62,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.35"
+__version__ = "mainwindow.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: Message list as columns, column editor, reading pane position, message windows
 # v0.0.35: Send later and snooze
 # v0.0.34: Junk and unread navigation
 # v0.0.33: Rules
@@ -132,6 +138,8 @@ class MainWindow(QMainWindow):
         self._build_toolbar()
         self._build_menus()
         self._build_status()
+        self._apply_list_layout()
+        self._apply_reading_pane()
         self._wire()
         self._restore_state()
         self._quitting: bool = False
@@ -165,17 +173,35 @@ class MainWindow(QMainWindow):
 
         self.list_model = MessageListModel(self.backend, self)
         self.delegate = MessageDelegate()
-        self.list_view = QListView(self)
+        self.plain_delegate = QStyledItemDelegate(self)
+        self._layout: str = str(self.settings.value("list_layout", "columns"))
+        if self._layout not in ("columns", "cards"):
+            self._layout = "columns"
+        self._columns: tuple[str, ...] = valid_columns([part for part in str(self.settings.value("columns", "")).split(",") if part])
+        self._widths: dict[str, int] = column_widths(str(self.settings.value("column_widths", "")))
+        self._reading_pane: str = str(self.settings.value("reading_pane", "right"))
+        if self._reading_pane not in ("right", "bottom", "off"):
+            self._reading_pane = "right"
+        self._date_style: str = str(self.settings.value("date_style", "short"))
+        self._message_windows: list[MessageWindow] = []
+        self.list_view = QTreeView(self)
         self.list_view.setModel(self.list_model)
-        self.list_view.setItemDelegate(self.delegate)
-        self.list_view.setUniformItemSizes(True)
+        self.list_view.setRootIsDecorated(False)
+        self.list_view.setItemsExpandable(False)
+        self.list_view.setUniformRowHeights(True)
+        self.list_view.setAllColumnsShowFocus(True)
+        self.list_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.list_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.list_view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list_view.setDragEnabled(True)
         self.list_view.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
         self.list_view.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.list_view.setFrameShape(QListView.Shape.NoFrame)
+        self.list_view.setFrameShape(QTreeView.Shape.NoFrame)
+        self.list_view.header().setSectionsMovable(True)
+        self.list_view.header().setStretchLastSection(True)
+        self.list_view.header().setSectionsClickable(True)
+        self.list_view.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
         list_pane = QWidget(self)
         list_layout = QVBoxLayout(list_pane)
@@ -210,21 +236,26 @@ class MainWindow(QMainWindow):
 
         self.reader = ReaderWidget(self)
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
+        self.content_splitter = QSplitter(Qt.Orientation.Horizontal, self)  # the list and the reading pane, side by side or one above the other
         self.splitter.addWidget(self.tree)
-        self.splitter.addWidget(list_pane)
+        self.splitter.addWidget(self.content_splitter)
+        self.content_splitter.addWidget(list_pane)
         self.conversation_bar = ConversationBar(self)
-        reading_pane = QWidget(self)
-        reading_layout = QVBoxLayout(reading_pane)
+        self.reading_pane = QWidget(self)
+        reading_layout = QVBoxLayout(self.reading_pane)
         reading_layout.setContentsMargins(0, 0, 0, 0)
         reading_layout.setSpacing(0)
         reading_layout.addWidget(self.conversation_bar)
         reading_layout.addWidget(self.reader, 1)
-        self.splitter.addWidget(reading_pane)
+        self.content_splitter.addWidget(self.reading_pane)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
-        self.splitter.setStretchFactor(2, 2)
-        self.splitter.setSizes([240, 400, 640])
+        self.content_splitter.setStretchFactor(0, 1)
+        self.content_splitter.setStretchFactor(1, 2)
+        self.splitter.setSizes([240, 1040])
+        self.content_splitter.setSizes([400, 640])
         self.splitter.setChildrenCollapsible(False)
+        self.content_splitter.setChildrenCollapsible(False)
         self.setCentralWidget(self.splitter)
         self._update_sort_menu()
 
@@ -251,11 +282,13 @@ class MainWindow(QMainWindow):
         self.act_reply = self._action("Reply", lambda: self.compose_from_selection("reply"), "Ctrl+R", "mail-reply-sender")
         self.act_reply_all = self._action("Reply all", lambda: self.compose_from_selection("reply_all"), "Ctrl+Shift+R", "mail-reply-all")
         self.act_forward = self._action("Forward", lambda: self.compose_from_selection("forward"), "Ctrl+L", "mail-forward")
-        self.act_edit_draft = self._action("Edit draft", self.edit_draft, "Return", "document-edit")
+        self.act_edit_draft = self._action("Edit draft", self.edit_draft, None, "document-edit")
         self.act_delete = self._action("Delete", self.delete_selected, "Delete", "edit-delete")
         self.act_save_as = self._action("Save as…", self.save_selected_as, "Ctrl+Shift+S", "document-save-as")
         self.act_source = self._action("View source", self.view_source, "Ctrl+U")
         self.act_print = self._action("Print…", self.print_selected, "Ctrl+P", "document-print")
+        self.act_open = self._action("Open", self.open_selected, "Return", "document-open")
+        self.act_columns = self._action("Message list…", self.edit_columns)
         self.act_junk = self._action("Mark as junk", lambda: self.junk_selected(True), "Ctrl+J", "mail-mark-junk")
         self.act_not_junk = self._action("Not junk", lambda: self.junk_selected(False), "Ctrl+Shift+J", "mail-mark-notjunk")
         self.act_not_junk.setEnabled(False)
@@ -344,6 +377,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.act_quit)
         message_menu = bar.addMenu("&Message")
+        message_menu.addAction(self.act_open)
         message_menu.addAction(self.act_edit_draft)
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
             message_menu.addAction(action)
@@ -373,6 +407,15 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(self.act_scheduled)
         view_menu = bar.addMenu("&View")
         view_menu.addAction(self.act_search)
+        view_menu.addAction(self.act_columns)
+        pane_menu = view_menu.addMenu("Reading pane")
+        self.pane_actions: dict[str, QAction] = {}
+        for value, label in (('right', 'At the right'), ('bottom', 'At the bottom'), ('off', 'Off')):
+            action = pane_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(self._reading_pane == value)
+            action.triggered.connect(lambda checked=False, chosen=value: self.set_reading_pane(chosen))
+            self.pane_actions[value] = action
         view_menu.addAction(self.act_advanced)
         view_menu.addAction(self.act_conversations)
         view_menu.addAction(self.act_auto)
@@ -398,6 +441,10 @@ class MainWindow(QMainWindow):
         self.list_view.selectionModel().currentChanged.connect(self._row_changed)
         self.list_view.customContextMenuRequested.connect(self._list_menu)
         self.list_view.doubleClicked.connect(self._row_double_clicked)
+        self.list_view.header().sectionClicked.connect(self._header_clicked)
+        self.list_view.header().sectionMoved.connect(self._columns_moved)
+        self.list_view.header().sectionResized.connect(self._column_resized)
+        self.list_view.header().customContextMenuRequested.connect(self._header_menu)
         self.list_model.counts_changed.connect(self._counts_changed)
         self.list_model.load_failed.connect(self._load_failed)
         self.list_model.loaded.connect(self._restore_row_selection)
@@ -418,9 +465,12 @@ class MainWindow(QMainWindow):
         geometry = self.settings.value("geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
-        sizes = self.settings.value("splitter")
-        if isinstance(sizes, list):
+        sizes = self.settings.value("splitter2")
+        if isinstance(sizes, list) and len(sizes) == 2:
             self.splitter.setSizes([int(size) for size in sizes])
+        inner = self.settings.value("content_splitter")
+        if isinstance(inner, list) and len(inner) == 2 and self._reading_pane != "off":
+            self.content_splitter.setSizes([int(size) for size in inner])
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
@@ -433,7 +483,9 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
         self.settings.setValue("geometry", self.saveGeometry())
-        self.settings.setValue("splitter", self.splitter.sizes())
+        self.settings.setValue("splitter2", self.splitter.sizes())
+        if self._reading_pane != "off":
+            self.settings.setValue("content_splitter", self.content_splitter.sizes())
         self.settings.setValue("sort", self._sort)
         self.settings.setValue("oldest_first", self._oldest_first)
         self.settings.setValue("auto_check", self.act_auto.isChecked())
@@ -910,6 +962,7 @@ class MainWindow(QMainWindow):
 
     def _apply_view(self) -> None:
         self.delegate.show_recipients = self._folder_role in ("sent", "drafts") or self._folder == "Outbox"
+        self.list_model.recipients_first = self.delegate.show_recipients
         self.list_model.show(self.view_spec())
 
     def _update_sort_menu(self) -> None:
@@ -932,6 +985,8 @@ class MainWindow(QMainWindow):
         self._sort, self._oldest_first = sort, oldest_first
         self._update_sort_menu()
         self._apply_view()
+        if self._layout == "columns":
+            self._show_sort_indicator()
 
     # --- reading ------------------------------------------------------------------------------------------
 
@@ -949,6 +1004,8 @@ class MainWindow(QMainWindow):
 
     def _row_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         self._mark_read_timer.stop()
+        if self._reading_pane == "off":
+            return  # nothing is shown, so nothing is read: a message is opened in a window of its own
         row = self.list_model.row_at(current.row()) if current.isValid() else None
         if row is None or self._account_id is None:
             if not self.list_view.selectionModel().hasSelection():
@@ -1232,8 +1289,149 @@ class MainWindow(QMainWindow):
         return window
 
     def _row_double_clicked(self, index: QModelIndex) -> None:
+        self.open_selected()
+
+    def open_selected(self) -> None:
+        """Enter or a double click: edit a draft, or read a message in a window of its own."""
         if self._in_drafts():
             self.edit_draft()
+            return
+        chosen = self._selected_message()
+        if chosen is None:
+            return
+        account, folder, message_id, _ = chosen
+
+        def shown(result: object) -> None:
+            window = MessageWindow(self.backend, account, folder, message_id, result, self._compose_in_window, self._open_link)
+            self._message_windows.append(window)
+            window.destroyed.connect(lambda: self._message_windows.remove(window) if window in self._message_windows else None)
+            window.show()
+            self._set_flags([(folder, message_id)], {"seen": True}, account)
+
+        self.backend.call("message.show", {"account": account, "folder": folder, "message": message_id}, shown, lambda error: self._report("Could not open the message", error), owner=self)
+
+    def _compose_in_window(self, kind: str, account: str, folder: str, message_id: str) -> None:
+        def drafted(result: object) -> None:
+            self._open_composer(account, result, (folder, message_id))
+
+        self.backend.call("message.compose", {"account": account, "folder": folder, "message": message_id, "kind": kind}, drafted, lambda error: self._report("Could not start the message", error), owner=self)
+
+    # --- the message list: layout, columns, reading pane -----------------------------------------------------------
+
+    def _apply_list_layout(self) -> None:
+        cards = self._layout == "cards"
+        self.list_model.date_style = self._date_style
+        header = self.list_view.header()
+        if cards:
+            self.list_model.set_columns((CARD,))
+            header.hide()
+            self.list_view.setItemDelegate(self.delegate)
+            self.list_view.setUniformRowHeights(True)
+        else:
+            self.list_model.set_columns(self._columns)
+            header.show()
+            self.list_view.setItemDelegate(self.plain_delegate)
+            for position, column_id in enumerate(self._columns):
+                self.list_view.setColumnWidth(position, self._widths.get(column_id, BY_ID[column_id].width))
+            header.setSortIndicatorShown(True)
+            self._show_sort_indicator()
+        self.list_model.refresh_cells()
+
+    def _show_sort_indicator(self) -> None:
+        sort_of = {"sender": ("from_to", "from"), "subject": ("subject",), "date": ("date",), "size": ("size",)}
+        header = self.list_view.header()
+        for position, column_id in enumerate(self.list_model.columns):
+            if column_id in sort_of.get(self._sort, ()):
+                header.setSortIndicator(position, Qt.SortOrder.AscendingOrder if self._oldest_first else Qt.SortOrder.DescendingOrder)
+                return
+        header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
+
+    def _header_clicked(self, section: int) -> None:
+        columns = self.list_model.columns
+        if self._layout != "columns" or not 0 <= section < len(columns):
+            return
+        sort = BY_ID[columns[section]].sort
+        if sort is None:
+            return
+        if sort == self._sort:
+            self._set_sort(sort, not self._oldest_first)
+        else:
+            self._set_sort(sort, sort != "date" and sort != "size")  # text columns A to Z first, dates and sizes newest and largest first
+        self._show_sort_indicator()
+
+    def _columns_moved(self, logical: int, old_visual: int, new_visual: int) -> None:
+        header = self.list_view.header()
+        order = [self.list_model.columns[header.logicalIndex(visual)] for visual in range(header.count())]
+        if self._layout == "columns" and tuple(order) != self._columns and set(order) == set(self._columns):
+            self._columns = tuple(order)
+            self.settings.setValue("columns", ",".join(order))
+
+    def _column_resized(self, section: int, old: int, new: int) -> None:
+        columns = self.list_model.columns
+        if self._layout == "columns" and 0 <= section < len(columns) and new >= 16 and self.list_view.header().isVisible():
+            self._widths[columns[section]] = new
+            self.settings.setValue("column_widths", json.dumps(self._widths))
+
+    def _header_menu(self, position: QPoint) -> None:
+        menu = QMenu(self)
+        chosen = set(self._columns)
+        for column_id, column in BY_ID.items():
+            action = menu.addAction(column.label)
+            action.setCheckable(True)
+            action.setChecked(column_id in chosen)
+            action.triggered.connect(lambda checked=False, wanted=column_id: self._toggle_column(wanted))
+        menu.addSeparator()
+        menu.addAction(self.act_columns)
+        menu.exec(self.list_view.header().mapToGlobal(position))
+
+    def _toggle_column(self, column_id: str) -> None:
+        columns = list(self._columns)
+        if column_id in columns:
+            if len(columns) > 1:
+                columns.remove(column_id)
+        else:
+            columns.append(column_id)
+        self._set_columns(tuple(columns))
+
+    def _set_columns(self, columns: tuple[str, ...]) -> None:
+        self._columns = columns
+        self.settings.setValue("columns", ",".join(columns))
+        self._apply_list_layout()
+
+    def edit_columns(self) -> None:
+        """View > Message list: layout, columns, reading pane and date style."""
+        dialog = ColumnsDialog(ListChoice(self._layout, self._columns, self._reading_pane, self._date_style), self)
+        if dialog.exec() != ColumnsDialog.DialogCode.Accepted:
+            return
+        self.apply_list_choice(dialog.choice())
+
+    def apply_list_choice(self, choice: ListChoice) -> None:
+        self._layout, self._columns, self._date_style = choice.layout, choice.columns, choice.date_style
+        for key, value in (("list_layout", self._layout), ("columns", ",".join(self._columns)), ("date_style", self._date_style)):
+            self.settings.setValue(key, value)
+        self._apply_list_layout()
+        self.set_reading_pane(choice.reading_pane)
+
+    def set_reading_pane(self, where: str) -> None:
+        self._reading_pane = where if where in ("right", "bottom", "off") else "right"
+        self.settings.setValue("reading_pane", self._reading_pane)
+        self._apply_reading_pane()
+
+    def _apply_reading_pane(self) -> None:
+        for value, action in self.pane_actions.items():
+            action.setChecked(value == self._reading_pane)
+        if self._reading_pane == "off":
+            self.reading_pane.hide()
+            self._clear_reader()
+            self._shown = None
+            return
+        self.content_splitter.setOrientation(Qt.Orientation.Horizontal if self._reading_pane == "right" else Qt.Orientation.Vertical)
+        self.reading_pane.show()
+        wide = self._layout == "columns"
+        self.content_splitter.setSizes(([640, 400] if wide else [400, 640]) if self._reading_pane == "right" else [320, 380])
+        current = self.list_view.currentIndex()
+        if current.isValid():
+            self._row_changed(current, QModelIndex())
 
     def _in_drafts(self) -> bool:
         return self._folder_role == "drafts" or self._folder == "Outbox"

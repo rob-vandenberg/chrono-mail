@@ -4,18 +4,20 @@ from collections.abc import Sequence
 from enum import Enum
 from typing import override
 
-from PySide6.QtCore import QAbstractListModel, QMimeData, QModelIndex, QObject, QPersistentModelIndex, Qt, Signal
-from PySide6.QtGui import QStandardItem, QStandardItemModel
+from PySide6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, QObject, QPersistentModelIndex, Qt, Signal
+from PySide6.QtGui import QFont, QStandardItem, QStandardItemModel
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.columns import BY_ID, CARD, SYMBOLS, cell_text
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.19"
+__version__ = "models.py 0.0.41"
 
 # --- Version history ----------------------------------------------------
+# v0.0.41: columns
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.17: messages can be dragged out of the list
@@ -70,7 +72,7 @@ class _Rows:
     loading_more: bool = False
 
 
-class MessageListModel(QAbstractListModel):
+class MessageListModel(QAbstractTableModel):
     """The rows of one folder or search, fetched a page at a time through engine commands."""
 
     counts_changed = Signal(int, int)  # total, unread
@@ -85,6 +87,28 @@ class MessageListModel(QAbstractListModel):
         self._total: int = 0
         self._unread: int = 0
         self._rows: _Rows = _Rows()
+        self._columns: tuple[str, ...] = (CARD,)
+        self.recipients_first: bool = False  # in Sent, Drafts and Outbox the From / To column shows the recipients
+        self.date_style: str = "short"
+
+    # --- the columns --------------------------------------------------------------------------
+
+    @property
+    def columns(self) -> tuple[str, ...]:
+        return self._columns
+
+    def set_columns(self, columns: tuple[str, ...]) -> None:
+        """Show these columns (ids from ui.columns), or the single card column."""
+        if columns == self._columns:
+            return
+        self.beginResetModel()
+        self._columns = columns
+        self.endResetModel()
+
+    def refresh_cells(self) -> None:
+        """What the cells show depends on settings (the date style, recipients): draw them again."""
+        if self.rowCount():
+            self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, max(0, len(self._columns) - 1)))
 
     # --- the view -----------------------------------------------------------------------------
 
@@ -123,10 +147,48 @@ class MessageListModel(QAbstractListModel):
         return self._total
 
     @override
-    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
-        if not index.isValid() or role != ROW_ROLE:
+    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self._columns)
+
+    @override
+    def index(self, row: int, column: int = 0, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> QModelIndex:
+        return super().index(row, column, parent)
+
+    @override
+    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+        if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(self._columns) or self._columns[section] not in BY_ID:
             return None
-        return self.row_at(index.row(), fetch=True)
+        column = BY_ID[self._columns[section]]
+        if role == Qt.ItemDataRole.DisplayRole:
+            return SYMBOLS.get(column.column_id, column.label)
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return column.label
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return int(Qt.AlignmentFlag.AlignCenter) if column.symbol else int(Qt.AlignmentFlag.AlignVCenter | (Qt.AlignmentFlag.AlignRight if column.right else Qt.AlignmentFlag.AlignLeft))
+        return None
+
+    @override
+    def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
+        if not index.isValid():
+            return None
+        if role == ROW_ROLE:
+            return self.row_at(index.row(), fetch=True)
+        column_id = self._columns[index.column()] if 0 <= index.column() < len(self._columns) else CARD
+        if column_id == CARD or column_id not in BY_ID:
+            return None
+        row = self.row_at(index.row(), fetch=True)
+        column = BY_ID[column_id]
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return int(Qt.AlignmentFlag.AlignCenter) if column.symbol else int(Qt.AlignmentFlag.AlignVCenter | (Qt.AlignmentFlag.AlignRight if column.right else Qt.AlignmentFlag.AlignLeft))
+        if row is None:
+            return "…" if role == Qt.ItemDataRole.DisplayRole and index.column() == 0 else None
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
+            return cell_text(column_id, row, self.recipients_first, self.date_style)
+        if role == Qt.ItemDataRole.FontRole and "seen" not in getattr(row, "flags"):
+            font = QFont()
+            font.setBold(True)
+            return font
+        return None
 
     @override
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
