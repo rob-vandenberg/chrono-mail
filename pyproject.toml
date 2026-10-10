@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chrono-mail"
+version = "0.0.6"
+description = "An open-source desktop email client for Linux, inspired by eM Client."
+readme = "README.md"
+requires-python = ">=3.14"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+dependencies = [
+    "cryptography>=50",
+    "keyring>=25.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "PySide6>=6.12",
+    "pyrefly>=1.3",
+    "pytest>=9.1",
+    "import-linter>=2.15",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chrono_mail = ["py.typed"]
+
+[tool.pyrefly]
+preset = "strict"
+project-includes = ["src", "tests"]
+project-excludes = ["tests/data"]
+search-path = ["src", "."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live and not oskeyring'"
+markers = [
+    "live: talks to a real mail server (opt-in: pytest -m live)",
+    "oskeyring: uses the real operating system credential store (opt-in: pytest -m oskeyring)",
+]
+
+[tool.importlinter]
+root_package = "chrono_mail"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Layers (ARCHITECTURE.md section 3)"
+type = "layers"
+layers = [
+    "chrono_mail.cli | chrono_mail.ui",
+    "chrono_mail.engine",
+    "chrono_mail.sync",
+    "chrono_mail.store | chrono_mail.index | chrono_mail.protocols",
+    "chrono_mail.crypto | chrono_mail.mime | chrono_mail.config",
+    "chrono_mail.core",
+]
+
+[[tool.importlinter.contracts]]
+name = "Only ui may import PySide6"
+type = "forbidden"
+source_modules = [
+    "chrono_mail.core",
+    "chrono_mail.crypto",
+    "chrono_mail.mime",
+    "chrono_mail.config",
+    "chrono_mail.store",
+    "chrono_mail.index",
+    "chrono_mail.protocols",
+    "chrono_mail.sync",
+    "chrono_mail.engine",
+    "chrono_mail.cli",
+]
+forbidden_modules = ["PySide6", "shiboken6"]

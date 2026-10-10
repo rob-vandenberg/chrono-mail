@@ -1,0 +1,64 @@
+import os
+import tomllib
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any  # tomllib returns untyped dictionaries
+
+# --- Version ------------------------------------------------------------
+__version__ = "account.py 0.0.3"
+
+# --- Version history ----------------------------------------------------
+# v0.0.3: Initial live account loader
+
+ACCOUNT_FILE: Path = Path(__file__).resolve().parent / "account.local.toml"
+EXAMPLE_FILE: Path = ACCOUNT_FILE.with_name("account.example.toml")
+
+
+@dataclass(frozen=True)
+class LiveAccount:
+    host: str
+    user: str
+    password: str
+    wrong_password_attempts: int
+    smtp_plain_port: int
+    smtp_starttls_port: int
+    smtp_ssl_port: int
+    pop3_port: int
+    pop3_ssl_port: int
+
+
+def _text(settings: dict[str, Any], key: str, variable: str) -> str:
+    value: object = os.environ.get(variable, settings.get(key))
+    if not isinstance(value, str) or not value:
+        raise RuntimeError(
+            f"Live account setting '{key}' is missing. Set {variable} or create "
+            f"{ACCOUNT_FILE} from {EXAMPLE_FILE}."
+        )
+    return value
+
+
+def _number(settings: dict[str, Any], key: str, default: int, variable: str | None = None) -> int:
+    value: object = settings.get(key, default)
+    if variable is not None and variable in os.environ:
+        value = os.environ[variable]
+    return int(str(value))
+
+
+def load_live_account() -> LiveAccount:
+    settings: dict[str, Any] = {}
+    if ACCOUNT_FILE.exists():
+        with ACCOUNT_FILE.open("rb") as handle:
+            settings = tomllib.load(handle)
+    return LiveAccount(
+        host=_text(settings, "host", "CHRONOMAIL_LIVE_HOST"),
+        user=_text(settings, "user", "CHRONOMAIL_LIVE_USER"),
+        password=_text(settings, "password", "CHRONOMAIL_LIVE_PASSWORD"),
+        wrong_password_attempts=_number(
+            settings, "wrong_password_attempts", 1, "CHRONOMAIL_LIVE_WRONG_PASSWORD_ATTEMPTS"
+        ),
+        smtp_plain_port=_number(settings, "smtp_plain_port", 25),
+        smtp_starttls_port=_number(settings, "smtp_starttls_port", 587),
+        smtp_ssl_port=_number(settings, "smtp_ssl_port", 465),
+        pop3_port=_number(settings, "pop3_port", 110),
+        pop3_ssl_port=_number(settings, "pop3_ssl_port", 995),
+    )

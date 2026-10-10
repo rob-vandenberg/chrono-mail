@@ -64,9 +64,9 @@ Only `ui` may import PySide6.
 
 ### 4.3 Keys
 
-- The data key encrypts message files. It is protected by the OS credential store (KWallet, GNOME Keyring/Secret Service, Windows Credential Manager, macOS Keychain) and/or by a master password *(options to be decided)*.
-- **Key backup and recovery is mandatory.** A lost key means all mail is lost. The design includes an explicit, tested backup and recovery procedure *(to be decided)*.
-- Algorithm and library: authenticated encryption from the `cryptography` package *(exact algorithm to be decided)*.
+- The data key encrypts message files. Version 1 keeps it in the OS credential store (KWallet, GNOME Keyring/Secret Service, Windows Credential Manager, macOS Keychain) through the `keyring` package. A master-password mode may follow later (D-023).
+- **Key backup and recovery is mandatory.** A lost key means all mail is lost. `crypto` provides two backup formats: a passphrase-protected recovery file (scrypt + AES-GCM) and a printable recovery code with a checksum. The tested end-to-end procedure is task 1.12.
+- Algorithm and library: AES-256-GCM from the `cryptography` package, with a per-file key derived by HKDF-SHA256 (D-023).
 
 ## 5. Account model
 

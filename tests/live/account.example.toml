@@ -1,0 +1,20 @@
+# Copy this file to account.local.toml (ignored by git) and fill in the values.
+# Environment variables override the file: CHRONOMAIL_LIVE_HOST,
+# CHRONOMAIL_LIVE_USER, CHRONOMAIL_LIVE_PASSWORD,
+# CHRONOMAIL_LIVE_WRONG_PASSWORD_ATTEMPTS.
+#
+# Use a disposable test mailbox. The live tests send, read and delete messages.
+
+host = "mail.example.com"
+user = "test@example.com"
+password = "change-me"
+
+# Wrong-password attempts per protocol per run. 0 disables those tests.
+wrong_password_attempts = 1
+
+# Ports (defaults shown).
+smtp_plain_port = 25
+smtp_starttls_port = 587
+smtp_ssl_port = 465
+pop3_port = 110
+pop3_ssl_port = 995
