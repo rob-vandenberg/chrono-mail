@@ -24,9 +24,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 0.0.44"
+__version__ = "accountedit.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: check interval and the folders of an IMAP account
 # v0.0.43: accepted certificates
 # v0.0.31: IMAP accounts have no server copies tab
@@ -69,6 +70,14 @@ class AccountEditDialog(QDialog):
         self.check_minutes.setSuffix(" minutes")
         self.check_minutes.setValue(int(getattr(account, "check_minutes", 0)))
         general_form.addRow("Check this account every", self.check_minutes)
+        self.storage: QComboBox | None = None
+        if str(getattr(account, "kind", "pop3")) == "pop3":  # an IMAP account always has the folders of its server
+            self.storage = QComboBox(general)
+            self.storage.addItem("A mailbox of its own, with its own folders", "own")
+            self.storage.addItem("Local Folders, together with the other accounts that keep their mail there", "local")
+            self.storage.setCurrentIndex(max(0, self.storage.findData(str(getattr(account, "storage", "own")))))
+            self.storage.setToolTip("Changing this moves the stored mail of this account. Nothing is deleted before the copy has been checked.")
+            general_form.addRow("Keep the mail in", self.storage)
         self.tabs.addTab(general, "General")
 
         servers = QWidget(self)
@@ -351,20 +360,39 @@ class AccountEditDialog(QDialog):
 
         self._backend.call("account.check", values, done, failed, owner=self)
 
+    def _storage_change(self) -> str | None:
+        """The new place for the mail when the choice was changed."""
+        if self.storage is None:
+            return None
+        chosen = str(self.storage.currentData())
+        return chosen if chosen != str(getattr(self._account, "storage", "own")) else None
+
     def _save(self) -> None:
         values = self._values()
         folders = self._folder_changes()
-        if not values and not folders:
+        storage = self._storage_change()
+        if not values and not folders and storage is None:
             self.accept()
             return
         self.save_button.setEnabled(False)
         self.result_label.setText("Saving…")
+        account_id = str(getattr(self._account, "account_id"))
+
+        def moved(result: object) -> None:
+            self.accept()
+
+        def finish(result: object) -> None:
+            if storage is None:
+                self.accept()
+                return
+            self.result_label.setText("Moving the mail. This can take a while…")
+            self._backend.call("account.set-storage", {"account": account_id, "storage": storage}, moved, failed, owner=self)
 
         def done(result: object) -> None:
             if folders:
-                self._backend.call("account.set-folders", {"account": str(getattr(self._account, "account_id")), **folders}, lambda outcome: self.accept(), failed, owner=self)
+                self._backend.call("account.set-folders", {"account": account_id, **folders}, finish, failed, owner=self)
             else:
-                self.accept()
+                finish(None)
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)

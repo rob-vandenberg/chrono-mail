@@ -21,9 +21,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.43"
+__version__ = "session.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.43: tls_context for accepted certificates
 # v0.0.32: stop_event for long waits
 # v0.0.13: key cache, safe for concurrent commands
@@ -117,6 +118,28 @@ class Engine:
 
     def store_directory(self, settings: AccountSettings) -> Path:
         return self.directories.store_directory(settings.account.account_id)
+
+    def storage_settings(self, settings: AccountSettings, config: AppConfig | None = None) -> AccountSettings:
+        """Where an account's mail is kept: the account itself, or Local Folders for a POP3 account that shares them."""
+        if settings.storage != "local":
+            return settings
+        local = (config if config is not None else self.config()).local_folders()
+        if local is None:
+            raise ConfigurationError("This account keeps its mail in Local Folders, but there is no Local Folders mailbox")
+        return local
+
+    def storage_groups(self, config: AppConfig | None = None) -> dict[str, list[AccountSettings]]:
+        """The accounts that share a place for their mail, by the id of that place: every account on its own, and the POP3
+        accounts that keep their mail in Local Folders together with Local Folders itself."""
+        current = config if config is not None else self.config()
+        groups: dict[str, list[AccountSettings]] = {}
+        for item in current.accounts:
+            try:
+                place = self.storage_settings(item, current).account.account_id
+            except ConfigurationError:
+                place = item.account.account_id  # Local Folders is missing: the account is shown on its own (and says so when opened)
+            groups.setdefault(place, []).append(item)
+        return groups
 
     def open_store(self, settings: AccountSettings, config: AppConfig | None = None) -> Store:
         current = config if config is not None else self.config()

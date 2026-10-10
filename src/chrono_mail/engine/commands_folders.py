@@ -8,9 +8,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.sync import rebuild_index, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 0.0.13"
+__version__ = "commands_folders.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: maintenance works on the storage of an account
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.12: Initial folder and maintenance commands
 
@@ -111,7 +112,7 @@ class IndexResult:
 
 
 def index_rebuild(engine: Engine, parameters: AccountParameters) -> IndexResult:
-    settings = engine.resolve_account(parameters.account)
+    settings = engine.storage_settings(engine.resolve_account(parameters.account))
     store = engine.open_store(settings)
     index, report = rebuild_index(store, engine.directories.index_file(settings.account.account_id), lambda done: engine.progress("Rebuilding the index", done, None))
     index.close()
@@ -139,8 +140,7 @@ class VerifyResult:
 
 def store_verify(engine: Engine, parameters: AccountParameters) -> VerifyResult:
     """Read and authenticate every message file; list the ones that are damaged."""
-    settings = engine.resolve_account(parameters.account)
-    store = engine.open_store(settings)
+    store = engine.open_store(engine.storage_settings(engine.resolve_account(parameters.account)))
     checked = 0
     damaged: list[str] = []
     for folder in store.list_folders():
@@ -163,8 +163,7 @@ class RecoverResult:
 
 
 def store_recover(engine: Engine, parameters: AccountParameters) -> RecoverResult:
-    settings = engine.resolve_account(parameters.account)
-    store = engine.open_store(settings)
+    store = engine.open_store(engine.storage_settings(engine.resolve_account(parameters.account)))
     report = store.recover()
     return RecoverResult(report.temporary_files_removed, report.abandoned_folders_removed, report.damaged_folders)
 

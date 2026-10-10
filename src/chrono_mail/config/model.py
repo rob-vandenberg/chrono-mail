@@ -2,12 +2,13 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
-from chrono_mail.core import Account, ConfigurationError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, Account, AccountKind, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.44"
+__version__ = "model.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: storage of an account (own folders or Local Folders)
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.43: accepted certificates per account
 # v0.0.20: signature per account
@@ -47,10 +48,15 @@ class AccountSettings:
     signature: str = ""  # plain text, added to new messages
     trusted_certificates: tuple[str, ...] = ()  # SHA-256 fingerprints of server certificates the person accepted
     check_minutes: int = 0  # how often to check this account for mail; 0 follows the general setting
+    storage: str = "own"  # where a POP3 account's mail is kept: its own folders (own) or the shared Local Folders (local)
 
     def __post_init__(self) -> None:
         if len(self.signature) > MAXIMUM_SIGNATURE_CHARACTERS:
             raise ConfigurationError(f"A signature may have at most {MAXIMUM_SIGNATURE_CHARACTERS} characters")
+        if self.storage not in ("own", "local"):
+            raise ConfigurationError("The storage of an account is 'own' (its own folders) or 'local' (Local Folders)")
+        if self.storage == "local" and self.account.kind is not AccountKind.POP3:
+            raise ConfigurationError("Only a POP3 account can keep its mail in Local Folders")
         if not 0 <= self.check_minutes <= MAXIMUM_CHECK_MINUTES:
             raise ConfigurationError(f"The number of minutes between checks must be between 0 and {MAXIMUM_CHECK_MINUTES}")
         if len(self.trusted_certificates) > MAXIMUM_TRUSTED_CERTIFICATES or len(set(self.trusted_certificates)) != len(self.trusted_certificates):
@@ -75,6 +81,10 @@ class AppConfig:
             seen.add(identifier)
         if self.key_id is not None and re.fullmatch(r"[0-9a-f]{16}", self.key_id) is None:
             raise ConfigurationError("The key id must be 16 lower-case hexadecimal characters")
+
+    def local_folders(self) -> AccountSettings | None:
+        """The Local Folders mailbox, if it exists."""
+        return next((item for item in self.accounts if item.account.account_id == LOCAL_ACCOUNT_ID), None)
 
     def find(self, account_id: str) -> AccountSettings:
         for settings in self.accounts:

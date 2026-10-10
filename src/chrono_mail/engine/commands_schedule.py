@@ -1,8 +1,8 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from chrono_mail.config import ServerRole
-from chrono_mail.core import ChronoMailError, ConfigurationError, FolderRole, MessageFlag, MessageRef
+from chrono_mail.config import AccountSettings, ServerRole
+from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
@@ -13,9 +13,10 @@ from chrono_mail.mime import Address, OutgoingMessage, ParsedMessage, parse_mess
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 0.0.43"
+__version__ = "commands_schedule.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: accounts that share Local Folders: the sender is found by the From address
 # v0.0.43: Certificate exceptions
 # v0.0.34: Initial send later and snooze
 
@@ -55,6 +56,23 @@ def _accounts(engine: Engine, wanted: str | None) -> list[str]:
     return [item.account.account_id for item in config.accounts]
 
 
+def _places(engine: Engine, wanted: str | None) -> list[list[AccountSettings]]:
+    """The places where mail is kept (accounts that share Local Folders count as one), each with the accounts that can send from it."""
+    config = engine.config()
+    groups = engine.storage_groups(config)
+    if wanted:
+        place = engine.storage_settings(engine.resolve_account(wanted, config), config).account.account_id
+        return [groups[place]]
+    return list(groups.values())
+
+
+def _sender(members: list[AccountSettings], parsed: ParsedMessage) -> AccountSettings | None:
+    """The account a scheduled message is sent from: the one whose address is in its From, else the first that can send."""
+    senders = [item for item in members if item.account.kind is not AccountKind.LOCAL]
+    own = {address.address.lower() for address in parsed.from_addresses}
+    return next((item for item in senders if item.account.email_address.lower() in own), senders[0] if senders else None)
+
+
 def _scheduled(mailbox: Mailbox) -> list[tuple[MessageRef, ParsedMessage, int]]:
     found: list[tuple[MessageRef, ParsedMessage, int]] = []
     outbox = mailbox.folder("Outbox")
@@ -72,10 +90,11 @@ def _scheduled(mailbox: Mailbox) -> list[tuple[MessageRef, ParsedMessage, int]]:
 def mail_scheduled(engine: Engine, parameters: AccountOptional) -> tuple[ScheduledInfo, ...]:
     """The messages waiting to be sent at a time, soonest first."""
     found: list[ScheduledInfo] = []
-    for account in _accounts(engine, parameters.account):
-        with open_mailbox(engine, account) as mailbox:
+    for members in _places(engine, parameters.account):
+        with open_mailbox(engine, members[0].account.account_id) as mailbox:
             for reference, parsed, due in _scheduled(mailbox):
-                found.append(ScheduledInfo(account, reference.store_id, describe_when(due), due, parsed.subject, tuple(a.address for a in parsed.to_addresses)))
+                sender = _sender(members, parsed) or members[0]
+                found.append(ScheduledInfo(sender.account.account_id, reference.store_id, describe_when(due), due, parsed.subject, tuple(a.address for a in parsed.to_addresses)))
     return tuple(sorted(found, key=lambda item: item.seconds))
 
 
@@ -92,10 +111,9 @@ class SendDueResult:
     waiting: int
 
 
-def _outgoing(mailbox: Mailbox, parsed: ParsedMessage) -> OutgoingMessage:
-    settings = mailbox.settings
+def _outgoing(sender: AccountSettings, parsed: ParsedMessage) -> OutgoingMessage:
     return OutgoingMessage(
-        from_address=Address(settings.account.display_name, settings.account.email_address),
+        from_address=Address(sender.account.display_name, sender.account.email_address),
         to_addresses=parsed.to_addresses, cc_addresses=parsed.cc_addresses, bcc_addresses=parsed.bcc_addresses, subject=parsed.subject,
         text_body=parsed.text_body or "", html_body=parsed.html_body, attachments=parsed.attachments,
         in_reply_to=parsed.in_reply_to, references=parsed.references,
@@ -107,20 +125,21 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
     and before the server is asked, so a crash can leave a message unsent in the Outbox but never sends it twice."""
     now, sent, waiting = engine.clock(), 0, 0
     failed: list[str] = []
-    for account in _accounts(engine, parameters.account):
-        with open_mailbox(engine, account) as mailbox:
-            password = engine.passwords.get(account, ServerRole.OUTGOING)
+    for members in _places(engine, parameters.account):
+        with open_mailbox(engine, members[0].account.account_id) as mailbox:
             for reference, parsed, due in _scheduled(mailbox):
                 if (parameters.message and parameters.message != reference.store_id) or (not parameters.message and due > now):
                     waiting += 1
                     continue
-                if password is None:
-                    failed.append(f"{parsed.subject}: no password is stored for the account")
+                sender = _sender(members, parsed)
+                password = engine.passwords.get(sender.account.account_id, ServerRole.OUTGOING) if sender is not None else None
+                if sender is None or password is None:
+                    failed.append(f"{parsed.subject}: no password is stored for the account it is sent from")
                     continue
                 try:
                     outcome = send_and_file(
-                        mailbox.store, mailbox.index, mailbox.settings.account.outgoing, password, _outgoing(mailbox, parsed), OUTBOX,
-                        mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference), ssl_context=engine.tls_context(mailbox.settings),
+                        mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX,
+                        mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference), ssl_context=engine.tls_context(sender),
                     )
                 except ChronoMailError as error:
                     failed.append(f"{parsed.subject}: {error}")

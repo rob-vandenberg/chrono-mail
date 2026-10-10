@@ -63,3 +63,7 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - PGP / S/MIME
 - Templates, snooze, send later (rules are done: 0.0.33)
 - Encrypted index (optional)
+
+## Local Folders and Favorites (from 0.0.45)
+- DONE (0.0.45) Local Folders as shared storage for POP3 accounts, choice at setup and in the account settings, safe move both ways, identical reply behaviour.
+- Next: sidebar (Local Folders node, collapsible accounts, account groups), unified views with Favorites and Inboxes sections, pinned folders, switches in the settings.

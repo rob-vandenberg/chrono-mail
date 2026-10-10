@@ -15,9 +15,10 @@ from chrono_mail.core import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 0.0.44"
+__version__ = "files.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: storage of an account
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.43: accepted certificates
 # v0.0.33: Rules
@@ -87,7 +88,10 @@ def _account(data: object, position: int) -> AccountSettings:
         check = data.get("check_minutes", 0)
         if not isinstance(check, int) or isinstance(check, bool):
             raise ConfigurationError(f"Setting '{where}.check_minutes' is not a number")
-        return AccountSettings(account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check)
+        storage = data.get("storage", "own")
+        if not isinstance(storage, str):
+            raise ConfigurationError(f"Setting '{where}.storage' is not text")
+        return AccountSettings(account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check, storage)
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
 
@@ -133,6 +137,7 @@ def config_to_text(config: AppConfig) -> str:
                     "signature": settings.signature,
                     "trusted_certificates": list(settings.trusted_certificates),
                     "check_minutes": settings.check_minutes,
+                    "storage": settings.storage,
                 }
                 for settings in config.accounts
             ],

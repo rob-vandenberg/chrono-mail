@@ -36,9 +36,10 @@ from chrono_mail.ui.columnsdialog import DATE_STYLES, LAYOUTS, READING_PANES, Co
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.44"
+__version__ = "settingsdialog.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: links from the settings
 # v0.0.42: pages for the message list, reading, composing, security and storage and the keyboard
 # v0.0.31: the account type is shown
@@ -361,7 +362,7 @@ class SettingsDialog(QDialog):
 
         def listed(result: object) -> None:
             accounts = [str(getattr(account, "account_id")) for account in (result if isinstance(result, (tuple, list)) else [])]
-            names = {str(getattr(account, "account_id")): str(getattr(account, "email_address")) for account in (result if isinstance(result, (tuple, list)) else [])}
+            names = {str(getattr(account, "account_id")): str(getattr(account, "display_name" if str(getattr(account, "kind", "pop3")) == "local" else "email_address")) for account in (result if isinstance(result, (tuple, list)) else [])}
             if not accounts:
                 finished()
                 return
@@ -448,6 +449,8 @@ class SettingsDialog(QDialog):
             self.default_account.clear()
             self.default_account.addItem("The account of the folder I am in", "")
             for account in list(result) if isinstance(result, (tuple, list)) else []:
+                if str(getattr(account, "kind", "pop3")) == "local":
+                    continue  # Local Folders is not an account: it is shown through the accounts that keep their mail there
                 kind = "IMAP" if str(getattr(account, "kind", "pop3")) == "imap" else "POP3"
                 item = QListWidgetItem(f"{getattr(account, 'display_name')}  <{getattr(account, 'email_address')}>  ({kind})")
                 item.setData(ROLE_ACCOUNT, account)

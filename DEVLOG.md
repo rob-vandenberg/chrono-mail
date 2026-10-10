@@ -545,3 +545,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **What landed**
 - `commands_imap.py` (`account.folders`, `account.set-folders`), folder choices and roles in the IMAP state and the planning of folders, `check_minutes` per account with per-account timers, a Folders tab and the interval in the account editor, links to Rules and scheduled messages in the settings (D-059). Tests: sync (4), engine (8), interface (4).
 
+## 2026-10-10 Local Folders (version 0.0.45)
+
+**What landed**
+- `storage` per account (own or local, POP3 only), the Local Folders pseudo-account, `local.enable`, `account.set-storage` (copy, verify, commit, remove; rerunnable), the choice on the setup dialog and in the account editor, reply account rule (`reply_account`), scheduled messages sent from the From account, contacts and checks counted once per storage place, Local Folders left out of check, watch and composer lists.
+- 15 new tests (interrupted moves at copy, commit and remove; corrupted copy keeps the original); 1,391 offline tests, Pyrefly 0 errors.
+
+**Still open**
+- The sidebar still shows Local Folders as a plain node; account groups, collapsible accounts, unified views and the Favorites and Inboxes sections follow in 0.0.46 and later.

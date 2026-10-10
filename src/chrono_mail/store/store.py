@@ -13,9 +13,10 @@ from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, w
 from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_name, split_info
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 0.0.7"
+__version__ = "store.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: deliver can keep a message's identity
 # v0.0.7: Initial encrypted Maildir store
 
 FORMAT_VERSION: int = 1
@@ -252,11 +253,15 @@ class Store:
         return destination
 
     def deliver(
-        self, folder_path: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag] = frozenset(), verify: bool = True
+        self, folder_path: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag] = frozenset(), verify: bool = True, store_id: str | None = None
     ) -> MessageRef:
-        """Store a complete raw message. With verify, it is read back and compared before this returns."""
+        """Store a complete raw message. With verify, it is read back and compared before this returns.
+        A store_id is given when a message is moved here from another store and keeps its identity."""
         directory = self._folder_directory(folder_path)
-        store_id = new_store_id()
+        if store_id is None:
+            store_id = new_store_id()
+        elif len(store_id) != 32 or any(character not in "0123456789abcdef" for character in store_id):
+            raise StorageError("A message id is 32 lower-case hexadecimal characters")
         destination = self._write_blob(directory, store_id, self._encode(raw), flags, "")
         if verify:
             try:

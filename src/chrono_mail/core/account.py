@@ -4,18 +4,21 @@ from enum import Enum
 from chrono_mail.core.errors import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "account.py 0.0.31"
+__version__ = "account.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders
 # v0.0.31: IMAP accounts
 # v0.0.4: Initial account model
 
 MAXIMUM_PORT: int = 65535
+LOCAL_ACCOUNT_ID: str = "00000000000000000000000000000001"  # the one Local Folders mailbox
 
 
 class AccountKind(Enum):
     POP3 = "pop3"
     IMAP = "imap"
+    LOCAL = "local"  # Local Folders: a mailbox without servers that POP3 accounts may share (D-060)
 
 
 class ConnectionSecurity(Enum):

@@ -10,9 +10,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, OutgoingMessage, build_message, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_drafts.py 0.0.24"
+__version__ = "commands_drafts.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.24: Rich text composing
 # v0.0.16: Initial draft commands
 
@@ -112,6 +113,7 @@ class DraftOpenResult:
     source_folder: str | None
     source_message: str | None
     html: str | None = None  # the HTML version, when the draft is a rich text message
+    from_address: str = ""  # the address the message is written from
 
 
 def draft_open(engine: Engine, parameters: DraftOpenParameters) -> DraftOpenResult:
@@ -143,6 +145,7 @@ def draft_open(engine: Engine, parameters: DraftOpenParameters) -> DraftOpenResu
             source_folder,
             source_message,
             parsed.html_body,
+            parsed.from_addresses[0].address if parsed.from_addresses else "",
         )
 
 

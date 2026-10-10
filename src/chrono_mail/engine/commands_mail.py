@@ -8,7 +8,7 @@ from email.utils import parseaddr
 from pathlib import Path
 from typing import Literal
 
-from chrono_mail.config import ServerRole
+from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_rules import apply_to_new
@@ -24,9 +24,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.43"
+__version__ = "commands_mail.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: replies are sent from the account the message was addressed to
 # v0.0.43: Certificate exceptions
 # v0.0.42: Settings window with pages for everything
 # v0.0.35: Send later and snooze
@@ -101,6 +102,8 @@ class FetchResult:
 def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
     with open_mailbox(engine, parameters.account) as mailbox:
         settings = mailbox.settings
+        if settings.account.kind is AccountKind.LOCAL:
+            raise UsageError("Local Folders has no server: there is no mail to fetch")
         password = engine.passwords.get(settings.account.account_id, ServerRole.INCOMING)
         if password is None:
             raise ConfigurationError("No password is stored for this account")
@@ -602,6 +605,25 @@ class ComposeResult:
     in_reply_to: str | None
     references: tuple[str, ...]
     attachment_names: tuple[str, ...]
+    from_account: str | None = None  # the account the answer is sent from; None: the caller chooses
+
+
+def reply_account(engine: Engine, opened: AccountSettings, parsed: ParsedMessage, raw: bytes) -> str | None:
+    """The account a reply or a forward is sent from. The same rule wherever the mail is kept (its own folders or Local Folders):
+    the account whose address the message was sent to (To, Cc, Delivered-To and the like); the account whose folders it is in
+    wins when it is one of them or when none matches. None when nothing decides (the person's default account then)."""
+    from chrono_mail.engine.rule_engine import header_values
+
+    addressed = {address.address.lower() for address in (*parsed.to_addresses, *parsed.cc_addresses)}
+    for name in ("Delivered-To", "X-Original-To", "Envelope-To", "X-Envelope-To"):
+        for value in header_values(raw, name):
+            addressed.add(parseaddr(value)[1].lower())
+    senders = [item for item in engine.config().accounts if item.account.kind is not AccountKind.LOCAL]
+    matches = [item for item in senders if item.account.email_address.lower() in addressed]
+    here = opened if opened.account.kind is not AccountKind.LOCAL and opened.storage == "own" else None
+    if here is not None and (not matches or any(item.account.account_id == here.account.account_id for item in matches)):
+        return here.account.account_id
+    return matches[0].account.account_id if matches else None
 
 
 def message_compose(engine: Engine, parameters: ComposeParameters) -> ComposeResult:
@@ -609,8 +631,11 @@ def message_compose(engine: Engine, parameters: ComposeParameters) -> ComposeRes
     with open_mailbox(engine, parameters.account) as mailbox:
         reference = mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message))
         parsed = parse_message(mailbox.store.read(reference, hint=mailbox.hint(reference.store_id)))
-        draft = build_draft(parsed, parameters.kind, mailbox.settings.account.email_address, parameters.quote)
-        return ComposeResult(draft.kind, draft.to, draft.cc, draft.subject, draft.body, draft.in_reply_to, draft.references, draft.attachment_names)
+        raw = mailbox.store.read(reference, hint=mailbox.hint(reference.store_id))
+        from_account = reply_account(engine, mailbox.settings, parsed, raw)
+        own = engine.resolve_account(from_account).account.email_address if from_account else mailbox.settings.account.email_address
+        draft = build_draft(parsed, parameters.kind, own, parameters.quote)
+        return ComposeResult(draft.kind, draft.to, draft.cc, draft.subject, draft.body, draft.in_reply_to, draft.references, draft.attachment_names, from_account)
 
 
 def register(registry: CommandRegistry) -> None:

@@ -28,6 +28,7 @@ from chrono_mail.crypto import (
     seal_key_with_passphrase,
     unseal_key_with_passphrase,
 )
+from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
@@ -37,9 +38,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.44"
+__version__ = "commands_accounts.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: storage of an account (own folders or Local Folders)
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.43: Certificate exceptions
 # v0.0.31: IMAP accounts in the engine and the interface
@@ -72,6 +74,7 @@ class AccountAddParameters:
     delete_days: int = field(default=30, metadata=option("Days before deleting, for delete_after_days"))
     kind: Kind = field(default="pop3", metadata=option("pop3 (mail is downloaded) or imap (the mail stays on the server and is kept in step)"))
     trusted_certificate: tuple[str, ...] = field(default=(), metadata=option("The SHA-256 fingerprint of a server certificate to accept (repeat for more); see certificate.inspect"))
+    storage: Literal["own", "local"] = field(default="own", metadata=option("POP3 only: own (the account has folders of its own) or local (its mail goes into the shared Local Folders)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +101,12 @@ def _security(value: str) -> ConnectionSecurity:
 
 
 def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddResult:
+    if parameters.storage == "local":
+        if parameters.kind != "pop3":
+            raise UsageError("Only a POP3 account can keep its mail in Local Folders")
+        _, local_key_created = ensure_local_folders(engine, parameters.encrypted)
+    else:
+        local_key_created = False
     config = engine.config()
     email = parameters.email_address.strip()
     if email.count("@") != 1 or email.startswith("@") or email.endswith("@"):
@@ -115,7 +124,7 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
     )
     settings = AccountSettings(
         account, Pop3Options(Pop3DeletePolicy(parameters.delete_policy), parameters.delete_days), parameters.encrypted,
-        trusted_certificates=_fingerprints(parameters.trusted_certificate),
+        trusted_certificates=_fingerprints(parameters.trusted_certificate), storage=parameters.storage,
     )
     key: DataKey | None = None
     key_created = False
@@ -134,16 +143,17 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
     engine.passwords.set(account_id, ServerRole.INCOMING, parameters.password)
     engine.passwords.set(account_id, ServerRole.OUTGOING, parameters.outgoing_password or parameters.password)
     try:
-        store = Store.create(store_directory, account_id, key, durable=engine.durable)
-        for path, role in STANDARD_FOLDERS:
-            store.create_folder(path, role)
+        if parameters.storage == "own":
+            store = Store.create(store_directory, account_id, key, durable=engine.durable)
+            for path, role in STANDARD_FOLDERS:
+                store.create_folder(path, role)
         engine.save_config(new_config.with_account(settings))  # the commit point: until here nothing refers to the account
     except ChronoMailError:
         engine.passwords.delete(account_id, ServerRole.INCOMING)
         engine.passwords.delete(account_id, ServerRole.OUTGOING)
         shutil.rmtree(engine.directories.account_directory(account_id), ignore_errors=True)
         raise
-    return AccountAddResult(account_id, key_created, tuple("/".join(path) for path, _ in STANDARD_FOLDERS))
+    return AccountAddResult(account_id, key_created or local_key_created, tuple("/".join(path) for path, _ in STANDARD_FOLDERS))
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +228,7 @@ class AccountSummary:
     outgoing_username: str = ""
     trusted_certificates: tuple[str, ...] = ()
     check_minutes: int = 0
+    storage: str = "own"
 
 
 def _summary(item: AccountSettings) -> AccountSummary:
@@ -242,6 +253,7 @@ def _summary(item: AccountSettings) -> AccountSummary:
         item.account.outgoing.username,
         item.trusted_certificates,
         item.check_minutes,
+        item.storage,
     )
 
 
@@ -265,6 +277,8 @@ def account_remove(engine: Engine, parameters: AccountParameters) -> AccountRemo
     config = engine.config()
     settings = engine.resolve_account(parameters.account, config)
     account_id = settings.account.account_id
+    if settings.account.kind is AccountKind.LOCAL and any(item.storage == "local" for item in config.accounts):
+        raise UsageError("Accounts still keep their mail in Local Folders: give them folders of their own first")
     engine.save_config(config.without_account(account_id))
     engine.passwords.delete(account_id, ServerRole.INCOMING)
     engine.passwords.delete(account_id, ServerRole.OUTGOING)

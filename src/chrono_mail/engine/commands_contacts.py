@@ -6,9 +6,10 @@ from chrono_mail.engine.registry import CommandRegistry, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_contacts.py 0.0.23"
+__version__ = "commands_contacts.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.23: Initial address suggestions
 
 MAXIMUM_SUGGESTIONS: int = 50
@@ -34,13 +35,13 @@ def contact_suggest(engine: Engine, parameters: SuggestParameters) -> tuple[Sugg
     """Addresses seen in the mail that match what is being typed, the ones written to most often first. Own addresses are left out."""
     config = engine.config()
     own = {item.account.email_address.lower() for item in config.accounts}
-    wanted = engine.resolve_account(parameters.account, config).account.account_id if parameters.account else None
     limit = max(1, min(parameters.limit, MAXIMUM_SUGGESTIONS))
     merged: dict[str, Suggestion] = {}
-    for item in config.accounts:
-        if wanted is not None and item.account.account_id != wanted:
+    wanted_place = engine.storage_settings(engine.resolve_account(parameters.account, config), config).account.account_id if parameters.account else None
+    for place, members in engine.storage_groups(config).items():
+        if wanted_place is not None and place != wanted_place:
             continue
-        with open_mailbox(engine, item.account.account_id) as mailbox:
+        with open_mailbox(engine, members[0].account.account_id) as mailbox:  # accounts that share their mail are looked at once
             for known in mailbox.index.suggest(parameters.text, limit + len(own)):
                 address = known.address.lower()
                 if address in own:

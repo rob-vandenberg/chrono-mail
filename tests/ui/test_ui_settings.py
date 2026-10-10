@@ -9,9 +9,10 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 0.0.44"
+__version__ = "test_ui_settings.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.42: Settings window with pages for everything
 # v0.0.31: IMAP accounts in the engine and the interface
@@ -170,3 +171,25 @@ def test_the_account_type_is_shown_and_imap_accounts_have_no_server_copies_tab(w
     imap = AccountEditDialog(world.backend, replace(imap_account, kind="imap"))
     qtbot.addWidget(imap)
     assert [imap.tabs.tabText(index) for index in range(imap.tabs.count())] == ["General", "Servers", "Folders"]
+
+
+def test_the_storage_choice_is_in_the_setup_and_the_account_settings_and_moves_the_mail(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.core import LOCAL_ACCOUNT_ID
+
+    setup = AccountDialog(world.backend)
+    qtbot.addWidget(setup)
+    assert setup.storage.currentData() == "own" and setup.storage.isEnabled()  # the default is a mailbox of its own
+    setup.kind.setCurrentIndex(setup.kind.findData("imap"))
+    assert not setup.storage.isEnabled()
+    dialog = open_settings(world, qtbot)
+    edit = AccountEditDialog(world.backend, dialog.accounts.item(0).data(256))
+    qtbot.addWidget(edit)
+    edit.show()
+    assert edit.storage is not None and edit.storage.currentData() == "own" and edit._values() == {}  # noqa: SLF001
+    edit.storage.setCurrentIndex(edit.storage.findData("local"))
+    edit.save_button.click()
+    wait(qtbot, lambda: edit.result() == QDialog.DialogCode.Accepted)
+    listed = {item.account_id: item for item in world.call("account.list")}
+    assert listed[world.account_id].storage == "local" and listed[LOCAL_ACCOUNT_ID].kind == "local"
+    again = open_settings(world, qtbot)  # Local Folders itself is not listed as an account to edit
+    assert again.accounts.count() == 1

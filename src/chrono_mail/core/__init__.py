@@ -1,6 +1,6 @@
 """Pure data model: Account, Folder, MessageRef, Flags and error types. No I/O."""
 
-from chrono_mail.core.account import Account, AccountKind, ConnectionSecurity, ServerSettings
+from chrono_mail.core.account import LOCAL_ACCOUNT_ID, Account, AccountKind, ConnectionSecurity, ServerSettings
 from chrono_mail.core.appinfo import program_version
 from chrono_mail.core.credentials import CredentialBackend
 from chrono_mail.core.errors import (
@@ -17,9 +17,10 @@ from chrono_mail.core.folder import Folder, FolderRole
 from chrono_mail.core.message import MessageRef
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 0.0.26"
+__version__ = "__init__.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.26: Version number in the About dialog
 # v0.0.10: Export AuthenticationError
 # v0.0.9: Export CredentialBackend
@@ -27,6 +28,7 @@ __version__ = "__init__.py 0.0.26"
 # v0.0.2: Initial skeleton
 
 __all__ = [
+    "LOCAL_ACCOUNT_ID",
     "program_version",
     "Account",
     "AccountKind",

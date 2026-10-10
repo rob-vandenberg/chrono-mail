@@ -64,9 +64,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.44"
+__version__ = "mainwindow.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.42: Settings window with pages for everything
 # v0.0.41: Message list as columns, column editor, reading pane position, message windows
@@ -596,10 +597,14 @@ class MainWindow(QMainWindow):
             return AUTO_CHECK_MINUTES
         return minutes if 1 <= minutes <= 240 else AUTO_CHECK_MINUTES
 
+    def _mail_accounts(self) -> list[object]:
+        """The accounts that have servers: Local Folders is a place to keep mail, not an account to check or send from."""
+        return [account for account in self._accounts if str(getattr(account, "kind", "pop3")) != "local"]
+
     def _apply_account_timers(self) -> None:
         """A timer for every account that has an interval of its own (and only while automatic checking is on)."""
         wanted = {
-            str(getattr(account, "account_id")): int(getattr(account, "check_minutes", 0)) for account in self._accounts
+            str(getattr(account, "account_id")): int(getattr(account, "check_minutes", 0)) for account in self._mail_accounts()
             if int(getattr(account, "check_minutes", 0)) > 0 and self.act_auto.isChecked()
         }
         for account_id in list(self._account_timers):
@@ -618,7 +623,7 @@ class MainWindow(QMainWindow):
         """For every IMAP account: wait for the server to report new mail (IDLE) and check at once when it does."""
         if not self.act_auto.isChecked():
             return
-        for account in self._accounts:
+        for account in self._mail_accounts():
             if str(getattr(account, "kind", "pop3")) == "imap":
                 self._watch(str(getattr(account, "account_id")))
 
@@ -714,7 +719,7 @@ class MainWindow(QMainWindow):
         def current() -> tuple[str, str] | None:
             return (self._account_id, self._folder) if self._account_id is not None and self._folder is not None and self._tree_kind == "folder" else None
 
-        dialog = RulesDialog(self.backend, self._accounts, folders, current, self)
+        dialog = RulesDialog(self.backend, self._mail_accounts(), folders, current, self)
         dialog.exec()
         if dialog.ran:
             self._after_change("Rules applied")
@@ -1355,11 +1360,15 @@ class MainWindow(QMainWindow):
         if self._account_id is None:
             return
         wanted = str(self.settings.value("default_account", ""))
-        known = {str(getattr(account, "account_id")) for account in self._accounts}
+        known = {str(getattr(account, "account_id")) for account in self._mail_accounts()}
         self._open_composer(wanted if wanted in known else self._account_id, None, None)
 
     def _open_composer(self, account_id: str, draft: object | None, source: tuple[str, str] | None, to: str = "", resume: tuple[str, str] | None = None) -> ComposeWindow:
-        window = ComposeWindow(self.backend, self._accounts, account_id, draft, source, resume, bool_setting(self.settings, "compose_html", False), self._compose_options())
+        mail_ids = [str(getattr(account, "account_id")) for account in self._mail_accounts()]
+        if account_id not in mail_ids:  # Local Folders has no server: the answer comes from the account chosen in the settings, or the first
+            wanted = str(self.settings.value("default_account", ""))
+            account_id = wanted if wanted in mail_ids else (mail_ids[0] if mail_ids else account_id)
+        window = ComposeWindow(self.backend, self._mail_accounts(), account_id, draft, source, resume, bool_setting(self.settings, "compose_html", False), self._compose_options())
         if to:
             window.to.setText(to)
         window.sent.connect(self._after_sent)
@@ -1395,7 +1404,7 @@ class MainWindow(QMainWindow):
 
     def _compose_in_window(self, kind: str, account: str, folder: str, message_id: str) -> None:
         def drafted(result: object) -> None:
-            self._open_composer(account, result, (folder, message_id))
+            self._open_composer(str(getattr(result, "from_account", None) or account), result, (folder, message_id))
 
         self.backend.call(
             "message.compose", {"account": account, "folder": folder, "message": message_id, "kind": kind, "quote": prefs.get_text(self.settings, "reply_quote", prefs.REPLY_QUOTES)},
@@ -1546,7 +1555,7 @@ class MainWindow(QMainWindow):
         account, folder, message_id = self._account_id, str(getattr(row, "folder")), str(getattr(row, "message_id"))
 
         def drafted(result: object) -> None:
-            self._open_composer(account, result, (folder, message_id))
+            self._open_composer(str(getattr(result, "from_account", None) or account), result, (folder, message_id))
 
         self.backend.call(
             "message.compose", {"account": account, "folder": folder, "message": message_id, "kind": kind, "quote": prefs.get_text(self.settings, "reply_quote", prefs.REPLY_QUOTES)},
@@ -1565,11 +1574,12 @@ class MainWindow(QMainWindow):
 
     def _check_on_general_interval(self) -> None:
         """The general timer: the accounts that have no interval of their own."""
-        self.check_accounts({str(getattr(account, "account_id")) for account in self._accounts if int(getattr(account, "check_minutes", 0)) == 0})
+        self.check_accounts({str(getattr(account, "account_id")) for account in self._mail_accounts() if int(getattr(account, "check_minutes", 0)) == 0})
 
     def check_accounts(self, only: set[str] | None) -> None:
         """Check these accounts (all when None) for new mail."""
-        wanted = {str(getattr(account, "account_id")) for account in self._accounts} if only is None else only & {str(getattr(account, "account_id")) for account in self._accounts}
+        mail_ids = {str(getattr(account, "account_id")) for account in self._mail_accounts()}
+        wanted = mail_ids if only is None else only & mail_ids
         if self._checking or not wanted:
             return
         self._checking = True

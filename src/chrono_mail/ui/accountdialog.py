@@ -22,9 +22,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 0.0.43"
+__version__ = "accountdialog.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.43: accepted certificates
 # v0.0.31: IMAP accounts
 # v0.0.16: Drafts
@@ -93,9 +94,14 @@ class AccountDialog(QDialog):
         self.policy = QComboBox(options)
         for value, label in POLICIES:
             self.policy.addItem(label, value)
+        self.storage = QComboBox(options)
+        self.storage.addItem("A mailbox of its own, with its own folders", "own")
+        self.storage.addItem("Local Folders, together with the other accounts that keep their mail there", "local")
+        self.storage.setToolTip("Only for POP3. You can change this later in the settings of the account.")
         self.encrypt = QCheckBox("Encrypt the stored mail on this computer (recommended)", options)
         self.encrypt.setChecked(True)
         options_layout.addRow("Server copies", self.policy)
+        options_layout.addRow("Keep the mail in", self.storage)
         options_layout.addRow("", self.encrypt)
         layout.addWidget(options)
 
@@ -158,6 +164,9 @@ class AccountDialog(QDialog):
         self.incoming_group.setTitle("Incoming mail (IMAP)" if self._is_imap() else "Incoming mail (POP3)")
         self._incoming_security_changed()
         self.policy.setEnabled(not self._is_imap())
+        self.storage.setEnabled(not self._is_imap())
+        if self._is_imap():
+            self.storage.setCurrentIndex(0)  # an IMAP account always has the folders of its server
 
     def _guess_from_address(self, text: str) -> None:
         """Suggest the user name and the server names from the e-mail address, until the person types their own."""
@@ -266,6 +275,7 @@ class AccountDialog(QDialog):
             "email_address": self.email.text().strip(),
             "encrypted": self.encrypt.isChecked(),
             "delete_policy": str(self.policy.currentData()),
+            "storage": "own" if self._is_imap() else str(self.storage.currentData()),
         }
 
         def done(result: object) -> None:

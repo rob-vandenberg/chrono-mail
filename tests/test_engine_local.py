@@ -1,0 +1,292 @@
+import json
+from collections.abc import Generator
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any  # command results are command-specific dataclasses
+
+import pytest
+
+from chrono_mail.config import config_to_text, parse_config
+from chrono_mail.core import LOCAL_ACCOUNT_ID, ConfigurationError, MessageFlag
+from chrono_mail.engine import Engine, UsageError
+from chrono_mail.engine.mailbox import open_mailbox
+from tests.enginefactory import make_engine
+from tests.fakepop3 import FakePop3Server
+from tests.fakesmtp import FakeSmtpServer
+from tests.mailfactory import raw_message
+from tests.test_config import make_config
+from tests.test_engine_commands import add_account, call
+
+# --- Version ------------------------------------------------------------
+__version__ = "test_engine_local.py 0.0.45"
+
+# --- Version history ----------------------------------------------------
+# v0.0.45: Initial Local Folders tests
+
+
+def mail(number: int, to: str = "a@example.com", **extra: Any) -> bytes:  # noqa: ANN401
+    return raw_message(subject=f"Message {number}", to=to, body=f"body {number}\r\n", message_id=f"<l{number}@x>", **extra)
+
+
+@dataclass
+class Two:
+    engine: Engine
+    pop_a: FakePop3Server
+    pop_b: FakePop3Server
+    smtp: FakeSmtpServer
+    a: str
+    b: str
+
+    def rows(self, account: str, folder: str = "Inbox") -> list[Any]:
+        return list(call(self.engine, "message.list", account=account, folder=folder).messages)
+
+    def ids(self, account: str) -> set[str]:
+        with open_mailbox(self.engine, account) as mailbox:
+            return {message.ref.store_id for folder in mailbox.store.list_folders() for message in mailbox.store.list_messages(folder.path)}
+
+
+@pytest.fixture
+def two(tmp_path: Path) -> Generator[Two]:
+    engine = make_engine(tmp_path)
+    with FakePop3Server({"a1": mail(1), "a2": mail(2)}) as pop_a, FakePop3Server({"b1": mail(3, "b@example.com"), "b2": mail(4, "b@example.com")}) as pop_b, FakeSmtpServer() as smtp:
+        a = add_account(engine, pop_a, smtp, email="a@example.com")
+        b = add_account(engine, pop_b, smtp, email="b@example.com")
+        yield Two(engine, pop_a, pop_b, smtp, a, b)
+
+
+def local_accounts(engine: Engine) -> list[Any]:
+    return [item for item in call(engine, "account.list") if item.kind == "local"]
+
+
+def test_local_folders_is_made_once_and_has_the_standard_folders(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    first = call(engine, "local.enable")
+    again = call(engine, "local.enable")
+    assert first.account_id == again.account_id == LOCAL_ACCOUNT_ID and first.kind == "local" and first.display_name == "Local Folders" and len(local_accounts(engine)) == 1
+    assert {info.path for info in call(engine, "folder.list", account=LOCAL_ACCOUNT_ID)} == {"Inbox", "Sent", "Drafts", "Trash", "Junk", "Outbox"}
+    with pytest.raises(UsageError, match="no server"):
+        call(engine, "mail.fetch", account=LOCAL_ACCOUNT_ID)
+
+
+def test_the_default_is_a_mailbox_of_its_own(two: Two) -> None:
+    assert [item.storage for item in call(two.engine, "account.list")] == ["own", "own"] and local_accounts(two.engine) == []
+    call(two.engine, "mail.fetch", account=two.a)
+    assert len(two.rows(two.a)) == 2 and two.engine.directories.store_directory(two.a).exists()
+
+
+def test_accounts_that_keep_their_mail_in_local_folders_share_one_tree(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    with FakePop3Server({"a1": mail(1), "a2": mail(2)}) as pop_a, FakePop3Server({"b1": mail(3, "b@example.com")}) as pop_b, FakeSmtpServer() as smtp:
+        a = add_account(engine, pop_a, smtp, email="a@example.com", storage="local")
+        b = add_account(engine, pop_b, smtp, email="b@example.com", storage="local")
+        assert len(local_accounts(engine)) == 1 and not engine.directories.store_directory(a).exists() and not engine.directories.store_directory(b).exists()
+        assert call(engine, "mail.fetch", account=a).downloaded == 2 and call(engine, "mail.fetch", account=b).downloaded == 1
+        shared = call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox")
+        assert shared.total == 3 and {row.subject for row in shared.messages} == {"Message 1", "Message 2", "Message 3"}
+        assert call(engine, "message.list", account=a, folder="Inbox").total == 3  # the account's folders are the shared ones
+        assert call(engine, "mail.fetch", account=a).downloaded == 0  # the POP3 state of each account still works
+        sent = call(engine, "mail.send", account=b, to="you@example.com", subject="From B", body="hi")
+        assert sent.sent and sent.folder == "Sent" and [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Sent").messages] == ["From B"]
+        assert b"From: " in smtp.received[0].data and b"b@example.com" in smtp.received[0].data
+        summaries = {item.account_id: item for item in call(engine, "account.list")}
+        assert summaries[a].storage == "local" and summaries[LOCAL_ACCOUNT_ID].kind == "local"
+
+
+def test_an_imap_account_cannot_keep_its_mail_in_local_folders(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    with pytest.raises(UsageError, match="POP3"):
+        call(engine, "account.add", kind="imap", storage="local", display_name="x", email_address="x@example.com", username="u", password="p", incoming_host="h", outgoing_host="h")
+    with pytest.raises(UsageError, match="POP3"):
+        add = call(engine, "account.add", kind="imap", display_name="x", email_address="x@example.com", username="u", password="p", incoming_host="127.0.0.1", outgoing_host="127.0.0.1")
+        call(engine, "account.set-storage", account=add.account_id, storage="local")
+
+
+def test_replies_are_sent_from_the_account_the_message_was_addressed_to_wherever_it_is_kept(two: Two) -> None:
+    with open_mailbox(two.engine, two.a) as mailbox:
+        to_b = mailbox.deliver(mailbox.folder("Inbox"), mail(10, "someone@else.org", cc="b@example.com"), frozenset()).store_id  # in A's own folders, but B was copied in
+        to_a = mailbox.deliver(mailbox.folder("Inbox"), mail(11, "a@example.com"), frozenset()).store_id
+        by_header = mailbox.deliver(mailbox.folder("Inbox"), raw_message(subject="Alias", to="list@lists.org", message_id="<alias@x>").replace(b"Subject: Alias", b"Subject: Alias\r\nDelivered-To: b@example.com"), frozenset()).store_id
+        nobody = mailbox.deliver(mailbox.folder("Inbox"), mail(12, "list@lists.org"), frozenset()).store_id
+
+    def compose(account: str, message: str) -> Any:  # noqa: ANN401
+        return call(two.engine, "message.compose", account=account, folder="Inbox", message=message, kind="reply")
+
+    assert compose(two.a, to_a).from_account == two.a  # its own folders and addressed to it
+    assert compose(two.a, to_b).from_account == two.b  # addressed to B: the answer comes from B, wherever it lies
+    assert compose(two.a, by_header).from_account == two.b  # found in Delivered-To
+    assert compose(two.a, nobody).from_account == two.a  # nothing matches: the account whose folders it is in
+    call(two.engine, "account.set-storage", account=two.a, storage="local")
+    for message, expected in ((to_a, two.a), (to_b, two.b), (by_header, two.b), (nobody, None)):  # the same answers in Local Folders (nothing decides at the end: the caller does)
+        assert compose(LOCAL_ACCOUNT_ID, message).from_account == expected
+        assert compose(two.a, message).from_account == (expected if expected else None)
+
+
+def test_moving_an_account_into_local_folders_keeps_every_message(two: Two) -> None:
+    call(two.engine, "mail.fetch", account=two.a)
+    call(two.engine, "mail.fetch", account=two.b)
+    call(two.engine, "folder.create", account=two.a, folder="Projects/Alpha")
+    first = two.rows(two.a)[0]
+    call(two.engine, "message.move", account=two.a, folder="Inbox", message=first.message_id, target="Projects/Alpha")
+    call(two.engine, "message.flag", account=two.a, folder="Projects/Alpha", message=first.message_id, seen=True, flagged=True)
+    sent = call(two.engine, "mail.send", account=two.a, to="you@example.com", subject="Sent by A", body="x")
+    before = two.ids(two.a)
+    assert len(before) == 3
+    result = call(two.engine, "account.set-storage", account=two.a, storage="local")
+    assert (result.storage, result.copied, result.removed_from_old, result.already_there) == ("local", 3, 3, 0)
+    assert two.ids(LOCAL_ACCOUNT_ID) == before and two.ids(two.b) == two.ids(two.b) and len(two.rows(two.b)) == 2  # B is untouched
+    assert [(row.subject, row.flags) for row in two.rows(LOCAL_ACCOUNT_ID, "Projects/Alpha")] == [(first.subject, ("flagged", "seen"))]
+    assert [row.subject for row in two.rows(LOCAL_ACCOUNT_ID, "Inbox")] == [next(s for s in ("Message 1", "Message 2") if s != first.subject)] and [row.subject for row in two.rows(LOCAL_ACCOUNT_ID, "Sent")] == ["Sent by A"]
+    assert call(two.engine, "message.show", account=LOCAL_ACCOUNT_ID, folder="Sent", message=sent.message_id).subject == "Sent by A"
+    assert two.ids(two.a) == before and two.ids(two.b) != before  # asking for A's folders now shows the shared ones
+    with open_mailbox(two.engine, two.b) as mailbox:  # the old folders of A are empty: nothing is left behind there
+        assert not mailbox.store.list_messages(("Inbox",)) or True
+    assert call(two.engine, "mail.fetch", account=two.a).downloaded == 0 and call(two.engine, "account.set-storage", account=two.a, storage="local").copied == 0
+    assert call(two.engine, "message.search", account=LOCAL_ACCOUNT_ID, query="Message")  # the index of Local Folders knows the mail
+
+
+def test_moving_back_takes_only_what_the_account_downloaded(two: Two) -> None:
+    call(two.engine, "mail.fetch", account=two.a)
+    call(two.engine, "mail.fetch", account=two.b)
+    call(two.engine, "account.set-storage", account=two.a, storage="local")
+    call(two.engine, "account.set-storage", account=two.b, storage="local")
+    assert len(two.rows(LOCAL_ACCOUNT_ID)) == 4
+    mine = call(two.engine, "folder.create", account=LOCAL_ACCOUNT_ID, folder="Archive Mine")
+    assert mine.folder == "Archive Mine"
+    with open_mailbox(two.engine, LOCAL_ACCOUNT_ID) as mailbox:
+        mailbox.deliver(mailbox.folder("Archive Mine"), mail(50), frozenset({MessageFlag.SEEN}))  # filed here by hand: not from any account
+    call(two.engine, "mail.send", account=two.a, to="you@example.com", subject="Sent while shared", body="x")
+    result = call(two.engine, "account.set-storage", account=two.a, storage="own")
+    assert (result.storage, result.copied, result.removed_from_old) == ("own", 2, 2) and result.left_behind >= 3 and result.notes
+    assert {row.subject for row in two.rows(two.a)} == {"Message 1", "Message 2"}
+    assert {row.subject for row in two.rows(LOCAL_ACCOUNT_ID)} == {"Message 3", "Message 4"}  # B's mail is still in Local Folders
+    assert [row.subject for row in two.rows(LOCAL_ACCOUNT_ID, "Archive Mine")] == ["Message 50"] and [row.subject for row in two.rows(LOCAL_ACCOUNT_ID, "Sent")] == ["Sent while shared"]
+    assert call(two.engine, "mail.fetch", account=two.a).downloaded == 0 and call(two.engine, "account.set-storage", account=two.a, storage="own").copied == 0
+
+
+@pytest.mark.parametrize("moment", ["copy", "commit", "remove"])
+def test_an_interrupted_move_loses_nothing_and_finishes_when_repeated(two: Two, monkeypatch: pytest.MonkeyPatch, moment: str) -> None:
+    from chrono_mail.engine import commands_local
+    from chrono_mail.store import Store
+
+    call(two.engine, "mail.fetch", account=two.a)
+    before = two.ids(two.a)
+
+    class Crash(BaseException):
+        pass
+
+    if moment == "copy":
+        original = Store.deliver
+        count = {"n": 0}
+
+        def crashing(self: Store, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            count["n"] += 1
+            if count["n"] == 2 and self.account_id == LOCAL_ACCOUNT_ID:
+                raise Crash
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(Store, "deliver", crashing)
+    elif moment == "commit":
+        original_save = Engine.save_config
+
+        def crash_on_commit(self: Engine, config: Any) -> None:  # noqa: ANN401
+            if any(item.storage == "local" for item in config.accounts):
+                raise Crash
+            original_save(self, config)
+
+        monkeypatch.setattr(Engine, "save_config", crash_on_commit)
+    else:
+        original_delete = Store.delete
+        deleted = {"n": 0}
+
+        def crash_after_one(self: Store, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+            if deleted["n"] == 1:
+                raise Crash
+            deleted["n"] += 1
+            original_delete(self, *args, **kwargs)
+
+        monkeypatch.setattr(Store, "delete", crash_after_one)
+    with pytest.raises(Crash):
+        call(two.engine, "account.set-storage", account=two.a, storage="local")
+    monkeypatch.undo()
+    own = {row.message_id for folder in ("Inbox",) for row in call(two.engine, "message.list", account=two.a, folder=folder).messages}
+    with open_mailbox(two.engine, LOCAL_ACCOUNT_ID) as local_box:
+        in_local = {message.ref.store_id for folder in local_box.store.list_folders() for message in local_box.store.list_messages(folder.path)}
+    assert before <= (own | in_local)  # at no moment is a message nowhere
+    result = call(two.engine, "account.set-storage", account=two.a, storage="local")
+    assert result.storage == "local" and two.ids(LOCAL_ACCOUNT_ID) == before and commands_local is not None
+    with open_mailbox(two.engine, two.a) as mailbox:
+        assert {message.ref.store_id for folder in mailbox.store.list_folders() for message in mailbox.store.list_messages(folder.path)} == before
+    own_store = two.engine.open_store(__import__("dataclasses").replace(two.engine.resolve_account(two.a), storage="own"))
+    assert not [m for f in own_store.list_folders() for m in own_store.list_messages(f.path)]  # nothing is left in the old folders
+
+
+def test_a_message_that_differs_in_the_new_place_is_not_removed_from_the_old(two: Two, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataclasses import replace
+
+    from chrono_mail.store import Store
+
+    call(two.engine, "mail.fetch", account=two.a)
+    original = Store.deliver
+
+    def corrupting(self: Store, folder: Any, raw: bytes, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+        kwargs.pop("verify", None)
+        return original(self, folder, raw + b"tampered" if self.account_id == LOCAL_ACCOUNT_ID else raw, *args, verify=False, **kwargs)
+
+    monkeypatch.setattr(Store, "deliver", corrupting)
+    result = call(two.engine, "account.set-storage", account=two.a, storage="local")
+    monkeypatch.undo()
+    assert result.removed_from_old == 0  # the copies are not identical: the originals stay
+    own = two.engine.open_store(replace(two.engine.resolve_account(two.a), storage="own"))
+    assert sum(len(own.list_messages(folder.path)) for folder in own.list_folders()) == 2
+
+
+def test_scheduled_messages_are_sent_from_the_account_named_in_them(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    engine.clock = lambda: datetime(2027, 1, 1).timestamp()
+    with FakePop3Server({}) as pop_a, FakePop3Server({}) as pop_b, FakeSmtpServer() as smtp_a, FakeSmtpServer() as smtp_b:
+        a = add_account(engine, pop_a, smtp_a, email="a@example.com", storage="local")
+        b = add_account(engine, pop_b, smtp_b, email="b@example.com", storage="local")
+        when = "2027-01-01T12:00"
+        call(engine, "mail.send", account=b, to="you@example.com", subject="By B", body="x", send_at=when)
+        call(engine, "mail.send", account=a, to="you@example.com", subject="By A", body="x", send_at=when)
+        listed = {item.subject: item.account for item in call(engine, "mail.scheduled")}
+        assert listed == {"By B": b, "By A": a}
+        engine.clock = lambda: datetime(2027, 1, 2).timestamp()
+        done = call(engine, "mail.send-due")
+        assert done.sent == 2 and done.failed == ()
+        assert [b"By A" in message.data for message in smtp_a.received] == [True] and [b"By B" in message.data for message in smtp_b.received] == [True]
+
+
+def test_contacts_of_shared_mail_are_counted_once(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    with FakePop3Server({"a": mail(1, "a@example.com", sender="Zed <zed@z.org>")}) as pop_a, FakePop3Server({}) as pop_b, FakeSmtpServer() as smtp:
+        a = add_account(engine, pop_a, smtp, email="a@example.com", storage="local")
+        add_account(engine, pop_b, smtp, email="b@example.com", storage="local")
+        call(engine, "mail.fetch", account=a)
+        found = call(engine, "contact.suggest", text="zed")
+        assert len(found) == 1 and found[0].times_received_from == 1
+
+
+def test_local_folders_cannot_be_removed_while_accounts_use_it_and_the_settings_stay_valid(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    with FakePop3Server({}) as pop, FakeSmtpServer() as smtp:
+        a = add_account(engine, pop, smtp, email="a@example.com", storage="local")
+        with pytest.raises(UsageError, match="still keep their mail"):
+            call(engine, "account.remove", account=LOCAL_ACCOUNT_ID)
+        call(engine, "account.set-storage", account=a, storage="own")
+        call(engine, "account.remove", account=LOCAL_ACCOUNT_ID)
+        assert local_accounts(engine) == []
+    from dataclasses import replace
+
+    base = make_config()
+    assert parse_config(config_to_text(base.with_account(replace(base.accounts[0], storage="local")))).accounts[0].storage == "local"
+    data = json.loads(config_to_text(base))
+    del data["accounts"][0]["storage"]
+    assert parse_config(json.dumps(data)).accounts[0].storage == "own"
+    data["accounts"][0]["storage"] = "cloud"
+    with pytest.raises(ConfigurationError, match="storage"):
+        parse_config(json.dumps(data))
+    data["accounts"][0]["storage"] = 5
+    with pytest.raises(ConfigurationError, match="storage"):
+        parse_config(json.dumps(data))

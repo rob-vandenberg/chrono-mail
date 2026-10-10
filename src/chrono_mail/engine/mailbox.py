@@ -17,9 +17,10 @@ from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 0.0.16"
+__version__ = "mailbox.py 0.0.45"
 
 # --- Version history ----------------------------------------------------
+# v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.16: deliver
 # v0.0.12: Initial mailbox helper
 
@@ -63,7 +64,7 @@ class Mailbox:
         raise StorageError(f"The account has no {role.value} folder")
 
     def reference(self, folder: tuple[str, ...], message_id: str) -> MessageRef:
-        return MessageRef(self.account_id, folder, message_id)
+        return MessageRef(self.store.account_id, folder, message_id)
 
     def hint(self, message_id: str) -> str | None:
         row = self.index.get(message_id)
@@ -131,8 +132,9 @@ class Mailbox:
 @contextmanager
 def open_mailbox(engine: Engine, account: str) -> Generator[Mailbox]:
     settings = engine.resolve_account(account)
-    store = engine.open_store(settings)
-    index = engine.open_index(settings, store)
+    storage = engine.storage_settings(settings)  # the account's own folders, or the shared Local Folders
+    store = engine.open_store(storage)
+    index = engine.open_index(storage, store)
     try:
         yield Mailbox(engine, settings, store, index)
     finally:
