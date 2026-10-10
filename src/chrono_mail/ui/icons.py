@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from typing import override
 
@@ -6,9 +7,10 @@ from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPalett
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.51"
+__version__ = "icons.py 0.0.55"
 
 # --- Version history ----------------------------------------------------
+# v0.0.55: Application id and icon file for Windows
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.14: Initial icons: the application icon and the theme icons of the folder tree
 
@@ -104,6 +106,9 @@ def folder_icon(kind: str) -> QIcon:
 
 
 def application_icon() -> QIcon:
-    """The icon of Chrono Mail (an envelope with a clock), from the file shipped with the program."""
-    icon = QIcon(str(RESOURCES / "chrono-mail.svg"))
+    """The icon of Chrono Mail (an envelope with a clock), from the file shipped with the program: the .ico on Windows, the SVG elsewhere."""
+    windows = RESOURCES / "chrono-mail.ico"
+    icon = QIcon(str(windows)) if sys.platform == "win32" and windows.exists() else QIcon()
+    if icon.isNull():
+        icon = QIcon(str(RESOURCES / "chrono-mail.svg"))
     return icon if not icon.isNull() else theme_icon("mail-message", "internet-mail")

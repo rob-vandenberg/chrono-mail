@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chrono-mail"
-version = "0.0.54"
+version = "0.0.55"
 description = "An open-source desktop email client for Linux, with the functions of a full mail program."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -35,7 +35,7 @@ chrono-mail = "chrono_mail.ui:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-chrono_mail = ["py.typed", "ui/resources/*.svg", "ui/resources/icons/*.svg", "ui/resources/icons/*.txt"]
+chrono_mail = ["py.typed", "ui/resources/*.svg", "ui/resources/*.ico", "ui/resources/icons/*.svg", "ui/resources/icons/*.txt"]
 
 [tool.pyrefly]
 preset = "strict"

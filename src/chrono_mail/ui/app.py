@@ -1,3 +1,4 @@
+import ctypes
 import sys
 from collections.abc import Sequence
 
@@ -15,9 +16,10 @@ from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.mainwindow import MainWindow
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 0.0.51"
+__version__ = "app.py 0.0.55"
 
 # --- Version history ----------------------------------------------------
+# v0.0.55: Application id and icon file for Windows
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.14: application icon, launcher name
@@ -27,11 +29,27 @@ APPLICATION_NAME: str = "Chrono Mail"
 DESKTOP_FILE_NAME: str = "chrono-mail"  # the launcher file packaging/chrono-mail.desktop; the desktop portal looks it up by this name
 
 
+APPLICATION_ID: str = "chrono-mail.ChronoMail"  # what Windows knows the program by (the taskbar groups windows and takes the icon by it)
+
+
+def set_application_id(identifier: str = APPLICATION_ID) -> bool:
+    """On Windows, give the process an identity of its own. Without it the taskbar treats the program as python.exe and shows the icon of Python.
+    Must be done before the first window. Does nothing elsewhere. Returns whether it was set."""
+    if sys.platform != "win32":
+        return False
+    try:
+        windll = getattr(ctypes, "windll")
+        return int(windll.shell32.SetCurrentProcessExplicitAppUserModelID(identifier)) == 0
+    except (AttributeError, OSError):
+        return False  # an old Windows without the call: the icon of Python stays, nothing else is lost
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Start the graphical program with the real credential store and the user's own directories."""
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     arguments = list(argv) if argv is not None else sys.argv
     appearance.keep_web_pages_light()
+    set_application_id()
     app = QApplication(arguments)
     app.setApplicationName(APPLICATION_NAME)
     app.setOrganizationName("chrono-mail")

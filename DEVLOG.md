@@ -613,3 +613,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **What landed**
 - After marking messages as read, unread or flagged, the list announced a change of the first column only, so in the table layout the other cells kept their old (bold) look until the selection moved. The change now covers every column of the row, also when a page of rows arrives; test added.
+
+## 2026-10-11 Windows icon (version 0.0.55)
+
+**What landed**
+- Application id at start-up on Windows, `chrono-mail.ico` (7 sizes) and its use as the window icon on Windows, 3 tests.
+
+**Still open**
+- To be checked on the Windows machine: the taskbar shows the envelope. A pip-made `chrono-mail.exe` launcher keeps a generic icon of its own; a shortcut with the .ico, or an installer, is the way to a proper launcher.
