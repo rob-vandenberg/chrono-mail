@@ -14,9 +14,10 @@ from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.21"
+__version__ = "test_ui_window.py 0.0.26"
 
 # --- Version history ----------------------------------------------------
+# v0.0.26: Version number in the About dialog
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.17: Message actions: archive, mark all as read, empty folder, drag and drop
@@ -644,3 +645,17 @@ def test_a_conversation_row_is_painted_with_its_count_at_any_width(world: World,
         wait(qtbot, lambda: narrow_model.rowCount() > 0 and narrow_model.row_at(0) is not None)
         qtbot.wait(50)
         assert not narrow.viewport().grab().isNull()
+
+
+def test_the_about_text_names_the_program_and_its_version(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.core import program_version
+
+    shown: list[str] = []
+
+    def about(parent: object, title: str, text: str) -> None:
+        shown.append(f"{title}|{text}")
+
+    monkeypatch.setattr(QMessageBox, "about", staticmethod(about))
+    world.window.act_about.trigger()
+    assert len(shown) == 1 and shown[0].startswith("About Chrono Mail|")
+    assert f"version {program_version()}" in shown[0] and program_version()[0].isdigit() and "AGPL" in shown[0]

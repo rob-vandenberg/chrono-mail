@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chrono_mail.core import ChronoMailError
+from chrono_mail.core import ChronoMailError, program_version
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.backend import Backend
@@ -53,9 +53,10 @@ from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.25"
+__version__ = "mainwindow.py 0.0.26"
 
 # --- Version history ----------------------------------------------------
+# v0.0.26: Version number in the About dialog
 # v0.0.25: No other product named in the project
 # v0.0.24: Rich text composing
 # v0.0.22: Save as .eml, view source, print
@@ -1277,5 +1278,5 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(url)
 
     def _about(self) -> None:
-        QMessageBox.about(self, "About Chrono Mail", "<b>Chrono Mail</b><br>An open-source e-mail client for Linux.<br><br>License: AGPL-3.0")
+        QMessageBox.about(self, "About Chrono Mail", f"<b>Chrono Mail</b> version {program_version()}<br>An open-source e-mail client for Linux.<br><br>License: AGPL-3.0")
 

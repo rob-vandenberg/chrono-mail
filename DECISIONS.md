@@ -367,3 +367,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** for legal reasons (the user's instruction) neither the repository nor the program refers to another mail program by name. The About text, the README, the package description, the design documents and the decision log were reworded without it, and a test (`tests/test_legal_names.py`) fails if such a name appears in the documents, the source or the tests. Earlier commits in the git history still contain the old wording; removing it from the history would mean rewriting published history and is left to the user to decide.
 **Reason:** avoiding any suggestion of affiliation with, or imitation of, another company's product.
+
+## D-047 The About dialog shows the version
+*2026-10-10*
+
+**Decision:** the About dialog states "Chrono Mail version x.y.z". The version comes from `pyproject.toml` when the program runs from the source tree (the single place the version lives, so it is always current), otherwise from the installed package's metadata, otherwise "unknown" (`core/appinfo.py`).
+**Reason:** the user's request; the installed metadata of an editable install is only as new as the last install, so it cannot be trusted while developing.

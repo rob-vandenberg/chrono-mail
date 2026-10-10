@@ -428,3 +428,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Old commits still contain the old wording (history rewrite is the user's decision).
 
+## 2026-10-10 Version in the About dialog (version 0.0.26)
+
+**What landed**
+- `core/appinfo.py` with `program_version()`; the About dialog shows it (D-047). Tests: 4.
+
