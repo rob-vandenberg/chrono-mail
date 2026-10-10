@@ -447,3 +447,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - IDLE, CONDSTORE (CHANGEDSINCE is supported in the call but not yet used), and the sync itself (tasks 2.2 to 2.5).
 
+## 2026-10-10 Task 2.2: IMAP sync, server to store (version 0.0.29)
+
+**What landed**
+- `sync/imap_state.py` (append-only state), `sync/imap_sync.py` (folder plan, removals, flags, downloads, renumbered folders; D-049).
+- Tests: 22 offline against the fake server (including crash repair, a dropped connection and the vanishing-folder guard), 1 live test against `mail.technova.us` (download, flag change, removal).
+
+**Still open**
+- Nothing is sent to the server yet (task 2.3); the engine and the window do not know IMAP accounts yet (task 2.4).
+

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from collections.abc import Generator
 from contextlib import suppress
 
@@ -9,9 +10,10 @@ from chrono_mail.protocols.imap import ImapClient, ImapLimits
 from tests.live.account import LiveAccount
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_imap.py 0.0.28"
+__version__ = "test_live_imap.py 0.0.29"
 
 # --- Version history ----------------------------------------------------
+# v0.0.29: IMAP sync, server to store
 # v0.0.28: Initial live IMAP tests
 
 pytestmark = pytest.mark.live
@@ -122,3 +124,45 @@ def test_unicode_folder_names_and_renaming(imap: ImapClient, folder_name: str) -
     finally:
         with suppress(Exception):
             imap.delete_folder(unicode_name)
+
+
+def test_sync_against_the_real_server(live_account: LiveAccount, imap: ImapClient, folder_name: str, tmp_path: Path) -> None:
+    from chrono_mail.core import FolderRole, MessageFlag
+    from chrono_mail.crypto import generate_data_key
+    from chrono_mail.index import Index
+    from chrono_mail.store import Store
+    from chrono_mail.sync import ImapState, sync_imap
+
+    store = Store.create(tmp_path / "store", "live", generate_data_key(), durable=False)
+    store.create_folder(("Inbox",), FolderRole.INBOX)
+    index = Index(tmp_path / "index.sqlite")
+    state = ImapState(tmp_path / "state.log", durable=False)
+    local = (folder_name,)
+    imap.create_folder(folder_name)
+    imap.subscribe(folder_name)  # folders that are not subscribed are not shown (D-049)
+    try:
+        imap.append(folder_name, MESSAGE, ["\\Seen"])
+        imap.append(folder_name, MESSAGE.replace(b"<live-imap-test@", b"<live-imap-test-2@"))
+        with connect(live_account, secure=True) as client:
+            report = sync_imap(client, store, index, state)
+        assert report.aborted is None and report.failed == ()
+        stored = store.list_messages(local)
+        assert len(stored) == 2 and sorted(message.flags == {MessageFlag.SEEN} for message in stored) == [False, True]
+        assert {store.read(message.ref) for message in stored} == {MESSAGE, MESSAGE.replace(b"<live-imap-test@", b"<live-imap-test-2@")}
+        imap.select(folder_name)
+        first = imap.uid_search("ALL")[0]
+        imap.uid_store(str(first), ["\\Flagged"], "add")
+        with connect(live_account, secure=True) as client:
+            again = sync_imap(client, store, index, state)
+        assert any(item.folder == folder_name and item.flags_updated == 1 for item in again.folders)
+        imap.uid_store(str(first), ["\\Deleted"], "add")
+        imap.uid_expunge(str(first))
+        with connect(live_account, secure=True) as client:
+            last = sync_imap(client, store, index, state)
+        assert any(item.folder == folder_name and item.removed == 1 for item in last.folders) and len(store.list_messages(local)) == 1
+    finally:
+        with suppress(Exception):
+            imap.select("INBOX", read_only=True)
+        with suppress(Exception):
+            imap.delete_folder(folder_name)
+        index.close()
