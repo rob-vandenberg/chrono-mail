@@ -8,9 +8,10 @@ from chrono_mail.engine.rule_engine import RuleReport, Subject, apply_rules, app
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_rules.py 0.0.33"
+__version__ = "commands_rules.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rule commands
 
 HEADER_PREFIX: str = "header."
@@ -103,6 +104,7 @@ class RuleEditParameters:
     match: str | None = field(default=None, metadata=option("all or any"))
     account: tuple[str, ...] = field(default=(), metadata=option("The accounts, replacing the old ones (repeat for more)"))
     every_account: bool = field(default=False, metadata=option("Make the rule apply to every account"))
+    no_conditions: bool = field(default=False, metadata=option("Remove all conditions (the rule then acts on all mail of its account)"))
 
 
 def rule_edit(engine: Engine, parameters: RuleEditParameters) -> RuleInfo:
@@ -111,7 +113,7 @@ def rule_edit(engine: Engine, parameters: RuleEditParameters) -> RuleInfo:
     changed = replace(
         rule,
         name=rule.name if parameters.name is None else parameters.name.strip(),
-        conditions=tuple(parse_condition(text) for text in parameters.condition) or rule.conditions,
+        conditions=() if parameters.no_conditions else (tuple(parse_condition(text) for text in parameters.condition) or rule.conditions),
         actions=tuple(parse_action(text) for text in parameters.action) or rule.actions,
         match=rule.match if parameters.match is None else parameters.match.strip().lower(),
         accounts=() if parameters.every_account else (_accounts(engine, parameters.account) or rule.accounts),

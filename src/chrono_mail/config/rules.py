@@ -11,9 +11,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "rules.py 0.0.33"
+__version__ = "rules.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial mail rules
 
 FORMAT_VERSION: int = 1
@@ -98,8 +99,10 @@ class Rule:
             raise ConfigurationError("A rule needs a name of up to 100 characters")
         if self.match not in ("all", "any"):
             raise ConfigurationError("A rule matches 'all' or 'any' of its conditions")
-        if not 1 <= len(self.conditions) <= MAXIMUM_CONDITIONS:
-            raise ConfigurationError(f"A rule needs between 1 and {MAXIMUM_CONDITIONS} conditions")
+        if len(self.conditions) > MAXIMUM_CONDITIONS:
+            raise ConfigurationError(f"A rule has at most {MAXIMUM_CONDITIONS} conditions")
+        if not self.conditions and not self.accounts:
+            raise ConfigurationError("A rule without conditions must be for one account, or it would act on all mail")
         if not 1 <= len(self.actions) <= MAXIMUM_ACTIONS:
             raise ConfigurationError(f"A rule needs between 1 and {MAXIMUM_ACTIONS} actions")
         if any(ACCOUNT_ID_PATTERN.fullmatch(account) is None for account in self.accounts):

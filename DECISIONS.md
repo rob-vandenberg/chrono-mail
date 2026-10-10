@@ -469,3 +469,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** when messages are dragged out of the list, the drag image is a small badge ("5 messages") that hangs right of and below the pointer. The default image of the selected rows is not used.
 **Reason:** with many messages selected the default image covered the folder list, so the user could not see which folder the drop would go to.
+
+## D-064 A rule may have no conditions when it is for one account
+*2026-10-10*
+
+**Decision:** a rule needs at least one condition, unless it is limited to one or more accounts; then it acts on all the mail of those accounts ("mail that arrives through this account"). In the editor, a condition row in which nothing was typed is left out, and all condition rows can be removed. A rule with no conditions and no account is refused, because it would act on all mail. The account of a rule is the account that downloaded the mail, also when its mail is kept in Local Folders; a folder in a move action is a folder of the place where that account keeps its mail.
+**Reason:** the user could not write "everything from rob@bccbox.com goes to its own folder in Local Folders, and stop": the editor demanded a condition with a value.

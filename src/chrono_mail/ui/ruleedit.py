@@ -16,9 +16,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "ruleedit.py 0.0.33"
+__version__ = "ruleedit.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rule editor
 
 FIELDS: tuple[tuple[str, str], ...] = (
@@ -85,6 +86,11 @@ class ConditionRow(QWidget):
             self.choice.setCurrentIndex(max(0, self.choice.findData(value)))
         else:
             self.value.setText(value)
+
+    def is_blank(self) -> bool:
+        """A row in which nothing was typed is left out (a text, header or size condition needs a value)."""
+        kind = str(self.field.currentData())
+        return kind not in ("attachment",) and not self.value.text().strip() and (kind != "header" or not self.header_name.text().strip())
 
     def condition(self) -> str:
         kind = str(self.field.currentData())
@@ -208,10 +214,9 @@ class RuleEditDialog(QDialog):
         return row
 
     def _remove_condition(self, row: ConditionRow) -> None:
-        if len(self.condition_rows) > 1:  # a rule keeps at least one
-            self.condition_rows.remove(row)
-            row.setParent(None)
-            row.deleteLater()
+        self.condition_rows.remove(row)  # a rule may have none: it then acts on all the mail of its account
+        row.setParent(None)
+        row.deleteLater()
 
     def _remove_action(self, row: ActionRow) -> None:
         if len(self.action_rows) > 1:
@@ -222,7 +227,7 @@ class RuleEditDialog(QDialog):
     def values(self) -> dict[str, object]:
         values: dict[str, object] = {
             "name": self.name.text().strip(),
-            "condition": [row.condition() for row in self.condition_rows],
+            "condition": [row.condition() for row in self.condition_rows if not row.is_blank()],
             "action": [row.action() for row in self.action_rows],
             "match": str(self.match.currentData()),
         }
@@ -246,6 +251,8 @@ class RuleEditDialog(QDialog):
             self._backend.call("rule.add", values, done, failed, owner=self)
         else:
             edit = {**values, "rule": self._rule_id}
+            if not values["condition"]:
+                edit["no_conditions"] = True
             if "account" not in edit:
                 edit["every_account"] = True
             self._backend.call("rule.edit", edit, done, failed, owner=self)

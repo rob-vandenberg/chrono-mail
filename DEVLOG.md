@@ -576,3 +576,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **What landed**
 - `ui/messagelistview.py`: the message list draws a small badge while dragging; test added.
+
+## 2026-10-10 Rules for an account alone (version 0.0.49)
+
+**What landed**
+- Rules without conditions for one account, in the engine (`rule.add`, `rule.edit --no-conditions`) and in the editor; a test with two accounts that share Local Folders and a rule that files one account's mail in a folder and stops.

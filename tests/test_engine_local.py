@@ -19,9 +19,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 0.0.47"
+__version__ = "test_engine_local.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: Rules without conditions for one account
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Initial Local Folders tests
@@ -321,3 +322,23 @@ def test_combined_views_can_be_searched_and_limited_to_some_accounts(two: Two) -
     call(two.engine, "mail.fetch", account=two.b)
     assert [row.subject for row in call(two.engine, "message.combined", view="inboxes", query="body 3")] == ["Message 3"]
     assert call(two.engine, "message.combined", view="inboxes", query="nothingatall") == ()
+
+
+def test_a_rule_for_one_account_files_its_mail_in_a_folder_of_local_folders_and_stops(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path)
+    with FakePop3Server({"a1": mail(1)}) as pop_a, FakePop3Server({"b1": mail(2, "b@example.com"), "b2": mail(3, "b@example.com")}) as pop_b, FakeSmtpServer() as smtp:
+        a = add_account(engine, pop_a, smtp, email="a@example.com", storage="local")
+        b = add_account(engine, pop_b, smtp, email="b@example.com", storage="local")
+        call(engine, "folder.create", account=LOCAL_ACCOUNT_ID, folder="b@example.com")
+        call(engine, "rule.add", name="B", condition=(), action=("move_to:b@example.com", "stop"), account=(b,))
+        call(engine, "rule.add", name="Everything else", condition=("subject:contains:Message",), action=("flag",))
+        assert call(engine, "mail.fetch", account=a).downloaded == 1 and call(engine, "mail.fetch", account=b).downloaded == 2
+        assert {row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="b@example.com").messages} == {"Message 2", "Message 3"}
+        inbox = call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages
+        assert [(row.subject, "flagged" in row.flags) for row in inbox] == [("Message 1", True)]  # the rule after "stop" did not touch B's mail
+        folder = call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="b@example.com").messages
+        assert all("flagged" not in row.flags for row in folder)
+        with pytest.raises(ConfigurationError, match="one account"):
+            call(engine, "rule.add", name="All", condition=(), action=("flag",))
+        edited = call(engine, "rule.edit", rule=call(engine, "rule.list")[0].rule_id, no_conditions=True)
+        assert edited.conditions == ()

@@ -7,9 +7,10 @@ from chrono_mail.ui.rulesdialog import RulesDialog
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rules.py 0.0.33"
+__version__ = "test_ui_rules.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rules window tests
 
 
@@ -86,16 +87,16 @@ def test_a_mistake_is_shown_and_the_dialog_stays_open(world: World, qtbot: QtBot
     wait(qtbot, lambda: "name" in dialog.result_label.text())
     assert dialog.isVisible() and dialog.save_button.isEnabled() and world.call("rule.list") == ()
     dialog.name.setText("Fine")
-    dialog.condition_rows[0].value.setText("")  # a condition needs a value
+    dialog.condition_rows[0].value.setText("")  # a row without a value is left out: no conditions and no account would act on all mail
     dialog.save_button.click()
-    wait(qtbot, lambda: "needs a value" in dialog.result_label.text())
+    wait(qtbot, lambda: "must be for one account" in dialog.result_label.text())
     dialog.condition_rows[0].value.setText("x")
     dialog.action_rows[0].kind.setCurrentIndex(dialog.action_rows[0].kind.findData("move_to"))  # and a move needs a folder
     dialog.save_button.click()
     wait(qtbot, lambda: "needs a folder" in dialog.result_label.text())
 
 
-def test_rows_can_be_removed_but_one_is_kept(world: World, qtbot: QtBot) -> None:
+def test_rows_can_be_removed_but_one_action_is_kept(world: World, qtbot: QtBot) -> None:
     dialog = editor(world, qtbot)
     second = dialog.add_condition()
     dialog.add_action()
@@ -105,7 +106,29 @@ def test_rows_can_be_removed_but_one_is_kept(world: World, qtbot: QtBot) -> None
     assert len(dialog.condition_rows) == 1 and len(dialog.action_rows) == 1
     dialog.condition_rows[0].remove_button.click()
     dialog.action_rows[0].remove_button.click()
-    assert len(dialog.condition_rows) == 1 and len(dialog.action_rows) == 1
+    assert len(dialog.condition_rows) == 0 and len(dialog.action_rows) == 1  # a rule may have no conditions, never no action
+
+
+def test_a_rule_for_one_account_needs_no_conditions(world: World, qtbot: QtBot) -> None:
+    dialog = editor(world, qtbot)
+    dialog.name.setText("Everything of this account")
+    dialog.account.setCurrentIndex(dialog.account.findData(world.account_id))
+    dialog.action_rows[0].kind.setCurrentIndex(dialog.action_rows[0].kind.findData("mark_read"))
+    dialog.save_button.click()  # the empty condition row is ignored
+    wait(qtbot, lambda: len(world.call("rule.list")) == 1)
+    rule = world.call("rule.list")[0]
+    assert rule.conditions == () and rule.accounts == (world.account_id,)
+    again = editor(world, qtbot, rule)
+    assert again.condition_rows == []
+    added = again.add_condition()
+    added.value.setText("x")
+    written = added.condition()
+    again.save_button.click()
+    wait(qtbot, lambda: world.call("rule.list")[0].conditions == (written,))
+    third = editor(world, qtbot, world.call("rule.list")[0])
+    third.condition_rows[0].remove_button.click()
+    third.save_button.click()
+    wait(qtbot, lambda: world.call("rule.list")[0].conditions == ())
 
 
 def test_a_rule_is_changed_in_the_editor(world: World, qtbot: QtBot) -> None:

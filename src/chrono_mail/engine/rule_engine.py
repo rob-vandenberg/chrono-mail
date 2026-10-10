@@ -8,9 +8,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "rule_engine.py 0.0.33"
+__version__ = "rule_engine.py 0.0.49"
 
 # --- Version history ----------------------------------------------------
+# v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rule matching and actions
 
 MAXIMUM_BODY_CHARACTERS: int = 200_000
@@ -92,6 +93,8 @@ def condition_holds(condition: Condition, subject: Subject) -> bool:
 
 
 def rule_matches(rule: Rule, subject: Subject) -> bool:
+    if not rule.conditions:
+        return True  # a rule for an account alone: all the mail of that account
     results = (condition_holds(condition, subject) for condition in rule.conditions)
     return all(results) if rule.match == "all" else any(results)
 
