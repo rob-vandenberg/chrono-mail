@@ -402,3 +402,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Printing the HTML layout of a message (only the text is printed); saving several messages at once.
 
+## 2026-10-10 Step 9 of the autonomous work: address completion (version 0.0.23)
+
+**What landed**
+- Index schema 4 with the `addresses` table; `Index.suggest`; engine `contact.suggest` (D-044). Interface: `ui/addresscompleter.py` on To, Cc and Bcc.
+- Tests: index (6), engine (6), interface (13). Measured: 100,000 messages with addresses insert in 4.4 s against 3.3 s without; a suggestion takes about 2 ms.
+
+**Still open**
+- Not measured on the 500,000-message mailbox. A real address book (contacts) is a later milestone.
+

@@ -11,6 +11,7 @@ from chrono_mail.core import MessageFlag, StorageError
 from chrono_mail.index.model import (
     IndexedMessage,
     IndexEntry,
+    KnownAddress,
     SearchFilter,
     SortField,
     flags_from_bits,
@@ -19,9 +20,10 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.0.19"
+__version__ = "index.py 0.0.23"
 
 # --- Version history ----------------------------------------------------
+# v0.0.23: addresses seen in messages, suggest
 # v0.0.19: OR and NOT (and a minus) in search words
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.13: preview, unread index, busy timeout
@@ -169,7 +171,7 @@ class Index:
 
     def _insert(self, entry: IndexEntry) -> None:
         self._connection.execute("DELETE FROM text WHERE rowid IN (SELECT id FROM messages WHERE store_id = ?)", (entry.store_id,))
-        self._connection.execute("DELETE FROM messages WHERE store_id = ?", (entry.store_id,))
+        replaced = self._connection.execute("DELETE FROM messages WHERE store_id = ?", (entry.store_id,)).rowcount
         cursor = self._connection.execute(
             "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -193,6 +195,16 @@ class Index:
             "INSERT INTO text (rowid, subject, sender, recipients, body) VALUES (?, ?, ?, ?, ?)",
             (cursor.lastrowid, entry.subject, entry.sender, entry.recipients, entry.body),
         )
+        if not replaced:  # a message that is added again must not count twice
+            for name, address, recipient in entry.people:
+                self._connection.execute(
+                    "INSERT INTO addresses (address, name, as_sender, as_recipient, last) VALUES (?, ?, ?, ?, ?)"
+                    " ON CONFLICT (address) DO UPDATE SET"
+                    " name = CASE WHEN excluded.name != '' AND (addresses.name = '' OR COALESCE(excluded.last, 0) >= COALESCE(addresses.last, 0)) THEN excluded.name ELSE addresses.name END,"
+                    " as_sender = addresses.as_sender + excluded.as_sender, as_recipient = addresses.as_recipient + excluded.as_recipient,"
+                    " last = MAX(COALESCE(addresses.last, 0), COALESCE(excluded.last, 0))",
+                    (address, name, 0 if recipient else 1, 1 if recipient else 0, _epoch(entry.date)),
+                )
 
     def add_many(self, entries: Iterable[IndexEntry]) -> int:
         """Add (or replace) messages in one transaction. Returns how many."""
@@ -299,6 +311,20 @@ class Index:
             f"SELECT {_COLUMNS} FROM messages m WHERE m.thread_key = ? ORDER BY m.date, m.id", (thread_key,)
         ).fetchall()
         return [_row(row) for row in rows]
+
+    def suggest(self, text: str, limit: int = 8) -> list[KnownAddress]:
+        """Addresses whose name or address contains the text, the ones written to most often first (a start of a word first of all)."""
+        needle = text.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        if not needle:
+            return []
+        rows = self._connection.execute(
+            "SELECT name, address, as_sender, as_recipient FROM addresses"
+            " WHERE address LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\'"
+            " ORDER BY CASE WHEN address LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,"
+            " as_recipient * 3 + as_sender DESC, last DESC, address LIMIT ?",
+            (f"%{needle}%", f"%{needle}%", f"{needle}%", f"{needle}%", f"% {needle}%", max(0, limit)),
+        ).fetchall()
+        return [KnownAddress(str(name), str(address), int(sender), int(recipient)) for name, address, sender, recipient in rows]
 
     def thread_sizes(self, thread_keys: Collection[str]) -> dict[str, int]:
         """How many messages (in all folders) each of these conversations has."""

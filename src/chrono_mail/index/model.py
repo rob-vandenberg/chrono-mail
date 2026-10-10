@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.18"
+__version__ = "model.py 0.0.23"
 
 # --- Version history ----------------------------------------------------
+# v0.0.23: people in index entries, KnownAddress
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.13: preview
 # v0.0.8: Initial index model
@@ -56,6 +57,17 @@ class IndexEntry:
     has_attachments: bool
     body: str
     preview: str = ""  # the first characters of the body, for the message list
+    people: tuple[tuple[str, str, bool], ...] = ()  # (name, address, is a recipient) for the address list
+
+
+@dataclass(frozen=True, slots=True)
+class KnownAddress:
+    """An address seen in the mail, for completing what a person types."""
+
+    name: str
+    address: str
+    as_sender: int
+    as_recipient: int
 
 
 @dataclass(frozen=True, slots=True)

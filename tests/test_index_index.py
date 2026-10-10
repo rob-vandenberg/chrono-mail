@@ -1,5 +1,6 @@
 import sqlite3
 from collections.abc import Iterator
+from email.utils import format_datetime
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -10,9 +11,10 @@ from chrono_mail.index import Index, IndexedMessage, IndexEntry, ParsedQuery, Se
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.0.19"
+__version__ = "test_index_index.py 0.0.23"
 
 # --- Version history ----------------------------------------------------
+# v0.0.23: Address completion
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
@@ -252,7 +254,7 @@ def test_damaged_index_is_reported_not_trusted(tmp_path: Path) -> None:
         Index(path)
 
 
-@pytest.mark.parametrize("old", ["1", "2"])
+@pytest.mark.parametrize("old", ["1", "2", "3"])
 def test_an_older_schema_is_reported_so_that_it_gets_rebuilt(tmp_path: Path, old: str) -> None:
     path = tmp_path / "index.sqlite"
     filled(tmp_path, 1).close()
@@ -360,3 +362,70 @@ def test_a_negative_search_inside_a_folder_and_with_a_date_range(tmp_path: Path)
     window = SearchFilter(date_from=BASE + timedelta(days=1), date_to=BASE + timedelta(days=3))
     assert sorted(subjects(index.search("-cats", INBOX, window))) == ["Birds", "Dogs"]
     assert index.search("-cats", ("Nowhere",)) == []
+
+
+# --- the addresses seen in the mail (0.0.23) ---------------------------------------------------------------------------------------
+
+
+def with_people(index: Index, number: int, sender: str, to: str, cc: str | None = None, days: int = 0) -> None:
+    lines = [f"From: {sender}", f"To: {to}", f"Subject: Person {number}", f"Message-ID: <p{number}@x>", f"Date: {format_datetime(BASE + timedelta(days=days))}"]
+    if cc:
+        lines.append(f"Cc: {cc}")
+    raw = ("\n".join(lines) + "\n\nbody\n").encode()
+    index.add(entry_from_raw(MessageRef("account1", INBOX, f"{number:032x}"), "new/x", frozenset(), len(raw), raw))
+
+
+def test_addresses_are_collected_and_found_by_name_or_address(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    with_people(index, 1, "Ann Archer <ann@x.org>", "me@example.com", "Bob Brown <bob@x.org>")
+    with_people(index, 2, "me@example.com", "Bob Brown <bob@x.org>, carol@y.net", days=1)
+    with_people(index, 3, "me@example.com", "Bob Brown <bob@x.org>", days=2)
+    assert [item.address for item in index.suggest("bob")] == ["bob@x.org"]
+    assert [item.address for item in index.suggest("BROWN")] == ["bob@x.org"]
+    found = index.suggest("o", 10)
+    assert found[0].address == "bob@x.org" and found[0].as_recipient == 3 and found[0].name == "Bob Brown"  # the one written to most comes first
+    assert {item.address for item in index.suggest("x.org")} == {"ann@x.org", "bob@x.org"}
+    assert index.suggest("") == [] and index.suggest("  ") == [] and index.suggest("zzz") == []
+    assert [item.address for item in index.suggest("carol", 1)] == ["carol@y.net"] and index.suggest("carol")[0].name == ""
+
+
+def test_word_starts_rank_before_the_middle_of_a_word(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    with_people(index, 1, "me@example.com", "Marta Lopez <marta@a.org>, Dr Tamara <t@b.org>, Smart Home <s@c.org>")
+    mar = [item.address for item in index.suggest("mar")]
+    assert mar[0] == "marta@a.org" and set(mar) == {"marta@a.org", "t@b.org", "s@c.org"}  # Tamara and Smart contain "mar" in the middle: they follow
+    assert [item.address for item in index.suggest("tam")][0] == "t@b.org"
+
+
+def test_wildcards_in_what_is_typed_match_literally(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    with_people(index, 1, "me@example.com", "a_b@x.org, axb@x.org, 100%@x.org")
+    assert [item.address for item in index.suggest("a_b")] == ["a_b@x.org"]
+    assert [item.address for item in index.suggest("%")] == ["100%@x.org"]
+    assert index.suggest("\\") == []
+
+
+def test_adding_a_message_again_does_not_count_it_twice(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    for _ in range(3):
+        with_people(index, 1, "me@example.com", "Bob <bob@x.org>")
+    assert index.suggest("bob")[0].as_recipient == 1
+
+
+def test_the_newest_non_empty_name_is_kept_and_odd_addresses_are_skipped(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    with_people(index, 1, "me@example.com", "Old Name <bob@x.org>", days=1)
+    with_people(index, 2, "me@example.com", "New Name <bob@x.org>", days=5)
+    with_people(index, 3, "me@example.com", "bob@x.org", days=9)  # no name: the known one stays
+    with_people(index, 4, "me@example.com", "Older Name <bob@x.org>", days=0)  # older mail does not rename
+    assert index.suggest("bob")[0].name == "New Name"
+    with_people(index, 5, "me@example.com", "Weird <a@b@c>, <@nodomain>, Evil <\"x y\"@z.org>")
+    assert index.suggest("nodomain") == [] and index.suggest("weird") == []
+
+
+def test_a_rebuild_recounts_the_addresses(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    with_people(index, 1, "me@example.com", "Bob <bob@x.org>")
+    index.remove(f"{1:032x}")
+    assert index.suggest("bob")[0].as_recipient == 1  # counts only grow until a rebuild
+    index.close()

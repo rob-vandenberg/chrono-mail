@@ -1,12 +1,13 @@
 from chrono_mail.core import MessageFlag, MessageRef
 from chrono_mail.index.model import PREVIEW_CHARACTERS, UNREADABLE_SUBJECT, IndexEntry
 from chrono_mail.index.text import clean_preview, searchable_body
-from chrono_mail.mime import Address, parse_message
+from chrono_mail.mime import Address, ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "entry.py 0.0.14"
+__version__ = "entry.py 0.0.23"
 
 # --- Version history ----------------------------------------------------
+# v0.0.23: the addresses of a message
 # v0.0.14: the preview is cleaned of web addresses and decoration
 # v0.0.13: preview
 # v0.0.8: Initial index entries
@@ -21,6 +22,25 @@ def _clean(text: str) -> str:
 
 def _display(address: Address) -> str:
     return f"{address.name} <{address.address}>" if address.name else address.address
+
+
+MAXIMUM_PEOPLE: int = 60
+MAXIMUM_ADDRESS_CHARACTERS: int = 254
+MAXIMUM_NAME_CHARACTERS: int = 200
+
+
+def _people(message: ParsedMessage) -> tuple[tuple[str, str, bool], ...]:
+    """The addresses of a message worth remembering: From (False) and To and Cc (True). Anything odd is skipped."""
+    found: list[tuple[str, str, bool]] = []
+    for addresses, recipient in ((message.from_addresses, False), (message.to_addresses, True), (message.cc_addresses, True)):
+        for address in addresses:
+            text = _clean(address.address).strip()
+            if not text or len(text) > MAXIMUM_ADDRESS_CHARACTERS or text.count("@") != 1 or text.startswith("@") or text.endswith("@") or any(c.isspace() or c in '<>",;' for c in text):
+                continue
+            found.append((_clean(address.name).strip()[:MAXIMUM_NAME_CHARACTERS], text, recipient))
+            if len(found) >= MAXIMUM_PEOPLE:
+                return tuple(found)
+    return tuple(found)
 
 
 def entry_from_raw(
@@ -55,6 +75,7 @@ def entry_from_raw(
         has_attachments=any(not attachment.inline for attachment in message.attachments),
         body=body,
         preview=clean_preview(body, PREVIEW_CHARACTERS),
+        people=_people(message),
     )
 
 

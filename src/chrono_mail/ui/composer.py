@@ -24,13 +24,15 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.ui.addresscompleter import AddressCompleter
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.20"
+__version__ = "composer.py 0.0.23"
 
 # --- Version history ----------------------------------------------------
+# v0.0.23: address completion
 # v0.0.20: Settings window, account editing, signatures
 # v0.0.16: drafts: save, autosave, resume, keep attachments, save/discard/cancel on close
 # v0.0.14: window icon
@@ -216,6 +218,7 @@ class ComposeWindow(QMainWindow):
         self.autosave_timer = QTimer(self)
         self.autosave_timer.timeout.connect(self._autosave)
         self.autosave_timer.start(AUTOSAVE_SECONDS * 1000)
+        self.completers = [AddressCompleter(backend, field) for field in (self.to, self.cc, self.bcc)]
         self.to.setFocus()
 
     # --- state ------------------------------------------------------------------------------------
