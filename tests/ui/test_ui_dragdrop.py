@@ -1,3 +1,4 @@
+import pytest
 from PySide6.QtCore import QMimeData, QModelIndex, QPoint, QPointF, Qt
 from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 from pytestqt.qtbot import QtBot
@@ -8,9 +9,10 @@ from tests.ui.world import account_node, World, row_of, wait
 from tests.ui.test_ui_window import started
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dragdrop.py 0.0.46"
+__version__ = "test_ui_dragdrop.py 0.0.48"
 
 # --- Version history ----------------------------------------------------
+# v0.0.48: Dragging messages shows a small badge, not the selected rows
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.17: Initial drag and drop tests
 
@@ -80,3 +82,30 @@ def test_drops_that_make_no_sense_are_refused(world: World, qtbot: QtBot) -> Non
     assert not enter.isAccepted()
     qtbot.wait(100)
     assert world.window.list_model.rowCount() == 3
+
+
+def test_dragging_shows_a_small_badge_and_not_the_selected_rows(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtCore import QItemSelectionModel
+    from PySide6.QtGui import QDrag
+
+    from chrono_mail.ui.messagelistview import BADGE_OFFSET, MessageListView, drag_badge
+
+    world.window.start()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
+    one, many = drag_badge(1), drag_badge(300)
+    assert many.width() > one.width() and many.height() == one.height() <= 60  # as high as one line, whatever the selection
+    assert one.toImage().pixelColor(2, 2).alpha() == 0 and BADGE_OFFSET > 0  # the corner near the pointer is empty
+    view = world.window.list_view
+    assert isinstance(view, MessageListView)
+    for row in range(3):
+        view.selectionModel().select(world.window.list_model.index(row), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    started: list[tuple[int, int]] = []
+
+    def fake_exec(self: QDrag, *args: object) -> object:
+        started.append((self.pixmap().width(), self.pixmap().height()))
+        assert self.mimeData().hasFormat("application/x-chrono-mail-messages") or self.mimeData().formats()
+        return Qt.DropAction.IgnoreAction
+
+    monkeypatch.setattr(QDrag, "exec", fake_exec)
+    view.startDrag(Qt.DropAction.MoveAction)
+    assert started == [(drag_badge(3).width(), drag_badge(3).height())]

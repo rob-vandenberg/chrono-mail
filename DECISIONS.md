@@ -463,3 +463,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** any folder can be pinned to Favorites (right-click > Add to Favorites). A pinned folder can be renamed (the folder itself keeps its name), moved up or down and removed; the standard favorites can be hidden and shown again. Accounts can be put in named groups (an account is in one group at most). A group is a heading in the folder list with a combined "All Inboxes" of its accounts, followed by those accounts; accounts outside any group follow, and Local Folders is last. Pins and groups are kept in `sidebar.json` next to `rules.json` (atomic write, a damaged file is copied to `.bad` and reported) and are driven by commands (`sidebar.show`, `favorite.pin/unpin/rename/reorder/show`, `group.add/rename/remove/assign`); removing an account removes its pins and its place in a group. The search box works inside combined views (`message.combined` takes a query and an account list). Reordering is done with Move up and Move down in the menu, not by dragging.
 **Reason:** the user asked for these next to the standard Favorites; the file is separate from the account settings because it is about the look of the folder list, not about the accounts, and it can be lost without losing mail.
+
+## D-063 Dragging messages shows a badge, not the rows
+*2026-10-10*
+
+**Decision:** when messages are dragged out of the list, the drag image is a small badge ("5 messages") that hangs right of and below the pointer. The default image of the selected rows is not used.
+**Reason:** with many messages selected the default image covered the folder list, so the user could not see which folder the drop would go to.

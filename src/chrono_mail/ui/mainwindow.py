@@ -40,6 +40,7 @@ from chrono_mail.ui.composer import ComposeOptions, ComposeWindow
 from chrono_mail.ui.conversationbar import ConversationBar
 from chrono_mail.ui.delegate import MessageDelegate
 from chrono_mail.ui.foldertree import FolderTree
+from chrono_mail.ui.messagelistview import MessageListView
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.models import (
@@ -66,9 +67,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.47"
+__version__ = "mainwindow.py 0.0.48"
 
 # --- Version history ----------------------------------------------------
+# v0.0.48: Dragging messages shows a small badge, not the selected rows
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
@@ -206,7 +208,7 @@ class MainWindow(QMainWindow):
             self._reading_pane = "right"
         self._date_style: str = str(self.settings.value("date_style", "short"))
         self._message_windows: list[MessageWindow] = []
-        self.list_view = QTreeView(self)
+        self.list_view = MessageListView(self)
         self.list_view.setModel(self.list_model)
         self.list_view.setRootIsDecorated(False)
         self.list_view.setItemsExpandable(False)

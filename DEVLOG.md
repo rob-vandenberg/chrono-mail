@@ -571,3 +571,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - Dragging to reorder favorites (Move up and Move down exist), dragging accounts into groups.
+
+## 2026-10-10 Drag badge (version 0.0.48)
+
+**What landed**
+- `ui/messagelistview.py`: the message list draws a small badge while dragging; test added.
