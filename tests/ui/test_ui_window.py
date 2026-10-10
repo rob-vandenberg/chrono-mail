@@ -14,9 +14,10 @@ from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.16"
+__version__ = "test_ui_window.py 0.0.17"
 
 # --- Version history ----------------------------------------------------
+# v0.0.17: Message actions: archive, mark all as read, empty folder, drag and drop
 # v0.0.16: Drafts
 # v0.0.13: Initial main window tests
 
@@ -489,3 +490,52 @@ def test_a_background_check_keeps_the_message_being_read_selected(world: World, 
     wait(qtbot, lambda: world.window.list_model.rowCount() == 4)
     wait(qtbot, lambda: world.window.list_view.currentIndex().isValid() and row_of(world.window, world.window.list_view.currentIndex().row()).message_id == reading)
     assert "Message" in world.window.reader._subject.text()  # noqa: SLF001
+
+
+# --- archive, mark all as read, empty folder, drag and drop (0.0.17) -----------------------------------------------------------------
+
+
+def open_folder(world: World, qtbot: QtBot, name: str, rows: int) -> None:
+    account = world.window.tree_model.index(0, 0)
+    for row in range(world.window.tree_model.rowCount(account)):
+        index = world.window.tree_model.index(row, 0, account)
+        if index.data(FOLDER_PATH_ROLE) == name:
+            world.window.tree.setCurrentIndex(index)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == rows and world.window._folder == name)  # noqa: SLF001
+
+
+def test_archive_moves_the_selected_messages_and_creates_the_folder(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    select(world.window, 0)
+    world.window.act_archive.trigger()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
+    assert world.call("message.list", account=world.account_id, folder="Archive").total == 1
+    wait(qtbot, lambda: any(label.strip().startswith("Archive") for label in tree_labels(world.window)))
+    open_folder(world, qtbot, "Archive", 1)
+    select(world.window, 0)
+    world.window.act_archive.trigger()  # already archived
+    wait(qtbot, lambda: "archive already" in world.window.status_label.text())
+
+
+def test_mark_all_as_read_and_empty_folder(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    world.window.act_mark_all_read.trigger()
+    wait(qtbot, lambda: world.call("folder.list", account=world.account_id)[3].unread == 0 and "as read" in world.window.status_label.text())
+    assert all("seen" in row_of(world.window, position).flags for position in range(3))
+    select(world.window, 0)
+    world.window.delete_selected()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
+    open_folder(world, qtbot, "Trash", 1)
+    assert world.window.act_empty_folder.isEnabled()
+    world.dialogs.answer = QMessageBox.StandardButton.No
+    world.window.act_empty_folder.trigger()
+    qtbot.wait(150)
+    assert world.call("message.list", account=world.account_id, folder="Trash").total == 1
+    world.dialogs.answer = QMessageBox.StandardButton.Yes
+    world.window.act_empty_folder.trigger()
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Trash").total == 0)
+    open_folder(world, qtbot, "Inbox", 2)
+    assert not world.window.act_empty_folder.isEnabled()
+    world.window.empty_folder()  # not allowed in the Inbox: nothing happens
+    qtbot.wait(150)
+    assert world.call("message.list", account=world.account_id, folder="Inbox").total == 2

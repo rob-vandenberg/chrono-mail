@@ -29,6 +29,7 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.composer import ComposeWindow
+from chrono_mail.ui.foldertree import FolderTree
 from chrono_mail.ui.delegate import MessageDelegate
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.models import (
@@ -45,9 +46,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.16"
+__version__ = "mainwindow.py 0.0.17"
 
 # --- Version history ----------------------------------------------------
+# v0.0.17: Message actions: archive, mark all as read, empty folder, drag and drop
 # v0.0.16: Drafts
 # v0.0.15: the encryption key is checked at the start and can be restored
 # v0.0.14: window icon, shared icon helpers
@@ -111,7 +113,7 @@ class MainWindow(QMainWindow):
 
     def _build_widgets(self) -> None:
         self.tree_model = FolderTreeModel(self)
-        self.tree = QTreeView(self)
+        self.tree = FolderTree(self)
         self.tree.setModel(self.tree_model)
         self.tree.setHeaderHidden(True)
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -127,6 +129,9 @@ class MainWindow(QMainWindow):
         self.list_view.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.list_view.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.list_view.setDragEnabled(True)
+        self.list_view.setDragDropMode(QAbstractItemView.DragDropMode.DragOnly)
+        self.list_view.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.list_view.setFrameShape(QListView.Shape.NoFrame)
 
         list_pane = QWidget(self)
@@ -192,6 +197,10 @@ class MainWindow(QMainWindow):
         self.act_forward = self._action("Forward", lambda: self.compose_from_selection("forward"), "Ctrl+L", "mail-forward")
         self.act_edit_draft = self._action("Edit draft", self.edit_draft, "Return", "document-edit")
         self.act_delete = self._action("Delete", self.delete_selected, "Delete", "edit-delete")
+        self.act_archive = self._action("Archive", self.archive_selected, "Ctrl+E", "mail-archive")
+        self.act_mark_all_read = self._action("Mark all as read", self.mark_folder_read, icon="mail-mark-read")
+        self.act_empty_folder = self._action("Empty folder…", self.empty_folder, icon="edit-clear")
+        self.act_empty_folder.setEnabled(False)
         self.act_read = self._action("Mark as read", lambda: self.mark_selected(seen=True))
         self.act_unread = self._action("Mark as unread", lambda: self.mark_selected(seen=False))
         self.act_flag = self._action("Flag", lambda: self.mark_selected(flagged=True), icon="mail-mark-important")
@@ -269,10 +278,14 @@ class MainWindow(QMainWindow):
         for action in (self.act_read, self.act_unread, self.act_flag, self.act_unflag):
             message_menu.addAction(action)
         message_menu.addSeparator()
+        message_menu.addAction(self.act_archive)
         message_menu.addAction(self.act_delete)
         folder_menu = bar.addMenu("F&older")
         for action in (self.act_new_folder, self.act_rename_folder, self.act_delete_folder):
             folder_menu.addAction(action)
+        folder_menu.addSeparator()
+        folder_menu.addAction(self.act_mark_all_read)
+        folder_menu.addAction(self.act_empty_folder)
         view_menu = bar.addMenu("&View")
         view_menu.addAction(self.act_search)
         view_menu.addAction(self.act_auto)
@@ -292,6 +305,7 @@ class MainWindow(QMainWindow):
     def _wire(self) -> None:
         self.tree.selectionModel().currentChanged.connect(self._tree_changed)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
+        self.tree.messages_dropped.connect(self._messages_dropped)
         self.list_view.selectionModel().currentChanged.connect(self._row_changed)
         self.list_view.customContextMenuRequested.connect(self._list_menu)
         self.list_view.doubleClicked.connect(self._row_double_clicked)
@@ -500,6 +514,8 @@ class MainWindow(QMainWindow):
         self._tree_kind = kind
         self._folder = str(current.data(FOLDER_PATH_ROLE)) if kind == "folder" else None
         self._folder_role = str(current.data(FOLDER_ROLE_ROLE) or "other")
+        self.act_empty_folder.setEnabled(kind == "folder" and self._folder_role in ("trash", "junk"))
+        self.act_mark_all_read.setEnabled(kind == "folder")
         self._select_quick_filters_for(kind)
         self.search_box.blockSignals(True)
         self.search_box.clear()
@@ -673,6 +689,68 @@ class MainWindow(QMainWindow):
         for row in rows:
             self.backend.call("message.delete", {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not delete", error), owner=self)
 
+    def archive_selected(self) -> None:
+        rows = self._selected_rows()
+        if not rows or self._account_id is None:
+            return
+        account = self._account_id
+        remaining = len(rows)
+        created = False
+
+        def done(result: object) -> None:
+            nonlocal remaining, created
+            created = created or bool(getattr(result, "created_folder"))
+            remaining -= 1
+            if remaining == 0:
+                self._after_change(f"Archived {len(rows)} message(s)")
+
+        for row in rows:
+            if str(getattr(row, "folder")) == "Archive":
+                remaining -= 1  # already there
+                continue
+            self.backend.call("message.archive", {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not archive", error), owner=self)
+        if remaining == 0:
+            self.show_status("The selected message(s) are in the archive already")
+
+    def mark_folder_read(self) -> None:
+        """Mark every message of the folder being shown as read."""
+        if self._account_id is None or self._folder is None:
+            return
+        folder = self._folder
+
+        def done(result: object) -> None:
+            changed = int(getattr(result, "changed"))
+            self._after_change(f"Marked {changed} message(s) in {folder} as read" if changed else f"Nothing to mark in {folder}")
+
+        self.backend.call("folder.mark-read", {"account": self._account_id, "folder": folder}, done, lambda error: self._report("Could not mark the messages", error), owner=self)
+
+    def empty_folder(self) -> None:
+        """Delete everything in Trash or Junk for good, after asking."""
+        if self._account_id is None or self._folder is None or self._folder_role not in ("trash", "junk"):
+            return
+        folder = self._folder
+        answer = QMessageBox.question(self, "Empty folder", f"Delete all messages in {folder} for good? This cannot be undone.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        def done(result: object) -> None:
+            self._after_change(f"Deleted {int(getattr(result, 'removed'))} message(s) from {folder}")
+
+        self.backend.call("folder.empty", {"account": self._account_id, "folder": folder}, done, lambda error: self._report("Could not empty the folder", error), owner=self)
+
+    def _messages_dropped(self, account: str, target: str, messages: list[tuple[str, str]]) -> None:
+        """Messages were dragged to a folder of the tree."""
+        remaining = len(messages)
+
+        def done(result: object) -> None:
+            nonlocal remaining
+            remaining -= 1
+            if remaining == 0:
+                self._after_change(f"Moved {len(messages)} message(s) to {target}")
+
+        for folder, message_id in messages:
+            self.backend.call("message.move", {"account": account, "folder": folder, "message": message_id, "target": target}, done, lambda error: self._report("Could not move", error), owner=self)
+
     def _fill_move_menu(self) -> None:
         self.move_menu.clear()
         if self._account_id is None:
@@ -842,6 +920,10 @@ class MainWindow(QMainWindow):
         if self._tree_kind == "folder":
             menu.addAction(self.act_rename_folder)
             menu.addAction(self.act_delete_folder)
+            menu.addSeparator()
+            menu.addAction(self.act_mark_all_read)
+            if self._folder_role in ("trash", "junk"):
+                menu.addAction(self.act_empty_folder)
         menu.exec(self.tree.viewport().mapToGlobal(position))
 
     def _list_menu(self, position: QPoint) -> None:
@@ -857,6 +939,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         self._fill_move_menu()
         menu.addMenu(self.move_menu).setText("Move to")
+        menu.addAction(self.act_archive)
         menu.addAction(self.act_delete)
         menu.exec(self.list_view.viewport().mapToGlobal(position))
 

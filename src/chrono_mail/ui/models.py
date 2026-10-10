@@ -1,19 +1,22 @@
 import dataclasses
 from dataclasses import dataclass, field
+from collections.abc import Sequence
 from enum import Enum
 from typing import override
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QObject, QPersistentModelIndex, Qt, Signal
+from PySide6.QtCore import QAbstractListModel, QMimeData, QModelIndex, QObject, QPersistentModelIndex, Qt, Signal
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.14"
+__version__ = "models.py 0.0.17"
 
 # --- Version history ----------------------------------------------------
+# v0.0.17: messages can be dragged out of the list
 # v0.0.14: icons in the folder tree
 # v0.0.13: Initial folder and message list models
 
@@ -117,6 +120,25 @@ class MessageListModel(QAbstractListModel):
         if not index.isValid() or role != ROW_ROLE:
             return None
         return self.row_at(index.row(), fetch=True)
+
+    @override
+    def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
+        base = super().flags(index)
+        return base | Qt.ItemFlag.ItemIsDragEnabled if index.isValid() else base
+
+    @override
+    def mimeTypes(self) -> list[str]:
+        return [MESSAGES_MIME_TYPE]
+
+    @override
+    def mimeData(self, indexes: Sequence[QModelIndex]) -> QMimeData:
+        """The messages being dragged: where they are, never their content."""
+        messages: list[tuple[str, str]] = []
+        for index in indexes:
+            row = self.row_at(index.row())
+            if row is not None:
+                messages.append((str(getattr(row, "folder")), str(getattr(row, "message_id"))))
+        return messages_mime_data(self._spec.account if self._spec is not None else "", messages)
 
     @override
     def canFetchMore(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> bool:

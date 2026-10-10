@@ -1,0 +1,81 @@
+from PySide6.QtCore import QMimeData, QModelIndex, QPoint, QPointF, Qt
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
+from pytestqt.qtbot import QtBot
+
+from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data, read_messages_mime_data
+from chrono_mail.ui.models import FOLDER_PATH_ROLE
+from tests.ui.world import World, row_of, wait
+from tests.ui.test_ui_window import started
+
+# --- Version ------------------------------------------------------------
+__version__ = "test_ui_dragdrop.py 0.0.17"
+
+# --- Version history ----------------------------------------------------
+# v0.0.17: Initial drag and drop tests
+
+
+def folder_point(world: World, name: str) -> QPoint:
+    account = world.window.tree_model.index(0, 0)
+    for row in range(world.window.tree_model.rowCount(account)):
+        index = world.window.tree_model.index(row, 0, account)
+        if index.data(FOLDER_PATH_ROLE) == name:
+            return world.window.tree.visualRect(index).center()
+    raise AssertionError(f"no folder {name}")
+
+
+def drop(world: World, point: QPoint, data: QMimeData) -> bool:
+    event = QDropEvent(QPointF(point), Qt.DropAction.MoveAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    world.window.tree.dropEvent(event)
+    return event.isAccepted()
+
+
+def move_probe(world: World, point: QPoint, data: QMimeData) -> bool:
+    event = QDragMoveEvent(point, Qt.DropAction.MoveAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    event.setAccepted(False)
+    world.window.tree.dragMoveEvent(event)
+    return event.isAccepted()
+
+
+def test_the_list_offers_the_selected_messages_for_dragging(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    indexes = [world.window.list_model.index(0), world.window.list_model.index(1)]
+    assert world.window.list_model.flags(indexes[0]) & Qt.ItemFlag.ItemIsDragEnabled
+    assert not world.window.list_model.flags(QModelIndex()) & Qt.ItemFlag.ItemIsDragEnabled
+    data = world.window.list_model.mimeData(indexes)
+    account, messages = read_messages_mime_data(data) or ("", [])
+    assert account == world.account_id and [message for _, message in messages] == [row_of(world.window, 0).message_id, row_of(world.window, 1).message_id]
+    assert MESSAGES_MIME_TYPE in world.window.list_model.mimeTypes()
+    assert world.window.list_view.dragEnabled()
+
+
+def test_dropping_messages_on_a_folder_moves_them(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    indexes = [world.window.list_model.index(0), world.window.list_model.index(1)]
+    data = world.window.list_model.mimeData(indexes)
+    junk = folder_point(world, "Junk")
+    assert move_probe(world, junk, data)
+    assert drop(world, junk, data)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
+    assert world.call("message.list", account=world.account_id, folder="Junk").total == 2
+
+
+def test_drops_that_make_no_sense_are_refused(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    data = world.window.list_model.mimeData([world.window.list_model.index(0)])
+    for point in (folder_point(world, "Inbox"), folder_point(world, "Outbox"), QPoint(2, 2000)):  # same folder, Outbox, nothing there
+        assert not move_probe(world, point, data)
+        assert not drop(world, point, data)
+    other_account = messages_mime_data("someone-else", [("Inbox", "x")])
+    assert not drop(world, folder_point(world, "Junk"), other_account)
+    for foreign in (QMimeData(), QMimeData()):
+        foreign.setData(MESSAGES_MIME_TYPE, b"not json")
+        assert read_messages_mime_data(foreign) is None
+        assert not drop(world, folder_point(world, "Junk"), foreign)
+    foreign_text = QMimeData()
+    foreign_text.setText("hello")
+    enter = QDragEnterEvent(QPoint(5, 5), Qt.DropAction.MoveAction, foreign_text, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    enter.setAccepted(True)
+    world.window.tree.dragEnterEvent(enter)
+    assert not enter.isAccepted()
+    qtbot.wait(100)
+    assert world.window.list_model.rowCount() == 3

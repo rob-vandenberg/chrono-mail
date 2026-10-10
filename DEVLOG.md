@@ -344,3 +344,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Drafts of HTML messages come with HTML composing (step 10).
 
+## 2026-10-10 Step 3 of the autonomous work: message actions (version 0.0.17)
+
+**What landed**
+- Engine: `message.archive`, `folder.mark-read`, `folder.empty` (`engine/commands_actions.py`, D-038).
+- Interface: Archive (Ctrl+E; Message menu and list context menu), Mark all as read and Empty folder (Folder menu and folder context menu; Empty only enabled in Trash and Junk, asks first), drag messages from the list to a folder (`ui/foldertree.py`, `ui/dragdata.py`).
+- Tests: engine (6), window (2), drag and drop (3).
+
+**Still open**
+- Drag and drop is tested through the drop events, not with a real mouse drag.
+
