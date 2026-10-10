@@ -58,7 +58,7 @@ Only `ui` may import PySide6.
 ### 4.2 Index
 
 - Holds what the UI needs fast: folder contents, sorting, threading, search (sender, recipients, subject, date, size, flags, and full-text).
-- Never the source of truth. It can be deleted at any time and rebuilt by reading every message in the store. A full rebuild is rare; for 500,000 messages, eM Client's 1.5 to 2.5 hours is an acceptable reference.
+- Never the source of truth. It can be deleted at any time and rebuilt by reading every message in the store. A full rebuild is rare; for 500,000 messages, an hour or two is an acceptable reference.
 - Normally updated incrementally.
 - Version 1: SQLite with full-text search, **not encrypted**. The metadata it holds (dates, senders, recipients, subjects) is treated as lower sensitivity. Encrypting the index is a possible later option.
 
@@ -78,7 +78,7 @@ Only `ui` may import PySide6.
 
 ## 6. User interface
 
-- Main window: folder tree, message list, reading pane (three-pane layout like eM Client).
+- Main window: folder tree, message list, reading pane (the usual three-pane layout).
 - The message list is virtualized (Qt model/view) so 500,000 messages do not slow it down.
 - HTML messages render in Qt WebEngine with JavaScript off and remote content blocked by default; plain-text messages render without a web engine.
 - All actions call engine commands. UI state that matters (selection, open folder) is inspectable, so tests and agents can drive the UI.

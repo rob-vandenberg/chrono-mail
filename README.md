@@ -1,6 +1,6 @@
 # Chrono Mail
 
-An open-source desktop email client for Linux, inspired by eM Client.
+An open-source desktop email client for Linux, built to offer the functions people expect from a full mail program.
 
 > **Status: early development.** There is no usable application yet. The project is in its design and setup phase.
 

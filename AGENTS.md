@@ -1,6 +1,6 @@
 # AGENTS.md: guide for AI agents and contributors
 
-Chrono Mail is an open-source desktop email client for Linux (Windows and macOS as a bonus), written in Python with a Qt 6 user interface through PySide6. Functionally it is modelled on eM Client. It does not need to look identical, but it should offer the same functionality.
+Chrono Mail is an open-source desktop email client for Linux (Windows and macOS as a bonus), written in Python with a Qt 6 user interface through PySide6. It aims to offer the full set of functions of a modern desktop mail program.
 
 **Read this file first. Then read `DEVELOPMENT-RULES.md` completely. Then `STATUS.md`.** Those three files are mandatory at the start of every session. The others are read when the task needs them.
 

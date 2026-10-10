@@ -4,11 +4,11 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 ---
 
-## D-001 Build an eM Client-like mail client for Linux, step by step
+## D-001 Build a full-featured mail client for Linux, step by step
 *2026-10-08*
 
-**Decision:** Build Chrono Mail, functionally modelled on eM Client. Start with SMTP + POP3 (with secure variants), then IMAP, then further features (Gmail, Exchange, calendar, contacts, tasks) in separate steps.
-**Reason:** eM Client has no Linux version and none is on its roadmap. Small steps work best with AI-assisted development across many sessions.
+**Decision:** Build Chrono Mail, aiming at the functions of a full desktop mail program. Start with SMTP + POP3 (with secure variants), then IMAP, then further features (Gmail, Exchange, calendar, contacts, tasks) in separate steps.
+**Reason:** No full-featured desktop mail program of this kind exists for Linux. Small steps work best with AI-assisted development across many sessions.
 
 ## D-002 Python with strict type checking (Pyrefly)
 *2026-10-08*
@@ -40,7 +40,7 @@ Every design decision, with its reason and the alternatives that were rejected. 
 *2026-10-08*
 
 **Decision:** A separate index (SQLite with full-text search) for lists, sorting and search. It is never the source of truth and can always be rebuilt from the store. Not encrypted in version 1.
-**Reason:** Fast UI with 500,000 messages. Corruption of the index loses no mail. The metadata it contains (dates, senders, recipients, subjects) is treated as lower sensitivity; for comparison, mail servers like Exim log these in plain text. A full rebuild is rare; eM Client takes 1.5 to 2.5 hours for a comparable mailbox, which is acceptable.
+**Reason:** Fast UI with 500,000 messages. Corruption of the index loses no mail. The metadata it contains (dates, senders, recipients, subjects) is treated as lower sensitivity; for comparison, mail servers like Exim log these in plain text. A full rebuild is rare; an hour or two for a mailbox of this size is acceptable.
 **Later option:** encrypt the index.
 
 ## D-006 IMAP-shaped internals from day one
@@ -251,7 +251,7 @@ Every design decision, with its reason and the alternatives that were rejected. 
 *2026-10-10*
 
 **Decision:**
-- Qt widgets (PySide6), a three-pane main window in the style of eM Client 9 and 10 (checked against its official 10.0 documentation, as a reference only; nothing is copied): folder tree on the left, message list in the middle, reading pane on the right, a top toolbar with the actions and a search field, and quick filters above the list. The look is the platform's own (palette, light and dark, theme icons); eM Client's colours and artwork are not used.
+- Qt widgets (PySide6), a three-pane main window (folder tree, message list, reading pane; own design): folder tree on the left, message list in the middle, reading pane on the right, a top toolbar with the actions and a search field, and quick filters above the list. The look is the platform's own (palette, light and dark, theme icons); all artwork is our own.
 - The interface contains no mail logic. A `Backend` runs engine commands on a thread pool and delivers each answer on the GUI thread, dropping answers for objects that no longer exist. A view that changes (another folder, a new search) makes every older answer obsolete; so does any change to the store while a message is being opened.
 - The message list is a model that knows its size from the first page and fetches 100 rows at a time when a row is needed (folders); searches and quick filters grow as the list is scrolled. Unread counts adjust locally when a flag changes.
 - A row shows an avatar with initials in a colour taken from the sender, sender or (in Sent, Drafts and Outbox) recipient, date, subject, a line of preview and marks for flags and attachments. Unread rows are bold with a marker in the margin.
@@ -259,7 +259,7 @@ Every design decision, with its reason and the alternatives that were rejected. 
 - Folder deletion in the interface removes the folder, its subfolders and their messages from the store, but the files stay in `.deleted`. Delete moves to Trash; deleting from Trash asks first.
 - The program checks for mail when it starts and every 5 minutes (switchable); sending keeps the message in the Outbox on failure and says so.
 - UI tests run without a screen (Qt `offscreen`, pytest-qt). The web view cannot be captured by `grab()` in that mode; its rendering is checked through a PDF export, its security through a local web server that counts the requests that really arrive.
-**Reason:** the user's goal is an eM Client for Linux; the rules in AGENTS.md sections 4.3 and 4.6.
+**Reason:** the user's goal is a full-featured mail program for Linux; the rules in AGENTS.md sections 4.3 and 4.6.
 **Open:** drafts, HTML composing, drag and drop, conversation view, a window icon and the Flatpak packaging (task 1.13).
 
 ## D-031 What the interface needed from the engine
@@ -361,3 +361,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** the composer has a "Rich text" switch (default for new windows from Settings, off). In rich mode the message is written in a small editor (bold, italic, underline, bulleted and numbered lists, links, clear formatting) and sent as `multipart/alternative` with a plain-text part (the editor's text) and an HTML part. Drafts store both parts (`draft.save` has `html`, `draft.open` returns it) and a rich draft reopens in rich mode. The outgoing HTML is cleaned: pictures are removed (a pasted picture or a tracking pixel never goes out and nothing in the message is fetched when it is read), only http, https and mailto links survive (an unsafe link typed in is refused, one that came in by pasting is emptied), and the editor's own font settings are dropped so the reader's apply. Going back to plain text asks first when formatting would be lost. In rich mode a signature is not swapped when the sender changes (that would flatten the formatting). Inline pictures, fonts, colours and tables are not offered.
 **Reason:** most people expect bold and lists; keeping to a small, safe subset keeps the output clean and keeps hostile or tracking content out of what we send.
+
+## D-046 No other product is named in the project
+*2026-10-10*
+
+**Decision:** for legal reasons (the user's instruction) neither the repository nor the program refers to another mail program by name. The About text, the README, the package description, the design documents and the decision log were reworded without it, and a test (`tests/test_legal_names.py`) fails if such a name appears in the documents, the source or the tests. Earlier commits in the git history still contain the old wording; removing it from the history would mean rewriting published history and is left to the user to decide.
+**Reason:** avoiding any suggestion of affiliation with, or imitation of, another company's product.

@@ -53,9 +53,10 @@ from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.24"
+__version__ = "mainwindow.py 0.0.25"
 
 # --- Version history ----------------------------------------------------
+# v0.0.25: No other product named in the project
 # v0.0.24: Rich text composing
 # v0.0.22: Save as .eml, view source, print
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
@@ -1276,5 +1277,5 @@ class MainWindow(QMainWindow):
             QDesktopServices.openUrl(url)
 
     def _about(self) -> None:
-        QMessageBox.about(self, "About Chrono Mail", "<b>Chrono Mail</b><br>An open-source e-mail client for Linux, inspired by eM Client.<br><br>License: AGPL-3.0")
+        QMessageBox.about(self, "About Chrono Mail", "<b>Chrono Mail</b><br>An open-source e-mail client for Linux.<br><br>License: AGPL-3.0")
 
