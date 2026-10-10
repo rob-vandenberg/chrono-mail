@@ -511,3 +511,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **What landed**
 - `.github/workflows/ci.yml`: Pyrefly strict, the layer check and the offline tests on every push, with Qt running without a screen. Written without being able to run it here; the first run on GitHub shows whether the runner needs more libraries.
+
+## 2026-10-10 CI made green (versions 0.0.37 to 0.0.39)
+
+- The first run found a YAML error (a colon in a step name), a test that wrote into a path that exists only on this machine, and a crash of Qt WebEngine while the process shuts down after all tests passed; the last is avoided by ending the process right after the results when `CHRONO_MAIL_FAST_EXIT` is set (the workflow sets it).
+

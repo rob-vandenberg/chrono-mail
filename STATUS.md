@@ -9,7 +9,7 @@
 - **There is a working graphical program to test**: `chrono-mail` (see below). Three-pane window: folders, message list, reading pane; get mail, read, reply, reply all, forward, new message, attachments (save and send), flag, mark read or unread, move, delete (Trash), folders (create, rename, delete), search with quick filters, first-run account setup with a connection test and the key recovery code screen. HTML mail is shown locked down (no scripts, remote content blocked until allowed per message).
 - The headless client still works: `chrono-mail-cli` (26 commands).
 - Verified against the real DirectAdmin server `mail.technova.us` through the engine and the CLI. The graphical program has been tested without a screen, with fake servers, and (one live test) against the real server through the window: compose, send, fetch, read, delete. **Nobody has used it on a real screen yet**: the first real use is the next step.
-- Project version 0.0.36. About 8,100 lines in `src/` (2,500 of them the interface), 8,300 in `tests/`; 926 offline tests, 31 live tests (one drives the window against the real server), 1 credential-store test, 1 performance test.
+- Project version 0.0.39. About 8,100 lines in `src/` (2,500 of them the interface), 8,300 in `tests/`; 926 offline tests, 31 live tests (one drives the window against the real server), 1 credential-store test, 1 performance test.
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main`. The last push is recorded in DEVLOG.md (version 0.0.12); the interface work (0.0.13) was pushed; everything up to 0.0.14 was pushed; later versions are pushed as they are finished (see the queue). The test account password (`chronomail@bccbox.com` on `mail.technova.us`) is only in the ignored `tests/live/account.local.toml`; it is still to be changed once the user decides POP3 and SMTP are proven.
 - KDEV is the development machine (Kubuntu 26). The project folder is `/home/rob/python/chrono-mail`.
 
@@ -32,7 +32,7 @@ Each step: tests, full gate, new version and tag, documents, push. Done steps ar
 13. DONE (0.0.34) Junk and navigation: mark as junk, next unread message.
 14. DONE (0.0.35) Send later and snooze.
 15. CONDSTORE for large IMAP folders; folder rename on the IMAP server.
-16. DONE (0.0.36) GitHub Actions workflow (task 0.4): check the first run on GitHub.
+16. DONE (0.0.36 to 0.0.39) GitHub Actions workflow (task 0.4): runs Pyrefly, the layer check and the 1,313 offline tests on every push; green since 0.0.39.
 Also when time allows: re-measure the 500,000-message performance (index schema 4, about an hour, run when nothing else is running), and the language of the interface (a later decision).
 
 If a step cannot be made green it is not pushed; the reason is written in STATUS.md under "Problems".

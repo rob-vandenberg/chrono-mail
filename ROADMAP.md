@@ -11,7 +11,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 0.1 | Development environment on KDEV: Python version, virtual environment, PySide6, Pyrefly (strict), pytest, VS Code with the Pyrefly extension. Linux equivalent of the `release` tooling. Also created `pyproject.toml` (version 0.0.1). | done |
 | 0.2 | Project skeleton: `src/chrono_mail/` package layout, Pyrefly strict config, test runner, automated layer check. | done |
 | 0.3 | Live test setup against a real mail server (the user's DirectAdmin Dovecot/Exim): SMTP and POP3 over plain, STARTTLS/STLS and implicit TLS, opt-in `live` tests. IMAP live tests follow in milestone 2. | done |
-| 0.4 | Optional: GitHub Actions running tests, Pyrefly and the layer check on every push. | done (0.0.36; see the first run on GitHub) |
+| 0.4 | Optional: GitHub Actions running tests, Pyrefly and the layer check on every push. | done (0.0.39, green) |
 
 ## Milestone 1: POP3 + SMTP, a usable mail client
 
