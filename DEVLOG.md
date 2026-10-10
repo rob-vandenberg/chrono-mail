@@ -384,3 +384,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - The interface language and a choice of appearance are not in the settings.
 
+## 2026-10-10 Step 7 of the autonomous work: tray and notifications (version 0.0.21)
+
+**What landed**
+- `ui/tray.py` (icon, menu, notifications), unread count in the window title and tooltip, notification of new mail (count only), close-to-tray option, three settings in the settings window (D-042).
+- Tests: tray and notification tests (10) with a pretended tray; the settings tests changed.
+
+**Still open**
+- Not tried on a real desktop with a tray (only with a pretended one in the offscreen test platform). Under XRDP the tray may not exist.
+

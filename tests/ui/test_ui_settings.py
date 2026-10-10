@@ -9,9 +9,10 @@ from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 0.0.20"
+__version__ = "test_ui_settings.py 0.0.21"
 
 # --- Version history ----------------------------------------------------
+# v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Initial settings window tests
 
 
@@ -144,7 +145,7 @@ def test_adding_an_account_from_the_settings_runs_the_normal_dialog(world: World
         return QDialog.DialogCode.Rejected
 
     monkeypatch.setattr(AccountDialog, "exec", fake_add_exec)
-    dialog = SettingsDialog(world.backend, GeneralSettings(), world.window)
+    dialog = SettingsDialog(world.backend, GeneralSettings(), True, world.window)
     qtbot.addWidget(dialog)
     dialog.add_account_requested.connect(lambda: world.window.add_account(after=dialog.reload))
     dialog.add_button.click()

@@ -14,9 +14,10 @@ from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.mainwindow import MainWindow
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 0.0.14"
+__version__ = "app.py 0.0.21"
 
 # --- Version history ----------------------------------------------------
+# v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.14: application icon, launcher name
 # v0.0.13: Initial application start
 
@@ -32,10 +33,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     app.setApplicationName(APPLICATION_NAME)
     app.setOrganizationName("chrono-mail")
     app.setDesktopFileName(DESKTOP_FILE_NAME)
+    app.setQuitOnLastWindowClosed(False)  # the window may be hidden in the tray; closing it for good quits explicitly
     app.setWindowIcon(application_icon())
     engine = Engine(default_directories(), KeyringPasswordStore(), KeyringKeyStore())
     backend = Backend(engine)
     window = MainWindow(backend, QSettings("chrono-mail", "chrono-mail"))
+    window.closed_for_good.connect(app.quit)
     window.show()
     QTimer.singleShot(0, window.start)
     return app.exec()

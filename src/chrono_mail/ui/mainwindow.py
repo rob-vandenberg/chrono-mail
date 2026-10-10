@@ -2,7 +2,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import override
 
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -47,11 +47,13 @@ from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
+from chrono_mail.ui.tray import TrayController
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.20"
+__version__ = "mainwindow.py 0.0.21"
 
 # --- Version history ----------------------------------------------------
+# v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Settings window, account editing, signatures
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.18: Conversations: counts, grouped list, conversation bar
@@ -78,6 +80,8 @@ class MainWindow(QMainWindow):
 
     It contains no mail logic. Everything it does is a command of the engine, run on a worker thread.
     """
+
+    closed_for_good = Signal()  # the window was closed and not merely hidden in the tray: the program should end
 
     def __init__(self, backend: Backend, settings: QSettings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -108,6 +112,13 @@ class MainWindow(QMainWindow):
         self._build_status()
         self._wire()
         self._restore_state()
+        self._quitting: bool = False
+        self.tray = TrayController(self)
+        self.tray.toggle_requested.connect(self.toggle_visibility)
+        self.tray.check_requested.connect(self.check_mail)
+        self.tray.settings_requested.connect(self._settings_from_tray)
+        self.tray.quit_requested.connect(self.quit_program)
+        self.tray.set_visible(bool_setting(settings, "tray", True))
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.check_mail)
         if bool_setting(settings, "auto_check", True):
@@ -229,7 +240,7 @@ class MainWindow(QMainWindow):
         self.act_recovery = self._action("Back up the encryption key…", self.show_recovery)
         self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
         self.act_settings = self._action("Settings…", self.open_settings, "Ctrl+,", "configure")
-        self.act_quit = self._action("Quit", self.close, "Ctrl+Q", "application-exit")
+        self.act_quit = self._action("Quit", self.quit_program, "Ctrl+Q", "application-exit")
         self.act_search = self._action("Search", self._focus_search, "Ctrl+F")
         self.act_advanced = self._action("Advanced search…", self.advanced_search, "Ctrl+Shift+F")
         self.act_auto = QAction("Check for mail automatically", self)
@@ -365,6 +376,10 @@ class MainWindow(QMainWindow):
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self._quitting and self.tray.visible and bool_setting(self.settings, "close_to_tray", False):
+            self.hide()  # the program keeps running in the notification area
+            event.ignore()
+            return
         for composer in list(self._composers):
             if not composer.close():
                 event.ignore()
@@ -377,7 +392,9 @@ class MainWindow(QMainWindow):
         self.settings.setValue("last_account", self._account_id or "")
         self.settings.setValue("last_folder", self._folder or "")
         self.backend.wait_for_done(3000)
+        self.tray.set_visible(False)
         event.accept()
+        self.closed_for_good.emit()
 
     def _clear_reader(self) -> None:
         self.reader.clear()
@@ -417,6 +434,47 @@ class MainWindow(QMainWindow):
 
         self.backend.call("message.thread", {"account": account, "folder": folder, "message": message_id}, arrived, lambda error: self.conversation_bar.clear(), owner=self)
 
+    # --- tray, notifications, closing ---------------------------------------------------------------------
+
+    def quit_program(self) -> None:
+        """Really quit (closing the window may only hide it, when the tray is used)."""
+        self._quitting = True
+        if not self.close():
+            self._quitting = False
+
+    def toggle_visibility(self) -> None:
+        if self.isVisible() and not self.isMinimized():
+            self.hide()
+        else:
+            self.showNormal()
+            self.raise_()
+            self.activateWindow()
+
+    def _settings_from_tray(self) -> None:
+        if not self.isVisible():
+            self.toggle_visibility()
+        self.open_settings()
+
+    def _total_unread(self) -> int:
+        return sum(int(getattr(info, "unread")) for infos in self._folders.values() for info in infos if str(getattr(info, "role")) == "inbox")
+
+    def _update_unread_summary(self) -> None:
+        unread = self._total_unread()
+        self.setWindowTitle(f"Chrono Mail ({unread} unread)" if unread else "Chrono Mail")
+        self.tray.set_unread(unread)
+
+    def _notify_new_mail(self, new_by_account: dict[str, int]) -> None:
+        """A desktop notification for mail that arrived while the window was not in use. It tells how many, never what."""
+        total = sum(new_by_account.values())
+        if not total or not bool_setting(self.settings, "notifications", True) or self.isActiveWindow():
+            return
+        names = {str(getattr(account, "account_id")): str(getattr(account, "email_address")) for account in self._accounts}
+        if len(new_by_account) > 1:
+            lines = [f"{count} new in {names.get(account, account)}" for account, count in sorted(new_by_account.items()) if count]
+            self.tray.notify("New mail", "\n".join(lines))
+        else:
+            self.tray.notify("New mail", f"{total} new message{'s' if total != 1 else ''}")
+
     def _auto_minutes(self) -> int:
         try:
             minutes = int(str(self.settings.value("auto_check_minutes", AUTO_CHECK_MINUTES)))
@@ -433,13 +491,20 @@ class MainWindow(QMainWindow):
 
     def open_settings(self) -> None:
         """File > Settings: the way the program behaves, and the accounts."""
-        dialog = SettingsDialog(self.backend, GeneralSettings(self.act_auto.isChecked(), self._auto_minutes(), self.act_conversations.isChecked()), self)
+        dialog = SettingsDialog(self.backend, GeneralSettings(
+            self.act_auto.isChecked(), self._auto_minutes(), self.act_conversations.isChecked(),
+            bool_setting(self.settings, "notifications", True), bool_setting(self.settings, "tray", True), bool_setting(self.settings, "close_to_tray", False),
+        ), self.tray.available, self)
         dialog.add_account_requested.connect(lambda: self.add_account(after=dialog.reload))
         dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False))
         if dialog.exec() != SettingsDialog.DialogCode.Accepted:
             return
         wanted = dialog.general()
         self.settings.setValue("auto_check_minutes", wanted.auto_check_minutes)
+        self.settings.setValue("notifications", wanted.notifications)
+        self.settings.setValue("tray", wanted.tray)
+        self.settings.setValue("close_to_tray", wanted.close_to_tray)
+        self.tray.set_visible(wanted.tray)
         if wanted.auto_check and self.act_auto.isChecked():
             self._timer.start(wanted.auto_check_minutes * 60 * 1000)  # a new interval
         self.act_auto.setChecked(wanted.auto_check)
@@ -525,6 +590,7 @@ class MainWindow(QMainWindow):
                 if not remaining:
                     self._folders = collected
                     self._populate_tree(select_saved)
+                    self._update_unread_summary()
                     if then is not None:
                         then()
 
@@ -992,6 +1058,7 @@ class MainWindow(QMainWindow):
         self.act_refresh.setEnabled(False)
         remaining = {str(getattr(account, "account_id")) for account in self._accounts}
         totals = {"new": 0}
+        new_by_account: dict[str, int] = {}
         problems: list[str] = []
 
         def finish() -> None:
@@ -1001,6 +1068,7 @@ class MainWindow(QMainWindow):
                 self.show_status("Mail check: " + "; ".join(problems), error=True)
             else:
                 self.show_status(f"Mail checked: {totals['new']} new message(s)" if totals["new"] else "Mail checked: nothing new")
+            self._notify_new_mail(new_by_account)
             if totals["new"]:
                 self._reselect = self._shown[2] if self._shown is not None else None  # keep the message that is being read
                 self.list_model.reload()
@@ -1009,6 +1077,7 @@ class MainWindow(QMainWindow):
         def make_done(account_id: str) -> Callable[[object], None]:
             def done(result: object) -> None:
                 totals["new"] += int(getattr(result, "downloaded"))
+                new_by_account[account_id] = int(getattr(result, "downloaded"))
                 for text in getattr(result, "failed"):
                     problems.append(str(text))
                 if getattr(result, "aborted"):
