@@ -10,9 +10,10 @@ from tests.fakeimap import FakeImapServer
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_protocols_imap.py 0.0.28"
+__version__ = "test_protocols_imap.py 0.0.30"
 
 # --- Version history ----------------------------------------------------
+# v0.0.30: IMAP sync, store to server
 # v0.0.28: Initial IMAP client tests
 
 MESSAGE_A = b"From: a@example.com\r\nSubject: one\r\n\r\nfirst body\r\n"
@@ -194,8 +195,9 @@ def test_move_copy_and_expunge_with_and_without_the_extensions(move: bool, uidpl
         with client(server) as imap:
             imap.select("INBOX")
             copied = imap.uid_copy(str(first), "Sent")
-            assert (copied.uid is not None) is uidplus and server.uids("INBOX") == [1, 2] and len(server.uids("Sent")) == 1
-            imap.uid_move(str(first), "Trash")
+            assert copied.uid == (server.uids("Sent")[0] if uidplus else None) and server.uids("INBOX") == [1, 2] and len(server.uids("Sent")) == 1
+            moved = imap.uid_move(str(first), "Trash")
+            assert moved.uid == (server.uids("Trash")[0] if uidplus else None)
             assert server.uids("INBOX") == [2] and server.raw_of("Trash", server.uids("Trash")[0]) == MESSAGE_A
         # without UIDPLUS an expunge takes every message marked deleted: here only the moved one was marked
         assert server.uids("INBOX") == [2]

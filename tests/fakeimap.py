@@ -9,9 +9,10 @@ from chrono_mail.protocols.imap import decode_folder_name, encode_folder_name
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeimap.py 0.0.28"
+__version__ = "fakeimap.py 0.0.30"
 
 # --- Version history ----------------------------------------------------
+# v0.0.30: IMAP sync, store to server
 # v0.0.28: Initial fake IMAP server
 
 # A small stateful IMAP server in memory: folders with UIDs, flags and UIDVALIDITY, the commands our client uses, and ways to
@@ -105,6 +106,7 @@ class FakeImapServer(ScriptedServer):
         self.lock = threading.RLock()
         self._user, self._password, self._starttls, self._fault = user, password, starttls_context, fault
         self._uidplus, self._move, self._sasl_ir, self._plain = uidplus, move, sasl_ir, plain
+        self.refuse_appends: bool = False
 
     # --- what a test can do to the server -------------------------------------------------------------
 
@@ -292,6 +294,12 @@ class FakeImapServer(ScriptedServer):
         match = re.match(r'^(".*?(?<!\\)"|\S+)(?: \((.*?)\))?(?: "[^"]*")? \{(\d+)\+?\}$', argument)
         if match is None:
             conversation.send_line(f"{tag} BAD cannot parse APPEND")
+            return selected
+        if self.refuse_appends:
+            conversation.send_line("+ ready for the message")
+            conversation.read_exactly(int(match.group(3)))
+            conversation.read_line()
+            conversation.send_line(f"{tag} NO [OVERQUOTA] mailbox full")
             return selected
         name = self._folder_argument(match.group(1))
         flags = set(match.group(2).split()) if match.group(2) else set()

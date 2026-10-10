@@ -15,9 +15,10 @@ from tests.fakeimap import FakeImapServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_imap.py 0.0.29"
+__version__ = "test_sync_imap.py 0.0.30"
 
 # --- Version history ----------------------------------------------------
+# v0.0.30: IMAP sync, store to server
 # v0.0.29: Initial IMAP sync tests
 
 INBOX = ("Inbox",)
@@ -321,3 +322,170 @@ def test_the_state_cannot_be_read_or_written_when_the_file_is_a_directory(tmp_pa
     (tmp_path / "state.log").mkdir()
     with pytest.raises(StorageError):
         ImapState(tmp_path / "state.log", durable=False)
+
+
+# --- sending local changes to the server (0.0.30) ------------------------------------------------------------------------------------------------
+
+
+def only(world: World, folder: tuple[str, ...]) -> str:
+    (store_id,) = [m.ref.store_id for m in world.store.list_messages(folder)]
+    return store_id
+
+
+def test_a_flag_changed_here_is_sent_and_only_the_difference(world: World) -> None:
+    uid = world.server.add("INBOX", mail(1), {"\\Seen", "$Label1"})
+    world.sync()
+    (message,) = world.store.list_messages(INBOX)
+    world.store.set_flags(message.ref, frozenset({MessageFlag.SEEN, MessageFlag.FLAGGED}))
+    report = world.sync()
+    assert of(report, "Inbox").flags_sent == 1
+    assert world.server.flags_of("INBOX", uid) == {"\\Seen", "\\Flagged", "$Label1"}  # the server's own keyword stays
+    assert of(world.sync(), "Inbox").flags_sent == 0 and world.state.entries[INBOX][uid].flags == {"\\seen", "\\flagged"}
+    world.store.set_flags(world.store.list_messages(INBOX)[0].ref, frozenset())
+    world.sync()
+    assert world.server.flags_of("INBOX", uid) == {"$Label1"}
+
+
+def test_a_flag_changed_on_both_sides_merges_and_the_local_change_is_not_lost(world: World) -> None:
+    uid = world.server.add("INBOX", mail(1))
+    world.sync()
+    (message,) = world.store.list_messages(INBOX)
+    world.store.set_flags(message.ref, frozenset({MessageFlag.SEEN}))  # here: read
+    world.server.folders["INBOX"].messages[0].flags = {"\\Flagged"}  # there: flagged
+    world.sync()
+    assert world.server.flags_of("INBOX", uid) == {"\\Flagged", "\\Seen"}
+    world.sync()
+    assert world.store.list_messages(INBOX)[0].flags == {MessageFlag.SEEN, MessageFlag.FLAGGED}  # and now the flag comes here too
+
+
+def test_a_message_moved_here_is_moved_on_the_server(world: World) -> None:
+    uid = world.server.add("INBOX", mail(1))
+    world.server.add("INBOX", mail(2))
+    world.sync()
+    (first,) = [m for m in world.store.list_messages(INBOX) if world.state.find(m.ref.store_id) == (INBOX, uid)]
+    world.store.move(first.ref, ("Junk",))
+    report = world.sync()
+    assert report.moved == 1 and report.failed == ()
+    assert world.server.uids("INBOX") == [2] and world.server.raw_of("Junk", world.server.uids("Junk")[0]) == mail(1)
+    assert len(world.messages(("Junk",))) == 1 and len(world.messages(INBOX)) == 1  # nothing was downloaded twice
+    assert world.state.find(first.ref.store_id) == (("Junk",), world.server.uids("Junk")[0])
+    again = world.sync()
+    assert again.moved == 0 and again.downloaded == 0
+
+
+def test_a_move_without_the_new_uid_is_matched_by_message_id_afterwards(world: World) -> None:
+    world.server.__exit__(None, None, None)
+    world.server = FakeImapServer(plain=False, uidplus=False, move=False)
+    world.server.__enter__()
+    world.server.add("INBOX", mail(1))
+    world.sync()
+    (message,) = world.store.list_messages(INBOX)
+    world.store.move(message.ref, ("Trash",))
+    world.sync()
+    world.sync()
+    assert world.server.uids("INBOX") == [] and len(world.server.uids("Trash")) == 1
+    assert len(world.messages(("Trash",))) == 1 and world.state.find(message.ref.store_id) is not None
+
+
+def test_a_message_deleted_for_good_here_is_deleted_on_the_server(world: World) -> None:
+    uids = [world.server.add("INBOX", mail(number)) for number in range(1, 4)]
+    world.sync()
+    victim = next(m for m in world.store.list_messages(INBOX) if world.state.find(m.ref.store_id) == (INBOX, uids[1]))
+    world.index.remove(victim.ref.store_id)
+    world.store.delete(victim.ref)
+    report = world.sync()
+    assert of(report, "Inbox").expunged == 1 and world.server.uids("INBOX") == [uids[0], uids[2]]
+    assert uids[1] not in world.state.entries[INBOX] and len(world.messages(INBOX)) == 2
+
+
+def test_nothing_is_deleted_on_the_server_when_most_of_a_folder_is_missing_here(world: World) -> None:
+    for number in range(1, 13):
+        world.server.add("INBOX", mail(number))
+    world.sync()
+    for message in world.store.list_messages(INBOX)[:9]:
+        world.store.delete(message.ref)
+    report = world.sync()
+    assert of(report, "Inbox").expunged == 0 and "missing from the store" in (of(report, "Inbox").note or "")
+    assert len(world.server.uids("INBOX")) == 12
+
+
+def test_nothing_is_deleted_on_the_server_when_the_store_is_damaged(world: World) -> None:
+    uid = world.server.add("INBOX", mail(1))
+    world.server.add("INBOX", mail(2))
+    world.sync()
+    world.store.delete(world.store.list_messages(INBOX)[0].ref)
+    world.store.damaged_folders.append("f-broken")
+    report = world.sync()
+    assert of(report, "Inbox").expunged == 0 and "damaged" in (of(report, "Inbox").note or "") and uid in world.server.uids("INBOX")
+
+
+def test_local_messages_are_uploaded_once_and_mapped(world: World) -> None:
+    world.store.create_folder(("Sent",), FolderRole.SENT)
+    reference = world.store.deliver(("Sent",), mail(7), flags=frozenset({MessageFlag.SEEN}), verify=True)
+    world.sync()
+    assert world.server.raw_of("Sent", world.server.uids("Sent")[0]) == mail(7) and world.server.flags_of("Sent", world.server.uids("Sent")[0]) == {"\\Seen"}
+    assert reference.store_id in world.state.uploaded and world.state.find(reference.store_id) is not None
+    report = world.sync()
+    assert of(report, "Sent").uploaded == 0 and len(world.server.uids("Sent")) == 1
+
+
+def test_a_local_copy_of_a_message_the_server_has_is_not_uploaded(world: World) -> None:
+    world.server.add("Sent", mail(7))
+    world.store.create_folder(("Sent",), FolderRole.SENT)
+    world.store.deliver(("Sent",), mail(7), verify=True)  # for example the copy kept when it was sent
+    report = world.sync()
+    assert of(report, "Sent").adopted == 1 and of(report, "Sent").uploaded == 0 and of(report, "Sent").downloaded == 0
+    assert len(world.server.uids("Sent")) == 1 and len(world.messages(("Sent",))) == 1
+
+
+def test_an_upload_the_server_refuses_is_reported_and_tried_again(world: World) -> None:
+    world.store.create_folder(("Sent",), FolderRole.SENT)
+    reference = world.store.deliver(("Sent",), mail(7), verify=True)
+    world.server.refuse_appends = True
+    report = world.sync()
+    world.server.refuse_appends = False
+    assert of(report, "Sent").uploaded == 0 and any("mailbox full" in reason for reason in of(report, "Sent").failed) and reference.store_id not in world.state.uploaded
+    assert of(world.sync(), "Sent").uploaded == 1
+
+
+def test_a_connection_lost_during_an_upload_is_an_error_of_the_run_not_a_crash(world: World) -> None:
+    world.store.create_folder(("Sent",), FolderRole.SENT)
+    world.store.deliver(("Sent",), mail(7), verify=True)
+    dropped = FakeImapServer(plain=False, fault=lambda verb, count: verb == "APPEND")
+    with dropped:
+        settings = ServerSettings("127.0.0.1", dropped.port, ConnectionSecurity.NONE, "user")
+        with ImapClient(settings, "secret", LIMITS) as client:
+            report = sync_imap(client, world.store, world.index, world.state)
+    assert report.aborted is not None and len(world.messages(("Sent",))) == 1
+
+
+def test_a_crash_after_the_server_took_a_message_does_not_duplicate_it(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    world.store.create_folder(("Sent",), FolderRole.SENT)
+    world.store.deliver(("Sent",), mail(7), verify=True)
+
+    class Crash(BaseException):
+        pass
+
+    def crash(self: ImapState, store_id: str) -> None:
+        raise Crash
+
+    monkeypatch.setattr(ImapState, "mark_uploaded", crash)
+    with pytest.raises(Crash):
+        world.sync()
+    monkeypatch.undo()
+    assert len(world.server.uids("Sent")) == 1  # it did reach the server, but the state does not know
+    report = world.sync()
+    assert len(world.server.uids("Sent")) == 1 and of(report, "Sent").adopted == 1 and len(world.messages(("Sent",))) == 1
+
+
+def test_the_uploaded_marks_survive_compaction(tmp_path: Path) -> None:
+    state = ImapState(tmp_path / "state.log", durable=False)
+    state.set_validity(("Inbox",), 3)
+    state.mark_uploaded("a" * 32)
+    from chrono_mail.sync import imap_state
+
+    imap_state.COMPACT_MINIMUM_LINES = 1
+    for number in range(40):
+        state.set_validity(("Inbox",), 3)
+    assert state.compact_if_needed()
+    assert ImapState(tmp_path / "state.log", durable=False).uploaded == {"a" * 32}

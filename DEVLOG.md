@@ -456,3 +456,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Nothing is sent to the server yet (task 2.3); the engine and the window do not know IMAP accounts yet (task 2.4).
 
+## 2026-10-10 Task 2.3: IMAP sync, store to server (version 0.0.30)
+
+**What landed**
+- Flags, moves, deletions and uploads from the store to the server, found by comparison (D-050); matching of local and server messages by Message-ID; `uid_move` tells the new UID; uploaded marks in the state.
+- Tests: 13 new offline sync tests (35 in all) including the guards that refuse to delete on the server, crash repair and a refused upload; 1 new live test (flags, move, upload, deletion on the real server).
+
+**Still open**
+- Creating, renaming and deleting folders on the server from here (task 2.4); folders created here that the server does not have are not created there yet.
+

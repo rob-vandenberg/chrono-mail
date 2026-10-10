@@ -10,9 +10,10 @@ from chrono_mail.protocols.imap import ImapClient, ImapLimits
 from tests.live.account import LiveAccount
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_imap.py 0.0.29"
+__version__ = "test_live_imap.py 0.0.30"
 
 # --- Version history ----------------------------------------------------
+# v0.0.30: IMAP sync, store to server
 # v0.0.29: IMAP sync, server to store
 # v0.0.28: Initial live IMAP tests
 
@@ -165,4 +166,59 @@ def test_sync_against_the_real_server(live_account: LiveAccount, imap: ImapClien
             imap.select("INBOX", read_only=True)
         with suppress(Exception):
             imap.delete_folder(folder_name)
+        index.close()
+
+
+def test_local_changes_reach_the_real_server(live_account: LiveAccount, imap: ImapClient, folder_name: str, tmp_path: Path) -> None:
+    from chrono_mail.core import FolderRole, MessageFlag
+    from chrono_mail.crypto import generate_data_key
+    from chrono_mail.index import Index
+    from chrono_mail.store import Store
+    from chrono_mail.sync import ImapState, sync_imap
+
+    store = Store.create(tmp_path / "store", "live", generate_data_key(), durable=False)
+    store.create_folder(("Inbox",), FolderRole.INBOX)
+    index = Index(tmp_path / "index.sqlite")
+    state = ImapState(tmp_path / "state.log", durable=False)
+    local = (folder_name,)
+    other = (folder_name + "-b",)
+    imap.create_folder(folder_name)
+    imap.create_folder(other[0])
+    imap.subscribe(folder_name)
+    imap.subscribe(other[0])
+
+    def sync() -> object:
+        with connect(live_account, secure=True) as client:
+            return sync_imap(client, store, index, state)
+
+    try:
+        imap.append(folder_name, MESSAGE)
+        sync()
+        (message,) = store.list_messages(local)
+        store.set_flags(message.ref, frozenset({MessageFlag.SEEN, MessageFlag.FLAGGED}))
+        sync()
+        imap.select(folder_name)
+        flags = imap.uid_fetch("1:*")[0].flags
+        assert "\\Seen" in flags and "\\Flagged" in flags
+        store.move(message.ref, other)
+        sync()
+        imap.select(folder_name)
+        assert imap.uid_search("ALL") == ()
+        imap.select(other[0])
+        assert len(imap.uid_search("ALL")) == 1 and len(store.list_messages(other)) == 1
+        uploaded = store.deliver(other, MESSAGE.replace(b"<live-imap-test@", b"<live-imap-up@"), flags=frozenset({MessageFlag.SEEN}), verify=True)
+        sync()
+        imap.select(other[0])
+        assert len(imap.uid_search("ALL")) == 2
+        index.remove(uploaded.store_id)
+        store.delete(uploaded)
+        sync()
+        imap.select(other[0])
+        assert len(imap.uid_search("ALL")) == 1
+    finally:
+        with suppress(Exception):
+            imap.select("INBOX", read_only=True)
+        for name in (folder_name, other[0]):
+            with suppress(Exception):
+                imap.delete_folder(name)
         index.close()

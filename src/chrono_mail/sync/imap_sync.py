@@ -5,13 +5,14 @@ from chrono_mail.core import ChronoMailError, Folder, FolderRole, MessageFlag, M
 from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.mime import parse_message
 from chrono_mail.protocols.imap import FetchedItem, FolderEntry, ImapClient, ImapRefused
-from chrono_mail.store import Store
+from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.0.29"
+__version__ = "imap_sync.py 0.0.30"
 
 # --- Version history ----------------------------------------------------
+# v0.0.30: IMAP sync, store to server
 # v0.0.29: Initial IMAP sync, server to store (D-049)
 
 Progress = Callable[[str, int, int], None]
@@ -58,6 +59,9 @@ class FolderReport:
     flags_updated: int = 0
     removed: int = 0
     recovered: int = 0
+    flags_sent: int = 0
+    expunged: int = 0
+    uploaded: int = 0
     failed: tuple[str, ...] = ()
     note: str | None = None
 
@@ -67,6 +71,7 @@ class ImapReport:
     folders: tuple[FolderReport, ...] = ()
     notes: tuple[str, ...] = ()
     aborted: str | None = None  # the connection failed part-way; what was done up to then is kept
+    moved: int = 0
 
     @property
     def downloaded(self) -> int:
@@ -153,22 +158,44 @@ class _Counts:
     flags_updated: int = 0
     removed: int = 0
     recovered: int = 0
+    flags_sent: int = 0
+    expunged: int = 0
+    uploaded: int = 0
     failed: list[str] = field(default_factory=list)
     note: str | None = None
 
     def report(self, folder: str) -> FolderReport:
-        return FolderReport(folder, self.downloaded, self.adopted, self.flags_updated, self.removed, self.recovered, tuple(self.failed), self.note)
+        return FolderReport(
+            folder, self.downloaded, self.adopted, self.flags_updated, self.removed, self.recovered, self.flags_sent, self.expunged, self.uploaded,
+            tuple(self.failed), self.note,
+        )
+
+
+@dataclass
+class _Folder:
+    """What is known about one folder during a run."""
+
+    plan: FolderPlan
+    stored: dict[str, StoredMessage]  # the messages that are in the local folder now
+    on_server: dict[int, FetchedItem]
+    locations: dict[str, tuple[tuple[str, ...], str]]  # where every stored message is, in all folders
+    pushed: set[int] = field(default_factory=set)  # UIDs whose flags we just sent: the summary we hold is out of date for them
 
 
 def sync_imap(
     client: ImapClient, store: Store, index: Index | None, state: ImapState, options: ImapSyncOptions = ImapSyncOptions(), progress: Progress | None = None
 ) -> ImapReport:
-    """Bring the store in line with the server, folder by folder: new messages are downloaded and verified before they are
-    entered in the state, flags that changed on the server are applied unless the local flags changed too, and messages
-    that are gone from the server are removed locally. A failure with one message is reported and the rest goes on; a
-    failure of the connection ends the run and keeps everything done so far."""
+    """Make server and store agree, in both directions, folder by folder.
+
+    Local changes are found by comparing the store with what the state remembers (nothing is queued, so nothing can be lost):
+    moved messages are moved on the server, messages deleted for good are expunged there, changed flags are sent, and local
+    messages the server does not have are uploaded. Server changes come in the same run: new messages (matched with local ones
+    by Message-ID before anything is downloaded twice), changed flags, and removals. A message is entered in the state only
+    after it is stored and verified or accepted by the server. A failure with one message is reported and the rest goes on;
+    a failure of the connection ends the run and keeps everything done so far."""
     reports: list[FolderReport] = []
     notes: list[str] = []
+    moved = 0
     try:
         listed = client.list_folders()
         subscribed = frozenset(entry.name for entry in client.list_folders(subscribed_only=True))
@@ -182,9 +209,9 @@ def sync_imap(
                     existing.add(plan.local_path)
                 except ChronoMailError as error:
                     notes.append(f"The local folder for '{_printable(plan.server_name)}' could not be made: {error}")
+        plans = [plan for plan in plans if plan.local_path in existing]
+        moved = _move_pass(client, store, index, state, plans, notes)
         for plan in plans:
-            if plan.local_path not in existing:
-                continue
             counts = _Counts()
             try:
                 _sync_folder(client, store, index, state, options, plan, counts, progress)
@@ -193,43 +220,78 @@ def sync_imap(
             reports.append(counts.report("/".join(plan.local_path)))
         state.compact_if_needed()
     except ProtocolError as error:
-        return ImapReport(tuple(reports), tuple(notes), str(error))
-    return ImapReport(tuple(reports), tuple(notes))
+        return ImapReport(tuple(reports), tuple(notes), str(error), moved)
+    return ImapReport(tuple(reports), tuple(notes), None, moved)
+
+
+def _move_pass(client: ImapClient, store: Store, index: Index | None, state: ImapState, plans: list[FolderPlan], notes: list[str]) -> int:
+    """Messages that were moved to another folder here are moved on the server."""
+    server_of = {plan.local_path: plan.server_name for plan in plans}
+    locations = store.locate_all()
+    moved = 0
+    for plan in plans:
+        pending: list[tuple[int, ImapEntry, tuple[str, ...]]] = []
+        for uid, entry in state.folder_entries(plan.local_path).items():
+            where = locations.get(entry.store_id)
+            if where is not None and where[0] != plan.local_path and where[0] in server_of:
+                pending.append((uid, entry, where[0]))
+        if not pending:
+            continue
+        try:
+            client.select(plan.server_name)
+            still_there = {item.uid for item in client.uid_fetch(",".join(str(uid) for uid, _, _ in pending), "(UID)")}
+        except ImapRefused as error:
+            notes.append(f"Messages moved here could not be moved on the server: {error}")
+            continue
+        for uid, entry, target in pending:
+            if uid in still_there:
+                try:
+                    result = client.uid_move(str(uid), server_of[target])
+                except ImapRefused as error:
+                    notes.append(f"A message could not be moved on the server to '{_printable(server_of[target])}': {error}")
+                    continue
+                moved += 1
+                state.unmap(plan.local_path, uid)
+                if result.uid is not None and result.uid_validity == state.validity.get(target):
+                    state.map(target, result.uid, entry.store_id, entry.flags)  # otherwise the next run matches it by Message-ID
+            else:
+                state.unmap(plan.local_path, uid)  # it was gone from there already
+    return moved
 
 
 def _sync_folder(
     client: ImapClient, store: Store, index: Index | None, state: ImapState, options: ImapSyncOptions, plan: FolderPlan, counts: _Counts, progress: Progress | None
 ) -> None:
     local = plan.local_path
-    info = client.select(plan.server_name, read_only=True)
+    info = client.select(plan.server_name)
     previous = state.validity.get(local)
-    orphans: dict[str, str | None] = {}
+    orphans: set[str] = set()
     if previous is not None and previous != info.uid_validity:
-        for entry in state.folder_entries(local).values():
-            row = index.get(entry.store_id) if index is not None else None
-            orphans[entry.store_id] = row.message_id if row is not None else None
+        orphans = {entry.store_id for entry in state.folder_entries(local).values()}
         counts.note = "the server renumbered the folder; the messages are matched again by their Message-ID"
     if previous != info.uid_validity:
         state.set_validity(local, info.uid_validity)
     on_server: dict[int, FetchedItem] = {}
     if info.exists > 0:
         on_server = {item.uid: item for item in client.uid_fetch("1:*", "(UID FLAGS RFC822.SIZE)")}
-    locations = store.locate_all()
-    mapped = state.folder_entries(local)
-    _remove_gone(store, index, state, local, mapped, on_server, locations, counts)
-    mapped = state.folder_entries(local)
-    _update_flags(store, index, state, local, mapped, on_server, locations, counts)
-    new = sorted(uid for uid in on_server if uid not in mapped)
-    _download(client, store, index, state, options, local, plan.server_name, new, on_server, orphans, counts, progress)
-    if orphans:
-        _recover(store, index, local, orphans, counts)
+    view = _Folder(plan, {message.ref.store_id: message for message in store.list_messages(local)}, on_server, store.locate_all())
+    _remove_gone(store, index, state, view, counts)
+    _push_expunges(client, store, state, view, counts)
+    _push_flags(client, state, view, counts)
+    _update_flags(store, index, state, view, counts)
+    pool = _unmapped(store, index, state, view)
+    new = sorted(uid for uid in on_server if uid not in state.folder_entries(local))
+    _download(client, store, index, state, options, view, new, pool, counts, progress)
+    leftovers = [store_id for store_id in pool if store_id in orphans]
+    if leftovers:
+        _recover(store, index, local, leftovers, counts)
+    _upload(client, store, state, options, view, counts)
 
 
-def _remove_gone(
-    store: Store, index: Index | None, state: ImapState, local: tuple[str, ...], mapped: dict[int, ImapEntry], on_server: dict[int, FetchedItem],
-    locations: dict[str, tuple[tuple[str, ...], str]], counts: _Counts,
-) -> None:
-    gone = [uid for uid in mapped if uid not in on_server]
+def _remove_gone(store: Store, index: Index | None, state: ImapState, view: _Folder, counts: _Counts) -> None:
+    local = view.plan.local_path
+    mapped = state.folder_entries(local)
+    gone = [uid for uid in mapped if uid not in view.on_server]
     if not gone:
         return
     if len(mapped) >= REMOVAL_RATIO_MINIMUM_COUNT and len(gone) / len(mapped) > REMOVAL_RATIO_LIMIT:
@@ -237,7 +299,7 @@ def _remove_gone(
         return
     for uid in gone:
         entry = mapped[uid]
-        where = locations.get(entry.store_id)
+        where = view.locations.get(entry.store_id)
         try:
             if where is not None:
                 if index is not None:
@@ -250,31 +312,71 @@ def _remove_gone(
         counts.removed += 1
 
 
-def _update_flags(
-    store: Store, index: Index | None, state: ImapState, local: tuple[str, ...], mapped: dict[int, ImapEntry], on_server: dict[int, FetchedItem],
-    locations: dict[str, tuple[tuple[str, ...], str]], counts: _Counts,
-) -> None:
-    current: dict[str, frozenset[MessageFlag]] = {}  # the flags of the stored messages, filled folder by folder when needed
-    loaded: set[tuple[str, ...]] = set()
-    for uid, entry in mapped.items():
-        item = on_server.get(uid)
-        where = locations.get(entry.store_id)
-        if item is None or where is None:
+def _push_expunges(client: ImapClient, store: Store, state: ImapState, view: _Folder, counts: _Counts) -> None:
+    """Messages that were deleted for good here are removed on the server. This is the one step that destroys mail on
+    the server, so it refuses to run when the store looks wrong or when most of a folder seems to have disappeared."""
+    local = view.plan.local_path
+    mapped = state.folder_entries(local)
+    missing = [uid for uid, entry in mapped.items() if entry.store_id not in view.locations and uid in view.on_server]
+    if not missing:
+        return
+    if store.damaged_folders or not store.list_folders():
+        counts.note = "the store looks damaged or empty; nothing was deleted on the server"
+        return
+    if len(mapped) >= REMOVAL_RATIO_MINIMUM_COUNT and len(missing) / len(mapped) > REMOVAL_RATIO_LIMIT:
+        counts.note = "most messages are missing from the store; nothing was deleted on the server"
+        return
+    uids = ",".join(str(uid) for uid in missing)
+    client.uid_store(uids, ["\\Deleted"], "add")
+    if "UIDPLUS" in client.capabilities:
+        client.uid_expunge(uids)
+    else:
+        counts.note = "the server cannot remove single messages: they are marked as deleted there"
+    for uid in missing:
+        state.unmap(local, uid)
+        view.on_server.pop(uid, None)
+        counts.expunged += 1
+
+
+def _push_flags(client: ImapClient, state: ImapState, view: _Folder, counts: _Counts) -> None:
+    local = view.plan.local_path
+    for uid, entry in state.folder_entries(local).items():
+        message = view.stored.get(entry.store_id)
+        if message is None or uid not in view.on_server:
+            continue
+        known = message_flags(entry.flags)
+        if message.flags == known:
+            continue
+        added = [flag.imap_name for flag in message.flags - known]
+        removed = [flag.imap_name for flag in known - message.flags]
+        try:
+            if added:
+                client.uid_store(str(uid), added, "add")
+            if removed:
+                client.uid_store(str(uid), removed, "remove")
+        except ImapRefused as error:
+            counts.failed.append(f"UID {uid}: the flags could not be changed on the server: {error}")
+            continue
+        state.set_flags(local, uid, frozenset(flag.imap_name.lower() for flag in message.flags))
+        view.pushed.add(uid)
+        counts.flags_sent += 1
+
+
+def _update_flags(store: Store, index: Index | None, state: ImapState, view: _Folder, counts: _Counts) -> None:
+    local = view.plan.local_path
+    for uid, entry in state.folder_entries(local).items():
+        item = view.on_server.get(uid)
+        message = view.stored.get(entry.store_id)
+        if item is None or message is None or uid in view.pushed:
             continue
         server_now = kept_flags(item.flags)
         if server_now == entry.flags:
             continue
-        reference = MessageRef(store.account_id, where[0], entry.store_id)
-        if where[0] not in loaded:
-            loaded.add(where[0])
-            for message in store.list_messages(where[0]):
-                current[message.ref.store_id] = message.flags
-        local_flags = current.get(entry.store_id)
-        if local_flags is None or local_flags != message_flags(entry.flags):
-            continue  # changed here too: the local change is kept and will be sent (it wins until then)
+        if message.flags != message_flags(entry.flags):
+            continue  # changed here too: the local change is kept and was or will be sent (it wins until then)
         wanted = message_flags(server_now)
         try:
-            path = store.set_flags(reference, wanted, hint=where[1])
+            path = store.set_flags(message.ref, wanted, hint=message.relative_path)
             if index is not None:
                 index.update_flags(entry.store_id, wanted, path)
         except ChronoMailError as error:
@@ -282,6 +384,24 @@ def _update_flags(
             continue
         state.set_flags(local, uid, server_now)
         counts.flags_updated += 1
+
+
+def _unmapped(store: Store, index: Index | None, state: ImapState, view: _Folder) -> dict[str, str | None]:
+    """The local messages of the folder that the server does not know yet (by store id: their Message-ID, if any)."""
+    mapped_ids = {entry.store_id for entry in state.folder_entries(view.plan.local_path).values()}
+    pool: dict[str, str | None] = {}
+    for store_id, message in view.stored.items():
+        if store_id in mapped_ids:
+            continue
+        row = index.get(store_id) if index is not None else None
+        if row is not None:
+            pool[store_id] = row.message_id
+        else:
+            try:
+                pool[store_id] = parse_message(store.read(message.ref, hint=message.relative_path)).message_id
+            except ChronoMailError:
+                pool[store_id] = None
+    return pool
 
 
 def _batches(uids: list[int], on_server: dict[int, FetchedItem], options: ImapSyncOptions) -> list[list[int]]:
@@ -302,18 +422,19 @@ def _batches(uids: list[int], on_server: dict[int, FetchedItem], options: ImapSy
 
 
 def _download(
-    client: ImapClient, store: Store, index: Index | None, state: ImapState, options: ImapSyncOptions, local: tuple[str, ...], server_name: str,
-    new: list[int], on_server: dict[int, FetchedItem], orphans: dict[str, str | None], counts: _Counts, progress: Progress | None,
+    client: ImapClient, store: Store, index: Index | None, state: ImapState, options: ImapSyncOptions, view: _Folder, new: list[int],
+    pool: dict[str, str | None], counts: _Counts, progress: Progress | None,
 ) -> None:
+    local = view.plan.local_path
     eligible: list[int] = []
     for uid in new:
-        size = on_server[uid].size
+        size = view.on_server[uid].size
         if size is not None and size > options.maximum_message_bytes:
             counts.failed.append(f"UID {uid}: the message is larger than the limit")
         else:
             eligible.append(uid)
     done = 0
-    for batch in _batches(eligible, on_server, options):
+    for batch in _batches(eligible, view.on_server, options):
         fetched = {item.uid: item for item in client.uid_fetch(",".join(str(uid) for uid in batch), "(UID FLAGS BODY.PEEK[])")}
         for uid in batch:
             done += 1
@@ -323,19 +444,21 @@ def _download(
             if item is None or item.data is None:
                 counts.failed.append(f"UID {uid}: the server did not send the message")
                 continue
-            _store_one(store, index, state, local, uid, item, orphans, counts)
+            _store_one(store, index, state, view, uid, item, pool, counts)
 
 
-def _store_one(store: Store, index: Index | None, state: ImapState, local: tuple[str, ...], uid: int, item: FetchedItem, orphans: dict[str, str | None], counts: _Counts) -> None:
+def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folder, uid: int, item: FetchedItem, pool: dict[str, str | None], counts: _Counts) -> None:
+    local = view.plan.local_path
     raw = item.data
     assert raw is not None
     server_now = kept_flags(item.flags)
-    if orphans:
+    if pool:
         message_id = parse_message(raw).message_id
-        match = next((store_id for store_id, known in orphans.items() if message_id and known == message_id), None)
+        match = next((store_id for store_id, known in pool.items() if message_id and known == message_id), None)
         if match is not None:
-            del orphans[match]
-            state.map(local, uid, match, server_now)  # the local copy is the same message: it gets its place on the server again
+            del pool[match]
+            # the local copy is the same message: it gets its place on the server again; the server's flags apply from the next run
+            state.map(local, uid, match, frozenset(flag.imap_name.lower() for flag in view.stored[match].flags))
             counts.adopted += 1
             return
     try:
@@ -352,7 +475,7 @@ def _store_one(store: Store, index: Index | None, state: ImapState, local: tuple
             counts.failed.append(f"UID {uid}: it is stored but not yet in the index (the next repair of the index adds it)")
 
 
-def _recover(store: Store, index: Index | None, local: tuple[str, ...], orphans: dict[str, str | None], counts: _Counts) -> None:
+def _recover(store: Store, index: Index | None, local: tuple[str, ...], store_ids: list[str], counts: _Counts) -> None:
     """Local messages that the renumbered server folder no longer has: kept, in a folder of their own."""
     target = (RECOVERED, *local)
     try:
@@ -362,7 +485,7 @@ def _recover(store: Store, index: Index | None, local: tuple[str, ...], orphans:
         counts.failed.append(f"The folder for recovered messages could not be made: {error}")
         return
     locations = store.locate_all()
-    for store_id in orphans:
+    for store_id in store_ids:
         where = locations.get(store_id)
         if where is None:
             continue
@@ -373,3 +496,30 @@ def _recover(store: Store, index: Index | None, local: tuple[str, ...], orphans:
             counts.recovered += 1
         except ChronoMailError as error:
             counts.failed.append(f"A message could not be kept in {RECOVERED}: {error}")
+
+
+def _upload(client: ImapClient, store: Store, state: ImapState, options: ImapSyncOptions, view: _Folder, counts: _Counts) -> None:
+    """Local messages the server has not got (written or moved in here, matched by nothing on the server) are sent to it."""
+    local = view.plan.local_path
+    mapped_ids = {entry.store_id for entry in state.folder_entries(local).values()}
+    for store_id, message in view.stored.items():
+        if store_id in mapped_ids or store_id in state.uploaded:
+            continue
+        if message.size > options.maximum_message_bytes:
+            counts.failed.append("A local message is larger than the limit and was not sent to the server")
+            continue
+        try:
+            raw = store.read(message.ref, hint=message.relative_path)
+            result = client.append(view.plan.server_name, raw, [flag.imap_name for flag in message.flags])
+        except ImapRefused as error:
+            counts.failed.append(f"A local message could not be sent to the server: {error}")
+            continue
+        except ChronoMailError as error:
+            if isinstance(error, ProtocolError):
+                raise
+            counts.failed.append(f"A local message could not be read for sending: {error}")
+            continue
+        state.mark_uploaded(store_id)
+        counts.uploaded += 1
+        if result.uid is not None and result.uid_validity == state.validity.get(local):
+            state.map(local, result.uid, store_id, frozenset(flag.imap_name.lower() for flag in message.flags))

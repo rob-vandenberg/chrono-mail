@@ -10,9 +10,10 @@ from typing import Self
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 0.0.28"
+__version__ = "imap.py 0.0.30"
 
 # --- Version history ----------------------------------------------------
+# v0.0.30: uid_move tells the new UID
 # v0.0.28: Initial IMAP client
 
 # The standard library's imaplib has no limits on the size of lines and literals, which a hostile server can use to
@@ -572,15 +573,16 @@ class ImapClient:
         responses = self._command(f"UID COPY {uids} {quote(encode_folder_name(folder))}")
         return self._append_uid(responses)
 
-    def uid_move(self, uids: str, folder: str) -> None:
-        """Move with MOVE where the server has it, otherwise copy, mark as deleted and expunge those messages."""
+    def uid_move(self, uids: str, folder: str) -> AppendResult:
+        """Move with MOVE where the server has it, otherwise copy, mark as deleted and expunge those messages.
+        Returns the new UID when the server tells it (UIDPLUS) and one message was moved."""
         target = quote(encode_folder_name(folder))
         if "MOVE" in self.capabilities:
-            self._command(f"UID MOVE {uids} {target}")
-            return
-        self._command(f"UID COPY {uids} {target}")
+            return self._append_uid(self._command(f"UID MOVE {uids} {target}"))
+        result = self._append_uid(self._command(f"UID COPY {uids} {target}"))
         self.uid_store(uids, ["\\Deleted"], "add")
         self.uid_expunge(uids)
+        return result
 
     def uid_expunge(self, uids: str) -> None:
         if "UIDPLUS" in self.capabilities:
@@ -595,13 +597,17 @@ class ImapClient:
         return self._append_uid(responses)
 
     def _append_uid(self, responses: list[Response]) -> AppendResult:
+        """The UIDVALIDITY and the new UID from an APPENDUID or COPYUID response code (one message only)."""
         for response in responses:
-            if response.code and str(response.code[0]).upper() in ("APPENDUID", "COPYUID") and len(response.code) >= 3:
-                validity, uid = response.code[1], response.code[2]
+            if not response.code:
+                continue
+            kind = str(response.code[0]).upper()
+            position = 2 if kind == "APPENDUID" else 3 if kind == "COPYUID" else 0
+            if position and len(response.code) > position:
                 try:
-                    return AppendResult(self._number(validity), self._number(uid))
+                    return AppendResult(self._number(response.code[1]), self._number(response.code[position]))
                 except ProtocolError:
-                    return AppendResult()  # a UID set such as 4:6 for several messages: not needed here
+                    return AppendResult()  # a set of UIDs such as 4:6, for several messages: not needed here
         return AppendResult()
 
     def create_folder(self, folder: str) -> None:

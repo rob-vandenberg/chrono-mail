@@ -118,7 +118,9 @@ IMAP accounts use the same encrypted store, index, engine commands and window as
   5. Pending local changes are sent last (section 8.3).
 - Safety rules (they follow AGENTS.md 4.1): nothing is removed from the server unless the local copy is stored and verified; a changed UIDVALIDITY never deletes local mail: the local messages are kept until the folder has been downloaded again and matched by Message-ID, and those with no match are moved to a local folder `Recovered/<folder>`; a server that answers with something unexpected makes the sync of that folder fail, never the whole program.
 
-### 8.3 Local changes
+### 8.3 Local changes (changed by D-050: compared, not queued)
+
+The text below is the first design; D-050 replaced the pending list by a comparison of the store, the remembered state and the server, run at every sync.
 
 - Flag changes, moves, deletes and sent or draft copies are applied to the store at once (the window stays responsive and offline use works) and recorded in a *pending changes* list in `imap_state` (flag set by UID, move/delete by UID, append of a stored message to a folder).
 - The list is applied in order during a sync, with `UID STORE`, `UID MOVE` (or `COPY` + `STORE \Deleted` + `UID EXPUNGE` where MOVE is missing), and `APPEND`; an entry is removed only after the server confirmed it. A change that cannot be applied twice in a row is reported and kept, never silently dropped.

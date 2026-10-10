@@ -6,9 +6,10 @@ from pathlib import Path
 from chrono_mail.core import StorageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_state.py 0.0.29"
+__version__ = "imap_state.py 0.0.30"
 
 # --- Version history ----------------------------------------------------
+# v0.0.30: uploaded messages
 # v0.0.29: Initial IMAP state log
 
 # What is known about an IMAP account is kept in an append-only file, one JSON object per line:
@@ -16,6 +17,7 @@ __version__ = "imap_state.py 0.0.29"
 #   {"e": "m", "f": [...], "u": UID, "s": store id, "g": [flags]}        UID <-> store id, with the server flags last seen
 #   {"e": "g", "f": [...], "u": UID, "g": [flags]}                       the server flags changed
 #   {"e": "x", "f": [...], "u": UID}                                     the UID is gone from the server (and from the store)
+#   {"e": "a", "s": store id}                                           the message was sent to the server (so that it is not sent twice)
 # Appending (with fsync) cannot damage earlier lines; a line cut off by a crash is ignored; unknown events are ignored (later
 # versions add more, for example the changes waiting to be sent). If the file is lost the next sync downloads again and
 # matches by Message-ID: duplicates are avoided where possible, never a loss. The file is rewritten compactly when it has
@@ -37,6 +39,7 @@ class ImapState:
         self._durable: bool = durable
         self.validity: dict[tuple[str, ...], int] = {}
         self.entries: dict[tuple[str, ...], dict[int, ImapEntry]] = {}
+        self.uploaded: set[str] = set()
         self.ignored_lines: int = 0
         self._lines: int = 0
         self._needs_newline: bool = False
@@ -61,6 +64,12 @@ class ImapState:
 
     def _apply(self, event: dict[str, object]) -> None:
         kind = event["e"]
+        if kind == "a":
+            stored = event["s"]
+            if not isinstance(stored, str) or len(stored) != 32:
+                raise ValueError("bad store id")
+            self.uploaded.add(stored)
+            return
         raw_folder = event["f"]
         if not isinstance(raw_folder, list) or not all(isinstance(part, str) for part in raw_folder) or not raw_folder:
             raise ValueError("bad folder")
@@ -107,6 +116,11 @@ class ImapState:
             self._lines += 1
         except OSError as error:
             raise StorageError(f"The IMAP state could not be saved: {error.strerror}") from None
+
+    def mark_uploaded(self, store_id: str) -> None:
+        """Remember that a local message was sent to the server. Call right after the server accepted it."""
+        self._append({"e": "a", "s": store_id})
+        self.uploaded.add(store_id)
 
     def set_validity(self, folder: tuple[str, ...], validity: int) -> None:
         """The folder's UIDVALIDITY. A new value forgets every UID of the folder (they mean something else now)."""
@@ -157,6 +171,7 @@ class ImapState:
             lines.append(json.dumps({"e": "v", "f": list(folder), "v": validity}, separators=(",", ":"), ensure_ascii=False))
             for uid, entry in self.entries.get(folder, {}).items():
                 lines.append(json.dumps({"e": "m", "f": list(folder), "u": uid, "s": entry.store_id, "g": sorted(entry.flags)}, separators=(",", ":"), ensure_ascii=False))
+        lines.extend(json.dumps({"e": "a", "s": store_id}, separators=(",", ":")) for store_id in sorted(self.uploaded))
         temporary = self.path.with_name(self.path.name + ".new")
         try:
             descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
