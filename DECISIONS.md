@@ -493,3 +493,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** the standard key of Mark as read is Ctrl+Q, and Quit moves to Ctrl+Shift+Q. Both can be changed in Settings > Keyboard.
 **Reason:** the user expects Ctrl+Q to mark mail as read, a key that is used all day, and quitting should take a deliberate key press.
+
+## D-068 The standard keyboard shortcuts
+*2026-10-11*
+
+**Decision:** the standard keys are the ones users of a full desktop mail program expect, and all of them can be changed in Settings > Keyboard. Message list: F5 get mail; Ctrl+N new; Ctrl+R reply; Ctrl+Shift+R reply all; Ctrl+F forward; Insert toggle flag; R toggle read; Ctrl+Q mark as read; Ctrl+U mark as unread; S snooze; M quick move and Ctrl+Shift+V move to folder; C quick copy and Ctrl+Shift+C copy to folder; A archive; Ctrl+J junk (a switch: in Junk it brings the message back to the Inbox); Ctrl+P print; Delete delete; Shift+Delete delete permanently (after asking); Ctrl+Shift+S save as; Return open; Ctrl+E search; Ctrl+Shift+F advanced search; F9 folder list on or off; G go to folder; F next and B previous message; N next and P previous unread message. Message window: Ctrl+R, Ctrl+Shift+R, Ctrl+F, Esc closes. Composer: Ctrl+Enter send, Ctrl+S save draft, Esc close (asks when there is something to save), Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+K in rich text. A key that is a plain letter works only while the message list or the folder list has the focus, so it never takes over typing in the search box or the composer. View source moved to Ctrl+Alt+U, Quit is Ctrl+Shift+Q (D-067). Left out because there is nothing to attach them to: sections other than mail, tags, quick actions and text snippets, forward as attachment, resend, find in message, spell check, signatures by number, translate.
+**Reason:** the user asked for the standard keys to match the established ones one to one, so that people who change programs keep their habits.

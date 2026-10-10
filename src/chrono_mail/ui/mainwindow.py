@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QCursor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -68,9 +68,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.52"
+__version__ = "mainwindow.py 0.0.53"
 
 # --- Version history ----------------------------------------------------
+# v0.0.53: Standard keyboard shortcuts
 # v0.0.52: Ctrl+Q marks as read, Quit is Ctrl+Shift+Q
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
@@ -139,6 +140,7 @@ class MainWindow(QMainWindow):
         self._tree_kind: str = "folder"
         self._tree_key_kind: str = "folder"  # the kind of the item in the tree: "inboxlink" is a folder shown under the Inboxes heading
         self._status_is_error: bool = False
+        self._folder_popup: QMenu | None = None
         self._tree_path: str = ""  # the folder, favorite or group of the item that is selected in the tree
         self._combined_accounts: tuple[str, ...] = ()  # the accounts of the group whose inbox is shown
         self._sidebar: object | None = None  # the answer of sidebar.show: pinned folders and groups
@@ -310,25 +312,38 @@ class MainWindow(QMainWindow):
         self.act_refresh = self._action("Get mail", self.check_mail, "F5", "mail-receive")
         self.act_reply = self._action("Reply", lambda: self.compose_from_selection("reply"), "Ctrl+R", "mail-reply-sender")
         self.act_reply_all = self._action("Reply all", lambda: self.compose_from_selection("reply_all"), "Ctrl+Shift+R", "mail-reply-all")
-        self.act_forward = self._action("Forward", lambda: self.compose_from_selection("forward"), "Ctrl+L", "mail-forward")
+        self.act_forward = self._action("Forward", lambda: self.compose_from_selection("forward"), "Ctrl+F", "mail-forward")
         self.act_edit_draft = self._action("Edit draft", self.edit_draft, None, "document-edit")
         self.act_delete = self._action("Delete", self.delete_selected, "Delete", "edit-delete")
         self.act_save_as = self._action("Save as…", self.save_selected_as, "Ctrl+Shift+S", "document-save-as")
-        self.act_source = self._action("View source", self.view_source, "Ctrl+U")
+        self.act_source = self._action("View source", self.view_source, "Ctrl+Alt+U")
         self.act_print = self._action("Print…", self.print_selected, "Ctrl+P", "document-print")
         self.act_open = self._action("Open", self.open_selected, "Return", "document-open")
         self.act_columns = self._action("Message list…", self.edit_columns)
-        self.act_junk = self._action("Mark as junk", lambda: self.junk_selected(True), "Ctrl+J", "mail-mark-junk")
-        self.act_not_junk = self._action("Not junk", lambda: self.junk_selected(False), "Ctrl+Shift+J", "mail-mark-notjunk")
+        self.act_junk = self._action("Move to Junk / back to Inbox", lambda: self.junk_selected(self._folder_role != "junk"), "Ctrl+J", "mail-mark-junk")  # one key does both, as the folder decides
+        self.act_not_junk = self._action("Not junk", lambda: self.junk_selected(False), None, "mail-mark-notjunk")
         self.act_not_junk.setEnabled(False)
-        self.act_next_unread = self._action("Next unread message", lambda: self.go_to_unread(1), "Ctrl+Shift+Down")
-        self.act_previous_unread = self._action("Previous unread message", lambda: self.go_to_unread(-1), "Ctrl+Shift+Up")
-        self.act_archive = self._action("Archive", self.archive_selected, "Ctrl+E", "mail-archive")
+        self.act_next_unread = self._action("Next unread message", lambda: self.go_to_unread(1), "N")
+        self.act_previous_unread = self._action("Previous unread message", lambda: self.go_to_unread(-1), "P")
+        self.act_archive = self._action("Archive", self.archive_selected, "A", "mail-archive")
         self.act_mark_all_read = self._action("Mark all as read", self.mark_folder_read, icon="mail-mark-read")
         self.act_empty_folder = self._action("Empty folder…", self.empty_folder, icon="edit-clear")
         self.act_empty_folder.setEnabled(False)
         self.act_read = self._action("Mark as read", lambda: self.mark_selected(seen=True), "Ctrl+Q")
-        self.act_unread = self._action("Mark as unread", lambda: self.mark_selected(seen=False))
+        self.act_next_message = self._action("Next message", lambda: self._step_message(1), "F")
+        self.act_previous_message = self._action("Previous message", lambda: self._step_message(-1), "B")
+        self.act_toggle_read = self._action("Toggle read / unread", self.toggle_read, "R")
+        self.act_toggle_flag = self._action("Toggle flag", self.toggle_flag, "Insert")
+        self.act_delete_forever = self._action("Delete permanently…", self.delete_permanently, "Shift+Delete", "edit-delete")
+        self.act_move_to = self._action("Move to folder…", lambda: self._popup_folders("move"), "Ctrl+Shift+V")
+        self.act_quick_move = self._action("Quick move", lambda: self._popup_folders("move"), "M")
+        self.act_copy_to = self._action("Copy to folder…", lambda: self._popup_folders("copy"), "Ctrl+Shift+C")
+        self.act_quick_copy = self._action("Quick copy", lambda: self._popup_folders("copy"), "C")
+        self.act_go_to_folder = self._action("Go to folder…", self.go_to_folder, "G")
+        self.act_toggle_folders = self._action("Folder list", self._toggle_folder_list, "F9")
+        self.act_toggle_folders.setCheckable(True)
+        self.act_toggle_folders.setChecked(True)
+        self.act_unread = self._action("Mark as unread", lambda: self.mark_selected(seen=False), "Ctrl+U")
         self.act_flag = self._action("Flag", lambda: self.mark_selected(flagged=True), icon="mail-mark-important")
         self.act_unflag = self._action("Remove flag", lambda: self.mark_selected(flagged=False))
         self.act_add_account = self._action("Add an account…", lambda: self.add_account(), icon="list-add")
@@ -336,10 +351,10 @@ class MainWindow(QMainWindow):
         self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
         self.act_settings = self._action("Settings…", lambda: self.open_settings(), "Ctrl+,", "configure")
         self.act_scheduled = self._action("Scheduled and snoozed messages…", self.open_scheduled)
-        self.act_snooze = self._action("Snooze…", self.snooze_selected, "Ctrl+Shift+Z", "appointment-soon")
+        self.act_snooze = self._action("Snooze…", self.snooze_selected, "S", "appointment-soon")
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
         self.act_quit = self._action("Quit", self.quit_program, "Ctrl+Shift+Q", "application-exit")
-        self.act_search = self._action("Search", self._focus_search, "Ctrl+F")
+        self.act_search = self._action("Search", self._focus_search, "Ctrl+E")
         self.act_advanced = self._action("Advanced search…", self.advanced_search, "Ctrl+Shift+F")
         self.act_auto = QAction("Check for mail automatically", self)
         self.act_auto.setCheckable(True)
@@ -414,14 +429,20 @@ class MainWindow(QMainWindow):
         for action in (self.act_read, self.act_unread, self.act_flag, self.act_unflag):
             message_menu.addAction(action)
         message_menu.addSeparator()
+        message_menu.addAction(self.act_toggle_read)
+        message_menu.addAction(self.act_toggle_flag)
+        message_menu.addSeparator()
+        for action in (self.act_move_to, self.act_quick_move, self.act_copy_to, self.act_quick_copy):
+            message_menu.addAction(action)
         message_menu.addAction(self.act_archive)
         message_menu.addAction(self.act_snooze)
         message_menu.addAction(self.act_junk)
         message_menu.addAction(self.act_not_junk)
         message_menu.addAction(self.act_delete)
+        message_menu.addAction(self.act_delete_forever)
         message_menu.addSeparator()
-        message_menu.addAction(self.act_next_unread)
-        message_menu.addAction(self.act_previous_unread)
+        for action in (self.act_next_message, self.act_previous_message, self.act_next_unread, self.act_previous_unread, self.act_go_to_folder):
+            message_menu.addAction(action)
         message_menu.addSeparator()
         for action in (self.act_save_as, self.act_print, self.act_source):
             message_menu.addAction(action)
@@ -433,6 +454,7 @@ class MainWindow(QMainWindow):
         folder_menu.addAction(self.act_empty_folder)
         view_menu = bar.addMenu("&View")
         view_menu.addAction(self.act_search)
+        view_menu.addAction(self.act_toggle_folders)
         view_menu.addAction(self.act_columns)
         pane_menu = view_menu.addMenu("Reading pane")
         self.pane_actions: dict[str, QAction] = {}
@@ -815,6 +837,16 @@ class MainWindow(QMainWindow):
         for name, action in vars(self).items():
             if name.startswith("act_") and isinstance(action, QAction) and name in self._default_shortcuts:
                 action.setShortcut(QKeySequence(chosen.get(name[4:], self._default_shortcuts[name])))
+                self._scope_shortcut(action)
+
+    def _scope_shortcut(self, action: QAction) -> None:
+        """A key that is a letter by itself (A, N, S ...) works in the message list and the folder list only: it is text anywhere else."""
+        text = action.shortcut().toString()
+        letter = len(text) == 1 and text.isalpha()
+        action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut if letter else Qt.ShortcutContext.WindowShortcut)
+        if letter:
+            for widget in (self.list_view, self.tree):
+                widget.addAction(action)
 
     def _mark_read_mode(self) -> str:
         return prefs.get_text(self.settings, "mark_read", prefs.MARK_READ)
@@ -1051,7 +1083,6 @@ class MainWindow(QMainWindow):
         self._folder = str(current.data(FOLDER_PATH_ROLE)) if kind == "folder" else None
         self._folder_role = str(current.data(FOLDER_ROLE_ROLE) or "other")
         self.act_empty_folder.setEnabled(kind == "folder" and self._folder_role in ("trash", "junk"))
-        self.act_junk.setEnabled(self._folder_role != "junk")
         self.act_not_junk.setEnabled(kind == "folder" and self._folder_role == "junk")
         self.act_mark_all_read.setEnabled(kind == "folder")
         self._select_quick_filters_for(kind)
@@ -1339,6 +1370,102 @@ class MainWindow(QMainWindow):
 
         for row in rows:
             self.backend.call(command, {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+
+    def _step_message(self, step: int) -> None:
+        """Select the next (or the previous) message of the list."""
+        count = self.list_model.rowCount()
+        current = self.list_view.currentIndex().row() if self.list_view.currentIndex().isValid() else (-1 if step > 0 else count)
+        position = current + step
+        if 0 <= position < count:
+            self.list_view.setCurrentIndex(self.list_model.index(position))
+            self.list_view.scrollTo(self.list_model.index(position))
+
+    def toggle_read(self) -> None:
+        rows = self._selected_rows()
+        if rows:
+            self.mark_selected(seen=any("seen" not in getattr(row, "flags") for row in rows))  # all read: unread, else read
+
+    def toggle_flag(self) -> None:
+        rows = self._selected_rows()
+        if rows:
+            self.mark_selected(flagged=any("flagged" not in getattr(row, "flags") for row in rows))
+
+    def delete_permanently(self) -> None:
+        """Shift+Delete: remove the selected messages for good, without a stop in Trash, after asking."""
+        rows = self._selected_rows()
+        if not rows or self._account_id is None:
+            return
+        if QMessageBox.question(self, "Delete permanently", f"Delete {len(rows)} message(s) for good, without moving them to Trash? This cannot be undone.") != QMessageBox.StandardButton.Yes:
+            return
+        remaining = len(rows)
+
+        def done(result: object) -> None:
+            nonlocal remaining
+            remaining -= 1
+            if remaining == 0:
+                self._after_change(f"Deleted {len(rows)} message(s) for good")
+
+        for row in rows:
+            self.backend.call(
+                "message.delete", {"account": self._account_of(row) or self._account_id, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "permanent": True},
+                done, lambda error: self._report("Could not delete", error), owner=self,
+            )
+
+    def _popup_folders(self, how: str) -> None:
+        """Move or copy the selected messages: the folders of their account, as a menu at the pointer."""
+        rows = self._selected_rows()
+        if not rows:
+            return
+        account = self._account_of(rows[0])
+        menu = QMenu(self)
+        for info in self._folders.get(account, []):
+            path = str(getattr(info, "path"))
+            if path == str(getattr(rows[0], "folder")) or path == "Outbox":
+                continue
+            menu.addAction(path).triggered.connect(lambda checked=False, target=path: self.copy_selected(target) if how == "copy" else self.move_selected(target))
+        self._folder_popup = menu  # kept: a menu shown with popup() is gone when its last reference is
+        menu.popup(QCursor.pos())
+
+    def copy_selected(self, target: str) -> None:
+        rows = self._selected_rows()
+        if not rows:
+            return
+        remaining = len(rows)
+
+        def done(result: object) -> None:
+            nonlocal remaining
+            remaining -= 1
+            if remaining == 0:
+                self._after_change(f"Copied {len(rows)} message(s) to {target}")
+
+        for row in rows:
+            self.backend.call(
+                "message.copy", {"account": self._account_of(row), "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target},
+                done, lambda error: self._report("Could not copy", error), owner=self,
+            )
+
+    def go_to_folder(self) -> None:
+        """G: type a part of a folder's name and go to that folder."""
+        names: dict[str, tuple[str, str]] = {}
+        accounts = {str(getattr(account, "account_id")): account for account in self._accounts}
+        for account_id, infos in self._folders.items():
+            account = accounts.get(account_id)
+            if account is None or str(getattr(account, "storage", "own")) == "local":
+                continue
+            label = "Local Folders" if str(getattr(account, "kind", "pop3")) == "local" else str(getattr(account, "email_address"))
+            for info in infos:
+                names[f"{label} / {getattr(info, 'path')}"] = (account_id, str(getattr(info, "path")))
+        if not names:
+            return
+        chosen, ok = QInputDialog.getItem(self, "Go to folder", "Folder:", sorted(names), 0, True)
+        if ok and chosen in names:
+            index = self._find_tree_item((names[chosen][0], "folder", names[chosen][1]))
+            if index is not None:
+                self.tree.setCurrentIndex(index)
+                self.list_view.setFocus()
+
+    def _toggle_folder_list(self) -> None:
+        self.tree.setVisible(self.act_toggle_folders.isChecked())
 
     def go_to_unread(self, step: int) -> bool:
         """Select the next (or previous) unread message of the list; at the end of the list, the first unread one of the next folder that has some."""

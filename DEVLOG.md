@@ -600,3 +600,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **What landed**
 - Mark as read has Ctrl+Q; Quit has Ctrl+Shift+Q; a test that no key is used twice.
+
+## 2026-10-11 Keyboard shortcuts (version 0.0.53)
+
+**What landed**
+- The standard keys changed to the usual set (D-068); new actions: next and previous message, toggle read and flag, delete permanently, move and copy menus, go to folder, folder list on and off; keys in the message window and the composer; letter keys only in the lists; 6 new tests.
+
+**Still open**
+- Forward as attachment, resend, find in message, spell check, tags.

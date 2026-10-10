@@ -2,6 +2,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QUrl
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QToolBar, QWidget
 
 from chrono_mail.core import ChronoMailError
@@ -10,9 +11,10 @@ from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.reader import ReaderWidget
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 0.0.41"
+__version__ = "messagewindow.py 0.0.53"
 
 # --- Version history ----------------------------------------------------
+# v0.0.53: Standard keyboard shortcuts
 # v0.0.41: Initial window for reading one message
 
 Compose = Callable[[str, str, str, str], None]  # kind, account, folder, message id
@@ -36,9 +38,16 @@ class MessageWindow(QMainWindow):
         toolbar = QToolBar("Message", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
-        for kind, label, icon in (("reply", "Reply", "mail-reply-sender"), ("reply_all", "Reply all", "mail-reply-all"), ("forward", "Forward", "mail-forward")):
+        for kind, label, icon, keys in (
+            ("reply", "Reply", "mail-reply-sender", "Ctrl+R"), ("reply_all", "Reply all", "mail-reply-all", "Ctrl+Shift+R"), ("forward", "Forward", "mail-forward", "Ctrl+F"),
+        ):
             action = toolbar.addAction(theme_icon(icon), label)
+            action.setShortcut(QKeySequence(keys))  # the same keys as in the main window
             action.triggered.connect(lambda checked=False, chosen=kind: compose(chosen, account, folder, message_id))
+        close = QAction("Close", self)
+        close.setShortcut(QKeySequence("Esc"))
+        close.triggered.connect(self.close)
+        self.addAction(close)
         self.reader.link_activated.connect(open_link)
         self.reader.attachment_save_requested.connect(self._save_attachment)
 

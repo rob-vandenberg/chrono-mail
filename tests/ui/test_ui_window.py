@@ -14,9 +14,10 @@ from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.47"
+__version__ = "test_ui_window.py 0.0.53"
 
 # --- Version history ----------------------------------------------------
+# v0.0.53: Standard keyboard shortcuts
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.34: Junk and unread navigation
@@ -674,9 +675,9 @@ def test_mark_as_junk_and_not_junk(world: World, qtbot: QtBot) -> None:
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
     assert world.call("message.list", account=world.account_id, folder="Junk").total == 1
     open_folder(world, qtbot, "Junk", 1)
-    assert not world.window.act_junk.isEnabled() and world.window.act_not_junk.isEnabled()
+    assert world.window.act_junk.isEnabled() and world.window.act_not_junk.isEnabled()  # Ctrl+J is a switch: in Junk it brings the message back
     select(world.window, 0)
-    world.window.act_not_junk.trigger()
+    world.window.act_junk.trigger()
     wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Junk").total == 0)
     open_folder(world, qtbot, "Inbox", 3)
     assert world.window.act_junk.isEnabled() and not world.window.act_not_junk.isEnabled()

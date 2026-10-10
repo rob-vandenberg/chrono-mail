@@ -33,9 +33,10 @@ from chrono_mail.ui.richeditor import RichEditor
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.42"
+__version__ = "composer.py 0.0.53"
 
 # --- Version history ----------------------------------------------------
+# v0.0.53: Standard keyboard shortcuts
 # v0.0.42: settings: autosave interval, subject warning, font size, reply under the quote
 # v0.0.35: Send later and snooze
 # v0.0.24: Rich text composing
@@ -249,7 +250,9 @@ class ComposeWindow(QMainWindow):
             self.set_rich(True)
         self._saved_snapshot: tuple[object, ...] = self._snapshot()
 
-        for text, shortcut, handler in (("Send", "Ctrl+Return", self._send_clicked), ("Save draft", "Ctrl+S", self._save_clicked)):
+        for text, shortcut, handler in (
+            ("Send", "Ctrl+Return", self._send_clicked), ("Send", "Ctrl+Enter", self._send_clicked), ("Save draft", "Ctrl+S", self._save_clicked), ("Close", "Esc", self.close),
+        ):
             action = QAction(text, self)
             action.setShortcut(QKeySequence(shortcut))
             action.triggered.connect(handler)
