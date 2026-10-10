@@ -23,9 +23,10 @@ from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.24"
+__version__ = "settingsdialog.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: the account type is shown
 # v0.0.24: Rich text composing
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Initial settings window
@@ -142,7 +143,8 @@ class SettingsDialog(QDialog):
         def listed(result: object) -> None:
             self.accounts.clear()
             for account in list(result) if isinstance(result, (tuple, list)) else []:
-                item = QListWidgetItem(f"{getattr(account, 'display_name')}  <{getattr(account, 'email_address')}>")
+                kind = "IMAP" if str(getattr(account, "kind", "pop3")) == "imap" else "POP3"
+                item = QListWidgetItem(f"{getattr(account, 'display_name')}  <{getattr(account, 'email_address')}>  ({kind})")
                 item.setData(ROLE_ACCOUNT, account)
                 self.accounts.addItem(item)
                 if str(getattr(account, "account_id")) == selected:

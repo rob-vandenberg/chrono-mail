@@ -21,14 +21,17 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 0.0.16"
+__version__ = "accountdialog.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts
 # v0.0.16: Drafts
 # v0.0.13: Initial account dialog
 
 SECURITY_CHOICES: tuple[tuple[str, str], ...] = (("tls", "TLS (encrypted from the start)"), ("starttls", "STARTTLS (upgrade to encrypted)"), ("none", "None (not encrypted)"))
 INCOMING_PORTS: dict[str, int] = {"tls": 995, "starttls": 110, "none": 110}
+IMAP_PORTS: dict[str, int] = {"tls": 993, "starttls": 143, "none": 143}
+KINDS: tuple[tuple[str, str], ...] = (("pop3", "POP3: the mail is downloaded to this computer"), ("imap", "IMAP: the mail stays on the server and is kept in step"))
 OUTGOING_PORTS: dict[str, int] = {"tls": 465, "starttls": 587, "none": 25}
 POLICIES: tuple[tuple[str, str], ...] = (
     ("keep", "Leave all mail on the server (default)"),
@@ -56,6 +59,10 @@ class AccountDialog(QDialog):
 
         who = QGroupBox("Your account", self)
         who_form = QFormLayout(who)
+        self.kind = QComboBox(who)
+        for value, label in KINDS:
+            self.kind.addItem(label, value)
+        who_form.addRow("Account type", self.kind)
         self.name = QLineEdit(who)
         self.email = QLineEdit(who)
         self.username = QLineEdit(who)
@@ -70,7 +77,8 @@ class AccountDialog(QDialog):
         self.incoming_host = QLineEdit(self)
         self.incoming_port = QSpinBox(self)
         self.incoming_security = self._security_combo()
-        layout.addWidget(self._server_group("Incoming mail (POP3)", self.incoming_host, self.incoming_port, self.incoming_security))
+        self.incoming_group = self._server_group("Incoming mail (POP3)", self.incoming_host, self.incoming_port, self.incoming_security)
+        layout.addWidget(self.incoming_group)
         self.outgoing_host = QLineEdit(self)
         self.outgoing_port = QSpinBox(self)
         self.outgoing_security = self._security_combo()
@@ -104,7 +112,8 @@ class AccountDialog(QDialog):
 
         for security, port in ((self.incoming_security, self.incoming_port), (self.outgoing_security, self.outgoing_port)):
             port.setRange(1, 65535)
-        self.incoming_security.currentIndexChanged.connect(lambda: self.incoming_port.setValue(INCOMING_PORTS[str(self.incoming_security.currentData())]))
+        self.incoming_security.currentIndexChanged.connect(self._incoming_security_changed)
+        self.kind.currentIndexChanged.connect(self._kind_changed)
         self.outgoing_security.currentIndexChanged.connect(lambda: self.outgoing_port.setValue(OUTGOING_PORTS[str(self.outgoing_security.currentData())]))
         self.incoming_port.setValue(INCOMING_PORTS["tls"])
         self.outgoing_port.setValue(OUTGOING_PORTS["starttls"])
@@ -130,6 +139,18 @@ class AccountDialog(QDialog):
         form.addRow("Port", port)
         return group
 
+    def _is_imap(self) -> bool:
+        return str(self.kind.currentData()) == "imap"
+
+    def _incoming_security_changed(self) -> None:
+        self.incoming_port.setValue((IMAP_PORTS if self._is_imap() else INCOMING_PORTS)[str(self.incoming_security.currentData())])
+
+    def _kind_changed(self) -> None:
+        """POP3 or IMAP: the title and the port follow, and the choice about copies on the server only matters for POP3."""
+        self.incoming_group.setTitle("Incoming mail (IMAP)" if self._is_imap() else "Incoming mail (POP3)")
+        self._incoming_security_changed()
+        self.policy.setEnabled(not self._is_imap())
+
     def _guess_from_address(self, text: str) -> None:
         """Suggest the user name and the server names from the e-mail address, until the person types their own."""
         if self.username.text() in ("", self._last_guess_user):
@@ -149,6 +170,7 @@ class AccountDialog(QDialog):
 
     def _values(self) -> dict[str, object]:
         return {
+            "kind": str(self.kind.currentData()),
             "username": self.username.text().strip(),
             "password": self.password.text(),
             "incoming_host": self.incoming_host.text().strip(),

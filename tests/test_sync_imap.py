@@ -15,9 +15,10 @@ from tests.fakeimap import FakeImapServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_imap.py 0.0.30"
+__version__ = "test_sync_imap.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.30: IMAP sync, store to server
 # v0.0.29: Initial IMAP sync tests
 
@@ -489,3 +490,59 @@ def test_the_uploaded_marks_survive_compaction(tmp_path: Path) -> None:
         state.set_validity(("Inbox",), 3)
     assert state.compact_if_needed()
     assert ImapState(tmp_path / "state.log", durable=False).uploaded == {"a" * 32}
+
+
+# --- folders made and deleted here (0.0.31) ----------------------------------------------------------------------------------------------------------
+
+
+def test_a_folder_made_here_is_made_on_the_server_and_then_synchronised(world: World) -> None:
+    world.sync()
+    world.store.create_folder(("Projects", "Beta"), FolderRole.OTHER)
+    world.store.deliver(("Projects", "Beta"), mail(5), verify=True)
+    report = world.sync()
+    assert "Projects/Beta" in world.server.folders and len(world.server.uids("Projects/Beta")) == 1
+    assert report.aborted is None
+    again = world.sync()
+    assert of(again, "Projects/Beta").uploaded == 0 and len(world.server.uids("Projects/Beta")) == 1 and len(world.messages(("Projects", "Beta"))) == 1
+
+
+def test_local_only_folders_are_not_sent_to_the_server(world: World) -> None:
+    world.sync()
+    world.store.create_folder(("Outbox",), FolderRole.OTHER)
+    world.store.deliver(("Outbox",), mail(5), verify=True)
+    world.sync()
+    assert "Outbox" not in world.server.folders and "Recovered" not in world.server.folders
+
+
+def test_a_standard_folder_the_server_lacks_is_made_there(world: World) -> None:
+    del world.server.folders["Junk"]
+    world.sync()
+    world.store.create_folder(("Junk",), FolderRole.JUNK)
+    world.sync()
+    assert "Junk" in world.server.folders
+
+
+def test_a_folder_deleted_here_is_hidden_and_stays_on_the_server(world: World) -> None:
+    world.server.add("Archive2", mail(1))
+    world.server.add("Archive2", mail(2))
+    world.sync()
+    assert len(world.messages(("Archive2",))) == 2
+    for message in world.store.list_messages(("Archive2",)):
+        world.index.remove(message.ref.store_id)
+    world.store.delete_folder(("Archive2",), require_empty=False)
+    report = world.sync()
+    assert any("deleted here" in note for note in report.notes)
+    assert ("Archive2",) not in {f.path for f in world.store.list_folders()} and len(world.server.uids("Archive2")) == 2
+    again = world.sync()
+    assert again.notes == () and ("Archive2",) not in {f.path for f in world.store.list_folders()}  # not brought back
+    reloaded = ImapState(world.state.path, durable=False)
+    assert "Archive2" in reloaded.hidden and ("Archive2",) not in reloaded.validity
+
+
+def test_a_folder_missing_from_a_damaged_store_is_not_concluded_deleted(world: World) -> None:
+    world.server.add("Archive2", mail(1))
+    world.sync()
+    world.store.delete_folder(("Archive2",), require_empty=False)
+    world.store.damaged_folders.append("f-broken")
+    report = world.sync()
+    assert any("looks damaged" in note for note in report.notes) and "Archive2" not in world.state.hidden

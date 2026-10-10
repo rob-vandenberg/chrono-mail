@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from chrono_mail.config import ServerRole
-from chrono_mail.core import ChronoMailError, ConfigurationError, FolderRole, MessageFlag
+from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.compose import ComposeKind, build_draft, suggest_filename
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
@@ -17,13 +17,15 @@ from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.mime import Address, Attachment, OutgoingMessage, ParsedMessage, parse_message
+from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
-from chrono_mail.sync import Pop3State, fetch_pop3, send_and_file
+from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.19"
+__version__ = "commands_mail.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.16: a sent message can replace a draft
@@ -95,6 +97,8 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
         password = engine.passwords.get(settings.account.account_id, ServerRole.INCOMING)
         if password is None:
             raise ConfigurationError("No password is stored for this account")
+        if settings.account.kind is AccountKind.IMAP:
+            return _imap_fetch(engine, mailbox, password)
         state = Pop3State(engine.directories.pop3_state_file(mailbox.account_id), durable=engine.durable)
         inbox = mailbox.role_folder(FolderRole.INBOX)
         with Pop3Client(settings.account.incoming, password, Pop3Limits(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES)) as client:
@@ -111,6 +115,18 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
         report.index_problems,
         report.aborted,
     )
+
+
+def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str) -> FetchResult:
+    """mail.fetch for an IMAP account: the two-way sync of store and server."""
+    state = ImapState(engine.directories.imap_state_file(mailbox.account_id), durable=engine.durable)
+    with ImapClient(mailbox.settings.account.incoming, password) as client:
+        report = sync_imap(
+            client, mailbox.store, mailbox.index, state, ImapSyncOptions(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES),
+            progress=lambda folder, done, total: engine.progress(f"Downloading {folder}", done, total),
+        )
+    remarks = (*report.failed, *report.notes, *(f"{item.folder}: {item.note}" for item in report.folders if item.note))
+    return FetchResult(report.downloaded, 0, tuple(remarks), 0, None, 0, report.aborted)
 
 
 def _addresses(values: tuple[str, ...]) -> tuple[Address, ...]:

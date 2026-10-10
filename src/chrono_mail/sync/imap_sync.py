@@ -9,10 +9,13 @@ from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.0.30"
+__version__ = "imap_sync.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.30: IMAP sync, store to server
+# v0.0.31: folders made here are made on the server, folders deleted here are hidden (D-051)
+# v0.0.30: store to server (D-050)
 # v0.0.29: Initial IMAP sync, server to store (D-049)
 
 Progress = Callable[[str, int, int], None]
@@ -33,6 +36,7 @@ STANDARD_PATH: dict[FolderRole, tuple[str, ...]] = {
     FolderRole.JUNK: ("Junk",), FolderRole.ARCHIVE: ("Archive",),
 }
 RECOVERED: str = "Recovered"
+LOCAL_ONLY: frozenset[str] = frozenset({"Outbox", RECOVERED})  # folders that exist only here
 REMOVAL_RATIO_LIMIT: float = 0.5
 REMOVAL_RATIO_MINIMUM_COUNT: int = 10
 
@@ -201,7 +205,9 @@ def sync_imap(
         subscribed = frozenset(entry.name for entry in client.list_folders(subscribed_only=True))
         plans, planning_notes = plan_folders(listed, subscribed)
         notes.extend(planning_notes)
+        plans = [plan for plan in plans if plan.server_name not in state.hidden]
         existing = {folder.path for folder in store.list_folders()}
+        plans = _forget_deleted_folders(store, state, plans, existing, notes)
         for plan in plans:
             if plan.local_path not in existing:
                 try:
@@ -210,6 +216,7 @@ def sync_imap(
                 except ChronoMailError as error:
                     notes.append(f"The local folder for '{_printable(plan.server_name)}' could not be made: {error}")
         plans = [plan for plan in plans if plan.local_path in existing]
+        plans.extend(_create_on_server(client, store, state, listed, plans, notes))
         moved = _move_pass(client, store, index, state, plans, notes)
         for plan in plans:
             counts = _Counts()
@@ -222,6 +229,45 @@ def sync_imap(
     except ProtocolError as error:
         return ImapReport(tuple(reports), tuple(notes), str(error), moved)
     return ImapReport(tuple(reports), tuple(notes), None, moved)
+
+
+def _forget_deleted_folders(store: Store, state: ImapState, plans: list[FolderPlan], existing: set[tuple[str, ...]], notes: list[str]) -> list[FolderPlan]:
+    """A folder that was synchronised before and is gone from the store was deleted here: it is hidden from now on (its
+    mail on the server stays). When the store looks damaged that is not concluded: the folder is left out of this run."""
+    kept: list[FolderPlan] = []
+    for plan in plans:
+        if plan.local_path not in existing and state.validity.get(plan.local_path) is not None:
+            if store.damaged_folders:
+                notes.append(f"The folder '{_printable(plan.server_name)}' is missing here and the store looks damaged: it was left out of this run")
+            else:
+                state.hide_folder(plan.server_name, plan.local_path)
+                notes.append(f"The folder '{_printable(plan.server_name)}' was deleted here and is no longer synchronised (it is still on the server)")
+            continue
+        kept.append(plan)
+    return kept
+
+
+def _create_on_server(client: ImapClient, store: Store, state: ImapState, listed: Sequence[FolderEntry], plans: list[FolderPlan], notes: list[str]) -> list[FolderPlan]:
+    """Local folders the server does not have (made here) are made there, so that their mail can follow."""
+    delimiter = next((entry.delimiter for entry in listed if entry.delimiter), "/")
+    planned = {plan.local_path for plan in plans}
+    taken = {entry.name for entry in listed}
+    created: list[FolderPlan] = []
+    for folder in store.list_folders():
+        path = folder.path
+        if path in planned or path[0] in LOCAL_ONLY or path == ("Inbox",) or state.validity.get(path) is not None:
+            continue
+        name = delimiter.join(("INBOX" if path[0] == "Inbox" else path[0], *path[1:]))
+        if name in taken or name in state.hidden or delimiter in "".join(path):
+            continue  # the server has it already (not shown) or the name cannot be written on the server
+        try:
+            client.create_folder(name)
+            client.subscribe(name)
+        except ImapRefused as error:
+            notes.append(f"The folder '{_printable(name)}' could not be made on the server: {error}")
+            continue
+        created.append(FolderPlan(name, path, folder.role))
+    return created
 
 
 def _move_pass(client: ImapClient, store: Store, index: Index | None, state: ImapState, plans: list[FolderPlan], notes: list[str]) -> int:

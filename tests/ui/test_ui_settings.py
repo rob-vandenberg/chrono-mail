@@ -9,9 +9,10 @@ from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 0.0.21"
+__version__ = "test_ui_settings.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Initial settings window tests
 
@@ -150,3 +151,17 @@ def test_adding_an_account_from_the_settings_runs_the_normal_dialog(world: World
     dialog.add_account_requested.connect(lambda: world.window.add_account(after=dialog.reload))
     dialog.add_button.click()
     assert asked == ["add"]
+
+
+def test_the_account_type_is_shown_and_imap_accounts_have_no_server_copies_tab(world: World, qtbot: QtBot) -> None:
+    dialog = open_settings(world, qtbot)
+    assert dialog.accounts.item(0).text().endswith("(POP3)")
+    pop3 = AccountEditDialog(world.backend, dialog.accounts.item(0).data(256))
+    qtbot.addWidget(pop3)
+    assert [pop3.tabs.tabText(index) for index in range(pop3.tabs.count())] == ["General", "Servers", "Server copies"]
+    imap_account = world.call("account.list")[0]
+    from dataclasses import replace
+
+    imap = AccountEditDialog(world.backend, replace(imap_account, kind="imap"))
+    qtbot.addWidget(imap)
+    assert [imap.tabs.tabText(index) for index in range(imap.tabs.count())] == ["General", "Servers"]

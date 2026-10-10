@@ -4,9 +4,10 @@ from enum import Enum
 from chrono_mail.core.errors import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "account.py 0.0.4"
+__version__ = "account.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts
 # v0.0.4: Initial account model
 
 MAXIMUM_PORT: int = 65535
@@ -14,6 +15,7 @@ MAXIMUM_PORT: int = 65535
 
 class AccountKind(Enum):
     POP3 = "pop3"
+    IMAP = "imap"
 
 
 class ConnectionSecurity(Enum):

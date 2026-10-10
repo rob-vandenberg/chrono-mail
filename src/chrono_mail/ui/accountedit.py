@@ -20,9 +20,10 @@ from chrono_mail.ui.accountdialog import POLICIES, SECURITY_CHOICES
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 0.0.20"
+__version__ = "accountedit.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts have no server copies tab
 # v0.0.20: Initial dialog for changing an account
 
 RED = "color:#c0392b"
@@ -65,7 +66,7 @@ class AccountEditDialog(QDialog):
         self.incoming_host = QLineEdit(str(getattr(account, "incoming_host")), servers)
         self.incoming_port = QSpinBox(servers)
         self.incoming_security = self._security_combo(str(getattr(account, "incoming_security")))
-        servers_layout.addWidget(self._group("Incoming mail (POP3)", self.incoming_host, self.incoming_port, int(getattr(account, "incoming_port")), self.incoming_security, self.username, self.password))
+        servers_layout.addWidget(self._group("Incoming mail (IMAP)" if str(getattr(account, "kind", "pop3")) == "imap" else "Incoming mail (POP3)", self.incoming_host, self.incoming_port, int(getattr(account, "incoming_port")), self.incoming_security, self.username, self.password))
         self.outgoing_username = QLineEdit(str(getattr(account, "outgoing_username")), servers)
         self.outgoing_password = QLineEdit(servers)
         self.outgoing_host = QLineEdit(str(getattr(account, "outgoing_host")), servers)
@@ -89,7 +90,8 @@ class AccountEditDialog(QDialog):
         self.days.setSuffix(" days")
         copies_form.addRow("Mail on the server", self.policy)
         copies_form.addRow("Delete after", self.days)
-        self.tabs.addTab(copies, "Server copies")
+        if str(getattr(account, "kind", "pop3")) == "pop3":  # copies on the server are a POP3 matter; an IMAP account is the server's mail
+            self.tabs.addTab(copies, "Server copies")
 
         self.result_label = QLabel("", self)
         self.result_label.setWordWrap(True)

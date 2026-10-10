@@ -7,9 +7,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 0.0.9"
+__version__ = "paths.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.9: Initial application directories
 
 APPLICATION_NAME: str = "chrono-mail"
@@ -39,6 +40,9 @@ class AppDirectories:
 
     def pop3_state_file(self, account_id: str) -> Path:
         return self.account_directory(account_id) / "pop3-state.log"
+
+    def imap_state_file(self, account_id: str) -> Path:
+        return self.account_directory(account_id) / "imap-state.log"
 
 
 def default_directories() -> AppDirectories:

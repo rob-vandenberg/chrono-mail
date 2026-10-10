@@ -30,19 +30,23 @@ from chrono_mail.crypto import (
 )
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
+from chrono_mail.protocols.imap import ImapClient, ImapLimits
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.20"
+__version__ = "commands_accounts.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.20: Settings window, account editing, signatures
+# v0.0.31: IMAP accounts
 # v0.0.13: account.check
 # v0.0.12: Initial account and key commands
 
 Security = Literal["tls", "starttls", "none"]
+Kind = Literal["pop3", "imap"]
 Policy = Literal["keep", "delete_after_download", "delete_after_days", "delete_when_deleted_locally"]
 
 
@@ -63,6 +67,7 @@ class AccountAddParameters:
     encrypted: bool = field(default=True, metadata=option("Encrypt the stored messages on disk (the default)"))
     delete_policy: Policy = field(default="keep", metadata=option("What happens to a message on the server after it was downloaded and verified"))
     delete_days: int = field(default=30, metadata=option("Days before deleting, for delete_after_days"))
+    kind: Kind = field(default="pop3", metadata=option("pop3 (mail is downloaded) or imap (the mail stays on the server and is kept in step)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +93,7 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
         account_id,
         parameters.display_name.strip(),
         email,
-        AccountKind.POP3,
+        AccountKind(parameters.kind),
         ServerSettings(parameters.incoming_host.strip(), parameters.incoming_port, _security(parameters.incoming_security), parameters.username),
         ServerSettings(parameters.outgoing_host.strip(), parameters.outgoing_port, _security(parameters.outgoing_security), parameters.outgoing_username or parameters.username),
     )
@@ -134,6 +139,7 @@ class AccountCheckParameters:
     outgoing_security: Security = field(default="starttls", metadata=option("tls, starttls or none"))
     outgoing_username: str | None = field(default=None, metadata=option("The SMTP user name, when it differs from the incoming one"))
     outgoing_password: str | None = field(default=None, metadata=option("The SMTP password, when it differs from the incoming one", secret=True))
+    kind: Kind = field(default="pop3", metadata=option("pop3 or imap"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +154,10 @@ def account_check(engine: Engine, parameters: AccountCheckParameters) -> Account
     """Try to connect and log in to both servers, before an account is created. Nothing is stored or sent."""
     try:
         incoming = ServerSettings(parameters.incoming_host.strip(), parameters.incoming_port, _security(parameters.incoming_security), parameters.username)
-        Pop3Client(incoming, parameters.password, Pop3Limits(connect_timeout_seconds=15, read_timeout_seconds=20)).connect()
+        if parameters.kind == "imap":
+            ImapClient(incoming, parameters.password, ImapLimits(connect_timeout_seconds=15, read_timeout_seconds=20)).connect()
+        else:
+            Pop3Client(incoming, parameters.password, Pop3Limits(connect_timeout_seconds=15, read_timeout_seconds=20)).connect()
         incoming_ok, incoming_message = True, "Connected and logged in"
     except ChronoMailError as error:
         incoming_ok, incoming_message = False, str(error)

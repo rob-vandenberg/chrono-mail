@@ -465,3 +465,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Creating, renaming and deleting folders on the server from here (task 2.4); folders created here that the server does not have are not created there yet.
 
+## 2026-10-10 Task 2.4: IMAP accounts in the engine and the interface (version 0.0.31)
+
+**What landed**
+- Account kind `imap`, `mail.fetch` runs the sync, account dialog with the account type, settings list shows it, folders made here are made on the server, folders deleted here are hidden (D-051).
+- Tests: 5 new sync tests (40), 10 engine tests with a fake IMAP server, 2 interface tests.
+
+**Still open**
+- Not tried by hand in the window against the real server (the live tests drive the sync itself); IDLE (task 2.5); renaming a folder is not a server rename.
+

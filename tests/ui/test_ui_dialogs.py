@@ -10,9 +10,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dialogs.py 0.0.13"
+__version__ = "test_ui_dialogs.py 0.0.31"
 
 # --- Version history ----------------------------------------------------
+# v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.13: Initial dialog tests
 
 
@@ -194,3 +195,19 @@ def test_without_a_key_the_dialog_says_so(blank: World, qtbot: QtBot) -> None:
     qtbot.addWidget(dialog)
     wait(qtbot, lambda: dialog.code.toPlainText() == "(the code could not be shown)")
     assert any(kind == "warning" for kind, _, _ in blank.dialogs.shown)
+
+
+# --- IMAP accounts (0.0.31) -------------------------------------------------------------------------------------------------------------
+
+
+def test_choosing_imap_changes_the_ports_the_title_and_the_copies_option(qtbot: QtBot, world: World) -> None:
+    dialog = AccountDialog(world.backend)
+    qtbot.addWidget(dialog)
+    assert dialog.kind.currentData() == "pop3" and dialog.incoming_port.value() == 995 and dialog.policy.isEnabled()
+    dialog.kind.setCurrentIndex(dialog.kind.findData("imap"))
+    assert dialog.incoming_port.value() == 993 and dialog.incoming_group.title() == "Incoming mail (IMAP)" and not dialog.policy.isEnabled()
+    dialog.incoming_security.setCurrentIndex(dialog.incoming_security.findData("starttls"))
+    assert dialog.incoming_port.value() == 143
+    assert dialog._values()["kind"] == "imap"  # noqa: SLF001
+    dialog.kind.setCurrentIndex(dialog.kind.findData("pop3"))
+    assert dialog.incoming_port.value() == 110 and dialog.policy.isEnabled() and dialog._values()["kind"] == "pop3"  # noqa: SLF001
