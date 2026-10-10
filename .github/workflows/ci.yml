@@ -9,6 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       QT_QPA_PLATFORM: offscreen
+      CHRONO_MAIL_FAST_EXIT: "1"
       QTWEBENGINE_CHROMIUM_FLAGS: --no-sandbox
     steps:
       - uses: actions/checkout@v4
