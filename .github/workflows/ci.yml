@@ -28,5 +28,5 @@ jobs:
         run: pyrefly check
       - name: Layers
         run: lint-imports
-      - name: Tests (offline: no mail server needed)
+      - name: Tests, offline (no mail server needed)
         run: pytest -q
