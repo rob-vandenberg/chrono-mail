@@ -18,9 +18,10 @@ PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_reader.py 0.0.13"
+__version__ = "test_ui_reader.py 0.0.38"
 
 # --- Version history ----------------------------------------------------
+# v0.0.38: CI: the PDF test writes into its own folder
 # v0.0.13: Initial reading pane tests
 
 
@@ -293,7 +294,7 @@ def test_clear_empties_the_pane(reader: ReaderWidget) -> None:
     assert reader._header.isHidden() and reader._attachments.isHidden() and not reader.banner_visible()  # noqa: SLF001
 
 
-def test_a_pdf_of_an_html_message_for_review(reader: ReaderWidget, qtbot: QtBot) -> None:
+def test_a_pdf_of_an_html_message_for_review(reader: ReaderWidget, qtbot: QtBot, tmp_path: Path) -> None:
     html = ("<html><body style='font-family:sans-serif'><h2>Newsletter</h2><p>Hello <b>Rob</b>, here is <i>formatted</i> mail with a "
             "<a href='https://example.com'>link</a>.</p><table border=1 cellpadding=6><tr><th>Item</th><th>Price</th></tr><tr><td>One</td><td>1.00</td></tr></table></body></html>")
     load(qtbot, reader, shown(html=html, subject="A formatted newsletter"))
@@ -304,6 +305,6 @@ def test_a_pdf_of_an_html_message_for_review(reader: ReaderWidget, qtbot: QtBot)
         done.append(ok)
 
     reader.web_page.pdfPrintingFinished.connect(finished)
-    reader.web_page.printToPdf(str(SHOTS / "html-message.pdf"))
+    reader.web_page.printToPdf(str(tmp_path / "html-message.pdf"))
     qtbot.waitUntil(lambda: bool(done), timeout=10000)
-    assert done == [True]
+    assert done == [True] and (tmp_path / "html-message.pdf").stat().st_size > 1000
