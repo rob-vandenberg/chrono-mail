@@ -50,14 +50,17 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from chrono_mail.ui.rulesdialog import RulesDialog
 from chrono_mail.ui.printing import print_message
+from chrono_mail.ui.scheduleddialog import ScheduledDialog
 from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
 from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
+from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.34"
+__version__ = "mainwindow.py 0.0.35"
 
 # --- Version history ----------------------------------------------------
+# v0.0.35: Send later and snooze
 # v0.0.34: Junk and unread navigation
 # v0.0.33: Rules
 # v0.0.32: IMAP IDLE: new mail pushed to the window
@@ -76,6 +79,7 @@ __version__ = "mainwindow.py 0.0.34"
 # v0.0.13: Initial main window
 
 AUTO_CHECK_MINUTES: int = 5
+DUE_CHECK_MS: int = 60_000
 WATCH_SECONDS: int = 300
 WATCH_RETRY_MS: int = 60_000
 MARK_READ_DELAY_MS: int = 700
@@ -137,6 +141,9 @@ class MainWindow(QMainWindow):
         self.tray.settings_requested.connect(self._settings_from_tray)
         self.tray.quit_requested.connect(self.quit_program)
         self.tray.set_visible(bool_setting(settings, "tray", True))
+        self._due_timer = QTimer(self)
+        self._due_timer.timeout.connect(self.run_due)
+        self._due_timer.start(DUE_CHECK_MS)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.check_mail)
         if bool_setting(settings, "auto_check", True):
@@ -266,6 +273,8 @@ class MainWindow(QMainWindow):
         self.act_recovery = self._action("Back up the encryption key…", self.show_recovery)
         self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
         self.act_settings = self._action("Settings…", self.open_settings, "Ctrl+,", "configure")
+        self.act_scheduled = self._action("Scheduled and snoozed messages…", self.open_scheduled)
+        self.act_snooze = self._action("Snooze…", self.snooze_selected, "Ctrl+Shift+Z", "appointment-soon")
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
         self.act_quit = self._action("Quit", self.quit_program, "Ctrl+Q", "application-exit")
         self.act_search = self._action("Search", self._focus_search, "Ctrl+F")
@@ -343,6 +352,7 @@ class MainWindow(QMainWindow):
             message_menu.addAction(action)
         message_menu.addSeparator()
         message_menu.addAction(self.act_archive)
+        message_menu.addAction(self.act_snooze)
         message_menu.addAction(self.act_junk)
         message_menu.addAction(self.act_not_junk)
         message_menu.addAction(self.act_delete)
@@ -360,6 +370,7 @@ class MainWindow(QMainWindow):
         folder_menu.addAction(self.act_empty_folder)
         tools_menu = bar.addMenu("&Tools")
         tools_menu.addAction(self.act_rules)
+        tools_menu.addAction(self.act_scheduled)
         view_menu = bar.addMenu("&View")
         view_menu.addAction(self.act_search)
         view_menu.addAction(self.act_advanced)
@@ -430,6 +441,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("last_folder", self._folder or "")
         self._quitting_for_good = True
         self.backend.engine.stop_event.set()  # waits for new mail end now
+        self._due_timer.stop()
         self.backend.wait_for_done(3000)
         self.tray.set_visible(False)
         event.accept()
@@ -558,6 +570,58 @@ class MainWindow(QMainWindow):
             self._timer.start(self._auto_minutes() * 60 * 1000)
         else:
             self._timer.stop()
+
+    def run_due(self) -> None:
+        """Every minute: send the scheduled messages whose time has come and bring snoozed messages back."""
+        if not self._accounts or self._quitting_for_good:
+            return
+        changes = {"sent": 0, "woken": 0}
+
+        def finish() -> None:
+            if changes["sent"] or changes["woken"]:
+                self._after_change(f"{changes['sent']} scheduled message(s) sent, {changes['woken']} snoozed message(s) back")
+
+        def sent(result: object) -> None:
+            changes["sent"] = int(getattr(result, "sent"))
+            for text in getattr(result, "failed"):
+                self.show_status(f"Scheduled message: {text}", error=True)
+            self.backend.call("message.wake", {}, woke, lambda error: finish(), owner=self)
+
+        def woke(result: object) -> None:
+            changes["woken"] = int(getattr(result, "woken"))
+            finish()
+
+        self.backend.call("mail.send-due", {}, sent, lambda error: self._report("Scheduled messages", error), owner=self)
+
+    def open_scheduled(self) -> None:
+        dialog = ScheduledDialog(self.backend, self)
+        dialog.exec()
+        if dialog.changed:
+            self._after_change("Scheduled messages changed")
+
+    def snooze_selected(self) -> None:
+        rows = self._selected_rows()
+        if not rows or self._account_id is None:
+            return
+        dialog = WhenDialog("Snooze", "Bring the message back, unread, at:", "Snooze", self)
+        if dialog.exec() != WhenDialog.DialogCode.Accepted:
+            return
+        account, until = self._account_id, dialog.chosen()
+        remaining = len(rows)
+
+        def done(result: object) -> None:
+            nonlocal remaining
+            remaining -= 1
+            if remaining == 0:
+                self._after_change(f"Snoozed {len(rows)} message(s) until {until.replace('T', ' ')}")
+
+        def failed(error: ChronoMailError) -> None:
+            nonlocal remaining
+            remaining -= 1
+            self._report("Could not snooze", error)
+
+        for row in rows:
+            self.backend.call("message.snooze", {"account": account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "until": until}, done, failed, owner=self)
 
     def open_rules(self) -> None:
         """Tools > Rules: what is done with mail as it arrives."""
@@ -1305,6 +1369,7 @@ class MainWindow(QMainWindow):
         self._fill_move_menu()
         menu.addMenu(self.move_menu).setText("Move to")
         menu.addAction(self.act_archive)
+        menu.addAction(self.act_snooze)
         menu.addAction(self.act_not_junk if self._folder_role == "junk" else self.act_junk)
         menu.addAction(self.act_delete)
         menu.addSeparator()

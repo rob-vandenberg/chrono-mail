@@ -497,3 +497,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **What landed**
 - `message.junk`, `message.not-junk`; Mark as junk / Not junk; next and previous unread message (D-054). Tests: engine (1), window (3).
 
+## 2026-10-10 Step 14 of the autonomous work: send later and snooze (version 0.0.35)
+
+**What landed**
+- `mail.send --send-at`, `mail.scheduled`, `mail.send-due`, `mail.unschedule`, `message.snooze`, `message.snoozed`, `message.wake` (D-055); Send later… in the composer, Snooze…, a once-a-minute check in the window, a window for scheduled and snoozed messages.
+- Tests: engine (11), interface (8).
+
+**Still open**
+- A scheduled message is only sent while the program is running.
+

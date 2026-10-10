@@ -9,9 +9,11 @@ from chrono_mail.protocols.smtp import Refusal, SmtpLimits, send_message
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "send.py 0.0.10"
+__version__ = "send.py 0.0.35"
 
 # --- Version history ----------------------------------------------------
+# v0.0.35: Send later and snooze
+# v0.0.34: before_send hook
 # v0.0.10: Initial send and file
 
 Checkpoint = Callable[[str], None]
@@ -41,6 +43,7 @@ def send_and_file(
     limits: SmtpLimits = SmtpLimits(),
     ssl_context: ssl.SSLContext | None = None,
     checkpoint: Checkpoint = _no_checkpoint,
+    before_send: Callable[[], None] = lambda: None,
 ) -> SendOutcome:
     """Build the message, keep a verified copy in the Outbox, send it, then move it to Sent.
 
@@ -54,6 +57,7 @@ def send_and_file(
     path = f"cur/{reference.store_id}!2,S"
     _index(index, reference, path, raw)
     checkpoint("send:after-outbox")
+    before_send()  # for example: remove the scheduled message this one replaces, now that a safe copy is in the Outbox
     try:
         result = send_message(settings, password, outgoing.from_address.address, recipients, raw, limits, ssl_context)
     except ProtocolError as error:

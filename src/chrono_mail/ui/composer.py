@@ -29,11 +29,13 @@ from chrono_mail.ui.addresscompleter import AddressCompleter
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.richeditor import RichEditor
+from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.24"
+__version__ = "composer.py 0.0.35"
 
 # --- Version history ----------------------------------------------------
+# v0.0.35: Send later and snooze
 # v0.0.24: Rich text composing
 # v0.0.23: address completion
 # v0.0.20: Settings window, account editing, signatures
@@ -184,11 +186,13 @@ class ComposeWindow(QMainWindow):
         self.rich_button.setCheckable(True)
         self.rich_button.setToolTip("Write with bold, italic, lists and links. The message is sent as text and as HTML.")
         self.save_button = QPushButton("Save draft", central)
+        self.later_button = QPushButton("Send later…", central)
         self.send_button = QPushButton("Send", central)
         self.send_button.setDefault(True)
         buttons.addWidget(self.rich_button)
         buttons.addWidget(self.status, 1)
         buttons.addWidget(self.save_button)
+        buttons.addWidget(self.later_button)
         buttons.addWidget(self.send_button)
         layout.addLayout(buttons)
         self.setCentralWidget(central)
@@ -229,6 +233,7 @@ class ComposeWindow(QMainWindow):
             self.addAction(action)
         self.from_box.currentIndexChanged.connect(self._account_changed)
         self.rich_button.clicked.connect(self._rich_clicked)
+        self.later_button.clicked.connect(self._later_clicked)
         self.send_button.clicked.connect(self._send_clicked)
         self.save_button.clicked.connect(self._save_clicked)
         self.attach_button.clicked.connect(self._choose_files)
@@ -437,7 +442,16 @@ class ComposeWindow(QMainWindow):
 
     # --- sending ------------------------------------------------------------------------------------
 
-    def send(self) -> None:
+    def _later_clicked(self, checked: bool = False) -> None:
+        self.send_later()
+
+    def send_later(self) -> None:
+        """Ask for a time and keep the message in the Outbox until then."""
+        dialog = WhenDialog("Send later", "Send this message at:", "Schedule", self)
+        if dialog.exec() == WhenDialog.DialogCode.Accepted:
+            self.send(dialog.chosen())
+
+    def send(self, send_at: str | None = None) -> None:
         if self._sending or self._saving:
             return
         recipients = self._recipients()
@@ -459,6 +473,8 @@ class ComposeWindow(QMainWindow):
             "body": self._text(),
             "attach": self.attached_paths(),
         }
+        if send_at:
+            values["send_at"] = send_at
         if self.is_rich():
             values["html"] = self.rich.outgoing_html()
         if cc:
@@ -483,12 +499,18 @@ class ComposeWindow(QMainWindow):
 
     def _set_sending(self, sending: bool) -> None:
         self._sending = sending
-        for widget in (self.send_button, self.save_button, self.to, self.cc, self.bcc, self.subject, self.editor_stack, self.rich_button, self.from_box, self.attach_button, self.remove_button):
+        for widget in (self.send_button, self.later_button, self.save_button, self.to, self.cc, self.bcc, self.subject, self.editor_stack, self.rich_button, self.from_box, self.attach_button, self.remove_button):
             widget.setEnabled(not sending)
         self.status.setText("Sending…" if sending else "")
 
     def _sent(self, result: object) -> None:
         self._set_sending(False)
+        if getattr(result, "scheduled", None):
+            QMessageBox.information(self, "Scheduled", f"The message will be sent at {getattr(result, 'scheduled')}. It waits in your Outbox until then; the program has to be running at that time.")
+            self._finished = True
+            self.sent.emit(str(self.from_box.currentData()))
+            self.close()
+            return
         if not getattr(result, "sent"):
             QMessageBox.warning(
                 self,
