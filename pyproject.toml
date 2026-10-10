@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chrono-mail"
-version = "0.0.17"
+version = "0.0.18"
 description = "An open-source desktop email client for Linux, inspired by eM Client."
 readme = "README.md"
 requires-python = ">=3.14"

@@ -354,3 +354,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Drag and drop is tested through the drop events, not with a real mouse drag.
 
+## 2026-10-10 Step 4 of the autonomous work: conversations (version 0.0.18)
+
+**What landed**
+- Index: `thread_sizes`, and the `newest_per_thread` filter. Engine: `message.thread`, `thread_size` on every row, `conversations` option of `message.search` (D-039).
+- Interface: count box in the list, View > Show conversations (remembered), conversation bar above the reading pane (`ui/conversationbar.py`).
+- Tests: engine (6), window (4). Measured on 200,000 generated messages: grouped first page 1.5 ms, full scan 275 ms (not the 500,000 mailbox).
+
+**Still open**
+- No subject-based threading fallback; the grouped list is sorted by date only.
+

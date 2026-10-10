@@ -1,6 +1,7 @@
 import base64
 import mimetypes
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from email.utils import parseaddr
@@ -20,9 +21,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import Pop3State, fetch_pop3, send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.16"
+__version__ = "commands_mail.py 0.0.18"
 
 # --- Version history ----------------------------------------------------
+# v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.16: a sent message can replace a draft
 # v0.0.13: previews, inline images, attachment save, compose, reply marks
 # v0.0.12: Initial message commands
@@ -56,10 +58,20 @@ class MessageRow:
     attachments: bool
     preview: str
     recipients: str
+    thread_size: int = 1  # messages in the conversation, in all folders
 
 
-def _row(message: IndexedMessage) -> MessageRow:
-    return MessageRow(message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, _flag_names(message.flags), message.has_attachments, message.preview, message.recipients)
+def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage]) -> tuple[MessageRow, ...]:
+    """Message rows with the size of their conversations."""
+    found = list(messages)
+    sizes = mailbox.index.thread_sizes([message.thread_key for message in found])
+    return tuple(
+        MessageRow(
+            message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, _flag_names(message.flags),
+            message.has_attachments, message.preview, message.recipients, sizes.get(message.thread_key, 1),
+        )
+        for message in found
+    )
 
 
 # --- fetching and sending -----------------------------------------------------------------------
@@ -260,7 +272,7 @@ def message_list(engine: Engine, parameters: ListParameters) -> ListResult:
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder)
         rows = mailbox.index.page(folder, SortField(parameters.sort), not parameters.oldest_first, parameters.offset, parameters.limit, parameters.unread_only)
-        return ListResult("/".join(folder), mailbox.index.count(folder), mailbox.index.count(folder, unread_only=True), tuple(_row(row) for row in rows))
+        return ListResult("/".join(folder), mailbox.index.count(folder), mailbox.index.count(folder, unread_only=True), _rows(mailbox, rows))
 
 
 @dataclass(frozen=True, slots=True)
@@ -362,6 +374,7 @@ class SearchParameters:
     unread: bool | None = field(default=None, metadata=option("Only unread (true) or only read (false) messages"))
     flagged: bool | None = field(default=None, metadata=option("Only flagged (true) or only unflagged (false) messages"))
     has_attachments: bool | None = field(default=None, metadata=option("Only messages with (true) or without (false) attachments"))
+    conversations: bool = field(default=False, metadata=option("Show only the newest message of each conversation (not together with words to find)"))
     offset: int = field(default=0, metadata=option("How many results to skip"))
     limit: int = field(default=50, metadata=option("How many results to show"))
 
@@ -369,8 +382,18 @@ class SearchParameters:
 def message_search(engine: Engine, parameters: SearchParameters) -> tuple[MessageRow, ...]:
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
-        filters = SearchFilter(unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments)
-        return tuple(_row(row) for row in mailbox.index.search(parameters.query, folder, filters, parameters.offset, parameters.limit))
+        filters = SearchFilter(unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments, newest_per_thread=parameters.conversations)
+        return _rows(mailbox, mailbox.index.search(parameters.query, folder, filters, parameters.offset, parameters.limit))
+
+
+def message_thread(engine: Engine, parameters: MessageParameters) -> tuple[MessageRow, ...]:
+    """The conversation a message belongs to, oldest first, with the messages of all folders."""
+    with open_mailbox(engine, parameters.account) as mailbox:
+        indexed = mailbox.index.get(_check_id(parameters.message))
+        if indexed is None:
+            raise UsageError("Message not found")
+        members = mailbox.index.thread_members(indexed.thread_key)
+        return _rows(mailbox, members)
 
 
 # --- changing ------------------------------------------------------------------------------------------
@@ -522,6 +545,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register("mail.fetch", "Download new messages from the POP3 server", AccountParameters, mail_fetch)
     registry.register("mail.send", "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send)
     registry.register("message.list", "List the messages of a folder", ListParameters, message_list)
+    registry.register("message.thread", "List the messages of the conversation a message belongs to", MessageParameters, message_thread)
     registry.register("message.show", "Show one message", MessageParameters, message_show)
     registry.register("message.search", "Search messages", SearchParameters, message_search)
     registry.register("message.attachment.save", "Save one attachment of a message to a file", AttachmentSaveParameters, message_attachment_save)

@@ -8,9 +8,10 @@ from chrono_mail.ui.formatting import avatar_colour, display_name, initials, sho
 from chrono_mail.ui.models import ROW_ROLE
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.0.14"
+__version__ = "delegate.py 0.0.18"
 
 # --- Version history ----------------------------------------------------
+# v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.14: secondary text on a selected row has more contrast
 # v0.0.13: Initial message row painting
 
@@ -108,10 +109,19 @@ class MessageDelegate(QStyledItemDelegate):
         marks = ("⚑ " if "flagged" in flags else "") + ("📎" if getattr(row, "attachments") else "")
         marks_width = QFontMetrics(base).horizontalAdvance(marks) + (MARGIN if marks else 0)
         subject = str(getattr(row, "subject")) or "(no subject)"
-        subject_rect = QRect(left, top + line, right - left - marks_width, line)
+        size = int(getattr(row, "thread_size", 1))
+        badge = str(size) if size > 1 else ""
+        badge_width = QFontMetrics(small).horizontalAdvance(badge) + 12 + MARGIN if badge else 0
+        subject_rect = QRect(left, top + line, right - left - marks_width - badge_width, line)
         painter.setFont(strong)
         painter.setPen(text)
         painter.drawText(subject_rect, Qt.AlignmentFlag.AlignVCenter, QFontMetrics(strong).elidedText(subject, Qt.TextElideMode.ElideRight, subject_rect.width()))
+        if badge:  # a conversation of several messages: the number in a small rounded box
+            box = QRect(right - marks_width - badge_width + MARGIN, top + line + 3, badge_width - MARGIN, line - 6)
+            painter.setFont(small)
+            painter.setPen(quiet)
+            painter.drawRoundedRect(box, 4, 4)
+            painter.drawText(box, Qt.AlignmentFlag.AlignCenter, badge)
         if marks:
             painter.setFont(base)
             painter.setPen(text)

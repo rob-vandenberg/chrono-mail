@@ -31,6 +31,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12 | Key backup and recovery procedure, tested end to end. Done in the interface: backup at account creation, restore dialog when the key is missing (11 scenarios tested). | done |
 | 1.12a | Drafts: save, autosave, resume, attachments kept, Outbox messages editable (0.0.16). | done |
 | 1.12b | Message actions: Archive, mark all as read, empty Trash and Junk, drag and drop to folders (0.0.17). | done |
+| 1.12c | Conversations: size in the list, grouped list, conversation bar (0.0.18). | done |
 | 1.13 | Packaging: Flatpak for Fedora and Kubuntu; test on GNOME. | todo |
 | 1.14 | Windows test run on DEVELOPMENT. | todo |
 

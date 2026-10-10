@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.13"
+__version__ = "model.py 0.0.18"
 
 # --- Version history ----------------------------------------------------
+# v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.13: preview
 # v0.0.8: Initial index model
 
@@ -83,3 +84,4 @@ class SearchFilter:
     date_to: datetime | None = None
     minimum_size: int | None = None
     maximum_size: int | None = None
+    newest_per_thread: bool = False  # only the newest message of each conversation in its folder (ignored with a text query)

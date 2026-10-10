@@ -13,9 +13,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.17"
+__version__ = "models.py 0.0.18"
 
 # --- Version history ----------------------------------------------------
+# v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.17: messages can be dragged out of the list
 # v0.0.14: icons in the folder tree
 # v0.0.13: Initial folder and message list models
@@ -47,10 +48,11 @@ class ViewSpec:
     unread: bool | None = None
     flagged: bool | None = None
     has_attachments: bool | None = None
+    conversations: bool = False  # only the newest message of each conversation (a plain folder view only)
 
     @property
     def kind(self) -> ViewKind:
-        searching = bool(self.query) or self.unread is not None or self.flagged is not None or self.has_attachments is not None or self.folder is None
+        searching = self.conversations or bool(self.query) or self.unread is not None or self.flagged is not None or self.has_attachments is not None or self.folder is None
         return ViewKind.QUERY if searching else ViewKind.FOLDER
 
 
@@ -214,6 +216,8 @@ class MessageListModel(QAbstractListModel):
         values: dict[str, object] = {"account": spec.account, "query": spec.query, "offset": offset, "limit": PAGE_SIZE}
         if spec.folder is not None:
             values["folder"] = spec.folder
+        if spec.conversations:
+            values["conversations"] = True
         for name in ("unread", "flagged", "has_attachments"):
             value = getattr(spec, name)
             if value is not None:

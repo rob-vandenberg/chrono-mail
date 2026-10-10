@@ -29,6 +29,7 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.composer import ComposeWindow
+from chrono_mail.ui.conversationbar import ConversationBar
 from chrono_mail.ui.foldertree import FolderTree
 from chrono_mail.ui.delegate import MessageDelegate
 from chrono_mail.ui.icons import application_icon, theme_icon
@@ -46,9 +47,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.17"
+__version__ = "mainwindow.py 0.0.18"
 
 # --- Version history ----------------------------------------------------
+# v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.17: Message actions: archive, mark all as read, empty folder, drag and drop
 # v0.0.16: Drafts
 # v0.0.15: the encryption key is checked at the start and can be restored
@@ -163,7 +165,14 @@ class MainWindow(QMainWindow):
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.splitter.addWidget(self.tree)
         self.splitter.addWidget(list_pane)
-        self.splitter.addWidget(self.reader)
+        self.conversation_bar = ConversationBar(self)
+        reading_pane = QWidget(self)
+        reading_layout = QVBoxLayout(reading_pane)
+        reading_layout.setContentsMargins(0, 0, 0, 0)
+        reading_layout.setSpacing(0)
+        reading_layout.addWidget(self.conversation_bar)
+        reading_layout.addWidget(self.reader, 1)
+        self.splitter.addWidget(reading_pane)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setStretchFactor(2, 2)
@@ -214,6 +223,9 @@ class MainWindow(QMainWindow):
         self.act_auto.setCheckable(True)
         self.act_auto.setChecked(bool_setting(self.settings, "auto_check", True))
         self.act_auto.toggled.connect(self._toggle_auto_check)
+        self.act_conversations = QAction("Show conversations", self)
+        self.act_conversations.setCheckable(True)
+        self.act_conversations.setChecked(bool_setting(self.settings, "conversations", False))
         self.act_new_folder = self._action("New folder…", self.new_folder)
         self.act_rename_folder = self._action("Rename folder…", self.rename_folder)
         self.act_delete_folder = self._action("Delete folder…", self.delete_folder)
@@ -288,6 +300,7 @@ class MainWindow(QMainWindow):
         folder_menu.addAction(self.act_empty_folder)
         view_menu = bar.addMenu("&View")
         view_menu.addAction(self.act_search)
+        view_menu.addAction(self.act_conversations)
         view_menu.addAction(self.act_auto)
         help_menu = bar.addMenu("&Help")
         help_menu.addAction(self.act_about)
@@ -306,6 +319,8 @@ class MainWindow(QMainWindow):
         self.tree.selectionModel().currentChanged.connect(self._tree_changed)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.tree.messages_dropped.connect(self._messages_dropped)
+        self.act_conversations.toggled.connect(self._toggle_conversations)
+        self.conversation_bar.message_chosen.connect(self._show_conversation_member)
         self.list_view.selectionModel().currentChanged.connect(self._row_changed)
         self.list_view.customContextMenuRequested.connect(self._list_menu)
         self.list_view.doubleClicked.connect(self._row_double_clicked)
@@ -347,6 +362,44 @@ class MainWindow(QMainWindow):
         self.settings.setValue("last_folder", self._folder or "")
         self.backend.wait_for_done(3000)
         event.accept()
+
+    def _clear_reader(self) -> None:
+        self.reader.clear()
+        self.conversation_bar.clear()
+
+    def _toggle_conversations(self, on: bool) -> None:
+        self.settings.setValue("conversations", on)
+        self.conversation_bar.clear()
+        self._apply_view()
+
+    def _show_conversation_member(self, folder: str, message_id: str, seen: bool) -> None:
+        """A message of the conversation was chosen in the bar: show it in the reading pane."""
+        if self._account_id is None:
+            return
+        self._mark_read_timer.stop()
+        self._show_request += 1
+        request, account = self._show_request, self._account_id
+
+        def shown(result: object) -> None:
+            if request != self._show_request:
+                return
+            self._shown = (account, folder, message_id)
+            self.reader.show_message(result)
+            if not seen:
+                self._mark_read_timer.start(MARK_READ_DELAY_MS)
+
+        def failed(error: ChronoMailError) -> None:
+            if request == self._show_request:
+                self._report("Could not open the message", error)
+
+        self.backend.call("message.show", {"account": account, "folder": folder, "message": message_id}, shown, failed, owner=self)
+
+    def _load_conversation(self, account: str, folder: str, message_id: str, request: int) -> None:
+        def arrived(result: object) -> None:
+            if request == self._show_request:
+                self.conversation_bar.show_thread(list(result) if isinstance(result, tuple) else [], message_id)
+
+        self.backend.call("message.thread", {"account": account, "folder": folder, "message": message_id}, arrived, lambda error: self.conversation_bar.clear(), owner=self)
 
     def _toggle_auto_check(self, on: bool) -> None:
         self.settings.setValue("auto_check", on)
@@ -520,7 +573,7 @@ class MainWindow(QMainWindow):
         self.search_box.blockSignals(True)
         self.search_box.clear()
         self.search_box.blockSignals(False)
-        self.reader.clear()
+        self._clear_reader()
         self._shown = None
         self._apply_view()
 
@@ -555,7 +608,8 @@ class MainWindow(QMainWindow):
             folder = None
         elif self._tree_kind in ("unread", "flagged"):
             folder = None
-        return ViewSpec(self._account_id, folder, query, self._sort, self._oldest_first, unread, flagged, attachments)
+        grouped = self.act_conversations.isChecked() and self._tree_kind == "folder" and not (query or unread or flagged or attachments)
+        return ViewSpec(self._account_id, folder, query, self._sort, self._oldest_first, unread, flagged, attachments, grouped)
 
     def _apply_view(self) -> None:
         self.delegate.show_recipients = self._folder_role in ("sent", "drafts") or self._folder == "Outbox"
@@ -601,7 +655,7 @@ class MainWindow(QMainWindow):
         row = self.list_model.row_at(current.row()) if current.isValid() else None
         if row is None or self._account_id is None:
             if not self.list_view.selectionModel().hasSelection():
-                self.reader.clear()
+                self._clear_reader()
                 self._shown = None
             return
         folder, message_id = str(getattr(row, "folder")), str(getattr(row, "message_id"))
@@ -616,6 +670,10 @@ class MainWindow(QMainWindow):
                 return
             self._shown = (account, folder, message_id)
             self.reader.show_message(result)
+            if int(getattr(row, "thread_size", 1)) > 1:
+                self._load_conversation(account, folder, message_id, request)
+            else:
+                self.conversation_bar.clear()
             if "seen" not in getattr(row, "flags"):
                 self._mark_read_timer.start(MARK_READ_DELAY_MS)
 
@@ -781,7 +839,7 @@ class MainWindow(QMainWindow):
         """Something changed in the store: show the same folder again and update the counts."""
         self.show_status(text)
         self._show_request += 1  # whatever was being opened may no longer exist
-        self.reader.clear()
+        self._clear_reader()
         self._shown = None
         self.list_model.reload()
         self._refresh_counts()

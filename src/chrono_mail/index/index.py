@@ -1,7 +1,7 @@
 import os
 import re
 import sqlite3
-from collections.abc import Generator, Iterable
+from collections.abc import Collection, Generator, Iterable
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,9 +18,10 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.0.13"
+__version__ = "index.py 0.0.18"
 
 # --- Version history ----------------------------------------------------
+# v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.13: preview, unread index, busy timeout
 # v0.0.8: Initial message index
 
@@ -262,6 +263,17 @@ class Index:
         ).fetchall()
         return [_row(row) for row in rows]
 
+    def thread_sizes(self, thread_keys: Collection[str]) -> dict[str, int]:
+        """How many messages (in all folders) each of these conversations has."""
+        sizes: dict[str, int] = {}
+        keys = sorted(set(thread_keys))
+        for start in range(0, len(keys), 500):
+            chunk = keys[start : start + 500]
+            marks = ", ".join("?" for _ in chunk)
+            for key, count in self._connection.execute(f"SELECT thread_key, count(*) FROM messages WHERE thread_key IN ({marks}) GROUP BY thread_key", chunk):
+                sizes[str(key)] = int(count)
+        return sizes
+
     def search(
         self,
         query: str,
@@ -299,6 +311,12 @@ class Index:
         if filters.date_to is not None:
             conditions.append(f"{steer}m.date <= ?")
             parameters.append(_epoch(filters.date_to))
+        if filters.newest_per_thread and not expression:
+            conditions.append(
+                "NOT EXISTS (SELECT 1 FROM messages n WHERE n.thread_key = m.thread_key AND n.folder = m.folder AND n.id != m.id"
+                " AND (COALESCE(n.date, -4611686018427387904) > COALESCE(m.date, -4611686018427387904)"
+                " OR (COALESCE(n.date, -4611686018427387904) = COALESCE(m.date, -4611686018427387904) AND n.id > m.id)))"
+            )
         if filters.minimum_size is not None:
             conditions.append("m.size >= ?")
             parameters.append(filters.minimum_size)

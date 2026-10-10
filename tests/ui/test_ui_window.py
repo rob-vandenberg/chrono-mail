@@ -14,9 +14,10 @@ from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.17"
+__version__ = "test_ui_window.py 0.0.18"
 
 # --- Version history ----------------------------------------------------
+# v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.17: Message actions: archive, mark all as read, empty folder, drag and drop
 # v0.0.16: Drafts
 # v0.0.13: Initial main window tests
@@ -539,3 +540,106 @@ def test_mark_all_as_read_and_empty_folder(world: World, qtbot: QtBot) -> None:
     world.window.empty_folder()  # not allowed in the Inbox: nothing happens
     qtbot.wait(150)
     assert world.call("message.list", account=world.account_id, folder="Inbox").total == 2
+
+
+# --- conversations (0.0.18) ---------------------------------------------------------------------------------------------------------------
+
+
+def make_conversation(world: World) -> tuple[str, str]:
+    from datetime import UTC, datetime, timedelta
+
+    from chrono_mail.core import MessageFlag
+    from chrono_mail.engine.mailbox import open_mailbox
+    from tests.mailfactory import raw_message
+
+    start = datetime(2026, 6, 1, 9, 0, tzinfo=UTC)
+    with open_mailbox(world.engine, world.account_id) as mailbox:
+        inbox, sent = mailbox.folder("Inbox"), mailbox.folder("Sent")
+        first = mailbox.deliver(inbox, raw_message(subject="Plans", sender="Dora <dora@example.com>", message_id="<k1@x>", date=start), frozenset())
+        mailbox.deliver(sent, raw_message(subject="Re: Plans", sender="me@example.com", message_id="<k2@x>", references="<k1@x>", date=start + timedelta(minutes=5)), frozenset({MessageFlag.SEEN}))
+        last = mailbox.deliver(inbox, raw_message(subject="Re: Plans", sender="Dora <dora@example.com>", message_id="<k3@x>", references="<k1@x>", date=start + timedelta(minutes=9)), frozenset())
+    return first.store_id, last.store_id
+
+
+def test_conversation_mode_groups_a_folder_and_shows_the_conversation_bar(world: World, qtbot: QtBot) -> None:
+    first, last = make_conversation(world)
+    world.window.start()
+    settle(qtbot, world, 5)
+    assert world.window.list_model.rowCount() == 5
+    world.window.act_conversations.setChecked(True)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 4)  # the 3 original messages and 1 conversation (2 of its 3 are in the Inbox)
+    assert subjects(world.window).count("Re: Plans") == 1 and "Plans" not in subjects(world.window)
+    position = subjects(world.window).index("Re: Plans")
+    assert row_of(world.window, position).thread_size == 3
+    select(world.window, position)
+    wait(qtbot, lambda: not world.window.conversation_bar.isHidden())
+    assert world.window.conversation_bar._list.count() == 3  # noqa: SLF001
+    assert world.window.settings.value("conversations") in (True, "true")
+
+
+def test_choosing_a_message_in_the_conversation_bar_shows_it(world: World, qtbot: QtBot) -> None:
+    first, last = make_conversation(world)
+    world.window.start()
+    settle(qtbot, world, 5)
+    world.window.act_conversations.setChecked(True)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 4)
+    select(world.window, subjects(world.window).index("Re: Plans"))
+    wait(qtbot, lambda: not world.window.conversation_bar.isHidden())
+    bar = world.window.conversation_bar
+    bar._list.setCurrentRow(0)  # noqa: SLF001
+    bar._chosen(bar._list.item(0))  # noqa: SLF001
+    wait(qtbot, lambda: world.window._shown is not None and world.window._shown[2] == first)  # noqa: SLF001
+    wait(qtbot, lambda: "seen" in world.call("message.show", account=world.account_id, folder="Inbox", message=first).flags)  # read after the delay
+
+
+def test_conversation_mode_is_off_while_searching_or_filtering(world: World, qtbot: QtBot) -> None:
+    make_conversation(world)
+    world.window.start()
+    settle(qtbot, world, 5)
+    world.window.act_conversations.setChecked(True)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 4)
+    spec = world.window.view_spec()
+    assert spec is not None and spec.conversations
+    world.window.filter_unread.setChecked(True)
+    wait(qtbot, lambda: world.window.list_model.rowCount() >= 5)  # every unread message is listed, not one per conversation
+    spec = world.window.view_spec()
+    assert spec is not None and not spec.conversations
+    world.window.filter_unread.setChecked(False)
+    world.window.act_conversations.setChecked(False)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 5)
+    assert world.window.conversation_bar.isHidden()
+
+
+def test_a_conversation_row_is_painted_with_its_count_at_any_width(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QListView
+
+    from chrono_mail.ui.delegate import ROW_HEIGHT, MessageDelegate
+    from chrono_mail.ui.models import MessageListModel, ViewSpec
+
+    make_conversation(world)
+    images = []
+    for conversations in (False, True):
+        model = MessageListModel(world.backend)
+        view = QListView()
+        qtbot.addWidget(view)
+        view.setModel(model)
+        view.setItemDelegate(MessageDelegate())
+        view.resize(420, ROW_HEIGHT * 6)
+        view.show()
+        model.show(ViewSpec(world.account_id, "Inbox", conversations=conversations))
+        wait(qtbot, lambda: model.rowCount() > 0 and model.row_at(0) is not None)
+        qtbot.wait(100)
+        images.append(view.viewport().grab().toImage())
+    assert images[0] != images[1]  # the count box changes the picture
+    for width in (60, 150, 800):
+        narrow = QListView()
+        qtbot.addWidget(narrow)
+        narrow_model = MessageListModel(world.backend)
+        narrow.setModel(narrow_model)
+        narrow.setItemDelegate(MessageDelegate())
+        narrow.resize(width, ROW_HEIGHT * 3)
+        narrow.show()
+        narrow_model.show(ViewSpec(world.account_id, "Inbox", conversations=True))
+        wait(qtbot, lambda: narrow_model.rowCount() > 0 and narrow_model.row_at(0) is not None)
+        qtbot.wait(50)
+        assert not narrow.viewport().grab().isNull()
