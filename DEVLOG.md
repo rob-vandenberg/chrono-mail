@@ -474,3 +474,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Not tried by hand in the window against the real server (the live tests drive the sync itself); IDLE (task 2.5); renaming a folder is not a server rename.
 
+## 2026-10-10 Task 2.5: IMAP IDLE (version 0.0.32)
+
+**What landed**
+- `ImapClient.idle`, `mail.wait` (`engine/commands_watch.py`), `Engine.stop_event`, a pool of its own for waits, watchers in the window (D-052).
+- Tests: client (4), engine (4), window (5), live (1: a message appended by a second connection ends the wait).
+
+**Milestone 2 is complete** (tasks 2.1 to 2.5). Still open for IMAP: CONDSTORE (a cheaper flag sync for large folders), watching folders other than the Inbox, a real server-side folder rename, and trying it by hand in the window.
+

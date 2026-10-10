@@ -10,9 +10,10 @@ from chrono_mail.protocols.imap import ImapClient, ImapLimits
 from tests.live.account import LiveAccount
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_imap.py 0.0.30"
+__version__ = "test_live_imap.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: IMAP IDLE: new mail pushed to the window
 # v0.0.30: IMAP sync, store to server
 # v0.0.29: IMAP sync, server to store
 # v0.0.28: Initial live IMAP tests
@@ -222,3 +223,65 @@ def test_local_changes_reach_the_real_server(live_account: LiveAccount, imap: Im
             with suppress(Exception):
                 imap.delete_folder(name)
         index.close()
+
+
+def test_an_imap_account_in_the_engine_against_the_real_server(live_account: LiveAccount, imap: ImapClient, folder_name: str, tmp_path: Path) -> None:
+    from chrono_mail.engine import build_registry
+    from tests.enginefactory import make_engine
+
+    engine = make_engine(tmp_path)
+    registry = build_registry()
+    created = registry.run(
+        engine, "account.add",
+        {
+            "kind": "imap", "display_name": "Live", "email_address": live_account.user, "username": live_account.user, "password": live_account.password,
+            "incoming_host": live_account.host, "incoming_port": live_account.imap_ssl_port, "incoming_security": "tls",
+            "outgoing_host": live_account.host, "outgoing_port": live_account.smtp_ssl_port, "outgoing_security": "tls",
+        },
+    )
+    account = str(getattr(created, "account_id"))
+    imap.create_folder(folder_name)
+    imap.subscribe(folder_name)
+    try:
+        imap.append(folder_name, MESSAGE, ["\\Seen"])
+        fetched = registry.run(engine, "mail.fetch", {"account": account})
+        assert getattr(fetched, "aborted") is None and getattr(fetched, "downloaded") >= 1
+        rows = getattr(registry.run(engine, "message.list", {"account": account, "folder": folder_name}), "messages")
+        assert [row.subject for row in rows] == ["Chrono Mail live IMAP test"] and rows[0].flags == ("seen",)
+        registry.run(engine, "message.flag", {"account": account, "folder": folder_name, "message": rows[0].message_id, "flagged": True})
+        registry.run(engine, "mail.fetch", {"account": account})
+        imap.select(folder_name)
+        assert "\\Flagged" in imap.uid_fetch("1:*")[0].flags
+    finally:
+        with suppress(Exception):
+            imap.select("INBOX", read_only=True)
+        with suppress(Exception):
+            imap.delete_folder(folder_name)
+
+
+def test_idle_sees_a_new_message_on_the_real_server(live_account: LiveAccount, imap: ImapClient, folder_name: str) -> None:
+    import threading
+
+    imap.create_folder(folder_name)
+    imap.subscribe(folder_name)
+    try:
+        if "IDLE" not in imap.capabilities:
+            pytest.skip("the server does not offer IDLE")
+        other = connect(live_account, secure=True)
+
+        def deliver() -> None:
+            other.append(folder_name, MESSAGE)
+
+        imap.select(folder_name)
+        timer = threading.Timer(1.5, deliver)
+        timer.start()
+        try:
+            assert imap.idle(30) is True
+        finally:
+            timer.join()
+            other.close()
+    finally:
+        with suppress(Exception):
+            imap.select("INBOX", read_only=True)
+        with suppress(Exception):
+            imap.delete_folder(folder_name)

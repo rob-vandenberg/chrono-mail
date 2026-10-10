@@ -9,9 +9,10 @@ from chrono_mail.protocols.imap import decode_folder_name, encode_folder_name
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeimap.py 0.0.30"
+__version__ = "fakeimap.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: IDLE
 # v0.0.30: IMAP sync, store to server
 # v0.0.28: Initial fake IMAP server
 
@@ -93,6 +94,7 @@ class FakeImapServer(ScriptedServer):
         move: bool = True,
         sasl_ir: bool = True,
         plain: bool = True,
+        idle: bool = True,
     ) -> None:
         super().__init__(self._session, implicit_tls)
         self.folders: dict[str, FakeFolder] = {
@@ -107,6 +109,8 @@ class FakeImapServer(ScriptedServer):
         self._user, self._password, self._starttls, self._fault = user, password, starttls_context, fault
         self._uidplus, self._move, self._sasl_ir, self._plain = uidplus, move, sasl_ir, plain
         self.refuse_appends: bool = False
+        self.idle_pushes: list[str] = []
+        self._idle = idle
 
     # --- what a test can do to the server -------------------------------------------------------------
 
@@ -117,6 +121,11 @@ class FakeImapServer(ScriptedServer):
             target.uid_next += 1
             target.messages.append(message)
             return message.uid
+
+    def push(self) -> None:
+        """Tell the clients that are in IDLE that something happened."""
+        with self.lock:
+            self.idle_pushes.append("x")
 
     def remove(self, folder: str, uid: int) -> None:
         with self.lock:
@@ -150,7 +159,9 @@ class FakeImapServer(ScriptedServer):
     # --- the protocol -----------------------------------------------------------------------------------
 
     def _capabilities(self, secure: bool) -> str:
-        words = ["IMAP4rev1", "SPECIAL-USE", "IDLE"]
+        words = ["IMAP4rev1", "SPECIAL-USE"]
+        if self._idle:
+            words.append("IDLE")
         if self._uidplus:
             words.append("UIDPLUS")
         if self._move:
@@ -223,6 +234,19 @@ class FakeImapServer(ScriptedServer):
                     conversation.send_line(f"{tag} NO [AUTHENTICATIONFAILED] Authentication failed.")
             elif not authenticated:
                 conversation.send_line(f"{tag} NO [AUTHENTICATIONREQUIRED] Log in first")
+            elif verb == "IDLE" and selected is not None and self._idle:
+                conversation.send_line("+ idling")
+                while True:
+                    status, line = conversation.read_line_within(0.05)
+                    if status == "closed":
+                        return
+                    if status == "line":
+                        conversation.send_line(f"{tag} OK idle terminated")
+                        break
+                    with self.lock:
+                        if self.idle_pushes:
+                            self.idle_pushes.clear()
+                            conversation.send_line(f"* {len(self.folders[selected].messages)} EXISTS")
             else:
                 selected = self._authenticated_command(conversation, tag, verb, argument, selected)
 

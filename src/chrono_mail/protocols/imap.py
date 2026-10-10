@@ -2,7 +2,7 @@ import base64
 import re
 import socket
 import ssl
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from types import TracebackType
 from typing import Self
@@ -10,9 +10,10 @@ from typing import Self
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 0.0.30"
+__version__ = "imap.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: IDLE
 # v0.0.30: uid_move tells the new UID
 # v0.0.28: Initial IMAP client
 
@@ -265,6 +266,25 @@ class ImapClient:
         if not chunk:
             raise ProtocolError("The server closed the connection unexpectedly")
         self._buffer += chunk
+
+    def _fill_within(self, seconds: float) -> bool:
+        """Wait up to this long for more data. False when none came; the connection is not harmed by that."""
+        if self._socket is None:
+            raise ProtocolError("Not connected")
+        self._socket.settimeout(seconds)
+        try:
+            chunk = self._socket.recv(65536)
+        except socket.timeout:
+            return False
+        except OSError as error:
+            raise ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}") from None
+        finally:
+            if self._socket is not None:
+                self._socket.settimeout(self._limits.read_timeout_seconds)
+        if not chunk:
+            raise ProtocolError("The server closed the connection unexpectedly")
+        self._buffer += chunk
+        return True
 
     def _read_line(self) -> bytes:
         limit = self._limits.maximum_line_bytes
@@ -609,6 +629,41 @@ class ImapClient:
                 except ProtocolError:
                     return AppendResult()  # a set of UIDs such as 4:6, for several messages: not needed here
         return AppendResult()
+
+    def idle(self, seconds: float, stop: Callable[[], bool] = lambda: False) -> bool:
+        """Wait for the server to report a change in the selected folder (IDLE), for at most this many seconds or until
+        stop() says so. True when the server reported a change. Needs a selected folder and a server that offers IDLE."""
+        if "IDLE" not in self.capabilities:
+            raise ProtocolError("The server does not offer IDLE")
+        tag = self._next_tag()
+        self._send_raw(f"{tag} IDLE\r\n".encode())
+        while True:
+            reply = self._read_response()
+            if reply.tag == "+":
+                break
+            if reply.tag == tag:
+                raise ImapRefused(f"The server would not start IDLE: {reply.text}")
+        changed = False
+        waited = 0.0
+        step = 1.0
+        while waited < seconds and not changed and not stop():
+            if b"\n" not in self._buffer and not self._fill_within(step):
+                waited += step
+                continue
+            if b"\n" in self._buffer:
+                reply = self._read_response()
+                if reply.tag == "*" and reply.name == "BYE":
+                    raise ProtocolError(f"The server ended the connection: {reply.text}")
+                changed = reply.tag == "*" and reply.name in ("EXISTS", "EXPUNGE", "FETCH", "RECENT")
+        self._send_raw(b"DONE\r\n")
+        while True:
+            reply = self._read_response()
+            if reply.tag == tag:
+                if reply.name != "OK":
+                    raise ImapRefused(f"The server ended IDLE with an error: {reply.text}")
+                return changed
+            if reply.tag == "*" and reply.name in ("EXISTS", "EXPUNGE", "FETCH", "RECENT"):
+                changed = True
 
     def create_folder(self, folder: str) -> None:
         self._command(f"CREATE {quote(encode_folder_name(folder))}")

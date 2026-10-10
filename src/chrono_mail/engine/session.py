@@ -19,9 +19,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.13"
+__version__ = "session.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: stop_event for long waits
 # v0.0.13: key cache, safe for concurrent commands
 # v0.0.12: Initial engine session
 
@@ -57,6 +58,7 @@ class Engine:
     clock: Callable[[], float] = time.time
     durable: bool = True
     progress: Progress = field(default=_no_progress)
+    stop_event: threading.Event = field(default_factory=threading.Event, repr=False)  # set when the program is ending: long waits stop
     _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)
     _cache_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 

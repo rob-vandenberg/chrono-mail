@@ -10,9 +10,10 @@ from tests.fakeimap import FakeImapServer
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_protocols_imap.py 0.0.30"
+__version__ = "test_protocols_imap.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: IMAP IDLE: new mail pushed to the window
 # v0.0.30: IMAP sync, store to server
 # v0.0.28: Initial IMAP client tests
 
@@ -379,3 +380,83 @@ def test_nul_bytes_and_unexpected_continuations_are_refused() -> None:
 def test_non_utf8_text_in_a_status_line_is_tolerated() -> None:
     with answer_with(b"* OK caf\xe9 still fine") as server, client(server) as imap:
         imap.noop()
+
+
+# --- IDLE (0.0.32) -----------------------------------------------------------------------------------------------------------------------------
+
+
+def test_idle_returns_when_the_server_reports_a_change() -> None:
+    import threading
+    import time
+
+    with FakeImapServer() as server, client(server, limits=ImapLimits(read_timeout_seconds=3, connect_timeout_seconds=3)) as imap:
+        imap.select("INBOX", read_only=True)
+        threading.Timer(0.4, server.push).start()
+        started = time.monotonic()
+        assert imap.idle(10) is True
+        assert 0.3 < time.monotonic() - started < 5
+        imap.noop()  # the connection is usable again afterwards
+
+
+def test_idle_returns_false_after_the_time_is_up_and_stops_on_request() -> None:
+    import time
+
+    with FakeImapServer() as server, client(server, limits=ImapLimits(read_timeout_seconds=3, connect_timeout_seconds=3)) as imap:
+        imap.select("INBOX", read_only=True)
+        started = time.monotonic()
+        assert imap.idle(2) is False and 1.5 < time.monotonic() - started < 6
+        flags = {"stop": False}
+        calls: list[int] = []
+
+        def stop() -> bool:
+            calls.append(1)
+            flags["stop"] = len(calls) >= 3
+            return flags["stop"]
+
+        assert imap.idle(60, stop) is False and len(calls) >= 3
+        imap.noop()
+
+
+def test_idle_needs_a_server_that_offers_it() -> None:
+    with FakeImapServer(idle=False) as server, client(server) as imap:
+        imap.select("INBOX", read_only=True)
+        with pytest.raises(ProtocolError, match="does not offer IDLE"):
+            imap.idle(1)
+
+
+def test_idle_survives_hostile_answers() -> None:
+    def script(conversation: Conversation) -> None:
+        conversation.send(b"* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN IDLE] hi\r\n")
+        while True:
+            raw = conversation.read_line()
+            if raw is None:
+                return
+            tag = raw.split(b" ", 1)[0]
+            if b"IDLE" in raw and b"CAPABILITY" not in raw:
+                conversation.send(b"* BYE going away\r\n")
+                return
+            if b"SELECT" in raw or b"EXAMINE" in raw:
+                conversation.send(b"* 0 EXISTS\r\n* OK [UIDVALIDITY 5] x\r\n" + tag + b" OK done\r\n")
+            else:
+                conversation.send(b"* CAPABILITY IMAP4rev1 AUTH=PLAIN IDLE\r\n" + tag + b" OK done\r\n")
+
+    with ScriptedServer(script) as server, client(server) as imap:
+        imap.select("INBOX", read_only=True)
+        with pytest.raises(ProtocolError, match="closed the connection"):
+            imap.idle(5)
+
+    def refusing(conversation: Conversation) -> None:
+        conversation.send(b"* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN IDLE] hi\r\n")
+        while True:
+            raw = conversation.read_line()
+            if raw is None:
+                return
+            tag = raw.split(b" ", 1)[0]
+            if raw.upper().endswith(b" IDLE"):
+                conversation.send(tag + b" NO not now\r\n")
+            else:
+                conversation.send(b"* CAPABILITY IMAP4rev1 AUTH=PLAIN IDLE\r\n" + tag + b" OK done\r\n")
+
+    with ScriptedServer(refusing) as server, client(server) as imap:
+        with pytest.raises(ImapRefused, match="would not start IDLE"):
+            imap.idle(1)

@@ -7,9 +7,10 @@ from types import TracebackType
 from typing import Self
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeserver.py 0.0.28"
+__version__ = "fakeserver.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: read_line_within for IDLE
 # v0.0.28: read_exactly for IMAP literals
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.10: Initial scripted test server
@@ -44,6 +45,27 @@ class Conversation:
         line = bytes(self._buffer[:position])
         del self._buffer[: position + 1]
         return line.rstrip(b"\r")
+
+    def read_line_within(self, seconds: float) -> tuple[str, bytes]:
+        """('line', the line), ('timeout', b'') when nothing came in time, or ('closed', b'') when the client is gone."""
+        if b"\n" not in self._buffer:
+            self.connection.settimeout(seconds)
+            try:
+                chunk = self.connection.recv(65536)
+            except TimeoutError:
+                return "timeout", b""
+            except OSError:
+                return "closed", b""
+            finally:
+                try:
+                    self.connection.settimeout(10)
+                except OSError:
+                    pass
+            if not chunk:
+                return "closed", b""
+            self._buffer += chunk
+        line = self.read_line()
+        return ("line", line) if line is not None else ("closed", b"")
 
     def read_exactly(self, count: int) -> bytes | None:
         """The next count bytes (a literal), or None when the client is gone."""

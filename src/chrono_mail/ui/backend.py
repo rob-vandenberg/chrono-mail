@@ -9,9 +9,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 0.0.13"
+__version__ = "backend.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: commands that wait have a pool of their own
 # v0.0.13: Initial UI backend
 
 Success = Callable[[object], None]
@@ -65,18 +66,29 @@ class Backend(QObject):
         self.registry: CommandRegistry = build_registry()
         self._pool: QThreadPool = QThreadPool(self)
         self._pool.setMaxThreadCount(4)
+        self._waiting_pool: QThreadPool = QThreadPool(self)  # for commands that wait for a long time (mail.wait): they never hold up the others
+        self._waiting_pool.setMaxThreadCount(8)
+        self._background: dict[int, _Pending] = {}
         self._done: _Done = _Done(self)
         self._done.finished.connect(self._deliver)
         self._ids = itertools.count(1)
         self._pending: dict[int, _Pending] = {}
         engine.progress = lambda what, done, total: self.progress.emit(what, done, total)
 
-    def call(self, command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None) -> int:
-        """Start a command. The callbacks run on the GUI thread; owner (if given) ends the interest in the answer."""
+    def call(
+        self, command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False
+    ) -> int:
+        """Start a command. The callbacks run on the GUI thread; owner (if given) ends the interest in the answer.
+        A command that only waits (waiting=True) has a pool of its own and does not count as busy."""
         request = next(self._ids)
+        task = _Task(request, self.engine, self.registry, command, dict(values), self._done)
+        if waiting:
+            self._background[request] = _Pending(on_success, on_error, owner)
+            self._waiting_pool.start(task)
+            return request
         self._pending[request] = _Pending(on_success, on_error, owner)
         self.busy_changed.emit(len(self._pending))
-        self._pool.start(_Task(request, self.engine, self.registry, command, dict(values), self._done))
+        self._pool.start(task)
         return request
 
     def run_now(self, command: str, values: Mapping[str, object]) -> object:
@@ -85,8 +97,10 @@ class Backend(QObject):
 
     @Slot(int, object, object)
     def _deliver(self, request: int, result: object, error: object) -> None:
-        pending = self._pending.pop(request, None)
-        self.busy_changed.emit(len(self._pending))
+        pending = self._background.pop(request, None)
+        if pending is None:
+            pending = self._pending.pop(request, None)
+            self.busy_changed.emit(len(self._pending))
         if pending is None:
             return
         if pending.owner is not None and not _alive(pending.owner):
@@ -98,7 +112,7 @@ class Backend(QObject):
             pending.on_success(result)
 
     def wait_for_done(self, milliseconds: int = 10_000) -> bool:
-        return self._pool.waitForDone(milliseconds)
+        return self._pool.waitForDone(milliseconds) and self._waiting_pool.waitForDone(milliseconds)
 
 
 def _alive(owner: QObject) -> bool:

@@ -53,9 +53,10 @@ from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.26"
+__version__ = "mainwindow.py 0.0.32"
 
 # --- Version history ----------------------------------------------------
+# v0.0.32: IMAP IDLE: new mail pushed to the window
 # v0.0.26: Version number in the About dialog
 # v0.0.25: No other product named in the project
 # v0.0.24: Rich text composing
@@ -71,6 +72,8 @@ __version__ = "mainwindow.py 0.0.26"
 # v0.0.13: Initial main window
 
 AUTO_CHECK_MINUTES: int = 5
+WATCH_SECONDS: int = 300
+WATCH_RETRY_MS: int = 60_000
 MARK_READ_DELAY_MS: int = 700
 SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Date"), ("subject", "Subject"), ("sender", "Sender"), ("size", "Size"))
 _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-outbox", "drafts": "document-edit", "trash": "user-trash", "junk": "mail-mark-junk", "archive": "folder-archive", "other": "folder"}
@@ -107,6 +110,9 @@ class MainWindow(QMainWindow):
         self._show_request: int = 0
         self._updating_tree: bool = False
         self._advanced: AdvancedSearch | None = None
+        self._watching: set[str] = set()  # accounts with a wait for new mail in progress
+        self._no_push: set[str] = set()  # accounts whose server cannot tell about new mail
+        self._quitting_for_good: bool = False
         self._sort: str = str(settings.value("sort", "date"))
         self._oldest_first: bool = bool_setting(settings, "oldest_first", False)
         self._reselect: str | None = None
@@ -404,6 +410,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("auto_check", self.act_auto.isChecked())
         self.settings.setValue("last_account", self._account_id or "")
         self.settings.setValue("last_folder", self._folder or "")
+        self._quitting_for_good = True
+        self.backend.engine.stop_event.set()  # waits for new mail end now
         self.backend.wait_for_done(3000)
         self.tray.set_visible(False)
         event.accept()
@@ -495,9 +503,40 @@ class MainWindow(QMainWindow):
             return AUTO_CHECK_MINUTES
         return minutes if 1 <= minutes <= 240 else AUTO_CHECK_MINUTES
 
+    def _start_watchers(self) -> None:
+        """For every IMAP account: wait for the server to report new mail (IDLE) and check at once when it does."""
+        if not self.act_auto.isChecked():
+            return
+        for account in self._accounts:
+            if str(getattr(account, "kind", "pop3")) == "imap":
+                self._watch(str(getattr(account, "account_id")))
+
+    def _watch(self, account_id: str) -> None:
+        if account_id in self._watching or self._quitting_for_good or account_id in self._no_push:
+            return
+        self._watching.add(account_id)
+
+        def waited(result: object) -> None:
+            self._watching.discard(account_id)
+            if not bool(getattr(result, "supported")):
+                self._no_push.add(account_id)  # this server cannot tell: the timer checks
+                return
+            if self.act_auto.isChecked() and not self._quitting_for_good:
+                if bool(getattr(result, "changed")):
+                    self.check_mail()
+                self._watch(account_id)
+
+        def failed(error: ChronoMailError) -> None:
+            self._watching.discard(account_id)
+            if not self._quitting_for_good and self.act_auto.isChecked():
+                QTimer.singleShot(WATCH_RETRY_MS, lambda: self._watch(account_id))  # a lost connection is tried again after a pause
+
+        self.backend.call("mail.wait", {"account": account_id, "seconds": WATCH_SECONDS}, waited, failed, owner=self, waiting=True)
+
     def _toggle_auto_check(self, on: bool) -> None:
         self.settings.setValue("auto_check", on)
         if on:
+            self._start_watchers()
             self._timer.start(self._auto_minutes() * 60 * 1000)
         else:
             self._timer.stop()
@@ -591,6 +630,7 @@ class MainWindow(QMainWindow):
                 self.add_account(first=True)
                 return
             self._load_folders(select_saved, then)
+            self._start_watchers()
 
         self.backend.call("account.list", {}, listed, lambda error: self._report("Accounts", error), owner=self)
 
