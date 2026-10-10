@@ -13,15 +13,15 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.colours import green_style, red_style
 
 # --- Version ------------------------------------------------------------
-__version__ = "restorekeydialog.py 0.0.15"
+__version__ = "restorekeydialog.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.15: Initial dialog for restoring the encryption key
 
-RED = "color:#c0392b"
-GREEN = "color:#1e8449"
 
 
 class RestoreKeyDialog(QDialog):
@@ -82,21 +82,21 @@ class RestoreKeyDialog(QDialog):
         def done(result: object) -> None:
             self._busy(False)
             if getattr(result, "in_credential_store"):
-                self._show("The key is back. Your mail can be read again.", GREEN)
+                self._show("The key is back. Your mail can be read again.", green_style())
                 self.accept()
             else:
-                self._show("The key is still not in the credential store. Unlock the wallet and try again.", RED)
+                self._show("The key is still not in the credential store. Unlock the wallet and try again.", red_style())
 
         def failed(error: ChronoMailError) -> None:
             self._busy(False)
-            self._show(str(error), RED)
+            self._show(str(error), red_style())
 
         self._backend.call(command, values, done, failed, owner=self)
 
     def _restore_with_code(self) -> None:
         text = self.code.toPlainText().strip()
         if not text:
-            self._show("Type or paste the recovery code first.", RED)
+            self._show("Type or paste the recovery code first.", red_style())
             return
         self._run("key.restore-code", {"code": text})
 
@@ -118,10 +118,10 @@ class RestoreKeyDialog(QDialog):
             if getattr(result, "in_credential_store"):
                 self.accept()
             else:
-                self._show("The key is still not available in the credential store.", RED)
+                self._show("The key is still not available in the credential store.", red_style())
 
         def failed(error: ChronoMailError) -> None:
             self._busy(False)
-            self._show(str(error), RED)
+            self._show(str(error), red_style())
 
         self._backend.call("key.status", {}, done, failed, owner=self)

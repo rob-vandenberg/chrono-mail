@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.0.46"
+__version__ = "prefs.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.42: Initial preferences (the keys of the settings file and their standard values)
 
@@ -17,6 +18,9 @@ DEFAULTS: dict[str, object] = {
     "notifications": True,
     "tray": True,
     "close_to_tray": False,
+    # appearance
+    "color_scheme": "system",  # system, light or dark
+    "style": "default",  # default: the platform's own style, or fusion
     # message list
     "list_layout": "columns",
     "reading_pane": "right",

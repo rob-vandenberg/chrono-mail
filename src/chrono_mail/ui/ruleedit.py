@@ -14,11 +14,13 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "ruleedit.py 0.0.49"
+__version__ = "ruleedit.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rule editor
 
@@ -245,7 +247,7 @@ class RuleEditDialog(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)
-            self.result_label.setText(f"<span style='color:#c0392b'>{error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>{error}</span>")
 
         if self._rule_id is None:
             self._backend.call("rule.add", values, done, failed, owner=self)

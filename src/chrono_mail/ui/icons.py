@@ -1,11 +1,15 @@
 from pathlib import Path
+from typing import override
 
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt
+from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPalette, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.14"
+__version__ = "icons.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.14: Initial icons: the application icon and the theme icons of the folder tree
 
 RESOURCES: Path = Path(__file__).resolve().parent / "resources"
@@ -27,10 +31,69 @@ FOLDER_ICONS: dict[str, tuple[str, ...]] = {
 }
 
 
+# Where the platform has no icon theme (Windows, macOS) the icons that come with the program are used: simple line
+# drawings (Lucide, ISC licence, see resources/icons/LICENSE-lucide.txt), drawn in the colour of the text.
+BUNDLED_ICONS: dict[str, str] = {
+    "mail-folder-inbox": "inbox", "folder-mail": "inbox", "mail-folder-sent": "send", "mail-sent": "send", "document-edit": "pencil",
+    "user-trash": "trash", "edit-delete": "trash", "mail-mark-junk": "shield-alert", "dialog-warning": "shield-alert", "folder-documents": "folder", "folder-archive": "archive", "archive-insert": "archive",
+    "mail-archive": "archive", "mail-folder-outbox": "send", "mail-send": "send", "folder": "folder", "folder-open": "folder-open",
+    "mail-message": "mail", "user-identity": "user", "mail-unread": "mail", "mail-unread-new": "mail", "mail-message-new": "mail-plus",
+    "mail-mark-important": "flag", "flag": "flag", "emblem-important": "flag", "application-exit": "log-out", "appointment-soon": "clock",
+    "configure": "settings", "document-open": "folder-open", "document-print": "printer", "document-save-as": "save", "edit-clear": "eraser",
+    "list-add": "plus", "mail-forward": "forward", "mail-mark-notjunk": "shield-check", "mail-mark-read": "mail-check", "mail-receive": "download",
+    "mail-reply-all": "reply-all", "mail-reply-sender": "reply", "view-filter": "funnel",
+}
+
+
+class TintedSvgEngine(QIconEngine):
+    """An icon drawn from a one-colour SVG in the colour the palette gives text at that moment, so that it suits the light and the dark scheme."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__()
+        self._path: Path = path
+        self._source: str = path.read_text("utf-8")
+
+    @staticmethod
+    def colour_for(mode: QIcon.Mode, palette: QPalette) -> str:
+        if mode == QIcon.Mode.Disabled:
+            return palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText).name()
+        if mode == QIcon.Mode.Selected:
+            return palette.color(QPalette.ColorRole.HighlightedText).name()
+        return palette.color(QPalette.ColorRole.ButtonText).name()
+
+    @override
+    def paint(self, painter: QPainter, rect: QRect, mode: QIcon.Mode, state: QIcon.State) -> None:
+        colour = self.colour_for(mode, QGuiApplication.palette())
+        QSvgRenderer(self._source.replace("currentColor", colour).encode("utf-8")).render(painter, QRectF(rect))
+
+    @override
+    def pixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State) -> QPixmap:
+        image = QPixmap(size)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        self.paint(painter, QRect(QPoint(0, 0), size), mode, state)
+        painter.end()
+        return image
+
+    @override
+    def clone(self) -> "TintedSvgEngine":
+        return TintedSvgEngine(self._path)
+
+
+def bundled_icon(name: str) -> QIcon:
+    """The icon that comes with the program for this theme icon name, or an empty icon."""
+    file = RESOURCES / "icons" / f"{BUNDLED_ICONS.get(name, '')}.svg"
+    return QIcon(TintedSvgEngine(file)) if name in BUNDLED_ICONS and file.exists() else QIcon()
+
+
 def theme_icon(*names: str) -> QIcon:
-    """The first of these names the icon theme has, or an empty icon."""
+    """The first of these names the icon theme has; else the icon of the program for the first name it has one for; else an empty icon."""
     for name in names:
         icon = QIcon.fromTheme(name)
+        if not icon.isNull():
+            return icon
+    for name in names:
+        icon = bundled_icon(name)
         if not icon.isNull():
             return icon
     return QIcon()

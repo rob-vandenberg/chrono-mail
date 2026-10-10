@@ -17,9 +17,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.0.50"
+__version__ = "test_ui_preferences.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.44: links from the settings
 # v0.0.42: Initial tests of the preferences and their effects
@@ -60,7 +61,7 @@ def test_the_preference_helpers_cope_with_bad_values(tmp_path: Path) -> None:
 def test_every_page_exists_and_the_values_round_trip(world: World, qtbot: QtBot) -> None:
     dialog = SettingsDialog(world.backend, settings_of(world), True, world.window._shortcut_registry())  # noqa: SLF001
     qtbot.addWidget(dialog)
-    assert [dialog.sidebar.item(row).text() for row in range(dialog.sidebar.count())] == ["General", "Message list", "Reading", "Writing", "Accounts", "Rules", "Scheduled messages", "Security and storage", "Keyboard"]
+    assert [dialog.sidebar.item(row).text() for row in range(dialog.sidebar.count())] == ["General", "Appearance", "Message list", "Reading", "Writing", "Accounts", "Rules", "Scheduled messages", "Security and storage", "Keyboard"]
     values = dialog.values()
     assert set(values) >= set(prefs.DEFAULTS)
     dialog.save()

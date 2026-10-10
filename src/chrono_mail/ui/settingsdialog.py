@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.ui import prefs
+from chrono_mail.ui import appearance, prefs
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import DEFAULT_COLUMNS, valid_columns
@@ -36,11 +36,13 @@ from chrono_mail.ui.columnsdialog import DATE_STYLES, LAYOUTS, READING_PANES, Co
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
+from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.50"
+__version__ = "settingsdialog.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
@@ -56,6 +58,8 @@ MARK_READ_LABELS: tuple[tuple[str, str], ...] = (
     ("delay", "A moment after I select it"), ("window", "Only when I open it in a window of its own"), ("never", "Never by itself (I mark messages)"),
 )
 QUOTE_LABELS: tuple[tuple[str, str], ...] = (("above", "My answer above the quoted text"), ("below", "My answer below the quoted text"), ("none", "Do not quote the original"))
+SCHEME_LABELS: tuple[tuple[str, str], ...] = (("system", "Follow the system"), ("light", "Light"), ("dark", "Dark"))
+STYLE_LABELS: tuple[tuple[str, str], ...] = (("default", "The style of the platform"), ("fusion", "Fusion"))
 DENSITY_LABELS: tuple[tuple[str, str], ...] = (("compact", "Compact"), ("normal", "Normal"), ("roomy", "Roomy"))
 
 
@@ -102,6 +106,7 @@ class SettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         outer.addWidget(buttons)
         self._add_page("General", self._general_page(tray_available))
+        self._add_page("Appearance", self._appearance_page())
         self._add_page("Message list", self._list_page())
         self._add_page("Reading", self._reading_page())
         self._add_page("Writing", self._writing_page())
@@ -165,6 +170,23 @@ class SettingsDialog(QDialog):
         if not on:
             self.close_to_tray.setChecked(False)
         self.close_to_tray.setEnabled(on and self.tray.isEnabled())
+
+    def _appearance_page(self) -> QWidget:
+        page = QWidget(self)
+        form = QFormLayout(page)
+        s = self._settings
+        self.scheme_box = _combo(page, SCHEME_LABELS, prefs.get_text(s, "color_scheme", appearance.SCHEMES))
+        self.style_box = _combo(page, STYLE_LABELS, prefs.get_text(s, "style", appearance.STYLES))
+        form.addRow("Colours", self.scheme_box)
+        form.addRow("Style", self.style_box)
+        note = QLabel(
+            "Dark needs a style that can draw it. When the style of the platform cannot (the classic Windows style), Fusion is used while the colours are dark. "
+            "Messages in HTML are always shown on a white page: they are written for one. A style given on the command line (-style) is not changed here.",
+            page,
+        )
+        note.setWordWrap(True)
+        form.addRow(note)
+        return page
 
     def _list_page(self) -> QWidget:
         s = self._settings
@@ -354,7 +376,7 @@ class SettingsDialog(QDialog):
         elif getattr(result, "in_credential_store"):
             self.key_label.setText("The encryption key is in this computer's credential store. Keep a copy of the recovery code somewhere safe: without the key the mail cannot be read.")
         else:
-            self.key_label.setText("<span style='color:#c0392b'>The encryption key is NOT in the credential store. Use “Restore the key…”.</span>")
+            self.key_label.setText(f"<span style='color:{red()}'>The encryption key is NOT in the credential store. Use “Restore the key…”.</span>")
 
     def _maintain(self, command: str, verb: str) -> None:
         self.verify_button.setEnabled(False)
@@ -379,7 +401,7 @@ class SettingsDialog(QDialog):
                 def done(outcome: object) -> None:
                     if command == "store.verify":
                         damaged = tuple(getattr(outcome, "damaged"))
-                        report.append(f"{names[account]}: {getattr(outcome, 'checked')} messages checked, " + (f"<span style='color:#c0392b'>{len(damaged)} damaged</span>" if damaged else "all can be read"))
+                        report.append(f"{names[account]}: {getattr(outcome, 'checked')} messages checked, " + (f"<span style='color:{red()}'>{len(damaged)} damaged</span>" if damaged else "all can be read"))
                     else:
                         report.append(f"{names[account]}: {getattr(outcome, 'messages')} messages indexed")
                     remaining.remove(account)
@@ -390,7 +412,7 @@ class SettingsDialog(QDialog):
 
             def make_failed(account: str) -> Callable[[ChronoMailError], None]:
                 def failed(error: ChronoMailError) -> None:
-                    report.append(f"{names[account]}: <span style='color:#c0392b'>{error}</span>")
+                    report.append(f"{names[account]}: <span style='color:{red()}'>{error}</span>")
                     remaining.remove(account)
                     if not remaining:
                         finished()
@@ -530,6 +552,7 @@ class SettingsDialog(QDialog):
         return {
             "check_on_start": self.check_on_start.isChecked(), "auto_check": self.auto_check.isChecked(), "auto_check_minutes": self.interval.value(),
             "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
+            "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_font_size": self.list_font.value(), "conversations": self.conversations.isChecked(),
             "show_favorites": self.show_favorites.isChecked(), "show_inboxes": self.show_inboxes.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
@@ -552,6 +575,6 @@ class SettingsDialog(QDialog):
         conflicts = self.shortcut_conflicts()
         if conflicts:
             self.show_page("Keyboard")
-            self.shortcut_note.setText("<span style='color:#c0392b'>The same keys are used twice: " + "; ".join(conflicts) + "</span>")
+            self.shortcut_note.setText(f"<span style='color:{red()}'>The same keys are used twice: " + "; ".join(conflicts) + "</span>")
             return
         super().accept()

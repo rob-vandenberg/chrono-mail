@@ -586,3 +586,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **What landed**
 - `ui/rulespanel.py` and `ui/scheduledpanel.py` (the former dialogs as pages), the Tools menu removed, the two buttons on the General page removed; tests changed.
+
+
+## 2026-10-11 Colour scheme and style (version 0.0.51)
+
+**What landed**
+- `ui/appearance.py` (scheme and style, live), `ui/colours.py` (marks, palettes, contrast), Appearance page in Settings, bundled Lucide icons with a palette-tinted icon engine, web pages kept light, error and success colours that suit both schemes; 9 new tests.
+
+**Still open**
+- The real `windowsvista` look has to be seen on the Windows machine. A change of the system scheme while the program runs re-applies the style and palette, but the status line only follows at its next message.

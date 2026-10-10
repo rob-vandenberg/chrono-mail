@@ -22,18 +22,19 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.accountdialog import POLICIES, SECURITY_CHOICES
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
+from chrono_mail.ui.colours import green, red, red_style
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 0.0.45"
+__version__ = "accountedit.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: check interval and the folders of an IMAP account
 # v0.0.43: accepted certificates
 # v0.0.31: IMAP accounts have no server copies tab
 # v0.0.20: Initial dialog for changing an account
 
-RED = "color:#c0392b"
 MAXIMUM_SIGNATURE_CHARACTERS: int = 4000
 
 
@@ -172,7 +173,7 @@ class AccountEditDialog(QDialog):
     def _count_signature(self) -> None:
         count = len(self.signature.toPlainText())
         self.signature_count.setText(f"{count} of {MAXIMUM_SIGNATURE_CHARACTERS} characters")
-        self.signature_count.setStyleSheet(RED if count > MAXIMUM_SIGNATURE_CHARACTERS else "")
+        self.signature_count.setStyleSheet(red_style() if count > MAXIMUM_SIGNATURE_CHARACTERS else "")
         self.save_button.setEnabled(count <= MAXIMUM_SIGNATURE_CHARACTERS)
 
     def _policy_changed(self) -> None:
@@ -231,7 +232,7 @@ class AccountEditDialog(QDialog):
         return tab
 
     def _folders_failed(self, error: ChronoMailError) -> None:
-        self.folders_label.setText(f"<span style='{RED}'>The folders could not be listed: {error}</span>")
+        self.folders_label.setText(f"<span style='{red_style()}'>The folders could not be listed: {error}</span>")
 
     def _folders_arrived(self, result: object) -> None:
         table = self.folder_table
@@ -316,7 +317,7 @@ class AccountEditDialog(QDialog):
         inspect_and_ask(self._backend, self, host, port, security, kind, accepted)
 
     def _certificate_failed(self, error: ChronoMailError) -> None:
-        self.result_label.setText(f"<span style='{RED}'>{error}</span>")
+        self.result_label.setText(f"<span style='{red_style()}'>{error}</span>")
 
     def _forget_certificates(self) -> None:
         if QMessageBox.question(self, "Accepted certificates", "Forget every accepted certificate of this account? Servers with such certificates can no longer be reached until you accept them again.") != QMessageBox.StandardButton.Yes:
@@ -350,13 +351,13 @@ class AccountEditDialog(QDialog):
             self.test_button.setEnabled(True)
             parts = []
             for name, ok, message in (("Incoming", getattr(result, "incoming_ok"), getattr(result, "incoming_message")), ("Outgoing", getattr(result, "outgoing_ok"), getattr(result, "outgoing_message"))):
-                colour, mark = ("#1e8449", "✓") if ok else ("#c0392b", "✗")
+                colour, mark = (green(), "✓") if ok else (red(), "✗")
                 parts.append(f"<span style='color:{colour}'><b>{mark} {name}:</b> {str(message).replace('<', '&lt;')}</span>")
             self.result_label.setText("<br>".join(parts))
 
         def failed(error: ChronoMailError) -> None:
             self.test_button.setEnabled(True)
-            self.result_label.setText(f"<span style='{RED}'>{error}</span>")
+            self.result_label.setText(f"<span style='{red_style()}'>{error}</span>")
 
         self._backend.call("account.check", values, done, failed, owner=self)
 
@@ -396,7 +397,7 @@ class AccountEditDialog(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)
-            self.result_label.setText(f"<span style='{RED}'>The account could not be changed: {error}</span>")
+            self.result_label.setText(f"<span style='{red_style()}'>The account could not be changed: {error}</span>")
 
         if values:
             self._backend.call("account.edit", {"account": str(getattr(self._account, "account_id")), **values}, done, failed, owner=self)

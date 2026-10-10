@@ -5,14 +5,15 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QMessageBox, QV
 from chrono_mail.core import ChronoMailError
 from chrono_mail.protocols.tls import readable
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.colours import red_style
 
 # --- Version ------------------------------------------------------------
-__version__ = "certificatedialog.py 0.0.43"
+__version__ = "certificatedialog.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.43: Initial dialog for accepting a server certificate
 
-RED = "color:#c0392b"
 
 
 class CertificateDialog(QDialog):
@@ -27,13 +28,13 @@ class CertificateDialog(QDialog):
         problem = getattr(info, "problem")
         names = ", ".join(getattr(info, "names")) or "(none)"
         warning = (
-            f"<span style='{RED}'><b>Chrono Mail does not trust this certificate</b></span>: {problem}.<br>"
+            f"<span style='{red_style()}'><b>Chrono Mail does not trust this certificate</b></span>: {problem}.<br>"
             "Anyone between you and the server could present a certificate like this one. Accept it only if you know this is your server "
             "and the fingerprint below is the one the server's owner gave you."
             if problem else "This certificate is trusted by the usual checks: there is nothing to accept."
         )
         if getattr(info, "expired"):
-            warning += f"<br><span style='{RED}'>The certificate has expired.</span>"
+            warning += f"<br><span style='{red_style()}'>The certificate has expired.</span>"
         label = QLabel(
             f"<b>{host}</b><br><br>{warning}<br><br>"
             f"<table cellspacing='4'><tr><td>Issued to</td><td><b>{getattr(info, 'subject')}</b></td></tr>"

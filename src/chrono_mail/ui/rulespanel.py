@@ -18,11 +18,13 @@ from PySide6.QtWidgets import (
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.ruleedit import RuleEditDialog
+from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "rulespanel.py 0.0.50"
+__version__ = "rulespanel.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.33: Initial rules window
 
@@ -101,7 +103,7 @@ class RulesPanel(QWidget):
         self._backend.call("rule.list", {}, listed, self._failed, owner=self)
 
     def _failed(self, error: ChronoMailError) -> None:
-        self.status.setText(f"<span style='color:#c0392b'>{error}</span>")
+        self.status.setText(f"<span style='color:{red()}'>{error}</span>")
 
     def _selected(self) -> object | None:
         item = self.list.currentItem()

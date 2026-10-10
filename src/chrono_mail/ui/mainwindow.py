@@ -35,7 +35,8 @@ from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import BY_ID, CARD, DEFAULT_COLUMNS, column_widths, valid_columns
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
-from chrono_mail.ui import prefs
+from chrono_mail.ui import appearance, prefs
+from chrono_mail.ui.colours import red
 from chrono_mail.ui.composer import ComposeOptions, ComposeWindow
 from chrono_mail.ui.conversationbar import ConversationBar
 from chrono_mail.ui.delegate import MessageDelegate
@@ -67,9 +68,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.50"
+__version__ = "mainwindow.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.48: Dragging messages shows a small badge, not the selected rows
 # v0.0.47: Pinned favorites, account groups and search in combined views
@@ -135,6 +137,7 @@ class MainWindow(QMainWindow):
         self._folder_role: str = "other"
         self._tree_kind: str = "folder"
         self._tree_key_kind: str = "folder"  # the kind of the item in the tree: "inboxlink" is a folder shown under the Inboxes heading
+        self._status_is_error: bool = False
         self._tree_path: str = ""  # the folder, favorite or group of the item that is selected in the tree
         self._combined_accounts: tuple[str, ...] = ()  # the accounts of the group whose inbox is shown
         self._sidebar: object | None = None  # the answer of sidebar.show: pinned folders and groups
@@ -764,6 +767,10 @@ class MainWindow(QMainWindow):
     def apply_preferences(self) -> None:
         """Take the settings (as they are in the settings file now) into use."""
         settings = self.settings
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            appearance.apply(app, settings)  # the colours and the style take effect at once
+            self._restyle_status()  # the red of an error follows the colours
         self.tray.set_visible(prefs.get_bool(settings, "tray"))
         minutes = self._auto_minutes()
         auto = prefs.get_bool(settings, "auto_check")
@@ -821,7 +828,11 @@ class MainWindow(QMainWindow):
 
     def show_status(self, text: str, error: bool = False) -> None:
         self.status_label.setText(text)
-        self.status_label.setStyleSheet("color: #c0392b" if error else "")
+        self._status_is_error = error
+        self._restyle_status()
+
+    def _restyle_status(self) -> None:
+        self.status_label.setStyleSheet(f"color: {red()}" if self._status_is_error else "")
 
     def _load_failed(self, text: str) -> None:
         self.show_status(f"Could not load the messages: {text}", error=True)

@@ -20,11 +20,13 @@ from PySide6.QtWidgets import (
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
+from chrono_mail.ui.colours import green, red
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 0.0.45"
+__version__ = "accountdialog.py 0.0.51"
 
 # --- Version history ----------------------------------------------------
+# v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.43: accepted certificates
 # v0.0.31: IMAP accounts
@@ -232,7 +234,7 @@ class AccountDialog(QDialog):
 
     def _complete(self) -> bool:
         if not (self.email.text().strip() and self.username.text().strip() and self.password.text() and self.incoming_host.text().strip() and self.outgoing_host.text().strip()):
-            self.result_label.setText("<span style='color:#c0392b'>Please fill in the e-mail address, user name, password and both servers.</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>Please fill in the e-mail address, user name, password and both servers.</span>")
             return False
         return True
 
@@ -249,14 +251,14 @@ class AccountDialog(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self._busy(False)
-            self.result_label.setText(f"<span style='color:#c0392b'>{error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>{error}</span>")
 
         self._backend.call("account.check", self._values(), done, failed, owner=self)
 
     @staticmethod
     def _describe(result: object) -> str:
         def line(ok: object, name: str, message: object) -> str:
-            colour, mark = ("#1e8449", "✓") if ok else ("#c0392b", "✗")
+            colour, mark = (green(), "✓") if ok else (red(), "✗")
             return f"<span style='color:{colour}'><b>{mark} {name}:</b> {str(message).replace('<', '&lt;')}</span>"
 
         return "<br>".join((
@@ -285,7 +287,7 @@ class AccountDialog(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self._busy(False)
-            self.result_label.setText(f"<span style='color:#c0392b'>The account could not be added: {error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>The account could not be added: {error}</span>")
             self._certificate_trouble(("incoming", str(error)))
 
         self._backend.call("account.add", values, done, failed, owner=self)
