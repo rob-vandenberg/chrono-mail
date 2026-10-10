@@ -3,9 +3,10 @@ from datetime import datetime
 from email.utils import format_datetime
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailfactory.py 0.0.8"
+__version__ = "mailfactory.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: Rules
 # v0.0.8: Initial mail factory for tests
 
 
@@ -13,6 +14,7 @@ def raw_message(
     subject: str = "Hello",
     sender: str = "Alice <alice@example.com>",
     to: str = "bob@example.com",
+    cc: str | None = None,
     body: str = "Hello Bob\n",
     date: datetime | None = None,
     message_id: str | None = None,
@@ -23,6 +25,8 @@ def raw_message(
 ) -> bytes:
     """A small, valid RFC 5322 message with exactly the given properties."""
     lines = [f"From: {sender}", f"To: {to}", f"Subject: {subject}"]
+    if cc:
+        lines.append(f"Cc: {cc}")
     if date is not None:
         lines.append(f"Date: {format_datetime(date)}")
     if message_id:

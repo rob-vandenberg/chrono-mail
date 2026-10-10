@@ -47,15 +47,17 @@ from chrono_mail.ui.models import (
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
+from chrono_mail.ui.rulesdialog import RulesDialog
 from chrono_mail.ui.printing import print_message
 from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
 from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.32"
+__version__ = "mainwindow.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: Rules
 # v0.0.32: IMAP IDLE: new mail pushed to the window
 # v0.0.26: Version number in the About dialog
 # v0.0.25: No other product named in the project
@@ -256,6 +258,7 @@ class MainWindow(QMainWindow):
         self.act_recovery = self._action("Back up the encryption key…", self.show_recovery)
         self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
         self.act_settings = self._action("Settings…", self.open_settings, "Ctrl+,", "configure")
+        self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
         self.act_quit = self._action("Quit", self.quit_program, "Ctrl+Q", "application-exit")
         self.act_search = self._action("Search", self._focus_search, "Ctrl+F")
         self.act_advanced = self._action("Advanced search…", self.advanced_search, "Ctrl+Shift+F")
@@ -342,6 +345,8 @@ class MainWindow(QMainWindow):
         folder_menu.addSeparator()
         folder_menu.addAction(self.act_mark_all_read)
         folder_menu.addAction(self.act_empty_folder)
+        tools_menu = bar.addMenu("&Tools")
+        tools_menu.addAction(self.act_rules)
         view_menu = bar.addMenu("&View")
         view_menu.addAction(self.act_search)
         view_menu.addAction(self.act_advanced)
@@ -540,6 +545,20 @@ class MainWindow(QMainWindow):
             self._timer.start(self._auto_minutes() * 60 * 1000)
         else:
             self._timer.stop()
+
+    def open_rules(self) -> None:
+        """Tools > Rules: what is done with mail as it arrives."""
+
+        def folders() -> list[str]:
+            return sorted({str(getattr(info, "path")) for infos in self._folders.values() for info in infos})
+
+        def current() -> tuple[str, str] | None:
+            return (self._account_id, self._folder) if self._account_id is not None and self._folder is not None and self._tree_kind == "folder" else None
+
+        dialog = RulesDialog(self.backend, self._accounts, folders, current, self)
+        dialog.exec()
+        if dialog.ran:
+            self._after_change("Rules applied")
 
     def open_settings(self) -> None:
         """File > Settings: the way the program behaves, and the accounts."""

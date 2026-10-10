@@ -11,6 +11,7 @@ from typing import Literal
 from chrono_mail.config import ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag
 from chrono_mail.engine.commands_accounts import AccountParameters
+from chrono_mail.engine.commands_rules import apply_to_new
 from chrono_mail.engine.compose import ComposeKind, build_draft, suggest_filename
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
@@ -22,9 +23,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.31"
+__version__ = "commands_mail.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: Rules
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.18: Conversations: counts, grouped list, conversation bar
@@ -89,6 +91,7 @@ class FetchResult:
     deletion_blocked: str | None
     index_problems: int
     aborted: str | None
+    rule_actions: int = 0  # what the rules did to the new messages
 
 
 def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
@@ -106,14 +109,16 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
                 client, mailbox.store, mailbox.index, state, inbox, settings.pop3, MAXIMUM_MESSAGE_BYTES, engine.clock,
                 progress=lambda done, total: engine.progress("Downloading", done, total),
             )
+        ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
     return FetchResult(
         report.downloaded,
         report.already_known,
-        tuple(f"{item.unique_id}: {item.reason}" for item in report.failed),
+        (*(f"{item.unique_id}: {item.reason}" for item in report.failed), *ruled.failed),
         report.deleted_on_server,
         report.deletion_blocked,
         report.index_problems,
         report.aborted,
+        ruled.actions,
     )
 
 
@@ -125,8 +130,10 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str) -> FetchResult:
             client, mailbox.store, mailbox.index, state, ImapSyncOptions(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES),
             progress=lambda folder, done, total: engine.progress(f"Downloading {folder}", done, total),
         )
-    remarks = (*report.failed, *report.notes, *(f"{item.folder}: {item.note}" for item in report.folders if item.note))
-    return FetchResult(report.downloaded, 0, tuple(remarks), 0, None, 0, report.aborted)
+    inbox = mailbox.role_folder(FolderRole.INBOX)
+    ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
+    remarks = (*report.failed, *report.notes, *(f"{item.folder}: {item.note}" for item in report.folders if item.note), *ruled.failed)
+    return FetchResult(report.downloaded, 0, tuple(remarks), 0, None, 0, report.aborted, ruled.actions)
 
 
 def _addresses(values: tuple[str, ...]) -> tuple[Address, ...]:

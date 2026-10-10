@@ -10,9 +10,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync.pop3_state import DownloadRecord, Pop3State
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3_fetch.py 0.0.10"
+__version__ = "pop3_fetch.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: the new messages are listed in the report
 # v0.0.10: Initial POP3 fetch
 
 SECONDS_PER_DAY: int = 86_400
@@ -41,6 +42,7 @@ class FetchReport:
     deletion_blocked: str | None = None
     index_problems: int = 0
     aborted: str | None = None  # the connection failed part-way; what was done up to then is kept
+    new_references: tuple[MessageRef, ...] = ()  # the messages stored by this run
 
 
 @dataclass
@@ -53,6 +55,7 @@ class _Run:
     blocked: str | None = None
     index_problems: int = 0
     aborted: str | None = None
+    new_references: list[MessageRef] = field(default_factory=list)
 
 
 def fetch_pop3(
@@ -94,7 +97,7 @@ def fetch_pop3(
             _delete_on_server(client, state, now, checkpoint, run)
     except ProtocolError as error:
         run.aborted = str(error)
-    return FetchReport(run.downloaded, run.already_known, tuple(run.failed), run.deleted, run.blocked, run.index_problems, run.aborted)
+    return FetchReport(run.downloaded, run.already_known, tuple(run.failed), run.deleted, run.blocked, run.index_problems, run.aborted, tuple(run.new_references))
 
 
 def _download_one(
@@ -130,6 +133,7 @@ def _download_one(
     state.record_download(unique_id, reference.store_id, int(now()))
     checkpoint("fetch:after-state")
     run.downloaded += 1
+    run.new_references.append(reference)
     if index is not None:
         try:
             index.add(entry_from_raw(reference, f"new/{reference.store_id}", frozenset(), len(raw), raw))

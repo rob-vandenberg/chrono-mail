@@ -13,9 +13,10 @@ from chrono_mail.engine.registry import option
 from tests.enginefactory import make_engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_registry.py 0.0.17"
+__version__ = "test_engine_registry.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: rule.remove is destructive
 # v0.0.17: folder.empty is destructive
 # v0.0.12: Initial command registry tests
 
@@ -127,7 +128,7 @@ def test_secrets_are_marked_on_the_real_commands() -> None:
 
 def test_destructive_commands_are_marked() -> None:
     registry = build_registry()
-    assert {command.id for command in registry.commands() if command.destructive} == {"account.remove", "folder.delete", "folder.empty", "message.delete"}
+    assert {command.id for command in registry.commands() if command.destructive} == {"account.remove", "folder.delete", "folder.empty", "message.delete", "rule.remove"}
 
 
 class Colour(Enum):

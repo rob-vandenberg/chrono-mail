@@ -61,5 +61,5 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - Contacts (CardDAV)
 - Notes
 - PGP / S/MIME
-- Templates, snooze, send later, rules
+- Templates, snooze, send later (rules are done: 0.0.33)
 - Encrypted index (optional)

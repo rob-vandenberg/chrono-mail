@@ -9,9 +9,10 @@ from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.0.31"
+__version__ = "imap_sync.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: Rules
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.30: IMAP sync, store to server
 # v0.0.31: folders made here are made on the server, folders deleted here are hidden (D-051)
@@ -68,6 +69,7 @@ class FolderReport:
     uploaded: int = 0
     failed: tuple[str, ...] = ()
     note: str | None = None
+    new_references: tuple[MessageRef, ...] = ()  # the messages downloaded into this folder
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +86,10 @@ class ImapReport:
     @property
     def failed(self) -> tuple[str, ...]:
         return tuple(reason for item in self.folders for reason in item.failed)
+
+    @property
+    def new_references(self) -> tuple[MessageRef, ...]:
+        return tuple(reference for item in self.folders for reference in item.new_references)
 
 
 def kept_flags(server_flags: frozenset[str]) -> frozenset[str]:
@@ -167,11 +173,12 @@ class _Counts:
     uploaded: int = 0
     failed: list[str] = field(default_factory=list)
     note: str | None = None
+    new: list[MessageRef] = field(default_factory=list)
 
     def report(self, folder: str) -> FolderReport:
         return FolderReport(
             folder, self.downloaded, self.adopted, self.flags_updated, self.removed, self.recovered, self.flags_sent, self.expunged, self.uploaded,
-            tuple(self.failed), self.note,
+            tuple(self.failed), self.note, tuple(self.new),
         )
 
 
@@ -503,8 +510,9 @@ def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folde
         match = next((store_id for store_id, known in pool.items() if message_id and known == message_id), None)
         if match is not None:
             del pool[match]
-            # the local copy is the same message: it gets its place on the server again; the server's flags apply from the next run
-            state.map(local, uid, match, frozenset(flag.imap_name.lower() for flag in view.stored[match].flags))
+            # the local copy is the same message: it gets its place on the server again; where its flags differ from the server's
+            # the local ones are sent in the next run (they may be newer: for example a message moved here after being read)
+            state.map(local, uid, match, server_now)
             counts.adopted += 1
             return
     try:
@@ -514,6 +522,7 @@ def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folde
         return
     state.map(local, uid, reference.store_id, server_now)
     counts.downloaded += 1
+    counts.new.append(reference)
     if index is not None:
         try:
             index.add(entry_from_raw(reference, store.locate(reference), message_flags(server_now), len(raw), raw))

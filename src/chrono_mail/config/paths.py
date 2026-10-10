@@ -7,9 +7,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 0.0.31"
+__version__ = "paths.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: rules file
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.9: Initial application directories
 
@@ -26,6 +27,10 @@ class AppDirectories:
     @property
     def config_file(self) -> Path:
         return self.config_directory / "config.json"
+
+    @property
+    def rules_file(self) -> Path:
+        return self.config_directory / "rules.json"
 
     def account_directory(self, account_id: str) -> Path:
         if ACCOUNT_ID_PATTERN.fullmatch(account_id) is None:

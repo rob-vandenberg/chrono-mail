@@ -15,9 +15,10 @@ from chrono_mail.core import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 0.0.20"
+__version__ = "files.py 0.0.33"
 
 # --- Version history ----------------------------------------------------
+# v0.0.33: Rules
 # v0.0.20: Settings window, account editing, signatures
 # v0.0.9: Initial settings file
 
@@ -172,5 +173,8 @@ def save_config(path: Path, config: AppConfig) -> None:
             finally:
                 os.close(directory)
     except OSError as error:
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass  # nothing was written there
         raise ConfigurationError(f"The settings could not be saved: {error.strerror}") from None

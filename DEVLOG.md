@@ -482,3 +482,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Milestone 2 is complete** (tasks 2.1 to 2.5). Still open for IMAP: CONDSTORE (a cheaper flag sync for large folders), watching folders other than the Inbox, a real server-side folder rename, and trying it by hand in the window.
 
+## 2026-10-10 Step 12 of the autonomous work: rules (version 0.0.33)
+
+**What landed**
+- `config/rules.py` (model and file), `engine/rule_engine.py` (matching and actions), `engine/commands_rules.py` (rule.list, add, edit, remove, enable, move, run), rules applied to new Inbox mail in both kinds of fetch, new messages listed in the fetch reports (D-053).
+- Interface: Tools > Rules (`ui/rulesdialog.py`, `ui/ruleedit.py`).
+- Tests: file (43), engine (19), interface (10).
+
+**Still open**
+- Rules for outgoing mail, rules on other folders as mail arrives there, and "reply with a template" actions.
+
