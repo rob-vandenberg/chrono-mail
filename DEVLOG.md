@@ -595,3 +595,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - The real `windowsvista` look has to be seen on the Windows machine. A change of the system scheme while the program runs re-applies the style and palette, but the status line only follows at its next message.
+
+## 2026-10-11 Shortcut for Mark as read (version 0.0.52)
+
+**What landed**
+- Mark as read has Ctrl+Q; Quit has Ctrl+Shift+Q; a test that no key is used twice.

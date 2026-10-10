@@ -17,9 +17,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.0.51"
+__version__ = "test_ui_preferences.py 0.0.52"
 
 # --- Version history ----------------------------------------------------
+# v0.0.52: Ctrl+Q marks as read, Quit is Ctrl+Shift+Q
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.44: links from the settings
@@ -327,3 +328,10 @@ def test_rules_and_scheduled_messages_are_pages_of_the_settings(world: World, qt
     dialog.show_page("Scheduled messages")
     assert dialog.pages.currentWidget() is dialog.scheduled_panel
     assert not hasattr(dialog, "rules_button")
+
+
+def test_ctrl_q_marks_as_read_and_quit_has_another_key(world: World) -> None:
+    window = world.window
+    assert window.act_read.shortcut().toString() == "Ctrl+Q" and window.act_quit.shortcut().toString() == "Ctrl+Shift+Q"
+    keys = [action.shortcut().toString() for name, action in vars(window).items() if name.startswith("act_") and hasattr(action, "shortcut") and action.shortcut().toString()]
+    assert len(keys) == len(set(keys))  # no key is given twice

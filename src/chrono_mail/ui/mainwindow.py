@@ -68,9 +68,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.51"
+__version__ = "mainwindow.py 0.0.52"
 
 # --- Version history ----------------------------------------------------
+# v0.0.52: Ctrl+Q marks as read, Quit is Ctrl+Shift+Q
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.48: Dragging messages shows a small badge, not the selected rows
@@ -326,7 +327,7 @@ class MainWindow(QMainWindow):
         self.act_mark_all_read = self._action("Mark all as read", self.mark_folder_read, icon="mail-mark-read")
         self.act_empty_folder = self._action("Empty folder…", self.empty_folder, icon="edit-clear")
         self.act_empty_folder.setEnabled(False)
-        self.act_read = self._action("Mark as read", lambda: self.mark_selected(seen=True))
+        self.act_read = self._action("Mark as read", lambda: self.mark_selected(seen=True), "Ctrl+Q")
         self.act_unread = self._action("Mark as unread", lambda: self.mark_selected(seen=False))
         self.act_flag = self._action("Flag", lambda: self.mark_selected(flagged=True), icon="mail-mark-important")
         self.act_unflag = self._action("Remove flag", lambda: self.mark_selected(flagged=False))
@@ -337,7 +338,7 @@ class MainWindow(QMainWindow):
         self.act_scheduled = self._action("Scheduled and snoozed messages…", self.open_scheduled)
         self.act_snooze = self._action("Snooze…", self.snooze_selected, "Ctrl+Shift+Z", "appointment-soon")
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
-        self.act_quit = self._action("Quit", self.quit_program, "Ctrl+Q", "application-exit")
+        self.act_quit = self._action("Quit", self.quit_program, "Ctrl+Shift+Q", "application-exit")
         self.act_search = self._action("Search", self._focus_search, "Ctrl+F")
         self.act_advanced = self._action("Advanced search…", self.advanced_search, "Ctrl+Shift+F")
         self.act_auto = QAction("Check for mail automatically", self)
