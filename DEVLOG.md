@@ -433,3 +433,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **What landed**
 - `core/appinfo.py` with `program_version()`; the About dialog shows it (D-047). Tests: 4.
 
+## 2026-10-10 Step 11, part 0: IMAP design (version 0.0.27)
+
+**What landed**
+- ARCHITECTURE.md section 8 and D-048; ROADMAP tasks 2.1 to 2.5. Documents only.
+

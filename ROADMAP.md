@@ -43,7 +43,15 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 
 ## Milestone 2: IMAP
 
-IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the same encrypted store, push (IDLE). Broken into tasks when milestone 1 is done.
+IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the same encrypted store, push (IDLE). Design: ARCHITECTURE.md section 8, D-048.
+
+| # | Task | Status |
+|---|---|---|
+| 2.1 | `protocols.imap`: own client, fake-server and live tests. | todo |
+| 2.2 | `sync`: state file, folder list, download of new messages, flags and removals from the server. | todo |
+| 2.3 | Local changes sent to the server (flags, move, delete, append of sent mail). | todo |
+| 2.4 | Engine and interface: IMAP account type, sync in `mail.fetch`, folder commands on the server. | todo |
+| 2.5 | IDLE (push) for the Inbox. | todo |
 
 ## Later milestones (order to be decided)
 

@@ -373,3 +373,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** the About dialog states "Chrono Mail version x.y.z". The version comes from `pyproject.toml` when the program runs from the source tree (the single place the version lives, so it is always current), otherwise from the installed package's metadata, otherwise "unknown" (`core/appinfo.py`).
 **Reason:** the user's request; the installed metadata of an editable install is only as new as the last install, so it cannot be trusted while developing.
+
+## D-048 IMAP: an offline mirror of the server, own client, pending changes
+*2026-10-10*
+
+**Decision:** IMAP accounts are a mirror of the server in the same encrypted store (design in ARCHITECTURE.md section 8). The server decides which messages exist and what their flags are; the map between local ids and (folder, UIDVALIDITY, UID), the pending local changes and the sync positions are kept in one small state file per account, not in the message files. The IMAP client is our own (like POP3, because the standard library's `imaplib` has no size limits on lines and literals, which hostile servers can use). A changed UIDVALIDITY never deletes local mail (unmatched messages go to `Recovered/<folder>`); removals seen on the server go through the store's delete (kept in `.deleted`); local changes are applied at once and sent to the server later from a persisted list, each entry removed only after the server confirmed it. Order of work: client, state and read direction, write direction, interface, IDLE.
+**Reason:** AGENTS.md section 4.1 (never lose mail) and 4.2 (hostile servers are normal); offline use and a responsive window need local changes first and the server second.

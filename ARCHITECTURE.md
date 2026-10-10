@@ -91,3 +91,45 @@ Only `ui` may import PySide6.
 - Interruption tests for every destructive or store-modifying operation.
 - Fuzz-style tests for `mime` with malformed messages.
 - A generated 500,000-message mailbox for performance tests.
+
+## 8. IMAP design (milestone 2)
+
+IMAP accounts use the same encrypted store, index, engine commands and window as POP3 accounts. What differs is where the truth about *which messages exist and what their flags are* lives: on the server. The local store is an offline mirror of it. Decision record: D-048.
+
+### 8.1 Pieces
+
+| Piece | Layer | Task |
+|---|---|---|
+| `protocols/imap.py`: own IMAP4rev1 client over a TLS or STARTTLS socket (tagged commands, response parser, literal handling), no `imaplib`. | L2 | 2.1 |
+| `sync/imap_state.py`: per account, per folder: UIDVALIDITY, highest UID seen, the map store id ↔ UID, the queue of changes made offline. One small file per account, written atomically. | L3 | 2.2 |
+| `sync/imap_sync.py`: folder list, download of new messages, server-side flag changes and removals brought into the store, local changes sent to the server. | L3 | 2.2, 2.3 |
+| Engine: `mail.fetch` runs the right sync for the account kind; flag, move and delete commands record a pending change for IMAP accounts; sending appends the sent copy to the server's Sent folder. | L4 | 2.3, 2.4 |
+| Interface: the account dialog gets "IMAP" as an account type; folders come from the server; a "sync" progress and error line. | L5 | 2.4 |
+| IDLE: a push connection for the Inbox. | L3/L5 | 2.5 |
+
+### 8.2 Identity and the mirror
+
+- A message has a local `store_id` (as now) and, for IMAP, a server identity (folder, UIDVALIDITY, UID). The map lives in `imap_state`, not in the message file, so the store format does not change and POP3 accounts are unaffected.
+- A folder is synchronised in this order, all steps idempotent so an interruption at any point is repaired by running again:
+  1. `SELECT` the folder; compare UIDVALIDITY with the stored value.
+  2. New messages: `UID FETCH <last+1>:* (FLAGS BODY.PEEK[])` in batches (a message is fetched whole, size-capped); each is delivered to the store with verification and only then entered in the map.
+  3. Flags: `UID FETCH 1:* (FLAGS)` (or `CHANGEDSINCE` when CONDSTORE is offered) and local flags are updated where the server differs and nothing is pending for that message.
+  4. Removals: UIDs that are in the map but no longer on the server are removed locally, *through the store's normal delete* (which keeps the file in `.deleted`), never by erasing.
+  5. Pending local changes are sent last (section 8.3).
+- Safety rules (they follow AGENTS.md 4.1): nothing is removed from the server unless the local copy is stored and verified; a changed UIDVALIDITY never deletes local mail: the local messages are kept until the folder has been downloaded again and matched by Message-ID, and those with no match are moved to a local folder `Recovered/<folder>`; a server that answers with something unexpected makes the sync of that folder fail, never the whole program.
+
+### 8.3 Local changes
+
+- Flag changes, moves, deletes and sent or draft copies are applied to the store at once (the window stays responsive and offline use works) and recorded in a *pending changes* list in `imap_state` (flag set by UID, move/delete by UID, append of a stored message to a folder).
+- The list is applied in order during a sync, with `UID STORE`, `UID MOVE` (or `COPY` + `STORE \Deleted` + `UID EXPUNGE` where MOVE is missing), and `APPEND`; an entry is removed only after the server confirmed it. A change that cannot be applied twice in a row is reported and kept, never silently dropped.
+- Delete means "move to the Trash folder" (server-side role from SPECIAL-USE or the usual names); deleting in Trash expunges.
+
+### 8.4 Folders
+
+- `LIST` with the delimiter; names are decoded from modified UTF-7; a folder path stays a tuple of names (D-006). SPECIAL-USE attributes (`\Sent`, `\Drafts`, `\Trash`, `\Junk`, `\Archive`) set the folder role, with the usual English names as the fallback. Folders that are not subscribed are not shown.
+- Creating, renaming and deleting a folder in the window are applied on the server first, then locally.
+
+### 8.5 The client
+
+- Built on `ssl` and `socket` like the POP3 client: every line and every literal has a size cap, every wait a timeout, unsolicited responses are tolerated, a tag mismatch or garbage is a `ProtocolError`. Required: IMAP4rev1, `LOGIN`/`PLAIN` over TLS (no password over an unencrypted link unless the person chose "none"). Used when offered: `UIDPLUS`, `MOVE`, `CONDSTORE`, `SPECIAL-USE`, `IDLE`, `LITERAL+`.
+- Tests: a scripted fake server (hostile cases: giant literals, endless lines, wrong tags, drops in the middle of a literal) and the live Dovecot server on `mail.technova.us` (read and write, with a mailbox that is cleaned before and after).
