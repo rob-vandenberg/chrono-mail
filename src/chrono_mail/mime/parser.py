@@ -16,14 +16,18 @@ from chrono_mail.mime.limits import (
 from chrono_mail.mime.model import Address, Attachment, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "parser.py 0.0.13"
+__version__ = "parser.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: Drafts
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
+# v0.0.16: Bcc and X-Chrono-Mail headers (drafts)
 # v0.0.5: Initial message parser
 
 _ID_PATTERN: re.Pattern[str] = re.compile(r"<[^<>\s]+>")
-_ADDRESS_HEADERS: tuple[str, ...] = ("from", "to", "cc", "reply-to")
+_ADDRESS_HEADERS: tuple[str, ...] = ("from", "to", "cc", "reply-to", "bcc")
+_CHRONO_HEADER_PREFIX: str = "x-chrono-mail-"
+_MAXIMUM_CHRONO_HEADERS: int = 20
 _CAMEL_BOUNDARY: re.Pattern[str] = re.compile(r"(?<!^)(?=[A-Z])")
 _FOLDING: re.Pattern[str] = re.compile(r"\r?\n[ \t]")
 
@@ -251,6 +255,14 @@ def _extract(root: MIMEPart, collector: _Collector, with_body: bool) -> ParsedMe
     if with_body:
         text_body, html_body, attachments = _extract_body(root, collector)
 
+    chrono: list[tuple[str, str]] = []
+    try:
+        for raw_name, raw_value in root.raw_items():
+            if raw_name.lower().startswith(_CHRONO_HEADER_PREFIX) and len(chrono) < _MAXIMUM_CHRONO_HEADERS:
+                chrono.append((raw_name.lower(), scrub(raw_value).strip()[:1000]))
+    except Exception:
+        collector.add("header-unreadable-x-chrono-mail")
+
     message_id_text = _header_text(root, "Message-ID", collector)
     message_id = scrub(message_id_text or "").strip() or None
     return ParsedMessage(
@@ -259,6 +271,8 @@ def _extract(root: MIMEPart, collector: _Collector, with_body: bool) -> ParsedMe
         to_addresses=_addresses(root, "To", collector),
         cc_addresses=_addresses(root, "Cc", collector),
         reply_to_addresses=_addresses(root, "Reply-To", collector),
+        bcc_addresses=_addresses(root, "Bcc", collector),
+        chrono_headers=tuple(chrono),
         raw_address_headers=tuple(raw_headers),
         date=_date(root, collector),
         message_id=message_id,

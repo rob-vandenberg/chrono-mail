@@ -301,3 +301,15 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** at start-up the program checks whether the encryption key is in the credential store (`key.status`). If it is not (new computer, reset or locked wallet), a dialog explains that the mail is safe and offers: the recovery code, a recovery file with its passphrase, or "try again" (for a wallet that was only locked). "Not now" leaves the program running with a red message in the status bar; File > Restore the encryption key does the same later. Nothing is asked when no account uses a key or the account is unencrypted. A wrong code, a mistyped code, a wrong passphrase and the key of another installation are each explained without repeating the secret. This completes task 1.12.
 **Reason:** a lost key means lost mail (AGENTS.md section 4.1.5); before this, a missing key showed up as an error message in the status bar.
+
+## D-036 Leave mail on the server is the default
+*2026-10-10*
+
+**Decision:** the user confirmed that "leave all mail on the server" is on and is the default for every POP3 account (engine, CLI and account dialog; it was already `keep`). The dialog option is now labelled "Leave all mail on the server (default)".
+**Reason:** with POP3 the local copy may be the only copy once the server copy is removed (AGENTS.md section 4.1); deleting from the server must be an explicit choice.
+
+## D-037 Drafts are ordinary messages in Drafts
+*2026-10-10*
+
+**Decision:** a draft is a Maildir message in the Drafts folder with the flags DRAFT and SEEN, written by `draft.save`. It carries the Bcc header (only drafts do; sent messages never) and the headers `X-Chrono-Mail-Kind` and `X-Chrono-Mail-Source`, so a reply or forward goes on where it stopped. Saving again stores the new version first and removes the old one only after that succeeded (a failed save never loses the earlier version). Attachments of a stored draft are kept by position, so they are not read from disk or re-uploaded. The composer saves on request (Ctrl+S, button), every 30 seconds while the text changed, and asks Save / Discard / Cancel on close; Discard removes only a draft that this window itself created. A message in Outbox can be opened and sent again the same way; the stored message is removed when the send succeeded. Drafts open from Drafts and Outbox by double-click, Return or the context menu.
+**Reason:** nothing a person has written may be lost (AGENTS.md section 4.1), and drafts stay readable by the same code, index and search as all other mail.

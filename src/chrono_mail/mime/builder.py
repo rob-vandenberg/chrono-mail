@@ -1,3 +1,4 @@
+import re
 from email import policy
 from email.headerregistry import Address as HeaderAddress
 from email.message import EmailMessage
@@ -7,10 +8,23 @@ from chrono_mail.core import MessageFormatError
 from chrono_mail.mime.model import Address, Attachment, OutgoingMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "builder.py 0.0.5"
+__version__ = "builder.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: drafts keep Bcc and the program's own X-Chrono-Mail headers
 # v0.0.5: Initial message builder
+
+
+_EXTRA_NAME: re.Pattern[str] = re.compile(r"X-Chrono-Mail-[A-Za-z0-9-]{1,40}")
+_MAXIMUM_EXTRA_VALUE: int = 500
+
+
+def _check_extra_header(name: str, value: str) -> None:
+    """Only the program's own notes may be added, and only as plain printable text."""
+    if _EXTRA_NAME.fullmatch(name) is None:
+        raise MessageFormatError("Only X-Chrono-Mail headers can be added")
+    if len(value) > _MAXIMUM_EXTRA_VALUE or not value.isascii() or any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise MessageFormatError("A header value must be short printable ASCII text")
 
 
 def _header_address(address: Address) -> HeaderAddress:
@@ -59,8 +73,9 @@ def envelope_recipients(outgoing: OutgoingMessage) -> tuple[str, ...]:
     return tuple(recipients)
 
 
-def build_message(outgoing: OutgoingMessage) -> bytes:
-    """Build the raw message. Bcc is never written into the message (see envelope_recipients)."""
+def build_message(outgoing: OutgoingMessage, draft: bool = False) -> bytes:
+    """Build the raw message. Bcc is never written into a message that is sent (see envelope_recipients);
+    a draft keeps it, so that editing can go on where it stopped."""
     try:
         message = EmailMessage()
         sender = _header_address(outgoing.from_address)
@@ -69,6 +84,11 @@ def build_message(outgoing: OutgoingMessage) -> bytes:
             message["To"] = [_header_address(address) for address in outgoing.to_addresses]
         if outgoing.cc_addresses:
             message["Cc"] = [_header_address(address) for address in outgoing.cc_addresses]
+        if draft and outgoing.bcc_addresses:
+            message["Bcc"] = [_header_address(address) for address in outgoing.bcc_addresses]
+        for name, value in outgoing.extra_headers:
+            _check_extra_header(name, value)
+            message[name] = value
         message["Subject"] = outgoing.subject
         message["Date"] = formatdate(localtime=True)
         message["Message-ID"] = make_msgid(domain=sender.domain or None)

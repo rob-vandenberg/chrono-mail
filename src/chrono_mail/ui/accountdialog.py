@@ -21,16 +21,17 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 0.0.13"
+__version__ = "accountdialog.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: Drafts
 # v0.0.13: Initial account dialog
 
 SECURITY_CHOICES: tuple[tuple[str, str], ...] = (("tls", "TLS (encrypted from the start)"), ("starttls", "STARTTLS (upgrade to encrypted)"), ("none", "None (not encrypted)"))
 INCOMING_PORTS: dict[str, int] = {"tls": 995, "starttls": 110, "none": 110}
 OUTGOING_PORTS: dict[str, int] = {"tls": 465, "starttls": 587, "none": 25}
 POLICIES: tuple[tuple[str, str], ...] = (
-    ("keep", "Keep every message on the server"),
+    ("keep", "Leave all mail on the server (default)"),
     ("delete_after_download", "Delete from the server once downloaded and verified"),
     ("delete_after_days", "Delete from the server 30 days after download"),
     ("delete_when_deleted_locally", "Delete from the server when I delete it here"),

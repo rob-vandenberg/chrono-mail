@@ -20,9 +20,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import Pop3State, fetch_pop3, send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.13"
+__version__ = "commands_mail.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: a sent message can replace a draft
 # v0.0.13: previews, inline images, attachment save, compose, reply marks
 # v0.0.12: Initial message commands
 
@@ -137,6 +138,11 @@ class SendParameters:
     source_message: str | None = field(default=None, metadata=option("The id of the message this answers or forwards"))
     include_source_attachments: bool = field(default=False, metadata=option("Forward: take the attachments of the source message along"))
     mark_replied: bool = field(default=False, metadata=option("Reply: mark the source message as replied to once sent"))
+    keep_folder: str | None = field(default=None, metadata=option("The folder of a stored message (a draft) whose attachments are to be sent"))
+    keep_message: str | None = field(default=None, metadata=option("The id of that stored message"))
+    keep_attachments: tuple[str, ...] = field(default=(), metadata=option("The position of an attachment of that stored message to send (repeat for more)"))
+    replaces_folder: str | None = field(default=None, metadata=option("The folder of a draft (or Outbox message) that this send replaces"))
+    replaces_message: str | None = field(default=None, metadata=option("The id of a draft (or Outbox message) that is removed once this message was sent"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,15 +155,40 @@ class SendResult:
     warning: str | None
 
 
-def _source_attachments(mailbox: Mailbox, parameters: "SendParameters") -> tuple[Attachment, ...]:
-    """The attachments of the message being forwarded, when asked for."""
-    if not parameters.include_source_attachments:
+def kept_attachments(raw: bytes | None, positions: tuple[str, ...]) -> tuple[Attachment, ...]:
+    """The attachments at these positions (as listed by message.show) of a stored message."""
+    if not positions:
         return ()
+    if raw is None:
+        raise UsageError("Keeping attachments needs the stored message they are in")
+    parsed = parse_message(raw)
+    kept: list[Attachment] = []
+    for text in positions:
+        if not text.isdigit() or int(text) >= len(parsed.attachments):
+            raise UsageError("The stored message has no such attachment")
+        attachment = parsed.attachments[int(text)]
+        if not attachment.inline:
+            kept.append(attachment)
+    return tuple(kept)
+
+
+def _source_attachments(mailbox: Mailbox, parameters: "SendParameters") -> tuple[Attachment, ...]:
+    """The attachments of the message being forwarded and those kept from a stored draft, when asked for."""
+    kept: tuple[Attachment, ...] = ()
+    if parameters.keep_attachments:
+        if not parameters.keep_folder or not parameters.keep_message:
+            raise UsageError("Keeping attachments needs the stored message they are in")
+        if any(not position.isdigit() for position in parameters.keep_attachments):
+            raise UsageError("An attachment position is a whole number, starting at 0")
+        stored = mailbox.reference(mailbox.folder(parameters.keep_folder), _check_id(parameters.keep_message))
+        kept = kept_attachments(mailbox.store.read(stored, hint=mailbox.hint(stored.store_id)), parameters.keep_attachments)
+    if not parameters.include_source_attachments:
+        return kept
     if not parameters.source_folder or not parameters.source_message:
         raise UsageError("Taking attachments along needs the source message")
     source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
     parsed = parse_message(mailbox.store.read(source, hint=mailbox.hint(source.store_id)))
-    return tuple(attachment for attachment in parsed.attachments if not attachment.inline)
+    return (*kept, *(attachment for attachment in parsed.attachments if not attachment.inline))
 
 
 def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
@@ -187,6 +218,12 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
                 mailbox.set_flags(source, frozenset({*mailbox.current_flags(source), MessageFlag.REPLIED}))
             except ChronoMailError:
                 pass  # the reply was sent; failing to mark the original is not worth an error
+        if outcome.sent and parameters.replaces_folder and parameters.replaces_message:
+            try:
+                old = mailbox.reference(mailbox.folder(parameters.replaces_folder), _check_id(parameters.replaces_message))
+                mailbox.delete(old, permanent=True)  # the draft has become the sent message
+            except ChronoMailError:
+                pass
         return SendResult(
             outcome.sent,
             outcome.reference.store_id,

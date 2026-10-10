@@ -45,9 +45,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.15"
+__version__ = "mainwindow.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: Drafts
 # v0.0.15: the encryption key is checked at the start and can be restored
 # v0.0.14: window icon, shared icon helpers
 # v0.0.13: Initial main window
@@ -189,6 +190,7 @@ class MainWindow(QMainWindow):
         self.act_reply = self._action("Reply", lambda: self.compose_from_selection("reply"), "Ctrl+R", "mail-reply-sender")
         self.act_reply_all = self._action("Reply all", lambda: self.compose_from_selection("reply_all"), "Ctrl+Shift+R", "mail-reply-all")
         self.act_forward = self._action("Forward", lambda: self.compose_from_selection("forward"), "Ctrl+L", "mail-forward")
+        self.act_edit_draft = self._action("Edit draft", self.edit_draft, "Return", "document-edit")
         self.act_delete = self._action("Delete", self.delete_selected, "Delete", "edit-delete")
         self.act_read = self._action("Mark as read", lambda: self.mark_selected(seen=True))
         self.act_unread = self._action("Mark as unread", lambda: self.mark_selected(seen=False))
@@ -260,6 +262,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.act_quit)
         message_menu = bar.addMenu("&Message")
+        message_menu.addAction(self.act_edit_draft)
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
             message_menu.addAction(action)
         message_menu.addSeparator()
@@ -291,6 +294,7 @@ class MainWindow(QMainWindow):
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.list_view.selectionModel().currentChanged.connect(self._row_changed)
         self.list_view.customContextMenuRequested.connect(self._list_menu)
+        self.list_view.doubleClicked.connect(self._row_double_clicked)
         self.list_model.counts_changed.connect(self._counts_changed)
         self.list_model.load_failed.connect(self._load_failed)
         self.list_model.loaded.connect(self._restore_row_selection)
@@ -714,15 +718,40 @@ class MainWindow(QMainWindow):
             return
         self._open_composer(self._account_id, None, None)
 
-    def _open_composer(self, account_id: str, draft: object | None, source: tuple[str, str] | None, to: str = "") -> ComposeWindow:
-        window = ComposeWindow(self.backend, self._accounts, account_id, draft, source)
+    def _open_composer(self, account_id: str, draft: object | None, source: tuple[str, str] | None, to: str = "", resume: tuple[str, str] | None = None) -> ComposeWindow:
+        window = ComposeWindow(self.backend, self._accounts, account_id, draft, source, resume)
         if to:
             window.to.setText(to)
         window.sent.connect(self._after_sent)
+        window.draft_saved.connect(self._after_sent)
         window.destroyed.connect(lambda: self._composers.remove(window) if window in self._composers else None)
         self._composers.append(window)
         window.show()
         return window
+
+    def _row_double_clicked(self, index: QModelIndex) -> None:
+        if self._in_drafts():
+            self.edit_draft()
+
+    def _in_drafts(self) -> bool:
+        return self._folder_role == "drafts" or self._folder == "Outbox"
+
+    def edit_draft(self) -> None:
+        """Open the selected message of Drafts (or Outbox) in the composer, to continue writing or to send it."""
+        row = self._current_row()
+        if row is None or self._account_id is None or not self._in_drafts():
+            return
+        account, folder, message_id = self._account_id, str(getattr(row, "folder")), str(getattr(row, "message_id"))
+        for window in self._composers:
+            if window.stored_as() == (folder, message_id):
+                window.raise_()
+                window.activateWindow()
+                return
+
+        def opened(result: object) -> None:
+            self._open_composer(account, result, None, resume=(str(getattr(result, "folder")), str(getattr(result, "message_id"))))
+
+        self.backend.call("draft.open", {"account": account, "folder": folder, "message": message_id}, opened, lambda error: self._report("Could not open the draft", error), owner=self)
 
     def compose_from_selection(self, kind: str) -> None:
         row = self._current_row()
@@ -737,7 +766,7 @@ class MainWindow(QMainWindow):
 
     def _after_sent(self, account_id: str = "") -> None:
         self._load_folders(select_saved=False)
-        if self._folder in ("Sent", "Outbox"):
+        if self._folder in ("Sent", "Outbox") or self._folder_role in ("sent", "drafts"):
             self.list_model.reload()
 
     # --- mail ---------------------------------------------------------------------------------------------------
@@ -817,6 +846,9 @@ class MainWindow(QMainWindow):
 
     def _list_menu(self, position: QPoint) -> None:
         menu = QMenu(self)
+        if self._in_drafts():
+            menu.addAction(self.act_edit_draft)
+            menu.addSeparator()
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
             menu.addAction(action)
         menu.addSeparator()

@@ -11,9 +11,10 @@ from chrono_mail.mime import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mime_build.py 0.0.5"
+__version__ = "test_mime_build.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: Drafts
 # v0.0.5: Initial builder tests
 
 SENDER = Address("Jörg Müller", "joerg@example.com")
@@ -131,3 +132,34 @@ def test_error_message_does_not_contain_the_private_text() -> None:
     with pytest.raises(MessageFormatError) as raised:
         build_message(OutgoingMessage(from_address=SENDER, subject=secret + "\r\nBcc: x@example.com"))
     assert secret not in str(raised.value)
+
+
+# --- drafts (version 0.0.16) ---------------------------------------------------------------------------------------------
+
+
+def test_a_draft_keeps_bcc_and_the_programs_own_notes_and_a_sent_message_does_not() -> None:
+    outgoing = OutgoingMessage(
+        from_address=SENDER, to_addresses=(RECIPIENT,), bcc_addresses=(Address("Hidden", "hidden@example.com"),), subject="Draft", text_body="unfinished",
+        extra_headers=(("X-Chrono-Mail-Kind", "reply"), ("X-Chrono-Mail-Source", "Inbox/" + "a" * 32)),
+    )
+    draft = parse_message(build_message(outgoing, draft=True))
+    assert draft.bcc_addresses == (Address("Hidden", "hidden@example.com"),)
+    assert draft.chrono_headers == (("x-chrono-mail-kind", "reply"), ("x-chrono-mail-source", "Inbox/" + "a" * 32))
+    sent = build_message(outgoing)
+    assert b"hidden@example.com" not in sent and parse_message(sent).bcc_addresses == ()
+    assert parse_message(sent).chrono_headers == (("x-chrono-mail-kind", "reply"), ("x-chrono-mail-source", "Inbox/" + "a" * 32))
+
+
+@pytest.mark.parametrize(
+    "header",
+    [("X-Other", "x"), ("Subject", "x"), ("X-Chrono-Mail-", "x"), ("X-Chrono-Mail-A B", "x"), ("X-Chrono-Mail-Kind", "a\r\nBcc: evil@example.com"), ("X-Chrono-Mail-Kind", "a\nb"),
+     ("X-Chrono-Mail-Kind", "caf\u00e9"), ("X-Chrono-Mail-Kind", "x" * 501), ("X-Chrono-Mail-Kind", "\x00"), ("x-chrono-mail-kind\r\nBcc: e@x", "v")],
+)
+def test_only_the_programs_own_headers_with_plain_values_can_be_added(header: tuple[str, str]) -> None:
+    with pytest.raises(MessageFormatError):
+        build_message(OutgoingMessage(from_address=SENDER, to_addresses=(RECIPIENT,), extra_headers=(header,)))
+
+
+def test_a_draft_may_be_empty() -> None:
+    parsed = parse_message(build_message(OutgoingMessage(from_address=SENDER), draft=True))
+    assert parsed.to_addresses == () and parsed.bcc_addresses == () and parsed.subject == "" and parsed.text_body is not None

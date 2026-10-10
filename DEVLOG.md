@@ -333,3 +333,14 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Push**
 - Pushed as version 0.0.15 with `release "Key recovery in the interface (task 1.12)"` after the full gate and the secret scan.
+
+## 2026-10-10 Step 2 of the autonomous work: drafts (version 0.0.16)
+
+**What landed**
+- Engine: `draft.save` and `draft.open` (`engine/commands_drafts.py`), `Mailbox.deliver`, `mail.send` can replace a draft or Outbox message and keep its stored attachments; the parser reads Bcc and `X-Chrono-Mail-*` headers, the builder writes them for drafts only (D-037).
+- Interface: Save draft (button, Ctrl+S), autosave every 30 seconds, Save / Discard / Cancel on close, editing from Drafts and Outbox (double-click, Return, context menu). The account dialog says "Leave all mail on the server (default)" (D-036).
+- Tests: engine (12), composer (5 new, close prompt changed), main window (2 new).
+
+**Still open**
+- Drafts of HTML messages come with HTML composing (step 10).
+

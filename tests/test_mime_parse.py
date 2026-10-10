@@ -5,9 +5,10 @@ from datetime import UTC, datetime, timedelta, timezone
 from chrono_mail.mime import Address, ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mime_parse.py 0.0.13"
+__version__ = "test_mime_parse.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: Drafts
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.5: Initial parser tests
 
@@ -177,3 +178,20 @@ def test_raw_bytes_in_an_attachment_name_and_content_id() -> None:
            b"--B\r\nContent-Type: image/png; name=\"caf\xc3\xa9\xff.png\"\r\nContent-ID: <\xc3\xa9\xff@x>\r\nContent-Disposition: attachment; filename=\"caf\xc3\xa9\xff.png\"\r\n\r\ndata\r\n--B--\r\n")
     message = parse_message(raw)
     assert not any(has_surrogates(text) for text in all_text(message)) and message.attachments
+
+
+def test_bcc_and_chrono_headers_are_read() -> None:
+    raw = (b"From: a@x.org\r\nTo: b@x.org\r\nBcc: Hidden <h@x.org>, i@x.org\r\nX-Chrono-Mail-Kind: forward\r\nx-chrono-mail-source: Inbox/abc\r\n"
+           b"X-Other: ignored\r\nSubject: s\r\n\r\nbody\r\n")
+    message = parse_message(raw)
+    assert message.bcc_addresses == (Address("Hidden", "h@x.org"), Address("", "i@x.org"))
+    assert message.chrono_headers == (("x-chrono-mail-kind", "forward"), ("x-chrono-mail-source", "Inbox/abc"))
+    assert ("bcc", "Hidden <h@x.org>, i@x.org") in message.raw_address_headers
+
+
+def test_chrono_headers_are_limited_and_scrubbed() -> None:
+    many = b"".join(b"X-Chrono-Mail-N%d: v\r\n" % number for number in range(100))
+    message = parse_message(b"From: a@x.org\r\n" + many + b"X-Chrono-Mail-Long: " + b"x" * 5000 + b"\r\nX-Chrono-Mail-Bytes: \xff\xfe\r\n\r\nx")
+    assert len(message.chrono_headers) == 20
+    assert not any(has_surrogates(value) for _, value in message.chrono_headers)
+    assert max(len(value) for _, value in message.chrono_headers) <= 1000

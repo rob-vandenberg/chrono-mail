@@ -17,9 +17,10 @@ from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 0.0.12"
+__version__ = "mailbox.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: deliver
 # v0.0.12: Initial mailbox helper
 
 
@@ -87,6 +88,13 @@ class Mailbox:
         path = self.store.locate(moved)
         self._index(lambda: self.index.move(moved.store_id, target, path))
         return moved
+
+    def deliver(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag]) -> MessageRef:
+        """Store a message (verified) and index it."""
+        reference = self.store.deliver(folder, raw, flags=flags, verify=True)
+        path = self.store.locate(reference)
+        self._index(lambda: self.index.add(entry_from_raw(reference, path, flags, len(raw), raw)))
+        return reference
 
     def copy(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
         copied = self.store.copy(ref, target, hint=self.hint(ref.store_id))

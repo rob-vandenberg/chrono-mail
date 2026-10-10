@@ -14,9 +14,10 @@ from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.13"
+__version__ = "test_ui_window.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: Drafts
 # v0.0.13: Initial main window tests
 
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
@@ -340,6 +341,37 @@ def test_reply_opens_a_prefilled_composer(world: World, qtbot: QtBot) -> None:
     composer.body.document().setModified(False)
     composer._finished = True  # noqa: SLF001
     composer.close()
+
+
+def test_a_draft_is_edited_from_the_drafts_folder_and_sent(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    world.call("draft.save", account=world.account_id, to=["you@example.com"], subject="Half done", body="first part")
+    for row in range(world.window.tree_model.rowCount(world.window.tree_model.index(0, 0))):
+        index = world.window.tree_model.index(row, 0, world.window.tree_model.index(0, 0))
+        if index.data(FOLDER_PATH_ROLE) == "Drafts":
+            world.window.tree.setCurrentIndex(index)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
+    world.window.act_edit_draft.trigger()  # nothing selected yet: nothing happens
+    select(world.window, 0)
+    world.window.act_edit_draft.trigger()
+    wait(qtbot, lambda: len(world.window._composers) == 1)  # noqa: SLF001
+    composer = world.window._composers[0]  # noqa: SLF001
+    assert composer.subject.text() == "Half done" and composer.body.toPlainText().strip() == "first part" and not composer.is_modified()
+    world.window.act_edit_draft.trigger()  # the same draft is not opened twice
+    qtbot.wait(150)
+    assert len(world.window._composers) == 1  # noqa: SLF001
+    composer.body.setPlainText("first part and the rest")
+    composer.send_button.click()
+    wait(qtbot, lambda: len(world.smtp.received) == 1)
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)
+
+
+def test_edit_draft_does_nothing_outside_drafts(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    select(world.window, 0)
+    world.window.act_edit_draft.trigger()
+    qtbot.wait(150)
+    assert world.window._composers == []  # noqa: SLF001
 
 
 def test_forward_and_reply_all_and_new_message(world: World, qtbot: QtBot) -> None:

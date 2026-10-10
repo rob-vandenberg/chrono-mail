@@ -10,9 +10,10 @@ from chrono_mail.ui.composer import ComposeWindow, parse_recipients
 from tests.ui.world import World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_composer.py 0.0.13"
+__version__ = "test_ui_composer.py 0.0.16"
 
 # --- Version history ----------------------------------------------------
+# v0.0.16: Drafts
 # v0.0.13: Initial composer tests
 
 
@@ -164,19 +165,72 @@ def test_closing_a_changed_message_asks_and_an_untouched_one_does_not(world: Wor
     assert untouched.close() and not world.dialogs.shown
     window = new_composer(world, qtbot)
     fill(window)
-    world.dialogs.answer = QMessageBox.StandardButton.No
+    world.dialogs.answer = QMessageBox.StandardButton.Cancel
     assert not window.close() and window.isVisible()
-    world.dialogs.answer = QMessageBox.StandardButton.Yes
+    world.dialogs.answer = QMessageBox.StandardButton.Discard
     assert window.close() and not window.isVisible()
-    assert "Discard this message?" in box_titles(world, "question")
-    event = QCloseEvent()
-    other = new_composer(world, qtbot)
-    fill(other)
-    world.dialogs.answer = QMessageBox.StandardButton.No
-    other.closeEvent(event)
-    assert not event.isAccepted()
-    other._finished = True  # noqa: SLF001
-    other.close()
+    assert "Save this message?" in box_titles(world, "question")
+    assert world.call("message.list", account=world.account_id, folder="Drafts").total == 0
+
+
+def test_saving_on_close_keeps_the_message_as_a_draft(world: World, qtbot: QtBot) -> None:
+    window = new_composer(world, qtbot)
+    fill(window, subject="Unfinished", body="to be continued")
+    world.dialogs.answer = QMessageBox.StandardButton.Save
+    window.close()
+    wait(qtbot, lambda: not window.isVisible())
+    listing = world.call("message.list", account=world.account_id, folder="Drafts")
+    assert listing.total == 1 and listing.messages[0].subject == "Unfinished"
+
+
+def test_saving_twice_replaces_the_draft_and_discard_removes_an_autosaved_one(world: World, qtbot: QtBot) -> None:
+    window = new_composer(world, qtbot)
+    fill(window, subject="One")
+    window.save_button.click()
+    wait(qtbot, lambda: window.stored_as() is not None and not window.is_modified())
+    window.subject.setText("Two")
+    window.save_button.click()
+    wait(qtbot, lambda: not window.is_modified() and window.status.text().startswith("Draft saved"))
+    listing = world.call("message.list", account=world.account_id, folder="Drafts")
+    assert listing.total == 1 and listing.messages[0].subject == "Two"
+    window.subject.setText("Three")
+    world.dialogs.answer = QMessageBox.StandardButton.Discard
+    window.close()
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)
+
+
+def test_autosave_stores_a_changed_message_and_skips_an_empty_one(world: World, qtbot: QtBot) -> None:
+    window = new_composer(world, qtbot)
+    window._autosave()  # noqa: SLF001
+    qtbot.wait(100)
+    assert world.call("message.list", account=world.account_id, folder="Drafts").total == 0
+    fill(window, subject="Auto")
+    window._autosave()  # noqa: SLF001
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 1)
+    window._finished = True  # noqa: SLF001
+    window.close()
+
+
+def test_a_draft_with_an_attachment_is_resumed_and_sent_with_it(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    attachment = tmp_path / "plan.txt"
+    attachment.write_text("the plan")
+    window = new_composer(world, qtbot)
+    fill(window, to="you@example.com", subject="With file")
+    window.add_attachment(str(attachment))
+    window.save_button.click()
+    wait(qtbot, lambda: not window.is_modified() and window.stored_as() is not None)
+    assert window.attached_paths() == [] and window.kept_positions() == ["0"]
+    window._finished = True  # noqa: SLF001
+    window.close()
+    drafts = world.call("message.list", account=world.account_id, folder="Drafts")
+    opened = world.call("draft.open", account=world.account_id, message=drafts.messages[0].message_id)
+    resumed = new_composer(world, qtbot, opened)
+    resumed._stored = (opened.folder, opened.message_id)  # noqa: SLF001
+    assert resumed.kept_positions() == ["0"] and resumed.subject.text() == "With file" and not resumed.is_modified()
+    resumed.send_button.click()
+    wait(qtbot, lambda: len(world.smtp.received) == 1)
+    assert b"plan.txt" in world.smtp.received[0].data
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)
 
 
 # --- replying and forwarding ----------------------------------------------------------------------------------------------------------
