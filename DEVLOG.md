@@ -506,3 +506,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - A scheduled message is only sent while the program is running.
 
+
+## 2026-10-10 Task 0.4: GitHub Actions (version 0.0.36)
+
+**What landed**
+- `.github/workflows/ci.yml`: Pyrefly strict, the layer check and the offline tests on every push, with Qt running without a screen. Written without being able to run it here; the first run on GitHub shows whether the runner needs more libraries.
