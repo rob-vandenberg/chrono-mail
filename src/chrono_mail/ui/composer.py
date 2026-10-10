@@ -28,9 +28,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.16"
+__version__ = "composer.py 0.0.20"
 
 # --- Version history ----------------------------------------------------
+# v0.0.20: Settings window, account editing, signatures
 # v0.0.16: drafts: save, autosave, resume, keep attachments, save/discard/cancel on close
 # v0.0.14: window icon
 # v0.0.13: Initial composer; recipients are parsed one by one
@@ -73,6 +74,23 @@ def parse_recipients(text: str) -> list[str] | None:
 
 
 AUTOSAVE_SECONDS: int = 30
+SIGNATURE_MARK: str = "-- \n"  # the usual separator: two dashes and a space on a line of their own
+
+
+def signature_block(signature: str) -> str:
+    return SIGNATURE_MARK + signature.strip("\n") if signature.strip() else ""
+
+
+def with_signature(body: str, signature: str) -> str:
+    """The body of a new message, a reply or a forward with the signature before any quoted text."""
+    block = signature_block(signature)
+    if not block:
+        return body
+    if not body.strip():
+        return f"\n\n{block}\n"
+    rest = body[2:] if body.startswith("\n\n") else body
+    return f"\n\n{block}\n\n{rest}"
+
 ROLE_PATH: int = 256  # an attachment that is a file on this computer
 ROLE_KEPT: int = 257  # an attachment that is already inside the stored draft (its position there)
 
@@ -177,6 +195,11 @@ class ComposeWindow(QMainWindow):
                 self._add_kept(int(getattr(stored, "position")), str(getattr(stored, "name")), int(getattr(stored, "size")))
             self.setWindowTitle(str(getattr(draft, "subject")) or "New message")
             self.body.moveCursor(self.body.textCursor().MoveOperation.Start)
+        self._accounts: list[object] = accounts
+        self._signature: str = self._signature_of(account_id)
+        if resume is None and self._signature:
+            self.body.setPlainText(with_signature(self.body.toPlainText(), self._signature))
+        self.body.moveCursor(self.body.textCursor().MoveOperation.Start)
         self.body.document().setModified(False)
         self._saved_snapshot: tuple[object, ...] = self._snapshot()
 
@@ -185,6 +208,7 @@ class ComposeWindow(QMainWindow):
             action.setShortcut(QKeySequence(shortcut))
             action.triggered.connect(handler)
             self.addAction(action)
+        self.from_box.currentIndexChanged.connect(self._account_changed)
         self.send_button.clicked.connect(self._send_clicked)
         self.save_button.clicked.connect(self._save_clicked)
         self.attach_button.clicked.connect(self._choose_files)
@@ -195,6 +219,23 @@ class ComposeWindow(QMainWindow):
         self.to.setFocus()
 
     # --- state ------------------------------------------------------------------------------------
+
+    def _signature_of(self, account_id: str) -> str:
+        for account in self._accounts:
+            if str(getattr(account, "account_id")) == account_id:
+                return str(getattr(account, "signature", ""))
+        return ""
+
+    def _account_changed(self) -> None:
+        """Another sender was chosen: the signature of the first one is replaced by the signature of the new one."""
+        new = self._signature_of(str(self.from_box.currentData()))
+        old, body = signature_block(self._signature), self.body.toPlainText()
+        if new != self._signature:
+            if old and old in body:
+                self.body.setPlainText(body.replace(old, signature_block(new), 1) if new else body.replace(old, "", 1).replace("\n\n\n\n", "\n\n"))
+            elif new and not old and not body.strip():
+                self.body.setPlainText(with_signature(body, new))
+        self._signature = new
 
     def stored_as(self) -> tuple[str, str] | None:
         """The folder and id of the saved version of this message, if there is one."""

@@ -1,6 +1,6 @@
 import os
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
@@ -35,9 +35,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.13"
+__version__ = "commands_accounts.py 0.0.20"
 
 # --- Version history ----------------------------------------------------
+# v0.0.20: Settings window, account editing, signatures
 # v0.0.13: account.check
 # v0.0.12: Initial account and key commands
 
@@ -175,6 +176,16 @@ class AccountSummary:
     incoming: str
     outgoing: str
     delete_policy: str
+    delete_days: int = 30
+    signature: str = ""
+    incoming_host: str = ""
+    incoming_port: int = 0
+    incoming_security: str = ""
+    incoming_username: str = ""
+    outgoing_host: str = ""
+    outgoing_port: int = 0
+    outgoing_security: str = ""
+    outgoing_username: str = ""
 
 
 def _summary(item: AccountSettings) -> AccountSummary:
@@ -187,6 +198,16 @@ def _summary(item: AccountSettings) -> AccountSummary:
         f"{item.account.incoming.host}:{item.account.incoming.port} ({item.account.incoming.security.value})",
         f"{item.account.outgoing.host}:{item.account.outgoing.port} ({item.account.outgoing.security.value})",
         item.pop3.policy.value,
+        item.pop3.days,
+        item.signature,
+        item.account.incoming.host,
+        item.account.incoming.port,
+        item.account.incoming.security.value,
+        item.account.incoming.username,
+        item.account.outgoing.host,
+        item.account.outgoing.port,
+        item.account.outgoing.security.value,
+        item.account.outgoing.username,
     )
 
 
@@ -226,7 +247,71 @@ class AccountPolicyParameters:
 def account_policy(engine: Engine, parameters: AccountPolicyParameters) -> AccountSummary:
     config = engine.config()
     settings = engine.resolve_account(parameters.account, config)
-    changed = AccountSettings(settings.account, Pop3Options(Pop3DeletePolicy(parameters.policy), parameters.days), settings.encrypted)
+    changed = replace(settings, pop3=Pop3Options(Pop3DeletePolicy(parameters.policy), parameters.days))
+    engine.save_config(config.with_account(changed))
+    return _summary(changed)
+
+
+@dataclass(frozen=True, slots=True)
+class AccountEditParameters:
+    account: str = field(metadata=option("The account"))
+    display_name: str | None = field(default=None, metadata=option("The name shown for the account"))
+    email_address: str | None = field(default=None, metadata=option("The e-mail address of the account"))
+    signature: str | None = field(default=None, metadata=option("The signature added to new messages (empty removes it)"))
+    username: str | None = field(default=None, metadata=option("The user name for the incoming server"))
+    password: str | None = field(default=None, metadata=option("A new password for the incoming server", secret=True))
+    incoming_host: str | None = field(default=None, metadata=option("The POP3 server"))
+    incoming_port: int | None = field(default=None, metadata=option("The POP3 port"))
+    incoming_security: Security | None = field(default=None, metadata=option("tls, starttls or none"))
+    outgoing_username: str | None = field(default=None, metadata=option("The SMTP user name"))
+    outgoing_password: str | None = field(default=None, metadata=option("A new password for the outgoing server", secret=True))
+    outgoing_host: str | None = field(default=None, metadata=option("The SMTP server"))
+    outgoing_port: int | None = field(default=None, metadata=option("The SMTP port"))
+    outgoing_security: Security | None = field(default=None, metadata=option("tls, starttls or none"))
+    delete_policy: Policy | None = field(default=None, metadata=option("What happens to a message on the server after it was downloaded and verified"))
+    delete_days: int | None = field(default=None, metadata=option("Days before deleting, for delete_after_days"))
+
+
+def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSummary:
+    """Change the settings of an account. What is not given stays as it was. The stored mail is not touched."""
+    config = engine.config()
+    settings = engine.resolve_account(parameters.account, config)
+    account = settings.account
+    email = account.email_address if parameters.email_address is None else parameters.email_address.strip()
+    if email.count("@") != 1 or email.startswith("@") or email.endswith("@"):
+        raise UsageError("The e-mail address is not valid")
+    if any(item.account.account_id != account.account_id and item.account.email_address.lower() == email.lower() for item in config.accounts):
+        raise ConfigurationError("Another account has this e-mail address already")
+    name = account.display_name if parameters.display_name is None else (parameters.display_name.strip() or email)
+    incoming = ServerSettings(
+        account.incoming.host if parameters.incoming_host is None else parameters.incoming_host.strip(),
+        account.incoming.port if parameters.incoming_port is None else parameters.incoming_port,
+        account.incoming.security if parameters.incoming_security is None else _security(parameters.incoming_security),
+        account.incoming.username if parameters.username is None else parameters.username.strip(),
+    )
+    outgoing = ServerSettings(
+        account.outgoing.host if parameters.outgoing_host is None else parameters.outgoing_host.strip(),
+        account.outgoing.port if parameters.outgoing_port is None else parameters.outgoing_port,
+        account.outgoing.security if parameters.outgoing_security is None else _security(parameters.outgoing_security),
+        account.outgoing.username if parameters.outgoing_username is None else parameters.outgoing_username.strip(),
+    )
+    if not incoming.username or not outgoing.username:
+        raise UsageError("A user name must not be empty")
+    pop3 = Pop3Options(
+        settings.pop3.policy if parameters.delete_policy is None else Pop3DeletePolicy(parameters.delete_policy),
+        settings.pop3.days if parameters.delete_days is None else parameters.delete_days,
+    )
+    changed = replace(
+        settings,
+        account=replace(account, display_name=name, email_address=email, incoming=incoming, outgoing=outgoing),
+        pop3=pop3,
+        signature=settings.signature if parameters.signature is None else parameters.signature.replace("\r\n", "\n").rstrip(),
+    )
+    # Passwords first: a new password that cannot be stored must not leave settings behind that expect it
+    if parameters.password:
+        engine.passwords.set(account.account_id, ServerRole.INCOMING, parameters.password)
+    if parameters.outgoing_password:
+        engine.passwords.set(account.account_id, ServerRole.OUTGOING, parameters.outgoing_password)
     engine.save_config(config.with_account(changed))
     return _summary(changed)
 
@@ -335,6 +420,7 @@ def key_restore_code(engine: Engine, parameters: KeyRestoreCodeParameters) -> Ke
 def register(registry: CommandRegistry) -> None:
     registry.register("account.add", "Add a POP3/SMTP account and create its (encrypted) message store", AccountAddParameters, account_add)
     registry.register("account.check", "Test the connection and login to both servers before creating an account", AccountCheckParameters, account_check)
+    registry.register("account.edit", "Change the name, address, servers, passwords, signature or server-copy policy of an account", AccountEditParameters, account_edit)
     registry.register("account.list", "List the accounts", NoParameters, account_list)
     registry.register("account.remove", "Forget an account and its passwords (the mail on disk is kept)", AccountParameters, account_remove, destructive=True)
     registry.register("account.policy", "Set what happens to messages on the POP3 server after download", AccountPolicyParameters, account_policy)

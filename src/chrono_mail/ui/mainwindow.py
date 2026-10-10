@@ -27,12 +27,12 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.accountdialog import AccountDialog
-from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
+from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.composer import ComposeWindow
 from chrono_mail.ui.conversationbar import ConversationBar
-from chrono_mail.ui.foldertree import FolderTree
 from chrono_mail.ui.delegate import MessageDelegate
+from chrono_mail.ui.foldertree import FolderTree
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.models import (
     ACCOUNT_ROLE,
@@ -46,11 +46,13 @@ from chrono_mail.ui.models import (
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
+from chrono_mail.ui.settingsdialog import GeneralSettings, SettingsDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.19"
+__version__ = "mainwindow.py 0.0.20"
 
 # --- Version history ----------------------------------------------------
+# v0.0.20: Settings window, account editing, signatures
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.17: Message actions: archive, mark all as read, empty folder, drag and drop
@@ -109,7 +111,7 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.check_mail)
         if bool_setting(settings, "auto_check", True):
-            self._timer.start(AUTO_CHECK_MINUTES * 60 * 1000)
+            self._timer.start(self._auto_minutes() * 60 * 1000)
         self._mark_read_timer = QTimer(self)
         self._mark_read_timer.setSingleShot(True)
         self._mark_read_timer.timeout.connect(self._mark_shown_as_read)
@@ -226,6 +228,7 @@ class MainWindow(QMainWindow):
         self.act_add_account = self._action("Add an account…", lambda: self.add_account(), icon="list-add")
         self.act_recovery = self._action("Back up the encryption key…", self.show_recovery)
         self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
+        self.act_settings = self._action("Settings…", self.open_settings, "Ctrl+,", "configure")
         self.act_quit = self._action("Quit", self.close, "Ctrl+Q", "application-exit")
         self.act_search = self._action("Search", self._focus_search, "Ctrl+F")
         self.act_advanced = self._action("Advanced search…", self.advanced_search, "Ctrl+Shift+F")
@@ -287,6 +290,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.act_new)
         file_menu.addAction(self.act_refresh)
         file_menu.addSeparator()
+        file_menu.addAction(self.act_settings)
         file_menu.addAction(self.act_add_account)
         file_menu.addAction(self.act_recovery)
         file_menu.addAction(self.act_restore_key)
@@ -413,12 +417,33 @@ class MainWindow(QMainWindow):
 
         self.backend.call("message.thread", {"account": account, "folder": folder, "message": message_id}, arrived, lambda error: self.conversation_bar.clear(), owner=self)
 
+    def _auto_minutes(self) -> int:
+        try:
+            minutes = int(str(self.settings.value("auto_check_minutes", AUTO_CHECK_MINUTES)))
+        except ValueError:
+            return AUTO_CHECK_MINUTES
+        return minutes if 1 <= minutes <= 240 else AUTO_CHECK_MINUTES
+
     def _toggle_auto_check(self, on: bool) -> None:
         self.settings.setValue("auto_check", on)
         if on:
-            self._timer.start(AUTO_CHECK_MINUTES * 60 * 1000)
+            self._timer.start(self._auto_minutes() * 60 * 1000)
         else:
             self._timer.stop()
+
+    def open_settings(self) -> None:
+        """File > Settings: the way the program behaves, and the accounts."""
+        dialog = SettingsDialog(self.backend, GeneralSettings(self.act_auto.isChecked(), self._auto_minutes(), self.act_conversations.isChecked()), self)
+        dialog.add_account_requested.connect(lambda: self.add_account(after=dialog.reload))
+        dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False))
+        if dialog.exec() != SettingsDialog.DialogCode.Accepted:
+            return
+        wanted = dialog.general()
+        self.settings.setValue("auto_check_minutes", wanted.auto_check_minutes)
+        if wanted.auto_check and self.act_auto.isChecked():
+            self._timer.start(wanted.auto_check_minutes * 60 * 1000)  # a new interval
+        self.act_auto.setChecked(wanted.auto_check)
+        self.act_conversations.setChecked(wanted.conversations)
 
     # --- status ---------------------------------------------------------------------------------------
 
@@ -1007,7 +1032,7 @@ class MainWindow(QMainWindow):
         for account_id in list(remaining):
             self.backend.call("mail.fetch", {"account": account_id}, make_done(account_id), make_failed(account_id), owner=self)
 
-    def add_account(self, first: bool = False) -> None:
+    def add_account(self, first: bool = False, after: Callable[[], None] | None = None) -> None:
         dialog = AccountDialog(self.backend, first_account=first, parent=self)
         if dialog.exec() != AccountDialog.DialogCode.Accepted:
             return
@@ -1016,6 +1041,8 @@ class MainWindow(QMainWindow):
         def loaded() -> None:
             if key_created:
                 RecoveryDialog(self.backend, self).exec()
+            if after is not None:
+                after()
             self.check_mail()
 
         self.reload_accounts(select_saved=False, then=loaded)

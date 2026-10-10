@@ -374,3 +374,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Saved searches are not built.
 
+## 2026-10-10 Step 6 of the autonomous work: settings and accounts (version 0.0.20)
+
+**What landed**
+- Config: a signature per account; `with_account` keeps an account's place. Engine: `account.edit`; the account summary tells every setting (D-041).
+- Interface: Settings window (`ui/settingsdialog.py`), account editor (`ui/accountedit.py`), signatures in the composer.
+- Tests: engine (6), config (4), composer (3), settings window (9).
+
+**Still open**
+- The interface language and a choice of appearance are not in the settings.
+

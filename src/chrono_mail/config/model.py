@@ -5,13 +5,15 @@ from enum import Enum
 from chrono_mail.core import Account, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.9"
+__version__ = "model.py 0.0.20"
 
 # --- Version history ----------------------------------------------------
+# v0.0.20: signature per account
 # v0.0.9: Initial configuration model
 
 ACCOUNT_ID_PATTERN: re.Pattern[str] = re.compile(r"[0-9a-f]{32}")  # used in directory names: nothing else may pass
 MAXIMUM_DELETE_AFTER_DAYS: int = 3650
+MAXIMUM_SIGNATURE_CHARACTERS: int = 4000
 
 
 class Pop3DeletePolicy(Enum):
@@ -38,6 +40,11 @@ class AccountSettings:
     account: Account
     pop3: Pop3Options = Pop3Options()
     encrypted: bool = True
+    signature: str = ""  # plain text, added to new messages
+
+    def __post_init__(self) -> None:
+        if len(self.signature) > MAXIMUM_SIGNATURE_CHARACTERS:
+            raise ConfigurationError(f"A signature may have at most {MAXIMUM_SIGNATURE_CHARACTERS} characters")
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,8 +72,9 @@ class AppConfig:
 
     def with_account(self, settings: AccountSettings) -> "AppConfig":
         """A copy with this account added, or replacing the account with the same id."""
-        others = tuple(item for item in self.accounts if item.account.account_id != settings.account.account_id)
-        return AppConfig((*others, settings), self.key_id)
+        if any(item.account.account_id == settings.account.account_id for item in self.accounts):  # the same place in the list
+            return AppConfig(tuple(settings if item.account.account_id == settings.account.account_id else item for item in self.accounts), self.key_id)
+        return AppConfig((*self.accounts, settings), self.key_id)
 
     def without_account(self, account_id: str) -> "AppConfig":
         self.find(account_id)

@@ -4,12 +4,12 @@
 
 ## Where we are
 
-- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-040).
+- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-041).
 - **Milestone 0 is done** (0.4, GitHub Actions, is optional and not started). **Milestone 1: tasks 1.1 to 1.12 are done.** Open in milestone 1: 1.13 (Flatpak) and 1.14 (Windows run); 1.12 (key recovery) is done.
 - **There is a working graphical program to test**: `chrono-mail` (see below). Three-pane window in the style of eM Client 9 and 10: folders, message list, reading pane; get mail, read, reply, reply all, forward, new message, attachments (save and send), flag, mark read or unread, move, delete (Trash), folders (create, rename, delete), search with quick filters, first-run account setup with a connection test and the key recovery code screen. HTML mail is shown locked down (no scripts, remote content blocked until allowed per message).
 - The headless client still works: `chrono-mail-cli` (26 commands).
 - Verified against the real DirectAdmin server `mail.technova.us` through the engine and the CLI. The graphical program has been tested without a screen, with fake servers, and (one live test) against the real server through the window: compose, send, fetch, read, delete. **Nobody has used it on a real screen yet**: the first real use is the next step.
-- Project version 0.0.19. About 8,100 lines in `src/` (2,500 of them the interface), 8,300 in `tests/`; 926 offline tests, 31 live tests (one drives the window against the real server), 1 credential-store test, 1 performance test.
+- Project version 0.0.20. About 8,100 lines in `src/` (2,500 of them the interface), 8,300 in `tests/`; 926 offline tests, 31 live tests (one drives the window against the real server), 1 credential-store test, 1 performance test.
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main`. The last push is recorded in DEVLOG.md (version 0.0.12); the interface work (0.0.13) was pushed; everything up to 0.0.14 was pushed; later versions are pushed as they are finished (see the queue). The test account password (`chronomail@bccbox.com` on `mail.technova.us`) is only in the ignored `tests/live/account.local.toml`; it is still to be changed once the user decides POP3 and SMTP are proven.
 - KDEV is the development machine (Kubuntu 26). The project folder is `/home/rob/python/chrono-mail`.
 
@@ -22,7 +22,7 @@ Each step: tests, full gate, new version and tag, documents, push. Done steps ar
 3. DONE (0.0.17) Message actions: drag and drop to folders, Archive, mark all as read, empty Trash and Junk, richer context menus.
 4. DONE (0.0.18) Conversation view (counts in the list, grouped list option, conversation bar in the reading pane).
 5. DONE (0.0.19) Advanced search dialog, with "does not contain" and "or", dates and sizes.
-6. Settings window and account management (edit, remove), signatures.
+6. DONE (0.0.20) Settings window and account management (edit, remove), signatures.
 7. Desktop notifications and a tray icon.
 8. Save as .eml, print, view source.
 9. Address autocomplete in the composer.
@@ -46,7 +46,7 @@ How to run the checks:
 ## Open questions
 
 1. The index rebuild time without other load was not measured (the 59 minutes were partly under load), and not since the index got previews (schema 2).
-2. HTML composing and a settings dialog are not built (D-030). The interface language is English while dates follow the system language; translation is a later decision. The launcher file `packaging/chrono-mail.desktop` exists but is not installed on KDEV.
+2. HTML composing is not built (D-030). The interface language is English while dates follow the system language; translation is a later decision. The launcher file `packaging/chrono-mail.desktop` exists but is not installed on KDEV.
 3. Master-password mode, key rotation and key change are not built (D-023); the end-to-end recovery procedure is task 1.12.
 4. Switching a store between encrypted and plain is a migration and is not built (D-024).
 5. Certificate exceptions for servers with self-signed certificates: the clients refuse an untrusted certificate (AGENTS.md section 4.6 allows an explicit user exception; not built).

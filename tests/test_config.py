@@ -24,9 +24,10 @@ from chrono_mail.core import Account, AccountKind, ConfigurationError, Connectio
 from tests.doubles import BrokenBackend, MemoryBackend
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_config.py 0.0.9"
+__version__ = "test_config.py 0.0.20"
 
 # --- Version history ----------------------------------------------------
+# v0.0.20: signature tests
 # v0.0.9: Initial configuration tests
 
 
@@ -101,6 +102,7 @@ def test_account_lookup_add_replace_remove() -> None:
     renamed = dataclasses.replace(first, account=dataclasses.replace(first.account, display_name="Renamed"))
     replaced = config.with_account(renamed)
     assert len(replaced.accounts) == 2 and replaced.find(first.account.account_id).account.display_name == "Renamed"
+    assert replaced.accounts[0].account.account_id == first.account.account_id  # replacing keeps the place in the list
     removed = config.without_account(first.account.account_id)
     assert len(removed.accounts) == 1
     with pytest.raises(ConfigurationError):
@@ -233,3 +235,29 @@ def test_unavailable_credential_store_is_a_configuration_error_without_the_passw
         with pytest.raises(ConfigurationError) as raised:
             action()
         assert "hunter2" not in str(raised.value)
+
+
+def test_a_signature_is_saved_and_old_files_without_one_still_load() -> None:
+    config = make_config()
+    signed = config.with_account(dataclasses.replace(config.accounts[0], signature="Rob\nChrono Mail"))
+    assert parse_config(config_to_text(signed)) == signed
+    data = json.loads(config_to_text(signed))
+    del data["accounts"][0]["signature"]
+    assert parse_config(json.dumps(data)).accounts[0].signature == ""
+
+
+@pytest.mark.parametrize("signature", [5, ["a"], None])
+def test_a_signature_must_be_text(signature: object) -> None:
+    data = json.loads(config_to_text(make_config()))
+    data["accounts"][0]["signature"] = signature
+    with pytest.raises(ConfigurationError, match="signature"):
+        parse_config(json.dumps(data))
+
+
+def test_a_huge_signature_is_refused() -> None:
+    data = json.loads(config_to_text(make_config()))
+    data["accounts"][0]["signature"] = "x" * 5000
+    with pytest.raises(ConfigurationError, match="at most"):
+        parse_config(json.dumps(data))
+    with pytest.raises(ConfigurationError):
+        dataclasses.replace(make_config().accounts[0], signature="x" * 4001)

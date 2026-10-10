@@ -15,9 +15,10 @@ from chrono_mail.core import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 0.0.9"
+__version__ = "files.py 0.0.20"
 
 # --- Version history ----------------------------------------------------
+# v0.0.20: Settings window, account editing, signatures
 # v0.0.9: Initial settings file
 
 FORMAT_VERSION: int = 1
@@ -73,7 +74,13 @@ def _account(data: object, position: int) -> AccountSettings:
         _server(data.get("incoming"), f"{where}.incoming"),
         _server(data.get("outgoing"), f"{where}.outgoing"),
     )
-    return AccountSettings(account, Pop3Options(policy, days), encrypted)
+    signature = data.get("signature", "")
+    if not isinstance(signature, str):
+        raise ConfigurationError(f"Setting '{where}.signature' is not text")
+    try:
+        return AccountSettings(account, Pop3Options(policy, days), encrypted, signature)
+    except ConfigurationError as error:
+        raise ConfigurationError(f"{where}: {error}") from None
 
 
 def parse_config(text: str) -> AppConfig:
@@ -114,6 +121,7 @@ def config_to_text(config: AppConfig) -> str:
                     "incoming": _server_data(settings.account.incoming),
                     "outgoing": _server_data(settings.account.outgoing),
                     "pop3": {"policy": settings.pop3.policy.value, "days": settings.pop3.days},
+                    "signature": settings.signature,
                 }
                 for settings in config.accounts
             ],

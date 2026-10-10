@@ -33,6 +33,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12b | Message actions: Archive, mark all as read, empty Trash and Junk, drag and drop to folders (0.0.17). | done |
 | 1.12c | Conversations: size in the list, grouped list, conversation bar (0.0.18). | done |
 | 1.12d | Advanced search: OR, NOT, dates, sizes, dialog (0.0.19). | done |
+| 1.12e | Settings window, account editing and removal, signatures (0.0.20). | done |
 | 1.13 | Packaging: Flatpak for Fedora and Kubuntu; test on GNOME. | todo |
 | 1.14 | Windows test run on DEVELOPMENT. | todo |
 

@@ -6,13 +6,14 @@ from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.config import ServerRole
-from chrono_mail.ui.composer import ComposeWindow, parse_recipients
+from chrono_mail.ui.composer import ComposeWindow, parse_recipients, signature_block, with_signature
 from tests.ui.world import World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_composer.py 0.0.16"
+__version__ = "test_ui_composer.py 0.0.20"
 
 # --- Version history ----------------------------------------------------
+# v0.0.20: Settings window, account editing, signatures
 # v0.0.16: Drafts
 # v0.0.13: Initial composer tests
 
@@ -295,3 +296,52 @@ def test_stray_separators_never_lose_an_address(text: str) -> None:
 def test_hostile_recipient_text_never_raises(hostile: str) -> None:
     result = parse_recipients(hostile)
     assert result is None or all("\r" not in address and "\n" not in address for address in result)
+
+
+# --- signatures (0.0.20) -----------------------------------------------------------------------------------------------------------------
+
+
+def test_with_signature_puts_it_before_quoted_text() -> None:
+    assert with_signature("", "") == "" and with_signature("text", "  ") == "text"
+    assert with_signature("", "Rob\nChrono Mail") == "\n\n-- \nRob\nChrono Mail\n"
+    assert with_signature("\n\nOn Monday, Ann wrote:\n> hi\n", "Rob") == "\n\n-- \nRob\n\nOn Monday, Ann wrote:\n> hi\n"
+    assert with_signature("no leading blank lines", "Rob") == "\n\n-- \nRob\n\nno leading blank lines"
+    assert signature_block("\nRob\n\n") == "-- \nRob"
+
+
+def test_a_new_message_and_a_reply_get_the_signature_but_a_resumed_draft_does_not(world: World, qtbot: QtBot) -> None:
+    world.call("account.edit", account=world.account_id, signature="Rob\nChrono Mail")
+    fresh = new_composer(world, qtbot)
+    assert fresh.body.toPlainText() == "\n\n-- \nRob\nChrono Mail\n" and not fresh.is_modified()
+    assert fresh.close() and not world.dialogs.shown  # a signature alone is not a change worth asking about
+    drafted = world.call("message.compose", account=world.account_id, folder="Inbox", message=world.call("message.list", account=world.account_id, folder="Inbox").messages[0].message_id, kind="reply")
+    reply = new_composer(world, qtbot, drafted)
+    text = reply.body.toPlainText()
+    assert text.index("-- \nRob") < text.index("wrote:") and text.count("-- \nRob") == 1
+    saved = world.call("draft.save", account=world.account_id, subject="x", body="mine\n\n-- \nRob\nChrono Mail\n")
+    opened = world.call("draft.open", account=world.account_id, message=saved.message_id)
+    resumed = ComposeWindow(world.backend, accounts(world), world.account_id, opened, None, (opened.folder, opened.message_id))
+    qtbot.addWidget(resumed)
+    assert resumed.body.toPlainText().count("-- \nRob") == 1
+    for window in (reply, resumed):
+        window._finished = True  # noqa: SLF001
+        window.close()
+
+
+def test_choosing_another_sender_swaps_the_signature(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    from tests.test_engine_commands import add_account
+
+    second = add_account(world.engine, world.pop, world.smtp, email="second@example.com")
+    world.call("account.edit", account=world.account_id, signature="First signature")
+    world.call("account.edit", account=second, signature="Second signature")
+    window = new_composer(world, qtbot)
+    assert "First signature" in window.body.toPlainText()
+    window.body.setPlainText("Hello\n\n" + window.body.toPlainText().lstrip("\n"))
+    window.from_box.setCurrentIndex(window.from_box.findData(second))
+    text = window.body.toPlainText()
+    assert "Second signature" in text and "First signature" not in text and text.startswith("Hello")
+    world.call("account.edit", account=second, signature="")
+    window.from_box.setCurrentIndex(window.from_box.findData(world.account_id))
+    assert window.body.toPlainText().count("-- \n") == 1  # the first account's signature is back once
+    window._finished = True  # noqa: SLF001
+    window.close()
