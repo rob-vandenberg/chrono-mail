@@ -1,6 +1,7 @@
 import os
 import re
 import sqlite3
+from dataclasses import dataclass
 from collections.abc import Collection, Generator, Iterable
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -18,9 +19,10 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.0.18"
+__version__ = "index.py 0.0.19"
 
 # --- Version history ----------------------------------------------------
+# v0.0.19: OR and NOT (and a minus) in search words
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.13: preview, unread index, busy timeout
 # v0.0.8: Initial message index
@@ -33,7 +35,7 @@ _SORT_COLUMN: dict[SortField, str] = {
     SortField.SIZE: "m.size",
 }
 _FIELD_COLUMN: dict[str, str] = {"from": "sender", "to": "recipients", "subject": "subject", "body": "body"}
-_TERM: re.Pattern[str] = re.compile(r'(?:(\w+):)?("[^"]*"?|\S+)')
+_TERM: re.Pattern[str] = re.compile(r'(-?)(?:(\w+):)?("[^"]*"?|\S+)')
 
 
 def _folder_key(path: tuple[str, ...]) -> str:
@@ -71,11 +73,36 @@ def _row(values: tuple[object, ...]) -> IndexedMessage:
     )
 
 
-def match_expression(query: str) -> str:
-    """A safe FTS5 expression for what a person typed. Words match as prefixes, quotes make phrases,
-    and from:, to:, subject: and body: limit a term to one field."""
-    terms: list[str] = []
-    for field, text in _TERM.findall(query.replace("\x00", " ")):
+@dataclass(frozen=True, slots=True)
+class ParsedQuery:
+    """What a person typed, as two full-text expressions: what must match and what must not."""
+
+    positive: str = ""
+    negative: str = ""
+
+
+def parse_query(query: str) -> ParsedQuery:
+    """A safe pair of FTS5 expressions for what a person typed.
+
+    Words match as prefixes, quotes make phrases, and from:, to:, subject: and body: limit a term to one field.
+    OR (capitals, or |) between terms gives a choice; terms next to each other all have to match, and that binds
+    tighter than OR: "a b OR c" is (a and b) or c. NOT before a term, or a minus in front of it ("-spam",
+    "-from:bob", -"a phrase"), excludes the messages that contain it; exclusions apply to the whole search.
+    """
+    groups: list[list[str]] = [[]]
+    excluded: list[str] = []
+    negate_next = False
+    for minus, field, text in _TERM.findall(query.replace("\x00", " ")):
+        if not field and text in ("OR", "|"):
+            if groups[-1]:
+                groups.append([])
+            negate_next = False
+            continue
+        if not field and text == "NOT":
+            negate_next = True
+            continue
+        negated = negate_next or bool(minus)
+        negate_next = False
         column = _FIELD_COLUMN.get(field.lower()) if field else None
         if field and column is None:
             text = f"{field}:{text}"  # not a field we know: ordinary text
@@ -84,8 +111,18 @@ def match_expression(query: str) -> str:
         if not words:
             continue
         expression = f'"{words}"' if phrase else f'"{words}"*'
-        terms.append(f"{column} : {expression}" if column else expression)
-    return " ".join(terms)
+        term = f"{column} : {expression}" if column else expression
+        if negated:
+            excluded.append(term)
+        else:
+            groups[-1].append(term)
+    positive = " OR ".join(" ".join(group) for group in groups if group)
+    return ParsedQuery(positive, " OR ".join(excluded))
+
+
+def match_expression(query: str) -> str:
+    """The expression for the words that must match (see parse_query)."""
+    return parse_query(query).positive
 
 
 class Index:
@@ -286,7 +323,8 @@ class Index:
         conditions: list[str] = []
         parameters: list[object] = []
         source = "messages m"
-        expression = match_expression(query)
+        parsed = parse_query(query)
+        expression = parsed.positive
         if expression:
             source = "text t JOIN messages m ON m.id = t.rowid"
             conditions.append("t.text MATCH ?")
@@ -295,6 +333,9 @@ class Index:
         # the folder's date index instead and probe the full-text table once per row (measured: 4 seconds instead of
         # 0.1 second with 300,000 hits). The unary plus on a column stops SQLite from using an index for that condition.
         steer = "+" if expression else ""
+        if parsed.negative:
+            conditions.append("m.id NOT IN (SELECT rowid FROM text WHERE text MATCH ?)")
+            parameters.append(parsed.negative)
         if folder is not None:
             conditions.append(f"{steer}m.folder = ?")
             parameters.append(_folder_key(folder))

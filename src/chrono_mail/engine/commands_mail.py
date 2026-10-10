@@ -3,7 +3,7 @@ import mimetypes
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, time
 from email.utils import parseaddr
 from pathlib import Path
 from typing import Literal
@@ -21,9 +21,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import Pop3State, fetch_pop3, send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.18"
+__version__ = "commands_mail.py 0.0.19"
 
 # --- Version history ----------------------------------------------------
+# v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.16: a sent message can replace a draft
 # v0.0.13: previews, inline images, attachment save, compose, reply marks
@@ -374,15 +375,36 @@ class SearchParameters:
     unread: bool | None = field(default=None, metadata=option("Only unread (true) or only read (false) messages"))
     flagged: bool | None = field(default=None, metadata=option("Only flagged (true) or only unflagged (false) messages"))
     has_attachments: bool | None = field(default=None, metadata=option("Only messages with (true) or without (false) attachments"))
+    date_from: str | None = field(default=None, metadata=option("Only messages from this day on (YYYY-MM-DD, your local time)"))
+    date_to: str | None = field(default=None, metadata=option("Only messages up to and including this day (YYYY-MM-DD)"))
+    minimum_size: int | None = field(default=None, metadata=option("Only messages of at least this many bytes"))
+    maximum_size: int | None = field(default=None, metadata=option("Only messages of at most this many bytes"))
     conversations: bool = field(default=False, metadata=option("Show only the newest message of each conversation (not together with words to find)"))
     offset: int = field(default=0, metadata=option("How many results to skip"))
     limit: int = field(default=50, metadata=option("How many results to show"))
 
 
+def _day(text: str | None, name: str, end: bool) -> datetime | None:
+    """The start (or the last moment) of a day given as YYYY-MM-DD, in the local time zone."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        day = date.fromisoformat(text)
+    except ValueError:
+        raise UsageError(f"{name} must be a date like 2026-05-31") from None
+    moment = datetime.combine(day, time.max if end else time.min)
+    return moment.astimezone()
+
+
 def message_search(engine: Engine, parameters: SearchParameters) -> tuple[MessageRow, ...]:
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
-        filters = SearchFilter(unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments, newest_per_thread=parameters.conversations)
+        filters = SearchFilter(
+            unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments,
+            date_from=_day(parameters.date_from, "date_from", end=False), date_to=_day(parameters.date_to, "date_to", end=True),
+            minimum_size=parameters.minimum_size, maximum_size=parameters.maximum_size, newest_per_thread=parameters.conversations,
+        )
         return _rows(mailbox, mailbox.index.search(parameters.query, folder, filters, parameters.offset, parameters.limit))
 
 

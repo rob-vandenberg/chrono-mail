@@ -13,9 +13,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.18"
+__version__ = "models.py 0.0.19"
 
 # --- Version history ----------------------------------------------------
+# v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.17: messages can be dragged out of the list
 # v0.0.14: icons in the folder tree
@@ -48,11 +49,15 @@ class ViewSpec:
     unread: bool | None = None
     flagged: bool | None = None
     has_attachments: bool | None = None
+    date_from: str | None = None  # YYYY-MM-DD
+    date_to: str | None = None
+    minimum_size: int | None = None
+    maximum_size: int | None = None
     conversations: bool = False  # only the newest message of each conversation (a plain folder view only)
 
     @property
     def kind(self) -> ViewKind:
-        searching = self.conversations or bool(self.query) or self.unread is not None or self.flagged is not None or self.has_attachments is not None or self.folder is None
+        searching = self.conversations or self.date_from is not None or self.date_to is not None or self.minimum_size is not None or self.maximum_size is not None or bool(self.query) or self.unread is not None or self.flagged is not None or self.has_attachments is not None or self.folder is None
         return ViewKind.QUERY if searching else ViewKind.FOLDER
 
 
@@ -218,7 +223,7 @@ class MessageListModel(QAbstractListModel):
             values["folder"] = spec.folder
         if spec.conversations:
             values["conversations"] = True
-        for name in ("unread", "flagged", "has_attachments"):
+        for name in ("unread", "flagged", "has_attachments", "date_from", "date_to", "minimum_size", "maximum_size"):
             value = getattr(spec, name)
             if value is not None:
                 values[name] = value

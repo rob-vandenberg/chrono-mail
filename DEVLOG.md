@@ -364,3 +364,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - No subject-based threading fallback; the grouped list is sorted by date only.
 
+## 2026-10-10 Step 5 of the autonomous work: advanced search (version 0.0.19)
+
+**What landed**
+- Index: `parse_query` (OR, NOT, minus) and the exclusion condition. Engine: date and size options of `message.search` (D-040).
+- Interface: Advanced search dialog (Ctrl+Shift+F), filter chip for dates and sizes (`ui/advancedsearch.py`).
+- Tests: index (3), engine (4), interface (5).
+
+**Still open**
+- Saved searches are not built.
+

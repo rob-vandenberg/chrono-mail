@@ -6,13 +6,14 @@ from pathlib import Path
 import pytest
 
 from chrono_mail.core import MessageFlag, MessageRef, StorageError
-from chrono_mail.index import Index, IndexedMessage, IndexEntry, SearchFilter, SortField, entry_from_raw, match_expression
+from chrono_mail.index import Index, IndexedMessage, IndexEntry, ParsedQuery, SearchFilter, SortField, entry_from_raw, match_expression, parse_query
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.0.14"
+__version__ = "test_index_index.py 0.0.19"
 
 # --- Version history ----------------------------------------------------
+# v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.8: Initial index tests
@@ -304,3 +305,58 @@ def test_failed_batch_leaves_nothing_behind(tmp_path: Path) -> None:
     assert index.message_count() == 3  # the two entries added before the failure were rolled back
     assert index.get(f"{100:032x}") is None
     assert index.search("number") != []  # and the index is still usable
+
+
+# --- OR and NOT in search words (0.0.19) -----------------------------------------------------------------------------------------------
+
+
+def test_parse_query_understands_or_not_and_minus() -> None:
+    assert parse_query("a b OR c") == ParsedQuery('"a"* "b"* OR "c"*', "")
+    assert parse_query("a | b") == ParsedQuery('"a"* OR "b"*', "")
+    assert parse_query("cat NOT dog") == ParsedQuery('"cat"*', '"dog"*')
+    assert parse_query("cat -dog -from:bob") == ParsedQuery('"cat"*', '"dog"* OR sender : "bob"*')
+    assert parse_query('-from:bob "a phrase"') == ParsedQuery('"a phrase"', 'sender : "bob"*')
+    assert parse_query('x NOT "not this"') == ParsedQuery('"x"*', '"not this"')
+    assert parse_query("only -negative") == ParsedQuery('"only"*', '"negative"*')
+    assert parse_query("-negative") == ParsedQuery("", '"negative"*')
+
+
+def test_parse_query_ignores_stray_operators_and_never_breaks() -> None:
+    assert parse_query("OR") == ParsedQuery() and parse_query("NOT") == ParsedQuery() and parse_query("-") == ParsedQuery('"-"*', "")
+    assert parse_query("OR a OR OR b OR") == ParsedQuery('"a"* OR "b"*', "")
+    assert parse_query("a NOT OR b") == ParsedQuery('"a"* OR "b"*', "")
+    assert parse_query('a OR "unfinished') == ParsedQuery('"a"* OR "unfinished"', "")
+    assert parse_query("lowercase or word") == ParsedQuery('"lowercase"* "or"* "word"*', "")  # only capitals are an operator
+    for hostile in ('"', '""', "'", "a ) (", "NEAR(a b)", "x:", ":y", "-from:", "*", "a AND b", "\x00", '- - -"'):
+        parse_query(hostile)
+
+
+def mixed(tmp_path: Path) -> Index:
+    index = Index(tmp_path / "index.sqlite")
+    for number, (subject, body, sender) in enumerate(
+        [("Cats", "all about cats", "Ann <ann@x.org>"), ("Dogs", "all about dogs", "Bob <bob@x.org>"), ("Both", "cats and dogs together", "Ann <ann@x.org>"), ("Birds", "owls only", "Cy <cy@x.org>")]
+    ):
+        raw = raw_message(subject=subject, body=body + "\n", sender=sender, message_id=f"<q{number}@x>", date=BASE + timedelta(days=number))
+        index.add(entry_from_raw(MessageRef("account1", INBOX, f"{number:032x}"), "new/x", frozenset(), len(raw), raw))
+    return index
+
+
+def test_searching_with_or_not_and_minus(tmp_path: Path) -> None:
+    index = mixed(tmp_path)
+    assert sorted(subjects(index.search("cats OR dogs"))) == ["Both", "Cats", "Dogs"]
+    assert sorted(subjects(index.search("cats dogs"))) == ["Both"]
+    assert sorted(subjects(index.search("cats NOT dogs"))) == ["Cats"]
+    assert sorted(subjects(index.search("cats -dogs"))) == ["Cats"]
+    assert sorted(subjects(index.search("-dogs"))) == ["Birds", "Cats"]  # only an exclusion: everything else
+    assert sorted(subjects(index.search("about -from:ann"))) == ["Dogs"]
+    assert sorted(subjects(index.search("from:ann OR from:cy"))) == ["Birds", "Both", "Cats"]
+    assert sorted(subjects(index.search("from:ann OR from:cy -cats"))) == ["Birds"]
+    assert index.search("cats NOT cats") == []
+    assert sorted(subjects(index.search("-dogs", INBOX, SearchFilter(unread=True)))) == ["Birds", "Cats"]
+
+
+def test_a_negative_search_inside_a_folder_and_with_a_date_range(tmp_path: Path) -> None:
+    index = mixed(tmp_path)
+    window = SearchFilter(date_from=BASE + timedelta(days=1), date_to=BASE + timedelta(days=3))
+    assert sorted(subjects(index.search("-cats", INBOX, window))) == ["Birds", "Dogs"]
+    assert index.search("-cats", ("Nowhere",)) == []

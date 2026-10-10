@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.composer import ComposeWindow
 from chrono_mail.ui.conversationbar import ConversationBar
 from chrono_mail.ui.foldertree import FolderTree
@@ -47,9 +48,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.18"
+__version__ = "mainwindow.py 0.0.19"
 
 # --- Version history ----------------------------------------------------
+# v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.17: Message actions: archive, mark all as read, empty folder, drag and drop
 # v0.0.16: Drafts
@@ -91,6 +93,7 @@ class MainWindow(QMainWindow):
         self._shown: tuple[str, str, str] | None = None  # account, folder, message id of what the reader shows
         self._show_request: int = 0
         self._updating_tree: bool = False
+        self._advanced: AdvancedSearch | None = None
         self._sort: str = str(settings.value("sort", "date"))
         self._oldest_first: bool = bool_setting(settings, "oldest_first", False)
         self._reselect: str | None = None
@@ -152,11 +155,17 @@ class MainWindow(QMainWindow):
         self.filter_flagged = self._filter_button("Flagged", header)
         self.filter_attachments = self._filter_button("Attachments", header)
         self.count_label = QLabel("", header)
+        self.filter_chip = QToolButton(header)
+        self.filter_chip.setAutoRaise(True)
+        self.filter_chip.setText("Advanced filters ✕")
+        self.filter_chip.setToolTip("Click to remove the dates and sizes of the advanced search")
+        self.filter_chip.hide()
         header_layout.addWidget(self.sort_button)
         header_layout.addStretch(1)
         header_layout.addWidget(self.filter_unread)
         header_layout.addWidget(self.filter_flagged)
         header_layout.addWidget(self.filter_attachments)
+        header_layout.addWidget(self.filter_chip)
         header_layout.addWidget(self.count_label)
         list_layout.addWidget(header)
         list_layout.addWidget(self.list_view, 1)
@@ -219,6 +228,7 @@ class MainWindow(QMainWindow):
         self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
         self.act_quit = self._action("Quit", self.close, "Ctrl+Q", "application-exit")
         self.act_search = self._action("Search", self._focus_search, "Ctrl+F")
+        self.act_advanced = self._action("Advanced search…", self.advanced_search, "Ctrl+Shift+F")
         self.act_auto = QAction("Check for mail automatically", self)
         self.act_auto.setCheckable(True)
         self.act_auto.setChecked(bool_setting(self.settings, "auto_check", True))
@@ -265,7 +275,7 @@ class MainWindow(QMainWindow):
         self.scope.addItem("This folder", "folder")
         self.scope.addItem("All folders", "all")
         self.search_box = QLineEdit(self)
-        self.search_box.setPlaceholderText("Search (from:  to:  subject:  body:)")
+        self.search_box.setPlaceholderText("Search (from:  to:  subject:  body:  OR  -word)")
         self.search_box.setClearButtonEnabled(True)
         self.search_box.setMinimumWidth(300)
         self.toolbar.addWidget(self.scope)
@@ -300,6 +310,7 @@ class MainWindow(QMainWindow):
         folder_menu.addAction(self.act_empty_folder)
         view_menu = bar.addMenu("&View")
         view_menu.addAction(self.act_search)
+        view_menu.addAction(self.act_advanced)
         view_menu.addAction(self.act_conversations)
         view_menu.addAction(self.act_auto)
         help_menu = bar.addMenu("&Help")
@@ -329,7 +340,8 @@ class MainWindow(QMainWindow):
         self.list_model.loaded.connect(self._restore_row_selection)
         self.search_box.returnPressed.connect(self._apply_view)
         self.search_box.textChanged.connect(self._search_text_changed)
-        self.scope.currentIndexChanged.connect(lambda: self._apply_view() if self.search_box.text() else None)
+        self.scope.currentIndexChanged.connect(self._scope_changed)
+        self.filter_chip.clicked.connect(self._clear_advanced)
         for button in (self.filter_unread, self.filter_flagged, self.filter_attachments):
             button.toggled.connect(self._apply_view)
         self.reader.attachment_save_requested.connect(self._save_attachment)
@@ -570,6 +582,8 @@ class MainWindow(QMainWindow):
         self.act_empty_folder.setEnabled(kind == "folder" and self._folder_role in ("trash", "junk"))
         self.act_mark_all_read.setEnabled(kind == "folder")
         self._select_quick_filters_for(kind)
+        self._advanced = None
+        self.filter_chip.hide()
         self.search_box.blockSignals(True)
         self.search_box.clear()
         self.search_box.blockSignals(False)
@@ -588,7 +602,40 @@ class MainWindow(QMainWindow):
 
     def _search_text_changed(self, text: str) -> None:
         if not text:
+            self._advanced = None
+            self.filter_chip.hide()
             self._apply_view()
+
+    def _scope_changed(self) -> None:
+        if self.search_box.text() or self._advanced is not None:
+            self._apply_view()
+
+    def _clear_advanced(self) -> None:
+        self._advanced = None
+        self.filter_chip.hide()
+        self._apply_view()
+
+    def advanced_search(self) -> None:
+        """Ask for several conditions at once and show the result in the message list."""
+        if self._account_id is None:
+            return
+        dialog = AdvancedSearchDialog(self)
+        if dialog.exec() != AdvancedSearchDialog.DialogCode.Accepted:
+            return
+        wanted = dialog.search()
+        self._advanced = wanted if wanted.extra_filters else None
+        self.filter_chip.setVisible(self._advanced is not None)
+        self.search_box.blockSignals(True)
+        self.search_box.setText(wanted.query)
+        self.search_box.blockSignals(False)
+        self.scope.blockSignals(True)
+        self.scope.setCurrentIndex(1 if wanted.all_folders else 0)
+        self.scope.blockSignals(False)
+        for button, on in ((self.filter_unread, wanted.unread), (self.filter_flagged, wanted.flagged), (self.filter_attachments, wanted.attachments)):
+            button.blockSignals(True)
+            button.setChecked(on)
+            button.blockSignals(False)
+        self._apply_view()
 
     def _focus_search(self) -> None:
         self.search_box.setFocus()
@@ -604,12 +651,18 @@ class MainWindow(QMainWindow):
         flagged = True if self.filter_flagged.isChecked() else None
         attachments = True if self.filter_attachments.isChecked() else None
         folder = self._folder
-        if query and self.scope.currentData() == "all":
+        advanced = self._advanced
+        if (query or advanced is not None) and self.scope.currentData() == "all":
             folder = None
         elif self._tree_kind in ("unread", "flagged"):
             folder = None
-        grouped = self.act_conversations.isChecked() and self._tree_kind == "folder" and not (query or unread or flagged or attachments)
-        return ViewSpec(self._account_id, folder, query, self._sort, self._oldest_first, unread, flagged, attachments, grouped)
+        grouped = self.act_conversations.isChecked() and self._tree_kind == "folder" and not (query or unread or flagged or attachments or self._advanced is not None)
+        return ViewSpec(
+            self._account_id, folder, query, self._sort, self._oldest_first, unread, flagged, attachments,
+            date_from=advanced.date_from if advanced else None, date_to=advanced.date_to if advanced else None,
+            minimum_size=advanced.minimum_size if advanced else None, maximum_size=advanced.maximum_size if advanced else None,
+            conversations=grouped,
+        )
 
     def _apply_view(self) -> None:
         self.delegate.show_recipients = self._folder_role in ("sent", "drafts") or self._folder == "Outbox"
