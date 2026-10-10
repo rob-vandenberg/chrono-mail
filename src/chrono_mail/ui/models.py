@@ -14,9 +14,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.47"
+__version__ = "models.py 0.0.54"
 
 # --- Version history ----------------------------------------------------
+# v0.0.54: A flag change redraws every column of the row
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.41: columns
@@ -266,7 +267,8 @@ class MessageListModel(QAbstractTableModel):
             if was_unread != now_unread:
                 self._unread = max(0, self._unread + (1 if now_unread else -1))
                 self.counts_changed.emit(self._total, self._unread)
-        self.dataChanged.emit(self.index(position), self.index(position))
+        last = max(0, self.columnCount() - 1)
+        self.dataChanged.emit(self.index(position, 0), self.index(position, last))  # every column of the row: each cell is drawn on its own
 
     def message_ids(self) -> list[str]:
         """The ids of the rows that are loaded now (for finding a message again after a reload)."""
@@ -330,7 +332,7 @@ class MessageListModel(QAbstractTableModel):
             else:
                 self._rows.pages[page] = rows
                 first = page * PAGE_SIZE
-                self.dataChanged.emit(self.index(first), self.index(min(first + len(rows), self._total) - 1))
+                self.dataChanged.emit(self.index(first, 0), self.index(min(first + len(rows), self._total) - 1, max(0, self.columnCount() - 1)))
             self.loaded.emit()
 
         self._backend.call("message.list", self._values(spec, page * PAGE_SIZE), arrived, self._failed, owner=self)

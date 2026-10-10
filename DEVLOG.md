@@ -608,3 +608,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - Forward as attachment, resend, find in message, spell check, tags.
+
+## 2026-10-11 Redraw after a flag change (version 0.0.54)
+
+**What landed**
+- After marking messages as read, unread or flagged, the list announced a change of the first column only, so in the table layout the other cells kept their old (bold) look until the selection moved. The change now covers every column of the row, also when a page of rows arrives; test added.

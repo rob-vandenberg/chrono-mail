@@ -1,5 +1,5 @@
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QModelIndex, Qt
 from PySide6.QtWidgets import QMenu, QMessageBox
 from pytestqt.qtbot import QtBot
 
@@ -7,9 +7,10 @@ from tests.ui.test_ui_window import select, started
 from tests.ui.world import World, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_shortcuts.py 0.0.53"
+__version__ = "test_ui_shortcuts.py 0.0.54"
 
 # --- Version history ----------------------------------------------------
+# v0.0.54: A flag change redraws every column of the row
 # v0.0.53: Initial tests of the standard shortcuts
 
 DEFAULT_KEYS: dict[str, str] = {
@@ -126,3 +127,25 @@ def test_the_composer_and_the_message_window_have_the_same_keys(world: World, qt
     assert toolbar_keys == {"Reply": "Ctrl+R", "Reply all": "Ctrl+Shift+R", "Forward": "Ctrl+F"}
     next(a for a in window.actions() if a.text() == "Close").trigger()
     assert not window.isVisible()
+
+
+def test_marking_as_read_redraws_every_cell_of_the_selected_rows(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window._mark_read_timer.stop()  # noqa: SLF001
+    assert window.list_model.columnCount() > 1  # the table layout: each column of a row is a cell of its own
+    changed: list[tuple[int, int, int, int]] = []
+
+    def record(top: QModelIndex, bottom: QModelIndex) -> None:
+        changed.append((top.row(), top.column(), bottom.row(), bottom.column()))
+
+    window.list_model.dataChanged.connect(record)
+    for row in range(3):
+        window.list_view.selectionModel().select(window.list_model.index(row), window.list_view.selectionModel().SelectionFlag.Select | window.list_view.selectionModel().SelectionFlag.Rows)
+    window.act_unread.trigger()
+    wait(qtbot, lambda: all("seen" not in row_of(window, position).flags for position in range(3)))
+    changed.clear()
+    window.act_read.trigger()
+    wait(qtbot, lambda: all("seen" in row_of(window, position).flags for position in range(3)))
+    last = window.list_model.columnCount() - 1
+    assert {(top, 0, top, last) for top in range(3)} <= set(changed)  # from the first column to the last, for every row
