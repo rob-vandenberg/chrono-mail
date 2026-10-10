@@ -15,9 +15,10 @@ from tests.fakeimap import FakeImapServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_imap.py 0.0.31"
+__version__ = "test_sync_imap.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: Folder choices, roles and check interval per account
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.30: IMAP sync, store to server
 # v0.0.29: Initial IMAP sync tests
@@ -546,3 +547,57 @@ def test_a_folder_missing_from_a_damaged_store_is_not_concluded_deleted(world: W
     world.store.damaged_folders.append("f-broken")
     report = world.sync()
     assert any("looks damaged" in note for note in report.notes) and "Archive2" not in world.state.hidden
+
+
+# --- the person's choices of folders and roles (0.0.44) ------------------------------------------------------------------------------------
+
+
+def test_a_role_chosen_by_the_person_beats_the_automatic_one() -> None:
+    entries = [entry("INBOX"), entry("Sent", "\\sent"), entry("Verzonden"), entry("Rommel")]
+    plans, _ = plan_folders(entries, roles={"Verzonden": "sent", "Rommel": "junk", "INBOX": "trash", "Sent": "nonsense"})
+    by_name = {plan.server_name: plan.local_path for plan in plans}
+    assert by_name["Verzonden"] == ("Sent",) and by_name["Rommel"] == ("Junk",) and by_name["INBOX"] == ("Inbox",)
+    assert "Sent" not in by_name or by_name["Sent"] != ("Sent",)  # the place is taken: the old Sent folder is an ordinary folder now
+
+
+def test_a_folder_the_server_does_not_list_as_subscribed_can_be_forced(world: World) -> None:
+    world.server.add("Hidden", mail(1))
+    world.server.folders["Hidden"].subscribed = False
+    world.sync()
+    assert ("Hidden",) not in {f.path for f in world.store.list_folders()}  # the others are subscribed: this one is not shown
+    world.state.set_hidden("Hidden", False)  # the person wants it
+    assert "Hidden" in world.state.forced and "Hidden" not in world.state.hidden
+    world.sync()
+    assert len(world.messages(("Hidden",))) == 1
+
+
+def test_hiding_a_folder_stops_its_synchronisation_and_showing_brings_it_back(world: World) -> None:
+    world.server.add("Projects", mail(1))
+    world.sync()
+    assert len(world.messages(("Projects",))) == 1
+    world.state.set_hidden("Projects", True)
+    world.server.add("Projects", mail(2))
+    world.sync()
+    assert len(world.messages(("Projects",))) == 1  # not synchronised: the new message does not come, the old one stays
+    world.state.set_hidden("Projects", False)
+    world.sync()
+    assert len(world.messages(("Projects",))) == 2
+
+
+def test_the_choices_survive_the_file_and_compaction(tmp_path: Path) -> None:
+    from chrono_mail.sync import imap_state
+
+    state = ImapState(tmp_path / "state.log", durable=False)
+    state.set_hidden("A", True)
+    state.set_hidden("B", False)
+    state.set_role("C", "junk")
+    state.set_role("D", "trash")
+    state.set_role("D", "")
+    reloaded = ImapState(tmp_path / "state.log", durable=False)
+    assert (reloaded.hidden, reloaded.forced, reloaded.roles) == ({"A"}, {"B"}, {"C": "junk"})
+    imap_state.COMPACT_MINIMUM_LINES = 1
+    for number in range(30):
+        state.set_role("C", "junk")
+    assert state.compact_if_needed()
+    again = ImapState(tmp_path / "state.log", durable=False)
+    assert (again.hidden, again.forced, again.roles) == ({"A"}, {"B"}, {"C": "junk"}) and again.ignored_lines == 0

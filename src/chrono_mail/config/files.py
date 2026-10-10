@@ -15,9 +15,10 @@ from chrono_mail.core import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 0.0.43"
+__version__ = "files.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: Folder choices, roles and check interval per account
 # v0.0.43: accepted certificates
 # v0.0.33: Rules
 # v0.0.20: Settings window, account editing, signatures
@@ -83,7 +84,10 @@ def _account(data: object, position: int) -> AccountSettings:
     if not isinstance(pins, list) or not all(isinstance(item, str) for item in pins):
         raise ConfigurationError(f"Setting '{where}.trusted_certificates' is not a list of text")
     try:
-        return AccountSettings(account, Pop3Options(policy, days), encrypted, signature, tuple(pins))
+        check = data.get("check_minutes", 0)
+        if not isinstance(check, int) or isinstance(check, bool):
+            raise ConfigurationError(f"Setting '{where}.check_minutes' is not a number")
+        return AccountSettings(account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check)
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
 
@@ -128,6 +132,7 @@ def config_to_text(config: AppConfig) -> str:
                     "pop3": {"policy": settings.pop3.policy.value, "days": settings.pop3.days},
                     "signature": settings.signature,
                     "trusted_certificates": list(settings.trusted_certificates),
+                    "check_minutes": settings.check_minutes,
                 }
                 for settings in config.accounts
             ],

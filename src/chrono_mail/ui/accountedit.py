@@ -11,6 +11,8 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -22,9 +24,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 0.0.43"
+__version__ = "accountedit.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: check interval and the folders of an IMAP account
 # v0.0.43: accepted certificates
 # v0.0.31: IMAP accounts have no server copies tab
 # v0.0.20: Initial dialog for changing an account
@@ -60,6 +63,12 @@ class AccountEditDialog(QDialog):
         general_form.addRow("E-mail address", self.email)
         general_form.addRow("Signature", self.signature)
         general_form.addRow("", self.signature_count)
+        self.check_minutes = QSpinBox(general)
+        self.check_minutes.setRange(0, 240)
+        self.check_minutes.setSpecialValueText("As set in the general settings")
+        self.check_minutes.setSuffix(" minutes")
+        self.check_minutes.setValue(int(getattr(account, "check_minutes", 0)))
+        general_form.addRow("Check this account every", self.check_minutes)
         self.tabs.addTab(general, "General")
 
         servers = QWidget(self)
@@ -102,6 +111,10 @@ class AccountEditDialog(QDialog):
         self.days.setSuffix(" days")
         copies_form.addRow("Mail on the server", self.policy)
         copies_form.addRow("Delete after", self.days)
+        self.folder_table: QTableWidget | None = None
+        self._folders_loaded: dict[str, tuple[bool, str]] = {}  # server folder -> (synchronised, chosen role) as they were
+        if str(getattr(account, "kind", "pop3")) == "imap":
+            self.tabs.addTab(self._folders_tab(), "Folders")
         if str(getattr(account, "kind", "pop3")) == "pop3":  # copies on the server are a POP3 matter; an IMAP account is the server's mail
             self.tabs.addTab(copies, "Server copies")
 
@@ -162,6 +175,7 @@ class AccountEditDialog(QDialog):
         """Only what differs from the stored account (and the passwords that were typed)."""
         account = self._account
         wanted: dict[str, object] = {
+            "check_minutes": self.check_minutes.value(),
             "display_name": self.name.text().strip(),
             "email_address": self.email.text().strip(),
             "signature": self.signature.toPlainText(),
@@ -182,6 +196,7 @@ class AccountEditDialog(QDialog):
             "incoming_security": getattr(account, "incoming_security"), "outgoing_username": getattr(account, "outgoing_username"),
             "outgoing_host": getattr(account, "outgoing_host"), "outgoing_port": getattr(account, "outgoing_port"), "outgoing_security": getattr(account, "outgoing_security"),
             "delete_policy": getattr(account, "delete_policy"), "delete_days": getattr(account, "delete_days", 30),
+            "check_minutes": getattr(account, "check_minutes", 0),
         }
         values: dict[str, object] = {name: value for name, value in wanted.items() if value != stored[name]}
         if self.password.text():
@@ -189,6 +204,82 @@ class AccountEditDialog(QDialog):
         if self.outgoing_password.text():
             values["outgoing_password"] = self.outgoing_password.text()
         return values
+
+    def _folders_tab(self) -> QWidget:
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
+        self.folders_label = QLabel("Loading the folders from the server…", tab)
+        self.folders_label.setWordWrap(True)
+        layout.addWidget(self.folders_label)
+        self.folder_table = QTableWidget(0, 3, tab)
+        self.folder_table.setHorizontalHeaderLabels(["Synchronise", "Folder on the server", "Used as"])
+        self.folder_table.verticalHeader().hide()
+        self.folder_table.horizontalHeader().setStretchLastSection(True)
+        self.folder_table.setColumnWidth(0, 100)
+        self.folder_table.setColumnWidth(1, 280)
+        layout.addWidget(self.folder_table, 1)
+        self._backend.call("account.folders", {"account": str(getattr(self._account, "account_id"))}, self._folders_arrived, self._folders_failed, owner=self)
+        return tab
+
+    def _folders_failed(self, error: ChronoMailError) -> None:
+        self.folders_label.setText(f"<span style='{RED}'>The folders could not be listed: {error}</span>")
+
+    def _folders_arrived(self, result: object) -> None:
+        table = self.folder_table
+        if table is None:
+            return
+        choices: list[object] = list(result) if isinstance(result, (tuple, list)) else []
+        self.folders_label.setText("Folders that are not synchronised are not shown here; mail already stored stays. A folder can be told to be the Sent, Drafts, Trash, Junk or Archive folder.")
+        table.setRowCount(len(choices))
+        for row, choice in enumerate(choices):
+            name = str(getattr(choice, "server_name"))
+            shown = QTableWidgetItem()
+            shown.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            shown.setCheckState(Qt.CheckState.Checked if getattr(choice, "shown") else Qt.CheckState.Unchecked)
+            if name.upper() == "INBOX":
+                shown.setFlags(Qt.ItemFlag.ItemIsEnabled)  # the Inbox is always synchronised
+            table.setItem(row, 0, shown)
+            label = QTableWidgetItem(name)
+            label.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            table.setItem(row, 1, label)
+            roles = QComboBox()
+            automatic = str(getattr(choice, "automatic_role"))
+            roles.addItem(f"Automatic ({automatic})" if automatic != "other" else "Automatic (an ordinary folder)", "")
+            for value, text in (("sent", "Sent"), ("drafts", "Drafts"), ("trash", "Trash"), ("junk", "Junk"), ("archive", "Archive")):
+                roles.addItem(text, value)
+            roles.setCurrentIndex(max(0, roles.findData(str(getattr(choice, "chosen_role")))))
+            roles.setEnabled(name.upper() != "INBOX")
+            table.setCellWidget(row, 2, roles)
+            self._folders_loaded[name] = (bool(getattr(choice, "shown")), str(getattr(choice, "chosen_role")))
+
+    def _folder_changes(self) -> dict[str, object]:
+        """What the person changed in the table: folders to show, to hide, and roles."""
+        table = self.folder_table
+        if table is None or not self._folders_loaded:
+            return {}
+        show: list[str] = []
+        hide: list[str] = []
+        roles: list[str] = []
+        for row in range(table.rowCount()):
+            name_item, shown_item, chooser = table.item(row, 1), table.item(row, 0), table.cellWidget(row, 2)
+            if name_item is None or shown_item is None:
+                continue
+            name = name_item.text()
+            wanted = shown_item.checkState() == Qt.CheckState.Checked
+            role = str(chooser.currentData() or "") if isinstance(chooser, QComboBox) else ""
+            was_shown, was_role = self._folders_loaded.get(name, (wanted, role))
+            if wanted != was_shown:
+                (show if wanted else hide).append(name)
+            if role != was_role:
+                roles.append(f"{name}={role}")
+        changes: dict[str, object] = {}
+        if show:
+            changes["show"] = show
+        if hide:
+            changes["hide"] = hide
+        if roles:
+            changes["role"] = roles
+        return changes
 
     def _show_certificates(self) -> None:
         count = len(self.trusted)
@@ -262,17 +353,24 @@ class AccountEditDialog(QDialog):
 
     def _save(self) -> None:
         values = self._values()
-        if not values:
+        folders = self._folder_changes()
+        if not values and not folders:
             self.accept()
             return
         self.save_button.setEnabled(False)
         self.result_label.setText("Saving…")
 
         def done(result: object) -> None:
-            self.accept()
+            if folders:
+                self._backend.call("account.set-folders", {"account": str(getattr(self._account, "account_id")), **folders}, lambda outcome: self.accept(), failed, owner=self)
+            else:
+                self.accept()
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)
             self.result_label.setText(f"<span style='{RED}'>The account could not be changed: {error}</span>")
 
-        self._backend.call("account.edit", {"account": str(getattr(self._account, "account_id")), **values}, done, failed, owner=self)
+        if values:
+            self._backend.call("account.edit", {"account": str(getattr(self._account, "account_id")), **values}, done, failed, owner=self)
+        else:
+            done(None)

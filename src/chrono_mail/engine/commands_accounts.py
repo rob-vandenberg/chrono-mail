@@ -37,9 +37,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.43"
+__version__ = "commands_accounts.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: Folder choices, roles and check interval per account
 # v0.0.43: Certificate exceptions
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.20: Settings window, account editing, signatures
@@ -216,6 +217,7 @@ class AccountSummary:
     outgoing_security: str = ""
     outgoing_username: str = ""
     trusted_certificates: tuple[str, ...] = ()
+    check_minutes: int = 0
 
 
 def _summary(item: AccountSettings) -> AccountSummary:
@@ -239,6 +241,7 @@ def _summary(item: AccountSettings) -> AccountSummary:
         item.account.outgoing.security.value,
         item.account.outgoing.username,
         item.trusted_certificates,
+        item.check_minutes,
     )
 
 
@@ -301,6 +304,7 @@ class AccountEditParameters:
     outgoing_security: Security | None = field(default=None, metadata=option("tls, starttls or none"))
     delete_policy: Policy | None = field(default=None, metadata=option("What happens to a message on the server after it was downloaded and verified"))
     delete_days: int | None = field(default=None, metadata=option("Days before deleting, for delete_after_days"))
+    check_minutes: int | None = field(default=None, metadata=option("Minutes between automatic checks of this account (0: as set in the general settings)"))
 
 
 def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSummary:
@@ -337,6 +341,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
         account=replace(account, display_name=name, email_address=email, incoming=incoming, outgoing=outgoing),
         pop3=pop3,
         signature=settings.signature if parameters.signature is None else parameters.signature.replace("\r\n", "\n").rstrip(),
+        check_minutes=settings.check_minutes if parameters.check_minutes is None else parameters.check_minutes,
     )
     # Passwords first: a new password that cannot be stored must not leave settings behind that expect it
     if parameters.password:

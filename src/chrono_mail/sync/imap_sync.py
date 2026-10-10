@@ -9,9 +9,10 @@ from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.0.33"
+__version__ = "imap_sync.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: the person's choices of folders and roles
 # v0.0.33: Rules
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.30: IMAP sync, store to server
@@ -101,7 +102,9 @@ def message_flags(names: frozenset[str]) -> frozenset[MessageFlag]:
     return frozenset(KEPT_FLAGS[name] for name in names if name in KEPT_FLAGS)
 
 
-def plan_folders(entries: Sequence[FolderEntry], subscribed: frozenset[str] = frozenset()) -> tuple[list[FolderPlan], list[str]]:
+def plan_folders(
+    entries: Sequence[FolderEntry], subscribed: frozenset[str] = frozenset(), forced: frozenset[str] = frozenset(), roles: dict[str, str] | None = None
+) -> tuple[list[FolderPlan], list[str]]:
     """Which server folder goes to which local folder. The standard roles go to the standard folders (the server's own
     names do not matter); every other folder keeps its path, with INBOX written as Inbox. Returns the plans and notes."""
     plans: list[FolderPlan] = []
@@ -109,8 +112,15 @@ def plan_folders(entries: Sequence[FolderEntry], subscribed: frozenset[str] = fr
     used: set[tuple[str, ...]] = set()
     choices = [entry for entry in entries if "\\noselect" not in entry.attributes and "\\nonexistent" not in entry.attributes]
     if subscribed:
-        choices = [entry for entry in choices if entry.name in subscribed or entry.name.upper() == "INBOX"]
+        choices = [entry for entry in choices if entry.name in subscribed or entry.name in forced or entry.name.upper() == "INBOX"]
     claimed: set[FolderRole] = set()
+    for entry in choices:  # the person's own choices first
+        wanted = (roles or {}).get(entry.name, "")
+        chosen = next((role for role in STANDARD_PATH if role.value == wanted and role is not FolderRole.INBOX), None)
+        if chosen is not None and chosen not in claimed and entry.name.upper() != "INBOX":
+            claimed.add(chosen)
+            used.add(STANDARD_PATH[chosen])
+            plans.append(FolderPlan(entry.name, STANDARD_PATH[chosen], chosen))
     # special-use attributes first, then the usual names, so that an explicit claim always wins
     for pass_number in (0, 1, 2):
         for entry in choices:
@@ -210,7 +220,7 @@ def sync_imap(
     try:
         listed = client.list_folders()
         subscribed = frozenset(entry.name for entry in client.list_folders(subscribed_only=True))
-        plans, planning_notes = plan_folders(listed, subscribed)
+        plans, planning_notes = plan_folders(listed, subscribed, frozenset(state.forced), dict(state.roles))
         notes.extend(planning_notes)
         plans = [plan for plan in plans if plan.server_name not in state.hidden]
         existing = {folder.path for folder in store.list_folders()}

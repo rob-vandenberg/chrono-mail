@@ -17,9 +17,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.0.42"
+__version__ = "test_ui_preferences.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: links from the settings
 # v0.0.42: Initial tests of the preferences and their effects
 
 
@@ -314,3 +315,23 @@ def test_keys_can_be_changed_checked_for_clashes_and_reset(world: World, qtbot: 
     dialog.save()
     window.apply_preferences()
     assert window.act_rules.shortcut().toString() == "Ctrl+Alt+R"
+
+
+def test_rules_and_scheduled_messages_can_be_opened_from_the_settings(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[str] = []
+
+    def rules() -> None:
+        opened.append("rules")
+
+    def scheduled() -> None:
+        opened.append("scheduled")
+
+    monkeypatch.setattr(world.window, "open_rules", rules)
+    monkeypatch.setattr(world.window, "open_scheduled", scheduled)
+
+    def press(dialog: SettingsDialog) -> None:
+        dialog.rules_button.click()
+        dialog.scheduled_button.click()
+
+    edit_settings(world, qtbot, monkeypatch, press)
+    assert opened == ["rules", "scheduled"]

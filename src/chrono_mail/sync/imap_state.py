@@ -6,9 +6,10 @@ from pathlib import Path
 from chrono_mail.core import StorageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_state.py 0.0.31"
+__version__ = "imap_state.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: folder choices and roles
 # v0.0.31: folders deleted here are hidden
 # v0.0.30: uploaded messages
 # v0.0.29: Initial IMAP state log
@@ -19,6 +20,8 @@ __version__ = "imap_state.py 0.0.31"
 #   {"e": "g", "f": [...], "u": UID, "g": [flags]}                       the server flags changed
 #   {"e": "x", "f": [...], "u": UID}                                     the UID is gone from the server (and from the store)
 #   {"e": "h", "n": server folder name, "f": [local path]}                               the folder is not shown or synchronised here (deleted here; it stays on the server)
+#   {"e": "d", "n": server folder name, "v": true|false}                  the person chose not to synchronise the folder (true) or to synchronise it though it is not subscribed (false)
+#   {"e": "r", "n": server folder name, "r": role}                       the person says which standard folder (sent, drafts, trash, junk, archive) this server folder is
 #   {"e": "a", "s": store id}                                           the message was sent to the server (so that it is not sent twice)
 # Appending (with fsync) cannot damage earlier lines; a line cut off by a crash is ignored; unknown events are ignored (later
 # versions add more, for example the changes waiting to be sent). If the file is lost the next sync downloads again and
@@ -43,6 +46,8 @@ class ImapState:
         self.entries: dict[tuple[str, ...], dict[int, ImapEntry]] = {}
         self.uploaded: set[str] = set()
         self.hidden: set[str] = set()
+        self.forced: set[str] = set()  # folders to synchronise even though the server does not list them as subscribed
+        self.roles: dict[str, str] = {}  # server folder name -> chosen role
         self.ignored_lines: int = 0
         self._lines: int = 0
         self._needs_newline: bool = False
@@ -67,6 +72,26 @@ class ImapState:
 
     def _apply(self, event: dict[str, object]) -> None:
         kind = event["e"]
+        if kind == "d":
+            name, hide = event["n"], event["v"]
+            if not isinstance(name, str) or not name or not isinstance(hide, bool):
+                raise ValueError("bad folder choice")
+            if hide:
+                self.hidden.add(name)
+                self.forced.discard(name)
+            else:
+                self.hidden.discard(name)
+                self.forced.add(name)
+            return
+        if kind == "r":
+            name, role = event["n"], event["r"]
+            if not isinstance(name, str) or not name or not isinstance(role, str) or len(role) > 20:
+                raise ValueError("bad role")
+            if role:
+                self.roles[name] = role
+            else:
+                self.roles.pop(name, None)
+            return
         if kind == "h":
             name, where = event["n"], event["f"]
             if not isinstance(name, str) or not name or not isinstance(where, list) or not where:
@@ -132,8 +157,27 @@ class ImapState:
         """The folder was deleted here: it is no longer synchronised (its mail on the server stays) and the UIDs we knew are forgotten."""
         self._append({"e": "h", "n": server_name, "f": list(folder)})
         self.hidden.add(server_name)
+        self.forced.discard(server_name)
         self.validity.pop(folder, None)
         self.entries.pop(folder, None)
+
+    def set_hidden(self, server_name: str, hidden: bool) -> None:
+        """Do not synchronise this folder (its local mail stays), or synchronise it again (even if the server does not list it as subscribed)."""
+        self._append({"e": "d", "n": server_name, "v": hidden})
+        if hidden:
+            self.hidden.add(server_name)
+            self.forced.discard(server_name)
+        else:
+            self.hidden.discard(server_name)
+            self.forced.add(server_name)
+
+    def set_role(self, server_name: str, role: str) -> None:
+        """Say which standard folder a server folder is ('' for: decide automatically)."""
+        self._append({"e": "r", "n": server_name, "r": role})
+        if role:
+            self.roles[server_name] = role
+        else:
+            self.roles.pop(server_name, None)
 
     def mark_uploaded(self, store_id: str) -> None:
         """Remember that a local message was sent to the server. Call right after the server accepted it."""
@@ -189,7 +233,9 @@ class ImapState:
             lines.append(json.dumps({"e": "v", "f": list(folder), "v": validity}, separators=(",", ":"), ensure_ascii=False))
             for uid, entry in self.entries.get(folder, {}).items():
                 lines.append(json.dumps({"e": "m", "f": list(folder), "u": uid, "s": entry.store_id, "g": sorted(entry.flags)}, separators=(",", ":"), ensure_ascii=False))
-        lines.extend(json.dumps({"e": "h", "n": name, "f": ["_"]}, separators=(",", ":"), ensure_ascii=False) for name in sorted(self.hidden))
+        lines.extend(json.dumps({"e": "d", "n": name, "v": True}, separators=(",", ":"), ensure_ascii=False) for name in sorted(self.hidden))
+        lines.extend(json.dumps({"e": "d", "n": name, "v": False}, separators=(",", ":"), ensure_ascii=False) for name in sorted(self.forced))
+        lines.extend(json.dumps({"e": "r", "n": name, "r": role}, separators=(",", ":"), ensure_ascii=False) for name, role in sorted(self.roles.items()))
         lines.extend(json.dumps({"e": "a", "s": store_id}, separators=(",", ":")) for store_id in sorted(self.uploaded))
         temporary = self.path.with_name(self.path.name + ".new")
         try:

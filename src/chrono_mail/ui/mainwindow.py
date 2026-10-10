@@ -64,9 +64,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.42"
+__version__ = "mainwindow.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: Folder choices, roles and check interval per account
 # v0.0.42: Settings window with pages for everything
 # v0.0.41: Message list as columns, column editor, reading pane position, message windows
 # v0.0.35: Send later and snooze
@@ -159,7 +160,8 @@ class MainWindow(QMainWindow):
         self._due_timer.timeout.connect(self.run_due)
         self._due_timer.start(DUE_CHECK_MS)
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self.check_mail)
+        self._timer.timeout.connect(self._check_on_general_interval)
+        self._account_timers: dict[str, QTimer] = {}  # accounts that have a check interval of their own
         if bool_setting(settings, "auto_check", True):
             self._timer.start(self._auto_minutes() * 60 * 1000)
         self._mark_read_timer = QTimer(self)
@@ -501,6 +503,8 @@ class MainWindow(QMainWindow):
         self._quitting_for_good = True
         self.backend.engine.stop_event.set()  # waits for new mail end now
         self._due_timer.stop()
+        for timer in self._account_timers.values():
+            timer.stop()
         self.backend.wait_for_done(3000)
         self.tray.set_visible(False)
         event.accept()
@@ -592,6 +596,24 @@ class MainWindow(QMainWindow):
             return AUTO_CHECK_MINUTES
         return minutes if 1 <= minutes <= 240 else AUTO_CHECK_MINUTES
 
+    def _apply_account_timers(self) -> None:
+        """A timer for every account that has an interval of its own (and only while automatic checking is on)."""
+        wanted = {
+            str(getattr(account, "account_id")): int(getattr(account, "check_minutes", 0)) for account in self._accounts
+            if int(getattr(account, "check_minutes", 0)) > 0 and self.act_auto.isChecked()
+        }
+        for account_id in list(self._account_timers):
+            if account_id not in wanted:
+                self._account_timers.pop(account_id).stop()
+        for account_id, minutes in wanted.items():
+            timer = self._account_timers.get(account_id)
+            if timer is None:
+                timer = QTimer(self)
+                timer.timeout.connect(lambda chosen=account_id: self.check_accounts({chosen}))
+                self._account_timers[account_id] = timer
+            if timer.interval() != minutes * 60_000 or not timer.isActive():
+                timer.start(minutes * 60_000)
+
     def _start_watchers(self) -> None:
         """For every IMAP account: wait for the server to report new mail (IDLE) and check at once when it does."""
         if not self.act_auto.isChecked():
@@ -629,6 +651,7 @@ class MainWindow(QMainWindow):
             self._timer.start(self._auto_minutes() * 60 * 1000)
         else:
             self._timer.stop()
+        self._apply_account_timers()
 
     def run_due(self) -> None:
         """Every minute: send the scheduled messages whose time has come and bring snoozed messages back."""
@@ -706,6 +729,8 @@ class MainWindow(QMainWindow):
         dialog.add_account_requested.connect(lambda: self.add_account(after=dialog.reload))
         dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False))
         dialog.restore_key_requested.connect(self.restore_key)
+        dialog.rules_requested.connect(self.open_rules)
+        dialog.scheduled_requested.connect(self.open_scheduled)
         if dialog.exec() != SettingsDialog.DialogCode.Accepted:
             return
         dialog.save()
@@ -832,6 +857,7 @@ class MainWindow(QMainWindow):
                 return
             self._load_folders(select_saved, then)
             self._start_watchers()
+            self._apply_account_timers()
 
         self.backend.call("account.list", {}, listed, lambda error: self._report("Accounts", error), owner=self)
 
@@ -1535,11 +1561,20 @@ class MainWindow(QMainWindow):
     # --- mail ---------------------------------------------------------------------------------------------------
 
     def check_mail(self) -> None:
-        if self._checking or not self._accounts:
+        self.check_accounts(None)
+
+    def _check_on_general_interval(self) -> None:
+        """The general timer: the accounts that have no interval of their own."""
+        self.check_accounts({str(getattr(account, "account_id")) for account in self._accounts if int(getattr(account, "check_minutes", 0)) == 0})
+
+    def check_accounts(self, only: set[str] | None) -> None:
+        """Check these accounts (all when None) for new mail."""
+        wanted = {str(getattr(account, "account_id")) for account in self._accounts} if only is None else only & {str(getattr(account, "account_id")) for account in self._accounts}
+        if self._checking or not wanted:
             return
         self._checking = True
         self.act_refresh.setEnabled(False)
-        remaining = {str(getattr(account, "account_id")) for account in self._accounts}
+        remaining = set(wanted)
         totals = {"new": 0}
         new_by_account: dict[str, int] = {}
         problems: list[str] = []

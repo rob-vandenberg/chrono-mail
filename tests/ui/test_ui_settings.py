@@ -9,9 +9,10 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 0.0.42"
+__version__ = "test_ui_settings.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: Folder choices, roles and check interval per account
 # v0.0.42: Settings window with pages for everything
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
@@ -168,4 +169,4 @@ def test_the_account_type_is_shown_and_imap_accounts_have_no_server_copies_tab(w
 
     imap = AccountEditDialog(world.backend, replace(imap_account, kind="imap"))
     qtbot.addWidget(imap)
-    assert [imap.tabs.tabText(index) for index in range(imap.tabs.count())] == ["General", "Servers"]
+    assert [imap.tabs.tabText(index) for index in range(imap.tabs.count())] == ["General", "Servers", "Folders"]

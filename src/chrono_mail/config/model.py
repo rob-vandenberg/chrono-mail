@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import Account, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.43"
+__version__ = "model.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: Folder choices, roles and check interval per account
 # v0.0.43: accepted certificates per account
 # v0.0.20: signature per account
 # v0.0.9: Initial configuration model
@@ -16,6 +17,7 @@ ACCOUNT_ID_PATTERN: re.Pattern[str] = re.compile(r"[0-9a-f]{32}")  # used in dir
 MAXIMUM_DELETE_AFTER_DAYS: int = 3650
 MAXIMUM_SIGNATURE_CHARACTERS: int = 4000
 MAXIMUM_TRUSTED_CERTIFICATES: int = 10
+MAXIMUM_CHECK_MINUTES: int = 240
 
 
 class Pop3DeletePolicy(Enum):
@@ -44,10 +46,13 @@ class AccountSettings:
     encrypted: bool = True
     signature: str = ""  # plain text, added to new messages
     trusted_certificates: tuple[str, ...] = ()  # SHA-256 fingerprints of server certificates the person accepted
+    check_minutes: int = 0  # how often to check this account for mail; 0 follows the general setting
 
     def __post_init__(self) -> None:
         if len(self.signature) > MAXIMUM_SIGNATURE_CHARACTERS:
             raise ConfigurationError(f"A signature may have at most {MAXIMUM_SIGNATURE_CHARACTERS} characters")
+        if not 0 <= self.check_minutes <= MAXIMUM_CHECK_MINUTES:
+            raise ConfigurationError(f"The number of minutes between checks must be between 0 and {MAXIMUM_CHECK_MINUTES}")
         if len(self.trusted_certificates) > MAXIMUM_TRUSTED_CERTIFICATES or len(set(self.trusted_certificates)) != len(self.trusted_certificates):
             raise ConfigurationError("Too many accepted certificates (or one twice)")
         if any(len(item) != 64 or any(character not in "0123456789abcdef" for character in item) for item in self.trusted_certificates):

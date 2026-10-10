@@ -540,3 +540,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - A connection that fails in the main window because of a certificate only shows the error; accepting is done in Settings > Accounts > Change > Servers.
 
+## 2026-10-10 Folder choices, roles, check interval (version 0.0.44)
+
+**What landed**
+- `commands_imap.py` (`account.folders`, `account.set-folders`), folder choices and roles in the IMAP state and the planning of folders, `check_minutes` per account with per-account timers, a Folders tab and the interval in the account editor, links to Rules and scheduled messages in the settings (D-059). Tests: sync (4), engine (8), interface (4).
+

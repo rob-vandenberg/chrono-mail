@@ -36,9 +36,10 @@ from chrono_mail.ui.columnsdialog import DATE_STYLES, LAYOUTS, READING_PANES, Co
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.42"
+__version__ = "settingsdialog.py 0.0.44"
 
 # --- Version history ----------------------------------------------------
+# v0.0.44: links from the settings
 # v0.0.42: pages for the message list, reading, composing, security and storage and the keyboard
 # v0.0.31: the account type is shown
 # v0.0.24: Rich text composing
@@ -68,6 +69,8 @@ class SettingsDialog(QDialog):
     accounts_changed = Signal()
     add_account_requested = Signal()
     restore_key_requested = Signal()
+    rules_requested = Signal()
+    scheduled_requested = Signal()
 
     def __init__(
         self, backend: Backend, settings: QSettings, tray_available: bool = True, shortcut_actions: dict[str, tuple[str, str]] | None = None, parent: QWidget | None = None
@@ -144,6 +147,15 @@ class SettingsDialog(QDialog):
             for widget in (self.tray, self.close_to_tray, self.notifications):
                 widget.setEnabled(False)
             form.addRow(QLabel("This desktop has no notification area, so there are no icon and no notifications.", page))
+        tools = QHBoxLayout()
+        self.rules_button = QPushButton("Rules…", page)
+        self.scheduled_button = QPushButton("Scheduled and snoozed messages…", page)
+        tools.addWidget(self.rules_button)
+        tools.addWidget(self.scheduled_button)
+        tools.addStretch(1)
+        form.addRow("Also", tools)
+        self.rules_button.clicked.connect(self.rules_requested)
+        self.scheduled_button.clicked.connect(self.scheduled_requested)
         form.addRow(QLabel("Language: the program is in English; dates and times follow the language of the system.", page))
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())
