@@ -1,8 +1,10 @@
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QAction, QKeySequence
+from typing import override
+
+from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QToolBar, QWidget
 
 from chrono_mail.core import ChronoMailError
@@ -10,11 +12,13 @@ from chrono_mail.ui import theme
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.reader import ReaderWidget
+from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 0.0.77"
+__version__ = "messagewindow.py 0.0.83"
 
 # --- Version history ----------------------------------------------------
+# v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.74: A message window gets the privacy settings before it shows the message and saves Always for this sender
 # v0.0.53: Standard keyboard shortcuts
@@ -27,7 +31,7 @@ class MessageWindow(QMainWindow):
     """One message in a window of its own, with Reply, Reply all and Forward."""
 
     def __init__(
-        self, backend: Backend, account: str, folder: str, message_id: str, shown: object, compose: Compose, open_link: Callable[[QUrl], None], prepare: Callable[[ReaderWidget], None], parent: QWidget | None = None
+        self, backend: Backend, account: str, folder: str, message_id: str, shown: object, compose: Compose, open_link: Callable[[QUrl], None], prepare: Callable[[ReaderWidget], None], settings: QSettings | None = None, parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -35,6 +39,8 @@ class MessageWindow(QMainWindow):
         self.setWindowIcon(application_icon())
         self.setWindowTitle(str(getattr(shown, "subject")) or "(no subject)")
         self.resize(820, 640)
+        self._settings: QSettings | None = settings
+        restore_geometry(self, settings, "message_window_geometry")
         self.setStyleSheet(theme.stylesheet())  # a window of its own does not inherit the look of the main window
         self.reader = ReaderWidget(self)
         self.setCentralWidget(self.reader)
@@ -55,6 +61,11 @@ class MessageWindow(QMainWindow):
         self.addAction(close)
         self.reader.link_activated.connect(open_link)
         self.reader.attachment_save_requested.connect(self._save_attachment)
+
+    @override
+    def closeEvent(self, event: QCloseEvent) -> None:
+        save_geometry(self, self._settings, "message_window_geometry")
+        super().closeEvent(event)
 
     def _save_attachment(self, position: int, suggested: str) -> None:
         account, folder, message_id = self._where

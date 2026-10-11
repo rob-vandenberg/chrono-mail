@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui import appearance, prefs
+from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import DEFAULT_COLUMNS, valid_columns
@@ -40,9 +41,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.82"
+__version__ = "settingsdialog.py 0.0.83"
 
 # --- Version history ----------------------------------------------------
+# v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
@@ -124,6 +126,7 @@ class SettingsDialog(QDialog):
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.sidebar.setCurrentRow(0)
         self.reload()
+        restore_geometry(self, settings, "settings_geometry")
 
     def _add_page(self, title: str, page: QWidget) -> None:
         self.sidebar.addItem(QListWidgetItem(title))
@@ -582,6 +585,11 @@ class SettingsDialog(QDialog):
     def save(self) -> None:
         for key, value in self.values().items():
             self._settings.setValue(key, value)
+
+    @override
+    def done(self, result: int) -> None:
+        save_geometry(self, self._settings, "settings_geometry")  # whether the window was closed with OK or with Cancel
+        super().done(result)
 
     @override
     def accept(self) -> None:

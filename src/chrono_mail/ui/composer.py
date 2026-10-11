@@ -5,7 +5,7 @@ from email.utils import formataddr, parseaddr
 from pathlib import Path
 from typing import override
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import QSettings, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -31,12 +31,15 @@ from chrono_mail.ui import theme
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.richeditor import RichEditor
+from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.78"
+__version__ = "composer.py 0.0.83"
 
 # --- Version history ----------------------------------------------------
+# v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
+# v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.67: Messages that are sent again and again
@@ -145,6 +148,7 @@ class ComposeWindow(QMainWindow):
         rich: bool = False,
         options: ComposeOptions = ComposeOptions(),
         parent: QWidget | None = None,
+        settings: QSettings | None = None,
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -230,6 +234,8 @@ class ComposeWindow(QMainWindow):
         layout.addLayout(buttons)
         self.setCentralWidget(central)
         self.resize(760, 640)
+        self._settings: QSettings | None = settings
+        restore_geometry(self, settings, "composer_geometry")
 
         if draft is not None:
             self.to.setText(", ".join(getattr(draft, "to")))
@@ -581,6 +587,7 @@ class ComposeWindow(QMainWindow):
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
+        save_geometry(self, self._settings, "composer_geometry")
         if self._finished or not self.is_modified():
             self.autosave_timer.stop()
             event.accept()

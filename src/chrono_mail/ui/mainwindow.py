@@ -69,6 +69,7 @@ from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.printing import print_message
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
+from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTIONS, TASKS, SectionBar
 from chrono_mail.ui.settingsdialog import SettingsDialog
 from chrono_mail.ui.sourcedialog import SourceDialog
@@ -76,9 +77,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.82"
+__version__ = "mainwindow.py 0.0.83"
 
 # --- Version history ----------------------------------------------------
+# v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
@@ -621,9 +623,7 @@ class MainWindow(QMainWindow):
     # --- state ------------------------------------------------------------------------------------------
 
     def _restore_state(self) -> None:
-        geometry = self.settings.value("geometry")
-        if geometry is not None:
-            self.restoreGeometry(geometry)
+        restore_geometry(self, self.settings, "geometry")
         saved_section = str(self.settings.value("last_section", MAIL))
         if saved_section != MAIL:
             self.switch_section(saved_section)
@@ -644,7 +644,7 @@ class MainWindow(QMainWindow):
             if not composer.close():
                 event.ignore()
                 return
-        self.settings.setValue("geometry", self.saveGeometry())
+        save_geometry(self, self.settings, "geometry")
         self.settings.setValue("splitter2", self.splitter.sizes())
         if self._reading_pane != "off":
             self.settings.setValue("content_splitter", self.content_splitter.sizes())
@@ -1814,7 +1814,7 @@ class MainWindow(QMainWindow):
         if account_id not in mail_ids:  # Local Folders has no server: the answer comes from the account chosen in the settings, or the first
             wanted = str(self.settings.value("default_account", ""))
             account_id = wanted if wanted in mail_ids else (mail_ids[0] if mail_ids else account_id)
-        window = ComposeWindow(self.backend, self._mail_accounts(), account_id, draft, source, resume, bool_setting(self.settings, "compose_html", True), self._compose_options())
+        window = ComposeWindow(self.backend, self._mail_accounts(), account_id, draft, source, resume, bool_setting(self.settings, "compose_html", True), self._compose_options(), settings=self.settings)
         if to:
             window.to.setText(to)
         window.sent.connect(self._after_sent)
@@ -1838,7 +1838,7 @@ class MainWindow(QMainWindow):
         account, folder, message_id, _ = chosen
 
         def shown(result: object) -> None:
-            window = MessageWindow(self.backend, account, folder, message_id, result, self._compose_in_window, self._open_link, self._prepare_message_reader)
+            window = MessageWindow(self.backend, account, folder, message_id, result, self._compose_in_window, self._open_link, self._prepare_message_reader, self.settings)
             self._message_windows.append(window)
             window.destroyed.connect(lambda: self._message_windows.remove(window) if window in self._message_windows else None)
             window.show()

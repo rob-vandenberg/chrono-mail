@@ -839,3 +839,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Whether U+2630 is large enough in the owner's font: to be seen. Option if not: draw the symbol separately.
 - Tests run: appearance, theme and preferences only; the full suite was not run (owner's instruction).
+
+## 2026-10-11 Remembered window size and position (version 0.0.83)
+
+**What landed**
+- `ui/windowstate.py`: saves and restores the size and position of a window (keys `geometry`, `message_window_geometry`, `composer_geometry`, `settings_geometry`). After restoring, the top edge of the window must be at least 100 by 20 pixels on a screen that is connected now (a screen that is gone, another resolution); if not, the window keeps its own size and position. Used by the main window (which restored without a check before), the message windows, the composers and the Settings window (saved with OK and with Cancel). All message windows share one saved geometry, all composers another.
+- Found: Qt itself already moves a window that was saved off-screen onto a screen when restoring; the check is a second guard.
+- Tests run: the new window state tests and the files for composer, columns (message window), preferences and window; not the full suite.

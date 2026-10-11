@@ -110,3 +110,4 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (0.0.80) The test run no longer crashes at the end (a web view waiting to be deleted at exit): the ui tests finish the pending deletions after each test.
 - DONE (0.0.81) The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button.
 - DONE (0.0.82) Text size of the interface under Appearance (8 to 48 pt; the first start saves the system size, so it is never 0), a button for the system size; the Menu button shows U+2630.
+- DONE (0.0.83) The size and position of the message windows, the composers and the Settings window are remembered, and every saved position is only used when the window would be reachable on a connected screen (the main window too).
