@@ -7,9 +7,10 @@ from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPalett
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.56"
+__version__ = "icons.py 0.0.61"
 
 # --- Version history ----------------------------------------------------
+# v0.0.61: The four section buttons and the sidebars of the calendar, task and contact sections
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.55: Application id and icon file for Windows
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
@@ -45,6 +46,8 @@ BUNDLED_ICONS: dict[str, str] = {
     "configure": "settings", "document-open": "folder-open", "document-print": "printer", "document-save-as": "save", "edit-clear": "eraser",
     "list-add": "plus", "mail-forward": "forward", "mail-mark-notjunk": "shield-check", "mail-mark-read": "mail-check", "mail-receive": "download", "view-refresh": "refresh-cw",
     "mail-reply-all": "reply-all", "mail-reply-sender": "reply", "view-filter": "funnel",
+    "x-office-calendar": "calendar-days", "view-calendar": "calendar-days", "x-office-address-book": "book-user", "view-calendar-tasks": "list-checks", "view-task": "list-checks",
+    "appointment-new": "calendar-plus", "contact-new": "user-plus", "color-management": "palette", "edit-find": "search",
 }
 
 

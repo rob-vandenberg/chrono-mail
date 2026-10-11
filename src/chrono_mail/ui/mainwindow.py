@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QSplitter,
+    QStackedWidget,
     QToolBar,
     QToolButton,
     QTreeView,
@@ -56,21 +57,24 @@ from chrono_mail.ui.models import (
     MessageListModel,
     ViewSpec,
 )
+from chrono_mail.ui.pimpages import CalendarPage, ContactsPage, PimPage, TasksPage
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.printing import print_message
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
+from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTIONS, TASKS, SectionBar
 from chrono_mail.ui.settingsdialog import SettingsDialog
 from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.56"
+__version__ = "mainwindow.py 0.0.61"
 
 # --- Version history ----------------------------------------------------
+# v0.0.61: The four section buttons and the sidebars of the calendar, task and contact sections
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.53: Standard keyboard shortcuts
 # v0.0.52: Ctrl+Q marks as read, Quit is Ctrl+Shift+Q
@@ -160,6 +164,7 @@ class MainWindow(QMainWindow):
         self._reselect: str | None = None
         self._composers: list[ComposeWindow] = []
         self._checking: bool = False
+        self._mail_action_states: dict[str, bool] = {}
         self._build_widgets()
         self._build_actions()
         self._default_shortcuts: dict[str, str] = {name: action.shortcut().toString() for name, action in vars(self).items() if name.startswith("act_") and isinstance(action, QAction)}
@@ -269,8 +274,27 @@ class MainWindow(QMainWindow):
         self.reader = ReaderWidget(self)
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal, self)  # the list and the reading pane, side by side or one above the other
-        self.splitter.addWidget(self.tree)
-        self.splitter.addWidget(self.content_splitter)
+        self.side_stack = QStackedWidget(self)  # the left side: the folders of the mail, or the sidebar of the section that is shown
+        self.side_stack.addWidget(self.tree)
+        self.content_stack = QStackedWidget(self)
+        self.content_stack.addWidget(self.content_splitter)
+        self.section_bar = SectionBar(self)
+        left_panel = QWidget(self)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
+        left_layout.addWidget(self.side_stack, 1)
+        left_layout.addWidget(self.section_bar)
+        self.splitter.addWidget(left_panel)
+        self.splitter.addWidget(self.content_stack)
+        self._section: str = MAIL
+        self.pages: dict[str, PimPage] = {
+            CALENDAR: CalendarPage(self.backend, self.settings, self), TASKS: TasksPage(self.backend, self.settings, self), CONTACTS: ContactsPage(self.backend, self.settings, self),
+        }
+        for page in self.pages.values():
+            self.side_stack.addWidget(page.side)
+            self.content_stack.addWidget(page.content)
+            page.status = self.show_status
         self.content_splitter.addWidget(list_pane)
         self.conversation_bar = ConversationBar(self)
         self.reading_pane = QWidget(self)
@@ -309,13 +333,13 @@ class MainWindow(QMainWindow):
         return action
 
     def _build_actions(self) -> None:
-        self.act_new = self._action("New", self.new_message, "Ctrl+N", "mail-message-new")
-        self.act_refresh = self._action("Refresh", self.check_mail, "F5", "view-refresh")
+        self.act_new = self._action("New", lambda: self._in_section("new"), "Ctrl+N", "mail-message-new")
+        self.act_refresh = self._action("Refresh", lambda: self._in_section("refresh"), "F5", "view-refresh")
         self.act_reply = self._action("Reply", lambda: self.compose_from_selection("reply"), "Ctrl+R", "mail-reply-sender")
         self.act_reply_all = self._action("Reply all", lambda: self.compose_from_selection("reply_all"), "Ctrl+Shift+R", "mail-reply-all")
         self.act_forward = self._action("Forward", lambda: self.compose_from_selection("forward"), "Ctrl+F", "mail-forward")
         self.act_edit_draft = self._action("Edit draft", self.edit_draft, None, "document-edit")
-        self.act_delete = self._action("Delete", self.delete_selected, "Delete", "edit-delete")
+        self.act_delete = self._action("Delete", lambda: self._in_section("delete"), "Delete", "edit-delete")
         self.act_save_as = self._action("Save as…", self.save_selected_as, "Ctrl+Shift+S", "document-save-as")
         self.act_source = self._action("View source", self.view_source, "Ctrl+Alt+U")
         self.act_print = self._action("Print…", self.print_selected, "Ctrl+P", "document-print")
@@ -331,6 +355,11 @@ class MainWindow(QMainWindow):
         self.act_empty_folder = self._action("Empty folder…", self.empty_folder, icon="edit-clear")
         self.act_empty_folder.setEnabled(False)
         self.act_read = self._action("Mark as read", lambda: self.mark_selected(seen=True), "Ctrl+Q")
+        self.section_actions: dict[str, QAction] = {}
+        for section, name, icons, shortcut in SECTIONS:
+            action = self._action(name, lambda checked=False, chosen=section: self.switch_section(chosen), shortcut, icons[0])
+            self.section_actions[section] = action
+            setattr(self, f"act_section_{section}", action)
         self.act_next_message = self._action("Next message", lambda: self._step_message(1), "F")
         self.act_previous_message = self._action("Previous message", lambda: self._step_message(-1), "B")
         self.act_toggle_read = self._action("Toggle read / unread", self.toggle_read, "R")
@@ -355,7 +384,7 @@ class MainWindow(QMainWindow):
         self.act_snooze = self._action("Snooze…", self.snooze_selected, "S", "appointment-soon")
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
         self.act_quit = self._action("Quit", self.quit_program, "Ctrl+Shift+Q", "application-exit")
-        self.act_search = self._action("Search", self._focus_search, "Ctrl+E")
+        self.act_search = self._action("Search", lambda: self._in_section("search"), "Ctrl+E")
         self.act_advanced = self._action("Advanced search…", self.advanced_search, "Ctrl+Shift+F")
         self.act_auto = QAction("Check for mail automatically", self)
         self.act_auto.setCheckable(True)
@@ -408,6 +437,9 @@ class MainWindow(QMainWindow):
         self.search_box.setMinimumWidth(300)
         self.toolbar.addWidget(self.scope)
         self.toolbar.addWidget(self.search_box)
+        for page in self.pages.values():  # the toolbars of the other sections: one is shown at a time, in the same place
+            self.addToolBar(page.toolbar)
+            page.toolbar.hide()
 
     def _build_menus(self) -> None:
         bar = self.menuBar()
@@ -453,6 +485,9 @@ class MainWindow(QMainWindow):
         folder_menu.addAction(self.act_mark_all_read)
         folder_menu.addAction(self.act_empty_folder)
         view_menu = bar.addMenu("&View")
+        for section_action in self.section_actions.values():
+            view_menu.addAction(section_action)
+        view_menu.addSeparator()
         view_menu.addAction(self.act_search)
         view_menu.addAction(self.act_toggle_folders)
         view_menu.addAction(self.act_columns)
@@ -481,6 +516,7 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.progress_bar)
 
     def _wire(self) -> None:
+        self.section_bar.chosen.connect(self.switch_section)
         self.tree.selectionModel().currentChanged.connect(self._tree_changed)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.tree.messages_dropped.connect(self._messages_dropped)
@@ -514,6 +550,9 @@ class MainWindow(QMainWindow):
         geometry = self.settings.value("geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
+        saved_section = str(self.settings.value("last_section", MAIL))
+        if saved_section != MAIL:
+            self.switch_section(saved_section)
         sizes = self.settings.value("splitter2")
         if isinstance(sizes, list) and len(sizes) == 2:
             self.splitter.setSizes([int(size) for size in sizes])
@@ -615,7 +654,8 @@ class MainWindow(QMainWindow):
 
     def _update_unread_summary(self) -> None:
         unread = self._total_unread()
-        self.setWindowTitle(f"Chrono Mail ({unread} unread)" if unread else "Chrono Mail")
+        if self._section == MAIL:
+            self.setWindowTitle(f"Chrono Mail ({unread} unread)" if unread else "Chrono Mail")
         self.tray.set_unread(unread)
 
     def _notify_new_mail(self, new_by_account: dict[str, int]) -> None:
@@ -1370,6 +1410,61 @@ class MainWindow(QMainWindow):
 
         for row in rows:
             self.backend.call(command, {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+
+    # --- the sections: mail, calendar, tasks, contacts ---------------------------------------------------------
+
+    MAIL_ONLY: tuple[str, ...] = (
+        "reply", "reply_all", "forward", "edit_draft", "save_as", "source", "print", "open", "junk", "not_junk", "next_unread", "previous_unread", "archive", "mark_all_read",
+        "empty_folder", "read", "unread", "flag", "unflag", "snooze", "toggle_read", "toggle_flag", "delete_forever", "move_to", "quick_move", "copy_to", "quick_copy",
+        "go_to_folder", "next_message", "previous_message", "advanced", "new_folder", "rename_folder", "delete_folder",
+    )
+
+    @property
+    def section(self) -> str:
+        return self._section
+
+    def _in_section(self, what: str) -> None:
+        """File > New, Refresh, Delete and Search do what the section that is shown needs."""
+        page = self.pages.get(self._section)
+        if page is not None:
+            {"new": page.new_item, "refresh": page.refresh, "delete": page.delete_selected, "search": page.focus_search}[what]()
+            return
+        {"new": self.new_message, "refresh": self.check_mail, "delete": self.delete_selected, "search": self._focus_search}[what]()
+
+    def switch_section(self, section: str) -> None:
+        """Show another section: its sidebar, its main area and its toolbar. The mail-only actions are off while another section is shown."""
+        if section not in {name for name, *_ in SECTIONS} or section == self._section:
+            self.section_bar.show_section(self._section)  # the button of the section that is shown stays pressed
+            return
+        if self._section == MAIL and section != MAIL:
+            self._mail_action_states = {name: getattr(self, f"act_{name}").isEnabled() for name in self.MAIL_ONLY if hasattr(self, f"act_{name}")}
+            for name in self._mail_action_states:
+                getattr(self, f"act_{name}").setEnabled(False)
+        elif self._section != MAIL and section == MAIL:
+            for name, enabled in self._mail_action_states.items():
+                getattr(self, f"act_{name}").setEnabled(enabled)
+        self._section = section
+        index = self._stack_index(section)
+        self.side_stack.setCurrentIndex(index)
+        self.content_stack.setCurrentIndex(index)
+        self.toolbar.setVisible(section == MAIL)
+        for name, page in self.pages.items():
+            page.toolbar.setVisible(name == section)
+        self.section_bar.show_section(section)
+        page = self.pages.get(section)
+        if page is not None:
+            page.on_show()
+        self.settings.setValue("last_section", section)
+        if page is not None:
+            self.setWindowTitle(self._title_for(section))
+        else:
+            self._update_unread_summary()
+
+    def _stack_index(self, section: str) -> int:
+        return 0 if section == MAIL else 1 + list(self.pages).index(section)
+
+    def _title_for(self, section: str) -> str:
+        return "Chrono Mail" if section == MAIL else f"Chrono Mail — {dict((name, label) for name, label, *_ in SECTIONS)[section]}"
 
     def _step_message(self, step: int) -> None:
         """Select the next (or the previous) message of the list."""

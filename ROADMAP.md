@@ -79,7 +79,7 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 | 3.2 | iCalendar (events and tasks): parsing, building, recurrence, time zones, reminders. | done (0.0.58) |
 | 3.3 | `pimstore`: encrypted items and the rebuildable index; local collections. | done (0.0.59) |
 | 3.4 | Engine commands for collections, events, tasks, contacts and tags. | done (0.0.60) |
-| 3.5 | The four-button shell: sections with their own sidebar, toolbar and status line. | open |
+| 3.5 | The four-button shell: sections with their own sidebar, toolbar and status line. | done (0.0.61) |
 | 3.6 | Contacts section (address books, list, detail, tags, History). | open |
 | 3.7 | Tasks section (lists, quick add, detail pane, status marks). | open |
 | 3.8 | Calendar section (Day, Work Week, Week, Upcoming, Month, Agenda; event editor; mini calendar). | open |

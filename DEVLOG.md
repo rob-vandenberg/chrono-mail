@@ -665,3 +665,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - 3.5 the four-button shell, then the three sections.
 
+## 2026-10-11 The four-button shell (version 0.0.61)
+
+**What landed**
+- `ui/sections.py` (the buttons, the base of a section), `ui/collectionpanel.py` (the sidebar of calendars, task lists, address books with ticks, colours and a menu), `ui/pimpages.py` (three pages), the stacks, toolbars and the switching in the main window, three new icons; 5 tests.
+- The main areas of the three sections show only a line of text for now: 3.6 to 3.8 fill them.
+

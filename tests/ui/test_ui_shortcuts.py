@@ -7,9 +7,10 @@ from tests.ui.test_ui_window import select, started
 from tests.ui.world import World, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_shortcuts.py 0.0.54"
+__version__ = "test_ui_shortcuts.py 0.0.61"
 
 # --- Version history ----------------------------------------------------
+# v0.0.61: The four section buttons and the sidebars of the calendar, task and contact sections
 # v0.0.54: A flag change redraws every column of the row
 # v0.0.53: Initial tests of the standard shortcuts
 
@@ -130,6 +131,7 @@ def test_the_composer_and_the_message_window_have_the_same_keys(world: World, qt
 
 
 def test_marking_as_read_redraws_every_cell_of_the_selected_rows(world: World, qtbot: QtBot) -> None:
+    world.window.settings.setValue("mark_read", "never")  # reading must not change the flags while the test looks at them
     started(qtbot, world)
     window = world.window
     window._mark_read_timer.stop()  # noqa: SLF001
