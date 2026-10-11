@@ -107,3 +107,4 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (0.0.77) New look, step 2: the message list and the reading pane (Received instead of Date, blue dot for unread and an empty circle for read, flat list header, reading pane header and banner). Group headers in the list are not done.
 - DONE (0.0.78) New look, step 3: the composer; rich text is the default for new messages (D-085).
 - DONE (0.0.79) The column headers of the message list have a thin line between them again (removed by mistake in 0.0.77).
+- DONE (0.0.80) The test run no longer crashes at the end (a web view waiting to be deleted at exit): the ui tests finish the pending deletions after each test.

@@ -812,3 +812,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **What landed**
 - The thin vertical line between the column headers of the message list is back (one property, border-right, on the header section rule). Version 0.0.77 had removed it by mistake.
+
+## 2026-10-11 The test run no longer crashes at exit (version 0.0.80)
+
+**What landed**
+- Every run of the ui tests ended with a segmentation fault (415 crash reports since 10 October): a web view that was still waiting to be deleted when the process ended crashed it. A fixture in `tests/ui/conftest.py` now finishes the pending deletions after each test. The full suite exits cleanly and made no new crash report. Only tests changed.
+
+**Still open**
+- Not checked: whether the program itself leaves a web view waiting when it quits; a few small probes exited cleanly.
+- Not tried: closing the windows in that fixture (closing a composer asks a question and the run waits for the answer).
