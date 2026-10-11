@@ -3,16 +3,18 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 from chrono_mail.config import AccountSettings
-from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionInfo, CollectionKind, ConfigurationError, StorageError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, CollectionInfo, CollectionKind, ConfigurationError, StorageError
+from chrono_mail.engine.commands_accounts import server_label
 from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import IndexedItem, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimaccess.py 0.0.66"
+__version__ = "pimaccess.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.66: A store can be made when an account is first synchronised
 # v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.60: Initial access to the calendars, task lists and address books of the accounts
@@ -61,7 +63,13 @@ def pim_account_ids(engine: Engine) -> list[str]:
 
 
 def account_name(engine: Engine, account_id: str) -> str:
-    return _settings(engine, account_id).account.display_name
+    config = engine.config()
+    settings = _settings(engine, account_id)
+    shared = any(
+        other.account.account_id != account_id and other.account.kind is not AccountKind.LOCAL and other.account.display_name.lower() == settings.account.display_name.lower()
+        for other in config.accounts
+    )
+    return f"{settings.account.display_name} - {server_label(settings)}" if shared and settings.account.kind is not AccountKind.LOCAL else settings.account.display_name
 
 
 @contextmanager

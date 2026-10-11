@@ -7,9 +7,10 @@ from chrono_mail.ui.rulespanel import RulesPanel
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rules.py 0.0.50"
+__version__ = "test_ui_rules.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rules window tests
@@ -206,3 +207,12 @@ def test_the_rules_are_a_page_of_the_settings(world: World, qtbot: QtBot, monkey
     assert len(seen) == 1 and [seen[0].sidebar.item(row).text() for row in range(seen[0].sidebar.count())][-4:-2] == ["Rules", "Scheduled messages"]
     wait(qtbot, lambda: "Rules applied" in world.window.status_label.text())
     assert "Tools" not in [action.text().replace("&", "") for action in world.window.menuBar().actions()]
+
+
+def test_accounts_with_the_same_address_are_told_apart_in_the_rule_editor(world: World, qtbot: QtBot) -> None:
+    world.call("account.add", display_name="Me", email_address="me@example.com", username="other", password="secret", incoming_host="127.0.0.1", incoming_port=world.pop.port, incoming_security="none", outgoing_host="127.0.0.1", outgoing_port=world.smtp.port, outgoing_security="none", kind="imap")
+    accounts = list(world.call("account.list"))
+    dialog = RuleEditDialog(world.backend, accounts, [])
+    qtbot.addWidget(dialog)
+    labels = [dialog.account.itemText(index) for index in range(1, dialog.account.count())]
+    assert len(labels) == 2 and len(set(labels)) == 2 and all(" - " in label for label in labels) and labels[1].endswith("(IMAP)")

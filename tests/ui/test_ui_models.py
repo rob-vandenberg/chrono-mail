@@ -13,9 +13,10 @@ from chrono_mail.ui.models import FOLDER_ROLE_ROLE, KIND_ROLE, PAGE_SIZE, ROW_RO
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.0.46"
+__version__ = "test_ui_models.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Initial list model, tree model and delegate tests
@@ -149,7 +150,7 @@ class Info:
 
 class Account:
     def __init__(self, account_id: str, email: str) -> None:
-        self.account_id, self.email_address = account_id, email
+        self.account_id, self.email_address, self.shown_name = account_id, email, email
 
 
 def test_tree_with_nested_and_virtual_folders() -> None:

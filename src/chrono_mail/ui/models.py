@@ -14,9 +14,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.54"
+__version__ = "models.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.54: A flag change redraws every column of the row
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -444,7 +445,7 @@ class FolderTreeModel(QStandardItemModel):
 
     def _account_node(self, parent: QStandardItem, account: object, folders: dict[str, list[object]]) -> None:
         account_id = str(getattr(account, "account_id"))
-        top = QStandardItem("Local Folders" if str(getattr(account, "kind", "pop3")) == "local" else str(getattr(account, "email_address")))
+        top = QStandardItem("Local Folders" if str(getattr(account, "kind", "pop3")) == "local" else str(getattr(account, "shown_name")))
         top.setEditable(False)
         top.setIcon(folder_icon("account"))
         top.setData("account", KIND_ROLE)
@@ -536,7 +537,7 @@ class FolderTreeModel(QStandardItemModel):
             account_id = str(getattr(account, "account_id"))
             inbox = next((info for info in folders.get(account_id, []) if str(getattr(info, "role")) == "inbox"), None)
             unread = int(getattr(inbox, "unread")) if inbox is not None else 0
-            item = QStandardItem(str(getattr(account, "email_address")))
+            item = QStandardItem(str(getattr(account, "shown_name")))
             item.setEditable(False)
             item.setIcon(folder_icon("inbox"))
             item.setData("inboxlink", KIND_ROLE)
@@ -544,7 +545,7 @@ class FolderTreeModel(QStandardItemModel):
             item.setData(str(getattr(inbox, "path")) if inbox is not None else "Inbox", FOLDER_PATH_ROLE)
             item.setData("inbox", FOLDER_ROLE_ROLE)
             item.setData(unread, UNREAD_ROLE)
-            self._label(item, str(getattr(account, "email_address")), unread)
+            self._label(item, str(getattr(account, "shown_name")), unread)
             section.appendRow(item)
 
     @staticmethod

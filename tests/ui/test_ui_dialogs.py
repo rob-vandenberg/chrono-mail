@@ -10,9 +10,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dialogs.py 0.0.31"
+__version__ = "test_ui_dialogs.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: The same e-mail address may be used by several accounts
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.13: Initial dialog tests
 
@@ -122,14 +123,14 @@ def test_without_encryption_no_key_is_created(blank: World, qtbot: QtBot) -> Non
     assert dialog.key_created is False and blank.call("key.status").key_id is None
 
 
-def test_a_second_account_with_the_same_address_is_refused_in_the_dialog(world: World, qtbot: QtBot) -> None:
+def test_a_second_account_with_the_same_user_name_on_the_same_server_is_refused_in_the_dialog(world: World, qtbot: QtBot) -> None:
     dialog = AccountDialog(world.backend)
     qtbot.addWidget(dialog)
     fill(dialog, world)
-    dialog.email.setText("me@example.com")
+    dialog.email.setText("other@example.com")
     dialog.add_button.click()
     wait(qtbot, lambda: "could not be added" in dialog.result_label.text())
-    assert "already exists" in dialog.result_label.text() and dialog.add_button.isEnabled()
+    assert "exists already" in dialog.result_label.text() and dialog.add_button.isEnabled()
     assert dialog.created_account_id is None and len(world.call("account.list")) == 1
 
 

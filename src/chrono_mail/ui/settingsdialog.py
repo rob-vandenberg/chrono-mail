@@ -39,9 +39,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.51"
+__version__ = "settingsdialog.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -391,7 +392,7 @@ class SettingsDialog(QDialog):
 
         def listed(result: object) -> None:
             accounts = [str(getattr(account, "account_id")) for account in (result if isinstance(result, (tuple, list)) else [])]
-            names = {str(getattr(account, "account_id")): str(getattr(account, "display_name" if str(getattr(account, "kind", "pop3")) == "local" else "email_address")) for account in (result if isinstance(result, (tuple, list)) else [])}
+            names = {str(getattr(account, "account_id")): str(getattr(account, "label")) for account in (result if isinstance(result, (tuple, list)) else [])}
             if not accounts:
                 finished()
                 return
@@ -480,11 +481,10 @@ class SettingsDialog(QDialog):
             for account in list(result) if isinstance(result, (tuple, list)) else []:
                 if str(getattr(account, "kind", "pop3")) == "local":
                     continue  # Local Folders is not an account: it is shown through the accounts that keep their mail there
-                kind = "IMAP" if str(getattr(account, "kind", "pop3")) == "imap" else "POP3"
-                item = QListWidgetItem(f"{getattr(account, 'display_name')}  <{getattr(account, 'email_address')}>  ({kind})")
+                item = QListWidgetItem(f"{getattr(account, 'display_name')}  <{getattr(account, 'email_address')}>  - {getattr(account, 'server_label')}")
                 item.setData(ROLE_ACCOUNT, account)
                 self.accounts.addItem(item)
-                self.default_account.addItem(str(getattr(account, "email_address")), str(getattr(account, "account_id")))
+                self.default_account.addItem(str(getattr(account, "label")), str(getattr(account, "account_id")))
                 if str(getattr(account, "account_id")) == selected:
                     self.accounts.setCurrentItem(item)
             self.default_account.setCurrentIndex(max(0, self.default_account.findData(keep)))

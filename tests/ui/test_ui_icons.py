@@ -9,9 +9,10 @@ from chrono_mail.ui.models import FolderTreeModel
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_icons.py 0.0.46"
+__version__ = "test_ui_icons.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.14: Initial icon tests
 
@@ -46,7 +47,7 @@ class Info:
 
 
 class Account:
-    account_id, email_address = "a" * 32, "me@example.com"
+    account_id, email_address, shown_name = "a" * 32, "me@example.com", "me@example.com"
 
 
 def test_the_tree_asks_for_the_icon_of_each_kind(monkeypatch: pytest.MonkeyPatch) -> None:

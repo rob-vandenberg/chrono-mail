@@ -17,9 +17,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "ruleedit.py 0.0.51"
+__version__ = "ruleedit.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rule editor
@@ -157,7 +158,7 @@ class RuleEditDialog(QDialog):
         self.account = QComboBox(self)
         self.account.addItem("All accounts", "")
         for item in accounts:
-            self.account.addItem(str(getattr(item, "email_address")), str(getattr(item, "account_id")))
+            self.account.addItem(str(getattr(item, "label")), str(getattr(item, "account_id")))
         form.addRow("Name", self.name)
         form.addRow("Conditions", self.match)
         form.addRow("For", self.account)

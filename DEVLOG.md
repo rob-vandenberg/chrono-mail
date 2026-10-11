@@ -728,3 +728,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **What landed**
 - A suggestion chosen with the arrow keys and Enter was in the address field twice: highlighting already puts the address in the field, and Enter added it again to what was there. The completer now builds the result from what the person typed, not from the field. Regression test added.
+
+## 2026-10-11 Accounts told apart by login, server and protocol (version 0.0.69)
+
+**What landed**
+- Adding or editing an account is refused only when another account has the same user name on the same incoming server with the same protocol (POP3 or IMAP); the e-mail address and the port do not matter. The same address on different servers, or one mailbox through POP3 and through IMAP, are separate accounts.
+- Accounts are named "address - server (PROTOCOL)" where they must be told apart: the rule editor, the From box, the account list and default account in Settings. The folder tree, the Inboxes list, notifications and the calendar, task and contact panels show the plain address (or name) and add the server and protocol only when another account has the same address (or name). The engine makes the labels (`label`, `server_label`, `shown_name` in `account.list`).
+
+**Still open**
+- A warning in the account dialog when another account uses the same mailbox with a delete-after-download policy.

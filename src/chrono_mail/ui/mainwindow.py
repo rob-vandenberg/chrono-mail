@@ -74,9 +74,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.66"
+__version__ = "mainwindow.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.66: Synchronisation of calendars, task lists and address books with a CalDAV and CardDAV server
 # v0.0.64: The calendar section
 # v0.0.63: The tasks section
@@ -672,7 +673,7 @@ class MainWindow(QMainWindow):
         total = sum(new_by_account.values())
         if not total or not bool_setting(self.settings, "notifications", True) or self.isActiveWindow():
             return
-        names = {str(getattr(account, "account_id")): str(getattr(account, "email_address")) for account in self._accounts}
+        names = {str(getattr(account, "account_id")): str(getattr(account, "shown_name")) for account in self._accounts}
         if len(new_by_account) > 1:
             lines = [f"{count} new in {names.get(account, account)}" for account, count in sorted(new_by_account.items()) if count]
             self.tray.notify("New mail", "\n".join(lines))
@@ -1565,7 +1566,7 @@ class MainWindow(QMainWindow):
             account = accounts.get(account_id)
             if account is None or str(getattr(account, "storage", "own")) == "local":
                 continue
-            label = "Local Folders" if str(getattr(account, "kind", "pop3")) == "local" else str(getattr(account, "email_address"))
+            label = "Local Folders" if str(getattr(account, "kind", "pop3")) == "local" else str(getattr(account, "shown_name"))
             for info in infos:
                 names[f"{label} / {getattr(info, 'path')}"] = (account_id, str(getattr(info, "path")))
         if not names:

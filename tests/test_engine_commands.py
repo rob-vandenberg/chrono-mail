@@ -16,9 +16,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.0.14"
+__version__ = "test_engine_commands.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: The same e-mail address may be used by several accounts
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.12: Initial engine command tests
@@ -48,6 +49,8 @@ def add_account(engine: Engine, pop: FakePop3Server, smtp: FakeSmtpServer, email
         "incoming_host": "127.0.0.1", "incoming_port": pop.port, "incoming_security": "none",
         "outgoing_host": "127.0.0.1", "outgoing_port": smtp.port, "outgoing_security": "none",
     }
+    taken = {item.incoming_host for item in call(engine, "account.list") if item.incoming_username == values["username"]}
+    values["incoming_host"] = next(host for host in ("127.0.0.1", "localhost", "127.1", "127.0.1") if host not in taken)  # one login on one server is one account
     values.update(extra)
     result = call(engine, "account.add", **values)
     return str(getattr(result, "account_id"))
@@ -87,9 +90,22 @@ def test_invalid_email_address_is_refused(setup: Setup, email: str) -> None:
         call(setup.engine, "account.add", display_name="X", email_address=email, username="u", password="p", incoming_host="h", outgoing_host="h")
 
 
-def test_duplicate_email_address_is_refused(setup: Setup) -> None:
-    with pytest.raises(ConfigurationError):
-        add_account(setup.engine, setup.pop, setup.smtp)
+def test_the_same_email_address_may_be_used_by_more_than_one_account(setup: Setup) -> None:
+    """Only the same user name on the same incoming server is the same account."""
+    other = FakePop3Server({})
+    with other:
+        second = add_account(setup.engine, other, setup.smtp, incoming_host="localhost")
+    accounts = call(setup.engine, "account.list")
+    assert len(accounts) == 2 and accounts[0].email_address == accounts[1].email_address and second != setup.account_id
+    with pytest.raises(ConfigurationError, match="More than one"):
+        setup.engine.resolve_account("me@example.com")
+    assert setup.engine.resolve_account(second).account.account_id == second  # the id tells them apart
+
+
+def test_the_same_user_name_on_the_same_incoming_server_is_refused(setup: Setup) -> None:
+    with pytest.raises(ConfigurationError, match="exists already"):
+        add_account(setup.engine, setup.pop, setup.smtp, email="other@example.com", incoming_host="127.0.0.1")
+    assert len(call(setup.engine, "account.list")) == 1
 
 
 def test_failed_account_creation_leaves_nothing_behind(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -598,3 +614,16 @@ def test_an_index_with_an_older_schema_is_rebuilt_automatically(tmp_path: Path) 
         connection.close()
         listing = call(engine, "message.list", account=account_id)  # opens the account: the old index is rebuilt
         assert getattr(listing, "total") == 1 and getattr(listing, "messages")[0].preview == "HELLO Rob"
+
+
+def test_the_same_login_on_the_same_server_through_another_protocol_is_another_account(setup: Setup) -> None:
+    imap = add_account(setup.engine, setup.pop, setup.smtp, incoming_host="127.0.0.1", kind="imap")  # the same mailbox through IMAP
+    accounts = call(setup.engine, "account.list")
+    assert len(accounts) == 2 and {item.kind for item in accounts} == {"pop3", "imap"} and imap != setup.account_id
+    first, second = accounts
+    assert first.label == "me@example.com - 127.0.0.1 (POP3)" and second.label == "me@example.com - 127.0.0.1 (IMAP)"
+    assert first.shown_name == first.label and second.shown_name == second.label  # the same address twice: each is told apart by its server
+    with pytest.raises(ConfigurationError, match="exists already"):
+        add_account(setup.engine, setup.pop, setup.smtp, email="x@example.com", incoming_host="127.0.0.1", kind="imap")  # not twice through the same protocol
+    other = add_account(setup.engine, setup.pop, setup.smtp, email="other@example.com", incoming_host="127.0.0.1", username="someone")
+    assert next(item for item in call(setup.engine, "account.list") if item.account_id == other).shown_name == "other@example.com"  # a unique address stays short

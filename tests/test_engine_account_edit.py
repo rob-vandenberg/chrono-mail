@@ -10,9 +10,10 @@ from tests.test_engine_commands import Setup, add_account, call, setup  # noqa: 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_account_edit.py 0.0.20"
+__version__ = "test_engine_account_edit.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.20: Initial tests of account.edit and the signature
 
 
@@ -71,10 +72,12 @@ def test_bad_values_change_nothing(setup: Setup) -> None:
     assert setup.engine.passwords.get(setup.account_id, ServerRole.INCOMING) != "must-not-be-kept"
 
 
-def test_two_accounts_cannot_share_an_address_and_order_is_kept(setup: Setup) -> None:
-    second = add_account(setup.engine, setup.pop, setup.smtp, email="second@example.com")
-    with pytest.raises(ConfigurationError, match="already"):
-        call(setup.engine, "account.edit", account=second, email_address="ME@example.com")
+def test_accounts_may_share_an_address_but_not_a_mailbox_and_order_is_kept(setup: Setup) -> None:
+    second = add_account(setup.engine, setup.pop, setup.smtp, email="second@example.com", username="second", incoming_host="127.0.0.1")
+    changed = call(setup.engine, "account.edit", account=second, email_address="ME@example.com")  # the same address on another login is fine
+    assert changed.email_address == "ME@example.com"
+    with pytest.raises(ConfigurationError, match="exists already"):
+        call(setup.engine, "account.edit", account=second, username="USER")  # the login of the first account on the same server and protocol
     call(setup.engine, "account.edit", account=setup.account_id, display_name="First again")
     assert [item.account_id for item in call(setup.engine, "account.list")] == [setup.account_id, second]
     changed = call(setup.engine, "account.edit", account=second, email_address="renamed@example.com")

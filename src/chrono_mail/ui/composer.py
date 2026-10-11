@@ -33,9 +33,10 @@ from chrono_mail.ui.richeditor import RichEditor
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.67"
+__version__ = "composer.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.67: Messages that are sent again and again
 # v0.0.53: Standard keyboard shortcuts
 # v0.0.42: settings: autosave interval, subject warning, font size, reply under the quote
@@ -164,7 +165,7 @@ class ComposeWindow(QMainWindow):
         form = QFormLayout()
         self.from_box = QComboBox(central)
         for account in accounts:
-            self.from_box.addItem(f"{getattr(account, 'display_name')} <{getattr(account, 'email_address')}>", str(getattr(account, "account_id")))
+            self.from_box.addItem(f"{getattr(account, 'display_name')} <{getattr(account, 'email_address')}> - {getattr(account, 'server_label')}", str(getattr(account, "account_id")))
         index = self.from_box.findData(account_id)
         self.from_box.setCurrentIndex(max(0, index))
         self.to = QLineEdit(central)

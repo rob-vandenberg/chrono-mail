@@ -40,9 +40,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.66"
+__version__ = "commands_accounts.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: An account is the same account only with the same user name, incoming server and protocol (not the same e-mail address); labels that tell accounts apart
 # v0.0.66: Address and user name of the calendar and contacts server in the summary
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.45: storage of an account (own folders or Local Folders)
@@ -115,8 +116,7 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
     email = parameters.email_address.strip()
     if email.count("@") != 1 or email.startswith("@") or email.endswith("@"):
         raise UsageError("The e-mail address is not valid")
-    if any(item.account.email_address.lower() == email.lower() for item in config.accounts):
-        raise ConfigurationError("An account with this e-mail address already exists")
+    _refuse_same_account(config.accounts, AccountKind(parameters.kind), parameters.username, parameters.incoming_host, None)
     account_id = new_account_id()
     account = Account(
         account_id,
@@ -210,6 +210,44 @@ class NoParameters:
     pass
 
 
+def _refuse_same_account(accounts: tuple[AccountSettings, ...], kind: AccountKind, username: str, host: str, own_id: str | None) -> None:
+    """One mailbox is one account: the same user name on the same incoming server with the same protocol cannot be added twice. The e-mail address
+    and the port do not matter: the same address on different servers, or the same mailbox through POP3 and through IMAP, are different accounts."""
+    for item in accounts:
+        incoming = item.account.incoming
+        if (
+            item.account.account_id != own_id and item.account.kind is kind and incoming.username.strip().lower() == username.strip().lower()
+            and incoming.host.strip().lower() == host.strip().lower()
+        ):
+            raise ConfigurationError("An account with this user name on this incoming mail server and with this protocol exists already")
+
+
+def server_label(item: AccountSettings) -> str:
+    """The incoming server and the protocol, like mail.example.com (POP3)."""
+    if item.account.kind is AccountKind.LOCAL:
+        return ""
+    return f"{item.account.incoming.host} ({item.account.kind.value.upper()})"
+
+
+def account_label(item: AccountSettings) -> str:
+    """How an account is named where it must be told apart from the others: address - server (protocol)."""
+    if item.account.kind is AccountKind.LOCAL:
+        return item.account.display_name
+    return f"{item.account.email_address} - {server_label(item)}"
+
+
+def shown_name(item: AccountSettings, accounts: tuple[AccountSettings, ...]) -> str:
+    """The e-mail address, and the server and protocol as well when another account has the same address (or, for the name, the same display name)."""
+    if item.account.kind is AccountKind.LOCAL:
+        return item.account.display_name
+    shared = any(
+        other.account.account_id != item.account.account_id and other.account.kind is not AccountKind.LOCAL
+        and other.account.email_address.lower() == item.account.email_address.lower()
+        for other in accounts
+    )
+    return account_label(item) if shared else item.account.email_address
+
+
 @dataclass(frozen=True, slots=True)
 class AccountSummary:
     account_id: str
@@ -235,9 +273,12 @@ class AccountSummary:
     storage: str = "own"
     dav_url: str = ""
     dav_username: str = ""
+    label: str = ""  # address - incoming server (protocol): tells accounts with the same address apart
+    server_label: str = ""
+    shown_name: str = ""  # the address; with server and protocol when another account has the same address
 
 
-def _summary(item: AccountSettings) -> AccountSummary:
+def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> AccountSummary:
     return AccountSummary(
         item.account.account_id,
         item.account.display_name,
@@ -262,11 +303,15 @@ def _summary(item: AccountSettings) -> AccountSummary:
         item.storage,
         item.dav_url,
         item.dav_username,
+        account_label(item),
+        server_label(item),
+        shown_name(item, accounts),
     )
 
 
 def account_list(engine: Engine, parameters: NoParameters) -> tuple[AccountSummary, ...]:
-    return tuple(_summary(item) for item in engine.config().accounts)
+    accounts = engine.config().accounts
+    return tuple(_summary(item, accounts) for item in accounts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -343,8 +388,6 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     email = account.email_address if parameters.email_address is None else parameters.email_address.strip()
     if email.count("@") != 1 or email.startswith("@") or email.endswith("@"):
         raise UsageError("The e-mail address is not valid")
-    if any(item.account.account_id != account.account_id and item.account.email_address.lower() == email.lower() for item in config.accounts):
-        raise ConfigurationError("Another account has this e-mail address already")
     name = account.display_name if parameters.display_name is None else (parameters.display_name.strip() or email)
     incoming = ServerSettings(
         account.incoming.host if parameters.incoming_host is None else parameters.incoming_host.strip(),
@@ -360,6 +403,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     )
     if not incoming.username or not outgoing.username:
         raise UsageError("A user name must not be empty")
+    _refuse_same_account(config.accounts, account.kind, incoming.username, incoming.host, account.account_id)
     pop3 = Pop3Options(
         settings.pop3.policy if parameters.delete_policy is None else Pop3DeletePolicy(parameters.delete_policy),
         settings.pop3.days if parameters.delete_days is None else parameters.delete_days,

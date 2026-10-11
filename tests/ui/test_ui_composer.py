@@ -10,9 +10,10 @@ from chrono_mail.ui.composer import ComposeWindow, parse_recipients, signature_b
 from tests.ui.world import World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_composer.py 0.0.20"
+__version__ = "test_ui_composer.py 0.0.69"
 
 # --- Version history ----------------------------------------------------
+# v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.20: Settings window, account editing, signatures
 # v0.0.16: Drafts
 # v0.0.13: Initial composer tests
@@ -276,7 +277,7 @@ def test_forward_can_leave_out_the_original_attachments(tmp_path: Path, qtbot: Q
 
 
 def test_two_accounts_can_be_chosen_as_the_sender(world: World, qtbot: QtBot) -> None:
-    world.call("account.add", display_name="Work", email_address="work@example.com", username="user", password="secret", incoming_host="127.0.0.1", incoming_port=world.pop.port, incoming_security="none", outgoing_host="127.0.0.1", outgoing_port=world.smtp.port, outgoing_security="none")
+    world.call("account.add", display_name="Work", email_address="work@example.com", username="user", password="secret", incoming_host="localhost", incoming_port=world.pop.port, incoming_security="none", outgoing_host="127.0.0.1", outgoing_port=world.smtp.port, outgoing_security="none")
     window = new_composer(world, qtbot)
     assert window.from_box.count() == 2
     window.from_box.setCurrentIndex(1 - window.from_box.currentIndex())
