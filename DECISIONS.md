@@ -592,3 +592,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** the look and feel (not an exact copy) follows the reference the owner chose, in five steps: 1 main window shell, 2 message list and reading pane, 3 composer, 4 settings and dialogs, 5 calendar, tasks and contacts. The Menu button replaces the menu bar; the primary button is orange, others are grey; both the light and the dark scheme are kept. The Settings stay one window with the pages in a list on the left. The rows/columns and cards choice for the message list stays. The Inboxes section stays removed (D-061). No name or artwork of the reference is used anywhere.
 **Reason:** the owner wants the familiar look without losing what Chrono Mail already does well.
+
+## D-084 The reference client decides the order and the names in the menus and sections
+*2026-10-11*
+
+**Decision:** where the reference client has a menu item or a section, the order and the name follow it: the Menu root has Settings, Accounts, Rules, then the menus, then Exit (no shortcut); the sections are Mail, Calendar, Contacts, Tasks (Ctrl+1 to Ctrl+4). The accent colour is the blue of the menus. Section buttons use the program's own plain icons, blue while the section is open. Only what Chrono Mail has is shown: nothing is added to match the reference.
+**Reason:** the owner's instruction; it supersedes the earlier orange accent and the order Tasks before Contacts.

@@ -3,12 +3,13 @@ from collections.abc import Callable
 from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QToolBar, QToolButton, QWidget
 
-from chrono_mail.ui.icons import theme_icon
+from chrono_mail.ui.icons import section_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "sections.py 0.0.73"
+__version__ = "sections.py 0.0.76"
 
 # --- Version history ----------------------------------------------------
+# v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.73: The section buttons share the width and show the section that is open with a line under it
 # v0.0.61: Initial section buttons (Mail, Calendar, Tasks, Contacts) and the base of a section
 
@@ -19,9 +20,10 @@ CONTACTS: str = "contacts"
 SECTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (  # id, name, icon names, shortcut
     (MAIL, "Mail", ("mail-message",), "Ctrl+1"),
     (CALENDAR, "Calendar", ("x-office-calendar", "view-calendar"), "Ctrl+2"),
-    (TASKS, "Tasks", ("view-calendar-tasks", "view-task"), "Ctrl+3"),
-    (CONTACTS, "Contacts", ("x-office-address-book",), "Ctrl+4"),
+    (CONTACTS, "Contacts", ("x-office-address-book",), "Ctrl+3"),
+    (TASKS, "Tasks", ("view-calendar-tasks", "view-task"), "Ctrl+4"),
 )
+SECTION_ICONS: dict[str, str] = {MAIL: "mail", CALENDAR: "calendar-days", CONTACTS: "user", TASKS: "check"}  # the files of the section buttons
 BUTTON_SIZE: int = 40
 
 
@@ -40,7 +42,7 @@ class SectionBar(QWidget):
         self.buttons: dict[str, QToolButton] = {}
         for section, name, icons, shortcut in SECTIONS:
             button = QToolButton(self)
-            button.setIcon(theme_icon(*icons))
+            button.setIcon(section_icon(SECTION_ICONS[section]))
             button.setIconSize(QSize(22, 22))
             button.setObjectName("sectionButton")
             button.setFixedHeight(BUTTON_SIZE)

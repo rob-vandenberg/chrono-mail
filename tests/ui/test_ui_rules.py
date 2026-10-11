@@ -7,9 +7,10 @@ from chrono_mail.ui.rulespanel import RulesPanel
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rules.py 0.0.73"
+__version__ = "test_ui_rules.py 0.0.76"
 
 # --- Version history ----------------------------------------------------
+# v0.0.76: The Menu has Settings, Accounts, Rules and Exit in its root
 # v0.0.73: The menus are inside one Menu button
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
@@ -207,7 +208,7 @@ def test_the_rules_are_a_page_of_the_settings(world: World, qtbot: QtBot, monkey
     world.window.act_rules.trigger()
     assert len(seen) == 1 and [seen[0].sidebar.item(row).text() for row in range(seen[0].sidebar.count())][-4:-2] == ["Rules", "Scheduled messages"]
     wait(qtbot, lambda: "Rules applied" in world.window.status_label.text())
-    assert [action.text().replace("&", "") for action in menu_named(world.window).actions()] == ["File", "Message", "Folder", "View", "Help"]
+    assert [action.text().replace("&", "") for action in menu_named(world.window).actions()] == ["Settings…", "Accounts…", "Rules…", "", "File", "Message", "Folder", "View", "Help", "", "Exit"]
 
 
 def test_accounts_with_the_same_address_are_told_apart_in_the_rule_editor(world: World, qtbot: QtBot) -> None:

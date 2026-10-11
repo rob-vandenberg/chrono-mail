@@ -103,3 +103,4 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (0.0.73) New look of the main window, step 1: the Menu button, the toolbar with an orange New button, the pill-shaped search field, the folder list with a heading, section buttons with a line under the open one (D-083).
 - DONE (0.0.74) A message window saves Always for this sender and knows the allowed senders before it shows the message.
 - DONE (0.0.75) The folder list remembers which headings, accounts and folders are open or closed, also after a restart.
+- DONE (0.0.76) Blue instead of orange; Settings, Accounts, Rules and Exit in the root of the Menu; plain section icons (blue when open); Contacts before Tasks (D-084).

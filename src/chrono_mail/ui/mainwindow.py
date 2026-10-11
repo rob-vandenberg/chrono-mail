@@ -76,9 +76,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.75"
+__version__ = "mainwindow.py 0.0.76"
 
 # --- Version history ----------------------------------------------------
+# v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.75: The folder list remembers which headings, accounts and folders are open, also after a restart
 # v0.0.74: A message window gets the privacy settings before it shows the message and saves Always for this sender
 # v0.0.73: The main window gets a new look: the Menu button, the toolbar, the search field, the folder list and the section buttons
@@ -405,7 +406,8 @@ class MainWindow(QMainWindow):
         self.act_scheduled = self._action("Scheduled and snoozed messages…", self.open_scheduled)
         self.act_snooze = self._action("Snooze…", self.snooze_selected, "S", "appointment-soon")
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
-        self.act_quit = self._action("Quit", self.quit_program, "Ctrl+Shift+Q", "application-exit")
+        self.act_accounts = self._action("Accounts…", lambda: self.open_settings("Accounts"), None, "user-identity")
+        self.act_quit = self._action("Exit", self.quit_program, None, "application-exit")
         self.act_search = self._action("Search", lambda: self._in_section("search"), "Ctrl+E")
         self.act_advanced = self._action("Advanced search…", self.advanced_search, "Ctrl+Shift+F")
         self.act_auto = QAction("Check for mail automatically", self)
@@ -483,15 +485,15 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         bar = self.menuBar()
         root = bar.addMenu("\u2261  &Menu")  # one Menu button holds the menus that make up the menu bar
+        for action in (self.act_settings, self.act_accounts, self.act_rules):
+            root.addAction(action)
+        root.addSeparator()
         file_menu = root.addMenu("&File")
         file_menu.addAction(self.act_new)
         file_menu.addAction(self.act_refresh)
         file_menu.addSeparator()
-        file_menu.addAction(self.act_settings)
         file_menu.addAction(self.act_recovery)
         file_menu.addAction(self.act_restore_key)
-        file_menu.addSeparator()
-        file_menu.addAction(self.act_quit)
         message_menu = root.addMenu("&Message")
         message_menu.addAction(self.act_open)
         message_menu.addAction(self.act_edit_draft)
@@ -544,6 +546,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.act_auto)
         help_menu = root.addMenu("&Help")
         help_menu.addAction(self.act_about)
+        root.addSeparator()
+        root.addAction(self.act_quit)
 
     def _build_status(self) -> None:
         self.status_label = QLabel("", self)

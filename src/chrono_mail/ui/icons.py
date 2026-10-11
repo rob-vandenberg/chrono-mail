@@ -7,9 +7,10 @@ from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPalett
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.63"
+__version__ = "icons.py 0.0.76"
 
 # --- Version history ----------------------------------------------------
+# v0.0.76: Section icons in plain colours, blue while the section is open
 # v0.0.63: The tasks section
 # v0.0.61: The four section buttons and the sidebars of the calendar, task and contact sections
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
@@ -55,22 +56,25 @@ BUNDLED_ICONS: dict[str, str] = {
 class TintedSvgEngine(QIconEngine):
     """An icon drawn from a one-colour SVG in the colour the palette gives text at that moment, so that it suits the light and the dark scheme."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, accent_when_on: bool = False) -> None:
         super().__init__()
         self._path: Path = path
+        self._accent_when_on: bool = accent_when_on  # in the blue of the highlight while the button is pressed (checked)
         self._source: str = path.read_text("utf-8")
 
     @staticmethod
-    def colour_for(mode: QIcon.Mode, palette: QPalette) -> str:
+    def colour_for(mode: QIcon.Mode, palette: QPalette, accent: bool = False) -> str:
         if mode == QIcon.Mode.Disabled:
             return palette.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText).name()
         if mode == QIcon.Mode.Selected:
             return palette.color(QPalette.ColorRole.HighlightedText).name()
+        if accent:
+            return palette.color(QPalette.ColorRole.Highlight).name()
         return palette.color(QPalette.ColorRole.ButtonText).name()
 
     @override
     def paint(self, painter: QPainter, rect: QRect, mode: QIcon.Mode, state: QIcon.State) -> None:
-        colour = self.colour_for(mode, QGuiApplication.palette())
+        colour = self.colour_for(mode, QGuiApplication.palette(), self._accent_when_on and state == QIcon.State.On)
         QSvgRenderer(self._source.replace("currentColor", colour).encode("utf-8")).render(painter, QRectF(rect))
 
     @override
@@ -84,13 +88,18 @@ class TintedSvgEngine(QIconEngine):
 
     @override
     def clone(self) -> "TintedSvgEngine":
-        return TintedSvgEngine(self._path)
+        return TintedSvgEngine(self._path, self._accent_when_on)
 
 
 def bundled_icon(name: str) -> QIcon:
     """The icon that comes with the program for this theme icon name, or an empty icon."""
     file = RESOURCES / "icons" / f"{BUNDLED_ICONS.get(name, '')}.svg"
     return QIcon(TintedSvgEngine(file)) if name in BUNDLED_ICONS and file.exists() else QIcon()
+
+
+def section_icon(stem: str) -> QIcon:
+    """The plain icon of a section button, from the file shipped with the program (not from the icon theme of the desktop): the colour of text, blue while the section is open."""
+    return QIcon(TintedSvgEngine(RESOURCES / "icons" / f"{stem}.svg", accent_when_on=True))
 
 
 def theme_icon(*names: str) -> QIcon:

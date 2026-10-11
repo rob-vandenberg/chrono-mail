@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sections.py 0.0.64"
+__version__ = "test_ui_sections.py 0.0.76"
 
 # --- Version history ----------------------------------------------------
+# v0.0.76: Contacts before Tasks (Ctrl+3 and Ctrl+4)
 # v0.0.64: The calendar section
 # v0.0.61: Initial tests of the section buttons and the sidebars of calendar, tasks and contacts
 
@@ -21,9 +22,9 @@ __version__ = "test_ui_sections.py 0.0.64"
 def test_four_square_buttons_switch_the_sidebar_the_main_area_and_the_toolbar(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     window = world.window
-    assert [name for name, *_ in SECTIONS] == [MAIL, CALENDAR, TASKS, CONTACTS] and list(window.section_bar.buttons) == [MAIL, CALENDAR, TASKS, CONTACTS]
+    assert [name for name, *_ in SECTIONS] == [MAIL, CALENDAR, CONTACTS, TASKS] and list(window.section_bar.buttons) == [MAIL, CALENDAR, CONTACTS, TASKS]
     assert window.section == MAIL and window.section_bar.buttons[MAIL].isChecked() and window.side_stack.currentWidget() is window.tree and window.toolbar.isVisible()
-    for section, key in ((CALENDAR, "Ctrl+2"), (TASKS, "Ctrl+3"), (CONTACTS, "Ctrl+4"), (MAIL, "Ctrl+1")):
+    for section, key in ((CALENDAR, "Ctrl+2"), (CONTACTS, "Ctrl+3"), (TASKS, "Ctrl+4"), (MAIL, "Ctrl+1")):
         assert window.section_actions[section].shortcut().toString() == key
     window.section_bar.buttons[CALENDAR].click()
     page = window.pages[CALENDAR]

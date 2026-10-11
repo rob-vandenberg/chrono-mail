@@ -779,3 +779,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **What landed**
 - Which headings (Favorites ...), account groups, accounts and folders with subfolders the person opened or closed is remembered, also after a restart (setting `tree_state`, a damaged value is ignored). Before, only accounts were remembered, and only until the next restart; subfolders closed at every refresh.
 - Never opened or closed: headings open, accounts open (with more than three only the one with the selection), folders closed. A node the person closed stays closed even when the selected folder is inside it.
+
+## 2026-10-11 Menu root, blue accent and section buttons (version 0.0.76)
+
+**What landed**
+- The accent is the blue of the menus (the highlight colour of the palette), not orange: the New button, the lines under the open section, hover. It follows the light and the dark scheme.
+- The root of the Menu: Settings…, Accounts…, Rules…, a separator, File, Message, Folder, View, Help, a separator, Exit. Accounts… and Rules… open the Settings window on their page. Settings is no longer in the File menu. Quit is now Exit and has no keyboard shortcut.
+- The four section buttons use the program's own plain icons (not the desktop's icon theme): mail, calendar, person, check mark; the open section is blue. The order is Mail, Calendar, Contacts, Tasks, with Ctrl+1 to Ctrl+4 following that order.
