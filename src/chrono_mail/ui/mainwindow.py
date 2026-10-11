@@ -76,9 +76,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.78"
+__version__ = "mainwindow.py 0.0.81"
 
 # --- Version history ----------------------------------------------------
+# v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
@@ -431,11 +432,7 @@ class MainWindow(QMainWindow):
         self.toolbar.setObjectName("mainToolbar")
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(self.toolbar)
-        self.new_button = QToolButton(self)
-        self.new_button.setObjectName("newButton")
-        self.new_button.setDefaultAction(self.act_new)
-        self.new_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.toolbar.addWidget(self.new_button)
+        self.toolbar.addAction(self.act_new)
         self.toolbar.addAction(self.act_refresh)
         self.toolbar.addWidget(self._stretch())
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
@@ -479,6 +476,17 @@ class MainWindow(QMainWindow):
         for page in self.pages.values():  # the toolbars of the other sections: one is shown at a time, in the same place
             self.addToolBar(page.toolbar)
             page.toolbar.hide()
+
+    def _menu_actions(self, menu: QMenu) -> list[QAction]:
+        """Every action in a menu and in its submenus: they are also given to the window, so that their keys work while the menu bar is hidden."""
+        found: list[QAction] = []
+        for action in menu.actions():
+            submenu = action.menu()
+            if isinstance(submenu, QMenu):
+                found.extend(self._menu_actions(submenu))
+            elif not action.isSeparator():
+                found.append(action)
+        return found
 
     def _stretch(self) -> QWidget:
         spacer = QWidget(self)
@@ -551,6 +559,20 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self.act_about)
         root.addSeparator()
         root.addAction(self.act_quit)
+        # The Menu button is the first button of every toolbar, so that no row of the window is used for it. The menu bar
+        # stays as the home of the menus (and of their keys) but is not shown.
+        self.menu_buttons: list[QToolButton] = []
+        for toolbar in (self.toolbar, *(page.toolbar for page in self.pages.values())):
+            button = QToolButton(self)
+            button.setObjectName("menuButton")
+            button.setText("\u2261  Menu")
+            button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            button.setMenu(root)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            toolbar.insertWidget(toolbar.actions()[0], button)
+            self.menu_buttons.append(button)
+        self.addActions(self._menu_actions(root))
+        bar.hide()
 
     def _build_status(self) -> None:
         self.status_label = QLabel("", self)

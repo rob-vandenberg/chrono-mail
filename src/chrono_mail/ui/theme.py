@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.0.79"
+__version__ = "theme.py 0.0.81"
 
 # --- Version history ----------------------------------------------------
+# v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
 # v0.0.79: The column headers of the message list have a thin line between them again
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
@@ -25,8 +26,9 @@ QMenu::separator {{ height: 1px; background: palette(mid); margin: 4px 8px; }}
 QToolBar#mainToolbar {{ background: palette(window); border: 0; spacing: 2px; padding: 4px 10px; }}
 QToolBar#mainToolbar QToolButton {{ background: transparent; border: 0; border-radius: 4px; padding: 6px 9px; }}
 QToolBar#mainToolbar QToolButton:hover, QToolBar#mainToolbar QToolButton:pressed {{ background: {HOVER}; }}
-QToolBar#mainToolbar QToolButton#newButton {{ background: palette(highlight); color: palette(highlighted-text); font-weight: 600; padding: 6px 16px; margin-right: 6px; }}
-QToolBar#mainToolbar QToolButton#newButton:hover {{ background: palette(link); }}
+QToolButton#menuButton, QToolBar#mainToolbar QToolButton#menuButton {{ background: palette(highlight); color: palette(highlighted-text); font-weight: 600; border: 0; border-radius: 4px; padding: 6px 14px; margin-right: 6px; }}
+QToolButton#menuButton:hover, QToolBar#mainToolbar QToolButton#menuButton:hover {{ background: palette(link); }}
+QToolButton#menuButton::menu-indicator {{ image: none; width: 0; }}
 QFrame#searchPill {{ border: 1px solid palette(mid); border-radius: 16px; background: palette(base); }}
 QFrame#searchPill QLineEdit {{ border: 0; background: transparent; padding: 5px 2px; }}
 QFrame#searchPill QComboBox {{ border: 0; background: transparent; padding: 2px 6px; }}

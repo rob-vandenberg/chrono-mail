@@ -12,9 +12,10 @@ from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SEC
 from tests.ui.world import World, dialogs, menu_named, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 0.0.79"
+__version__ = "test_ui_theme.py 0.0.81"
 
 # --- Version history ----------------------------------------------------
+# v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
 # v0.0.79: A test of the lines between the column headers
 # v0.0.78: Tests of the composer look and of rich text as the default
 # v0.0.77: Tests of the message list and the reading pane
@@ -25,12 +26,12 @@ __version__ = "test_ui_theme.py 0.0.79"
 def test_every_widget_the_stylesheet_names_exists(world: World) -> None:
     window = world.window
     sheet = theme.stylesheet()
-    names = {"mainToolbar": window.toolbar, "newButton": window.new_button, "folderTree": window.tree, "sideHeading": window.side_heading, "sectionBar": window.section_bar}
+    names = {"mainToolbar": window.toolbar, "folderTree": window.tree, "sideHeading": window.side_heading, "sectionBar": window.section_bar}
     for name, widget in names.items():
         assert f"#{name}" in sheet and widget.objectName() == name
     assert window.findChild(QFrame, "searchPill") is not None and window.scope.parent() is window.findChild(QFrame, "searchPill") and window.search_box.parent() is window.scope.parent()
     assert all(button.objectName() == "sectionButton" for button in window.section_bar.buttons.values()) and "#sectionButton" in sheet
-    assert window.new_button.defaultAction() is window.act_new and isinstance(window.new_button, QToolButton)
+    assert window.act_new in window.toolbar.actions() and all(isinstance(button, QToolButton) and button.objectName() == "menuButton" for button in window.menu_buttons) and "#menuButton" in sheet
     assert window.styleSheet() == sheet
 
 
@@ -68,7 +69,7 @@ def test_settings_accounts_and_rules_open_the_settings_window_on_their_page(worl
 
 def test_the_accent_is_the_blue_of_the_menus_and_the_section_icons_are_plain() -> None:
     sheet = theme.stylesheet()
-    assert "#ff8c00" not in sheet.lower() and "QToolButton#newButton {" in sheet and "palette(highlight)" in sheet
+    assert "#ff8c00" not in sheet.lower() and "QToolButton#menuButton, " in sheet and "palette(highlight)" in sheet
     assert [name for name, *_ in SECTIONS] == [MAIL, CALENDAR, CONTACTS, TASKS] and set(SECTION_ICONS) == {MAIL, CALENDAR, CONTACTS, TASKS}
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.ButtonText, QColor("#eeeeee"))
@@ -134,3 +135,18 @@ def test_the_composer_has_send_first_and_the_look_of_the_main_window(world: Worl
 def test_the_column_headers_of_the_list_have_a_line_between_them() -> None:
     rule = next(line for line in theme.stylesheet().splitlines() if line.startswith("QTreeView#messageList QHeaderView::section"))
     assert "border-right: 1px solid palette(mid)" in rule  # the place to grab a column edge
+
+
+def test_the_menu_button_is_the_first_button_of_every_toolbar_and_the_menu_bar_row_is_gone(world: World) -> None:
+    window = world.window
+    from PySide6.QtWidgets import QToolBar
+
+    toolbars: list[QToolBar] = [window.toolbar, *(page.toolbar for page in window.pages.values())]
+    assert len(toolbars) == 4 and len(window.menu_buttons) == 4
+    for toolbar, button in zip(toolbars, window.menu_buttons, strict=True):
+        assert toolbar.widgetForAction(toolbar.actions()[0]) is button and button.text().endswith("Menu") and button.menu() is menu_named(window)
+    mail_actions = window.toolbar.actions()
+    assert mail_actions[1] is window.act_new and mail_actions[2] is window.act_refresh
+    assert window.menuBar().isHidden() and window.act_settings in window.actions() and window.act_quit in window.actions()
+    rule = next(line for line in theme.stylesheet().splitlines() if line.startswith("QToolButton#menuButton, "))
+    assert "palette(highlight)" in rule and "newButton" not in theme.stylesheet()

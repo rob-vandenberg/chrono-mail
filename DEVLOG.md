@@ -821,3 +821,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Not checked: whether the program itself leaves a web view waiting when it quits; a few small probes exited cleanly.
 - Not tried: closing the windows in that fixture (closing a composer asks a question and the run waits for the answer).
+
+## 2026-10-11 The Menu button in the toolbar (version 0.0.81)
+
+**What landed**
+- The Menu button is the first button of the toolbar in every section, with the blue background. The row of the menu bar is not shown any more (the menu bar still holds the menus; their actions are also given to the window so that their keys work). New is a plain toolbar button, like Refresh. Tests for each toolbar.
+
+**Still open**
+- `test_mark_all_as_read_and_empty_folder` (tests/ui/test_ui_window.py) fails now and then: after "as read" the list rows are not always loaded yet when the test reads them (a race in the test). Not changed.

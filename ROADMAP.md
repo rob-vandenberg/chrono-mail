@@ -108,3 +108,4 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (0.0.78) New look, step 3: the composer; rich text is the default for new messages (D-085).
 - DONE (0.0.79) The column headers of the message list have a thin line between them again (removed by mistake in 0.0.77).
 - DONE (0.0.80) The test run no longer crashes at the end (a web view waiting to be deleted at exit): the ui tests finish the pending deletions after each test.
+- DONE (0.0.81) The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button.
