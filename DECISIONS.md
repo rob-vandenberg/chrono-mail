@@ -598,3 +598,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** where the reference client has a menu item or a section, the order and the name follow it: the Menu root has Settings, Accounts, Rules, then the menus, then Exit (no shortcut); the sections are Mail, Calendar, Contacts, Tasks (Ctrl+1 to Ctrl+4). The accent colour is the blue of the menus. Section buttons use the program's own plain icons, blue while the section is open. Only what Chrono Mail has is shown: nothing is added to match the reference.
 **Reason:** the owner's instruction; it supersedes the earlier orange accent and the order Tasks before Contacts.
+
+## D-085 Rich text is the default for new messages
+*2026-10-11*
+
+**Decision:** new messages, replies and forwards open in rich text unless the setting `compose_html` ("Write new messages as rich text") is off; it is on by default. A rich message is sent as text and HTML as before.
+**Reason:** the owner's instruction, following the reference client.

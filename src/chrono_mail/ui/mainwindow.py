@@ -76,9 +76,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.77"
+__version__ = "mainwindow.py 0.0.78"
 
 # --- Version history ----------------------------------------------------
+# v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.75: The folder list remembers which headings, accounts and folders are open, also after a restart
@@ -1790,7 +1791,7 @@ class MainWindow(QMainWindow):
         if account_id not in mail_ids:  # Local Folders has no server: the answer comes from the account chosen in the settings, or the first
             wanted = str(self.settings.value("default_account", ""))
             account_id = wanted if wanted in mail_ids else (mail_ids[0] if mail_ids else account_id)
-        window = ComposeWindow(self.backend, self._mail_accounts(), account_id, draft, source, resume, bool_setting(self.settings, "compose_html", False), self._compose_options())
+        window = ComposeWindow(self.backend, self._mail_accounts(), account_id, draft, source, resume, bool_setting(self.settings, "compose_html", True), self._compose_options())
         if to:
             window.to.setText(to)
         window.sent.connect(self._after_sent)

@@ -27,15 +27,17 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.addresscompleter import AddressCompleter
+from chrono_mail.ui import theme
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.richeditor import RichEditor
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.69"
+__version__ = "composer.py 0.0.78"
 
 # --- Version history ----------------------------------------------------
+# v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.67: Messages that are sent again and again
 # v0.0.53: Standard keyboard shortcuts
@@ -160,8 +162,11 @@ class ComposeWindow(QMainWindow):
         self._account_id: str = account_id
         self.setWindowTitle("New message")
         self.setWindowIcon(application_icon())
+        self.setObjectName("composeWindow")
+        self.setStyleSheet(theme.stylesheet())  # a window of its own does not inherit the look of the main window
         central = QWidget(self)
         layout = QVBoxLayout(central)
+        layout.setContentsMargins(12, 10, 12, 10)
         form = QFormLayout()
         self.from_box = QComboBox(central)
         for account in accounts:
@@ -172,11 +177,24 @@ class ComposeWindow(QMainWindow):
         self.cc = QLineEdit(central)
         self.bcc = QLineEdit(central)
         self.subject = QLineEdit(central)
-        form.addRow("From", self.from_box)
         form.addRow("To", self.to)
         form.addRow("Cc", self.cc)
         form.addRow("Bcc", self.bcc)
         form.addRow("Subject", self.subject)
+        self.save_button = QPushButton("Save draft", central)
+        self.later_button = QPushButton("Send later…", central)
+        self.send_button = QPushButton("Send", central)
+        self.send_button.setObjectName("sendButton")
+        self.send_button.setDefault(True)
+        for flat in (self.save_button, self.later_button):
+            flat.setObjectName("flatButton")
+        top = QHBoxLayout()  # what to do with the message, and who it is from
+        top.addWidget(self.send_button)
+        top.addWidget(self.later_button)
+        top.addWidget(self.save_button)
+        top.addSpacing(12)
+        top.addWidget(self.from_box, 1)
+        layout.addLayout(top)
         layout.addLayout(form)
         self.body = QPlainTextEdit(central)
         self.rich = RichEditor(central)
@@ -206,15 +224,9 @@ class ComposeWindow(QMainWindow):
         self.rich_button = QPushButton("Rich text", central)
         self.rich_button.setCheckable(True)
         self.rich_button.setToolTip("Write with bold, italic, lists and links. The message is sent as text and as HTML.")
-        self.save_button = QPushButton("Save draft", central)
-        self.later_button = QPushButton("Send later…", central)
-        self.send_button = QPushButton("Send", central)
-        self.send_button.setDefault(True)
-        buttons.addWidget(self.rich_button)
+        self.rich_button.setObjectName("flatButton")
         buttons.addWidget(self.status, 1)
-        buttons.addWidget(self.save_button)
-        buttons.addWidget(self.later_button)
-        buttons.addWidget(self.send_button)
+        buttons.addWidget(self.rich_button)
         layout.addLayout(buttons)
         self.setCentralWidget(central)
         self.resize(760, 640)

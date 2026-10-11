@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.0.77"
+__version__ = "theme.py 0.0.78"
 
 # --- Version history ----------------------------------------------------
+# v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.73: Initial look of the main window: the Menu button, the toolbar, the search field, the folder list and the section buttons
@@ -40,6 +41,18 @@ QFrame#readerHeader {{ background: palette(window); border: 0; border-bottom: 1p
 QFrame#remoteBanner {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner QPushButton {{ background: {HOVER}; border: 0; border-radius: 4px; padding: 5px 12px; }}
 QFrame#remoteBanner QPushButton:hover {{ background: rgba(128, 128, 128, 0.4); }}
+QMainWindow#composeWindow QLineEdit, QMainWindow#composeWindow QComboBox {{ border: 1px solid palette(mid); border-radius: 4px; padding: 5px 8px; background: palette(base); }}
+QMainWindow#composeWindow QLineEdit:focus {{ border: 1px solid palette(highlight); }}
+QMainWindow#composeWindow QFormLayout QLabel {{ color: palette(placeholder-text); }}
+QMainWindow#composeWindow QTextEdit, QMainWindow#composeWindow QPlainTextEdit {{ border: 0; }}
+QPushButton#sendButton {{ background: palette(highlight); color: palette(highlighted-text); border: 0; border-radius: 4px; padding: 7px 20px; font-weight: 600; }}
+QPushButton#sendButton:hover {{ background: palette(link); }}
+QPushButton#sendButton:disabled {{ background: {HOVER}; color: palette(placeholder-text); }}
+QPushButton#flatButton {{ background: transparent; border: 0; border-radius: 4px; padding: 7px 12px; }}
+QPushButton#flatButton:hover, QPushButton#flatButton:checked {{ background: {HOVER}; }}
+QToolBar#richToolbar {{ background: palette(window); border: 0; border-top: 1px solid palette(mid); border-bottom: 1px solid palette(mid); padding: 2px 8px; spacing: 2px; }}
+QToolBar#richToolbar QToolButton {{ background: transparent; border: 0; border-radius: 4px; padding: 5px 10px; }}
+QToolBar#richToolbar QToolButton:hover, QToolBar#richToolbar QToolButton:checked {{ background: {HOVER}; }}
 QWidget#sectionBar {{ background: palette(window); border-top: 1px solid palette(mid); }}
 QToolButton#sectionButton {{ border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; }}
 QToolButton#sectionButton:hover {{ background: {HOVER}; }}

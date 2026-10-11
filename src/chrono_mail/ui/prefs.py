@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.0.70"
+__version__ = "prefs.py 0.0.78"
 
 # --- Version history ----------------------------------------------------
+# v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -41,7 +42,7 @@ DEFAULTS: dict[str, object] = {
     "links_ask": True,
     # composing
     "default_account": "",
-    "compose_html": False,
+    "compose_html": True,
     "reply_quote": "above",  # above: my text above the quote, below: under it, none: no quote
     "autosave_seconds": 30,
     "warn_no_subject": True,

@@ -7,9 +7,10 @@ from PySide6.QtGui import QAction, QFont, QKeySequence, QTextCharFormat, QTextLi
 from PySide6.QtWidgets import QInputDialog, QMessageBox, QTextEdit, QToolBar, QVBoxLayout, QWidget
 
 # --- Version ------------------------------------------------------------
-__version__ = "richeditor.py 0.0.24"
+__version__ = "richeditor.py 0.0.78"
 
 # --- Version history ----------------------------------------------------
+# v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.24: Initial rich text editor for the composer
 
 ALLOWED_LINK_SCHEMES: frozenset[str] = frozenset({"http", "https", "mailto"})
@@ -67,6 +68,7 @@ class RichEditor(QWidget):
         self.edit = _Editor(self)
         self.edit.setAcceptRichText(True)
         self.toolbar = QToolBar(self)
+        self.toolbar.setObjectName("richToolbar")
         self.bold = self._action("B", "Bold", "Ctrl+B", checkable=True)
         self.italic = self._action("I", "Italic", "Ctrl+I", checkable=True)
         self.underline = self._action("U", "Underline", "Ctrl+U", checkable=True)

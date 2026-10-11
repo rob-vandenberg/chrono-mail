@@ -12,9 +12,10 @@ from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SEC
 from tests.ui.world import World, dialogs, menu_named, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 0.0.77"
+__version__ = "test_ui_theme.py 0.0.78"
 
 # --- Version history ----------------------------------------------------
+# v0.0.78: Tests of the composer look and of rich text as the default
 # v0.0.77: Tests of the message list and the reading pane
 # v0.0.76: Tests of the root of the Menu, blue accent and the section icons
 # v0.0.73: Initial tests of the look of the main window
@@ -106,3 +107,24 @@ def test_the_list_header_the_reading_pane_header_and_the_banner_are_styled_and_a
     opened = MessageWindow(window.backend, "a", "INBOX", "m", shown(html="", text="x"), lambda *args: None, lambda url: None, window._prepare_message_reader)  # noqa: SLF001
     qtbot.addWidget(opened)
     assert opened.styleSheet() == sheet
+
+
+def test_rich_text_is_the_default_for_new_messages() -> None:
+    from chrono_mail.ui import prefs
+
+    assert prefs.DEFAULTS["compose_html"] is True
+
+
+def test_the_composer_has_send_first_and_the_look_of_the_main_window(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.composer import ComposeWindow
+
+    composer = ComposeWindow(world.window.backend, world.window._mail_accounts(), world.account_id, rich=True)  # noqa: SLF001
+    qtbot.addWidget(composer)
+    composer.show()
+    sheet = theme.stylesheet()
+    assert composer.objectName() == "composeWindow" and composer.styleSheet() == sheet and "QMainWindow#composeWindow" in sheet
+    assert composer.send_button.objectName() == "sendButton" and "QPushButton#sendButton" in sheet
+    assert composer.later_button.objectName() == composer.save_button.objectName() == composer.rich_button.objectName() == "flatButton"
+    assert composer.rich.toolbar.objectName() == "richToolbar" and composer.is_rich()
+    assert composer.send_button.x() < composer.later_button.x() < composer.save_button.x() < composer.from_box.x()  # one row, in this order
+    assert composer.send_button.y() < composer.to.y() and composer.from_box.y() < composer.to.y()  # above the fields

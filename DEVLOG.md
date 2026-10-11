@@ -798,3 +798,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Group headers in the list (the reference groups by the sort column): the list is loaded in pages and has no group rows; needs a plan of its own.
 - Steps 3 to 5: composer, settings and dialogs, calendar, tasks and contacts.
+
+## 2026-10-11 New look, step 3: the composer (version 0.0.78)
+
+**What landed**
+- The composer: Send (blue), Send later… and Save draft on top with the From box beside them, then the fields with rounded borders and a blue outline when focused, a flat formatting toolbar and the text; the Rich text toggle moved to the bottom row. The composer window gets the same look as the main window.
+- Rich text is now the default for new messages (setting `compose_html`, on in Settings > Writing; a person who switched it off keeps it off). The tests start in plain text.
+
+**Still open**
+- Steps 4 and 5: settings and dialogs, calendar, tasks and contacts. The composer has no attachment chips, no emoji and no font colour: not built.
