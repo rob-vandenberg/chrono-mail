@@ -687,3 +687,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Tasks are not yet shown in the calendar (3.8); no sub-tasks view; the editor has no choice of the zone of a time.
 
+## 2026-10-11 The calendar section (version 0.0.64)
+
+**What landed**
+- `ui/calendarlayout.py` (layout), `ui/calendarwidgets.py` (time grid, all-day header, month, agenda), `ui/calendarview.py` (the page, the mini calendar), `ui/eventeditor.py`; 8 layout tests and 7 UI tests; three painting mistakes found by looking at screenshots (a brush that stayed set filled the month cells; short blocks cut their title; the all-day editor ended a day late).
+
+**Still open**
+- Dragging events, tasks in the calendar, invitations and replies, a setting for the first weekday and the work days, an event of another time zone shown in its own zone.
+- 3.9 tags for mail and reminders with notifications.
+

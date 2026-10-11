@@ -11,9 +11,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.sections import SectionPage
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimpages.py 0.0.63"
+__version__ = "pimpages.py 0.0.64"
 
 # --- Version history ----------------------------------------------------
+# v0.0.64: The calendar section
 # v0.0.63: The tasks section
 # v0.0.62: The contacts section
 # v0.0.61: Initial pages for the calendar, task and contact sections (the sidebar, a toolbar and a main area to be filled)
@@ -82,10 +83,3 @@ class PimPage(SectionPage):
         count = len(self.panel.visible_ids())
         self.message.setText(f"{count} selected" if count else "Nothing selected")
         self.status(self.message.text())
-
-
-class CalendarPage(PimPage):
-    kind = "events"
-    multiple = True
-    new_label = "New event"
-    new_icon = "appointment-new"

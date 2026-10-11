@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_contacts.py 0.0.62"
+__version__ = "test_ui_contacts.py 0.0.64"
 
 # --- Version history ----------------------------------------------------
+# v0.0.64: The calendar section
 # v0.0.62: Initial tests of the contacts section
 
 
@@ -153,6 +154,7 @@ def test_tags_are_set_from_the_menu_for_several_contacts_and_contacts_are_moved_
     seed(world)
     other = world.call("collection.create", kind="contacts", name="Friends").collection
     page = open_contacts(world, qtbot, 3)
+    wait(qtbot, lambda: page.tag_list.count() == 4)  # the tags have arrived (the menu is made from them)
     select_rows(page, 0, 1)
     page._fill_tag_menu()  # noqa: SLF001
     labels = [a.text() for a in page.tag_menu.actions()]

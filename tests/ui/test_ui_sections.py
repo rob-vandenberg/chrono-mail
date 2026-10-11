@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sections.py 0.0.61"
+__version__ = "test_ui_sections.py 0.0.64"
 
 # --- Version history ----------------------------------------------------
+# v0.0.64: The calendar section
 # v0.0.61: Initial tests of the section buttons and the sidebars of calendar, tasks and contacts
 
 
@@ -91,8 +92,15 @@ def test_new_refresh_and_the_collection_menu_work_in_a_section(world: World, qtb
     window.switch_section(CALENDAR)
     panel = window.pages[CALENDAR].panel
     wait(qtbot, lambda: len(collection_items(panel.tree)) == 1)
+    asked: list[str] = []
+    def new_item(self: object) -> None:
+        asked.append("event")
+
+    monkeypatch.setattr(type(window.pages[CALENDAR]), "new_item", new_item)
+    window.act_new.trigger()  # New in the calendar section is a new event, not a new message
+    assert asked == ["event"] and not window._composers  # noqa: SLF001
     monkeypatch.setattr(QInputDialog, "getText", answering("Work"))
-    window.act_new.trigger()  # New in the calendar section (for now: a new calendar)
+    panel.new_collection()
     wait(qtbot, lambda: len(collection_items(panel.tree)) == 2)
     assert sorted(i.text(0) for i in collection_items(panel.tree)) == ["Calendar", "Work"]
     work = next(i for i in collection_items(panel.tree) if i.text(0) == "Work")

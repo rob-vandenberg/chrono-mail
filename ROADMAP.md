@@ -82,7 +82,7 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 | 3.5 | The four-button shell: sections with their own sidebar, toolbar and status line. | done (0.0.61) |
 | 3.6 | Contacts section (address books, list, detail, tags, History). | done (0.0.62) |
 | 3.7 | Tasks section (lists, quick add, detail pane, status marks). | done (0.0.63) |
-| 3.8 | Calendar section (Day, Work Week, Week, Upcoming, Month, Agenda; event editor; mini calendar). | open |
+| 3.8 | Calendar section (Day, Work Week, Week, Upcoming, Month, Agenda; event editor; mini calendar). | done (0.0.64) |
 | 3.9 | Tags for mail; reminders and notifications. | open |
 
 ## Milestone 4: CalDAV and CardDAV (Kerio Connect test server)

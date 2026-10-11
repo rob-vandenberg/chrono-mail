@@ -58,7 +58,8 @@ from chrono_mail.ui.models import (
     ViewSpec,
 )
 from chrono_mail.ui.contactsview import ContactsPage
-from chrono_mail.ui.pimpages import CalendarPage, PimPage
+from chrono_mail.ui.calendarview import CalendarPage
+from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.tasksview import TasksPage
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
@@ -73,9 +74,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.63"
+__version__ = "mainwindow.py 0.0.64"
 
 # --- Version history ----------------------------------------------------
+# v0.0.64: The calendar section
 # v0.0.63: The tasks section
 # v0.0.62: The contacts section
 # v0.0.61: The four section buttons and the sidebars of the calendar, task and contact sections

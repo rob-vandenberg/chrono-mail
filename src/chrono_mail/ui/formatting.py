@@ -1,12 +1,13 @@
 import hashlib
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 
 from PySide6.QtGui import QColor
 
 # --- Version ------------------------------------------------------------
-__version__ = "formatting.py 0.0.14"
+__version__ = "formatting.py 0.0.64"
 
 # --- Version history ----------------------------------------------------
+# v0.0.64: The calendar section
 # v0.0.14: avatar colours from 72 hues with guaranteed contrast
 # v0.0.13: Initial display helpers
 
@@ -68,3 +69,8 @@ def file_size(size: int) -> str:
             return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
         value /= 1024
     return f"{size} B"
+
+
+def local_zone_now() -> tzinfo:
+    """The time zone of this computer as it is now (for views that place events on a clock)."""
+    return datetime.now().astimezone().tzinfo or UTC
