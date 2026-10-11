@@ -74,9 +74,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.64"
+__version__ = "mainwindow.py 0.0.66"
 
 # --- Version history ----------------------------------------------------
+# v0.0.66: Synchronisation of calendars, task lists and address books with a CalDAV and CardDAV server
 # v0.0.64: The calendar section
 # v0.0.63: The tasks section
 # v0.0.62: The contacts section
@@ -170,6 +171,7 @@ class MainWindow(QMainWindow):
         self._reselect: str | None = None
         self._composers: list[ComposeWindow] = []
         self._checking: bool = False
+        self._dav_syncing: bool = False
         self._mail_action_states: dict[str, bool] = {}
         self._build_widgets()
         self._build_actions()
@@ -831,7 +833,7 @@ class MainWindow(QMainWindow):
         if page is not None:
             dialog.show_page(page)
         dialog.add_account_requested.connect(lambda: self.add_account(after=dialog.reload))
-        dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False))
+        dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False, then=self._sync_calendars))
         dialog.restore_key_requested.connect(self.restore_key)
         accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted
         if dialog.rules_panel.ran:  # rules and scheduled messages act at once, also when the settings are cancelled
@@ -1915,6 +1917,8 @@ class MainWindow(QMainWindow):
         """Check these accounts (all when None) for new mail."""
         mail_ids = {str(getattr(account, "account_id")) for account in self._mail_accounts()}
         wanted = mail_ids if only is None else only & mail_ids
+        if only is None:
+            self._sync_calendars()
         if self._checking or not wanted:
             return
         self._checking = True
@@ -1963,6 +1967,28 @@ class MainWindow(QMainWindow):
         self.show_status("Checking for mail…")
         for account_id in list(remaining):
             self.backend.call("mail.fetch", {"account": account_id}, make_done(account_id), make_failed(account_id), owner=self)
+
+    def _sync_calendars(self) -> None:
+        """Bring the calendars, task lists and address books of the accounts that have a server in step with it (in the background)."""
+        if self._dav_syncing or not any(str(getattr(account, "dav_url", "")) for account in self._accounts):
+            return
+        self._dav_syncing = True
+
+        def done(result: object) -> None:
+            self._dav_syncing = False
+            rows: list[object] = list(result) if isinstance(result, tuple) else []
+            problems = [str(text) for row in rows for text in getattr(row, "errors", ())]
+            if sum(int(getattr(row, "pulled", 0)) + int(getattr(row, "deleted_here", 0)) + int(getattr(row, "created", 0)) for row in rows):
+                for page in self.pages.values():
+                    page.refresh()
+            if problems:
+                self.show_status("Calendars and contacts: " + "; ".join(problems), error=True)
+
+        def failed(error: ChronoMailError) -> None:
+            self._dav_syncing = False
+            self.show_status(f"Calendars and contacts: {error}", error=True)
+
+        self.backend.call("dav.sync", {}, done, failed, owner=self)
 
     def add_account(self, first: bool = False, after: Callable[[], None] | None = None) -> None:
         dialog = AccountDialog(self.backend, first_account=first, parent=self)

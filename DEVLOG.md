@@ -704,3 +704,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - 4.2 the sync; 4.3 the account settings and the interface.
 - A race found in the full runs: the three sections can each ask for the local calendars at the same moment on first use, and the first-time setup of Local Folders was not protected; it is serialised now (test with six threads).
+
+## 2026-10-11 Synchronisation with a CalDAV and CardDAV server (version 0.0.66)
+
+**What landed**
+- `sync/davsync.py` (pull by sync token or ctag, push with If-Match, conflict copies, state file), the commands `account.set-dav`, `dav.discover`, `dav.sync`, the DAV settings in the account, the tab "Calendars and contacts" in the account dialog and the synchronisation whenever mail is checked.
+- Tests: `tests/test_sync_dav.py` (13, with fake servers of every kind), `tests/test_engine_dav.py`, `tests/ui/test_ui_dav.py`, one live test against the Kerio test server (the data is pulled; a test contact is pushed and removed again).
+
+**Still open**
+- 4.4 invitations and replies (iTIP). Making calendars and address books on the server from here (MKCALENDAR). A timer of its own for the calendar sync.

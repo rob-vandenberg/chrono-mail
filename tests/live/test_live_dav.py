@@ -10,9 +10,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_dav.py 0.0.65"
+__version__ = "test_live_dav.py 0.0.66"
 
 # --- Version history ----------------------------------------------------
+# v0.0.66: Live test of the synchronisation
 # v0.0.65: Initial live tests of the CalDAV and CardDAV client
 
 SETTINGS = Path(__file__).with_name("dav.local.toml")
@@ -87,3 +88,31 @@ def test_an_event_a_task_and_a_contact_are_made_changed_and_deleted_and_the_serv
         finally:
             dav.delete(href)
         assert href not in {item.href for item in dav.items(target)}
+
+
+def test_the_synchronisation_brings_the_server_data_here_and_back(dav: DavClient, tmp_path: Path) -> None:
+    from chrono_mail.core import CollectionKind
+    from chrono_mail.pimstore import PimStore
+    from chrono_mail.sync.davsync import sync_dav
+
+    store = PimStore.create(tmp_path / "pim", None, durable=False)
+    state = tmp_path / "pim" / "dav-state.json"
+    first = sync_dav(dav, store, state, durable=False)
+    assert first.errors == [] and first.created >= 3 and first.pulled > 0
+    kinds = {info.kind for info in store.collections()}
+    assert kinds >= {CollectionKind.EVENTS, CollectionKind.TASKS, CollectionKind.CONTACTS}
+    assert sync_dav(dav, store, state, durable=False).pulled == 0
+    contacts = next(info for info in store.collections(CollectionKind.CONTACTS))
+    uid = new_uid()
+    text = contact_to_text(Contact(uid=uid, given_name="Chrono Mail", family_name="Sync Test"))
+    created = store.put(contacts.collection_id, text)
+    try:
+        assert sync_dav(dav, store, state, durable=False).pushed == 1
+        remote = collection(dav, "contacts")
+        assert any("Chrono Mail Sync Test" in body for _, body in dav.fetch(remote, [item.href for item in dav.items(remote)]).values())
+    finally:
+        store.delete(contacts.collection_id, created)  # always remove the test item from the server
+        report = sync_dav(dav, store, state, durable=False)
+    assert report.deleted_on_server == 1
+    remote = collection(dav, "contacts")
+    assert not any("Chrono Mail Sync Test" in body for _, body in dav.fetch(remote, [item.href for item in dav.items(remote)]).values())

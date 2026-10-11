@@ -1,3 +1,5 @@
+import urllib.parse
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -25,9 +27,10 @@ from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import green, red, red_style
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 0.0.51"
+__version__ = "accountedit.py 0.0.66"
 
 # --- Version history ----------------------------------------------------
+# v0.0.66: Tab for the calendar and contacts server
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: check interval and the folders of an IMAP account
@@ -46,6 +49,7 @@ class AccountEditDialog(QDialog):
         super().__init__(parent)
         self._backend: Backend = backend
         self._account: object = account
+        self.dav_changed: bool = False  # the calendar and contacts server was changed: the caller should synchronise
         self.setWindowTitle(f"Account: {getattr(account, 'email_address')}")
         self.setMinimumWidth(560)
         layout = QVBoxLayout(self)
@@ -109,6 +113,15 @@ class AccountEditDialog(QDialog):
         servers_layout.addStretch(1)
         self.tabs.addTab(servers, "Servers")
 
+        self.dav_url = QLineEdit(str(getattr(account, "dav_url", "")), self)
+        self.dav_username = QLineEdit(str(getattr(account, "dav_username", "")), self)
+        self.dav_password = QLineEdit(self)
+        self.dav_result = QLabel("", self)
+        self.dav_check_button = QPushButton("Find the calendars and contacts", self)
+        self.dav_certificate_button = QPushButton("Look at the server's certificate…", self)
+        if str(getattr(account, "kind", "pop3")) != "local":
+            self.tabs.addTab(self._calendars_tab(), "Calendars and contacts")
+
         copies = QWidget(self)
         copies_form = QFormLayout(copies)
         self.policy = QComboBox(copies)
@@ -145,6 +158,89 @@ class AccountEditDialog(QDialog):
         self.policy.currentIndexChanged.connect(self._policy_changed)
         self._policy_changed()
         self._count_signature()
+
+    def _calendars_tab(self) -> QWidget:
+        tab = QWidget(self)
+        layout = QVBoxLayout(tab)
+        explanation = QLabel(
+            "Calendars, task lists and address books of this account are kept in step with a CalDAV and CardDAV server. "
+            "Leave the address empty if this account has none.", tab,
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        form = QFormLayout()
+        self.dav_url.setPlaceholderText("https://server.example.com/caldav/")
+        self.dav_username.setPlaceholderText("(the same as for incoming mail)")
+        self.dav_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.dav_password.setPlaceholderText("(unchanged; or the mail password)")
+        form.addRow("Server address", self.dav_url)
+        form.addRow("User name", self.dav_username)
+        form.addRow("New password", self.dav_password)
+        layout.addLayout(form)
+        self.dav_result.setWordWrap(True)
+        self.dav_result.setTextFormat(Qt.TextFormat.RichText)
+        for widget in (self.dav_check_button, self.dav_certificate_button, self.dav_result):
+            layout.addWidget(widget)
+        layout.addStretch(1)
+        self.dav_check_button.clicked.connect(self._check_dav)
+        self.dav_certificate_button.clicked.connect(self._look_at_dav)
+        return tab
+
+    def _dav_address(self) -> tuple[str, int] | None:
+        parts = urllib.parse.urlsplit(self.dav_url.text().strip())
+        if parts.scheme != "https" or not parts.hostname:
+            return None
+        return parts.hostname, parts.port or 443
+
+    def _look_at_dav(self) -> None:
+        address = self._dav_address()
+        if address is None:
+            self.dav_result.setText("Type an address that starts with https:// first.")
+            return
+
+        def accepted(fingerprint: str) -> None:
+            def done(result: object) -> None:
+                self.trusted = list(getattr(result, "trusted_certificates"))
+                self._show_certificates()
+                self.dav_result.setText("The certificate was accepted.")
+
+            def failed(error: ChronoMailError) -> None:
+                self.dav_result.setText(f"<span style='{red_style()}'>{error}</span>")
+
+            self._backend.call("account.trust-certificate", {"account": str(getattr(self._account, "account_id")), "fingerprint": fingerprint}, done, failed, owner=self)
+
+        inspect_and_ask(self._backend, self, address[0], address[1], "tls", "imap", accepted)
+
+    def _check_dav(self) -> None:
+        self.dav_check_button.setEnabled(False)
+        self.dav_result.setText("Looking…")
+        values: dict[str, object] = {"account": str(getattr(self._account, "account_id")), "url": self.dav_url.text().strip(), "username": self.dav_username.text().strip()}
+        if self.dav_password.text():
+            values["password"] = self.dav_password.text()
+
+        def done(result: object) -> None:
+            self.dav_check_button.setEnabled(True)
+            found: list[object] = list(result) if isinstance(result, tuple) else []
+            words = {"events": "calendar", "tasks": "task list", "contacts": "address book"}
+            lines = [f"<span style='color:{green()}'><b>✓</b> {len(found)} found:</span>"] + [f"{words.get(str(getattr(item, 'kind')), 'collection')}: {str(getattr(item, 'name')).replace('<', '&lt;')}" for item in found]
+            self.dav_result.setText("<br>".join(lines) if found else f"<span style='{red_style()}'>The server was reached, but it offers no calendars, task lists or address books.</span>")
+
+        def failed(error: ChronoMailError) -> None:
+            self.dav_check_button.setEnabled(True)
+            self.dav_result.setText(f"<span style='{red_style()}'>{str(error).replace('<', '&lt;')}</span>")
+
+        self._backend.call("dav.discover", values, done, failed, owner=self)
+
+    def _dav_values(self) -> dict[str, object] | None:
+        """The values for account.set-dav when something about the server changed."""
+        account = self._account
+        url, username = self.dav_url.text().strip(), self.dav_username.text().strip()
+        if url == str(getattr(account, "dav_url", "")) and username == str(getattr(account, "dav_username", "")) and not self.dav_password.text():
+            return None
+        values: dict[str, object] = {"account": str(getattr(account, "account_id")), "url": url, "username": username}
+        if self.dav_password.text():
+            values["password"] = self.dav_password.text()
+        return values
 
     # --- layout -------------------------------------------------------------------------------------------
 
@@ -372,22 +468,27 @@ class AccountEditDialog(QDialog):
         values = self._values()
         folders = self._folder_changes()
         storage = self._storage_change()
-        if not values and not folders and storage is None:
+        dav = self._dav_values()
+        if not values and not folders and storage is None and dav is None:
             self.accept()
             return
         self.save_button.setEnabled(False)
         self.result_label.setText("Saving…")
         account_id = str(getattr(self._account, "account_id"))
 
-        def moved(result: object) -> None:
-            self.accept()
+        def finish_dav(result: object) -> None:
+            if dav is None:
+                self.accept()
+                return
+            self.dav_changed = True
+            self._backend.call("account.set-dav", dav, lambda _result: self.accept(), failed, owner=self)
 
         def finish(result: object) -> None:
             if storage is None:
-                self.accept()
+                finish_dav(None)
                 return
             self.result_label.setText("Moving the mail. This can take a while…")
-            self._backend.call("account.set-storage", {"account": account_id, "storage": storage}, moved, failed, owner=self)
+            self._backend.call("account.set-storage", {"account": account_id, "storage": storage}, finish_dav, failed, owner=self)
 
         def done(result: object) -> None:
             if folders:

@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import LOCAL_ACCOUNT_ID, Account, AccountKind, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.45"
+__version__ = "model.py 0.0.66"
 
 # --- Version history ----------------------------------------------------
+# v0.0.66: address and user name of the calendar and contacts server
 # v0.0.45: storage of an account (own folders or Local Folders)
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.43: accepted certificates per account
@@ -48,6 +49,8 @@ class AccountSettings:
     signature: str = ""  # plain text, added to new messages
     trusted_certificates: tuple[str, ...] = ()  # SHA-256 fingerprints of server certificates the person accepted
     check_minutes: int = 0  # how often to check this account for mail; 0 follows the general setting
+    dav_url: str = ""  # the address of the CalDAV and CardDAV server of this account; empty: no calendars, tasks and contacts from a server
+    dav_username: str = ""  # the user name for it; empty: the same as for incoming mail
     storage: str = "own"  # where a POP3 account's mail is kept: its own folders (own) or the shared Local Folders (local)
 
     def __post_init__(self) -> None:
@@ -57,6 +60,10 @@ class AccountSettings:
             raise ConfigurationError("The storage of an account is 'own' (its own folders) or 'local' (Local Folders)")
         if self.storage == "local" and self.account.kind is not AccountKind.POP3:
             raise ConfigurationError("Only a POP3 account can keep its mail in Local Folders")
+        if self.dav_url and not self.dav_url.startswith(("https://", "http://")):
+            raise ConfigurationError("The address of the calendar and contacts server starts with https:// (or http:// for this computer)")
+        if len(self.dav_url) > 500 or len(self.dav_username) > 200:
+            raise ConfigurationError("The address or user name of the calendar and contacts server is too long")
         if not 0 <= self.check_minutes <= MAXIMUM_CHECK_MINUTES:
             raise ConfigurationError(f"The number of minutes between checks must be between 0 and {MAXIMUM_CHECK_MINUTES}")
         if len(self.trusted_certificates) > MAXIMUM_TRUSTED_CERTIFICATES or len(set(self.trusted_certificates)) != len(self.trusted_certificates):

@@ -164,13 +164,13 @@ def test_the_account_type_is_shown_and_imap_accounts_have_no_server_copies_tab(w
     assert dialog.accounts.item(0).text().endswith("(POP3)")
     pop3 = AccountEditDialog(world.backend, dialog.accounts.item(0).data(256))
     qtbot.addWidget(pop3)
-    assert [pop3.tabs.tabText(index) for index in range(pop3.tabs.count())] == ["General", "Servers", "Server copies"]
+    assert [pop3.tabs.tabText(index) for index in range(pop3.tabs.count())] == ["General", "Servers", "Calendars and contacts", "Server copies"]
     imap_account = world.call("account.list")[0]
     from dataclasses import replace
 
     imap = AccountEditDialog(world.backend, replace(imap_account, kind="imap"))
     qtbot.addWidget(imap)
-    assert [imap.tabs.tabText(index) for index in range(imap.tabs.count())] == ["General", "Servers", "Folders"]
+    assert [imap.tabs.tabText(index) for index in range(imap.tabs.count())] == ["General", "Servers", "Calendars and contacts", "Folders"]
 
 
 def test_the_storage_choice_is_in_the_setup_and_the_account_settings_and_moves_the_mail(world: World, qtbot: QtBot) -> None:

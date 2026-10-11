@@ -15,9 +15,10 @@ from chrono_mail.core import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 0.0.45"
+__version__ = "files.py 0.0.66"
 
 # --- Version history ----------------------------------------------------
+# v0.0.66: address and user name of the calendar and contacts server
 # v0.0.45: storage of an account
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.43: accepted certificates
@@ -91,7 +92,10 @@ def _account(data: object, position: int) -> AccountSettings:
         storage = data.get("storage", "own")
         if not isinstance(storage, str):
             raise ConfigurationError(f"Setting '{where}.storage' is not text")
-        return AccountSettings(account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check, storage)
+        dav_url, dav_username = data.get("dav_url", ""), data.get("dav_username", "")
+        if not isinstance(dav_url, str) or not isinstance(dav_username, str):
+            raise ConfigurationError(f"Setting '{where}.dav_url' is not text")
+        return AccountSettings(account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check, storage=storage, dav_url=dav_url, dav_username=dav_username)
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
 
@@ -138,6 +142,8 @@ def config_to_text(config: AppConfig) -> str:
                     "trusted_certificates": list(settings.trusted_certificates),
                     "check_minutes": settings.check_minutes,
                     "storage": settings.storage,
+                    "dav_url": settings.dav_url,
+                    "dav_username": settings.dav_username,
                 }
                 for settings in config.accounts
             ],

@@ -7,9 +7,10 @@ import keyring.errors
 from chrono_mail.core import ConfigurationError, CredentialBackend
 
 # --- Version ------------------------------------------------------------
-__version__ = "passwords.py 0.0.9"
+__version__ = "passwords.py 0.0.66"
 
 # --- Version history ----------------------------------------------------
+# v0.0.66: password role for the calendar and contacts server
 # v0.0.9: Initial password stores
 
 SERVICE_NAME: str = "chrono-mail"
@@ -18,6 +19,7 @@ SERVICE_NAME: str = "chrono-mail"
 class ServerRole(Enum):
     INCOMING = "incoming"
     OUTGOING = "outgoing"
+    DAV = "dav"  # the calendar and contacts server, when its password is not the one for incoming mail
 
 
 class PasswordStore(Protocol):

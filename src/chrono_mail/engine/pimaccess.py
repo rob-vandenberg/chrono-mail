@@ -10,9 +10,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import IndexedItem, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimaccess.py 0.0.65"
+__version__ = "pimaccess.py 0.0.66"
 
 # --- Version history ----------------------------------------------------
+# v0.0.66: A store can be made when an account is first synchronised
 # v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.60: Initial access to the calendars, task lists and address books of the accounts
 
@@ -64,8 +65,8 @@ def account_name(engine: Engine, account_id: str) -> str:
 
 
 @contextmanager
-def open_pim(engine: Engine, account_id: str) -> Generator[PimStore]:
-    store = _open(engine, account_id, create=False)
+def open_pim(engine: Engine, account_id: str, create: bool = False) -> Generator[PimStore]:
+    store = _open(engine, account_id, create=create)
     try:
         yield store
     finally:

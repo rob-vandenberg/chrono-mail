@@ -90,8 +90,8 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 | # | Task | Status |
 |---|---|---|
 | 4.1 | `protocols.dav`: discovery, collections, items, sync tokens, writing, certificate pinning; fake server and live tests. | done (0.0.65) |
-| 4.2 | `sync`: state per account, pull and push, conflicts, commands (`dav.discover`, `account.set-dav`, `dav.sync`). | open |
-| 4.3 | Account settings and interface: the tab "Calendars and contacts", sync on Refresh and on a timer. | open |
+| 4.2 | `sync`: state per account, pull and push, conflicts, commands (`dav.discover`, `account.set-dav`, `dav.sync`). | done (0.0.66) |
+| 4.3 | Account settings and interface: the tab "Calendars and contacts", sync on Refresh and on a timer. | done (0.0.66) |
 | 4.4 | Invitations and replies (iTIP); more live tests. | open |
 
 ## Milestone 5: Google (OAuth2, Gmail by IMAP, Calendar, People, Tasks)

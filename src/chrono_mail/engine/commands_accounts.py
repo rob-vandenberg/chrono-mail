@@ -40,9 +40,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.47"
+__version__ = "commands_accounts.py 0.0.66"
 
 # --- Version history ----------------------------------------------------
+# v0.0.66: Address and user name of the calendar and contacts server in the summary
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.45: storage of an account (own folders or Local Folders)
 # v0.0.44: Folder choices, roles and check interval per account
@@ -232,6 +233,8 @@ class AccountSummary:
     trusted_certificates: tuple[str, ...] = ()
     check_minutes: int = 0
     storage: str = "own"
+    dav_url: str = ""
+    dav_username: str = ""
 
 
 def _summary(item: AccountSettings) -> AccountSummary:
@@ -257,6 +260,8 @@ def _summary(item: AccountSettings) -> AccountSummary:
         item.trusted_certificates,
         item.check_minutes,
         item.storage,
+        item.dav_url,
+        item.dav_username,
     )
 
 
