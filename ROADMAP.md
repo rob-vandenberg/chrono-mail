@@ -85,9 +85,14 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 | 3.8 | Calendar section (Day, Work Week, Week, Upcoming, Month, Agenda; event editor; mini calendar). | done (0.0.64) |
 | 3.9 | Tags for mail; reminders and notifications. | open |
 
-## Milestone 4: CalDAV and CardDAV (Kerio Connect test server)
+## Milestone 4: CalDAV and CardDAV (Kerio Connect test server, D-078)
 
-Generic CalDAV and CardDAV client (discovery, ctag and etag sync, tasks as VTODO), account setup, certificate pinning for HTTPS, live tests against the user's Kerio Connect server. Later: invitations and replies (iTIP).
+| # | Task | Status |
+|---|---|---|
+| 4.1 | `protocols.dav`: discovery, collections, items, sync tokens, writing, certificate pinning; fake server and live tests. | done (0.0.65) |
+| 4.2 | `sync`: state per account, pull and push, conflicts, commands (`dav.discover`, `account.set-dav`, `dav.sync`). | open |
+| 4.3 | Account settings and interface: the tab "Calendars and contacts", sync on Refresh and on a timer. | open |
+| 4.4 | Invitations and replies (iTIP); more live tests. | open |
 
 ## Milestone 5: Google (OAuth2, Gmail by IMAP, Calendar, People, Tasks)
 ## Milestone 6: Microsoft (OAuth2, Graph: mail, calendar, contacts, To Do)

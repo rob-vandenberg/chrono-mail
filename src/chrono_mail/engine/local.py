@@ -1,4 +1,5 @@
 import shutil
+import threading
 
 from chrono_mail.config import AccountSettings, AppConfig
 from chrono_mail.core import (
@@ -15,18 +16,25 @@ from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "local.py 0.0.45"
+__version__ = "local.py 0.0.65"
 
 # --- Version history ----------------------------------------------------
+# v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.45: Initial Local Folders mailbox
 
 LOCAL_NAME: str = "Local Folders"
+SETUP_LOCK = threading.RLock()  # two commands that need Local Folders for the first time at once (three sections shown quickly) must not both make it
 _NOWHERE = ServerSettings("localhost", 1, ConnectionSecurity.NONE, "-")  # Local Folders has no servers
 
 
 def ensure_local_folders(engine: Engine, encrypted: bool = True) -> tuple[AppConfig, bool]:
     """Make the Local Folders mailbox if it does not exist yet. Returns the settings and whether a new encryption key was made.
     Local Folders is a mailbox without servers: POP3 accounts may keep their mail in it, all in one tree of folders."""
+    with SETUP_LOCK:
+        return _ensure_local_folders(engine, encrypted)
+
+
+def _ensure_local_folders(engine: Engine, encrypted: bool) -> tuple[AppConfig, bool]:
     config = engine.config()
     if config.local_folders() is not None:
         return config, False

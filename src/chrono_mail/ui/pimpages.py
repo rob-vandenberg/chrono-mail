@@ -11,9 +11,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.sections import SectionPage
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimpages.py 0.0.64"
+__version__ = "pimpages.py 0.0.65"
 
 # --- Version history ----------------------------------------------------
+# v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.64: The calendar section
 # v0.0.63: The tasks section
 # v0.0.62: The contacts section
@@ -65,7 +66,10 @@ class PimPage(SectionPage):
                 self.panel.reload()
 
             def failed(error: ChronoMailError) -> None:
-                self.message.setText(f"Calendars, tasks and contacts could not be opened: {error}")
+                try:
+                    self.message.setText(f"Calendars, tasks and contacts could not be opened: {error}")
+                except RuntimeError:
+                    pass  # the window was closed while the command ran
 
             self._backend.call("pim.enable", {}, enabled, failed, owner=self)
         else:

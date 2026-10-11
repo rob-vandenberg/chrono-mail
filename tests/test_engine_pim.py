@@ -8,9 +8,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_pim.py 0.0.60"
+__version__ = "test_engine_pim.py 0.0.65"
 
 # --- Version history ----------------------------------------------------
+# v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.60: Initial tests of the collection, tag and contact commands
 
 
@@ -129,3 +130,23 @@ def test_tags_have_colours_counts_and_can_be_renamed_everywhere(engine: Engine) 
     assert "Work" not in after and after["Job"].contacts == 2 and after["Job"].colour == "#aa0000"  # the colour went with it
     assert call(engine, "contact.show", item=a.item).tags == ("Job", "Friends")
     assert len(call(engine, "tag.colour", name="Job", colour="")) == 2  # the colour is taken away
+
+
+def test_enabling_from_several_threads_at_once_makes_one_set(tmp_path: Path) -> None:
+    import threading
+
+    engine = make_engine(tmp_path)
+    errors: list[BaseException] = []
+
+    def enable() -> None:
+        try:
+            call(engine, "pim.enable")
+        except BaseException as error:  # noqa: BLE001 - the test reports whatever a thread raised
+            errors.append(error)
+
+    threads = [threading.Thread(target=enable) for _ in range(6)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == [] and [c.name for c in call(engine, "collection.list")] == ["Calendar", "Contacts", "Tasks"]

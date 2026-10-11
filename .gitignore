@@ -4,3 +4,4 @@ __pycache__/
 .pytest_cache/
 tests/live/account.local.toml
 *.egg-info/
+tests/live/dav.local.toml

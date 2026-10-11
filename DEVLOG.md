@@ -696,3 +696,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Dragging events, tasks in the calendar, invitations and replies, a setting for the first weekday and the work days, an event of another time zone shown in its own zone.
 - 3.9 tags for mail and reminders with notifications.
 
+## 2026-10-11 The CalDAV and CardDAV client (version 0.0.65)
+
+**What landed**
+- `protocols/dav.py`, `tests/fakedav.py` (a fake server that can also behave awkwardly: no change report, no multiget, no ETag after a write, TLS with a self-signed certificate, read-only collections), 12 offline tests and 3 live tests against the Kerio Connect test account; the test account was added to the program as an IMAP account (D-058: its certificate approved by its fingerprint); dummy contacts, events and tasks were put on the server for the next steps.
+
+**Still open**
+- 4.2 the sync; 4.3 the account settings and the interface.
+- A race found in the full runs: the three sections can each ask for the local calendars at the same moment on first use, and the first-time setup of Local Folders was not protected; it is serialised now (test with six threads).

@@ -4,15 +4,16 @@ from dataclasses import dataclass
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionInfo, CollectionKind, ConfigurationError, StorageError
-from chrono_mail.engine.local import ensure_local_folders
+from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import IndexedItem, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimaccess.py 0.0.60"
+__version__ = "pimaccess.py 0.0.65"
 
 # --- Version history ----------------------------------------------------
+# v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.60: Initial access to the calendars, task lists and address books of the accounts
 
 DEFAULT_COLLECTIONS: tuple[tuple[CollectionKind, str, str], ...] = (
@@ -74,17 +75,18 @@ def open_pim(engine: Engine, account_id: str) -> Generator[PimStore]:
 def ensure_local_pim(engine: Engine) -> bool:
     """Make the calendars, task lists and address books of this computer if they are not there yet (a calendar, a task list and an address book,
     in the pseudo-account Local Folders). Returns whether something was made."""
-    ensure_local_folders(engine)
-    made = False
-    store = _open(engine, LOCAL_ACCOUNT_ID, create=True)
-    try:
-        if not store.collections():
-            for kind, name, colour in DEFAULT_COLLECTIONS:
-                store.create_collection(kind, name, colour)
-            made = True
-    finally:
-        store.close()
-    return made
+    with SETUP_LOCK:
+        ensure_local_folders(engine)
+        made = False
+        store = _open(engine, LOCAL_ACCOUNT_ID, create=True)
+        try:
+            if not store.collections():
+                for kind, name, colour in DEFAULT_COLLECTIONS:
+                    store.create_collection(kind, name, colour)
+                made = True
+        finally:
+            store.close()
+        return made
 
 
 @contextmanager
