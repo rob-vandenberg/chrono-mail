@@ -6,12 +6,24 @@ from chrono_mail.pim.contact import contact_to_text, parse_contacts
 from chrono_mail.pim.ical import events_to_text, parse_events, parse_tasks, tasks_to_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "edit.py 0.0.60"
+__version__ = "edit.py 0.0.63"
 
 # --- Version history ----------------------------------------------------
+# v0.0.63: The tasks section
 # v0.0.60: Initial changes to the tags of an item
 
 Retag = Callable[[tuple[str, ...]], tuple[str, ...]]
+
+
+def changed_tags(tags: tuple[str, ...], add: tuple[str, ...], remove: tuple[str, ...]) -> tuple[str, ...]:
+    """The tags with some added (a tag that is there already, in any case, is not added twice) and some taken away (without regard to case)."""
+    gone = {" ".join(name.split()).casefold() for name in remove}
+    kept = [tag for tag in tags if tag.casefold() not in gone]
+    for name in add:
+        cleaned = " ".join(name.split())
+        if cleaned and cleaned.casefold() not in {tag.casefold() for tag in kept}:
+            kept.append(cleaned)
+    return tuple(kept)
 
 
 def tags_of(kind: CollectionKind, text: str) -> tuple[str, ...]:

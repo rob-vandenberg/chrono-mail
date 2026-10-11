@@ -679,3 +679,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Business cards and list views of the contacts; photos can be shown but not yet chosen in the editor; the History tab lists the mail but does not open it.
 
+## 2026-10-11 The tasks section (version 0.0.63)
+
+**What landed**
+- `ui/tasksview.py`, `ui/taskeditor.py`; `add_tag` and `remove_tag` for tasks and events (`pim.edit.changed_tags`); 8 UI tests and 1 engine test.
+
+**Still open**
+- Tasks are not yet shown in the calendar (3.8); no sub-tasks view; the editor has no choice of the zone of a time.
+

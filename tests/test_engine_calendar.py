@@ -7,9 +7,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 0.0.60"
+__version__ = "test_engine_calendar.py 0.0.63"
 
 # --- Version history ----------------------------------------------------
+# v0.0.63: The tasks section
 # v0.0.60: Initial tests of the event and task commands
 
 
@@ -180,3 +181,11 @@ def test_tasks_move_import_and_export_and_tags_are_renamed_in_all_kinds(engine: 
     assert call(engine, "task.show", item=moved.item).tags == ("Job",) and call(engine, "event.show", item=event.item).tags == ("Job", "Team")
     names = {t.name: t for t in call(engine, "tag.list")}
     assert names["Job"].tasks == 1 and names["Job"].events == 1 and names["Job"].contacts == 0 and "Work" not in names
+
+
+def test_tags_are_added_and_removed_on_events_and_tasks_without_regard_to_case(engine: Engine) -> None:
+    event = call(engine, "event.add", calendar=collection(engine, "events"), summary="Meet", start="2026-11-05T10:00", time_zone="UTC", tag=("Work",))
+    task = call(engine, "task.add", list=collection(engine, "tasks"), summary="Do", tag=("Work", "Home"))
+    after_event = call(engine, "event.edit", item=event.item, add_tag=("work", "Team"), remove_tag=("HOME",))
+    after_task = call(engine, "task.edit", item=task.item, add_tag=("Chores", "home"), remove_tag=("WORK",))
+    assert after_event.tags == ("Work", "Team") and after_task.tags == ("Home", "Chores")

@@ -7,14 +7,16 @@ from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import Engine
+from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Reminder, events_to_text, new_uid, occurrences, parse_events
 from chrono_mail.pim.times import day_bounds, format_moment, local_zone, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 0.0.60"
+__version__ = "commands_calendar.py 0.0.63"
 
 # --- Version history ----------------------------------------------------
+# v0.0.63: The tasks section
 # v0.0.60: Initial event commands
 
 MAXIMUM_DAYS: int = 400
@@ -327,6 +329,8 @@ class EditParameters(EventFields):
     item: str = field(metadata=option("The event id"))
     occurrence: str = field(default="", metadata=option("For a repeating event: the occurrence to change on its own (the 'occurrence' of event.list); empty changes the whole series"))
     clear: tuple[str, ...] = field(default=(), metadata=option("Lists to empty: reminder, attendee, tag (repeat)"))
+    add_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to add (repeat)"))
+    remove_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to remove (repeat)"))
 
 
 def _in_event_zone(moment: Moment, start: Moment) -> Moment:
@@ -378,7 +382,10 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 others = tuple(o for o in series.overrides if o.recurrence_id != moment)
                 series = EventSeries(series.master, (*others, changed))
             else:
-                series = EventSeries(_apply(_clear(series.master, parameters.clear), parameters, creating=False), series.overrides)
+                master = _apply(_clear(series.master, parameters.clear), parameters, creating=False)
+                if parameters.add_tag or parameters.remove_tag:
+                    master = replace(master, categories=changed_tags(master.categories, parameters.add_tag, parameters.remove_tag))
+                series = EventSeries(master, series.overrides)
             found.store.put(found.item.collection, events_to_text(series, original), parameters.item)
             return _info(parameters.item, found.account, found.item.collection, series)
     except StorageError as error:

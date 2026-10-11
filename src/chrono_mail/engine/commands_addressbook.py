@@ -5,13 +5,15 @@ from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import Engine
+from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, contact_to_text, parse_contacts
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 0.0.62"
+__version__ = "commands_addressbook.py 0.0.63"
 
 # --- Version history ----------------------------------------------------
+# v0.0.63: The tasks section
 # v0.0.62: The contacts section
 # v0.0.60: Initial contact commands
 
@@ -304,9 +306,7 @@ def contact_edit(engine: Engine, parameters: EditParameters) -> ContactInfo:
             contact = _clear(contacts[0], parameters.clear)
             contact = _apply(contact, parameters)
             if parameters.add_tag or parameters.remove_tag:
-                removed = {tag.casefold() for tag in parameters.remove_tag}
-                kept = [tag for tag in (*contact.categories, *(" ".join(tag.split()) for tag in parameters.add_tag if tag.strip())) if tag.casefold() not in removed or tag in parameters.add_tag]
-                contact = replace(contact, categories=tuple(dict.fromkeys(kept)))
+                contact = replace(contact, categories=changed_tags(contact.categories, parameters.add_tag, parameters.remove_tag))
             _check_named(contact)
             found.store.put(found.item.collection, contact_to_text(contact), parameters.item)
             return _info(parameters.item, found.account, found.item.collection, contact)

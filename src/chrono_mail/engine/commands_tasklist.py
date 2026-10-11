@@ -7,14 +7,16 @@ from chrono_mail.engine.commands_calendar import _reminder
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import Engine
+from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.ical import Moment, Task, advance_task, complete_task, new_uid, parse_tasks, reopen_task, tasks_to_text
 from chrono_mail.pim.times import format_moment, local_zone, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 0.0.60"
+__version__ = "commands_tasklist.py 0.0.63"
 
 # --- Version history ----------------------------------------------------
+# v0.0.63: The tasks section
 # v0.0.60: Initial task commands
 
 MAXIMUM_ROWS: int = 5_000
@@ -258,6 +260,8 @@ def task_add(engine: Engine, parameters: AddParameters) -> TaskInfo:
 class EditParameters(TaskFields):
     item: str = field(metadata=option("The task id"))
     clear: tuple[str, ...] = field(default=(), metadata=option("Lists to empty: reminder, tag (repeat)"))
+    add_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to add (repeat)"))
+    remove_tag: tuple[str, ...] = field(default=(), metadata=option("Tags to remove (repeat)"))
 
 
 def task_edit(engine: Engine, parameters: EditParameters) -> TaskInfo:
@@ -275,6 +279,8 @@ def task_edit(engine: Engine, parameters: EditParameters) -> TaskInfo:
                 else:
                     raise UsageError(f"Only these can be cleared: {', '.join(LIST_FIELDS)}")
             task = _apply(task, parameters)
+            if parameters.add_tag or parameters.remove_tag:
+                task = replace(task, categories=changed_tags(task.categories, parameters.add_tag, parameters.remove_tag))
             found.store.put(found.item.collection, tasks_to_text(task, original), parameters.item)
             return _info(parameters.item, found.account, found.item.collection, task)
     except StorageError as error:
