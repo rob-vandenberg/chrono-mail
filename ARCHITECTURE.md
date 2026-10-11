@@ -135,3 +135,42 @@ The text below is the first design; D-050 replaced the pending list by a compari
 
 - Built on `ssl` and `socket` like the POP3 client: every line and every literal has a size cap, every wait a timeout, unsolicited responses are tolerated, a tag mismatch or garbage is a `ProtocolError`. Required: IMAP4rev1, `LOGIN`/`PLAIN` over TLS (no password over an unencrypted link unless the person chose "none"). Used when offered: `UIDPLUS`, `MOVE`, `CONDSTORE`, `SPECIAL-USE`, `IDLE`, `LITERAL+`.
 - Tests: a scripted fake server (hostile cases: giant literals, endless lines, wrong tags, drops in the middle of a literal) and the live Dovecot server on `mail.technova.us` (read and write, with a mailbox that is cleaned before and after).
+
+## 9. Calendars, tasks and contacts (milestone 3 and later)
+
+### 9.1 Goals
+
+Calendars (events), tasks and contacts next to mail, for every kind of account: local (no server), CalDAV and CardDAV servers (Kerio, Nextcloud, Fastmail, iCloud, Google by CalDAV), the provider APIs (Google, Microsoft Graph) and, later and only when there is a way to test it, Exchange ActiveSync or EWS. The interface has four section buttons in the left sidebar (Mail, Calendar, Contacts, Tasks); each section has its own sidebar, toolbar and views. Tags work for mail, tasks and contacts alike.
+
+### 9.2 Items are the standard text formats
+
+- An **event** or a **task** is one *calendar object resource*: an iCalendar text (RFC 5545) with a VEVENT (or VTODO) and, for a repeating item, its changed occurrences, plus the VTIMEZONE it uses. A **contact** is a vCard text (RFC 6350, and 3.0 and 2.1 on input).
+- The text is the source of truth and is kept as it came: properties we do not know are kept and sent back to the server. Changing an item changes only the properties that were edited.
+- The same texts are what servers exchange (CalDAV and CardDAV), so no translation is needed for them; the provider APIs translate to and from them in `sync`.
+
+### 9.3 Packages and layers
+
+| Module | Layer | Responsibility |
+|---|---|---|
+| `core.pim` | L0 | Collection kinds, references to collections and items. |
+| `pim` | L1 | vCard and iCalendar parsing and building into typed items (`Contact`, `Event`, `Task`), recurrence, time zones, reminders. No I/O. Wraps `icalendar` and `recurring-ical-events`. |
+| `pimstore` | L2 | The encrypted item store and the rebuildable index for collections. |
+| `sync` | L3 | CalDAV and CardDAV (milestone 4), the provider APIs (milestones 5 and 6). |
+| `engine` | L4 | Commands: `calendar.*`, `event.*`, `task.*`, `contact.*`, `tag.*`. |
+| `ui` | L5 | The four sections. |
+
+### 9.4 Storage
+
+- One directory per account: `pim/<collection>/<item>.enc`, an encrypted item text written atomically exactly as mail is (tmp, flush, rename), with the same data key. A damaged item is one lost item, never a stalled collection.
+- The index (SQLite) holds what the views need: kind, uid, name or summary, start and end in UTC, due date, status, priority, tags, and full-text search. It is rebuilt from the items at any time; it is never the source of truth. Occurrences of repeating events are expanded when a range is asked for, not stored.
+- Server state (CalDAV ctag and etags, sync tokens) is kept beside, like the POP3 and IMAP state files.
+- Collections belong to an account. Local collections belong to a pseudo-account like Local Folders, so calendars, tasks and contacts work without any server.
+
+### 9.5 Tags
+
+A tag is a name with a colour. The names live in the items themselves (the CATEGORIES property of a task, event or contact, so they travel to servers), the colours in a small file of their own (`tags.json`). Mail messages get tags through a sidecar file per account (the mail store is not changed), mapped to IMAP keywords when an IMAP server supports them.
+
+### 9.6 Time
+
+An event with a start time has a time zone. The wall-clock time and the zone are kept as given; the UTC instant is derived (`zoneinfo`, and the `tzdata` package on systems without a zone database). Servers that send their own VTIMEZONE are understood. All-day events are dates, not instants.
+

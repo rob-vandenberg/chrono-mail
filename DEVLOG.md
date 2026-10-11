@@ -629,3 +629,14 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - Menus with "Follow the system" on Windows are drawn by the system: to be checked there.
+
+## 2026-10-11 Calendars, tasks, contacts: design and vCard (version 0.0.57)
+
+**What landed**
+- ARCHITECTURE.md section 9, D-071, milestones 3 to 7 in ROADMAP.md; dependencies `icalendar`, `recurring-ical-events`, `tzdata`, `python-dateutil`; packages `pim` (L1) and `pimstore` (L2) in the layer check.
+- `pim/vcard.py` (content lines for vCard 2.1, 3.0 and 4.0, folding, escapes, quoted-printable, inline photos) and `pim/contact.py` (the typed contact; properties we do not understand are kept); 20 tests including hostile input.
+- The Kerio Connect 8.5.2 server of the user was probed without a login: TLS 1.2, a self-signed certificate, CalDAV at https://kerio.technova.us:11443/caldav/ (Basic authentication). A test mailbox exists; its credentials go only into the untracked local test settings.
+
+**Still open**
+- 3.2 events and tasks (iCalendar).
+

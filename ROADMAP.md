@@ -70,3 +70,26 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (0.0.46) Favorites and Inboxes headings, combined views, Local Folders node, collapsible accounts, three switches in the settings.
 - Next: pin any folder to Favorites (add, remove, rename, reorder), account groups with a combined inbox per group, search inside combined views.
 - DONE (0.0.47) Pinned favorites (add, remove, rename, reorder), account groups with a combined inbox, search inside combined views.
+
+## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
+
+| # | Task | Status |
+|---|---|---|
+| 3.1 | Design, dependencies, vCard (contacts): parsing, building, keeping unknown properties. | done (0.0.57) |
+| 3.2 | iCalendar (events and tasks): parsing, building, recurrence, time zones, reminders. | open |
+| 3.3 | `pimstore`: encrypted items and the rebuildable index; local collections. | open |
+| 3.4 | Engine commands for collections, events, tasks, contacts and tags. | open |
+| 3.5 | The four-button shell: sections with their own sidebar, toolbar and status line. | open |
+| 3.6 | Contacts section (address books, list, detail, tags, History). | open |
+| 3.7 | Tasks section (lists, quick add, detail pane, status marks). | open |
+| 3.8 | Calendar section (Day, Work Week, Week, Upcoming, Month, Agenda; event editor; mini calendar). | open |
+| 3.9 | Tags for mail; reminders and notifications. | open |
+
+## Milestone 4: CalDAV and CardDAV (Kerio Connect test server)
+
+Generic CalDAV and CardDAV client (discovery, ctag and etag sync, tasks as VTODO), account setup, certificate pinning for HTTPS, live tests against the user's Kerio Connect server. Later: invitations and replies (iTIP).
+
+## Milestone 5: Google (OAuth2, Gmail by IMAP, Calendar, People, Tasks)
+## Milestone 6: Microsoft (OAuth2, Graph: mail, calendar, contacts, To Do)
+## Milestone 7: On-premises Exchange (ActiveSync, testable on the Kerio server; or EWS), only when needed
+
