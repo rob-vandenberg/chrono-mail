@@ -10,9 +10,10 @@ from chrono_mail.pimstore.extract import Extract, tag_text
 from chrono_mail.pimstore.schema import MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.0.60"
+__version__ = "index.py 0.0.62"
 
 # --- Version history ----------------------------------------------------
+# v0.0.62: The contacts section
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.59: Initial index of calendars, tasks and contacts
 
@@ -109,7 +110,7 @@ class PimIndex:
 
     @contextmanager
     def _transaction(self) -> Generator[None]:
-        self._connection.execute("BEGIN")
+        self._connection.execute("BEGIN IMMEDIATE")  # the write lock at once: two commands changing items at the same time wait for each other (30 s) instead of failing as "locked"
         try:
             yield
         except BaseException:

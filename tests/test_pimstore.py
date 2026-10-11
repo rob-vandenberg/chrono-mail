@@ -12,9 +12,10 @@ from chrono_mail.pimstore import ItemQuery, PimStore
 from chrono_mail.pimstore.extract import epoch
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pimstore.py 0.0.60"
+__version__ = "test_pimstore.py 0.0.62"
 
 # --- Version history ----------------------------------------------------
+# v0.0.62: The contacts section
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.59: Initial tests of the store and the index for calendars, tasks and contacts
 
@@ -263,3 +264,31 @@ def test_a_crash_while_deleting_or_moving_loses_nothing_and_repeating_finishes_i
         assert [name for name, _ in where] == ["One", "Two"]  # in both: a copy is never lost
         after.move(one.collection_id, item, two.collection_id)  # again: finds the copy, adds no second one, takes the original away
         assert [name for c in after.collections() for name in [c.name] for _ in after.item_ids(c.collection_id)] == ["Two"]
+
+
+def test_several_writers_at_the_same_time_wait_for_each_other(tmp_path: Path) -> None:
+    import threading
+
+    key = generate_data_key()
+    first = PimStore.create(tmp_path / "pim", key, durable=False)
+    book = first.create_collection(CollectionKind.CONTACTS, "People")
+    first.close()
+    errors: list[BaseException] = []
+
+    def work(number: int) -> None:
+        try:
+            store = PimStore.open(tmp_path / "pim", key, durable=False)  # each thread has its own store object, as each command has
+            for turn in range(15):
+                store.put(book.collection_id, contact(f"Name{number}, Turn{turn}"))
+            store.close()
+        except BaseException as error:  # noqa: BLE001 - the test reports whatever went wrong in a thread
+            errors.append(error)
+
+    threads = [threading.Thread(target=work, args=(number,)) for number in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert errors == []
+    check = PimStore.open(tmp_path / "pim", key, durable=False)
+    assert len(check.item_ids(book.collection_id)) == 60 and len(check.index.item_ids()) == 60

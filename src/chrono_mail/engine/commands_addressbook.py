@@ -9,9 +9,10 @@ from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, cont
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 0.0.60"
+__version__ = "commands_addressbook.py 0.0.62"
 
 # --- Version history ----------------------------------------------------
+# v0.0.62: The contacts section
 # v0.0.60: Initial contact commands
 
 MAXIMUM_ROWS: int = 5_000
@@ -26,6 +27,7 @@ class ContactRow:
     name: str
     subtitle: str  # the organisation, or else the first address
     tags: tuple[str, ...]
+    sort_key: str  # what the contacts are sorted by (family name first, without accents)
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,8 +123,8 @@ def contact_list(engine: Engine, parameters: ListParameters) -> ContactList:
                 continue
             query = ItemQuery(CollectionKind.CONTACTS, (parameters.collection,) if parameters.collection else (), parameters.text, parameters.tag, limit=10**6)
             total += store.index.count(query)
-            rows.extend(ContactRow(i.item_id, account, i.collection, i.title, i.subtitle, i.tags) for i in store.index.query(replace(query, limit=parameters.offset + limit)))
-    rows.sort(key=lambda row: row.name.casefold())  # one account: already in order; several: merged here
+            rows.extend(ContactRow(i.item_id, account, i.collection, i.title, i.subtitle, i.tags, i.sort_key) for i in store.index.query(replace(query, limit=parameters.offset + limit)))
+    rows.sort(key=lambda row: (row.sort_key, row.name.casefold()))  # one account: already in order; several: merged here
     return ContactList(total, tuple(rows[parameters.offset : parameters.offset + limit]))
 
 

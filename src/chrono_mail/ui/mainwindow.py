@@ -57,7 +57,8 @@ from chrono_mail.ui.models import (
     MessageListModel,
     ViewSpec,
 )
-from chrono_mail.ui.pimpages import CalendarPage, ContactsPage, PimPage, TasksPage
+from chrono_mail.ui.contactsview import ContactsPage
+from chrono_mail.ui.pimpages import CalendarPage, PimPage, TasksPage
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
@@ -71,9 +72,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.61"
+__version__ = "mainwindow.py 0.0.62"
 
 # --- Version history ----------------------------------------------------
+# v0.0.62: The contacts section
 # v0.0.61: The four section buttons and the sidebars of the calendar, task and contact sections
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.53: Standard keyboard shortcuts
@@ -288,9 +290,8 @@ class MainWindow(QMainWindow):
         self.splitter.addWidget(left_panel)
         self.splitter.addWidget(self.content_stack)
         self._section: str = MAIL
-        self.pages: dict[str, PimPage] = {
-            CALENDAR: CalendarPage(self.backend, self.settings, self), TASKS: TasksPage(self.backend, self.settings, self), CONTACTS: ContactsPage(self.backend, self.settings, self),
-        }
+        self.contacts_page = ContactsPage(self.backend, self.settings, self)
+        self.pages: dict[str, PimPage] = {CALENDAR: CalendarPage(self.backend, self.settings, self), TASKS: TasksPage(self.backend, self.settings, self), CONTACTS: self.contacts_page}
         for page in self.pages.values():
             self.side_stack.addWidget(page.side)
             self.content_stack.addWidget(page.content)
@@ -517,6 +518,8 @@ class MainWindow(QMainWindow):
 
     def _wire(self) -> None:
         self.section_bar.chosen.connect(self.switch_section)
+        self.contacts_page.compose_requested.connect(self._compose_to)
+        self.contacts_page.mail_accounts_source = self._accounts_with_mail
         self.tree.selectionModel().currentChanged.connect(self._tree_changed)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.tree.messages_dropped.connect(self._messages_dropped)
@@ -680,6 +683,15 @@ class MainWindow(QMainWindow):
     def _account_of(self, row: object) -> str:
         """The account a row of the list belongs to: rows of the combined views say so themselves."""
         return str(getattr(row, "account", "") or self._account_id or "")
+
+    def _accounts_with_mail(self) -> list[str]:
+        """The places where mail is kept (accounts that share Local Folders count once), for searching the mail of a contact."""
+        return [str(getattr(account, "account_id")) for account in self._accounts if str(getattr(account, "storage", "own")) != "local"]
+
+    def _compose_to(self, address: str) -> None:
+        """A new message to this address (from a contact)."""
+        if self._mail_accounts():
+            self._open_composer(self._account_id or "", None, None, to=address)
 
     def _mail_accounts(self) -> list[object]:
         """The accounts that have servers: Local Folders is a place to keep mail, not an account to check or send from."""
