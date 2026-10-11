@@ -68,9 +68,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.53"
+__version__ = "mainwindow.py 0.0.56"
 
 # --- Version history ----------------------------------------------------
+# v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.53: Standard keyboard shortcuts
 # v0.0.52: Ctrl+Q marks as read, Quit is Ctrl+Shift+Q
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
@@ -309,7 +310,7 @@ class MainWindow(QMainWindow):
 
     def _build_actions(self) -> None:
         self.act_new = self._action("New", self.new_message, "Ctrl+N", "mail-message-new")
-        self.act_refresh = self._action("Get mail", self.check_mail, "F5", "mail-receive")
+        self.act_refresh = self._action("Refresh", self.check_mail, "F5", "view-refresh")
         self.act_reply = self._action("Reply", lambda: self.compose_from_selection("reply"), "Ctrl+R", "mail-reply-sender")
         self.act_reply_all = self._action("Reply all", lambda: self.compose_from_selection("reply_all"), "Ctrl+Shift+R", "mail-reply-all")
         self.act_forward = self._action("Forward", lambda: self.compose_from_selection("forward"), "Ctrl+F", "mail-forward")
@@ -415,7 +416,6 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.act_refresh)
         file_menu.addSeparator()
         file_menu.addAction(self.act_settings)
-        file_menu.addAction(self.act_add_account)
         file_menu.addAction(self.act_recovery)
         file_menu.addAction(self.act_restore_key)
         file_menu.addSeparator()

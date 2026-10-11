@@ -4,10 +4,10 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPalette
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMenu
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.ui import appearance
+from chrono_mail.ui import appearance, icons
 from chrono_mail.ui.colours import contrast, green, is_dark, red
 from chrono_mail.ui.formatting import AVATAR_HUES, avatar_colour
 from chrono_mail.ui.icons import BUNDLED_ICONS, FOLDER_ICONS, RESOURCES, bundled_icon, theme_icon
@@ -15,9 +15,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.0.51"
+__version__ = "test_ui_appearance.py 0.0.56"
 
 # --- Version history ----------------------------------------------------
+# v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.51: Initial colour scheme, style, colours and icons tests
 
 
@@ -103,7 +104,7 @@ def test_marks_and_avatars_can_be_read_in_both_schemes(app: QApplication, scheme
 
 
 def test_every_icon_name_the_program_uses_has_an_icon_of_its_own_and_follows_the_text_colour(app: QApplication, tmp_path: Path) -> None:
-    wanted = {name for names in FOLDER_ICONS.values() for name in names} | {"application-exit", "appointment-soon", "document-edit", "document-open", "document-print", "document-save-as", "edit-clear", "edit-delete", "list-add", "mail-archive", "mail-forward", "mail-mark-important", "mail-mark-junk", "mail-mark-notjunk", "mail-mark-read", "mail-message-new", "mail-receive", "mail-reply-all", "mail-reply-sender", "view-filter", "configure"}
+    wanted = {name for names in FOLDER_ICONS.values() for name in names} | {"application-exit", "appointment-soon", "document-edit", "document-open", "document-print", "document-save-as", "edit-clear", "edit-delete", "list-add", "mail-archive", "mail-forward", "mail-mark-important", "mail-mark-junk", "mail-mark-notjunk", "mail-mark-read", "mail-message-new", "mail-receive", "mail-reply-all", "mail-reply-sender", "view-filter", "view-refresh", "configure"}
     assert all(not bundled_icon(name).isNull() for name in wanted - {"internet-mail"}), wanted - set(BUNDLED_ICONS)
     assert (RESOURCES / "icons" / "LICENSE-lucide.txt").exists() and theme_icon("name-that-no-theme-has").isNull()
     for scheme in ("light", "dark"):
@@ -120,3 +121,39 @@ def test_web_pages_are_kept_light(monkeypatch: pytest.MonkeyPatch) -> None:
     appearance.keep_web_pages_light()  # twice: still once
     flags = __import__("os").environ["QTWEBENGINE_CHROMIUM_FLAGS"].split()
     assert flags == ["--other-flag", appearance.LIGHT_PAGES_FLAG]
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_dropdown_menus_have_the_colour_of_the_menu_bar_and_not_that_of_the_lists(world: World, qtbot: QtBot, app: QApplication, scheme: str) -> None:
+    from PySide6.QtCore import QPoint
+
+    world.window.settings.setValue("color_scheme", scheme)
+    world.window.settings.setValue("style", "fusion")
+    world.window.apply_preferences()
+    world.window.resize(900, 500)
+    world.window.show()
+    qtbot.wait(200)
+    palette = QGuiApplication.palette()
+    menu = world.window.menuBar().actions()[0].menu()
+    assert isinstance(menu, QMenu)
+    menu.popup(world.window.mapToGlobal(QPoint(10, world.window.menuBar().height())))
+    qtbot.wait(200)
+    shown = menu.grab().toImage().pixelColor(3, 3)
+    bar = world.window.grab().toImage().pixelColor(400, 5)
+    window = palette.color(QPalette.ColorRole.Window)
+    assert all(abs(a - b) <= 2 for a, b in ((shown.red(), window.red()), (shown.green(), window.green()), (shown.blue(), window.blue())))  # the colour of the menu bar
+    assert shown != palette.color(QPalette.ColorRole.Base) and bar == window
+    menu.hide()
+    world.window.settings.setValue("style", "default")  # a style that draws its menus well itself is left alone
+    world.window.apply_preferences()
+
+
+def test_refresh_is_a_circle_of_two_arrows_and_the_file_menu_has_no_add_account(world: World) -> None:
+    window = world.window
+    assert window.act_refresh.text() == "Refresh" and window.act_refresh.shortcut().toString() == "F5" and not window.act_refresh.icon().isNull()
+    file_menu = window.menuBar().actions()[0].menu()
+    assert isinstance(file_menu, QMenu)
+    texts = [action.text() for action in file_menu.actions()]
+    assert "Refresh" in texts and "Get mail" not in texts and not any("account" in text.lower() for text in texts)
+    assert window.act_refresh in window.toolbar.actions()
+    assert (icons.RESOURCES / "icons" / "refresh-cw.svg").exists() and icons.BUNDLED_ICONS["view-refresh"] == "refresh-cw"

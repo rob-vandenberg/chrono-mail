@@ -1,18 +1,20 @@
 import os
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QApplication
 
 from chrono_mail.ui import prefs
-from chrono_mail.ui.colours import dark_palette, light_palette
+from chrono_mail.ui.colours import dark_palette, light_palette, menu_palette
 
 # --- Version ------------------------------------------------------------
-__version__ = "appearance.py 0.0.51"
+__version__ = "appearance.py 0.0.56"
 
 # --- Version history ----------------------------------------------------
+# v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.51: Initial colour scheme (system, light, dark) and style (platform, Fusion)
 
 SCHEMES: tuple[str, ...] = ("system", "light", "dark")
@@ -57,6 +59,16 @@ def style_to_use(choice: str, dark: bool, platform_style: str) -> str:
     return platform_style
 
 
+def _colour_the_menus(app: QApplication) -> None:
+    """Dropdown menus are drawn in the 'base' colour, the colour of the lists, so they run into the folder list. Give them the colour of the menu bar."""
+    # The stub of setPalette says bytes for the class name, but the call wants a str.
+    class_name = cast("bytes", "QMenu")
+    if app.style().objectName().lower() == FUSION.lower():
+        app.setPalette(menu_palette(app.palette()), class_name)
+    else:
+        app.setPalette(QPalette(), class_name)  # the other styles draw their menus well themselves
+
+
 def start(app: QApplication, arguments: Sequence[str], settings: QSettings) -> None:
     """Remember what the platform chose, apply the settings, and follow the system when it switches between light and dark."""
     _state.platform_style = app.style().objectName()
@@ -87,5 +99,6 @@ def apply(app: QApplication, settings: QSettings) -> None:
                 app.setStyle(wanted)
         # A platform does not always do what it is asked (Linux desktops mostly do not), so a chosen scheme brings its own colours.
         app.setPalette(QPalette() if scheme == "system" else (dark_palette() if dark else light_palette()))
+        _colour_the_menus(app)
     finally:
         _state.busy = False

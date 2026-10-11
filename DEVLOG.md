@@ -621,3 +621,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - To be checked on the Windows machine: the taskbar shows the envelope. A pip-made `chrono-mail.exe` launcher keeps a generic icon of its own; a shortcut with the .ico, or an installer, is the way to a proper launcher.
+
+## 2026-10-11 Menu colour and Refresh (version 0.0.56)
+
+**What landed**
+- Dropdown menus in the colour of the menu bar (Fusion), Refresh with its icon in the toolbar, the File menu and the tray, no Add an account in the File menu; 2 tests.
+
+**Still open**
+- Menus with "Follow the system" on Windows are drawn by the system: to be checked there.

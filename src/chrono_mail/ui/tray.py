@@ -5,9 +5,10 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
 from chrono_mail.ui.icons import application_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "tray.py 0.0.21"
+__version__ = "tray.py 0.0.56"
 
 # --- Version history ----------------------------------------------------
+# v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.21: Initial notification area icon and new mail notifications
 
 NOTIFICATION_MILLISECONDS: int = 6000
@@ -34,7 +35,7 @@ class TrayController(QObject):
         self._icon = QSystemTrayIcon(application_icon(), self)
         self._menu = QMenu(parent)
         self.show_action = self._menu.addAction("Show or hide Chrono Mail")
-        self.check_action = self._menu.addAction("Get mail")
+        self.check_action = self._menu.addAction("Refresh")
         self.settings_action = self._menu.addAction("Settings…")
         self._menu.addSeparator()
         self.quit_action = self._menu.addAction("Quit")

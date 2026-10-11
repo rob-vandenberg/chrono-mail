@@ -1,9 +1,10 @@
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 0.0.51"
+__version__ = "colours.py 0.0.56"
 
 # --- Version history ----------------------------------------------------
+# v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.51: Initial colours for messages and marks that suit both a light and a dark scheme
 
 RED_ON_LIGHT: str = "#c0392b"
@@ -36,6 +37,19 @@ def dark_palette() -> QPalette:
 def light_palette() -> QPalette:
     """The light colours, for when the platform cannot be asked for them."""
     return _palette("#efefef", "#ffffff", "#1a1a1a", "#e4e4e4", "#2f7fcf", "#ffffff", "#1a5fb4", "#8a8a8a", ("#ffffff", "#f5f5f5", "#b8b8b8", "#9a9a9a"))
+
+
+FUSION_MENU_LIGHTENING: int = 108  # Fusion draws a menu 8% lighter than the 'base' colour it is given (measured; a test guards it)
+
+
+def menu_palette(palette: QPalette) -> QPalette:
+    """The palette for dropdown menus: they come out in the colour of the menu bar (the window colour), where they would
+    otherwise be the colour of the lists."""
+    menu = QPalette(palette)
+    base = palette.color(QPalette.ColorRole.Window).darker(FUSION_MENU_LIGHTENING)
+    menu.setColor(QPalette.ColorRole.Base, base)
+    menu.setColor(QPalette.ColorRole.AlternateBase, base)
+    return menu
 
 
 def is_dark(palette: QPalette | None = None) -> bool:

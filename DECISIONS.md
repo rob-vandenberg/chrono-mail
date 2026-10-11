@@ -505,3 +505,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** on Windows the program gives its process the application id `chrono-mail.ChronoMail` before the first window (`SetCurrentProcessExplicitAppUserModelID`), and the window icon is `ui/resources/chrono-mail.ico` (the envelope, PNG entries of 16, 24, 32, 48, 64, 128 and 256 pixels, made from the SVG). Elsewhere the SVG is used as before.
 **Reason:** without its own application id the Windows taskbar treats a Python program as python.exe and shows the icon of Python, whatever icon the window sets. A shortcut or an installer needs an .ico file. Not seen on a real Windows desktop yet.
+
+## D-070 Menu colour, Refresh, and no Add an account in the File menu
+*2026-10-11*
+
+**Decision:** dropdown menus have the colour of the menu bar. The Fusion style draws a menu in the 'base' colour of its palette (the colour of the lists) made 8% lighter, so a menu palette is set for the class QMenu with the window colour made 8% darker as its base; a test measures the result against the menu bar. Other styles draw their menus themselves and are left alone. "Get mail" is called Refresh (toolbar, File menu and tray menu), with the circular-arrows icon (`view-refresh`, bundled as Lucide `refresh-cw`) and the key F5. The File menu no longer has "Add an account…": accounts are added in Settings > Accounts, and the first-run dialog still appears when there is no account.
+**Reason:** the user asked for all three: the dropdowns ran into the folder list, and Refresh is the usual name and symbol for what the button does.

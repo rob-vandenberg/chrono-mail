@@ -7,9 +7,10 @@ from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPalett
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.55"
+__version__ = "icons.py 0.0.56"
 
 # --- Version history ----------------------------------------------------
+# v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.55: Application id and icon file for Windows
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.14: Initial icons: the application icon and the theme icons of the folder tree
@@ -42,7 +43,7 @@ BUNDLED_ICONS: dict[str, str] = {
     "mail-message": "mail", "user-identity": "user", "mail-unread": "mail", "mail-unread-new": "mail", "mail-message-new": "mail-plus",
     "mail-mark-important": "flag", "flag": "flag", "emblem-important": "flag", "application-exit": "log-out", "appointment-soon": "clock",
     "configure": "settings", "document-open": "folder-open", "document-print": "printer", "document-save-as": "save", "edit-clear": "eraser",
-    "list-add": "plus", "mail-forward": "forward", "mail-mark-notjunk": "shield-check", "mail-mark-read": "mail-check", "mail-receive": "download",
+    "list-add": "plus", "mail-forward": "forward", "mail-mark-notjunk": "shield-check", "mail-mark-read": "mail-check", "mail-receive": "download", "view-refresh": "refresh-cw",
     "mail-reply-all": "reply-all", "mail-reply-sender": "reply", "view-filter": "funnel",
 }
 
