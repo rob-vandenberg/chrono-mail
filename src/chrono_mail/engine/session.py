@@ -10,6 +10,7 @@ from chrono_mail.config import (
     AppConfig,
     AppDirectories,
     PasswordStore,
+    fingerprints_for,
     load_config,
     save_config,
 )
@@ -21,9 +22,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.45"
+__version__ = "session.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.43: tls_context for accepted certificates
 # v0.0.32: stop_event for long waits
@@ -66,9 +68,11 @@ class Engine:
     _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)
     _cache_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
-    def tls_context(self, settings: AccountSettings) -> ssl.SSLContext | None:
-        """The TLS context for an account that has accepted certificates; None means the usual checks apply."""
-        return context_for(frozenset(settings.trusted_certificates))
+    def tls_context(self, settings: AccountSettings, outgoing: bool = False) -> ssl.SSLContext | None:
+        """The TLS context for the incoming (or outgoing) server of an account; None means the usual checks apply to it,
+        which is so unless a certificate was accepted for that very server."""
+        server = settings.account.outgoing if outgoing else settings.account.incoming
+        return context_for(fingerprints_for(settings.trusted_certificates, server.host, server.port))
 
     # --- configuration -------------------------------------------------------------------------
 

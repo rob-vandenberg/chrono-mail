@@ -743,3 +743,18 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **What landed**
 - The Inboxes heading in the folder tree (one inbox per account, shown with two or more own-mailbox accounts) is removed completely, with its settings switch, its default and its tree item kind. It was never requested. Favorites (with All Inboxes), accounts, account groups and Local Folders are unchanged. An old `show_inboxes` value in a saved config is ignored.
 - D-061 corrected. Tests adjusted.
+
+## 2026-10-11 Stale accepted certificate in the Add account dialog (version 0.0.71)
+
+**What landed**
+- In the Add account dialog a certificate accepted for one server stayed in the list after the server address was corrected. Any entry in the list switches both servers to pinned-only checking, so the valid certificate of the new address was refused ("not the certificate you accepted") and the account could not be added. The dialog now remembers for which host, port and security each certificate was accepted and sends only those that still match the servers as they are now. Regression test added.
+
+**Still open**
+- The accepted certificates are one list per account (and per dialog) that applies to both servers, and one entry makes the usual checks stop for both. Pins per server would need a change to D-058 and the saved config; not done, to be decided.
+
+## 2026-10-11 Accepted certificates per server (version 0.0.72)
+
+**What landed**
+- An accepted certificate is stored as host:port=fingerprint and applies only to that server. A server without one keeps the usual checks, whatever the other server of the account has (D-082, changes D-058). Used by fetch, watch, send, the connection test and calendar sync (the calendar server counts as a server of its own).
+- `account.trust-certificate` now needs `host` and `port`. Entries saved before (a bare fingerprint) keep working and apply to every server of the account, as they did.
+- Tests: one server's certificate does not touch the other, other port, older form, the pin format and its checks. The 0.0.71 open item is closed.

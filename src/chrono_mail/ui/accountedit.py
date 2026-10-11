@@ -27,9 +27,10 @@ from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import green, red, red_style
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 0.0.66"
+__version__ = "accountedit.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.66: Tab for the calendar and contacts server
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
@@ -207,7 +208,7 @@ class AccountEditDialog(QDialog):
             def failed(error: ChronoMailError) -> None:
                 self.dav_result.setText(f"<span style='{red_style()}'>{error}</span>")
 
-            self._backend.call("account.trust-certificate", {"account": str(getattr(self._account, "account_id")), "fingerprint": fingerprint}, done, failed, owner=self)
+            self._backend.call("account.trust-certificate", {"account": str(getattr(self._account, "account_id")), "host": address[0], "port": address[1], "fingerprint": fingerprint}, done, failed, owner=self)
 
         inspect_and_ask(self._backend, self, address[0], address[1], "tls", "imap", accepted)
 
@@ -390,7 +391,7 @@ class AccountEditDialog(QDialog):
     def _show_certificates(self) -> None:
         count = len(self.trusted)
         self.certificates_label.setText(
-            f"{count} server certificate(s) accepted for this account. Only exactly those certificates are trusted; a different one is refused until you look at it again."
+            f"{count} server certificate(s) accepted for this account. Each is trusted only for the server it was accepted for, and only exactly that certificate; a different one from that server is refused until you look at it again."
             if count else "No server certificate was accepted for this account: the usual checks apply."
         )
         self.forget_certificates_button.setEnabled(count > 0)
@@ -408,7 +409,7 @@ class AccountEditDialog(QDialog):
                 self._show_certificates()
                 self.result_label.setText("The certificate was accepted.")
 
-            self._backend.call("account.trust-certificate", {"account": str(getattr(self._account, "account_id")), "fingerprint": fingerprint}, done, self._certificate_failed, owner=self)
+            self._backend.call("account.trust-certificate", {"account": str(getattr(self._account, "account_id")), "host": host, "port": port, "fingerprint": fingerprint}, done, self._certificate_failed, owner=self)
 
         inspect_and_ask(self._backend, self, host, port, security, kind, accepted)
 

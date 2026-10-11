@@ -98,3 +98,5 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 ## Milestone 6: Microsoft (OAuth2, Graph: mail, calendar, contacts, To Do)
 ## Milestone 7: On-premises Exchange (ActiveSync, testable on the Kerio server; or EWS), only when needed
 - DONE (0.0.70) The Inboxes heading is removed from the folder tree (it was never requested, D-061).
+- DONE (0.0.71) Add account dialog: a certificate accepted for a server address is dropped when that address, port or security changes.
+- DONE (0.0.72) Accepted certificates are kept per server (host and port), D-082.

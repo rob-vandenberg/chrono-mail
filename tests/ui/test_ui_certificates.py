@@ -17,9 +17,11 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.ui.world import REGISTRY, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_certificates.py 0.0.43"
+__version__ = "test_ui_certificates.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
+# v0.0.71: A certificate accepted for an address that was changed afterwards is not used
 # v0.0.43: Initial certificate exception window tests
 
 
@@ -80,7 +82,29 @@ def test_an_untrusted_server_leads_to_the_certificate_and_then_to_a_working_acco
     dialog.add_button.click()
     wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
     created = REGISTRY.run(secure.backend.engine, "account.list", {})
-    assert isinstance(created, tuple) and set(getattr(created[0], "trusted_certificates")) == set(dialog.trusted)
+    assert isinstance(created, tuple) and set(getattr(created[0], "trusted_certificates")) == set(dialog.trusted) and all("=" in pin for pin in dialog.trusted)
+
+
+def test_a_certificate_accepted_for_an_address_that_was_changed_is_dropped(secure: Setup, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    dialog = AccountDialog(secure.backend)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    fill(dialog, secure)
+    dialog.test_button.click()
+    wait(qtbot, lambda: not dialog.certificate_button.isHidden())
+    shown: list[CertificateDialog] = []
+    accept_certificates(monkeypatch, shown)
+    dialog.certificate_button.click()
+    wait(qtbot, lambda: len(shown) == 2 and len(dialog.trusted) == 2)
+    incoming_pin, outgoing_pin = (item.fingerprint for item in shown)
+    dialog.outgoing_host.setText("localhost")  # the outgoing server address was wrong and is corrected
+    assert [pin.split("=")[1] for pin in dialog.trusted] == [incoming_pin] and outgoing_pin not in "".join(dialog.trusted)
+    dialog.outgoing_host.setText("127.0.0.1")  # back to the address the certificate was accepted for
+    assert {pin.split("=")[1] for pin in dialog.trusted} == {incoming_pin, outgoing_pin}
+    dialog.incoming_port.setValue(dialog.incoming_port.value() + 1)
+    assert [pin.split("=")[1] for pin in dialog.trusted] == [outgoing_pin]
+    dialog.outgoing_security.setCurrentIndex(dialog.outgoing_security.findData("starttls"))
+    assert dialog.trusted == []
 
 
 def test_cancelling_the_certificate_dialog_accepts_nothing(secure: Setup, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

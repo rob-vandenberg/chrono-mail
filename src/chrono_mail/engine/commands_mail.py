@@ -25,9 +25,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.67"
+__version__ = "commands_mail.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.67: Messages that are sent again and again
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: replies are sent from the account the message was addressed to
@@ -300,7 +301,7 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
             raise UsageError("Repeating needs the time of the first send (send_at)")
         if parameters.send_at:
             return _schedule(engine, mailbox, outgoing, parameters)
-        outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings))
+        outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings, outgoing=True))
         if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
             try:
                 source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))

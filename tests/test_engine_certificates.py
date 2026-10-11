@@ -14,9 +14,10 @@ from tests.mailfactory import raw_message
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_certificates.py 0.0.43"
+__version__ = "test_engine_certificates.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.43: Initial certificate exception tests
 
 MESSAGE = raw_message(subject="Over TLS", body="x\r\n", message_id="<tls1@x>")
@@ -114,9 +115,9 @@ def test_an_account_with_an_accepted_certificate_works_and_forgetting_it_stops_i
             call(engine, "mail.fetch", account=account)
         unsent = call(engine, "mail.send", account=account, to="you@example.com", subject="Refused", body="x")
         assert not unsent.sent and "certificate" in (unsent.error or "")
-        call(engine, "account.trust-certificate", account=account, fingerprint=pop_pin)
-        call(engine, "account.trust-certificate", account=account, fingerprint=pop_pin)  # twice is the same
-        assert call(engine, "account.list")[0].trusted_certificates == (pop_pin,)
+        call(engine, "account.trust-certificate", account=account, host="127.0.0.1", port=pop.port, fingerprint=pop_pin)
+        call(engine, "account.trust-certificate", account=account, host="127.0.0.1", port=pop.port, fingerprint=pop_pin)  # twice is the same
+        assert call(engine, "account.list")[0].trusted_certificates == (f"127.0.0.1:{pop.port}={pop_pin}",)
         assert call(engine, "mail.fetch", account=account).aborted is None
 
 
@@ -145,6 +146,39 @@ def test_imap_watching_and_sending_use_the_accepted_certificate(tmp_path: Path) 
         imap.add("INBOX", MESSAGE)
         assert call(engine, "mail.fetch", account=str(created.account_id)).downloaded == 1
         assert call(engine, "mail.wait", account=str(created.account_id), seconds=1).supported
+
+
+def test_a_certificate_accepted_for_one_server_does_not_touch_the_other(tmp_path: Path) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    pop_context, _ = make_certificate(tmp_path / "a")
+    smtp_context, _ = make_certificate(tmp_path / "b")
+    engine = make_engine(tmp_path / "e")
+    with FakePop3Server({}, implicit_tls=pop_context) as pop, FakeSmtpServer(implicit_tls=smtp_context) as smtp:
+        pop_pin, smtp_pin = inspect(engine, pop.port).fingerprint, inspect(engine, smtp.port, kind="smtp").fingerprint
+        only_pop = check(engine, pop.port, [f"127.0.0.1:{pop.port}={pop_pin}"], smtp_port=smtp.port)
+        assert only_pop.incoming_ok and not only_pop.outgoing_ok
+        assert "certificate" in only_pop.outgoing_message and "not the certificate you accepted" not in only_pop.outgoing_message  # the usual checks apply to it
+        both = check(engine, pop.port, [f"127.0.0.1:{pop.port}={pop_pin}", f"127.0.0.1:{smtp.port}={smtp_pin}"], smtp_port=smtp.port)
+        assert both.incoming_ok and both.outgoing_ok
+        wrong_way = check(engine, pop.port, [f"127.0.0.1:{pop.port}={smtp_pin}", f"127.0.0.1:{smtp.port}={pop_pin}"], smtp_port=smtp.port)
+        assert "not the certificate you accepted" in wrong_way.incoming_message and "not the certificate you accepted" in wrong_way.outgoing_message
+        other_port = check(engine, pop.port, [f"127.0.0.1:{pop.port + 1}={pop_pin}"], smtp_port=smtp.port)
+        assert not other_port.incoming_ok and "not the certificate you accepted" not in other_port.incoming_message  # a pin for another port is not used here
+        older_form = check(engine, pop.port, [pop_pin], smtp_port=smtp.port)  # a bare fingerprint still applies to every server of the account
+        assert older_form.incoming_ok and "not the certificate you accepted" in older_form.outgoing_message
+
+
+def test_pins_are_written_in_one_form_and_checked() -> None:
+    from chrono_mail.config import fingerprints_for, server_pin, valid_pin
+
+    pin = server_pin(" Mail.Example.COM ", 995, "a" * 64)
+    assert pin == "mail.example.com:995=" + "a" * 64 and valid_pin(pin) and valid_pin("a" * 64) and valid_pin(server_pin("::1", 993, "b" * 64))
+    for bad in ("", "a" * 63, "mail.example.com=" + "a" * 64, ":995=" + "a" * 64, "mail:0=" + "a" * 64, "mail:99999=" + "a" * 64, "Mail:995=" + "a" * 64, "mail:995=" + "A" * 64, "mail:995=" + "a" * 64 + "=x"):
+        assert not valid_pin(bad)
+    pins = (pin, "c" * 64, server_pin("other.example.com", 995, "d" * 64))
+    assert fingerprints_for(pins, "MAIL.example.com", 995) == {"a" * 64, "c" * 64}
+    assert fingerprints_for(pins, "mail.example.com", 465) == {"c" * 64} and fingerprints_for((pin,), "mail.example.com", 465) == frozenset()
 
 
 def test_the_pinned_context_trusts_only_what_it_is_told_to(tmp_path: Path) -> None:

@@ -9,6 +9,9 @@ from chrono_mail.config.model import (
     AppConfig,
     Pop3DeletePolicy,
     Pop3Options,
+    fingerprints_for,
+    server_pin,
+    valid_pin,
 )
 from chrono_mail.config.passwords import (
     InMemoryPasswordStore,
@@ -22,9 +25,10 @@ from chrono_mail.config.sidebar import Group, Pin, Sidebar, load_sidebar, parse_
 from chrono_mail.config.rules import Action, Condition, Rule, RuleSet, load_rules, new_rule_id, parse_rules, rules_to_text, save_rules
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 0.0.60"
+__version__ = "__init__.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.33: Export the rules
@@ -38,6 +42,9 @@ def new_account_id() -> str:
 
 
 __all__ = [
+    "fingerprints_for",
+    "server_pin",
+    "valid_pin",
     "TagColours",
     "load_tags",
     "parse_tags",

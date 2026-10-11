@@ -17,15 +17,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.config import server_pin
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import green, red
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 0.0.51"
+__version__ = "accountdialog.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
+# v0.0.71: A certificate accepted for a server address is no longer used after the address, port or security changed
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.43: accepted certificates
@@ -52,7 +55,7 @@ class AccountDialog(QDialog):
     def __init__(self, backend: Backend, first_account: bool = False, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
-        self.trusted: list[str] = []  # fingerprints of server certificates the person accepted in this dialog
+        self._pins: dict[str, tuple[tuple[str, int, str], str]] = {}  # incoming/outgoing -> (host, port, security) it was accepted for, fingerprint
         self._cert_servers: list[str] = []
         self.created_account_id: str | None = None
         self.key_created: bool = False
@@ -187,6 +190,17 @@ class AccountDialog(QDialog):
         self._cert_servers = [name for name, message in messages if "certificate" in message.lower()]
         self.certificate_button.setVisible(bool(self._cert_servers))
 
+    def _endpoint(self, which: str) -> tuple[str, int, str]:
+        """The host, port and security as they stand now for the incoming or the outgoing server."""
+        if which == "incoming":
+            return self.incoming_host.text().strip(), self.incoming_port.value(), str(self.incoming_security.currentData())
+        return self.outgoing_host.text().strip(), self.outgoing_port.value(), str(self.outgoing_security.currentData())
+
+    @property
+    def trusted(self) -> list[str]:
+        """The certificates the person accepted for the servers as they are now, each for its own server (host:port=fingerprint): one accepted for an address that was changed since is dropped."""
+        return [server_pin(endpoint[0], endpoint[1], fingerprint) for which, (endpoint, fingerprint) in self._pins.items() if endpoint == self._endpoint(which)]
+
     def _look_at_certificates(self) -> None:
         servers = list(self._cert_servers)
 
@@ -201,8 +215,7 @@ class AccountDialog(QDialog):
                 host, port, security, kind = self.outgoing_host.text().strip(), self.outgoing_port.value(), str(self.outgoing_security.currentData()), "smtp"
 
             def accepted(fingerprint: str) -> None:
-                if fingerprint not in self.trusted:
-                    self.trusted.append(fingerprint)
+                self._pins[which] = ((host, port, security), fingerprint)
                 ask_next()
 
             inspect_and_ask(self._backend, self, host, port, security, kind, accepted)

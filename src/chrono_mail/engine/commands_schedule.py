@@ -17,9 +17,10 @@ from chrono_mail.mime import Address, OutgoingMessage, ParsedMessage, parse_mess
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 0.0.67"
+__version__ = "commands_schedule.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.67: Messages that are sent again and again
 # v0.0.45: accounts that share Local Folders: the sender is found by the From address
 # v0.0.43: Certificate exceptions
@@ -180,7 +181,7 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                 try:
                     outcome = send_and_file(
                         mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX,
-                        mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference), ssl_context=engine.tls_context(sender),
+                        mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference), ssl_context=engine.tls_context(sender, outgoing=True),
                     )
                 except ChronoMailError as error:
                     failed.append(f"{parsed.subject}: {error}")
@@ -234,7 +235,7 @@ def _send_repeats(engine: Engine, members: list[AccountSettings], mailbox: Mailb
             try:
                 outcome = send_and_file(
                     mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX, mailbox.role_folder(FolderRole.SENT),
-                    ssl_context=engine.tls_context(sender),
+                    ssl_context=engine.tls_context(sender, outgoing=True),
                 )
                 if not outcome.sent:
                     error = outcome.error or "the server refused the message"

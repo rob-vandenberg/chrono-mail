@@ -11,7 +11,9 @@ from chrono_mail.config import (
     Pop3DeletePolicy,
     Pop3Options,
     ServerRole,
+    fingerprints_for,
     new_account_id,
+    server_pin,
 )
 from chrono_mail.core import (
     Account,
@@ -40,9 +42,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.69"
+__version__ = "commands_accounts.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.69: An account is the same account only with the same user name, incoming server and protocol (not the same e-mail address); labels that tell accounts apart
 # v0.0.66: Address and user name of the calendar and contacts server in the summary
 # v0.0.47: Pinned favorites, account groups and search in combined views
@@ -101,6 +104,22 @@ def _fingerprints(values: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(found)
 
 
+def _pins(values: tuple[str, ...]) -> tuple[str, ...]:
+    """Accepted certificates as typed: a fingerprint (for every server of the account) or host:port=fingerprint (for that server only)."""
+    found: list[str] = []
+    for value in values:
+        server, separator, fingerprint = value.rpartition("=")
+        (checked,) = _fingerprints((fingerprint if separator else value,))
+        if separator:
+            host, _, port = server.rpartition(":")
+            if not host.strip() or not port.isdigit() or not 1 <= int(port) <= 65535:
+                raise UsageError("An accepted certificate for one server is written host:port=fingerprint")
+            checked = server_pin(host, int(port), checked)
+        if checked not in found:
+            found.append(checked)
+    return tuple(found)
+
+
 def _security(value: str) -> ConnectionSecurity:
     return ConnectionSecurity(value)
 
@@ -128,7 +147,7 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
     )
     settings = AccountSettings(
         account, Pop3Options(Pop3DeletePolicy(parameters.delete_policy), parameters.delete_days), parameters.encrypted,
-        trusted_certificates=_fingerprints(parameters.trusted_certificate), storage=parameters.storage,
+        trusted_certificates=_pins(parameters.trusted_certificate), storage=parameters.storage,
     )
     key: DataKey | None = None
     key_created = False
@@ -186,9 +205,10 @@ class AccountCheckResult:
 
 def account_check(engine: Engine, parameters: AccountCheckParameters) -> AccountCheckResult:
     """Try to connect and log in to both servers, before an account is created. Nothing is stored or sent."""
-    context = context_for(frozenset(_fingerprints(parameters.trusted_certificate)))
+    pins = _pins(parameters.trusted_certificate)
     try:
         incoming = ServerSettings(parameters.incoming_host.strip(), parameters.incoming_port, _security(parameters.incoming_security), parameters.username)
+        context = context_for(fingerprints_for(pins, incoming.host, incoming.port))
         if parameters.kind == "imap":
             ImapClient(incoming, parameters.password, ImapLimits(connect_timeout_seconds=15, read_timeout_seconds=20), context).connect()
         else:
@@ -198,7 +218,7 @@ def account_check(engine: Engine, parameters: AccountCheckParameters) -> Account
         incoming_ok, incoming_message = False, str(error)
     try:
         outgoing = ServerSettings(parameters.outgoing_host.strip(), parameters.outgoing_port, _security(parameters.outgoing_security), parameters.outgoing_username or parameters.username)
-        check_login(outgoing, parameters.outgoing_password or parameters.password, SmtpLimits(timeout_seconds=20), context)
+        check_login(outgoing, parameters.outgoing_password or parameters.password, SmtpLimits(timeout_seconds=20), context_for(fingerprints_for(pins, outgoing.host, outgoing.port)))
         outgoing_ok, outgoing_message = True, "Connected and logged in"
     except ChronoMailError as error:
         outgoing_ok, outgoing_message = False, str(error)
@@ -555,6 +575,8 @@ def certificate_inspect(engine: Engine, parameters: CertificateParameters) -> Ce
 @dataclass(frozen=True, slots=True)
 class TrustParameters:
     account: str = field(metadata=option("The account"))
+    host: str = field(metadata=option("The server the certificate belongs to"))
+    port: int = field(metadata=option("The port of that server"))
     fingerprint: str = field(metadata=option("The SHA-256 fingerprint of the certificate to accept, as shown by certificate.inspect"))
 
 
@@ -562,7 +584,7 @@ def account_trust_certificate(engine: Engine, parameters: TrustParameters) -> Ac
     """Accept one server certificate for an account, on the person's explicit say-so. Only that exact certificate is trusted."""
     config = engine.config()
     settings = engine.resolve_account(parameters.account, config)
-    (new,) = _fingerprints((parameters.fingerprint,))
+    (new,) = _pins((f"{parameters.host}:{parameters.port}={parameters.fingerprint}",))
     if new in settings.trusted_certificates:
         return _summary(settings)
     changed = replace(settings, trusted_certificates=(*settings.trusted_certificates, new))

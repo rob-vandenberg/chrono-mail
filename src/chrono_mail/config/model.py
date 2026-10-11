@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import LOCAL_ACCOUNT_ID, Account, AccountKind, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.66"
+__version__ = "model.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.66: address and user name of the calendar and contacts server
 # v0.0.45: storage of an account (own folders or Local Folders)
 # v0.0.44: Folder choices, roles and check interval per account
@@ -19,6 +20,27 @@ ACCOUNT_ID_PATTERN: re.Pattern[str] = re.compile(r"[0-9a-f]{32}")  # used in dir
 MAXIMUM_DELETE_AFTER_DAYS: int = 3650
 MAXIMUM_SIGNATURE_CHARACTERS: int = 4000
 MAXIMUM_TRUSTED_CERTIFICATES: int = 10
+_HEXADECIMAL = "0123456789abcdef"
+
+
+def server_pin(host: str, port: int, fingerprint: str) -> str:
+    """An accepted certificate for one server: host:port=fingerprint (host in lower case)."""
+    return f"{host.strip().lower()}:{port}={fingerprint}"
+
+
+def valid_pin(text: str) -> bool:
+    """A bare SHA-256 fingerprint (an older entry, for every server of the account) or a server pin in exactly the form server_pin makes."""
+    if "=" not in text:
+        return len(text) == 64 and all(character in _HEXADECIMAL for character in text)
+    server, _, fingerprint = text.rpartition("=")
+    host, _, port = server.rpartition(":")
+    return bool(host) and port.isdigit() and 1 <= int(port) <= 65535 and valid_pin(fingerprint) and "=" not in fingerprint and text == server_pin(host, int(port), fingerprint)
+
+
+def fingerprints_for(pins: tuple[str, ...], host: str, port: int) -> frozenset[str]:
+    """The fingerprints accepted for one server: the ones pinned to its host and port and the bare ones of older entries."""
+    wanted = f"{host.strip().lower()}:{port}="
+    return frozenset(pin.removeprefix(wanted) if pin.startswith(wanted) else pin for pin in pins if "=" not in pin or pin.startswith(wanted))
 MAXIMUM_CHECK_MINUTES: int = 240
 
 
@@ -68,8 +90,8 @@ class AccountSettings:
             raise ConfigurationError(f"The number of minutes between checks must be between 0 and {MAXIMUM_CHECK_MINUTES}")
         if len(self.trusted_certificates) > MAXIMUM_TRUSTED_CERTIFICATES or len(set(self.trusted_certificates)) != len(self.trusted_certificates):
             raise ConfigurationError("Too many accepted certificates (or one twice)")
-        if any(len(item) != 64 or any(character not in "0123456789abcdef" for character in item) for item in self.trusted_certificates):
-            raise ConfigurationError("An accepted certificate is a SHA-256 fingerprint: 64 lower-case hexadecimal characters")
+        if not all(valid_pin(item) for item in self.trusted_certificates):
+            raise ConfigurationError("An accepted certificate is a server (host:port) and a SHA-256 fingerprint of 64 lower-case hexadecimal characters")
 
 
 @dataclass(frozen=True, slots=True)

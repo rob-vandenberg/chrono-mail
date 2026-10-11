@@ -11,9 +11,10 @@ from tests.test_engine_commands import call
 from tests.test_sync_dav import card, event, task
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_dav.py 0.0.66"
+__version__ = "test_engine_dav.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.66: Initial tests of the commands for the calendar and contacts server
 
 
@@ -70,5 +71,5 @@ def test_a_certificate_that_was_accepted_for_the_account_is_used(tmp_path: Path)
         call(engine, "account.set-dav", account=account, url=server.url)
         with pytest.raises(Exception, match="certificate"):
             call(engine, "dav.sync", account=account)
-        call(engine, "account.trust-certificate", account=account, fingerprint=fingerprint(server.certificate))
+        call(engine, "account.trust-certificate", account=account, host="127.0.0.1", port=int(server.url.rsplit(":", 1)[1].split("/")[0]), fingerprint=fingerprint(server.certificate))
         assert call(engine, "dav.sync", account=account)[0].errors == ()

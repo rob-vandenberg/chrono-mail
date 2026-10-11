@@ -1,7 +1,8 @@
 import threading
+import urllib.parse
 from dataclasses import dataclass, field, replace
 
-from chrono_mail.config import AccountSettings, ServerRole
+from chrono_mail.config import AccountSettings, ServerRole, fingerprints_for
 from chrono_mail.core import AccountKind, ConfigurationError, LOCAL_ACCOUNT_ID
 from chrono_mail.engine.commands_accounts import AccountSummary, _summary
 from chrono_mail.engine.pimaccess import open_pim
@@ -11,9 +12,10 @@ from chrono_mail.protocols.dav import DavClient
 from chrono_mail.sync.davsync import sync_dav
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 0.0.66"
+__version__ = "commands_dav.py 0.0.72"
 
 # --- Version history ----------------------------------------------------
+# v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.66: Initial commands for the calendars, task lists and address books on a CalDAV and CardDAV server
 
 _LOCKS: dict[str, threading.Lock] = {}
@@ -34,7 +36,8 @@ def _client(engine: Engine, settings: AccountSettings, url: str = "", username: 
     if secret is None:
         raise ConfigurationError("No password is stored for the calendar and contacts server")
     user = (username if username is not None else settings.dav_username) or settings.account.incoming.username
-    return DavClient(address, user, secret, frozenset(settings.trusted_certificates))
+    parts = urllib.parse.urlsplit(address)
+    return DavClient(address, user, secret, fingerprints_for(settings.trusted_certificates, parts.hostname or "", parts.port or 443))
 
 
 @dataclass(frozen=True, slots=True)
