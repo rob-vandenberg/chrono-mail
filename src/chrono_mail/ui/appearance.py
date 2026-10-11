@@ -4,19 +4,23 @@ from dataclasses import dataclass
 from typing import cast
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QPalette
+from PySide6.QtGui import QFont, QPalette
 from PySide6.QtWidgets import QApplication
 
 from chrono_mail.ui import prefs
 from chrono_mail.ui.colours import dark_palette, light_palette, menu_palette
 
 # --- Version ------------------------------------------------------------
-__version__ = "appearance.py 0.0.56"
+__version__ = "appearance.py 0.0.82"
 
 # --- Version history ----------------------------------------------------
+# v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.51: Initial colour scheme (system, light, dark) and style (platform, Fusion)
 
+MINIMUM_FONT_POINTS: int = 8
+MAXIMUM_FONT_POINTS: int = 48
+FALLBACK_FONT_POINTS: int = 10  # for a platform font that is sized in pixels
 SCHEMES: tuple[str, ...] = ("system", "light", "dark")
 STYLES: tuple[str, ...] = ("default", "fusion")
 CANNOT_DRAW_DARK: frozenset[str] = frozenset({"windowsvista", "windows"})  # the classic Windows styles ignore the dark scheme
@@ -31,6 +35,7 @@ class _State:
     style_given: bool = False  # -style on the command line (or QT_STYLE_OVERRIDE): then the style is not ours to choose
     settings: QSettings | None = None
     busy: bool = False
+    system_font: QFont | None = None  # the font the platform gave, before we changed its size
 
 
 _state = _State()
@@ -45,6 +50,14 @@ def keep_web_pages_light() -> None:
     flags = os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS", "")
     if LIGHT_PAGES_FLAG not in flags:
         os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = f"{flags} {LIGHT_PAGES_FLAG}".strip()
+
+
+def system_font_size(app: QApplication) -> int:
+    """The size in points of the font the platform gave, between the smallest and the largest size the settings allow."""
+    if _state.system_font is None:
+        _state.system_font = QFont(app.font())
+    points = _state.system_font.pointSizeF()
+    return max(MINIMUM_FONT_POINTS, min(MAXIMUM_FONT_POINTS, round(points) if points > 0 else FALLBACK_FONT_POINTS))
 
 
 def style_given(arguments: Sequence[str]) -> bool:
@@ -74,12 +87,25 @@ def start(app: QApplication, arguments: Sequence[str], settings: QSettings) -> N
     _state.platform_style = app.style().objectName()
     _state.style_given = style_given(arguments)
     _state.settings = settings
+    _state.system_font = QFont(app.font())
 
     def changed(scheme: Qt.ColorScheme) -> None:
         apply(app, settings)
 
     app.styleHints().colorSchemeChanged.connect(changed)
     apply(app, settings)
+
+
+def _apply_font_size(app: QApplication, settings: QSettings) -> None:
+    """The text size of the interface: the first time there is none in the settings, the size the system gave is saved, so the size is never 0."""
+    system = system_font_size(app)
+    if not settings.contains("ui_font_size"):
+        settings.setValue("ui_font_size", system)
+    size = prefs.get_int(settings, "ui_font_size", MINIMUM_FONT_POINTS, MAXIMUM_FONT_POINTS)
+    font = QFont(_state.system_font if _state.system_font is not None else app.font())
+    font.setPointSizeF(float(size))
+    if app.font() != font:
+        app.setFont(font)
 
 
 def apply(app: QApplication, settings: QSettings) -> None:
@@ -100,5 +126,6 @@ def apply(app: QApplication, settings: QSettings) -> None:
         # A platform does not always do what it is asked (Linux desktops mostly do not), so a chosen scheme brings its own colours.
         app.setPalette(QPalette() if scheme == "system" else (dark_palette() if dark else light_palette()))
         _colour_the_menus(app)
+        _apply_font_size(app, settings)
     finally:
         _state.busy = False

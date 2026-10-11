@@ -76,9 +76,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.81"
+__version__ = "mainwindow.py 0.0.82"
 
 # --- Version history ----------------------------------------------------
+# v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
@@ -565,7 +566,7 @@ class MainWindow(QMainWindow):
         for toolbar in (self.toolbar, *(page.toolbar for page in self.pages.values())):
             button = QToolButton(self)
             button.setObjectName("menuButton")
-            button.setText("\u2261  Menu")
+            button.setText("\u2630  Menu")
             button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             button.setMenu(root)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)

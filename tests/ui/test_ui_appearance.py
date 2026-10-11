@@ -15,9 +15,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.0.73"
+__version__ = "test_ui_appearance.py 0.0.82"
 
 # --- Version history ----------------------------------------------------
+# v0.0.82: Tests of the text size of the interface
 # v0.0.73: The menus are inside one Menu button
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.51: Initial colour scheme, style, colours and icons tests
@@ -158,3 +159,36 @@ def test_refresh_is_a_circle_of_two_arrows_and_the_file_menu_has_no_add_account(
     assert "Refresh" in texts and "Get mail" not in texts and not any("account" in text.lower() for text in texts)
     assert window.act_refresh in window.toolbar.actions()
     assert (icons.RESOURCES / "icons" / "refresh-cw.svg").exists() and icons.BUNDLED_ICONS["view-refresh"] == "refresh-cw"
+
+
+def test_the_interface_text_size_is_the_system_size_at_the_first_start_and_never_outside_8_to_48(app: QApplication, tmp_path: Path) -> None:
+    from PySide6.QtGui import QFont
+
+    original = QFont(app.font())
+    appearance._state.system_font = QFont(original)  # noqa: SLF001 - what start() remembers
+    system = appearance.system_font_size(app)
+    assert 8 <= system <= 48
+    first = settings(tmp_path)
+    assert not first.contains("ui_font_size")
+    appearance.apply(app, first)
+    assert int(str(first.value("ui_font_size"))) == system and app.font().pointSizeF() == float(system)  # saved, and never 0
+    appearance.apply(app, settings(tmp_path, ui_font_size=20))
+    assert app.font().pointSizeF() == 20.0
+    for wrong, expected in ((0, 8), (3, 8), (99, 48), ("text", system)):
+        appearance.apply(app, settings(tmp_path, ui_font_size=wrong))
+        assert app.font().pointSizeF() == float(expected if wrong != "text" else 10)  # a damaged value falls back to the placeholder
+    appearance.apply(app, settings(tmp_path, ui_font_size=system))
+    assert app.font().pointSizeF() == float(system)
+    app.setFont(original)  # the other tests start with the size they had
+
+
+def test_the_appearance_page_has_the_text_size_with_a_button_for_the_system_size(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    dialog = SettingsDialog(world.backend, world.window.settings, False, world.window._shortcut_registry(), world.window)  # noqa: SLF001
+    qtbot.addWidget(dialog)
+    assert (dialog.ui_font.minimum(), dialog.ui_font.maximum()) == (8, 48)
+    dialog.ui_font.setValue(30)
+    assert dialog.values()["ui_font_size"] == 30
+    dialog.ui_font_system.click()
+    assert dialog.ui_font.value() == dialog.system_font_points and 8 <= dialog.system_font_points <= 48

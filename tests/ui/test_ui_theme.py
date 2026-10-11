@@ -12,9 +12,10 @@ from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SEC
 from tests.ui.world import World, dialogs, menu_named, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 0.0.81"
+__version__ = "test_ui_theme.py 0.0.82"
 
 # --- Version history ----------------------------------------------------
+# v0.0.82: The Menu button shows the three-bar character U+2630
 # v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
 # v0.0.79: A test of the lines between the column headers
 # v0.0.78: Tests of the composer look and of rich text as the default
@@ -144,7 +145,7 @@ def test_the_menu_button_is_the_first_button_of_every_toolbar_and_the_menu_bar_r
     toolbars: list[QToolBar] = [window.toolbar, *(page.toolbar for page in window.pages.values())]
     assert len(toolbars) == 4 and len(window.menu_buttons) == 4
     for toolbar, button in zip(toolbars, window.menu_buttons, strict=True):
-        assert toolbar.widgetForAction(toolbar.actions()[0]) is button and button.text().endswith("Menu") and button.menu() is menu_named(window)
+        assert toolbar.widgetForAction(toolbar.actions()[0]) is button and button.text() == "\u2630  Menu" and button.menu() is menu_named(window)
     mail_actions = window.toolbar.actions()
     assert mail_actions[1] is window.act_new and mail_actions[2] is window.act_refresh
     assert window.menuBar().isHidden() and window.act_settings in window.actions() and window.act_quit in window.actions()

@@ -109,3 +109,4 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (0.0.79) The column headers of the message list have a thin line between them again (removed by mistake in 0.0.77).
 - DONE (0.0.80) The test run no longer crashes at the end (a web view waiting to be deleted at exit): the ui tests finish the pending deletions after each test.
 - DONE (0.0.81) The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button.
+- DONE (0.0.82) Text size of the interface under Appearance (8 to 48 pt; the first start saves the system size, so it is never 0), a button for the system size; the Menu button shows U+2630.

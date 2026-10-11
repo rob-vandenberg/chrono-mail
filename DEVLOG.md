@@ -829,3 +829,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - `test_mark_all_as_read_and_empty_folder` (tests/ui/test_ui_window.py) fails now and then: after "as read" the list rows are not always loaded yet when the test reads them (a race in the test). Not changed.
+
+## 2026-10-11 Text size of the interface (version 0.0.82)
+
+**What landed**
+- Settings > Appearance has "Text size of the interface" (8 to 48 pt) and a button "Use the system size". The first time there is no saved size, the size of the font the platform gave is saved, so the setting is never 0. The size is applied at once on OK. The list, message and writing sizes keep their own settings; the heading "Mail" and the icons have fixed sizes and do not scale.
+- The Menu button shows the character U+2630 (three bars), which is drawn larger than the one used before.
+
+**Still open**
+- Whether U+2630 is large enough in the owner's font: to be seen. Option if not: draw the symbol separately.
+- Tests run: appearance, theme and preferences only; the full suite was not run (owner's instruction).

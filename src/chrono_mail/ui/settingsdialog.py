@@ -5,6 +5,7 @@ from typing import override
 from PySide6.QtCore import QSettings, Qt, Signal
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -39,9 +40,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.70"
+__version__ = "settingsdialog.py 0.0.82"
 
 # --- Version history ----------------------------------------------------
+# v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
@@ -181,6 +183,19 @@ class SettingsDialog(QDialog):
         self.style_box = _combo(page, STYLE_LABELS, prefs.get_text(s, "style", appearance.STYLES))
         form.addRow("Colours", self.scheme_box)
         form.addRow("Style", self.style_box)
+        self.ui_font = QSpinBox(page)
+        self.ui_font.setRange(appearance.MINIMUM_FONT_POINTS, appearance.MAXIMUM_FONT_POINTS)
+        self.ui_font.setSuffix(" pt")
+        self.ui_font.setValue(prefs.get_int(s, "ui_font_size", appearance.MINIMUM_FONT_POINTS, appearance.MAXIMUM_FONT_POINTS))
+        self.ui_font_system = QPushButton("Use the system size", page)
+        app = QApplication.instance()
+        self.system_font_points: int = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
+        self.ui_font_system.clicked.connect(lambda: self.ui_font.setValue(self.system_font_points))
+        font_row = QHBoxLayout()
+        font_row.addWidget(self.ui_font)
+        font_row.addWidget(self.ui_font_system)
+        font_row.addStretch(1)
+        form.addRow("Text size of the interface", font_row)
         note = QLabel(
             "Dark needs a style that can draw it. When the style of the platform cannot (the classic Windows style), Fusion is used while the colours are dark. "
             "Messages in HTML are always shown on a white page: they are written for one. A style given on the command line (-style) is not changed here.",
@@ -550,7 +565,7 @@ class SettingsDialog(QDialog):
         return {
             "check_on_start": self.check_on_start.isChecked(), "auto_check": self.auto_check.isChecked(), "auto_check_minutes": self.interval.value(),
             "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
-            "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()),
+            "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()), "ui_font_size": self.ui_font.value(),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_font_size": self.list_font.value(), "conversations": self.conversations.isChecked(),
             "show_favorites": self.show_favorites.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
