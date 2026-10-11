@@ -33,9 +33,10 @@ from chrono_mail.ui.richeditor import RichEditor
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.53"
+__version__ = "composer.py 0.0.67"
 
 # --- Version history ----------------------------------------------------
+# v0.0.67: Messages that are sent again and again
 # v0.0.53: Standard keyboard shortcuts
 # v0.0.42: settings: autosave interval, subject warning, font size, reply under the quote
 # v0.0.35: Send later and snooze
@@ -474,11 +475,11 @@ class ComposeWindow(QMainWindow):
 
     def send_later(self) -> None:
         """Ask for a time and keep the message in the Outbox until then."""
-        dialog = WhenDialog("Send later", "Send this message at:", "Schedule", self)
+        dialog = WhenDialog("Send later", "Send this message at:", "Schedule", self, repeat=True)
         if dialog.exec() == WhenDialog.DialogCode.Accepted:
-            self.send(dialog.chosen())
+            self.send(dialog.chosen(), dialog.repeat_values())
 
-    def send(self, send_at: str | None = None) -> None:
+    def send(self, send_at: str | None = None, repeat: dict[str, object] | None = None) -> None:
         if self._sending or self._saving:
             return
         recipients = self._recipients()
@@ -502,6 +503,7 @@ class ComposeWindow(QMainWindow):
         }
         if send_at:
             values["send_at"] = send_at
+            values.update(repeat or {})
         if self.is_rich():
             values["html"] = self.rich.outgoing_html()
         if cc:

@@ -2,16 +2,17 @@ from collections.abc import Callable
 from typing import override
 
 from PySide6.QtGui import QShowEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "scheduledpanel.py 0.0.51"
+__version__ = "scheduledpanel.py 0.0.67"
 
 # --- Version history ----------------------------------------------------
+# v0.0.67: Messages that repeat can be paused, resumed and stopped
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.34: Initial window for scheduled and snoozed messages
@@ -35,6 +36,10 @@ class ScheduledPanel(QWidget):
         self.back_button = QPushButton("Take back as a draft", self)
         row.addWidget(self.now_button)
         row.addWidget(self.back_button)
+        self.pause_button = QPushButton("Pause", self)
+        self.stop_button = QPushButton("Stop repeating", self)
+        row.addWidget(self.pause_button)
+        row.addWidget(self.stop_button)
         row.addStretch(1)
         layout.addLayout(row)
         self.status = QLabel("", self)
@@ -42,6 +47,8 @@ class ScheduledPanel(QWidget):
         layout.addWidget(self.status)
         self.now_button.clicked.connect(self.now)
         self.back_button.clicked.connect(self.take_back)
+        self.pause_button.clicked.connect(self.pause_or_resume)
+        self.stop_button.clicked.connect(self.stop_repeating)
         self.list.currentItemChanged.connect(self._selection_changed)
         self._selection_changed()
         self.reload()
@@ -56,7 +63,11 @@ class ScheduledPanel(QWidget):
 
         def got_scheduled(result: object) -> None:
             for item in list(result) if isinstance(result, (tuple, list)) else []:
-                entries.append((int(getattr(item, "seconds")), f"Send {getattr(item, 'send_at')}   {getattr(item, 'subject') or '(no subject)'}  to {', '.join(getattr(item, 'to'))}", item))
+                text = f"Send {getattr(item, 'send_at')}   {getattr(item, 'subject') or '(no subject)'}  to {', '.join(getattr(item, 'to'))}"
+                if getattr(item, "repeat"):
+                    state = "paused" if getattr(item, "paused") else f"sent {getattr(item, 'times_sent')} times so far"
+                    text += f"   [{getattr(item, 'repeat')}; {state}]"
+                entries.append((int(getattr(item, "seconds")), text, item))
             self._backend.call("message.snoozed", {}, got_snoozed, self._failed, owner=self)
 
         def got_snoozed(result: object) -> None:
@@ -84,6 +95,10 @@ class ScheduledPanel(QWidget):
         info = self._selected()
         self.now_button.setEnabled(info is not None)
         self.back_button.setEnabled(info is not None and hasattr(info, "send_at"))
+        repeating = info is not None and bool(getattr(info, "repeat", ""))
+        self.pause_button.setEnabled(repeating)
+        self.stop_button.setEnabled(repeating)
+        self.pause_button.setText("Resume" if repeating and bool(getattr(info, "paused", False)) else "Pause")
 
     def now(self) -> None:
         info = self._selected()
@@ -94,6 +109,23 @@ class ScheduledPanel(QWidget):
             self._backend.call("mail.send-due", {"account": str(getattr(info, "account")), "message": str(getattr(info, "message_id"))}, done, self._failed, owner=self)
         else:
             self._backend.call("message.wake", {"account": str(getattr(info, "account")), "message": str(getattr(info, "message_id"))}, done, self._failed, owner=self)
+
+    def _repeat_call(self, command: str, text: str) -> None:
+        info = self._selected()
+        if info is None or not getattr(info, "repeat", ""):
+            return
+        self._backend.call(command, {"account": str(getattr(info, "account")), "folder": "Outbox", "message": str(getattr(info, "message_id"))}, self._done(text), self._failed, owner=self)
+
+    def pause_or_resume(self) -> None:
+        info = self._selected()
+        if info is not None and bool(getattr(info, "paused", False)):
+            self._repeat_call("mail.repeat-resume", "It is sent again from now on")
+        else:
+            self._repeat_call("mail.repeat-pause", "Paused")
+
+    def stop_repeating(self) -> None:
+        if QMessageBox.question(self, "Stop repeating", "Stop sending this message and remove it? What was sent already stays in the Sent folder.") == QMessageBox.StandardButton.Yes:
+            self._repeat_call("mail.repeat-cancel", "Stopped")
 
     def take_back(self) -> None:
         info = self._selected()

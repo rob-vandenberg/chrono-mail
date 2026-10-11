@@ -713,3 +713,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - 4.4 invitations and replies (iTIP). Making calendars and address books on the server from here (MKCALENDAR). A timer of its own for the calendar sync.
+
+## 2026-10-11 Messages that are sent again and again (version 0.0.67)
+
+**What landed**
+- `engine/recurring.py` (the schedule and its file), the repeat options of `mail.send`, the commands `mail.repeat-pause`, `-resume`, `-change`, `-cancel`; `mail.scheduled` and `mail.send-due` know repeating messages.
+- The "Send later" dialog has "Send it again and again, every ..." and "Stop after"; the scheduled-messages page shows the interval and the number of sends, and pauses, resumes and stops.
+- Tests: `tests/test_engine_recurring.py` (18), additions in `tests/ui/test_ui_schedule.py`.
+
+**Still open**
+- Google accounts (next, on the user's word), 4.4 invitations, Microsoft.

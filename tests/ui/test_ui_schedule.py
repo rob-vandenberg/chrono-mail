@@ -11,9 +11,10 @@ from tests.ui.test_ui_composer import fill, new_composer
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 0.0.50"
+__version__ = "test_ui_schedule.py 0.0.67"
 
 # --- Version history ----------------------------------------------------
+# v0.0.67: Repeating messages
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.34: Initial send later and snooze window tests
 
@@ -132,3 +133,42 @@ def test_a_snoozed_message_can_be_brought_back_from_the_window(world: World, qtb
     dialog.now_button.click()
     wait(qtbot, lambda: dialog.list.count() == 0)
     assert world.call("message.list", account=world.account_id, folder="Snoozed").total == 0
+
+
+def test_the_dialog_gives_the_repeat_values_only_when_asked(qtbot: QtBot) -> None:
+    plain = WhenDialog("t", "q", "ok", now=datetime(2026, 10, 7, 10, 30))
+    qtbot.addWidget(plain)
+    assert plain.repeat_values() == {} and plain.repeat_box.isHidden()
+    dialog = WhenDialog("t", "q", "ok", now=datetime(2026, 10, 7, 10, 30), repeat=True)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.repeat_values() == {} and not dialog.repeating.isEnabled()
+    dialog.repeat_box.setChecked(True)
+    dialog.days.setValue(5)
+    assert dialog.repeat_values() == {"repeat_months": 0, "repeat_weeks": 0, "repeat_days": 5}
+    dialog.until_box.setChecked(True)
+    assert str(dialog.repeat_values()["repeat_until"]).startswith("2026-11-06")
+
+
+def test_a_repeating_message_is_listed_paused_and_stopped_in_the_window(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    real_clock(world)
+    world.call("mail.send", account=world.account_id, to="you@example.com", subject="Weekly", body="x", send_at=in_hours(4), repeat_days=7)
+    dialog = ScheduledPanel(world.backend)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    wait(qtbot, lambda: dialog.list.count() == 1)
+    assert "every 7 days" in dialog.list.item(0).text() and dialog.pause_button.isEnabled() and dialog.pause_button.text() == "Pause"
+    dialog.pause_button.click()
+    wait(qtbot, lambda: "paused" in dialog.list.item(0).text())
+    assert dialog.pause_button.text() == "Resume"
+    dialog.pause_button.click()
+    wait(qtbot, lambda: "sent 0 times" in dialog.list.item(0).text())
+    from PySide6.QtWidgets import QMessageBox
+
+    def yes(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
+        return QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", yes)
+    dialog.stop_button.click()
+    wait(qtbot, lambda: dialog.list.count() == 0)
+    assert world.call("message.list", account=world.account_id, folder="Outbox").total == 0

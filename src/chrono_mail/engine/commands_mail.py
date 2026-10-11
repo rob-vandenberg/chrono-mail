@@ -12,6 +12,7 @@ from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_rules import apply_to_new
+from chrono_mail.engine.recurring import RECURRING_FILE, Repeat, load_repeats, save_repeats
 from chrono_mail.engine.schedule import describe_when, parse_when
 from chrono_mail.engine.compose import ComposeKind, build_draft, suggest_filename
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
@@ -24,9 +25,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.46"
+__version__ = "commands_mail.py 0.0.67"
 
 # --- Version history ----------------------------------------------------
+# v0.0.67: Messages that are sent again and again
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.45: replies are sent from the account the message was addressed to
 # v0.0.43: Certificate exceptions
@@ -189,6 +191,10 @@ class SendParameters:
     replaces_folder: str | None = field(default=None, metadata=option("The folder of a draft (or Outbox message) that this send replaces"))
     replaces_message: str | None = field(default=None, metadata=option("The id of a draft (or Outbox message) that is removed once this message was sent"))
     send_at: str | None = field(default=None, metadata=option("Send later: the local time, like 2026-10-11T09:00; the message waits in the Outbox"))
+    repeat_months: int = field(default=0, metadata=option("With send_at: send the message again every this many months (with the weeks and days: one interval)"))
+    repeat_weeks: int = field(default=0, metadata=option("With send_at: send the message again every this many weeks"))
+    repeat_days: int = field(default=0, metadata=option("With send_at: send the message again every this many days"))
+    repeat_until: str | None = field(default=None, metadata=option("With a repeat: the local time after which nothing is sent any more (default: never)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,13 +247,27 @@ def _source_attachments(mailbox: Mailbox, parameters: "SendParameters") -> tuple
 def _schedule(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, parameters: SendParameters) -> SendResult:
     """Keep the message in the Outbox, marked with the time it is to be sent (mail.send-due sends it then)."""
     when = parse_when(str(parameters.send_at), engine.clock())
-    notes: list[tuple[str, str]] = [("X-Chrono-Mail-Kind", "scheduled"), ("X-Chrono-Mail-Send-At", str(when))]
+    repeating = parameters.repeat_months or parameters.repeat_weeks or parameters.repeat_days
+    if parameters.repeat_until and not repeating:
+        raise UsageError("An end time needs an interval (repeat_days, repeat_weeks or repeat_months)")
+    repeat = (
+        Repeat(when, parse_when(parameters.repeat_until, engine.clock()) if parameters.repeat_until else None, parameters.repeat_months, parameters.repeat_weeks, parameters.repeat_days)
+        if repeating else None
+    )
+    notes: list[tuple[str, str]] = [("X-Chrono-Mail-Kind", "recurring" if repeat else "scheduled")]
+    if repeat is None:
+        notes.append(("X-Chrono-Mail-Send-At", str(when)))
     if parameters.source_folder and parameters.source_message:
         notes.append(("X-Chrono-Mail-Source", f"{parameters.source_folder}/{_check_id(parameters.source_message)}"))
         if parameters.mark_replied:
             notes.append(("X-Chrono-Mail-Mark-Replied", "1"))
     scheduled = replace(outgoing, extra_headers=tuple(notes))
     reference = mailbox.deliver(mailbox.folder("Outbox"), build_message(scheduled, draft=True), frozenset({MessageFlag.SEEN}))
+    if repeat is not None:  # the message stays in the Outbox as the pattern; the schedule is kept next to it
+        path = engine.directories.account_directory(mailbox.account_id) / RECURRING_FILE
+        repeats = load_repeats(path)
+        repeats[reference.store_id] = repeat
+        save_repeats(path, repeats)
     if parameters.replaces_folder and parameters.replaces_message:
         try:
             mailbox.delete(mailbox.reference(mailbox.folder(parameters.replaces_folder), _check_id(parameters.replaces_message)), permanent=True)
@@ -276,6 +296,8 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
             in_reply_to=parameters.in_reply_to,
             references=parameters.references or ((parameters.in_reply_to,) if parameters.in_reply_to else ()),
         )
+        if (parameters.repeat_months or parameters.repeat_weeks or parameters.repeat_days or parameters.repeat_until) and not parameters.send_at:
+            raise UsageError("Repeating needs the time of the first send (send_at)")
         if parameters.send_at:
             return _schedule(engine, mailbox, outgoing, parameters)
         outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings))
