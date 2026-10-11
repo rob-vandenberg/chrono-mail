@@ -38,6 +38,7 @@ A module may import only from its own layer or lower layers. Enforced by an auto
 | L0 | `core` |
 | L1 | `crypto`, `mime`, `config` |
 | L2 | `store`, `index`, `protocols` |
+| L2.5 | `pimstore` (storage for calendars, tasks and contacts, built on `store`) |
 | L3 | `sync` |
 | L4 | `engine` |
 | L5 | `cli`, `ui` |
@@ -154,7 +155,7 @@ Calendars (events), tasks and contacts next to mail, for every kind of account: 
 |---|---|---|
 | `core.pim` | L0 | Collection kinds, references to collections and items. |
 | `pim` | L1 | vCard and iCalendar parsing and building into typed items (`Contact`, `Event`, `Task`), recurrence, time zones, reminders. No I/O. Wraps `icalendar` and `recurring-ical-events`. |
-| `pimstore` | L2 | The encrypted item store and the rebuildable index for collections. |
+| `pimstore` | L2.5 | The encrypted item store and the rebuildable index for collections. It uses the atomic file writing of `store`, so it sits one step above it. |
 | `sync` | L3 | CalDAV and CardDAV (milestone 4), the provider APIs (milestones 5 and 6). |
 | `engine` | L4 | Commands: `calendar.*`, `event.*`, `task.*`, `contact.*`, `tag.*`. |
 | `ui` | L5 | The four sections. |

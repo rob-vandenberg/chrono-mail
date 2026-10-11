@@ -648,3 +648,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - 3.3 the encrypted item store and the index.
 
+## 2026-10-11 The store and index for calendars, tasks and contacts (version 0.0.59)
+
+**What landed**
+- `core/pim.py` (collection kinds), `pimstore` (collections, encrypted items, the SQLite index with search, tags, range and due queries, reconcile, rebuild, verify, purge); crash tests at every step of put, delete and move. 24 tests, with and without encryption.
+
+**Still open**
+- 3.4 engine commands.
+

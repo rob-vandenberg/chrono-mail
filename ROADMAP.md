@@ -77,7 +77,7 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 |---|---|---|
 | 3.1 | Design, dependencies, vCard (contacts): parsing, building, keeping unknown properties. | done (0.0.57) |
 | 3.2 | iCalendar (events and tasks): parsing, building, recurrence, time zones, reminders. | done (0.0.58) |
-| 3.3 | `pimstore`: encrypted items and the rebuildable index; local collections. | open |
+| 3.3 | `pimstore`: encrypted items and the rebuildable index; local collections. | done (0.0.59) |
 | 3.4 | Engine commands for collections, events, tasks, contacts and tags. | open |
 | 3.5 | The four-button shell: sections with their own sidebar, toolbar and status line. | open |
 | 3.6 | Contacts section (address books, list, detail, tags, History). | open |

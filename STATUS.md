@@ -4,12 +4,12 @@
 
 ## Where we are
 
-- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-071).
+- Design phase complete. All design decisions are in `DECISIONS.md` (D-001 to D-072).
 - **Milestone 0 is done** (0.4, GitHub Actions, is optional and not started). **Milestone 1: tasks 1.1 to 1.12 are done.** Open in milestone 1: 1.13 (Flatpak) and 1.14 (Windows run); 1.12 (key recovery) is done.
 - **There is a working graphical program to test**: `chrono-mail` (see below). Three-pane window: folders, message list, reading pane; get mail, read, reply, reply all, forward, new message, attachments (save and send), flag, mark read or unread, move, delete (Trash), folders (create, rename, delete), search with quick filters, first-run account setup with a connection test and the key recovery code screen. HTML mail is shown locked down (no scripts, remote content blocked until allowed per message).
 - The headless client still works: `chrono-mail-cli` (26 commands).
 - Verified against the real DirectAdmin server `mail.technova.us` through the engine and the CLI. The graphical program has been tested without a screen, with fake servers, and (one live test) against the real server through the window: compose, send, fetch, read, delete. **Nobody has used it on a real screen yet**: the first real use is the next step.
-- Project version 0.0.58 (Local Folders, Favorites, Inboxes, pinned folders, account groups and search in combined views done). About 8,100 lines in `src/` (2,500 of them the interface), 8,300 in `tests/`; 926 offline tests, 31 live tests (one drives the window against the real server), 1 credential-store test, 1 performance test.
+- Project version 0.0.59 (Local Folders, Favorites, Inboxes, pinned folders, account groups and search in combined views done). About 8,100 lines in `src/` (2,500 of them the interface), 8,300 in `tests/`; 926 offline tests, 31 live tests (one drives the window against the real server), 1 credential-store test, 1 performance test.
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main`. The last push is recorded in DEVLOG.md (version 0.0.12); the interface work (0.0.13) was pushed; everything up to 0.0.14 was pushed; later versions are pushed as they are finished (see the queue). The test account password (`chronomail@bccbox.com` on `mail.technova.us`) is only in the ignored `tests/live/account.local.toml`; it is still to be changed once the user decides POP3 and SMTP are proven.
 - KDEV is the development machine (Kubuntu 26). The project folder is `/home/rob/python/chrono-mail`.
 

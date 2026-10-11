@@ -15,11 +15,13 @@ from chrono_mail.core.errors import (
 from chrono_mail.core.flags import MessageFlag, flags_from_maildir_suffix, flags_to_maildir_suffix
 from chrono_mail.core.folder import Folder, FolderRole
 from chrono_mail.core.message import MessageRef
+from chrono_mail.core.pim import CollectionInfo, CollectionKind
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 0.0.45"
+__version__ = "__init__.py 0.0.59"
 
 # --- Version history ----------------------------------------------------
+# v0.0.59: Export the collection kinds
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.26: Version number in the About dialog
 # v0.0.10: Export AuthenticationError
@@ -28,6 +30,8 @@ __version__ = "__init__.py 0.0.45"
 # v0.0.2: Initial skeleton
 
 __all__ = [
+    "CollectionInfo",
+    "CollectionKind",
     "LOCAL_ACCOUNT_ID",
     "program_version",
     "Account",
