@@ -27,9 +27,10 @@ from PySide6.QtWidgets import (
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 0.0.42"
+__version__ = "reader.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.42: settings: remote content per sender, plain text first, zoom
 # v0.0.13: Initial reading pane
 
@@ -155,6 +156,7 @@ class ReaderWidget(QWidget):
         layout.setSpacing(0)
 
         self._header = QFrame(self)
+        self._header.setObjectName("readerHeader")
         header_layout = QVBoxLayout(self._header)
         header_layout.setContentsMargins(16, 12, 16, 8)
         self._subject = QLabel(self._header)
@@ -188,6 +190,7 @@ class ReaderWidget(QWidget):
         layout.addWidget(self._attachments)
 
         self._banner = QFrame(self)
+        self._banner.setObjectName("remoteBanner")
         self._banner.setFrameShape(QFrame.Shape.StyledPanel)
         banner_layout = QHBoxLayout(self._banner)
         self._banner_label = QLabel("Pictures and other content from the internet are not shown, to protect your privacy.", self._banner)
@@ -244,10 +247,11 @@ class ReaderWidget(QWidget):
         copies: tuple[str, ...] = getattr(shown, "cc")
         who = senders[0] if senders else "(unknown sender)"
         lines = [f"<b>{html.escape(who)}</b>"]
+        muted = self.palette().color(QPalette.ColorRole.PlaceholderText).name()
         if recipients:
-            lines.append(f"to {html.escape(', '.join(recipients))}")
+            lines.append(f'<span style="color:{muted}">to {html.escape(", ".join(recipients))}</span>')
         if copies:
-            lines.append(f"cc {html.escape(', '.join(copies))}")
+            lines.append(f'<span style="color:{muted}">cc {html.escape(", ".join(copies))}</span>')
         self._people.setText("<br>".join(lines))
         self._date.setText(long_date(getattr(shown, "date")))
         name = display_name(who)

@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.0.76"
+__version__ = "theme.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.73: Initial look of the main window: the Menu button, the toolbar, the search field, the folder list and the section buttons
 
@@ -33,6 +34,12 @@ QTreeView#folderTree {{ border: 0; background: palette(window); outline: 0; padd
 QTreeView#folderTree::item {{ padding: 4px 4px; border-radius: 4px; min-height: 22px; }}
 QTreeView#folderTree::item:hover:!selected {{ background: {HOVER}; }}
 QTreeView#folderTree::item:selected {{ background: palette(highlight); color: palette(highlighted-text); }}
+QTreeView#messageList {{ border: 0; outline: 0; }}
+QTreeView#messageList QHeaderView::section {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); padding: 5px 8px; }}
+QFrame#readerHeader {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
+QFrame#remoteBanner {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
+QFrame#remoteBanner QPushButton {{ background: {HOVER}; border: 0; border-radius: 4px; padding: 5px 12px; }}
+QFrame#remoteBanner QPushButton:hover {{ background: rgba(128, 128, 128, 0.4); }}
 QWidget#sectionBar {{ background: palette(window); border-top: 1px solid palette(mid); }}
 QToolButton#sectionButton {{ border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; }}
 QToolButton#sectionButton:hover {{ background: {HOVER}; }}

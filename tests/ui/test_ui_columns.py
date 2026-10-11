@@ -11,9 +11,10 @@ from chrono_mail.ui.messagewindow import MessageWindow
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.0.46"
+__version__ = "test_ui_columns.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Received instead of Date
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.41: Initial tests of the columns, the reading pane and message windows
 
@@ -98,7 +99,7 @@ def test_the_column_editor_returns_the_choice(qtbot: QtBot) -> None:
     dialog = ColumnsDialog(ListChoice("columns", ("subject", "date"), "bottom", "iso"))
     qtbot.addWidget(dialog)
     shown = [dialog.list.item(row).text() for row in range(dialog.list.count()) if dialog.list.item(row).checkState() == Qt.CheckState.Checked]
-    assert shown == ["Subject", "Date"] and dialog.list.item(0).text() == "Subject" and dialog.pane_box.currentData() == "bottom" and dialog.date_box.currentData() == "iso"
+    assert shown == ["Subject", "Received"] and dialog.list.item(0).text() == "Subject" and dialog.pane_box.currentData() == "bottom" and dialog.date_box.currentData() == "iso"
     dialog.list.setCurrentRow(1)
     dialog._move(-1)  # noqa: SLF001
     dialog.list.item(2).setCheckState(Qt.CheckState.Checked)

@@ -6,14 +6,16 @@ from PySide6.QtWidgets import QFrame, QToolButton
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import theme
+from chrono_mail.ui.columns import BY_ID, READ_MARK, cell_text
 from chrono_mail.ui.icons import TintedSvgEngine, section_icon
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SECTIONS, TASKS
 from tests.ui.world import World, dialogs, menu_named, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 0.0.76"
+__version__ = "test_ui_theme.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Tests of the message list and the reading pane
 # v0.0.76: Tests of the root of the Menu, blue accent and the section icons
 # v0.0.73: Initial tests of the look of the main window
 
@@ -71,3 +73,36 @@ def test_the_accent_is_the_blue_of_the_menus_and_the_section_icons_are_plain() -
     palette.setColor(QPalette.ColorRole.Highlight, QColor("#2a6fc4"))
     assert TintedSvgEngine.colour_for(QIcon.Mode.Normal, palette) == "#eeeeee" and TintedSvgEngine.colour_for(QIcon.Mode.Normal, palette, accent=True) == "#2a6fc4"
     assert not section_icon("check").isNull() and all(not section_icon(stem).isNull() for stem in SECTION_ICONS.values())
+
+
+def test_the_list_says_received_and_marks_unread_with_a_blue_dot_and_read_with_a_circle(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QBrush, QGuiApplication
+
+    from tests.ui.test_ui_window import started
+
+    started(qtbot, world)
+    window = world.window
+    assert BY_ID["date"].label == "Received" and window.sort_button.text() == "Sorted by Received \u25be"
+    row = window.list_model.row_at(0)
+    assert "seen" not in getattr(row, "flags") and cell_text("status", row, False) == "\u25cf"
+    column = window.list_model.columns.index("status")
+    unread = window.list_model.index(0, column).data(Qt.ItemDataRole.ForegroundRole)
+    assert isinstance(unread, QBrush) and unread.color() == QGuiApplication.palette().highlight().color()
+    seen = type("Seen", (), {"flags": ("seen",), "sender": "", "recipients": ""})()
+    assert cell_text("status", seen, False) == READ_MARK
+
+
+def test_the_list_header_the_reading_pane_header_and_the_banner_are_styled_and_a_message_window_has_the_look(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    sheet = theme.stylesheet()
+    assert window.list_view.objectName() == "messageList" and "QTreeView#messageList" in sheet
+    assert window.reader._header.objectName() == "readerHeader" and "QFrame#readerHeader" in sheet  # noqa: SLF001
+    assert window.reader._banner.objectName() == "remoteBanner" and "QFrame#remoteBanner" in sheet  # noqa: SLF001
+    from tests.ui.test_ui_reader import shown
+
+    from chrono_mail.ui.messagewindow import MessageWindow
+
+    opened = MessageWindow(window.backend, "a", "INBOX", "m", shown(html="", text="x"), lambda *args: None, lambda url: None, window._prepare_message_reader)  # noqa: SLF001
+    qtbot.addWidget(opened)
+    assert opened.styleSheet() == sheet

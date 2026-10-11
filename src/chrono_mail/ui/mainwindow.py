@@ -76,9 +76,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.76"
+__version__ = "mainwindow.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.75: The folder list remembers which headings, accounts and folders are open, also after a restart
 # v0.0.74: A message window gets the privacy settings before it shows the message and saves Always for this sender
@@ -124,7 +125,7 @@ AUTO_CHECK_MINUTES: int = 5
 DUE_CHECK_MS: int = 60_000
 WATCH_SECONDS: int = 300
 WATCH_RETRY_MS: int = 60_000
-SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Date"), ("subject", "Subject"), ("sender", "Sender"), ("size", "Size"))
+SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Received"), ("subject", "Subject"), ("sender", "Sender"), ("size", "Size"))
 _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-outbox", "drafts": "document-edit", "trash": "user-trash", "junk": "mail-mark-junk", "archive": "folder-archive", "other": "folder"}
 
 
@@ -243,6 +244,7 @@ class MainWindow(QMainWindow):
         self._date_style: str = str(self.settings.value("date_style", "short"))
         self._message_windows: list[MessageWindow] = []
         self.list_view = MessageListView(self)
+        self.list_view.setObjectName("messageList")
         self.list_view.setModel(self.list_model)
         self.list_view.setRootIsDecorated(False)
         self.list_view.setItemsExpandable(False)
@@ -922,6 +924,8 @@ class MainWindow(QMainWindow):
     def _apply_reader_preferences(self) -> None:
         for reader in (self.reader, *(window.reader for window in self._message_windows)):
             self._set_reader_preferences(reader)
+        for window in self._message_windows:
+            window.setStyleSheet(theme.stylesheet())
 
     def _set_reader_preferences(self, reader: ReaderWidget) -> None:
         reader.always_remote = prefs.get_bool(self.settings, "remote_always")

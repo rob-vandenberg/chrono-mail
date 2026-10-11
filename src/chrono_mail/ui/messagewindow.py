@@ -6,14 +6,16 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QToolBar, QWidget
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.ui import theme
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.reader import ReaderWidget
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 0.0.74"
+__version__ = "messagewindow.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.74: A message window gets the privacy settings before it shows the message and saves Always for this sender
 # v0.0.53: Standard keyboard shortcuts
 # v0.0.41: Initial window for reading one message
@@ -33,6 +35,7 @@ class MessageWindow(QMainWindow):
         self.setWindowIcon(application_icon())
         self.setWindowTitle(str(getattr(shown, "subject")) or "(no subject)")
         self.resize(820, 640)
+        self.setStyleSheet(theme.stylesheet())  # a window of its own does not inherit the look of the main window
         self.reader = ReaderWidget(self)
         self.setCentralWidget(self.reader)
         prepare(self.reader)  # the privacy settings come before the message: what is allowed decides what is loaded

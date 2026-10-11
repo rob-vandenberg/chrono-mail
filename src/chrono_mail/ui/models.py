@@ -5,7 +5,7 @@ from enum import Enum
 from typing import override
 
 from PySide6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, QObject, QPersistentModelIndex, Qt, Signal
-from PySide6.QtGui import QFont, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QBrush, QFont, QGuiApplication, QPalette, QStandardItem, QStandardItemModel
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
@@ -14,9 +14,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.70"
+__version__ = "models.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.54: A flag change redraws every column of the row
@@ -195,6 +196,9 @@ class MessageListModel(QAbstractTableModel):
             return "…" if role == Qt.ItemDataRole.DisplayRole and index.column() == 0 else None
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return cell_text(column_id, row, self.recipients_first, self.date_style)
+        if role == Qt.ItemDataRole.ForegroundRole and column_id == "status":
+            palette = QGuiApplication.palette()
+            return QBrush(palette.color(QPalette.ColorRole.Highlight if "seen" not in getattr(row, "flags") else QPalette.ColorRole.PlaceholderText))  # blue dot: unread; faint circle: read
         if role == Qt.ItemDataRole.FontRole and "seen" not in getattr(row, "flags"):
             font = QFont()
             font.setBold(True)

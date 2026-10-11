@@ -6,9 +6,10 @@ from email.utils import getaddresses
 from chrono_mail.ui.formatting import display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 0.0.41"
+__version__ = "columns.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.41: Initial columns of the message list
 
 CARD: str = "card"  # the single column of the card layout
@@ -33,7 +34,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("from", "From", 200, "sender"),
     Column("to", "To", 200),
     Column("subject", "Subject", 300, "subject"),
-    Column("date", "Date", 110, "date"),
+    Column("date", "Received", 110, "date"),
     Column("size", "Size", 64, "size", right=True),
     Column("folder", "Folder", 110),
     Column("conversation", "Messages in conversation", 60, right=True),
@@ -42,6 +43,7 @@ COLUMNS: tuple[Column, ...] = (
 DEFAULT_COLUMNS: tuple[str, ...] = ("status", "flag", "attachment", "from_to", "subject", "date", "size")
 BY_ID: dict[str, Column] = {column.column_id: column for column in COLUMNS}
 SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎", "replied": "↩"}
+READ_MARK: str = "○"  # the dot of an unread message turns into an empty circle when it is read
 
 
 def valid_columns(wanted: list[str]) -> tuple[str, ...]:
@@ -89,7 +91,7 @@ def cell_text(column_id: str, row: object, recipients_first: bool, date_style: s
     flags: tuple[str, ...] = getattr(row, "flags")
     sender, recipients = str(getattr(row, "sender")), str(getattr(row, "recipients"))
     if column_id == "status":
-        return SYMBOLS["status"] if "seen" not in flags else ""
+        return SYMBOLS["status"] if "seen" not in flags else READ_MARK
     if column_id == "flag":
         return SYMBOLS["flag"] if "flagged" in flags else ""
     if column_id == "attachment":

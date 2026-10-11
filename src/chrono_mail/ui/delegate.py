@@ -8,9 +8,10 @@ from chrono_mail.ui.formatting import avatar_colour, display_name, initials, sho
 from chrono_mail.ui.models import ROW_ROLE
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.0.18"
+__version__ = "delegate.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.14: secondary text on a selected row has more contrast
 # v0.0.13: Initial message row painting
@@ -20,6 +21,7 @@ AVATAR_SIZE: int = 40
 QUIET_ALPHA: int = 170
 QUIET_ALPHA_SELECTED: int = 255  # on the highlight, secondary text is as strong as the main text: the theme's own pairing is the limit
 MARGIN: int = 12
+UNREAD_DOT: int = 8
 
 
 def _typed[T](option: QStyleOptionViewItem, name: str, expected: type[T]) -> T:
@@ -132,10 +134,10 @@ class MessageDelegate(QStyledItemDelegate):
         preview_rect = QRect(left, top + 2 * line, right - left, line)
         preview = str(getattr(row, "preview")) or " "
         painter.drawText(preview_rect, Qt.AlignmentFlag.AlignVCenter, QFontMetrics(small).elidedText(preview, Qt.TextElideMode.ElideRight, preview_rect.width()))
-        if unread:  # a small bar at the left edge, like a marker in the margin
+        if unread:  # a blue dot in the left margin (white on the selected row, which is blue itself)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(palette.color(QPalette.ColorRole.Highlight))
-            painter.drawRect(QRect(rect.left(), rect.top() + 6, 3, rect.height() - 12))
+            painter.setBrush(palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Highlight))
+            painter.drawEllipse(QRect(rect.left() + 2, rect.top() + (rect.height() - UNREAD_DOT) // 2, UNREAD_DOT, UNREAD_DOT))
         self._separator(painter, full, palette)
         painter.restore()
 

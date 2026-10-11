@@ -786,3 +786,15 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - The accent is the blue of the menus (the highlight colour of the palette), not orange: the New button, the lines under the open section, hover. It follows the light and the dark scheme.
 - The root of the Menu: Settings…, Accounts…, Rules…, a separator, File, Message, Folder, View, Help, a separator, Exit. Accounts… and Rules… open the Settings window on their page. Settings is no longer in the File menu. Quit is now Exit and has no keyboard shortcut.
 - The four section buttons use the program's own plain icons (not the desktop's icon theme): mail, calendar, person, check mark; the open section is blue. The order is Mail, Calendar, Contacts, Tasks, with Ctrl+1 to Ctrl+4 following that order.
+
+## 2026-10-11 New look, step 2: message list and reading pane (version 0.0.77)
+
+**What landed**
+- The column and the sort choice that said Date now say Received (the saved settings keep working: the ids did not change).
+- Unread: a blue dot in the status column and in the cards (instead of the bar); read: a faint empty circle in the status column.
+- The list header is flat with a line under it; the header of the reading pane and the remote content banner have the window colour with a line under them, the banner buttons are grey, and the lines "to ..." and "cc ..." are in a quieter colour. A message window gets the same look as the main window.
+- The rows/columns and cards choice is unchanged.
+
+**Still open**
+- Group headers in the list (the reference groups by the sort column): the list is loaded in pages and has no group rows; needs a plan of its own.
+- Steps 3 to 5: composer, settings and dialogs, calendar, tasks and contacts.

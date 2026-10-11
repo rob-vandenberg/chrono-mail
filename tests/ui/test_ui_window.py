@@ -14,9 +14,10 @@ from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.53"
+__version__ = "test_ui_window.py 0.0.77"
 
 # --- Version history ----------------------------------------------------
+# v0.0.77: Received instead of Date
 # v0.0.53: Standard keyboard shortcuts
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -97,7 +98,7 @@ def test_tree_shows_the_account_and_its_folders_with_unread_counts(world: World,
     started(qtbot, world)
     assert tree_labels(world.window) == ["Favorites", "  All Inboxes  (3)", "  Unread  (3)", "  Flagged", "  Outbox", "  Sent", "  Drafts", "  Junk", "  Trash", "me@example.com", "  Unread", "  Flagged", "  Inbox  (3)", "  Drafts", "  Sent", "  Outbox", "  Junk", "  Trash"]
     assert world.window.count_label.text() == "3 messages, 3 unread"
-    assert world.window.sort_button.text() == "Sorted by Date ▾"
+    assert world.window.sort_button.text() == "Sorted by Received ▾"
     assert world.window.windowTitle() == "Chrono Mail (3 unread)"
 
 

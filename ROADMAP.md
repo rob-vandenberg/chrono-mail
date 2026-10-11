@@ -104,3 +104,4 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (0.0.74) A message window saves Always for this sender and knows the allowed senders before it shows the message.
 - DONE (0.0.75) The folder list remembers which headings, accounts and folders are open or closed, also after a restart.
 - DONE (0.0.76) Blue instead of orange; Settings, Accounts, Rules and Exit in the root of the Menu; plain section icons (blue when open); Contacts before Tasks (D-084).
+- DONE (0.0.77) New look, step 2: the message list and the reading pane (Received instead of Date, blue dot for unread and an empty circle for read, flat list header, reading pane header and banner). Group headers in the list are not done.
