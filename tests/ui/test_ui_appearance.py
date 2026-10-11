@@ -12,12 +12,13 @@ from chrono_mail.ui.colours import contrast, green, is_dark, red
 from chrono_mail.ui.formatting import AVATAR_HUES, avatar_colour
 from chrono_mail.ui.icons import BUNDLED_ICONS, FOLDER_ICONS, RESOURCES, bundled_icon, theme_icon
 from tests.ui.test_ui_preferences import edit_settings, settings_of
-from tests.ui.world import World
+from tests.ui.world import World, menu_named
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.0.56"
+__version__ = "test_ui_appearance.py 0.0.73"
 
 # --- Version history ----------------------------------------------------
+# v0.0.73: The menus are inside one Menu button
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.51: Initial colour scheme, style, colours and icons tests
 
@@ -151,7 +152,7 @@ def test_dropdown_menus_have_the_colour_of_the_menu_bar_and_not_that_of_the_list
 def test_refresh_is_a_circle_of_two_arrows_and_the_file_menu_has_no_add_account(world: World) -> None:
     window = world.window
     assert window.act_refresh.text() == "Refresh" and window.act_refresh.shortcut().toString() == "F5" and not window.act_refresh.icon().isNull()
-    file_menu = window.menuBar().actions()[0].menu()
+    file_menu = menu_named(window, "File")
     assert isinstance(file_menu, QMenu)
     texts = [action.text() for action in file_menu.actions()]
     assert "Refresh" in texts and "Get mail" not in texts and not any("account" in text.lower() for text in texts)

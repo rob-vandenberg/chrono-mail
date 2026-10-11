@@ -11,9 +11,10 @@ from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.reader import ReaderWidget
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 0.0.53"
+__version__ = "messagewindow.py 0.0.74"
 
 # --- Version history ----------------------------------------------------
+# v0.0.74: A message window gets the privacy settings before it shows the message and saves Always for this sender
 # v0.0.53: Standard keyboard shortcuts
 # v0.0.41: Initial window for reading one message
 
@@ -24,7 +25,7 @@ class MessageWindow(QMainWindow):
     """One message in a window of its own, with Reply, Reply all and Forward."""
 
     def __init__(
-        self, backend: Backend, account: str, folder: str, message_id: str, shown: object, compose: Compose, open_link: Callable[[QUrl], None], parent: QWidget | None = None
+        self, backend: Backend, account: str, folder: str, message_id: str, shown: object, compose: Compose, open_link: Callable[[QUrl], None], prepare: Callable[[ReaderWidget], None], parent: QWidget | None = None
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -34,6 +35,7 @@ class MessageWindow(QMainWindow):
         self.resize(820, 640)
         self.reader = ReaderWidget(self)
         self.setCentralWidget(self.reader)
+        prepare(self.reader)  # the privacy settings come before the message: what is allowed decides what is loaded
         self.reader.show_message(shown)
         toolbar = QToolBar("Message", self)
         toolbar.setMovable(False)

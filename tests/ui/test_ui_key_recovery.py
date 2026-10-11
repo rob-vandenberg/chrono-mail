@@ -8,12 +8,13 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.crypto import DataKey, InMemoryKeyStore
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
-from tests.ui.world import World, answer_input, answer_open_file, reject_dialog, wait
+from tests.ui.world import World, answer_input, answer_open_file, menu_named, reject_dialog, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_key_recovery.py 0.0.46"
+__version__ = "test_ui_key_recovery.py 0.0.73"
 
 # --- Version history ----------------------------------------------------
+# v0.0.73: The menus are inside one Menu button
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.15: Initial key recovery tests
 
@@ -205,5 +206,5 @@ def test_an_unencrypted_account_never_asks_for_a_key(tmp_path: Path, qtbot: QtBo
 
 def test_the_menu_has_the_action(world: World) -> None:
     assert world.window.act_restore_key.text() == "Restore the encryption key…"
-    file_menu = world.window.menuBar().findChildren(QMenu)[0]
+    file_menu = menu_named(world.window, "File")
     assert world.window.act_restore_key in file_menu.actions()

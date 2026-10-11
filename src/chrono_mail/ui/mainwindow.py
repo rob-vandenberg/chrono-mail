@@ -9,11 +9,11 @@ from PySide6.QtGui import QAction, QCloseEvent, QCursor, QDesktopServices, QKeyS
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QHeaderView,
-    QStyledItemDelegate,
     QComboBox,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -21,8 +21,10 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressBar,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyledItemDelegate,
     QToolBar,
     QToolButton,
     QTreeView,
@@ -36,7 +38,7 @@ from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import BY_ID, CARD, DEFAULT_COLUMNS, column_widths, valid_columns
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
-from chrono_mail.ui import appearance, prefs
+from chrono_mail.ui import appearance, prefs, theme
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.composer import ComposeOptions, ComposeWindow
 from chrono_mail.ui.conversationbar import ConversationBar
@@ -74,9 +76,12 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.70"
+__version__ = "mainwindow.py 0.0.75"
 
 # --- Version history ----------------------------------------------------
+# v0.0.75: The folder list remembers which headings, accounts and folders are open, also after a restart
+# v0.0.74: A message window gets the privacy settings before it shows the message and saves Always for this sender
+# v0.0.73: The main window gets a new look: the Menu button, the toolbar, the search field, the folder list and the section buttons
 # v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.66: Synchronisation of calendars, task lists and address books with a CalDAV and CardDAV server
@@ -131,6 +136,9 @@ def bool_setting(settings: QSettings, key: str, default: bool) -> bool:
     return value if isinstance(value, bool) else str(value).lower() == "true"
 
 
+MAXIMUM_TREE_STATE: int = 2000  # opened or closed nodes that are remembered
+
+
 class MainWindow(QMainWindow):
     """The three-pane window: folders, the messages of a folder, and the message being read.
 
@@ -159,7 +167,7 @@ class MainWindow(QMainWindow):
         self._combined_accounts: tuple[str, ...] = ()  # the accounts of the group whose inbox is shown
         self._sidebar: object | None = None  # the answer of sidebar.show: pinned folders and groups
         self._combined: str | None = None  # the favorite that is shown (all inboxes, unread, ...), or None
-        self._expanded: set[str] | None = None  # accounts whose folders are open in the tree
+        self._tree_state: dict[str, bool] = self._load_tree_state()  # node -> opened (True) or closed (False) by the person
         self._shown: tuple[str, str, str] | None = None  # account, folder, message id of what the reader shows
         self._show_request: int = 0
         self._updating_tree: bool = False
@@ -175,6 +183,7 @@ class MainWindow(QMainWindow):
         self._checking: bool = False
         self._dav_syncing: bool = False
         self._mail_action_states: dict[str, bool] = {}
+        self.setStyleSheet(theme.stylesheet())  # only this window: a stylesheet on the application would hide the style from appearance.py
         self._build_widgets()
         self._build_actions()
         self._default_shortcuts: dict[str, str] = {name: action.shortcut().toString() for name, action in vars(self).items() if name.startswith("act_") and isinstance(action, QAction)}
@@ -217,6 +226,7 @@ class MainWindow(QMainWindow):
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.setMinimumWidth(180)
+        self.tree.setObjectName("folderTree")
 
         self.list_model = MessageListModel(self.backend, self)
         self.delegate = MessageDelegate()
@@ -293,6 +303,9 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
+        self.side_heading = QLabel("Mail", left_panel)
+        self.side_heading.setObjectName("sideHeading")
+        left_layout.addWidget(self.side_heading)
         left_layout.addWidget(self.side_stack, 1)
         left_layout.addWidget(self.section_bar)
         self.splitter.addWidget(left_panel)
@@ -410,14 +423,18 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self) -> None:
         self.toolbar = QToolBar("Main", self)
         self.toolbar.setMovable(False)
+        self.toolbar.setObjectName("mainToolbar")
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.addToolBar(self.toolbar)
-        for action in (self.act_new, self.act_refresh):
-            self.toolbar.addAction(action)
-        self.toolbar.addSeparator()
+        self.new_button = QToolButton(self)
+        self.new_button.setObjectName("newButton")
+        self.new_button.setDefaultAction(self.act_new)
+        self.new_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toolbar.addWidget(self.new_button)
+        self.toolbar.addAction(self.act_refresh)
+        self.toolbar.addWidget(self._stretch())
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
             self.toolbar.addAction(action)
-        self.toolbar.addSeparator()
         self.mark_button = QToolButton(self)
         self.mark_button.setText("Mark")
         self.mark_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -434,25 +451,39 @@ class MainWindow(QMainWindow):
         self.move_button.setMenu(self.move_menu)
         self.toolbar.addWidget(self.move_button)
         self.toolbar.addAction(self.act_delete)
-        spacer = QWidget(self)
-        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding, spacer.sizePolicy().verticalPolicy().Preferred)
-        self.toolbar.addWidget(spacer)
+        self.toolbar.addWidget(self._stretch())
         self.scope = QComboBox(self)
         self.scope.addItem("This folder", "folder")
         self.scope.addItem("All folders", "all")
         self.search_box = QLineEdit(self)
         self.search_box.setPlaceholderText("Search (from:  to:  subject:  body:  OR  -word)")
         self.search_box.setClearButtonEnabled(True)
-        self.search_box.setMinimumWidth(300)
-        self.toolbar.addWidget(self.scope)
-        self.toolbar.addWidget(self.search_box)
+        self.search_box.setMinimumWidth(220)
+        pill = QFrame(self)
+        pill.setObjectName("searchPill")
+        pill_layout = QHBoxLayout(pill)
+        pill_layout.setContentsMargins(10, 1, 6, 1)
+        pill_layout.setSpacing(4)
+        magnifier = QLabel(pill)
+        magnifier.setPixmap(theme_icon("edit-find").pixmap(16, 16))
+        pill_layout.addWidget(magnifier)
+        pill_layout.addWidget(self.search_box, 1)
+        pill_layout.addWidget(self.scope)
+        pill.setMinimumWidth(360)
+        self.toolbar.addWidget(pill)
         for page in self.pages.values():  # the toolbars of the other sections: one is shown at a time, in the same place
             self.addToolBar(page.toolbar)
             page.toolbar.hide()
 
+    def _stretch(self) -> QWidget:
+        spacer = QWidget(self)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        return spacer
+
     def _build_menus(self) -> None:
         bar = self.menuBar()
-        file_menu = bar.addMenu("&File")
+        root = bar.addMenu("\u2261  &Menu")  # one Menu button holds the menus that make up the menu bar
+        file_menu = root.addMenu("&File")
         file_menu.addAction(self.act_new)
         file_menu.addAction(self.act_refresh)
         file_menu.addSeparator()
@@ -461,7 +492,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.act_restore_key)
         file_menu.addSeparator()
         file_menu.addAction(self.act_quit)
-        message_menu = bar.addMenu("&Message")
+        message_menu = root.addMenu("&Message")
         message_menu.addAction(self.act_open)
         message_menu.addAction(self.act_edit_draft)
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
@@ -487,13 +518,13 @@ class MainWindow(QMainWindow):
         message_menu.addSeparator()
         for action in (self.act_save_as, self.act_print, self.act_source):
             message_menu.addAction(action)
-        folder_menu = bar.addMenu("F&older")
+        folder_menu = root.addMenu("F&older")
         for action in (self.act_new_folder, self.act_rename_folder, self.act_delete_folder):
             folder_menu.addAction(action)
         folder_menu.addSeparator()
         folder_menu.addAction(self.act_mark_all_read)
         folder_menu.addAction(self.act_empty_folder)
-        view_menu = bar.addMenu("&View")
+        view_menu = root.addMenu("&View")
         for section_action in self.section_actions.values():
             view_menu.addAction(section_action)
         view_menu.addSeparator()
@@ -511,7 +542,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.act_advanced)
         view_menu.addAction(self.act_conversations)
         view_menu.addAction(self.act_auto)
-        help_menu = bar.addMenu("&Help")
+        help_menu = root.addMenu("&Help")
         help_menu.addAction(self.act_about)
 
     def _build_status(self) -> None:
@@ -529,6 +560,8 @@ class MainWindow(QMainWindow):
         self.contacts_page.compose_requested.connect(self._compose_to)
         self.contacts_page.mail_accounts_source = self._accounts_with_mail
         self.tree.selectionModel().currentChanged.connect(self._tree_changed)
+        self.tree.expanded.connect(self._tree_opened)
+        self.tree.collapsed.connect(self._tree_closed)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.tree.messages_dropped.connect(self._messages_dropped)
         self.act_conversations.toggled.connect(self._toggle_conversations)
@@ -853,6 +886,7 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if isinstance(app, QApplication):
             appearance.apply(app, settings)  # the colours and the style take effect at once
+            self.setStyleSheet(theme.stylesheet())  # the colours in it come from the palette: ask for them again
             self._restyle_status()  # the red of an error follows the colours
         self.tray.set_visible(prefs.get_bool(settings, "tray"))
         minutes = self._auto_minutes()
@@ -883,10 +917,18 @@ class MainWindow(QMainWindow):
 
     def _apply_reader_preferences(self) -> None:
         for reader in (self.reader, *(window.reader for window in self._message_windows)):
-            reader.always_remote = prefs.get_bool(self.settings, "remote_always")
-            reader.allowed_senders = prefs.allowed_senders(self.settings)
-            reader.prefer_plain = prefs.get_bool(self.settings, "prefer_plain")
-            reader.set_zoom(prefs.get_int(self.settings, "reader_zoom", 50, 300))
+            self._set_reader_preferences(reader)
+
+    def _set_reader_preferences(self, reader: ReaderWidget) -> None:
+        reader.always_remote = prefs.get_bool(self.settings, "remote_always")
+        reader.allowed_senders = prefs.allowed_senders(self.settings)
+        reader.prefer_plain = prefs.get_bool(self.settings, "prefer_plain")
+        reader.set_zoom(prefs.get_int(self.settings, "reader_zoom", 50, 300))
+
+    def _prepare_message_reader(self, reader: ReaderWidget) -> None:
+        """A message window: the settings first, and its Always for this sender saves like the one in the reading pane."""
+        self._set_reader_preferences(reader)
+        reader.sender_allowed.connect(self._sender_allowed)
 
     def _sender_allowed(self, address: str) -> None:
         senders = prefs.allowed_senders(self.settings) | {address.lower()}
@@ -1063,7 +1105,6 @@ class MainWindow(QMainWindow):
             saved_kind = str(self.settings.value("last_kind", "folder"))
             keep = (saved_account, saved_kind, saved_folder) if saved_folder and (saved_account or saved_kind in ("favorite", "groupinbox")) else None
         self._updating_tree = True
-        self._remember_expanded()
         self.tree_model.pins = [(str(getattr(pin, "pin_id")), str(getattr(pin, "account")), str(getattr(pin, "folder")), str(getattr(pin, "name"))) for pin in getattr(self._sidebar, "pins", ())]
         self.tree_model.groups = [(str(getattr(group, "group_id")), str(getattr(group, "name")), tuple(str(m) for m in getattr(group, "accounts"))) for group in getattr(self._sidebar, "groups", ())]
         self.tree_model.hidden = {str(view) for view in getattr(self._sidebar, "hidden", ())}
@@ -1073,33 +1114,67 @@ class MainWindow(QMainWindow):
         target = self._find_tree_item(keep) if keep is not None else None
         if target is None:
             target = self._first_inbox()
-        self._restore_expanded(target)
         if target is not None and target.isValid():
-            self.tree.setCurrentIndex(target)
+            self.tree.setCurrentIndex(target)  # this opens the parents of the item: what the person closed is closed again below
+        self._restore_expanded(target)
         self._updating_tree = False
         if target is not None and target.isValid() and self._key_of(target) != (self._account_id, self._tree_key_kind, self._tree_path):
             self._tree_changed(target, QModelIndex())
 
-    def _remember_expanded(self) -> None:
-        """Which accounts are open in the tree: with many accounts only the ones in use stay open."""
-        if not self.tree_model.rowCount():
+    def _load_tree_state(self) -> dict[str, bool]:
+        """Which headings, accounts and folders the person opened or closed in the folder list (kept in the settings)."""
+        try:
+            data = json.loads(str(self.settings.value("tree_state", "{}")))
+        except ValueError:
+            return {}
+        return {key: value for key, value in data.items() if isinstance(key, str) and isinstance(value, bool)} if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _node_key(index: QModelIndex) -> str:
+        kind = str(index.data(KIND_ROLE))
+        detail = str(index.data(Qt.ItemDataRole.DisplayRole)) if kind == "section" else str(index.data(GROUP_ROLE)) if kind == "group" else str(index.data(FOLDER_PATH_ROLE) or "")
+        return "|".join((kind, str(index.data(ACCOUNT_ROLE) or ""), detail))
+
+    def _tree_opened(self, index: QModelIndex) -> None:
+        self._tree_toggled(index, True)
+
+    def _tree_closed(self, index: QModelIndex) -> None:
+        self._tree_toggled(index, False)
+
+    def _tree_toggled(self, index: QModelIndex, opened: bool) -> None:
+        """The person opened or closed a node: remember it, also for the next start."""
+        if self._updating_tree:
             return
-        self._expanded = {
-            str(index.data(ACCOUNT_ROLE)) for row in range(self.tree_model.rowCount())
-            for index in (self.tree_model.index(row, 0),) if index.data(KIND_ROLE) == "account" and self.tree.isExpanded(index)
-        }
+        self._tree_state[self._node_key(index)] = opened
+        if len(self._tree_state) > MAXIMUM_TREE_STATE:
+            self._tree_state.pop(next(iter(self._tree_state)))
+        self.settings.setValue("tree_state", json.dumps(self._tree_state))
 
     def _restore_expanded(self, selected: QModelIndex | None) -> None:
-        chosen = str(selected.data(ACCOUNT_ROLE)) if selected is not None and selected.isValid() else ""
-        accounts = [self.tree_model.index(row, 0) for row in range(self.tree_model.rowCount()) if self.tree_model.index(row, 0).data(KIND_ROLE) == "account"]
-        for row in range(self.tree_model.rowCount()):
-            index = self.tree_model.index(row, 0)
-            if index.data(KIND_ROLE) == "section":
-                self.tree.expand(index)
-        for index in accounts:
-            account = str(index.data(ACCOUNT_ROLE))
-            opened = account in self._expanded if self._expanded is not None else len(accounts) <= 3
-            self.tree.setExpanded(index, opened or account == chosen)
+        """Open and close the nodes as the person left them. What was never opened or closed: headings open, accounts open
+        (with more than three accounts only the one holding the selection), folders closed. The selection is never hidden."""
+        holding: set[str] = set()
+        node = selected if selected is not None and selected.isValid() else QModelIndex()
+        while node.isValid():
+            holding.add(self._node_key(node))
+            node = node.parent()
+        accounts = sum(1 for row in range(self.tree_model.rowCount()) if self.tree_model.index(row, 0).data(KIND_ROLE) == "account")
+
+        def walk(parent: QModelIndex) -> None:
+            for row in range(self.tree_model.rowCount(parent)):
+                index = self.tree_model.index(row, 0, parent)
+                if not self.tree_model.hasChildren(index):
+                    continue
+                key = self._node_key(index)
+                kind = str(index.data(KIND_ROLE))
+                if key in self._tree_state:
+                    opened = self._tree_state[key]
+                else:
+                    opened = kind == "section" or (kind == "account" and accounts <= 3) or key in holding
+                self.tree.setExpanded(index, opened)
+                walk(index)
+
+        walk(QModelIndex())
 
     def _find_tree_item(self, key: tuple[str, str, str]) -> QModelIndex | None:
         def walk(parent: QModelIndex) -> QModelIndex | None:
@@ -1470,6 +1545,7 @@ class MainWindow(QMainWindow):
         for name, page in self.pages.items():
             page.toolbar.setVisible(name == section)
         self.section_bar.show_section(section)
+        self.side_heading.setText(next(name for key, name, *_ in SECTIONS if key == section))
         page = self.pages.get(section)
         if page is not None:
             page.on_show()
@@ -1730,7 +1806,7 @@ class MainWindow(QMainWindow):
         account, folder, message_id, _ = chosen
 
         def shown(result: object) -> None:
-            window = MessageWindow(self.backend, account, folder, message_id, result, self._compose_in_window, self._open_link)
+            window = MessageWindow(self.backend, account, folder, message_id, result, self._compose_in_window, self._open_link, self._prepare_message_reader)
             self._message_windows.append(window)
             window.destroyed.connect(lambda: self._message_windows.remove(window) if window in self._message_windows else None)
             window.show()

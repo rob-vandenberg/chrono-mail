@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from PySide6.QtCore import QModelIndex, QSettings, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
+from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMenu, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine import Engine, build_registry
@@ -19,9 +19,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 0.0.46"
+__version__ = "world.py 0.0.73"
 
 # --- Version history ----------------------------------------------------
+# v0.0.73: The menus are inside one Menu button
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.15: Key recovery
 # v0.0.13: Initial ui test world
@@ -56,6 +57,18 @@ class World:
 
     def call(self, command: str, **values: object) -> Any:  # noqa: ANN401 - command-specific result
         return REGISTRY.run(self.engine, command, values)
+
+
+def menu_named(window: MainWindow, *path: str) -> QMenu:
+    """A menu of the window by its names, from the Menu button down: menu_named(window, 'File')."""
+    action = window.menuBar().actions()[0]
+    for name in path:
+        menu = action.menu()
+        assert isinstance(menu, QMenu)
+        action = next(item for item in menu.actions() if item.text().replace('&', '') == name)
+    menu = action.menu()
+    assert isinstance(menu, QMenu)
+    return menu
 
 
 def row_of(window: MainWindow, position: int) -> Any:  # noqa: ANN401 - a loaded message row: a dataclass of the engine's list result

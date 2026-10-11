@@ -1,14 +1,15 @@
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QToolBar, QToolButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QToolBar, QToolButton, QWidget
 
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "sections.py 0.0.61"
+__version__ = "sections.py 0.0.73"
 
 # --- Version history ----------------------------------------------------
+# v0.0.73: The section buttons share the width and show the section that is open with a line under it
 # v0.0.61: Initial section buttons (Mail, Calendar, Tasks, Contacts) and the base of a section
 
 MAIL: str = "mail"
@@ -31,24 +32,26 @@ class SectionBar(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.setObjectName("sectionBar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(6, 4, 6, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.buttons: dict[str, QToolButton] = {}
         for section, name, icons, shortcut in SECTIONS:
             button = QToolButton(self)
             button.setIcon(theme_icon(*icons))
             button.setIconSize(QSize(22, 22))
-            button.setFixedSize(BUTTON_SIZE, BUTTON_SIZE)
+            button.setObjectName("sectionButton")
+            button.setFixedHeight(BUTTON_SIZE)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.setCheckable(True)
-            button.setAutoRaise(True)
             button.setToolTip(f"{name} ({shortcut})")
             button.setAccessibleName(name)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             button.clicked.connect(lambda checked=False, chosen=section: self.chosen.emit(chosen))
             layout.addWidget(button)
             self.buttons[section] = button
-        layout.addStretch(1)
         self.show_section(MAIL)
 
     def show_section(self, section: str) -> None:

@@ -758,3 +758,24 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - An accepted certificate is stored as host:port=fingerprint and applies only to that server. A server without one keeps the usual checks, whatever the other server of the account has (D-082, changes D-058). Used by fetch, watch, send, the connection test and calendar sync (the calendar server counts as a server of its own).
 - `account.trust-certificate` now needs `host` and `port`. Entries saved before (a bare fingerprint) keep working and apply to every server of the account, as they did.
 - Tests: one server's certificate does not touch the other, other port, older form, the pin format and its checks. The 0.0.71 open item is closed.
+
+## 2026-10-11 New look of the main window, step 1 (version 0.0.73)
+
+**What landed**
+- A shared stylesheet (`ui/theme.py`) for the main window: the menus sit in one Menu button, the toolbar is flat with an orange New button and the main actions in the middle, the search field is a pill with the folder/all-folders choice inside, the folder list has a heading and rounded rows, the section buttons share the width and show the open section with a line under it. It takes its colours from the palette, so light and dark both work. The rows/columns and cards choice for the message list is unchanged.
+- The stylesheet is set on the main window only: on the application it would hide the style from `appearance.py`. It is set again when the colours change.
+
+**Still open**
+- Steps 2 to 5: message list and reading pane, composer, settings and dialogs, calendar, tasks and contacts.
+
+## 2026-10-11 Always for this sender in a message window (version 0.0.74)
+
+**What landed**
+- In a message window "Always for this sender" was not saved: the window's reader was not connected to the saving code of the main window. It now is.
+- A message window received the allowed senders only after it had shown the message, so a remembered sender still got the banner. The window now gets the privacy settings first. Two regression tests.
+
+## 2026-10-11 The folder list remembers what is open (version 0.0.75)
+
+**What landed**
+- Which headings (Favorites ...), account groups, accounts and folders with subfolders the person opened or closed is remembered, also after a restart (setting `tree_state`, a damaged value is ignored). Before, only accounts were remembered, and only until the next restart; subfolders closed at every refresh.
+- Never opened or closed: headings open, accounts open (with more than three only the one with the selection), folders closed. A node the person closed stays closed even when the selected folder is inside it.

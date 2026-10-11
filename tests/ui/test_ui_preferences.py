@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QDialog, QLabel
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import prefs
+from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.test_ui_composer import fill, new_composer
@@ -17,9 +18,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.0.52"
+__version__ = "test_ui_preferences.py 0.0.74"
 
 # --- Version history ----------------------------------------------------
+# v0.0.74: A message window uses and saves the allowed senders
 # v0.0.52: Ctrl+Q marks as read, Quit is Ctrl+Shift+Q
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
@@ -335,3 +337,24 @@ def test_ctrl_q_marks_as_read_and_quit_has_another_key(world: World) -> None:
     assert window.act_read.shortcut().toString() == "Ctrl+Q" and window.act_quit.shortcut().toString() == "Ctrl+Shift+Q"
     keys = [action.shortcut().toString() for name, action in vars(window).items() if name.startswith("act_") and hasattr(action, "shortcut") and action.shortcut().toString()]
     assert len(keys) == len(set(keys))  # no key is given twice
+
+
+def message_window(world: World, qtbot: QtBot, html: str) -> MessageWindow:
+    window = MessageWindow(world.window.backend, "a", "INBOX", "m", shown(html=html, text=""), lambda *args: None, lambda url: None, world.window._prepare_message_reader)  # noqa: SLF001
+    qtbot.addWidget(window)
+    window.show()
+    return window
+
+
+def test_a_message_window_saves_always_for_this_sender(world: World, qtbot: QtBot, probe: Probe) -> None:
+    window = message_window(world, qtbot, f"<p><img src='{probe.url()}'></p>")
+    qtbot.waitUntil(window.reader.banner_visible, timeout=8000)
+    window.reader._always_remote.click()  # noqa: SLF001
+    assert prefs.allowed_senders(settings_of(world)) == {"alice@example.com"}
+
+
+def test_a_message_window_knows_the_allowed_senders_before_it_shows_the_message(world: World, qtbot: QtBot, probe: Probe) -> None:
+    settings_of(world).setValue("remote_senders", "alice@example.com")
+    window = message_window(world, qtbot, f"<p><img src='{probe.url()}'></p>")
+    qtbot.waitUntil(lambda: len(probe.requests) >= 1, timeout=8000)  # shown at once: no banner, no second load
+    assert not window.reader.banner_visible()

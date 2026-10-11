@@ -100,3 +100,6 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (0.0.70) The Inboxes heading is removed from the folder tree (it was never requested, D-061).
 - DONE (0.0.71) Add account dialog: a certificate accepted for a server address is dropped when that address, port or security changes.
 - DONE (0.0.72) Accepted certificates are kept per server (host and port), D-082.
+- DONE (0.0.73) New look of the main window, step 1: the Menu button, the toolbar with an orange New button, the pill-shaped search field, the folder list with a heading, section buttons with a line under the open one (D-083).
+- DONE (0.0.74) A message window saves Always for this sender and knows the allowed senders before it shows the message.
+- DONE (0.0.75) The folder list remembers which headings, accounts and folders are open or closed, also after a restart.
