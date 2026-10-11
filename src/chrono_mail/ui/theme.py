@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.0.78"
+__version__ = "theme.py 0.0.79"
 
 # --- Version history ----------------------------------------------------
+# v0.0.79: The column headers of the message list have a thin line between them again
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
@@ -36,7 +37,7 @@ QTreeView#folderTree::item {{ padding: 4px 4px; border-radius: 4px; min-height: 
 QTreeView#folderTree::item:hover:!selected {{ background: {HOVER}; }}
 QTreeView#folderTree::item:selected {{ background: palette(highlight); color: palette(highlighted-text); }}
 QTreeView#messageList {{ border: 0; outline: 0; }}
-QTreeView#messageList QHeaderView::section {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); padding: 5px 8px; }}
+QTreeView#messageList QHeaderView::section {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); border-right: 1px solid palette(mid); padding: 5px 8px; }}
 QFrame#readerHeader {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner QPushButton {{ background: {HOVER}; border: 0; border-radius: 4px; padding: 5px 12px; }}

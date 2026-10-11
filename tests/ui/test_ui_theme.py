@@ -12,9 +12,10 @@ from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SEC
 from tests.ui.world import World, dialogs, menu_named, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 0.0.78"
+__version__ = "test_ui_theme.py 0.0.79"
 
 # --- Version history ----------------------------------------------------
+# v0.0.79: A test of the lines between the column headers
 # v0.0.78: Tests of the composer look and of rich text as the default
 # v0.0.77: Tests of the message list and the reading pane
 # v0.0.76: Tests of the root of the Menu, blue accent and the section icons
@@ -128,3 +129,8 @@ def test_the_composer_has_send_first_and_the_look_of_the_main_window(world: Worl
     assert composer.rich.toolbar.objectName() == "richToolbar" and composer.is_rich()
     assert composer.send_button.x() < composer.later_button.x() < composer.save_button.x() < composer.from_box.x()  # one row, in this order
     assert composer.send_button.y() < composer.to.y() and composer.from_box.y() < composer.to.y()  # above the fields
+
+
+def test_the_column_headers_of_the_list_have_a_line_between_them() -> None:
+    rule = next(line for line in theme.stylesheet().splitlines() if line.startswith("QTreeView#messageList QHeaderView::section"))
+    assert "border-right: 1px solid palette(mid)" in rule  # the place to grab a column edge

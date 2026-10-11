@@ -807,3 +807,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - Steps 4 and 5: settings and dialogs, calendar, tasks and contacts. The composer has no attachment chips, no emoji and no font colour: not built.
+
+## 2026-10-11 Lines between the column headers (version 0.0.79)
+
+**What landed**
+- The thin vertical line between the column headers of the message list is back (one property, border-right, on the header section rule). Version 0.0.77 had removed it by mistake.
