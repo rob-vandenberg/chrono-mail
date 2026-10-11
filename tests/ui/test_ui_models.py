@@ -13,9 +13,10 @@ from chrono_mail.ui.models import FOLDER_ROLE_ROLE, KIND_ROLE, PAGE_SIZE, ROW_RO
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.0.69"
+__version__ = "test_ui_models.py 0.0.70"
 
 # --- Version history ----------------------------------------------------
+# v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
@@ -156,7 +157,7 @@ class Account:
 def test_tree_with_nested_and_virtual_folders() -> None:
     model = FolderTreeModel()
     infos: list[object] = [Info("Inbox", "inbox", 4), Info("Archive/2026/Q1", "other", 2), Info("Trash", "trash"), Info("Sent", "sent"), Info("Drafts", "drafts"), Info("Zeta", "other"), Info("Alpha", "other"), Info("Archive", "archive")]
-    model.show_favorites = model.show_inboxes = False
+    model.show_favorites = False
     model.populate([Account("a" * 32, "me@example.com")], {"a" * 32: infos})
     labels: list[str] = []
 
@@ -175,7 +176,7 @@ def test_tree_with_nested_and_virtual_folders() -> None:
 
 def test_tree_with_two_accounts_and_no_accounts() -> None:
     model = FolderTreeModel()
-    model.show_favorites = model.show_inboxes = False
+    model.show_favorites = False
     model.populate([Account("a" * 32, "one@example.com"), Account("b" * 32, "two@example.com")], {"a" * 32: [Info("Inbox", "inbox")], "b" * 32: []})
     assert model.rowCount() == 2 and model.rowCount(model.index(1, 0)) == 2  # only the two virtual views
     model.populate([], {})
@@ -303,7 +304,7 @@ def tops(model: FolderTreeModel) -> list[str]:
     return [str(model.index(row, 0).data()) for row in range(model.rowCount())]
 
 
-def test_favorites_inboxes_and_local_folders_in_the_tree() -> None:
+def test_favorites_and_local_folders_in_the_tree() -> None:
     model = FolderTreeModel()
     folders: dict[str, list[object]] = {
         "a" * 32: [Info("Inbox", "inbox", 2)], "b" * 32: [Info("Inbox", "inbox", 1)],
@@ -312,14 +313,13 @@ def test_favorites_inboxes_and_local_folders_in_the_tree() -> None:
     accounts: list[object] = [Place("a" * 32, "one@example.com"), Place("b" * 32, "two@example.com"), Place("1" * 31 + "1", "-", "local"), Place("c" * 32, "three@example.com", storage="local")]
     model.populate(accounts, folders)
     # the account that keeps its mail in Local Folders has no tree of its own, and Local Folders comes last
-    assert tops(model) == ["Favorites", "Inboxes", "one@example.com", "two@example.com", "Local Folders"]
+    assert tops(model) == ["Favorites", "one@example.com", "two@example.com", "Local Folders"]
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
     assert labels[:2] == ["All Inboxes  (7)", "Unread  (7)"] and labels[-1] == "Trash  (7)" and len(labels) == 8  # shared mail counted once
-    assert [str(model.index(row, 0, model.index(1, 0)).data()) for row in range(2)] == ["one@example.com  (2)", "two@example.com  (1)"]
-    model.show_favorites = model.show_inboxes = model.show_local_folders = False
+    model.show_favorites = model.show_local_folders = False
     model.populate(accounts, folders)
     assert tops(model) == ["one@example.com", "two@example.com"]
     model.show_favorites = True
     model.populate(accounts[:1], folders)
-    assert tops(model) == ["Favorites", "one@example.com"]  # one account: no Inboxes heading
+    assert tops(model) == ["Favorites", "one@example.com"]

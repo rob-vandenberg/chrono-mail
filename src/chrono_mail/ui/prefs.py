@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.0.51"
+__version__ = "prefs.py 0.0.70"
 
 # --- Version history ----------------------------------------------------
+# v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.42: Initial preferences (the keys of the settings file and their standard values)
@@ -29,7 +30,6 @@ DEFAULTS: dict[str, object] = {
     "list_font_size": 0,
     "conversations": False,
     "show_favorites": True,
-    "show_inboxes": True,
     "show_local_folders": True,
     # reading
     "mark_read": "delay",  # delay: after a moment, never: only when I mark it, window: only when opened in a window of its own

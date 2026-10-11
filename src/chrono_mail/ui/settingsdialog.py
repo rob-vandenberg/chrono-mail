@@ -39,9 +39,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.69"
+__version__ = "settingsdialog.py 0.0.70"
 
 # --- Version history ----------------------------------------------------
+# v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
@@ -206,8 +207,6 @@ class SettingsDialog(QDialog):
         self.conversations.setChecked(prefs.get_bool(s, "conversations"))
         self.show_favorites = QCheckBox("Show Favorites at the top of the folder list (all inboxes, unread, flagged, sent …)", page)
         self.show_favorites.setChecked(prefs.get_bool(s, "show_favorites"))
-        self.show_inboxes = QCheckBox("Show the Inboxes of all accounts under one heading (with two or more accounts)", page)
-        self.show_inboxes.setChecked(prefs.get_bool(s, "show_inboxes"))
         self.show_local_folders = QCheckBox("Show Local Folders in the folder list", page)
         self.show_local_folders.setChecked(prefs.get_bool(s, "show_local_folders"))
         self.columns_label = QLabel("", page)
@@ -219,7 +218,6 @@ class SettingsDialog(QDialog):
         form.addRow("Text size in the list", self.list_font)
         form.addRow(self.conversations)
         form.addRow(self.show_favorites)
-        form.addRow(self.show_inboxes)
         form.addRow(self.show_local_folders)
         form.addRow("Columns", self.columns_label)
         form.addRow("", self.columns_button)
@@ -555,7 +553,7 @@ class SettingsDialog(QDialog):
             "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_font_size": self.list_font.value(), "conversations": self.conversations.isChecked(),
-            "show_favorites": self.show_favorites.isChecked(), "show_inboxes": self.show_inboxes.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
+            "show_favorites": self.show_favorites.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
             "columns": ",".join(self._columns or DEFAULT_COLUMNS),
             "mark_read": str(self.mark_read_box.currentData()), "mark_read_delay_ms": self.mark_read_delay.value(), "reader_zoom": self.zoom.value(),
             "prefer_plain": self.prefer_plain.isChecked(), "remote_always": self.remote_always.isChecked(), "remote_senders": "\n".join(senders),

@@ -14,9 +14,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.69"
+__version__ = "models.py 0.0.70"
 
 # --- Version history ----------------------------------------------------
+# v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.54: A flag change redraws every column of the row
 # v0.0.47: Pinned favorites, account groups and search in combined views
@@ -384,10 +385,9 @@ _FAVORITE_ROLE: dict[str, str] = {"inboxes": "inbox", "sent": "sent", "drafts": 
 
 
 class FolderTreeModel(QStandardItemModel):
-    """Favorites, the inboxes of all accounts, and then the accounts with their folders and the number of unread messages."""
+    """Favorites, and then the accounts with their folders and the number of unread messages."""
 
     show_favorites: bool = True
-    show_inboxes: bool = True
     show_local_folders: bool = True
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -409,8 +409,6 @@ class FolderTreeModel(QStandardItemModel):
         if mailboxes and self.show_favorites:
             self._favorites(root, mailboxes, folders)
         real = [account for account in places if str(getattr(account, "kind", "pop3")) != "local"]
-        if len(real) >= 2 and self.show_inboxes:
-            self._inboxes(root, real, folders)
         members = {member for _, _, accounts_of in self.groups for member in accounts_of}
         shown = {str(getattr(account, "account_id")): account for account in places}
         for group_id, name, member_ids in self.groups:
@@ -528,24 +526,6 @@ class FolderTreeModel(QStandardItemModel):
             item.setData(pin_id, PIN_ROLE)
             item.setData(unread, UNREAD_ROLE)
             self._label(item, name or folder.rsplit("/", 1)[-1], unread)
-            section.appendRow(item)
-
-    def _inboxes(self, root: QStandardItem, accounts: list[object], folders: dict[str, list[object]]) -> None:
-        """The inbox of every account under one heading, so that many accounts do not need their trees open."""
-        section = self._section(root, "Inboxes", "section")
-        for account in accounts:
-            account_id = str(getattr(account, "account_id"))
-            inbox = next((info for info in folders.get(account_id, []) if str(getattr(info, "role")) == "inbox"), None)
-            unread = int(getattr(inbox, "unread")) if inbox is not None else 0
-            item = QStandardItem(str(getattr(account, "shown_name")))
-            item.setEditable(False)
-            item.setIcon(folder_icon("inbox"))
-            item.setData("inboxlink", KIND_ROLE)
-            item.setData(account_id, ACCOUNT_ROLE)
-            item.setData(str(getattr(inbox, "path")) if inbox is not None else "Inbox", FOLDER_PATH_ROLE)
-            item.setData("inbox", FOLDER_ROLE_ROLE)
-            item.setData(unread, UNREAD_ROLE)
-            self._label(item, str(getattr(account, "shown_name")), unread)
             section.appendRow(item)
 
     @staticmethod

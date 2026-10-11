@@ -737,3 +737,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - A warning in the account dialog when another account uses the same mailbox with a delete-after-download policy.
+
+## 2026-10-11 The Inboxes section is removed (version 0.0.70)
+
+**What landed**
+- The Inboxes heading in the folder tree (one inbox per account, shown with two or more own-mailbox accounts) is removed completely, with its settings switch, its default and its tree item kind. It was never requested. Favorites (with All Inboxes), accounts, account groups and Local Folders are unchanged. An old `show_inboxes` value in a saved config is ignored.
+- D-061 corrected. Tests adjusted.

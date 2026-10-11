@@ -74,9 +74,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.69"
+__version__ = "mainwindow.py 0.0.70"
 
 # --- Version history ----------------------------------------------------
+# v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.66: Synchronisation of calendars, task lists and address books with a CalDAV and CardDAV server
 # v0.0.64: The calendar section
@@ -151,7 +152,7 @@ class MainWindow(QMainWindow):
         self._folder: str | None = None
         self._folder_role: str = "other"
         self._tree_kind: str = "folder"
-        self._tree_key_kind: str = "folder"  # the kind of the item in the tree: "inboxlink" is a folder shown under the Inboxes heading
+        self._tree_key_kind: str = "folder"
         self._status_is_error: bool = False
         self._folder_popup: QMenu | None = None
         self._tree_path: str = ""  # the folder, favorite or group of the item that is selected in the tree
@@ -1067,7 +1068,6 @@ class MainWindow(QMainWindow):
         self.tree_model.groups = [(str(getattr(group, "group_id")), str(getattr(group, "name")), tuple(str(m) for m in getattr(group, "accounts"))) for group in getattr(self._sidebar, "groups", ())]
         self.tree_model.hidden = {str(view) for view in getattr(self._sidebar, "hidden", ())}
         self.tree_model.show_favorites = bool_setting(self.settings, "show_favorites", True)
-        self.tree_model.show_inboxes = bool_setting(self.settings, "show_inboxes", True)
         self.tree_model.show_local_folders = bool_setting(self.settings, "show_local_folders", True)
         self.tree_model.populate(self._accounts, self._folders)
         target = self._find_tree_item(keep) if keep is not None else None
@@ -1135,7 +1135,7 @@ class MainWindow(QMainWindow):
         self._tree_path = str(current.data(FOLDER_PATH_ROLE) or "")
         self._combined = "inboxes" if kind == "groupinbox" else (str(current.data(FOLDER_PATH_ROLE)) if kind == "favorite" else None)
         self._combined_accounts = self._group_accounts(str(current.data(GROUP_ROLE))) if kind == "groupinbox" else ()
-        if kind in ("inboxlink", "pinlink"):
+        if kind == "pinlink":
             kind = "folder"
         self._account_id = str(current.data(ACCOUNT_ROLE))  # "" in a favorite: the rows say which account they belong to
         self._tree_kind = kind
@@ -2025,7 +2025,7 @@ class MainWindow(QMainWindow):
         """What the clicked item of the folder list offers about Favorites and groups."""
         kind = str(index.data(KIND_ROLE)) if index.isValid() else ""
         account = str(index.data(ACCOUNT_ROLE) or "")
-        if kind in ("folder", "inboxlink"):
+        if kind == "folder":
             folder = str(index.data(FOLDER_PATH_ROLE))
             pinned = any(str(getattr(pin, "account")) == account and str(getattr(pin, "folder")) == folder for pin in getattr(self._sidebar, "pins", ()))
             if not pinned:
