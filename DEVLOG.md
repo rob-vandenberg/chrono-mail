@@ -640,3 +640,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - 3.2 events and tasks (iCalendar).
 
+## 2026-10-11 Events and tasks from iCalendar (version 0.0.58)
+
+**What landed**
+- `pim/ical.py`: typed `Event`, `EventSeries` (an event and its changed occurrences), `Task`, `Reminder`, `Attendee`; reading with the library and the Windows-style and custom time zones that servers send; writing that changes only what was edited (properties and alarms that were not touched, and anything unknown, stay as they were; VTIMEZONE is made for zone-aware times); `occurrences()` expands repeating events over a range with exceptions, moved occurrences and clock changes, with a cap against endless rules; completing and reopening tasks; tolerant reading of damaged alarms and tasks. 19 tests.
+
+**Still open**
+- 3.3 the encrypted item store and the index.
+
