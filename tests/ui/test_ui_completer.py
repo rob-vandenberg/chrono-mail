@@ -11,9 +11,10 @@ from tests.ui.test_ui_composer import new_composer
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_completer.py 0.0.23"
+__version__ = "test_ui_completer.py 0.0.68"
 
 # --- Version history ----------------------------------------------------
+# v0.0.68: Address suggestion chosen with the arrow keys was entered twice
 # v0.0.23: Initial address completion tests
 
 
@@ -99,5 +100,20 @@ def test_the_completer_survives_a_failing_command(world: World, qtbot: QtBot, mo
     monkeypatch.undo()
     QTest.keyClicks(window.to, "@")
     wait(qtbot, lambda: window.completers[0]._suggestions.rowCount() == 1)  # noqa: SLF001 - it works again afterwards
+    window._finished = True  # noqa: SLF001
+    window.close()
+
+
+def test_a_suggestion_chosen_with_the_arrow_keys_is_in_the_field_once(world: World, qtbot: QtBot) -> None:
+    """Highlighting a suggestion puts it in the field already; pressing Enter must not add it a second time."""
+    fill_addresses(world)
+    window = new_composer(world, qtbot)
+    completer = window.completers[0]
+    window.to.setFocus()
+    QTest.keyClicks(window.to, "ann@x.org, br")
+    wait(qtbot, lambda: completer._suggestions.rowCount() == 1)  # noqa: SLF001
+    index = completer._suggestions.index(0, 0)  # noqa: SLF001
+    window.to.setText(completer.pathFromIndex(index))  # what the line edit does when the suggestion is highlighted
+    assert completer.pathFromIndex(index) == 'ann@x.org, "Brown, Bob" <bob@x.org>, '  # and when it is activated
     window._finished = True  # noqa: SLF001
     window.close()

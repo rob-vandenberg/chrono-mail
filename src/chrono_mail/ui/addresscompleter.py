@@ -7,9 +7,11 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "addresscompleter.py 0.0.23"
+__version__ = "addresscompleter.py 0.0.68"
 
 # --- Version history ----------------------------------------------------
+# v0.0.68: Address suggestion chosen with the arrow keys was entered twice
+# v0.0.68: A suggestion chosen with the arrow keys was put in the field twice
 # v0.0.23: Initial address completion
 
 DELAY_MS: int = 150
@@ -43,6 +45,7 @@ class AddressCompleter(QCompleter):
         self._backend: Backend = backend
         self._field: QLineEdit = field
         self._request: int = 0
+        self._typed: str = field.text()  # what the person typed last, before any suggestion was put in the field
         self.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.setFilterMode(Qt.MatchFlag.MatchContains)
         self.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
@@ -58,11 +61,12 @@ class AddressCompleter(QCompleter):
 
     @override
     def pathFromIndex(self, index: QModelIndex | QPersistentModelIndex, /) -> str:
-        head, _ = split_last_address(self._field.text())
+        head, _ = split_last_address(self._typed)  # not the field: highlighting a suggestion with the arrow keys already puts it there
         chosen = str(index.data(Qt.ItemDataRole.EditRole))
         return f"{head.rstrip()} {chosen}, ".lstrip() if head.strip() else f"{chosen}, "
 
     def _edited(self, text: str) -> None:
+        self._typed = text
         self._request += 1
         if len(split_last_address(text)[1]) < MINIMUM_CHARACTERS:
             self._suggestions.setStringList([])

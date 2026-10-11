@@ -723,3 +723,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - Google accounts (next, on the user's word), 4.4 invitations, Microsoft.
+
+## 2026-10-11 Address suggestions entered twice (version 0.0.68)
+
+**What landed**
+- A suggestion chosen with the arrow keys and Enter was in the address field twice: highlighting already puts the address in the field, and Enter added it again to what was there. The completer now builds the result from what the person typed, not from the field. Regression test added.
