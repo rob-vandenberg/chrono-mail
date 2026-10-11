@@ -1,10 +1,11 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 0.0.59"
+__version__ = "schema.py 0.0.60"
 
 # --- Version history ----------------------------------------------------
+# v0.0.60: Schema 2: a second line for lists (organisation, place)
 # v0.0.59: Initial index schema for calendars, tasks and contacts
 
-SCHEMA_VERSION: int = 1
+SCHEMA_VERSION: int = 2
 MINIMUM_SQLITE_VERSION: tuple[int, int, int] = (3, 43, 0)
 
 STATEMENTS: tuple[str, ...] = (
@@ -16,6 +17,7 @@ STATEMENTS: tuple[str, ...] = (
         kind TEXT NOT NULL,
         uid TEXT NOT NULL,
         title TEXT NOT NULL,
+        subtitle TEXT NOT NULL,
         sort_key TEXT NOT NULL,
         start INTEGER,
         end INTEGER,
@@ -28,6 +30,7 @@ STATEMENTS: tuple[str, ...] = (
         priority INTEGER NOT NULL,
         percent INTEGER NOT NULL,
         tags TEXT NOT NULL,
+        tags_folded TEXT NOT NULL,
         size INTEGER NOT NULL
     )""",
     "CREATE INDEX items_by_collection ON items (collection, kind)",

@@ -12,9 +12,10 @@ from chrono_mail.pimstore import ItemQuery, PimStore
 from chrono_mail.pimstore.extract import epoch
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pimstore.py 0.0.59"
+__version__ = "test_pimstore.py 0.0.60"
 
 # --- Version history ----------------------------------------------------
+# v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.59: Initial tests of the store and the index for calendars, tasks and contacts
 
 
@@ -114,7 +115,7 @@ def test_contacts_can_be_searched_by_part_of_a_word_sorted_and_found_by_tag(stor
     assert [item.title for item in store.index.query(ItemQuery(text="cafe"))] == ["Zoë Åberg"] and [i.title for i in store.index.query(ItemQuery(text="zoe aberg"))] == ["Zoë Åberg"]  # accents do not matter
     assert [i.title for i in store.index.query(ItemQuery(text="hoffman@example.com"))] == ["Rebecca Hoffman"]
     assert [i.item_id for i in store.index.query(ItemQuery(tag="important"))] == [ids["Reynolds, John"]] and store.index.query(ItemQuery(tag="impor")) == []  # a whole tag
-    assert store.index.tags() == {"important": 1, "key customer": 1, "business": 1} and store.index.count(ItemQuery(kind=CollectionKind.CONTACTS)) == 3
+    assert {k: v for k, (_, v) in store.index.tags().items()} == {"important": 1, "key customer": 1, "business": 1} and store.index.tags()["key customer"][0] == "Key Customer" and store.index.count(ItemQuery(kind=CollectionKind.CONTACTS)) == 3
     assert [i.title for i in store.index.query(ItemQuery(limit=1, offset=1, kind=CollectionKind.CONTACTS))] == ["Rebecca Hoffman"]
 
 
@@ -145,7 +146,7 @@ def test_tasks_open_done_due_and_ordered_by_due_date(store: PimStore) -> None:
     assert [i.item_id for i in store.index.query(ItemQuery(kind=CollectionKind.TASKS, only_done=True))] == [finished]
     assert [i.item_id for i in store.index.query(ItemQuery(kind=CollectionKind.TASKS, only_open=True, due_before=int(ts(2026, 11, 1).timestamp())))] == [soon]
     item = store.index.get(soon)
-    assert item is not None and (item.priority, item.tags, item.due) == (1, ("home",), int(ts(2026, 10, 15, 17).timestamp())) and not item.done
+    assert item is not None and (item.priority, item.tags, item.due) == (1, ("Home",), int(ts(2026, 10, 15, 17).timestamp())) and not item.done
     assert [i.title for i in store.index.query(ItemQuery(kind=CollectionKind.TASKS, sort="due", descending=True))][0] == "Later"  # a task without a due date is last either way
 
 

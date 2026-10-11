@@ -9,9 +9,10 @@ from chrono_mail.pim.contact import parse_contacts
 from chrono_mail.pim.ical import Moment, parse_events, parse_tasks
 
 # --- Version ------------------------------------------------------------
-__version__ = "extract.py 0.0.59"
+__version__ = "extract.py 0.0.60"
 
 # --- Version history ----------------------------------------------------
+# v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.59: Initial extraction of what the index holds from an item
 
 _UNTIL = re.compile(r"UNTIL=(\d{8})(?:T(\d{6}))?Z?", re.IGNORECASE)
@@ -24,6 +25,7 @@ class Extract:
 
     uid: str = ""
     title: str = ""
+    subtitle: str = ""
     sort_key: str = ""
     start: int | None = None
     end: int | None = None
@@ -69,9 +71,9 @@ def fold(text: str) -> str:
     return "".join(character for character in unicodedata.normalize("NFKD", text.casefold()) if not unicodedata.combining(character))
 
 
-def _tag_text(tags: tuple[str, ...]) -> str:
-    """The tags as one text that can be searched for a whole tag: each between separators, in lower case."""
-    return "".join(f"\x1f{tag.casefold()}" for tag in tags) + ("\x1f" if tags else "")
+def _tag_text(tags: tuple[str, ...], folded: bool) -> str:
+    """The tags as one text that can be searched for a whole tag: each between separators (in lower case when folded)."""
+    return "".join(f"\x1f{tag.casefold() if folded else tag}" for tag in tags) + ("\x1f" if tags else "")
 
 
 def extract(kind: CollectionKind, text: str) -> Extract:
@@ -85,7 +87,7 @@ def extract(kind: CollectionKind, text: str) -> Extract:
         end, _ = epoch(event.end)
         body = " ".join([event.description, event.location, *event.categories, *(person.address + " " + person.name for person in event.attendees)])[:MAXIMUM_TEXT]
         return Extract(
-            event.uid, event.summary, str(start or 0).zfill(12), start, end, None, floating, event.repeats, _until(event.rrule) if event.rrule else None,
+            event.uid, event.summary, event.location, str(start or 0).zfill(12), start, end, None, floating, event.repeats, _until(event.rrule) if event.rrule else None,
             event.status, False, 0, 0, event.categories, body,
         )
     if kind is CollectionKind.TASKS:
@@ -97,7 +99,7 @@ def extract(kind: CollectionKind, text: str) -> Extract:
         start, start_floating = epoch(task.start)
         body = " ".join([task.description, task.location, *task.categories])[:MAXIMUM_TEXT]
         return Extract(
-            task.uid, task.summary, str(due if due is not None else 10**11).zfill(12), start, None, due, floating or start_floating, bool(task.rrule), None,
+            task.uid, task.summary, task.location, str(due if due is not None else 10**11).zfill(12), start, None, due, floating or start_floating, bool(task.rrule), None,
             task.status, task.done, task.priority, task.percent, task.categories, body,
         )
     contacts = parse_contacts(text)
@@ -111,8 +113,9 @@ def extract(kind: CollectionKind, text: str) -> Extract:
             *(part for address in contact.addresses for part in address.lines()),
         ]
     )[:MAXIMUM_TEXT]
-    return Extract(contact.uid, contact.full_name(), fold(contact.sort_name()), None, None, None, False, False, None, "", False, 0, 0, contact.categories, body)
+    subtitle = contact.organization or (contact.emails[0].value if contact.emails else "")
+    return Extract(contact.uid, contact.full_name(), subtitle, fold(contact.sort_name()), None, None, None, False, False, None, "", False, 0, 0, contact.categories, body)
 
 
-def tag_text(tags: tuple[str, ...]) -> str:
-    return _tag_text(tags)
+def tag_text(tags: tuple[str, ...], folded: bool = False) -> str:
+    return _tag_text(tags, folded)

@@ -10,9 +10,10 @@ from chrono_mail.pimstore.extract import Extract, tag_text
 from chrono_mail.pimstore.schema import MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.0.59"
+__version__ = "index.py 0.0.60"
 
 # --- Version history ----------------------------------------------------
+# v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.59: Initial index of calendars, tasks and contacts
 
 _WORD = re.compile(r"\w+", re.UNICODE)
@@ -26,6 +27,7 @@ class IndexedItem:
     kind: CollectionKind
     uid: str
     title: str
+    subtitle: str
     sort_key: str
     start: int | None
     end: int | None
@@ -41,14 +43,14 @@ class IndexedItem:
     size: int
 
 
-_COLUMNS = "i.item_id, i.collection, i.kind, i.uid, i.title, i.sort_key, i.start, i.end, i.due, i.floating, i.repeats, i.until, i.status, i.done, i.priority, i.percent, i.tags, i.size"
+_COLUMNS = "i.item_id, i.collection, i.kind, i.uid, i.title, i.subtitle, i.sort_key, i.start, i.end, i.due, i.floating, i.repeats, i.until, i.status, i.done, i.priority, i.percent, i.tags, i.size"
 
 
 def _item(row: tuple[object, ...]) -> IndexedItem:
-    tags = tuple(part for part in str(row[16]).split("\x1f") if part)
+    tags = tuple(part for part in str(row[17]).split("\x1f") if part)
     return IndexedItem(
-        str(row[0]), str(row[1]), CollectionKind(str(row[2])), str(row[3]), str(row[4]), str(row[5]), _number(row[6]), _number(row[7]), _number(row[8]),
-        bool(row[9]), bool(row[10]), _number(row[11]), str(row[12]), bool(row[13]), int(str(row[14])), int(str(row[15])), tags, int(str(row[17])),
+        str(row[0]), str(row[1]), CollectionKind(str(row[2])), str(row[3]), str(row[4]), str(row[5]), str(row[6]), _number(row[7]), _number(row[8]), _number(row[9]),
+        bool(row[10]), bool(row[11]), _number(row[12]), str(row[13]), bool(row[14]), int(str(row[15])), int(str(row[16])), tags, int(str(row[18])),
     )
 
 
@@ -121,11 +123,11 @@ class PimIndex:
         with self._transaction():
             self._remove(item_id)
             cursor = self._connection.execute(
-                "INSERT INTO items (item_id, collection, kind, uid, title, sort_key, start, end, due, floating, repeats, until, status, done, priority, percent, tags, size) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO items (item_id, collection, kind, uid, title, subtitle, sort_key, start, end, due, floating, repeats, until, status, done, priority, percent, tags, tags_folded, size) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    item_id, collection, kind.value, extract.uid, extract.title, extract.sort_key, extract.start, extract.end, extract.due, int(extract.floating),
-                    int(extract.repeats), extract.until, extract.status, int(extract.done), extract.priority, extract.percent, tag_text(extract.tags), size,
+                    item_id, collection, kind.value, extract.uid, extract.title, extract.subtitle, extract.sort_key, extract.start, extract.end, extract.due, int(extract.floating),
+                    int(extract.repeats), extract.until, extract.status, int(extract.done), extract.priority, extract.percent, tag_text(extract.tags), tag_text(extract.tags, True), size,
                 ),
             )
             self._connection.execute("INSERT INTO text (rowid, title, body) VALUES (?, ?, ?)", (cursor.lastrowid, extract.title, extract.text))
@@ -191,7 +193,7 @@ class PimIndex:
             conditions.append("i.collection IN (" + ",".join("?" * len(query.collections)) + ")")
             parameters.extend(query.collections)
         if query.tag:
-            conditions.append("i.tags LIKE ? ESCAPE '\\'")
+            conditions.append("i.tags_folded LIKE ? ESCAPE '\\'")
             escaped = query.tag.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             parameters.append(f"%\x1f{escaped}\x1f%")
         if query.only_open:
@@ -214,13 +216,15 @@ class PimIndex:
             parameters.extend([max(0, query.limit), max(0, query.offset)])
         return statement, parameters
 
-    def tags(self) -> dict[str, int]:
-        """Every tag in use (lower case) and how many items carry it."""
-        counts: dict[str, int] = {}
-        for (text,) in self._connection.execute("SELECT tags FROM items WHERE tags != ''").fetchall():
+    def tags(self, kind: CollectionKind | None = None) -> dict[str, tuple[str, int]]:
+        """Every tag in use, by its lower-case name: as it was first written, and how many items carry it."""
+        counts: dict[str, tuple[str, int]] = {}
+        rows = self._connection.execute("SELECT tags FROM items WHERE tags != ''" + (" AND kind = ?" if kind is not None else ""), (kind.value,) if kind is not None else ()).fetchall()
+        for (text,) in rows:
             for tag in str(text).split("\x1f"):
                 if tag:
-                    counts[tag] = counts.get(tag, 0) + 1
+                    shown, number = counts.get(tag.casefold(), (tag, 0))
+                    counts[tag.casefold()] = (shown, number + 1)
         return counts
 
     def check(self) -> bool:

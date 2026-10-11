@@ -656,3 +656,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - 3.4 engine commands.
 
+## 2026-10-11 Commands for calendars, tasks and contacts (version 0.0.60)
+
+**What landed**
+- `commands_pim.py` (pim.enable, collection.*, tag.*), `commands_addressbook.py` (contact.*), `commands_calendar.py` (event.*), `commands_tasklist.py` (task.*), `pimaccess.py`, `pim/times.py`, `pim/edit.py`, `config/tags.py`; `advance_task` for repeating tasks; the index keeps the tags as written and a lower-case copy; 13 new engine tests (contacts, events with repeats and exceptions, tasks, tags).
+- A throw-away run of the command line used the real credential store and left a test key in it; it was removed again. Command-line runs for tests must use an in-memory key store.
+
+**Still open**
+- 3.5 the four-button shell, then the three sections.
+

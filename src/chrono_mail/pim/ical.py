@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 0.0.58"
+__version__ = "ical.py 0.0.60"
 
 # --- Version history ----------------------------------------------------
+# v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.58: Initial events and tasks from and to iCalendar, reminders, attendees, recurrence
 
 MAXIMUM_TEXT_CHARACTERS: int = 16 * 1024 * 1024
@@ -552,6 +553,30 @@ def tasks_to_text(task: Task, original: str | None = None) -> str:
 def complete_task(task: Task, when: datetime | None = None) -> Task:
     """The task marked completed now (or at this time); a repeating task is the caller's matter."""
     return replace(task, status="COMPLETED", completed=when or datetime.now(UTC), percent=100)
+
+
+def advance_task(task: Task) -> Task | None:
+    """The next time of a repeating task: its dates moved to the next time its rule gives, open again. None when the task does not repeat, or the rule has no next time."""
+    from dateutil.rrule import rrulestr
+
+    anchor = task.due or task.start
+    if not task.rrule or anchor is None:
+        return None
+    base = anchor if isinstance(anchor, datetime) else datetime(anchor.year, anchor.month, anchor.day)
+    try:
+        following = rrulestr(task.rrule, dtstart=base).after(base)
+    except (ValueError, TypeError, OverflowError):
+        return None
+    if not isinstance(following, datetime):
+        return None
+    delta = following - base
+
+    def moved(moment: Moment | None) -> Moment | None:
+        if moment is None:
+            return None
+        return moment + delta
+
+    return replace(task, start=moved(task.start), due=moved(task.due), status="NEEDS-ACTION", completed=None, percent=0)
 
 
 def reopen_task(task: Task) -> Task:

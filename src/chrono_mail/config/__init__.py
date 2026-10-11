@@ -17,13 +17,15 @@ from chrono_mail.config.passwords import (
     ServerRole,
 )
 from chrono_mail.config.paths import AppDirectories, default_directories
+from chrono_mail.config.tags import TagColours, load_tags, parse_tags, save_tags, tags_to_text
 from chrono_mail.config.sidebar import Group, Pin, Sidebar, load_sidebar, parse_sidebar, save_sidebar, sidebar_to_text
 from chrono_mail.config.rules import Action, Condition, Rule, RuleSet, load_rules, new_rule_id, parse_rules, rules_to_text, save_rules
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 0.0.47"
+__version__ = "__init__.py 0.0.60"
 
 # --- Version history ----------------------------------------------------
+# v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.33: Export the rules
 # v0.0.9: Export the settings, the paths and the password stores
@@ -36,6 +38,11 @@ def new_account_id() -> str:
 
 
 __all__ = [
+    "TagColours",
+    "load_tags",
+    "parse_tags",
+    "save_tags",
+    "tags_to_text",
     "Group",
     "Pin",
     "Sidebar",
