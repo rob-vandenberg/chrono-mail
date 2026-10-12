@@ -846,3 +846,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - `ui/windowstate.py`: saves and restores the size and position of a window (keys `geometry`, `message_window_geometry`, `composer_geometry`, `settings_geometry`). After restoring, the top edge of the window must be at least 100 by 20 pixels on a screen that is connected now (a screen that is gone, another resolution); if not, the window keeps its own size and position. Used by the main window (which restored without a check before), the message windows, the composers and the Settings window (saved with OK and with Cancel). All message windows share one saved geometry, all composers another.
 - Found: Qt itself already moves a window that was saved off-screen onto a screen when restoring; the check is a second guard.
 - Tests run: the new window state tests and the files for composer, columns (message window), preferences and window; not the full suite.
+
+## 2026-10-12 STATUS.md rewritten, repository recreated (version 0.0.84)
+
+**What landed**
+- `STATUS.md` rewritten: current state, next task, backlog, problems, open questions; the old work queue and old counts removed. It is now updated before every push.
+- The GitHub repository was recreated; the author of the first commit was changed to the owner (history rewritten, all 70 tags kept, files unchanged).
+- Test count (collected, not run): 1621 offline, 48 opt-in.
