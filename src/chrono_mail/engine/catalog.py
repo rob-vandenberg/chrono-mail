@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_actions, commands_addressbook, commands_calendar, commands_combined, commands_contacts, commands_dav, commands_drafts, commands_export, commands_folders, commands_imap, commands_local, commands_mail, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tasklist, commands_watch
+from chrono_mail.engine import commands_accounts, commands_actions, commands_addressbook, commands_calendar, commands_combined, commands_contacts, commands_dav, commands_drafts, commands_export, commands_folders, commands_imap, commands_local, commands_mail, commands_outbox, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tasklist, commands_watch
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 0.0.66"
+__version__ = "catalog.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Send All (mail.send-outbox)
 # v0.0.66: Commands for the calendar and contacts server
 # v0.0.60: Commands for collections, tags and contacts
 # v0.0.47: Pinned favorites, account groups and search in combined views
@@ -46,4 +47,5 @@ def build_registry() -> CommandRegistry:
     commands_calendar.register(registry)
     commands_tasklist.register(registry)
     commands_schedule.register(registry)
+    commands_outbox.register(registry)
     return registry

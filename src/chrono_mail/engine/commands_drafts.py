@@ -10,14 +10,15 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, OutgoingMessage, build_message, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_drafts.py 0.0.45"
+__version__ = "commands_drafts.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: A draft can be a forward as attachment
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.24: Rich text composing
 # v0.0.16: Initial draft commands
 
-DraftKind = Literal["new", "reply", "reply_all", "forward"]
+DraftKind = Literal["new", "reply", "reply_all", "forward", "forward_attachment"]
 DRAFT_FLAGS: frozenset[MessageFlag] = frozenset({MessageFlag.DRAFT, MessageFlag.SEEN})
 
 
@@ -32,7 +33,7 @@ class DraftSaveParameters:
     html: str | None = field(default=None, metadata=option("An HTML version of the body (a rich text draft)"))
     attach: tuple[str, ...] = field(default=(), metadata=option("A file to attach (repeat for more)"))
     keep_attachments: tuple[str, ...] = field(default=(), metadata=option("The position of an attachment of the earlier version of this draft to keep (repeat for more)"))
-    kind: DraftKind = field(default="new", metadata=option("What the draft is: new, reply, reply_all or forward"))
+    kind: DraftKind = field(default="new", metadata=option("What the draft is: new, reply, reply_all, forward or forward_attachment"))
     in_reply_to: str | None = field(default=None, metadata=option("The Message-ID this answers"))
     references: tuple[str, ...] = field(default=(), metadata=option("A Message-ID of the conversation (repeat for more)"))
     source_folder: str | None = field(default=None, metadata=option("The folder of the message this answers or forwards"))
@@ -133,7 +134,7 @@ def draft_open(engine: Engine, parameters: DraftOpenParameters) -> DraftOpenResu
         return DraftOpenResult(
             reference.store_id,
             "/".join(folder),
-            kind if kind in ("new", "reply", "reply_all", "forward") else "new",
+            kind if kind in ("new", "reply", "reply_all", "forward", "forward_attachment") else "new",
             _shown(parsed.to_addresses),
             _shown(parsed.cc_addresses),
             _shown(parsed.bcc_addresses),

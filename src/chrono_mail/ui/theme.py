@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.0.85"
+__version__ = "theme.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Split toolbar buttons (Refresh, Snooze): the arrow part beside the text
 # v0.0.85: The arrow of a toolbar button with a menu sits beside its text, not in the corner
 # v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
 # v0.0.79: The column headers of the message list have a thin line between them again
@@ -28,6 +29,8 @@ QToolBar#mainToolbar {{ background: palette(window); border: 0; spacing: 2px; pa
 QToolBar#mainToolbar QToolButton {{ background: transparent; border: 0; border-radius: 4px; padding: 6px 9px; }}
 QToolBar#mainToolbar QToolButton:hover, QToolBar#mainToolbar QToolButton:pressed {{ background: {HOVER}; }}
 QToolBar#mainToolbar QToolButton[popupMode="2"] {{ padding-right: 22px; }}
+QToolBar#mainToolbar QToolButton[popupMode="1"] {{ padding-right: 24px; }}
+QToolBar#mainToolbar QToolButton::menu-button {{ border: 0; width: 18px; }}
 QToolBar#mainToolbar QToolButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 7px; }}
 QToolButton#menuButton, QToolBar#mainToolbar QToolButton#menuButton {{ background: palette(highlight); color: palette(highlighted-text); font-weight: 600; border: 0; border-radius: 4px; padding: 6px 14px; margin-right: 6px; }}
 QToolButton#menuButton:hover, QToolBar#mainToolbar QToolButton#menuButton:hover {{ background: palette(link); }}

@@ -11,9 +11,10 @@ from chrono_mail.mime import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mime_build.py 0.0.16"
+__version__ = "test_mime_build.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Bcc is taken out of a stored message without touching anything else
 # v0.0.16: Drafts
 # v0.0.5: Initial builder tests
 
@@ -163,3 +164,12 @@ def test_only_the_programs_own_headers_with_plain_values_can_be_added(header: tu
 def test_a_draft_may_be_empty() -> None:
     parsed = parse_message(build_message(OutgoingMessage(from_address=SENDER), draft=True))
     assert parsed.to_addresses == () and parsed.bcc_addresses == () and parsed.subject == "" and parsed.text_body is not None
+
+
+def test_without_bcc_removes_only_the_bcc_header_and_its_continuation_lines() -> None:
+    from chrono_mail.mime import without_bcc
+
+    raw = b"From: a@example.com\r\nBcc: one@example.com,\r\n two@example.com\r\nSubject: Bcc: in the subject\r\nX-Other: kept\r\n folded\r\n\r\nBcc: in the body stays\r\n"
+    assert without_bcc(raw) == b"From: a@example.com\r\nSubject: Bcc: in the subject\r\nX-Other: kept\r\n folded\r\n\r\nBcc: in the body stays\r\n"
+    assert without_bcc(b"no header end") == b"no header end"
+    assert without_bcc(b"BCC: x@example.com\r\nTo: y@example.com\r\n\r\nbody") == b"To: y@example.com\r\n\r\nbody"

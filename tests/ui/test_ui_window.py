@@ -8,15 +8,17 @@ from PySide6.QtWidgets import QDialog, QLabel, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.config import ServerRole
+from chrono_mail.ui.sections import CALENDAR, MAIL
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.85"
+__version__ = "test_ui_window.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Message buttons are greyed out while no message is selected
 # v0.0.85: The window title names the open folder and its unread messages
 # v0.0.77: Received instead of Date
 # v0.0.53: Standard keyboard shortcuts
@@ -101,6 +103,22 @@ def test_tree_shows_the_account_and_its_folders_with_unread_counts(world: World,
     assert world.window.count_label.text() == "3 messages, 3 unread"
     assert world.window.sort_button.text() == "Sorted by Received ▾"
     assert world.window.windowTitle() == "Inbox (3) - Chrono Mail"
+
+
+def test_message_buttons_are_greyed_out_while_no_message_is_selected(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.list_view.clearSelection()
+    message_buttons = [window.act_reply, window.act_reply_all, window.act_forward, window.act_archive, window.act_snooze, window.act_delete, window.act_open]
+    assert not any(action.isEnabled() for action in message_buttons) and not window.mark_button.isEnabled() and not window.move_button.isEnabled()
+    assert window.act_new.isEnabled() and window.act_refresh.isEnabled()
+    window.list_view.setCurrentIndex(window.list_model.index(0))
+    assert all(action.isEnabled() for action in message_buttons) and window.mark_button.isEnabled() and window.move_button.isEnabled()
+    window.list_view.clearSelection()
+    window.switch_section(CALENDAR)
+    assert window.act_delete.isEnabled()  # Delete of the calendar
+    window.switch_section(MAIL)
+    assert not window.act_reply.isEnabled() and not window.act_delete.isEnabled()
 
 
 def test_the_window_title_follows_the_open_folder(world: World, qtbot: QtBot) -> None:
@@ -686,11 +704,12 @@ def test_mark_as_junk_and_not_junk(world: World, qtbot: QtBot) -> None:
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
     assert world.call("message.list", account=world.account_id, folder="Junk").total == 1
     open_folder(world, qtbot, "Junk", 1)
-    assert world.window.act_junk.isEnabled() and world.window.act_not_junk.isEnabled()  # Ctrl+J is a switch: in Junk it brings the message back
     select(world.window, 0)
+    assert world.window.act_junk.isEnabled() and world.window.act_not_junk.isEnabled()  # Ctrl+J is a switch: in Junk it brings the message back
     world.window.act_junk.trigger()
     wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Junk").total == 0)
     open_folder(world, qtbot, "Inbox", 3)
+    select(world.window, 0)
     assert world.window.act_junk.isEnabled() and not world.window.act_not_junk.isEnabled()
 
 

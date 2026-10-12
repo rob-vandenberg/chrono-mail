@@ -35,9 +35,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.83"
+__version__ = "composer.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Forward as attachment: a checked box attaches the original message as an .eml file
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
@@ -245,13 +246,18 @@ class ComposeWindow(QMainWindow):
             self.body.setPlainText(str(getattr(draft, "body")))
             names: tuple[str, ...] = tuple(getattr(draft, "attachment_names", ()))
             if names:
-                self.include_original.setText(f"Include the attachments of the original message ({', '.join(names)})")
+                wording = "Attach the original message" if self._kind == "forward_attachment" else "Include the attachments of the original message"
+                self.include_original.setText(f"{wording} ({', '.join(names)})")
                 self.include_original.setChecked(True)
                 self.include_original.show()
             for stored in getattr(draft, "attachments", ()):
                 self._add_kept(int(getattr(stored, "position")), str(getattr(stored, "name")), int(getattr(stored, "size")))
             self.setWindowTitle(str(getattr(draft, "subject")) or "New message")
             self.body.moveCursor(self.body.textCursor().MoveOperation.Start)
+        if self._kind == "forward_attachment" and self.include_original.isHidden():  # a draft taken up again: the original still goes along
+            self.include_original.setText("Attach the original message")
+            self.include_original.setChecked(True)
+            self.include_original.show()
         self._accounts: list[object] = accounts
         self._signature: str = self._signature_of(account_id)
         if resume is None and self._signature:
@@ -533,10 +539,11 @@ class ComposeWindow(QMainWindow):
             values["in_reply_to"] = self._in_reply_to
         if self._references:
             values["references"] = list(self._references)
-        if self._source is not None and self._kind in ("reply", "reply_all", "forward"):
+        if self._source is not None and self._kind in ("reply", "reply_all", "forward", "forward_attachment"):
             values["source_folder"], values["source_message"] = self._source
             values["mark_replied"] = self._kind in ("reply", "reply_all")
             values["include_source_attachments"] = self._kind == "forward" and self.include_original.isChecked()
+            values["attach_source_message"] = self._kind == "forward_attachment" and self.include_original.isChecked()
         if self._stored is not None:
             values["replaces_folder"], values["replaces_message"] = self._stored  # the draft (or Outbox message) becomes the sent message
             if self.kept_positions():

@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, first_id, setup  # noqa: F40
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_drafts.py 0.0.24"
+__version__ = "test_engine_drafts.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: A forward as attachment can be saved as a draft and taken up again
 # v0.0.24: Rich text composing
 # v0.0.16: Initial draft command tests
 
@@ -197,3 +198,9 @@ def test_a_rich_text_message_is_sent_as_text_and_html(setup: Setup) -> None:
     assert result.sent
     data = setup.smtp.received[0].data
     assert b"multipart/alternative" in data and b"text/plain" in data and b"text/html" in data and b"<b>bold</b>" in data
+
+
+def test_a_forward_as_attachment_is_kept_as_such_in_drafts(setup: Setup) -> None:
+    saved = call(setup.engine, "draft.save", account=setup.account_id, subject="Fwd: x", body="", kind="forward_attachment")
+    opened = call(setup.engine, "draft.open", account=setup.account_id, folder=saved.folder, message=saved.message_id)
+    assert opened.kind == "forward_attachment"

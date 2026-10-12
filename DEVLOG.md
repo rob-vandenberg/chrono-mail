@@ -866,3 +866,16 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - Running some ui test files together with others (`test_ui_window.py` by node id, `test_ui_appearance.py`) gives "fixture 'world' not found" (a test-collection quirk, not new); run alone they pass.
 - Steps 2 to 8 (D-086).
+
+## 2026-10-13 Main screen restyle step 2: Refresh, Snooze and Forward menus, Send All (version 0.0.86)
+
+**What landed**
+- Refresh is a split button: a click sends what waits in the Outbox and then checks all accounts (Send and Receive All, as the reference does); its arrow opens Send and Receive All, Receive All, Send All and one entry per account ("<account>" only).
+- Send All: new command `mail.send-outbox` (`engine/commands_outbox.py`, `send_stored` in `sync/send.py`). The copy in the Outbox and in Sent now keeps the Bcc header; `without_bcc` takes it out of what goes to the server (D-088). Tests for a crash after the server accepted and after the move: one copy, never zero, never two.
+- Forward is a split button with Forward as attachment: the original goes along unchanged as `<subject>.eml` (message/rfc822, not base64); the composer shows a checked box "Attach the original message (...)"; such a draft can be saved and taken up again.
+- A Snooze split button (clock icon) after Archive: a click opens the time dialog; its arrow offers Tomorrow, Later this week, This weekend and Next week (each at 09:00, with the weekday) and Custom date and time. The times come from `snooze_presets` in `engine/schedule.py`: later this week is two days ahead and left out when that is Saturday or later; this weekend is the coming Saturday and left out on Saturday and Sunday.
+- The Snooze button opens its menu wherever it is clicked (Custom date and time is its last entry). While no message is selected (after a fresh start) the message buttons and actions are greyed out: Reply, Reply all, Forward, Mark, Archive, Snooze, Move to, Delete and the matching menu items; Delete is on again in the other sections.
+- Tests run: `tests/test_sync_send.py`, `tests/test_mime_build.py`, `tests/test_engine_outbox.py` (new), `tests/test_engine_drafts.py`, `tests/test_engine_schedule.py`, `tests/test_engine_compose.py`, the send tests of `tests/test_engine_commands.py`, `tests/ui/test_ui_schedule.py`, `tests/ui/test_ui_composer.py`, `tests/ui/test_ui_window.py`, `tests/ui/test_ui_export.py`, `tests/ui/test_ui_columns.py`, `tests/ui/test_ui_shortcuts.py` (the known flaky test failed once), `tests/ui/test_ui_sections.py`, `tests/ui/test_ui_theme.py`, `tests/ui/test_ui_tray.py`, `tests/test_appinfo.py`; not the full suite.
+
+**Still open**
+- Messages already in the Outbox from before 0.0.86 have no Bcc header. "Forward as Original" and "Resend" of the reference are not built. The tray menu's Refresh still only receives.

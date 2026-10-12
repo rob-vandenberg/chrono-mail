@@ -8,13 +8,14 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "compose.py 0.0.42"
+__version__ = "compose.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Forward as attachment: the original goes along as an .eml file
 # v0.0.42: Settings window with pages for everything
 # v0.0.13: Initial reply and forward drafts
 
-ComposeKind = Literal["reply", "reply_all", "forward"]
+ComposeKind = Literal["reply", "reply_all", "forward", "forward_attachment"]
 _REPLY_PREFIX: re.Pattern[str] = re.compile(r"^\s*(?:re|aw|antw|sv|vs)\s*:\s*", re.IGNORECASE)
 _FORWARD_PREFIX: re.Pattern[str] = re.compile(r"^\s*(?:fwd?|wg|tr|vs)\s*:\s*", re.IGNORECASE)
 _UNSAFE_NAME: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
@@ -72,9 +73,15 @@ def _when(moment: datetime | None) -> str:
 
 def subject_for(subject: str, kind: ComposeKind) -> str:
     """Re: or Fwd: in front of the subject, never twice."""
-    if kind == "forward":
+    if kind in ("forward", "forward_attachment"):
         return subject if _FORWARD_PREFIX.match(subject) else f"Fwd: {subject}"
     return subject if _REPLY_PREFIX.match(subject) else f"Re: {subject}"
+
+
+def message_filename(subject: str) -> str:
+    """The file name of a message sent along as an attachment: its subject, made safe, with .eml."""
+    cleaned = _UNSAFE_NAME.sub("_", subject).strip(" .")[:100]
+    return f"{cleaned or 'message'}.eml"
 
 
 def build_draft(message: ParsedMessage, kind: ComposeKind, own_address: str, quote: str = "above") -> Draft:
@@ -84,6 +91,8 @@ def build_draft(message: ParsedMessage, kind: ComposeKind, own_address: str, quo
     sender_text = _format(sender) if sender is not None else "an unknown sender"
     in_reply_to = message.message_id
     references = (*message.references, *((in_reply_to,) if in_reply_to else ()))
+    if kind == "forward_attachment":  # no quoted text: the whole original is attached
+        return Draft("forward_attachment", (), (), subject_for(message.subject, kind), "\n\n", None, (), (message_filename(message.subject),))
     if kind == "forward":
         header = [
             "---------- Forwarded message ----------",

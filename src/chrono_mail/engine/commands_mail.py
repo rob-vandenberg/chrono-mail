@@ -14,7 +14,7 @@ from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_rules import apply_to_new
 from chrono_mail.engine.recurring import RECURRING_FILE, Repeat, load_repeats, save_repeats
 from chrono_mail.engine.schedule import describe_when, parse_when
-from chrono_mail.engine.compose import ComposeKind, build_draft, suggest_filename
+from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
@@ -25,9 +25,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.72"
+__version__ = "commands_mail.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Forward as attachment: the original message attached as an .eml file (attach_source_message)
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.67: Messages that are sent again and again
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -185,6 +186,7 @@ class SendParameters:
     source_folder: str | None = field(default=None, metadata=option("The folder of the message this answers or forwards"))
     source_message: str | None = field(default=None, metadata=option("The id of the message this answers or forwards"))
     include_source_attachments: bool = field(default=False, metadata=option("Forward: take the attachments of the source message along"))
+    attach_source_message: bool = field(default=False, metadata=option("Forward as attachment: attach the whole source message as an .eml file"))
     mark_replied: bool = field(default=False, metadata=option("Reply: mark the source message as replied to once sent"))
     keep_folder: str | None = field(default=None, metadata=option("The folder of a stored message (a draft) whose attachments are to be sent"))
     keep_message: str | None = field(default=None, metadata=option("The id of that stored message"))
@@ -236,12 +238,15 @@ def _source_attachments(mailbox: Mailbox, parameters: "SendParameters") -> tuple
             raise UsageError("An attachment position is a whole number, starting at 0")
         stored = mailbox.reference(mailbox.folder(parameters.keep_folder), _check_id(parameters.keep_message))
         kept = kept_attachments(mailbox.store.read(stored, hint=mailbox.hint(stored.store_id)), parameters.keep_attachments)
-    if not parameters.include_source_attachments:
+    if not parameters.include_source_attachments and not parameters.attach_source_message:
         return kept
     if not parameters.source_folder or not parameters.source_message:
         raise UsageError("Taking attachments along needs the source message")
     source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
-    parsed = parse_message(mailbox.store.read(source, hint=mailbox.hint(source.store_id)))
+    raw = mailbox.store.read(source, hint=mailbox.hint(source.store_id))
+    parsed = parse_message(raw)
+    if parameters.attach_source_message:
+        return (*kept, Attachment(message_filename(parsed.subject), "message/rfc822", None, False, raw))
     return (*kept, *(attachment for attachment in parsed.attachments if not attachment.inline))
 
 
@@ -616,7 +621,7 @@ class ComposeParameters:
     account: str = field(metadata=option("The account"))
     folder: str = field(metadata=option("The folder the message is in"))
     message: str = field(metadata=option("The message to reply to or forward"))
-    kind: ComposeKind = field(default="reply", metadata=option("reply, reply_all or forward"))
+    kind: ComposeKind = field(default="reply", metadata=option("reply, reply_all, forward or forward_attachment"))
     quote: Literal["above", "below", "none"] = field(default="above", metadata=option("Replies: my text above the quote, below it, or no quote at all"))
 
 

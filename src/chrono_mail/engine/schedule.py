@@ -1,19 +1,36 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from chrono_mail.core import StorageError
 from chrono_mail.engine.registry import UsageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "schedule.py 0.0.34"
+__version__ = "schedule.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Ready-made snooze times (tomorrow, later this week, this weekend, next week)
 # v0.0.34: Initial times for sending later and snoozing
 
 TOLERANCE_SECONDS: int = 60
 MAXIMUM_SECONDS_AHEAD: int = 5 * 366 * 86_400
+SNOOZE_HOUR: int = 9  # the ready-made snooze times are at 09:00
+SATURDAY: int = 5  # datetime.weekday(): Monday is 0
+
+
+def snooze_presets(now: datetime) -> list[tuple[str, datetime]]:
+    """The ready-made snooze times from a local moment, each at 09:00: tomorrow; later this week (two days ahead, left out
+    when that is Saturday or later); this weekend (the coming Saturday, left out on Saturday and Sunday); next week (the coming Monday)."""
+    day = now.replace(hour=SNOOZE_HOUR, minute=0, second=0, microsecond=0)
+    weekday = now.weekday()
+    presets = [("Tomorrow", day + timedelta(days=1))]
+    if weekday + 2 < SATURDAY:
+        presets.append(("Later this week", day + timedelta(days=2)))
+    if weekday < SATURDAY:
+        presets.append(("This weekend", day + timedelta(days=SATURDAY - weekday)))
+    presets.append(("Next week", day + timedelta(days=7 - weekday)))
+    return presets
 
 
 def parse_when(text: str, now: float) -> int:

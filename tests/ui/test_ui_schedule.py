@@ -11,9 +11,10 @@ from tests.ui.test_ui_composer import fill, new_composer
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 0.0.67"
+__version__ = "test_ui_schedule.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: The Refresh menu (send and receive), the Snooze button with ready-made times, the Forward menu
 # v0.0.67: Repeating messages
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.34: Initial send later and snooze window tests
@@ -172,3 +173,63 @@ def test_a_repeating_message_is_listed_paused_and_stopped_in_the_window(world: W
     dialog.stop_button.click()
     wait(qtbot, lambda: dialog.list.count() == 0)
     assert world.call("message.list", account=world.account_id, folder="Outbox").total == 0
+
+
+def test_refresh_has_a_menu_to_receive_all_or_one_account(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QToolButton
+
+    world.window.start()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
+    button = world.window.toolbar.widgetForAction(world.window.act_refresh)
+    assert isinstance(button, QToolButton) and button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup and button.menu() is world.window.refresh_menu
+    checked: list[set[str] | None] = []
+
+    def record(only: set[str] | None) -> None:
+        checked.append(only)
+
+    monkeypatch.setattr(world.window, "check_accounts", record)
+    world.window._fill_refresh_menu()  # noqa: SLF001
+    actions = world.window.refresh_menu.actions()
+    assert [action.text() for action in actions] == ["Send and Receive All", "Receive All", "Send All", "", '"me@example.com" only']
+    actions[4].trigger()
+    actions[1].trigger()
+    assert checked == [{world.account_id}, None]
+
+
+def test_the_snooze_button_offers_ready_made_times(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QToolButton
+
+    world.window.start()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
+    button = world.window.toolbar.widgetForAction(world.window.act_snooze)
+    assert isinstance(button, QToolButton) and button.text() == "Snooze" and button.popupMode() == QToolButton.ToolButtonPopupMode.InstantPopup and button.menu() is world.window.snooze_menu
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(0))
+    real_clock(world)
+    world.window._fill_snooze_menu()  # noqa: SLF001
+    texts = [action.text() for action in world.window.snooze_menu.actions()]
+    assert texts[0].startswith("Tomorrow (") and texts[0].endswith(" 09:00)") and "Next week" in texts[-3] and texts[-2:] == ["", "Custom date and time…"]
+    world.window.snooze_menu.actions()[0].trigger()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
+    assert len(world.call("message.snoozed")) == 1 and "Snoozed 1 message(s)" in world.window.status_label.text()
+
+
+def test_refresh_sends_what_waits_in_the_outbox_and_then_receives(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.config import ServerRole
+
+    world.window.start()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
+    world.engine.passwords.set(world.account_id, ServerRole.OUTGOING, "wrong")
+    world.call("mail.send", account=world.account_id, to="you@example.com", subject="Waiting", body="x")
+    world.engine.passwords.set(world.account_id, ServerRole.OUTGOING, "secret")
+    assert world.smtp.received == []
+    world.window.act_refresh.trigger()
+    wait(qtbot, lambda: len(world.smtp.received) == 1 and world.window.act_refresh.isEnabled())
+    assert len(world.call("message.list", account=world.account_id, folder="Outbox").messages) == 0
+
+
+def test_forward_has_a_menu_with_forward_as_attachment(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QToolButton
+
+    button = world.window.toolbar.widgetForAction(world.window.act_forward)
+    assert isinstance(button, QToolButton) and button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup
+    assert [action.text() for action in world.window.forward_menu.actions()] == ["Forward as attachment"]

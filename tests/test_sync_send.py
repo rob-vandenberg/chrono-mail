@@ -3,19 +3,20 @@ from pathlib import Path
 
 import pytest
 
-from chrono_mail.core import ConnectionSecurity, FolderRole, MessageFlag, MessageFormatError, ServerSettings
+from chrono_mail.core import ConnectionSecurity, FolderRole, MessageFlag, MessageFormatError, MessageRef, ServerSettings
 from chrono_mail.crypto import generate_data_key
 from chrono_mail.index import Index
-from chrono_mail.mime import Address, OutgoingMessage, parse_message
+from chrono_mail.mime import Address, OutgoingMessage, parse_message, without_bcc
 from chrono_mail.protocols.smtp import SmtpLimits
 from chrono_mail.store import Store
-from chrono_mail.sync import reconcile_index, send_and_file
+from chrono_mail.sync import reconcile_index, send_and_file, send_stored
 from tests.fakesmtp import FakeSmtpServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_send.py 0.0.10"
+__version__ = "test_sync_send.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: The stored copy keeps Bcc and what is sent does not; send_stored sends a message that waits in the Outbox, safely at every step
 # v0.0.10: Initial send and file tests
 
 OUTBOX = ("Outbox",)
@@ -69,7 +70,8 @@ def test_sent_message_is_filed_in_sent_and_indexed(tmp_path: Path) -> None:
         assert received.sender == "alice@example.com"
         assert received.recipients == ("bob@example.com", "secret@example.com")  # Bcc is in the envelope
         assert b"secret@example.com" not in received.data  # and nowhere in the message
-        assert contents(world, SENT) == [received.data]  # the stored copy is exactly what was sent
+        (stored,) = contents(world, SENT)
+        assert without_bcc(stored) == received.data and b"secret@example.com" in stored  # our copy is what was sent, plus the Bcc header
         assert contents(world, OUTBOX) == []
         assert world.store.list_messages(SENT)[0].flags == {MessageFlag.SEEN}
         assert [m.subject for m in world.index.page(SENT)] == ["Quarterly plan"] and world.index.count(OUTBOX) == 0
@@ -141,7 +143,7 @@ def test_crash_at_every_step_never_loses_the_message(tmp_path: Path, point: str)
         if point == "send:after-outbox":
             assert server.received == []
         else:
-            assert len(server.received) == 1 and stored[0] == server.received[0].data
+            assert len(server.received) == 1 and without_bcc(stored[0]) == server.received[0].data
         # the index can be repaired from the store after the crash
         reconcile_index(restarted, world.index)
         assert world.index.message_count() == 1
@@ -153,3 +155,54 @@ def test_a_message_left_in_the_outbox_is_never_sent_by_this_code_again(tmp_path:
         send_and_file(world.store, world.index, settings(server), "wrong", outgoing(), OUTBOX, SENT, FAST)
         send_and_file(world.store, world.index, settings(server), "wrong", outgoing(subject="Another"), OUTBOX, SENT, FAST)
         assert len(contents(world, OUTBOX)) == 2 and server.received == []  # each call sends only its own message
+
+
+def test_a_failed_message_keeps_its_bcc_in_the_outbox(tmp_path: Path) -> None:
+    world = make_world(tmp_path)
+    with FakeSmtpServer(password="right") as server:
+        send_and_file(world.store, world.index, settings(server), "wrong", outgoing(), OUTBOX, SENT, FAST)
+    (waiting,) = contents(world, OUTBOX)
+    assert [address.address for address in parse_message(waiting).bcc_addresses] == ["secret@example.com"]
+
+
+def _waiting(world: World, server: FakeSmtpServer) -> tuple[MessageRef, bytes]:
+    send_and_file(world.store, world.index, settings(server), "wrong", outgoing(), OUTBOX, SENT, FAST)
+    (message,) = world.store.list_messages(OUTBOX)
+    return message.ref, world.store.read(message.ref)
+
+
+def test_a_waiting_message_is_sent_as_stored_without_its_bcc_header_and_filed_in_sent(tmp_path: Path) -> None:
+    world = make_world(tmp_path)
+    with FakeSmtpServer(password="right") as server:
+        reference, raw = _waiting(world, server)
+        outcome = send_stored(world.store, world.index, settings(server), "right", reference, None, raw, "alice@example.com", ("bob@example.com", "secret@example.com"), SENT, FAST)
+        assert outcome.sent and outcome.reference.folder_path == SENT
+        (received,) = server.received
+        assert received.recipients == ("bob@example.com", "secret@example.com") and b"secret@example.com" not in received.data
+        assert received.data == without_bcc(raw) and contents(world, SENT) == [raw] and contents(world, OUTBOX) == []
+        assert world.index.count(SENT) == 1 and world.index.count(OUTBOX) == 0
+
+
+def test_a_waiting_message_that_fails_again_stays_in_the_outbox(tmp_path: Path) -> None:
+    world = make_world(tmp_path)
+    with FakeSmtpServer(password="right") as server:
+        reference, raw = _waiting(world, server)
+        outcome = send_stored(world.store, world.index, settings(server), "wrong", reference, None, raw, "alice@example.com", ("bob@example.com",), SENT, FAST)
+        assert not outcome.sent and contents(world, OUTBOX) == [raw] and server.received == []
+
+
+@pytest.mark.parametrize("point", ["send:after-smtp", "send:after-move"])
+def test_a_crash_while_sending_a_waiting_message_never_loses_it(tmp_path: Path, point: str) -> None:
+    world = make_world(tmp_path)
+
+    def crash(name: str) -> None:
+        if name == point:
+            raise SimulatedCrash(name)
+
+    with FakeSmtpServer(password="right") as server:
+        reference, raw = _waiting(world, server)
+        with pytest.raises(SimulatedCrash):
+            send_stored(world.store, world.index, settings(server), "right", reference, None, raw, "alice@example.com", ("bob@example.com",), SENT, FAST, None, crash)
+        restarted = Store.open(tmp_path / "store", world.store._key, durable=False)  # noqa: SLF001
+        stored = [restarted.read(m.ref) for folder in (OUTBOX, SENT) for m in restarted.list_messages(folder)]
+        assert stored == [raw], "exactly one copy of the message exists, never zero, never two"

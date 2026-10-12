@@ -10,9 +10,10 @@ from chrono_mail.ui.composer import ComposeWindow, parse_recipients, signature_b
 from tests.ui.world import World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_composer.py 0.0.69"
+__version__ = "test_ui_composer.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Forward as attachment
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.20: Settings window, account editing, signatures
 # v0.0.16: Drafts
@@ -274,6 +275,17 @@ def test_forward_can_leave_out_the_original_attachments(tmp_path: Path, qtbot: Q
             wait(qtbot, lambda: len(world.smtp.received) == (1 if include else 2))
         assert world.smtp.received[0].data.count(b"Content-Disposition: attachment") == 1
         assert b"Content-Disposition: attachment" not in world.smtp.received[1].data
+
+
+def test_forward_as_attachment_attaches_the_original(world: World, qtbot: QtBot) -> None:
+    message = world.call("message.list", account=world.account_id).messages[0]
+    draft = world.call("message.compose", account=world.account_id, folder="Inbox", message=message.message_id, kind="forward_attachment")
+    window = new_composer(world, qtbot, draft, ("Inbox", message.message_id))
+    assert not window.include_original.isHidden() and window.include_original.isChecked() and window.include_original.text() == f"Attach the original message ({message.subject}.eml)"
+    window.to.setText("friend@example.org")
+    window.send_button.click()
+    wait(qtbot, lambda: len(world.smtp.received) == 1)
+    assert b"Content-Type: message/rfc822" in world.smtp.received[0].data
 
 
 def test_two_accounts_can_be_chosen_as_the_sender(world: World, qtbot: QtBot) -> None:

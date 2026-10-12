@@ -1,5 +1,5 @@
 import re
-from email import policy
+from email import message_from_bytes, policy
 from email.headerregistry import Address as HeaderAddress
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
@@ -8,9 +8,10 @@ from chrono_mail.core import MessageFormatError
 from chrono_mail.mime.model import Address, Attachment, OutgoingMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "builder.py 0.0.16"
+__version__ = "builder.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Bcc can be taken out of a stored message just before it is sent; an attached e-mail (message/rfc822) is added as it is, not in base64
 # v0.0.16: drafts keep Bcc and the program's own X-Chrono-Mail headers
 # v0.0.5: Initial message builder
 
@@ -42,6 +43,10 @@ def _split_content_type(content_type: str) -> tuple[str, str]:
 
 def _add_attachment(message: EmailMessage, attachment: Attachment) -> None:
     main_type, subtype = _split_content_type(attachment.content_type)
+    if (main_type.lower(), subtype.lower()) == ("message", "rfc822"):  # an e-mail as an attachment may not be base64 (RFC 2046 section 5.2.1)
+        attached = message_from_bytes(attachment.data, policy=policy.default)
+        message.add_attachment(attached, filename=attachment.filename)
+        return
     if attachment.inline:
         message.add_attachment(
             attachment.data,
@@ -61,6 +66,26 @@ def _add_attachment(message: EmailMessage, attachment: Attachment) -> None:
         )
 
 
+def without_bcc(raw: bytes) -> bytes:
+    """The stored message as it goes to the server: the same bytes without its Bcc header (and the lines that continue it).
+    Only the header block is looked at; the body and everything else stay exactly as they are."""
+    end = raw.find(b"\r\n\r\n")
+    if end < 0:
+        return raw
+    lines = raw[: end + 2].split(b"\r\n")[:-1]
+    kept: list[bytes] = []
+    skipping = False
+    for line in lines:
+        if line[:1] in (b" ", b"\t"):
+            if not skipping:
+                kept.append(line)
+            continue
+        skipping = line[:4].lower() == b"bcc:"
+        if not skipping:
+            kept.append(line)
+    return b"\r\n".join(kept) + raw[end:]
+
+
 def envelope_recipients(outgoing: OutgoingMessage) -> tuple[str, ...]:
     """Every recipient address for the SMTP envelope (To, Cc and Bcc), without duplicates."""
     seen: set[str] = set()
@@ -74,8 +99,8 @@ def envelope_recipients(outgoing: OutgoingMessage) -> tuple[str, ...]:
 
 
 def build_message(outgoing: OutgoingMessage, draft: bool = False) -> bytes:
-    """Build the raw message. Bcc is never written into a message that is sent (see envelope_recipients);
-    a draft keeps it, so that editing can go on where it stopped."""
+    """Build the raw message. With draft (a draft, or the copy kept in the Outbox and Sent) the Bcc header is written,
+    so that no information is lost; what goes to the server never has it (see without_bcc and envelope_recipients)."""
     try:
         message = EmailMessage()
         sender = _header_address(outgoing.from_address)

@@ -7,16 +7,17 @@ from chrono_mail.config import ServerRole
 
 from chrono_mail.engine import UsageError
 from chrono_mail.engine.mailbox import open_mailbox
-from chrono_mail.engine.schedule import describe_when, load_snoozed, parse_when
+from chrono_mail.engine.schedule import describe_when, load_snoozed, parse_when, snooze_presets
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_schedule.py 0.0.34"
+__version__ = "test_engine_schedule.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Ready-made snooze times
 # v0.0.34: Initial send later and snooze tests
 
 NOW = 1_800_000_000.0
@@ -172,3 +173,16 @@ def test_a_damaged_snooze_file_is_an_empty_list(tmp_path: Any) -> None:  # noqa:
         assert load_snoozed(path) == {}
     path.write_text('{"a": {"until": 5, "folder": "Inbox"}, "b": 3}')
     assert load_snoozed(path) == {"a": {"until": 5, "folder": "Inbox"}}
+
+
+@pytest.mark.parametrize(("now", "expected"), [
+    (datetime(2026, 10, 12, 14, 30), [("Tomorrow", 13), ("Later this week", 14), ("This weekend", 17), ("Next week", 19)]),  # Monday
+    (datetime(2026, 10, 14, 8, 0), [("Tomorrow", 15), ("Later this week", 16), ("This weekend", 17), ("Next week", 19)]),  # Wednesday
+    (datetime(2026, 10, 15, 23, 59), [("Tomorrow", 16), ("This weekend", 17), ("Next week", 19)]),  # Thursday: two days ahead is Saturday
+    (datetime(2026, 10, 17, 10, 0), [("Tomorrow", 18), ("Next week", 19)]),  # Saturday
+    (datetime(2026, 10, 18, 10, 0), [("Tomorrow", 19), ("Next week", 19)]),  # Sunday
+])
+def test_the_ready_made_snooze_times(now: datetime, expected: list[tuple[str, int]]) -> None:
+    presets = snooze_presets(now)
+    assert [(name, moment.day) for name, moment in presets] == expected
+    assert all(moment.month == 10 and (moment.hour, moment.minute, moment.second) == (9, 0, 0) for _, moment in presets)

@@ -1,6 +1,7 @@
 import json
 import re
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import override
 
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError, program_version
 from chrono_mail.ui.accountdialog import AccountDialog
+from chrono_mail.engine.schedule import snooze_presets
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import BY_ID, CARD, DEFAULT_COLUMNS, column_widths, valid_columns
@@ -78,9 +80,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.85"
+__version__ = "mainwindow.py 0.0.86"
 
 # --- Version history ----------------------------------------------------
+# v0.0.86: Refresh sends and receives and has a menu (send and receive all, receive all, send all, one account only); a Snooze button with ready-made times; Forward has a menu with Forward as attachment; the Snooze button opens its menu wherever it is clicked; message buttons and actions are greyed out while no message is selected
 # v0.0.85: Window title: the open folder and its unread messages, then the program; icons on Mark and Move to; Archive in the toolbar; Snooze uses the clock icon by its own name
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
@@ -133,6 +136,7 @@ DUE_CHECK_MS: int = 60_000
 WATCH_SECONDS: int = 300
 WATCH_RETRY_MS: int = 60_000
 SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Received"), ("subject", "Subject"), ("sender", "Sender"), ("size", "Size"))
+_WEEKDAYS: tuple[str, ...] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # in the snooze menu, English like the rest of the interface
 _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-outbox", "drafts": "document-edit", "trash": "user-trash", "junk": "mail-mark-junk", "archive": "folder-archive", "other": "folder"}
 
 
@@ -370,6 +374,7 @@ class MainWindow(QMainWindow):
         self.act_reply = self._action("Reply", lambda: self.compose_from_selection("reply"), "Ctrl+R", "mail-reply-sender")
         self.act_reply_all = self._action("Reply all", lambda: self.compose_from_selection("reply_all"), "Ctrl+Shift+R", "mail-reply-all")
         self.act_forward = self._action("Forward", lambda: self.compose_from_selection("forward"), "Ctrl+F", "mail-forward")
+        self.act_forward_attachment = self._action("Forward as attachment", lambda: self.compose_from_selection("forward_attachment"))
         self.act_edit_draft = self._action("Edit draft", self.edit_draft, None, "document-edit")
         self.act_delete = self._action("Delete", lambda: self._in_section("delete"), "Delete", "edit-delete")
         self.act_save_as = self._action("Save as…", self.save_selected_as, "Ctrl+Shift+S", "document-save-as")
@@ -414,6 +419,7 @@ class MainWindow(QMainWindow):
         self.act_settings = self._action("Settings…", lambda: self.open_settings(), "Ctrl+,", "configure")
         self.act_scheduled = self._action("Scheduled and snoozed messages…", self.open_scheduled)
         self.act_snooze = self._action("Snooze…", self.snooze_selected, "S", "clock")
+        self.act_snooze.setIconText("Snooze")  # on the toolbar button
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
         self.act_accounts = self._action("Accounts…", lambda: self.open_settings("Accounts"), None, "user-identity")
         self.act_quit = self._action("Exit", self.quit_program, None, "application-exit")
@@ -431,6 +437,35 @@ class MainWindow(QMainWindow):
         self.act_delete_folder = self._action("Delete folder…", self.delete_folder)
         self.act_about = self._action("About Chrono Mail", self._about)
 
+    def _split_button(self, action: QAction, menu: QMenu) -> None:
+        """The toolbar button of an action does the action when clicked and opens the menu from its arrow."""
+        button = self.toolbar.widgetForAction(action)
+        if isinstance(button, QToolButton):
+            button.setMenu(menu)
+            button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+
+    def _fill_refresh_menu(self) -> None:
+        """Send and receive all, receive all, send all, or receive the mail of one account only."""
+        self.refresh_menu.clear()
+        self.refresh_menu.addAction("Send and Receive All", self.send_and_receive)
+        self.refresh_menu.addAction("Receive All", self.check_mail)
+        self.refresh_menu.addAction("Send All", self.send_outbox)
+        accounts = self._mail_accounts()
+        if accounts:
+            self.refresh_menu.addSeparator()
+        for account in accounts:
+            account_id = str(getattr(account, "account_id"))
+            self.refresh_menu.addAction(f"\"{getattr(account, 'shown_name')}\" only", lambda chosen=account_id: self.check_accounts({chosen}))
+
+    def _fill_snooze_menu(self) -> None:
+        """The ready-made times, counted from now, and a choice of one's own."""
+        self.snooze_menu.clear()
+        for name, moment in snooze_presets(datetime.now()):
+            label = f"{name} ({_WEEKDAYS[moment.weekday()]} {moment:%H:%M})"
+            self.snooze_menu.addAction(label, lambda until=moment.strftime("%Y-%m-%dT%H:%M"): self.snooze_until(until))
+        self.snooze_menu.addSeparator()
+        self.snooze_menu.addAction("Custom date and time…", self.snooze_selected)
+
     def _build_toolbar(self) -> None:
         self.toolbar = QToolBar("Main", self)
         self.toolbar.setMovable(False)
@@ -439,9 +474,15 @@ class MainWindow(QMainWindow):
         self.addToolBar(self.toolbar)
         self.toolbar.addAction(self.act_new)
         self.toolbar.addAction(self.act_refresh)
+        self.refresh_menu = QMenu(self)
+        self.refresh_menu.aboutToShow.connect(self._fill_refresh_menu)
+        self._split_button(self.act_refresh, self.refresh_menu)
         self.toolbar.addWidget(self._stretch())
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
             self.toolbar.addAction(action)
+        self.forward_menu = QMenu(self)
+        self.forward_menu.addAction(self.act_forward_attachment)
+        self._split_button(self.act_forward, self.forward_menu)
         self.mark_button = QToolButton(self)
         self.mark_button.setText("Mark")
         self.mark_button.setIcon(theme_icon("crosshairs"))
@@ -453,6 +494,13 @@ class MainWindow(QMainWindow):
         self.mark_button.setMenu(mark_menu)
         self.toolbar.addWidget(self.mark_button)
         self.toolbar.addAction(self.act_archive)
+        self.toolbar.addAction(self.act_snooze)
+        self.snooze_menu = QMenu(self)
+        self.snooze_menu.aboutToShow.connect(self._fill_snooze_menu)
+        snooze_button = self.toolbar.widgetForAction(self.act_snooze)
+        if isinstance(snooze_button, QToolButton):  # a click anywhere on it opens the menu: the time dialog is its last entry
+            snooze_button.setMenu(self.snooze_menu)
+            snooze_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.move_button = QToolButton(self)
         self.move_button.setText("Move to")
         self.move_button.setIcon(theme_icon("go-parent-folder"))
@@ -606,6 +654,11 @@ class MainWindow(QMainWindow):
         self.act_conversations.toggled.connect(self._toggle_conversations)
         self.conversation_bar.message_chosen.connect(self._show_conversation_member)
         self.list_view.selectionModel().currentChanged.connect(self._row_changed)
+        self.list_view.selectionModel().selectionChanged.connect(self._update_message_actions)
+        self.list_model.modelReset.connect(self._update_message_actions)
+        self.list_model.rowsRemoved.connect(self._update_message_actions)
+        self.list_model.rowsInserted.connect(self._update_message_actions)
+        self._update_message_actions()
         self.list_view.customContextMenuRequested.connect(self._list_menu)
         self.list_view.doubleClicked.connect(self._row_double_clicked)
         self.list_view.header().sectionClicked.connect(self._header_clicked)
@@ -874,7 +927,14 @@ class MainWindow(QMainWindow):
         dialog = WhenDialog("Snooze", "Bring the message back, unread, at:", "Snooze", self)
         if dialog.exec() != WhenDialog.DialogCode.Accepted:
             return
-        account, until = self._account_id, dialog.chosen()
+        self.snooze_until(dialog.chosen())
+
+    def snooze_until(self, until: str) -> None:
+        """Put the selected messages away until this local time (2026-10-13T09:00)."""
+        rows = self._selected_rows()
+        if not rows or self._account_id is None:
+            return
+        account = self._account_id
         remaining = len(rows)
 
         def done(result: object) -> None:
@@ -1556,6 +1616,22 @@ class MainWindow(QMainWindow):
 
     # --- the sections: mail, calendar, tasks, contacts ---------------------------------------------------------
 
+    MESSAGE_ACTIONS: tuple[str, ...] = (  # need a selected message: greyed out while none is selected
+        "reply", "reply_all", "forward", "forward_attachment", "archive", "snooze", "read", "unread", "flag", "unflag", "toggle_read", "toggle_flag",
+        "move_to", "quick_move", "copy_to", "quick_copy", "junk", "delete_forever", "open", "save_as", "source", "print", "edit_draft",
+    )
+
+    def _update_message_actions(self, *_: object) -> None:
+        """Grey out what needs a selected message while none is selected (in the mail section; Delete also serves the other sections)."""
+        if self._section != MAIL:
+            return
+        selected = self.list_view.selectionModel().hasSelection()
+        for name in self.MESSAGE_ACTIONS:
+            getattr(self, f"act_{name}").setEnabled(selected)
+        self.act_delete.setEnabled(selected)
+        self.mark_button.setEnabled(selected)
+        self.move_button.setEnabled(selected)
+
     MAIL_ONLY: tuple[str, ...] = (
         "reply", "reply_all", "forward", "edit_draft", "save_as", "source", "print", "open", "junk", "not_junk", "next_unread", "previous_unread", "archive", "mark_all_read",
         "empty_folder", "read", "unread", "flag", "unflag", "snooze", "toggle_read", "toggle_flag", "delete_forever", "move_to", "quick_move", "copy_to", "quick_copy",
@@ -1572,7 +1648,7 @@ class MainWindow(QMainWindow):
         if page is not None:
             {"new": page.new_item, "refresh": page.refresh, "delete": page.delete_selected, "search": page.focus_search}[what]()
             return
-        {"new": self.new_message, "refresh": self.check_mail, "delete": self.delete_selected, "search": self._focus_search}[what]()
+        {"new": self.new_message, "refresh": self.send_and_receive, "delete": self.delete_selected, "search": self._focus_search}[what]()
 
     def switch_section(self, section: str) -> None:
         """Show another section: its sidebar, its main area and its toolbar. The mail-only actions are off while another section is shown."""
@@ -1587,6 +1663,10 @@ class MainWindow(QMainWindow):
             for name, enabled in self._mail_action_states.items():
                 getattr(self, f"act_{name}").setEnabled(enabled)
         self._section = section
+        if section == MAIL:
+            self._update_message_actions()
+        else:
+            self.act_delete.setEnabled(True)  # Delete of the calendar, contacts and tasks
         index = self._stack_index(section)
         self.side_stack.setCurrentIndex(index)
         self.content_stack.setCurrentIndex(index)
@@ -2034,6 +2114,38 @@ class MainWindow(QMainWindow):
 
     def check_mail(self) -> None:
         self.check_accounts(None)
+
+    def send_and_receive(self) -> None:
+        """Refresh: first send what waits in the Outbox, then check every account. Refresh stays greyed out meanwhile."""
+        self.act_refresh.setEnabled(False)
+
+        def receive() -> None:
+            if not self._checking:
+                self.act_refresh.setEnabled(True)
+            self.check_mail()
+
+        self.send_outbox(then=receive)
+
+    def send_outbox(self, then: Callable[[], None] | None = None) -> None:
+        """Send All: the messages that wait in the Outbox (scheduled ones wait for their time)."""
+
+        def done(result: object) -> None:
+            sent, failed = int(getattr(result, "sent")), tuple(str(text) for text in getattr(result, "failed"))
+            if failed:
+                self.show_status("Sending: " + "; ".join(failed), error=True)
+            elif sent:
+                self.show_status(f"Sent {sent} message(s) from the Outbox")
+            if sent or failed:
+                self._after_sent()
+            if then is not None:
+                then()
+
+        def failed(error: ChronoMailError) -> None:
+            self._report("Could not send the Outbox", error)
+            if then is not None:
+                then()
+
+        self.backend.call("mail.send-outbox", {}, done, failed, owner=self)
 
     def _check_on_general_interval(self) -> None:
         """The general timer: the accounts that have no interval of their own."""
