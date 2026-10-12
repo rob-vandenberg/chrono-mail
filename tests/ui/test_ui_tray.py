@@ -11,9 +11,10 @@ from tests.mailfactory import raw_message
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tray.py 0.0.42"
+__version__ = "test_ui_tray.py 0.0.85"
 
 # --- Version history ----------------------------------------------------
+# v0.0.85: The window title names the open folder and its unread messages
 # v0.0.42: Settings window with pages for everything
 # v0.0.21: Initial tray and notification tests
 
@@ -62,7 +63,7 @@ def test_the_tray_has_a_menu_and_reports_clicks(qtbot: QtBot, shown: list[tuple[
 def test_the_title_and_tooltip_show_the_unread_count(shown: list[tuple[str, str]], world: World, qtbot: QtBot) -> None:
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
-    assert world.window.windowTitle() == "Chrono Mail (3 unread)"
+    assert world.window.windowTitle() == "Inbox (3) - Chrono Mail"
     assert world.window.tray._icon is not None and world.window.tray._icon.toolTip() == "Chrono Mail: 3 unread"  # noqa: SLF001
 
 

@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sections.py 0.0.76"
+__version__ = "test_ui_sections.py 0.0.85"
 
 # --- Version history ----------------------------------------------------
+# v0.0.85: The mail title ends with the program name
 # v0.0.76: Contacts before Tasks (Ctrl+3 and Ctrl+4)
 # v0.0.64: The calendar section
 # v0.0.61: Initial tests of the section buttons and the sidebars of calendar, tasks and contacts
@@ -36,7 +37,7 @@ def test_four_square_buttons_switch_the_sidebar_the_main_area_and_the_toolbar(wo
     window.section_actions[CONTACTS].trigger()
     assert window.section == CONTACTS and window.pages[CONTACTS].toolbar.isVisible() and not page.toolbar.isVisible()
     window.section_actions[MAIL].trigger()
-    assert window.section == MAIL and window.toolbar.isVisible() and window.windowTitle().startswith("Chrono Mail")
+    assert window.section == MAIL and window.toolbar.isVisible() and window.windowTitle().endswith("Chrono Mail")
 
 
 def test_the_sidebar_lists_the_calendars_under_their_account_and_remembers_what_is_hidden(world: World, qtbot: QtBot) -> None:

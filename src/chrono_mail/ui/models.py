@@ -14,9 +14,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.77"
+__version__ = "models.py 0.0.85"
 
 # --- Version history ----------------------------------------------------
+# v0.0.85: A folder item keeps its plain name (for the window title)
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
@@ -39,6 +40,7 @@ UNREAD_ROLE: int = Qt.ItemDataRole.UserRole + 5
 FOLDER_ROLE_ROLE: int = Qt.ItemDataRole.UserRole + 6
 GROUP_ROLE: int = Qt.ItemDataRole.UserRole + 7
 PIN_ROLE: int = Qt.ItemDataRole.UserRole + 8
+NAME_ROLE: int = Qt.ItemDataRole.UserRole + 9  # the folder's name without the number of unread messages
 ROW_PLACEHOLDER: None = None
 
 
@@ -536,6 +538,7 @@ class FolderTreeModel(QStandardItemModel):
     def _label(item: QStandardItem, name: str, unread: int) -> None:
         """The folder's name, with the number of unread messages after it, and in bold when there are some."""
         item.setText(f"{name}  ({unread})" if unread else name)
+        item.setData(name, NAME_ROLE)
         font = item.font()
         font.setBold(unread > 0)
         item.setFont(font)

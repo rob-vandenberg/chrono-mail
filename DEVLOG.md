@@ -853,3 +853,16 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - `STATUS.md` rewritten: current state, next task, backlog, problems, open questions; the old work queue and old counts removed. It is now updated before every push.
 - The GitHub repository was recreated; the author of the first commit was changed to the owner (history rewritten, all 70 tags kept, files unchanged).
 - Test count (collected, not run): 1621 offline, 48 opt-in.
+
+## 2026-10-12 Main screen restyle step 1: toolbar look (version 0.0.85)
+
+**What landed**
+- Window title in the mail section: the open folder and its unread messages, then the program ("Inbox (3) - Chrono Mail"); folder items keep their plain name for this (`NAME_ROLE`).
+- Mark has the crosshairs icon and Move to the go-parent-folder icon; Archive is in the toolbar after Mark.
+- All icons are now the program's own copy of the Breeze icons (51 files, LGPL, D-087); the desktop's icon theme is not asked any more and the Lucide icons are removed. The text colour of an icon follows the palette; other colours (red Delete) stay.
+- The arrow of a toolbar button with a menu sits beside its text, vertically centred, instead of in the corner.
+- Tests run: `tests/ui/test_ui_theme.py`, `test_ui_sections.py`, `test_ui_tray.py`, `test_ui_icons.py`, `test_ui_appearance.py`, `tests/test_packaging.py`, `tests/test_appinfo.py` and two tests of `test_ui_window.py`; not the full suite.
+
+**Still open**
+- Running some ui test files together with others (`test_ui_window.py` by node id, `test_ui_appearance.py`) gives "fixture 'world' not found" (a test-collection quirk, not new); run alone they pass.
+- Steps 2 to 8 (D-086).

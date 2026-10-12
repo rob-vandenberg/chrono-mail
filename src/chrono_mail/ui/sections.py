@@ -6,9 +6,10 @@ from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QToolBar, QToolButton, Q
 from chrono_mail.ui.icons import section_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "sections.py 0.0.76"
+__version__ = "sections.py 0.0.85"
 
 # --- Version history ----------------------------------------------------
+# v0.0.85: Section icons from the program's copy of the Breeze icons
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.73: The section buttons share the width and show the section that is open with a line under it
 # v0.0.61: Initial section buttons (Mail, Calendar, Tasks, Contacts) and the base of a section
@@ -19,11 +20,11 @@ TASKS: str = "tasks"
 CONTACTS: str = "contacts"
 SECTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (  # id, name, icon names, shortcut
     (MAIL, "Mail", ("mail-message",), "Ctrl+1"),
-    (CALENDAR, "Calendar", ("x-office-calendar", "view-calendar"), "Ctrl+2"),
-    (CONTACTS, "Contacts", ("x-office-address-book",), "Ctrl+3"),
+    (CALENDAR, "Calendar", ("view-calendar",), "Ctrl+2"),
+    (CONTACTS, "Contacts", ("user",), "Ctrl+3"),
     (TASKS, "Tasks", ("view-calendar-tasks", "view-task"), "Ctrl+4"),
 )
-SECTION_ICONS: dict[str, str] = {MAIL: "mail", CALENDAR: "calendar-days", CONTACTS: "user", TASKS: "check"}  # the files of the section buttons
+SECTION_ICONS: dict[str, str] = {MAIL: "mail-message", CALENDAR: "view-calendar", CONTACTS: "user", TASKS: "checkmark"}  # the files of the section buttons
 BUTTON_SIZE: int = 40
 
 

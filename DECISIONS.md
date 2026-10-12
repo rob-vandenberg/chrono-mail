@@ -604,3 +604,15 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** new messages, replies and forwards open in rich text unless the setting `compose_html` ("Write new messages as rich text") is off; it is on by default. A rich message is sent as text and HTML as before.
 **Reason:** the owner's instruction, following the reference client.
+
+## D-086 Main screen restyle, second round, in eight steps
+*2026-10-12*
+
+**Decision:** the main screen is compared with the reference once more and changed in eight steps, one at a time, each confirmed by the owner before the next: (1) toolbar look, (2) toolbar menus (Refresh, Snooze, Forward), (3) folder list counts and icons, (4) selection colours and separator lines, (5) message list columns and row height, (6) filter menu, (7) search help, (8) group headers by the sort column. The window title in the mail section is "<folder> (<unread>) - Chrono Mail" (without the number when nothing is unread); other sections keep their titles. The Mark button uses the "crosshairs" icon and Move to uses "go-parent-folder" (see D-087). Kept as is: the blue Menu button, the plain New button, the program's own chevrons, the Move to button, the blue accent.
+**Reason:** the owner's instructions after comparing the two screens; small steps limit the risk of breaking what works.
+
+## D-087 All icons are the program's own copy of the Breeze icons
+*2026-10-12*
+
+**Decision:** every icon in the program comes from its own copy of the Breeze icons of KDE (breeze-dark, 22 px, copied unchanged into `ui/resources/icons`, file name = icon name, LGPL-3.0-or-later, see `LICENSE-breeze.txt`). The icon theme of the desktop is no longer asked, and the Lucide icons are removed (supersedes the Lucide part of D-051 and D-054). An icon is drawn with its text colour (`ColorScheme-Text`) replaced by the palette's text colour, so it suits light and dark; other colours stay (the red of Delete and Exit, the colours of the appearance icon). Move to uses `go-parent-folder` (chosen by the owner); Snooze uses `clock`; the section buttons use `mail-message`, `view-calendar`, `user` and `checkmark`.
+**Reason:** the owner wants all icons of one origin. The Lucide icons looked bolder than the Breeze icons beside them (2 px lines on a 24 px grid, smeared at toolbar size); Breeze icons are 1 px lines on a 22 px grid, thin like the reference's, and shipping them gives the same look on KDE, GNOME and Windows. LGPL may be combined with the AGPL.

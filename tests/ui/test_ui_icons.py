@@ -9,9 +9,10 @@ from chrono_mail.ui.models import FolderTreeModel
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_icons.py 0.0.70"
+__version__ = "test_ui_icons.py 0.0.85"
 
 # --- Version history ----------------------------------------------------
+# v0.0.85: All icons are the program's own Breeze files, drawn in the text colour with other colours kept
 # v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -68,3 +69,35 @@ def test_the_tree_asks_for_the_icon_of_each_kind(monkeypatch: pytest.MonkeyPatch
     asked.clear()
     model.populate([Account()], {"a" * 32: [Info("Mine/Sub", "other")]})
     assert asked.count("other") >= 2  # the folder and the parent that exists only in its path both get an icon
+
+
+def test_all_icons_are_the_programs_own_breeze_files_and_ignore_the_desktop_theme(monkeypatch: pytest.MonkeyPatch) -> None:
+    folder = RESOURCES / "icons"
+    assert (folder / "LICENSE-breeze.txt").is_file() and not (folder / "LICENSE-lucide.txt").exists()
+    for file in folder.glob("*.svg"):
+        assert "ColorScheme-" in file.read_text("utf-8") or file.stem == "color-management", file.name
+    def no_theme(*_: object) -> QIcon:
+        raise AssertionError("the desktop theme was asked")
+
+    monkeypatch.setattr(QIcon, "fromTheme", no_theme)
+    assert not theme_icon("crosshairs").isNull() and not folder_icon("inbox").isNull()
+
+
+def test_an_icon_takes_the_text_colour_and_keeps_its_other_colours() -> None:
+    from PySide6.QtGui import QColor, QGuiApplication, QPalette
+
+    from chrono_mail.ui.icons import TintedSvgEngine
+
+    original = QGuiApplication.palette()
+    palette = QPalette(original)
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#123456"))
+    QGuiApplication.setPalette(palette)
+    try:
+        def colours(name: str) -> set[str]:
+            image = QIcon(TintedSvgEngine(RESOURCES / "icons" / f"{name}.svg")).pixmap(QSize(22, 22)).toImage()
+            return {image.pixelColor(x, y).name() for x in range(22) for y in range(22) if image.pixelColor(x, y).alpha() == 255}
+
+        assert colours("mail-reply-sender") == {"#123456"}
+        assert "#da4453" in colours("edit-delete")
+    finally:
+        QGuiApplication.setPalette(original)

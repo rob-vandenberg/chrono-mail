@@ -10,14 +10,15 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.ui import appearance, icons
 from chrono_mail.ui.colours import contrast, green, is_dark, red
 from chrono_mail.ui.formatting import AVATAR_HUES, avatar_colour
-from chrono_mail.ui.icons import BUNDLED_ICONS, FOLDER_ICONS, RESOURCES, bundled_icon, theme_icon
+from chrono_mail.ui.icons import FOLDER_ICONS, RESOURCES, bundled_icon, folder_icon, theme_icon
 from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.0.82"
+__version__ = "test_ui_appearance.py 0.0.85"
 
 # --- Version history ----------------------------------------------------
+# v0.0.85: The icons are the program's own Breeze files
 # v0.0.82: Tests of the text size of the interface
 # v0.0.73: The menus are inside one Menu button
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
@@ -106,9 +107,10 @@ def test_marks_and_avatars_can_be_read_in_both_schemes(app: QApplication, scheme
 
 
 def test_every_icon_name_the_program_uses_has_an_icon_of_its_own_and_follows_the_text_colour(app: QApplication, tmp_path: Path) -> None:
-    wanted = {name for names in FOLDER_ICONS.values() for name in names} | {"application-exit", "appointment-soon", "document-edit", "document-open", "document-print", "document-save-as", "edit-clear", "edit-delete", "list-add", "mail-archive", "mail-forward", "mail-mark-important", "mail-mark-junk", "mail-mark-notjunk", "mail-mark-read", "mail-message-new", "mail-receive", "mail-reply-all", "mail-reply-sender", "view-filter", "view-refresh", "configure"}
-    assert all(not bundled_icon(name).isNull() for name in wanted - {"internet-mail"}), wanted - set(BUNDLED_ICONS)
-    assert (RESOURCES / "icons" / "LICENSE-lucide.txt").exists() and theme_icon("name-that-no-theme-has").isNull()
+    assert all(not folder_icon(kind).isNull() for kind in FOLDER_ICONS)
+    wanted = {"application-exit", "clock", "document-edit", "document-open", "document-print", "document-save-as", "edit-clear", "edit-delete", "list-add", "archive-insert", "mail-forward", "mail-mark-important", "mail-mark-junk", "mail-mark-notjunk", "mail-mark-read", "mail-message-new", "mail-receive", "mail-reply-all", "mail-reply-sender", "view-filter", "view-refresh", "configure"}
+    assert all(not bundled_icon(name).isNull() for name in wanted), {name for name in wanted if bundled_icon(name).isNull()}
+    assert (RESOURCES / "icons" / "LICENSE-breeze.txt").exists() and theme_icon("name-that-no-theme-has").isNull()
     for scheme in ("light", "dark"):
         appearance.apply(app, settings(tmp_path, color_scheme=scheme, style="fusion"))
         text = QGuiApplication.palette().color(QPalette.ColorRole.ButtonText)
@@ -158,7 +160,7 @@ def test_refresh_is_a_circle_of_two_arrows_and_the_file_menu_has_no_add_account(
     texts = [action.text() for action in file_menu.actions()]
     assert "Refresh" in texts and "Get mail" not in texts and not any("account" in text.lower() for text in texts)
     assert window.act_refresh in window.toolbar.actions()
-    assert (icons.RESOURCES / "icons" / "refresh-cw.svg").exists() and icons.BUNDLED_ICONS["view-refresh"] == "refresh-cw"
+    assert (icons.RESOURCES / "icons" / "view-refresh.svg").exists()
 
 
 def test_the_interface_text_size_is_the_system_size_at_the_first_start_and_never_outside_8_to_48(app: QApplication, tmp_path: Path) -> None:

@@ -53,6 +53,7 @@ from chrono_mail.ui.models import (
     FOLDER_ROLE_ROLE,
     GROUP_ROLE,
     KIND_ROLE,
+    NAME_ROLE,
     PIN_ROLE,
     UNREAD_ROLE,
     FolderTreeModel,
@@ -77,9 +78,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.83"
+__version__ = "mainwindow.py 0.0.85"
 
 # --- Version history ----------------------------------------------------
+# v0.0.85: Window title: the open folder and its unread messages, then the program; icons on Mark and Move to; Archive in the toolbar; Snooze uses the clock icon by its own name
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
@@ -380,7 +382,7 @@ class MainWindow(QMainWindow):
         self.act_not_junk.setEnabled(False)
         self.act_next_unread = self._action("Next unread message", lambda: self.go_to_unread(1), "N")
         self.act_previous_unread = self._action("Previous unread message", lambda: self.go_to_unread(-1), "P")
-        self.act_archive = self._action("Archive", self.archive_selected, "A", "mail-archive")
+        self.act_archive = self._action("Archive", self.archive_selected, "A", "archive-insert")
         self.act_mark_all_read = self._action("Mark all as read", self.mark_folder_read, icon="mail-mark-read")
         self.act_empty_folder = self._action("Empty folder…", self.empty_folder, icon="edit-clear")
         self.act_empty_folder.setEnabled(False)
@@ -411,7 +413,7 @@ class MainWindow(QMainWindow):
         self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
         self.act_settings = self._action("Settings…", lambda: self.open_settings(), "Ctrl+,", "configure")
         self.act_scheduled = self._action("Scheduled and snoozed messages…", self.open_scheduled)
-        self.act_snooze = self._action("Snooze…", self.snooze_selected, "S", "appointment-soon")
+        self.act_snooze = self._action("Snooze…", self.snooze_selected, "S", "clock")
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
         self.act_accounts = self._action("Accounts…", lambda: self.open_settings("Accounts"), None, "user-identity")
         self.act_quit = self._action("Exit", self.quit_program, None, "application-exit")
@@ -442,14 +444,19 @@ class MainWindow(QMainWindow):
             self.toolbar.addAction(action)
         self.mark_button = QToolButton(self)
         self.mark_button.setText("Mark")
+        self.mark_button.setIcon(theme_icon("crosshairs"))
+        self.mark_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.mark_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         mark_menu = QMenu(self.mark_button)
         for action in (self.act_read, self.act_unread, self.act_flag, self.act_unflag):
             mark_menu.addAction(action)
         self.mark_button.setMenu(mark_menu)
         self.toolbar.addWidget(self.mark_button)
+        self.toolbar.addAction(self.act_archive)
         self.move_button = QToolButton(self)
         self.move_button.setText("Move to")
+        self.move_button.setIcon(theme_icon("go-parent-folder"))
+        self.move_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.move_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.move_menu = QMenu(self.move_button)
         self.move_menu.aboutToShow.connect(self._fill_move_menu)
@@ -729,8 +736,17 @@ class MainWindow(QMainWindow):
     def _update_unread_summary(self) -> None:
         unread = self._total_unread()
         if self._section == MAIL:
-            self.setWindowTitle(f"Chrono Mail ({unread} unread)" if unread else "Chrono Mail")
+            self.setWindowTitle(self._mail_title())
         self.tray.set_unread(unread)
+
+    def _mail_title(self) -> str:
+        """The window title in the mail section: the folder that is open and its unread messages, then the program."""
+        current = self.tree.currentIndex()
+        name = str(current.data(NAME_ROLE) or "") if current.isValid() else ""
+        if not name:
+            return "Chrono Mail"
+        unread = int(current.data(UNREAD_ROLE) or 0)
+        return f"{name} ({unread}) - Chrono Mail" if unread else f"{name} - Chrono Mail"
 
     def _notify_new_mail(self, new_by_account: dict[str, int]) -> None:
         """A desktop notification for mail that arrived while the window was not in use. It tells how many, never what."""
@@ -1259,6 +1275,7 @@ class MainWindow(QMainWindow):
         self.search_box.blockSignals(False)
         self._clear_reader()
         self._shown = None
+        self._update_unread_summary()
         self._apply_view()
 
     def _select_quick_filters_for(self, kind: str) -> None:

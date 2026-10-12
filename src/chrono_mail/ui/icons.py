@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 from typing import override
@@ -7,9 +8,10 @@ from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPalett
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.76"
+__version__ = "icons.py 0.0.85"
 
 # --- Version history ----------------------------------------------------
+# v0.0.85: Every icon comes from the program's own copy of the Breeze icons (LGPL), on every platform; no icon theme of the desktop and no Lucide icons any more
 # v0.0.76: Section icons in plain colours, blue while the section is open
 # v0.0.63: The tasks section
 # v0.0.61: The four section buttons and the sidebars of the calendar, task and contact sections
@@ -20,8 +22,8 @@ __version__ = "icons.py 0.0.76"
 
 RESOURCES: Path = Path(__file__).resolve().parent / "resources"
 
-# Names from the freedesktop icon naming specification, best match first; the platform's icon theme
-# (Breeze on KDE, Adwaita on GNOME) provides the pictures. A theme without one gives no icon.
+# Names from the freedesktop icon naming specification, best match first. The pictures are the program's own copy
+# of the Breeze icons (resources/icons, LGPL, see LICENSE-breeze.txt), the same on every platform.
 FOLDER_ICONS: dict[str, tuple[str, ...]] = {
     "inbox": ("mail-folder-inbox", "folder-mail", "folder"),
     "sent": ("mail-folder-sent", "mail-sent", "mail-folder-outbox", "folder"),
@@ -37,24 +39,11 @@ FOLDER_ICONS: dict[str, tuple[str, ...]] = {
 }
 
 
-# Where the platform has no icon theme (Windows, macOS) the icons that come with the program are used: simple line
-# drawings (Lucide, ISC licence, see resources/icons/LICENSE-lucide.txt), drawn in the colour of the text.
-BUNDLED_ICONS: dict[str, str] = {
-    "mail-folder-inbox": "inbox", "folder-mail": "inbox", "mail-folder-sent": "send", "mail-sent": "send", "document-edit": "pencil",
-    "user-trash": "trash", "edit-delete": "trash", "mail-mark-junk": "shield-alert", "dialog-warning": "shield-alert", "folder-documents": "folder", "folder-archive": "archive", "archive-insert": "archive",
-    "mail-archive": "archive", "mail-folder-outbox": "send", "mail-send": "send", "folder": "folder", "folder-open": "folder-open",
-    "mail-message": "mail", "user-identity": "user", "mail-unread": "mail", "mail-unread-new": "mail", "mail-message-new": "mail-plus",
-    "mail-mark-important": "flag", "flag": "flag", "emblem-important": "flag", "application-exit": "log-out", "appointment-soon": "clock",
-    "configure": "settings", "document-open": "folder-open", "document-print": "printer", "document-save-as": "save", "edit-clear": "eraser",
-    "list-add": "plus", "mail-forward": "forward", "mail-mark-notjunk": "shield-check", "mail-mark-read": "mail-check", "mail-receive": "download", "view-refresh": "refresh-cw",
-    "mail-reply-all": "reply-all", "mail-reply-sender": "reply", "view-filter": "funnel",
-    "x-office-calendar": "calendar-days", "view-calendar": "calendar-days", "x-office-address-book": "book-user", "view-calendar-tasks": "list-checks", "view-task": "list-checks",
-    "task-complete": "circle-check", "appointment-new": "calendar-plus", "contact-new": "user-plus", "color-management": "palette", "edit-find": "search",
-}
+_TEXT_COLOUR: re.Pattern[str] = re.compile(r"(\.ColorScheme-Text\s*\{\s*color:\s*)#[0-9a-fA-F]{3,6}")
 
 
 class TintedSvgEngine(QIconEngine):
-    """An icon drawn from a one-colour SVG in the colour the palette gives text at that moment, so that it suits the light and the dark scheme."""
+    """An icon drawn from a Breeze SVG with its text colour replaced by the colour the palette gives text at that moment, so that it suits the light and the dark scheme; other colours (the red of Delete) stay."""
 
     def __init__(self, path: Path, accent_when_on: bool = False) -> None:
         super().__init__()
@@ -75,7 +64,7 @@ class TintedSvgEngine(QIconEngine):
     @override
     def paint(self, painter: QPainter, rect: QRect, mode: QIcon.Mode, state: QIcon.State) -> None:
         colour = self.colour_for(mode, QGuiApplication.palette(), self._accent_when_on and state == QIcon.State.On)
-        QSvgRenderer(self._source.replace("currentColor", colour).encode("utf-8")).render(painter, QRectF(rect))
+        QSvgRenderer(_TEXT_COLOUR.sub(rf"\g<1>{colour}", self._source).encode("utf-8")).render(painter, QRectF(rect))
 
     @override
     def pixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State) -> QPixmap:
@@ -92,22 +81,18 @@ class TintedSvgEngine(QIconEngine):
 
 
 def bundled_icon(name: str) -> QIcon:
-    """The icon that comes with the program for this theme icon name, or an empty icon."""
-    file = RESOURCES / "icons" / f"{BUNDLED_ICONS.get(name, '')}.svg"
-    return QIcon(TintedSvgEngine(file)) if name in BUNDLED_ICONS and file.exists() else QIcon()
+    """The icon that comes with the program for this icon name, or an empty icon."""
+    file = RESOURCES / "icons" / f"{name}.svg"
+    return QIcon(TintedSvgEngine(file)) if name and "/" not in name and file.is_file() else QIcon()
 
 
 def section_icon(stem: str) -> QIcon:
-    """The plain icon of a section button, from the file shipped with the program (not from the icon theme of the desktop): the colour of text, blue while the section is open."""
+    """The plain icon of a section button, from the file shipped with the program: the colour of text, blue while the section is open."""
     return QIcon(TintedSvgEngine(RESOURCES / "icons" / f"{stem}.svg", accent_when_on=True))
 
 
 def theme_icon(*names: str) -> QIcon:
-    """The first of these names the icon theme has; else the icon of the program for the first name it has one for; else an empty icon."""
-    for name in names:
-        icon = QIcon.fromTheme(name)
-        if not icon.isNull():
-            return icon
+    """The icon of the program for the first of these names it has one for; else an empty icon. The icon theme of the desktop is not used."""
     for name in names:
         icon = bundled_icon(name)
         if not icon.isNull():

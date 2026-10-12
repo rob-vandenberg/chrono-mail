@@ -12,9 +12,10 @@ from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SEC
 from tests.ui.world import World, dialogs, menu_named, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 0.0.82"
+__version__ = "test_ui_theme.py 0.0.85"
 
 # --- Version history ----------------------------------------------------
+# v0.0.85: Mark and Move to have icons, Archive is in the toolbar, the menu arrows sit beside the text; section icons are Breeze files
 # v0.0.82: The Menu button shows the three-bar character U+2630
 # v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
 # v0.0.79: A test of the lines between the column headers
@@ -76,7 +77,7 @@ def test_the_accent_is_the_blue_of_the_menus_and_the_section_icons_are_plain() -
     palette.setColor(QPalette.ColorRole.ButtonText, QColor("#eeeeee"))
     palette.setColor(QPalette.ColorRole.Highlight, QColor("#2a6fc4"))
     assert TintedSvgEngine.colour_for(QIcon.Mode.Normal, palette) == "#eeeeee" and TintedSvgEngine.colour_for(QIcon.Mode.Normal, palette, accent=True) == "#2a6fc4"
-    assert not section_icon("check").isNull() and all(not section_icon(stem).isNull() for stem in SECTION_ICONS.values())
+    assert not section_icon("checkmark").isNull() and all(not section_icon(stem).isNull() for stem in SECTION_ICONS.values())
 
 
 def test_the_list_says_received_and_marks_unread_with_a_blue_dot_and_read_with_a_circle(world: World, qtbot: QtBot) -> None:
@@ -151,3 +152,15 @@ def test_the_menu_button_is_the_first_button_of_every_toolbar_and_the_menu_bar_r
     assert window.menuBar().isHidden() and window.act_settings in window.actions() and window.act_quit in window.actions()
     rule = next(line for line in theme.stylesheet().splitlines() if line.startswith("QToolButton#menuButton, "))
     assert "palette(highlight)" in rule and "newButton" not in theme.stylesheet()
+
+
+def test_mark_and_move_to_have_icons_and_archive_is_in_the_toolbar(world: World) -> None:
+    window = world.window
+    from PySide6.QtCore import Qt
+
+    for button in (window.mark_button, window.move_button):
+        assert not button.icon().isNull() and button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    actions = window.toolbar.actions()
+    mark = next(action for action in actions if window.toolbar.widgetForAction(action) is window.mark_button)
+    assert actions[actions.index(mark) + 1] is window.act_archive
+    assert "QToolBar#mainToolbar QToolButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center;".replace("{{", "{") in theme.stylesheet()
