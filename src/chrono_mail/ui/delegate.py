@@ -10,11 +10,13 @@ from chrono_mail.ui.colours import group_header_colour, selection_grey
 from chrono_mail.ui.formatting import avatar_colour, coming_date, display_name, initials, short_date
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.models import CONTACT_ROLE, GROUP_HEADER_ROLE, ROW_ROLE
+from chrono_mail.ui.scale import lpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.2.100"
+__version__ = "delegate.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: Rows, cards, group headers, the circle, the dot and the icons follow the size factor of the message list (lpx)
 # v0.2.100: A card of a snoozed message shows when it comes back ("Until Mon 09:00") in place of the date
 # v0.2.96: In the card layout a group header is 36 px high
 # v0.2.95: Group headers have a fixed background colour per scheme (darker in the dark scheme)
@@ -67,16 +69,16 @@ def paint_group_header(painter: QPainter, option: QStyleOptionViewItem, header: 
     text = palette.color(active, QPalette.ColorRole.Text)
     painter.setPen(QPen(text, 1.4))
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    middle = QPoint(full.left() + 14, full.center().y() + 1)
+    middle = QPoint(full.left() + lpx(14), full.center().y() + 1)
     if folded:
-        painter.drawPolyline([QPoint(middle.x() - 2, middle.y() - 4), QPoint(middle.x() + 2, middle.y()), QPoint(middle.x() - 2, middle.y() + 4)])
+        painter.drawPolyline([QPoint(middle.x() - lpx(2), middle.y() - lpx(4)), QPoint(middle.x() + lpx(2), middle.y()), QPoint(middle.x() - lpx(2), middle.y() + lpx(4))])
     else:
-        painter.drawPolyline([QPoint(middle.x() - 4, middle.y() - 2), QPoint(middle.x(), middle.y() + 2), QPoint(middle.x() + 4, middle.y() - 2)])
+        painter.drawPolyline([QPoint(middle.x() - lpx(4), middle.y() - lpx(2)), QPoint(middle.x(), middle.y() + lpx(2)), QPoint(middle.x() + lpx(4), middle.y() - lpx(2))])
     font = QFont(_typed(option, "font", QFont))
     font.setBold(True)
     painter.setFont(font)
     painter.setPen(text)
-    area = QRect(full.left() + 28, full.top(), full.width() - 36, full.height())
+    area = QRect(full.left() + lpx(28), full.top(), full.width() - lpx(36), full.height())
     painter.drawText(area, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, QFontMetrics(font).elidedText(name, Qt.TextElideMode.ElideRight, area.width()))
     painter.restore()
     return True
@@ -91,7 +93,7 @@ class MessageDelegate(QStyledItemDelegate):
 
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
-        return QSize(_rect(option).width(), CARD_HEADER_HEIGHT if index.data(GROUP_HEADER_ROLE) is not None else ROW_HEIGHT)
+        return QSize(_rect(option).width(), lpx(CARD_HEADER_HEIGHT) if index.data(GROUP_HEADER_ROLE) is not None else lpx(ROW_HEIGHT))
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -111,7 +113,7 @@ class MessageDelegate(QStyledItemDelegate):
         quiet.setAlpha(QUIET_ALPHA_SELECTED if selected else QUIET_ALPHA)  # secondary text must stay readable on the highlight
         if row is None:  # the page with this row is still on its way
             painter.setPen(quiet)
-            painter.drawText(full.adjusted(MARGIN * 2 + AVATAR_SIZE, 0, 0, 0), Qt.AlignmentFlag.AlignVCenter, "…")
+            painter.drawText(full.adjusted(lpx(MARGIN) * 2 + lpx(AVATAR_SIZE), 0, 0, 0), Qt.AlignmentFlag.AlignVCenter, "…")
             self._separator(painter, full, palette)
             painter.restore()
             return
@@ -121,7 +123,7 @@ class MessageDelegate(QStyledItemDelegate):
         who = display_name(who_text.split(",")[0]) if self.show_recipients else display_name(who_text)
         rect = full
         # avatar
-        avatar = QRect(rect.left() + MARGIN, rect.top() + (rect.height() - AVATAR_SIZE) // 2, AVATAR_SIZE, AVATAR_SIZE)
+        avatar = QRect(rect.left() + lpx(MARGIN), rect.top() + (rect.height() - lpx(AVATAR_SIZE)) // 2, lpx(AVATAR_SIZE), lpx(AVATAR_SIZE))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(avatar_colour(who_text))
@@ -133,8 +135,8 @@ class MessageDelegate(QStyledItemDelegate):
         painter.setFont(font)
         painter.drawText(avatar, Qt.AlignmentFlag.AlignCenter, initials(who))
         # text area
-        left = rect.left() + MARGIN * 2 + AVATAR_SIZE
-        right = rect.right() - MARGIN
+        left = rect.left() + lpx(MARGIN) * 2 + lpx(AVATAR_SIZE)
+        right = rect.right() - lpx(MARGIN)
         line = QFontMetrics(_typed(option, "font", QFont)).height() + 3
         top = rect.top() + (rect.height() - 3 * line) // 2
         base = QFont(_typed(option, "font", QFont))
@@ -151,21 +153,21 @@ class MessageDelegate(QStyledItemDelegate):
         painter.drawText(QRect(right - date_width, top, date_width, line), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, date_text)
         painter.setFont(strong)
         painter.setPen(text)
-        who_rect = QRect(left, top, right - left - date_width - MARGIN, line)
+        who_rect = QRect(left, top, right - left - date_width - lpx(MARGIN), line)
         painter.drawText(who_rect, Qt.AlignmentFlag.AlignVCenter, QFontMetrics(strong).elidedText(who, Qt.TextElideMode.ElideRight, who_rect.width()))
         # second line: subject, with marks at the right
         marks = ("⚑ " if "flagged" in flags else "") + ("📎" if getattr(row, "attachments") else "")
-        marks_width = QFontMetrics(base).horizontalAdvance(marks) + (MARGIN if marks else 0)
+        marks_width = QFontMetrics(base).horizontalAdvance(marks) + (lpx(MARGIN) if marks else 0)
         subject = str(getattr(row, "subject")) or "(no subject)"
         size = int(getattr(row, "thread_size", 1))
         badge = str(size) if size > 1 else ""
-        badge_width = QFontMetrics(small).horizontalAdvance(badge) + 12 + MARGIN if badge else 0
+        badge_width = QFontMetrics(small).horizontalAdvance(badge) + 12 + lpx(MARGIN) if badge else 0
         subject_rect = QRect(left, top + line, right - left - marks_width - badge_width, line)
         painter.setFont(strong)
         painter.setPen(text)
         painter.drawText(subject_rect, Qt.AlignmentFlag.AlignVCenter, QFontMetrics(strong).elidedText(subject, Qt.TextElideMode.ElideRight, subject_rect.width()))
         if badge:  # a conversation of several messages: the number in a small rounded box
-            box = QRect(right - marks_width - badge_width + MARGIN, top + line + 3, badge_width - MARGIN, line - 6)
+            box = QRect(right - marks_width - badge_width + lpx(MARGIN), top + line + 3, badge_width - lpx(MARGIN), line - 6)
             painter.setFont(small)
             painter.setPen(quiet)
             painter.drawRoundedRect(box, 4, 4)
@@ -183,7 +185,7 @@ class MessageDelegate(QStyledItemDelegate):
         if unread:  # a blue dot in the left margin (white on the selected row, which is blue itself)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(palette.color(QPalette.ColorRole.HighlightedText if selected and focused else QPalette.ColorRole.Highlight))
-            painter.drawEllipse(QRect(rect.left() + 2, rect.top() + (rect.height() - UNREAD_DOT) // 2, UNREAD_DOT, UNREAD_DOT))
+            painter.drawEllipse(QRect(rect.left() + 2, rect.top() + (rect.height() - lpx(UNREAD_DOT)) // 2, lpx(UNREAD_DOT), lpx(UNREAD_DOT)))
         self._separator(painter, full, palette)
         painter.restore()
 
@@ -192,7 +194,7 @@ class MessageDelegate(QStyledItemDelegate):
         line = QColor(palette.color(QPalette.ColorRole.Text))
         line.setAlpha(28)
         painter.setPen(line)
-        painter.drawLine(rect.left() + MARGIN, rect.bottom(), rect.right(), rect.bottom())
+        painter.drawLine(rect.left() + lpx(MARGIN), rect.bottom(), rect.right(), rect.bottom())
 
 
 class ColumnDelegate(QStyledItemDelegate):
@@ -206,7 +208,7 @@ class ColumnDelegate(QStyledItemDelegate):
 
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
-        return QSize(super().sizeHint(option, index).width(), self.row_height)
+        return QSize(super().sizeHint(option, index).width(), lpx(self.row_height))
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -224,5 +226,5 @@ class ColumnDelegate(QStyledItemDelegate):
     @staticmethod
     def _icon(painter: QPainter, option: QStyleOptionViewItem, icon: QIcon) -> None:
         full = _rect(option)
-        area = QRect(full.center().x() - CELL_ICON // 2 + 1, full.center().y() - CELL_ICON // 2 + 1, CELL_ICON, CELL_ICON)
+        area = QRect(full.center().x() - lpx(CELL_ICON) // 2 + 1, full.center().y() - lpx(CELL_ICON) // 2 + 1, lpx(CELL_ICON), lpx(CELL_ICON))
         icon.paint(painter, area)

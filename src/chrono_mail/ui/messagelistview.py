@@ -7,13 +7,15 @@ from PySide6.QtGui import QColor, QDrag, QFocusEvent, QFontMetrics, QIcon, QMous
 from PySide6.QtWidgets import QApplication, QHeaderView, QTreeView, QWidget
 
 from chrono_mail.ui.models import HEADER_ICON_ROLE
+from chrono_mail.ui.scale import lpx
 
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 0.2.105"
+__version__ = "messagelistview.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: The grey icons of the column header follow the size factor of the message list
 # v0.2.105: The badge hangs just past the bottom-right corner of the cursor, by the desktop's cursor size (it covered the first digit)
 # v0.2.104: The drag is offered as the copy kind, so the desktop shows its arrow with a plus (not its hand); the messages are still moved
 # v0.2.103: The drag has its own cursors (arrow with a move sign where the messages can go, with a red cross elsewhere) instead of the theme's large hand
@@ -117,7 +119,8 @@ class ListHeader(QHeaderView):
         model = self.model()
         icon = model.headerData(logicalIndex, Qt.Orientation.Horizontal, HEADER_ICON_ROLE) if model is not None else None
         if isinstance(icon, QIcon) and not icon.isNull():
-            icon.paint(painter, QRect(rect.center().x() - HEADER_ICON // 2 + 1, rect.center().y() - HEADER_ICON // 2 + 1, HEADER_ICON, HEADER_ICON))
+            size = lpx(HEADER_ICON)
+            icon.paint(painter, QRect(rect.center().x() - size // 2 + 1, rect.center().y() - size // 2 + 1, size, size))
 
 
 class MessageListView(QTreeView):

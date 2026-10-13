@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QSettings, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -35,9 +36,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.0.86"
+__version__ = "composer.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: The way of writing is a button at the bottom left that shows Rich text or Plain text and chooses in its menu (was an on and off button at the right)
+# v0.3.108: The text size is in points with a fraction (the Writing size slider) and can change while the window is open (set_text_size)
 # v0.0.86: Forward as attachment: a checked box attaches the original message as an .eml file
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
@@ -106,7 +109,7 @@ class ComposeOptions:
 
     autosave_seconds: int = AUTOSAVE_SECONDS
     warn_no_subject: bool = True
-    font_size: int = 0
+    font_size: float = 0.0  # points
     reply_below: bool = False
 
 
@@ -226,12 +229,21 @@ class ComposeWindow(QMainWindow):
 
         buttons = QHBoxLayout()
         self.status = QLabel("", central)
-        self.rich_button = QPushButton("Rich text", central)
-        self.rich_button.setCheckable(True)
-        self.rich_button.setToolTip("Write with bold, italic, lists and links. The message is sent as text and as HTML.")
+        self.rich_button = QPushButton("Plain text", central)  # shows the way of writing; its menu chooses the other
+        self.rich_button.setToolTip("Rich text: bold, italic, lists and links, sent as text and as HTML. Plain text: text only.")
         self.rich_button.setObjectName("flatButton")
-        buttons.addWidget(self.status, 1)
+        mode_menu = QMenu(self.rich_button)
+        modes = QActionGroup(mode_menu)
+        self.rich_action = QAction("Rich text", modes)
+        self.plain_action = QAction("Plain text", modes)
+        for action, rich_wanted in ((self.rich_action, True), (self.plain_action, False)):
+            action.setCheckable(True)
+            action.triggered.connect(lambda checked=False, wanted=rich_wanted: self._mode_chosen(wanted))
+            mode_menu.addAction(action)
+        self.plain_action.setChecked(True)
+        self.rich_button.setMenu(mode_menu)
         buttons.addWidget(self.rich_button)
+        buttons.addWidget(self.status, 1)
         layout.addLayout(buttons)
         self.setCentralWidget(central)
         self.resize(760, 640)
@@ -265,10 +277,7 @@ class ComposeWindow(QMainWindow):
         self.body.moveCursor(self.body.textCursor().MoveOperation.End if options.reply_below and self._kind in ("reply", "reply_all") and resume is None else self.body.textCursor().MoveOperation.Start)
         self.body.document().setModified(False)
         if options.font_size > 0:
-            for editor in (self.body, self.rich.edit):
-                font = editor.font()
-                font.setPointSize(options.font_size)
-                editor.setFont(font)
+            self.set_text_size(options.font_size)
         stored_html = getattr(draft, "html", None) if draft is not None else None
         if stored_html:  # a rich text draft comes back as rich text
             self.set_rich(True, str(stored_html))
@@ -284,7 +293,6 @@ class ComposeWindow(QMainWindow):
             action.triggered.connect(handler)
             self.addAction(action)
         self.from_box.currentIndexChanged.connect(self._account_changed)
-        self.rich_button.clicked.connect(self._rich_clicked)
         self.later_button.clicked.connect(self._later_clicked)
         self.send_button.clicked.connect(self._send_clicked)
         self.save_button.clicked.connect(self._save_clicked)
@@ -298,6 +306,13 @@ class ComposeWindow(QMainWindow):
         self.to.setFocus()
 
     # --- state ------------------------------------------------------------------------------------
+
+    def set_text_size(self, points: float) -> None:
+        """The size of the text being written (the Writing size slider)."""
+        for editor in (self.body, self.rich.edit):
+            font = editor.font()
+            font.setPointSizeF(points)
+            editor.setFont(font)
 
     def _signature_of(self, account_id: str) -> str:
         for account in self._accounts:
@@ -341,16 +356,23 @@ class ComposeWindow(QMainWindow):
         else:
             self.body.setPlainText(self.rich.toPlainText())
             self.editor_stack.setCurrentWidget(self.body)
-        self.rich_button.setChecked(on)
+        self._show_mode()
         (self.rich if on else self.body).setFocus()
 
-    def _rich_clicked(self, checked: bool) -> None:
-        if not checked and self.is_rich() and self.rich.has_formatting():
+    def _show_mode(self) -> None:
+        rich = self.is_rich()
+        self.rich_button.setText("Rich text" if rich else "Plain text")
+        (self.rich_action if rich else self.plain_action).setChecked(True)
+
+    def _mode_chosen(self, rich: bool) -> None:
+        """Rich text or Plain text was chosen in the menu of the button."""
+        if not rich and self.is_rich() and self.rich.has_formatting():
             answer = QMessageBox.question(self, "Plain text", "Changing to plain text removes the formatting (bold, lists, links). Continue?")
             if answer != QMessageBox.StandardButton.Yes:
-                self.rich_button.setChecked(True)
+                self._show_mode()
                 return
-        self.set_rich(checked)
+        self.set_rich(rich)
+        self._show_mode()
 
     def stored_as(self) -> tuple[str, str] | None:
         """The folder and id of the saved version of this message, if there is one."""

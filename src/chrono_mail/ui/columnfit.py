@@ -2,10 +2,13 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from chrono_mail.ui.scale import lpx, message_list
+
 # --- Version ------------------------------------------------------------
-__version__ = "columnfit.py 0.1.89"
+__version__ = "columnfit.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: Icon columns and the smallest widths follow the size factor of the message list; icon widths are kept as the width at the standard size
 # v0.1.89: Initial column fit: the columns always fill the width of the list, text columns as shares, icon columns in pixels
 
 MINIMUM_TEXT: int = 50  # a text column is never narrower
@@ -51,7 +54,7 @@ def layout_from_pixels(order: Sequence[str], icon: Sequence[bool], widths: Seque
     text_total = sum(width for width, is_icon in zip(widths, icon) if not is_icon)
     for column_id, is_icon, width in zip(order, icon, widths):
         if is_icon:
-            layout.icons[column_id] = max(MINIMUM_ICON, width)
+            layout.icons[column_id] = max(MINIMUM_ICON, round(width / message_list()))  # kept as the width at the standard size
         elif text_total > 0:
             layout.shares[column_id] = max(width, 1) / text_total
     return layout
@@ -61,14 +64,14 @@ def fit(order: Sequence[str], icon: Sequence[bool], layout: ColumnLayout, defaul
     """The widths of the columns (in their visual order) that fill exactly the available width: icon columns keep their pixels,
     the text columns share what is left. A column without a saved width starts from its default. When the room is too small
     for every column at its smallest, each column gets its smallest width."""
-    widths = [max(MINIMUM_ICON, layout.icons.get(column_id, default)) if is_icon else 0 for column_id, is_icon, default in zip(order, icon, defaults)]
+    widths = [lpx(max(MINIMUM_ICON, layout.icons.get(column_id, default))) if is_icon else 0 for column_id, is_icon, default in zip(order, icon, defaults)]
     texts = [position for position, is_icon in enumerate(icon) if not is_icon]
     if not texts:
         return widths
     text_defaults = sum(defaults[position] for position in texts) or 1
     wanted = {position: layout.shares.get(order[position], defaults[position] / text_defaults) for position in texts}
     room = available - sum(widths)
-    for position, width in _share_out(room, wanted, MINIMUM_TEXT).items():
+    for position, width in _share_out(room, wanted, lpx(MINIMUM_TEXT)).items():
         widths[position] = width
     return widths
 
@@ -95,8 +98,8 @@ def drag(icon: Sequence[bool], widths: Sequence[int], section: int, wanted: int)
         change = moved if changing == left else -moved
         return _change_icon(widths, changing, change, texts)
     after = [position for position in texts if position > left]
-    room = sum(widths[position] - MINIMUM_TEXT for position in after)
-    change = max(MINIMUM_TEXT - widths[left], min(moved, max(room, 0)))
+    room = sum(widths[position] - lpx(MINIMUM_TEXT) for position in after)
+    change = max(lpx(MINIMUM_TEXT) - widths[left], min(moved, max(room, 0)))
     if change == 0 or not after:
         return result
     result[left] += change
@@ -107,8 +110,8 @@ def drag(icon: Sequence[bool], widths: Sequence[int], section: int, wanted: int)
 def _change_icon(widths: Sequence[int], changing: int, change: int, texts: list[int]) -> list[int]:
     """An icon column wider or narrower; every text column gives or takes in proportion."""
     result = list(widths)
-    room = sum(widths[position] - MINIMUM_TEXT for position in texts)
-    change = max(MINIMUM_ICON - widths[changing], min(change, max(room, 0)))
+    room = sum(widths[position] - lpx(MINIMUM_TEXT) for position in texts)
+    change = max(lpx(MINIMUM_ICON) - widths[changing], min(change, max(room, 0)))
     if change == 0 or not texts:
         return result
     result[changing] += change
@@ -120,7 +123,7 @@ def _give(result: list[int], widths: Sequence[int], positions: list[int], change
     """These text columns give (change > 0) or take (change < 0) the change: they give in proportion to what each can still
     give, and take in proportion to their width."""
     if change > 0:
-        give = {position: float(max(widths[position] - MINIMUM_TEXT, 0)) for position in positions}
+        give = {position: float(max(widths[position] - lpx(MINIMUM_TEXT), 0)) for position in positions}
         shares = give if sum(give.values()) > 0 else {position: float(widths[position]) for position in positions}
         for position, part in _split(change, shares).items():
             result[position] = widths[position] - part

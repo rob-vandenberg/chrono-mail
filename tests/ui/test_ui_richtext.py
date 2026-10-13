@@ -2,15 +2,22 @@ import pytest
 from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.ui.composer import ComposeWindow
 from chrono_mail.ui.richeditor import clean_html, safe_link
 from tests.ui.test_ui_composer import new_composer
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_richtext.py 0.0.24"
+__version__ = "test_ui_richtext.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: The way of writing is chosen in the menu of the button (Rich text, Plain text), which shows it
 # v0.0.24: Initial rich text composing tests
+
+
+def switch(window: ComposeWindow) -> None:
+    """Choose the other way of writing in the menu of the button, as a click on the old on and off button did."""
+    (window.plain_action if window.is_rich() else window.rich_action).trigger()
 
 
 @pytest.mark.parametrize(
@@ -31,19 +38,19 @@ def test_clean_html_removes_pictures_editor_fonts_and_unsafe_links() -> None:
 def test_switching_keeps_the_text_and_warns_before_dropping_formatting(world: World, qtbot: QtBot) -> None:
     window = new_composer(world, qtbot)
     window.body.setPlainText("Hello there")
-    window.rich_button.click()
+    switch(window)
     assert window.is_rich() and window.rich.toPlainText() == "Hello there"
-    window.rich_button.click()  # nothing formatted: no question
+    switch(window)  # nothing formatted: no question
     assert not window.is_rich() and window.body.toPlainText() == "Hello there" and not world.dialogs.shown
-    window.rich_button.click()
+    switch(window)
     window.rich.edit.selectAll()
     window.rich.bold.trigger()
     assert window.rich.has_formatting()
     world.dialogs.answer = QMessageBox.StandardButton.No
-    window.rich_button.click()
-    assert window.is_rich() and window.rich_button.isChecked()
+    switch(window)
+    assert window.is_rich() and window.rich_action.isChecked()
     world.dialogs.answer = QMessageBox.StandardButton.Yes
-    window.rich_button.click()
+    switch(window)
     assert not window.is_rich() and window.body.toPlainText() == "Hello there"
     window._finished = True  # noqa: SLF001
     window.close()
@@ -53,7 +60,7 @@ def test_formatting_counts_as_a_change(world: World, qtbot: QtBot) -> None:
     window = new_composer(world, qtbot)
     window.body.setPlainText("text")
     window._saved_snapshot = window._snapshot()  # noqa: SLF001
-    window.rich_button.click()
+    switch(window)
     window._saved_snapshot = window._snapshot()  # noqa: SLF001
     assert not window.is_modified()
     window.rich.edit.selectAll()
@@ -67,7 +74,7 @@ def test_a_rich_message_is_sent_as_text_and_html(world: World, qtbot: QtBot) -> 
     window = new_composer(world, qtbot)
     window.to.setText("you@example.com")
     window.subject.setText("Rich")
-    window.rich_button.click()
+    switch(window)
     window.rich.setPlainText("Hello world")
     window.rich.edit.selectAll()
     window.rich.bold.trigger()
@@ -81,7 +88,7 @@ def test_a_rich_message_is_sent_as_text_and_html(world: World, qtbot: QtBot) -> 
 
 def test_an_unsafe_link_is_refused(world: World, qtbot: QtBot) -> None:
     window = new_composer(world, qtbot)
-    window.rich_button.click()
+    switch(window)
     window.rich.setPlainText("x")
     window.rich.edit.selectAll()
     assert window.rich.make_link("javascript:alert(1)") is False
@@ -92,7 +99,7 @@ def test_an_unsafe_link_is_refused(world: World, qtbot: QtBot) -> None:
 
 def test_lists_and_clear_formatting(world: World, qtbot: QtBot) -> None:
     window = new_composer(world, qtbot)
-    window.rich_button.click()
+    switch(window)
     window.rich.setPlainText("one")
     window.rich.bullets.trigger()
     assert "<ul" in window.rich.outgoing_html()
@@ -111,7 +118,7 @@ def test_lists_and_clear_formatting(world: World, qtbot: QtBot) -> None:
 def test_a_rich_draft_comes_back_as_rich_text(world: World, qtbot: QtBot) -> None:
     window = new_composer(world, qtbot)
     window.to.setText("you@example.com")
-    window.rich_button.click()
+    switch(window)
     window.rich.setPlainText("Formatted")
     window.rich.edit.selectAll()
     window.rich.bold.trigger()
@@ -122,7 +129,7 @@ def test_a_rich_draft_comes_back_as_rich_text(world: World, qtbot: QtBot) -> Non
     saved = world.call("message.list", account=world.account_id, folder="Drafts").messages[0]
     opened = world.call("draft.open", account=world.account_id, message=saved.message_id)
     again = new_composer(world, qtbot, opened)
-    assert again.is_rich() and again.rich_button.isChecked() and again.rich.has_formatting() and not again.is_modified()
+    assert again.is_rich() and again.rich_action.isChecked() and again.rich.has_formatting() and not again.is_modified()
     again._finished = True  # noqa: SLF001
     again.close()
 
@@ -130,7 +137,7 @@ def test_a_rich_draft_comes_back_as_rich_text(world: World, qtbot: QtBot) -> Non
 def test_the_signature_is_left_alone_in_rich_text_when_the_sender_changes(world: World, qtbot: QtBot) -> None:
     world.call("account.edit", account=world.account_id, signature="Sig")
     window = new_composer(world, qtbot)
-    window.rich_button.click()
+    switch(window)
     window.rich.edit.selectAll()
     window.rich.bold.trigger()
     before = window.rich.toPlainText()

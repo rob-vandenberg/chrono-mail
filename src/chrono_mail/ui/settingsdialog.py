@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable
 from typing import override
 
-from PySide6.QtCore import QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QRect, QSettings, QSize, Qt, Signal
 from PySide6.QtGui import QKeySequence, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -20,7 +20,9 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSlider,
+    QSpacerItem,
     QSpinBox,
     QStyle,
     QStyleOptionSlider,
@@ -45,9 +47,13 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.3.106"
+__version__ = "settingsdialog.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: The message list is a size slider too (Message list)
+# v0.3.108: Writing: new messages are written in Rich text or Plain text, chosen in a list (was a tick box); a blank line above Sizes
+# v0.3.108: The text of messages (read and written) is a size slider too (one part for both, _size_row)
+# v0.3.107: The ticks of the size slider stand above its track, under the handle
 # v0.3.106: Appearance has a Sizes section: a slider from Small to Large for the interface (text and icons, applied when the handle is let go, at once with the keys) and the text sizes of the message list, messages and writing (moved here from their pages)
 # v0.2.100: Snoozed until keeps its place when the columns are chosen here (it is not offered here)
 # v0.2.97: The row height choices come from the Message list window (one list for both)
@@ -92,7 +98,12 @@ TICK_LENGTH: int = 4  # pixels at the standard size; the tick at the standard si
 
 
 class SizeSlider(QSlider):
-    """The size slider: below its track a tick every 0.25, a taller one at the standard size (1.00)."""
+    """The size slider: above its track a tick every 0.25, a taller one at the standard size (1.00); the handle is drawn over them."""
+
+    def _groove(self) -> QRect:
+        option = QStyleOptionSlider()
+        self.initStyleOption(option)
+        return self.style().subControlRect(QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderGroove, self)
 
     def tick_x(self, factor: float) -> int:
         """Where the middle of the handle is at this factor."""
@@ -108,24 +119,33 @@ class SizeSlider(QSlider):
     @override
     def sizeHint(self) -> QSize:
         size = super().sizeHint()
-        return QSize(size.width(), size.height() + px(2 * TICK_LENGTH + 2))
+        return QSize(size.width(), max(size.height(), self._room()))
 
     @override
     def minimumSizeHint(self) -> QSize:
         size = super().minimumSizeHint()
-        return QSize(size.width(), size.height() + px(2 * TICK_LENGTH + 2))
+        return QSize(size.width(), max(size.height(), self._room()))
+
+    def _room(self) -> int:
+        """Height enough for the tall tick above the track (the track is in the middle)."""
+        return 2 * (px(2 * TICK_LENGTH) + 1) + self._groove().height()
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:
-        super().paintEvent(event)
-        painter = QPainter(self)
+        painter = QPainter(self)  # the ticks first: the track and the handle are drawn over them
         painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Text), 1))
-        bottom = self.height() - 1
+        bottom = self.tick_bottom()
         for factor in TICKS:
             length = px(2 * TICK_LENGTH if factor == scale.STANDARD else TICK_LENGTH)
             x = self.tick_x(factor)
-            painter.drawLine(x, bottom - length, x, bottom)
+            painter.drawLine(x, bottom - length + 1, x, bottom)
         painter.end()
+        super().paintEvent(event)
+
+    def tick_bottom(self) -> int:
+        """The lowest row of the ticks: the top of the track's area, so they touch the track (a style that draws its track
+        from that row on covers the last pixel, which touches it as well)."""
+        return self._groove().top()
 
 
 class SettingsDialog(QDialog):
@@ -136,6 +156,8 @@ class SettingsDialog(QDialog):
     add_account_requested = Signal()
     restore_key_requested = Signal()
     interface_scale_tried = Signal(float)  # the slider of the interface moved: the window shows that size at once (not saved yet)
+    list_scale_tried = Signal(float)  # the same for the message list
+    reading_scale_tried = Signal(float)  # the same for the text of messages, read and written
 
     def __init__(
         self, backend: Backend, settings: QSettings, tray_available: bool = True, shortcut_actions: dict[str, tuple[str, str]] | None = None, parent: QWidget | None = None,
@@ -230,12 +252,56 @@ class SettingsDialog(QDialog):
             self.close_to_tray.setChecked(False)
         self.close_to_tray.setEnabled(on and self.tray.isEnabled())
 
+    def _size_row(self, page: QWidget, factor: float) -> tuple[SizeSlider, QPushButton, QHBoxLayout]:
+        """A size slider from Small to Large with its Reset button. While the handle is dragged nothing changes (a window
+        that grows would move the slider under the pointer); keys and clicks apply each step at once."""
+        slider = SizeSlider(Qt.Orientation.Horizontal, page)
+        slider.setRange(0, scale.SLIDER_STEPS)
+        slider.setPageStep(4)
+        slider.setTracking(False)
+        slider.setMinimumWidth(px(SLIDER_WIDTH))  # never squeezed down to its handle
+        slider.setValue(scale.slider_position(factor))
+        reset = QPushButton("Reset", page)
+        reset.clicked.connect(lambda: slider.setValue(scale.slider_position(scale.STANDARD)))
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Small", page))
+        row.addWidget(slider, 1)
+        row.addWidget(QLabel("Large", page))
+        row.addWidget(reset)
+        return slider, reset, row
+
+    def _list_slider_moved(self, position: int) -> None:
+        self.list_scale_tried.emit(scale.factor_at(position))
+
+    def _reading_slider_moved(self, position: int) -> None:
+        self.reading_scale_tried.emit(scale.factor_at(position))
+
     def _interface_slider_moved(self, position: int) -> None:
         factor = scale.factor_at(position)
         self.interface_scale_tried.emit(factor)
         self.sidebar.setFixedWidth(px(190))  # this window follows too
-        self.interface_slider.setMinimumWidth(px(SLIDER_WIDTH))
+        for slider in (self.interface_slider, self.list_slider, self.reading_slider):
+            slider.setMinimumWidth(px(SLIDER_WIDTH))
         self._grow_with(factor)
+
+    def _needed_size(self) -> QSize:
+        """The smallest size at which the page that is shown fits: the page list, the page, the status line and the buttons."""
+        outer = self.layout()
+        page = self.pages.currentWidget()
+        if outer is None or page is None:
+            return QSize(0, 0)
+        margins = outer.contentsMargins()
+        body = outer.itemAt(0)
+        body_layout = body.layout() if body is not None else None
+        gap = body_layout.spacing() if body_layout is not None else 0
+        wanted = page.minimumSizeHint()
+        width = margins.left() + margins.right() + self.sidebar.width() + max(0, gap) + wanted.width()
+        below = 0
+        for index in range(1, outer.count()):
+            item = outer.itemAt(index)
+            if item is not None:
+                below += item.sizeHint().height() + max(0, outer.spacing())
+        return QSize(width, margins.top() + margins.bottom() + wanted.height() + below)
 
     def _grow_with(self, factor: float) -> None:
         """This window grows and shrinks with the size of the interface, in proportion, never beyond the screen, around the same centre."""
@@ -247,7 +313,8 @@ class SettingsDialog(QDialog):
         standard_width, standard_height = self._size_at_standard
         self.setMinimumSize(round(MINIMUM_WIDTH * factor), round(MINIMUM_HEIGHT * factor))  # the smallest size follows too
         centre = self.geometry().center()
-        width, height = round(standard_width * factor), round(standard_height * factor)
+        needed = self._needed_size()  # never smaller than the page that is shown needs: its parts would overlap
+        width, height = max(round(standard_width * factor), needed.width()), max(round(standard_height * factor), needed.height())
         screen = self.screen()
         if screen is not None:
             room = screen.availableGeometry()
@@ -274,44 +341,26 @@ class SettingsDialog(QDialog):
         )
         note.setWordWrap(True)
         form.addRow(note)
+        form.addItem(QSpacerItem(0, px(18), QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))  # a blank line above the sizes
         sizes = QLabel("Sizes", page)
         sizes.setStyleSheet("font-weight: bold;")  # the size keeps following the interface
         form.addRow(sizes)
+        app = QApplication.instance()
+        self.system_points: int = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
         self.interface_scale_saved: float = scale.interface()  # what Cancel puts back
-        self.interface_slider = SizeSlider(Qt.Orientation.Horizontal, page)
-        self.interface_slider.setRange(0, scale.SLIDER_STEPS)
-        self.interface_slider.setPageStep(4)
-        self.interface_slider.setTracking(False)
-        self.interface_slider.setMinimumWidth(px(SLIDER_WIDTH))  # never squeezed down to its handle
         self._window_factor: float = self.interface_scale_saved
-        self._size_at_standard: tuple[float, float] | None = None  # while the handle is dragged nothing changes: this window grows too and would move the slider under the pointer; keys and clicks apply each step at once
-        self.interface_slider.setValue(scale.slider_position(self.interface_scale_saved))
-        self.interface_standard = QPushButton("Reset", page)
-        self.interface_standard.clicked.connect(lambda: self.interface_slider.setValue(scale.slider_position(scale.STANDARD)))
+        self._size_at_standard: tuple[float, float] | None = None
+        self.interface_slider, self.interface_standard, row = self._size_row(page, self.interface_scale_saved)
         self.interface_slider.valueChanged.connect(self._interface_slider_moved)
-        slider_row = QHBoxLayout()
-        slider_row.addWidget(QLabel("Small", page))
-        slider_row.addWidget(self.interface_slider, 1)
-        slider_row.addWidget(QLabel("Large", page))
-        slider_row.addWidget(self.interface_standard)
-        form.addRow("Interface (text and icons)", slider_row)
-        self.list_font = QSpinBox(page)
-        self.list_font.setRange(0, 24)
-        self.list_font.setSpecialValueText("System size")
-        self.list_font.setSuffix(" pt")
-        self.list_font.setValue(prefs.get_int(s, "list_font_size", 0, 24))
-        form.addRow("Text size in the message list", self.list_font)
-        self.zoom = QSpinBox(page)
-        self.zoom.setRange(50, 300)
-        self.zoom.setSuffix(" %")
-        self.zoom.setValue(prefs.get_int(s, "reader_zoom", 50, 300))
-        form.addRow("Text size of messages", self.zoom)
-        self.compose_font = QSpinBox(page)
-        self.compose_font.setRange(0, 24)
-        self.compose_font.setSpecialValueText("System size")
-        self.compose_font.setSuffix(" pt")
-        self.compose_font.setValue(prefs.get_int(s, "compose_font_size", 0, 24))
-        form.addRow("Text size when writing", self.compose_font)
+        form.addRow("Interface (text and icons)", row)
+        self.list_scale_saved: float = scale.saved_list(s, self.system_points)
+        self.list_slider, self.list_reset, row = self._size_row(page, self.list_scale_saved)
+        self.list_slider.valueChanged.connect(self._list_slider_moved)
+        form.addRow("Message list", row)
+        self.reading_scale_saved: float = scale.saved_reading(s)
+        self.reading_slider, self.reading_reset, row = self._size_row(page, self.reading_scale_saved)
+        self.reading_slider.valueChanged.connect(self._reading_slider_moved)
+        form.addRow("Text of messages", row)  # reading and writing alike
         return page
 
     def _list_page(self) -> QWidget:
@@ -393,8 +442,10 @@ class SettingsDialog(QDialog):
         form = QFormLayout(page)
         self.default_account = QComboBox(page)
         self.default_account.addItem("The account of the folder I am in", "")
-        self.compose_html = QCheckBox("Write new messages as rich text (bold, lists, links; sent as text and HTML)", page)
-        self.compose_html.setChecked(prefs.get_bool(s, "compose_html"))
+        self.compose_html = QComboBox(page)
+        self.compose_html.addItem("Rich text (bold, lists, links; sent as text and HTML)", True)
+        self.compose_html.addItem("Plain text", False)
+        self.compose_html.setCurrentIndex(0 if prefs.get_bool(s, "compose_html") else 1)
         self.reply_quote_box = _combo(page, QUOTE_LABELS, prefs.get_text(s, "reply_quote", prefs.REPLY_QUOTES))
         self.autosave = QSpinBox(page)
         self.autosave.setRange(0, 600)
@@ -404,7 +455,7 @@ class SettingsDialog(QDialog):
         self.warn_no_subject = QCheckBox("Ask before sending a message without a subject", page)
         self.warn_no_subject.setChecked(prefs.get_bool(s, "warn_no_subject"))
         form.addRow("New messages are sent from", self.default_account)
-        form.addRow(self.compose_html)
+        form.addRow("New messages are written in", self.compose_html)
         form.addRow("Replies", self.reply_quote_box)
         form.addRow("Save a draft every", self.autosave)
         form.addRow(self.warn_no_subject)
@@ -646,15 +697,15 @@ class SettingsDialog(QDialog):
             "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
             "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()), "interface_scale": scale.factor_at(self.interface_slider.value()),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
-            "list_density": str(self.density_box.currentData()), "list_font_size": self.list_font.value(), "conversations": self.conversations.isChecked(),
+            "list_density": str(self.density_box.currentData()), "list_scale": scale.factor_at(self.list_slider.value()), "conversations": self.conversations.isChecked(),
             "show_favorites": self.show_favorites.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
             "columns": ",".join(keep_snoozed_column(self.columns_picker.columns() or DEFAULT_COLUMNS, self._columns)),
-            "mark_read": str(self.mark_read_box.currentData()), "mark_read_delay_ms": self.mark_read_delay.value(), "reader_zoom": self.zoom.value(),
+            "mark_read": str(self.mark_read_box.currentData()), "mark_read_delay_ms": self.mark_read_delay.value(), "reading_scale": scale.factor_at(self.reading_slider.value()),
             "prefer_plain": self.prefer_plain.isChecked(), "remote_always": self.remote_always.isChecked(), "remote_senders": "\n".join(senders),
             "links_ask": self.links_ask.isChecked(),
-            "default_account": str(self.default_account.currentData() or ""), "compose_html": self.compose_html.isChecked(),
+            "default_account": str(self.default_account.currentData() or ""), "compose_html": bool(self.compose_html.currentData()),
             "reply_quote": str(self.reply_quote_box.currentData()), "autosave_seconds": self.autosave.value(),
-            "warn_no_subject": self.warn_no_subject.isChecked(), "compose_font_size": self.compose_font.value(),
+            "warn_no_subject": self.warn_no_subject.isChecked(), 
             "shortcuts": json.dumps({action_id: keys for action_id, keys in self.shortcut_values().items() if keys != self._shortcut_actions[action_id][1]}),
         }
 

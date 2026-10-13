@@ -5,9 +5,10 @@ from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QProxyStyle, QStyle, QStyleOption, QWidget
 
 # --- Version ------------------------------------------------------------
-__version__ = "scale.py 0.3.106"
+__version__ = "scale.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: The size factor of the message list (lpx, saved_list); saved_reading converts the older zoom of messages (percent); it is the size of reading and writing
 # v0.3.106: Initial size factor of the interface (a magnifying glass): text, icons, spacing and fixed sizes grow and shrink together
 
 MINIMUM: float = 0.75
@@ -26,6 +27,7 @@ _PIXELS = re.compile(r"(?<![\w.#-])(\d+(?:\.\d+)?)px")
 
 class _State:
     factor: float = STANDARD
+    list_factor: float = STANDARD
 
 
 _state = _State()
@@ -38,6 +40,20 @@ def interface() -> float:
 
 def set_interface(factor: float) -> None:
     _state.factor = clamp(factor)
+
+
+def message_list() -> float:
+    """The size factor of the message list now."""
+    return _state.list_factor
+
+
+def set_message_list(factor: float) -> None:
+    _state.list_factor = clamp(factor)
+
+
+def lpx(pixels: float) -> int:
+    """A size in pixels at the factor of the message list; never below 1."""
+    return max(1, round(pixels * _state.list_factor))
 
 
 def clamp(factor: float) -> float:
@@ -84,6 +100,42 @@ def saved_factor(settings: QSettings, system_points: float) -> float:
             return clamp(float(str(settings.value("ui_font_size"))) / system_points)
         except ValueError:
             return STANDARD
+    return STANDARD
+
+
+def _stored(settings: QSettings, key: str) -> float | None:
+    if not settings.contains(key):
+        return None
+    try:
+        return clamp(float(str(settings.value(key))))
+    except ValueError:
+        return STANDARD
+
+
+def saved_reading(settings: QSettings) -> float:
+    """The size of the text of messages; a zoom in percent of an older version (reader_zoom) becomes the factor."""
+    stored = _stored(settings, "reading_scale")
+    if stored is not None:
+        return stored
+    if settings.contains("reader_zoom"):
+        try:
+            return clamp(float(str(settings.value("reader_zoom"))) / 100)
+        except ValueError:
+            return STANDARD
+    return STANDARD
+
+
+def saved_list(settings: QSettings, system_points: float) -> float:
+    """The size of the message list; a text size in points of an older version (list_font_size, 0 the system's) becomes the factor."""
+    stored = _stored(settings, "list_scale")
+    if stored is not None:
+        return stored
+    if settings.contains("list_font_size") and system_points > 0:
+        try:
+            points = float(str(settings.value("list_font_size")))
+        except ValueError:
+            return STANDARD
+        return clamp(points / system_points) if points > 0 else STANDARD
     return STANDARD
 
 

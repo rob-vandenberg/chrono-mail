@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QCursor, QDesktopServices, QKeyEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QCursor, QDesktopServices, QFont, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -85,9 +85,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.3.106"
+__version__ = "mainwindow.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: The message list has its own size factor (text, rows, cards, icons and columns), tried out at once from Settings; the size of the text of messages is a factor for reading and writing, tried out at once from Settings (Cancel puts it back); open composers follow
 # v0.3.106: The size factor of the interface is tried out while the slider in Settings moves (Cancel puts it back); the fixed sizes of the window follow it
 # v0.2.102: In the Archive folder Archive is Unarchive (back to the folder it came from); Move to Junk and Not junk (move to Inbox) say what they do
 # v0.2.101: Cancel snooze (in the Snoozed folder: the menu of the Snooze button and the right-click menu) brings the message back now
@@ -1092,9 +1093,14 @@ class MainWindow(QMainWindow):
         dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False, then=self._sync_calendars))
         dialog.restore_key_requested.connect(self.restore_key)
         dialog.interface_scale_tried.connect(self.try_interface_scale)
+        dialog.reading_scale_tried.connect(self.try_reading_scale)
+        dialog.list_scale_tried.connect(self.try_list_scale)
         accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted
-        if not accepted and dialog.interface_slider.value() != scale.slider_position(dialog.interface_scale_saved):
-            self.try_interface_scale(dialog.interface_scale_saved)  # Cancel: the size it had
+        if not accepted:  # Cancel: the sizes they had
+            if dialog.interface_slider.value() != scale.slider_position(dialog.interface_scale_saved):
+                self.try_interface_scale(dialog.interface_scale_saved)
+            self.try_reading_scale(dialog.reading_scale_saved)
+            self.try_list_scale(dialog.list_scale_saved)
         if dialog.rules_panel.ran:  # rules and scheduled messages act at once, also when the settings are cancelled
             self._after_change("Rules applied")
         elif dialog.scheduled_panel.changed:
@@ -1139,7 +1145,24 @@ class MainWindow(QMainWindow):
         appearance.apply(app, self.settings, factor)
         self.setStyleSheet(theme.stylesheet())
         self._apply_scaled_parts()
-        self._apply_list_look()  # a list at the system size follows the text of the interface
+        self._apply_list_look(scale.message_list())  # the list keeps the size it shows (also one being tried out, not saved yet)
+
+    def _writing_points(self, factor: float | None = None) -> float:
+        """The text size of the composer: the system's size times the size of the text of messages (reading and writing are one size)."""
+        app = QApplication.instance()
+        system = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
+        return round(system * (factor if factor is not None else scale.saved_reading(self.settings)), 2)
+
+    def try_list_scale(self, factor: float) -> None:
+        """Show the message list at this size now, without saving it."""
+        self._apply_list_look(factor)
+
+    def try_reading_scale(self, factor: float) -> None:
+        """Show the text of messages, read and being written, at this size now, without saving it."""
+        for reader in (self.reader, *(window.reader for window in self._message_windows)):
+            reader.set_zoom(round(factor * 100))
+        for composer in self._composers:
+            composer.set_text_size(self._writing_points(factor))
 
     def _apply_scaled_parts(self) -> None:
         """The sizes the style list does not hold, at the size factor of the interface."""
@@ -1151,14 +1174,21 @@ class MainWindow(QMainWindow):
         for window in self._message_windows:
             window.setStyleSheet(theme.stylesheet())
 
-    def _apply_list_look(self) -> None:
-        size = prefs.get_int(self.settings, "list_font_size", 0, 24)
-        font = QApplication.font()
-        if size > 0:
-            font.setPointSize(size)
+    def _apply_list_look(self, factor: float | None = None) -> None:
+        """The message list at its own size factor (a factor given here is tried out, not saved): its text is the
+        system's size times the factor, and its rows, icons and columns follow (scale.lpx)."""
+        app = QApplication.instance()
+        system = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
+        scale.set_message_list(factor if factor is not None else scale.saved_list(self.settings, system))
+        font = QFont(QApplication.font())
+        font.setPointSizeF(round(system * scale.message_list(), 2))
         self.list_view.setFont(font)
+        self.list_view.header().setFont(font)
+        self.list_view.header().setStyleSheet(f"QHeaderView::section {{ font-size: {font.pointSizeF()}pt; }}")  # the style rules of the header draw with their own font otherwise
+        self.list_view.header().setMinimumSectionSize(scale.lpx(MINIMUM_ICON))  # icon columns may be narrower at a small size
         self.column_delegate.row_height = COLUMN_ROW_HEIGHTS[prefs.get_text(self.settings, "list_density", prefs.DENSITIES)]
         self.list_view.doItemsLayout()
+        self._fit_columns()
 
     def _apply_reader_preferences(self) -> None:
         for reader in (self.reader, *(window.reader for window in self._message_windows)):
@@ -1170,7 +1200,7 @@ class MainWindow(QMainWindow):
         reader.always_remote = prefs.get_bool(self.settings, "remote_always")
         reader.allowed_senders = prefs.allowed_senders(self.settings)
         reader.prefer_plain = prefs.get_bool(self.settings, "prefer_plain")
-        reader.set_zoom(prefs.get_int(self.settings, "reader_zoom", 50, 300))
+        reader.set_zoom(round(scale.saved_reading(self.settings) * 100))
 
     def _prepare_message_reader(self, reader: ReaderWidget) -> None:
         """A message window: the settings first, and its Always for this sender saves like the one in the reading pane."""
@@ -1204,7 +1234,7 @@ class MainWindow(QMainWindow):
     def _compose_options(self) -> ComposeOptions:
         return ComposeOptions(
             prefs.get_int(self.settings, "autosave_seconds", 0, 600), prefs.get_bool(self.settings, "warn_no_subject"),
-            prefs.get_int(self.settings, "compose_font_size", 0, 24), prefs.get_text(self.settings, "reply_quote", prefs.REPLY_QUOTES) == "below",
+            self._writing_points(), prefs.get_text(self.settings, "reply_quote", prefs.REPLY_QUOTES) == "below",
         )
 
     # --- status ---------------------------------------------------------------------------------------

@@ -4,10 +4,10 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QSettings, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence
-from PySide6.QtWidgets import QDialog, QLabel
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.ui import prefs
+from chrono_mail.ui import appearance, prefs, scale
 from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.settingsdialog import SettingsDialog
@@ -18,9 +18,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.2.100"
+__version__ = "test_ui_preferences.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: The size of messages, read and written, is set with its slider
 # v0.2.100: Snoozed until keeps its place when the columns are chosen in Settings
 # v0.2.98: Roomy is checked by the row height (36 px), not by the old row padding
 # v0.2.96: The columns are chosen right on the Message list page
@@ -109,14 +110,17 @@ def test_a_long_or_short_delay_for_marking_read(world: World, qtbot: QtBot, monk
 def test_the_look_of_the_list_follows_the_settings(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     def change(dialog: SettingsDialog) -> None:
         dialog.density_box.setCurrentIndex(dialog.density_box.findData("roomy"))
-        dialog.list_font.setValue(14)
+        dialog.list_slider.setValue(scale.slider_position(1.5))
         dialog.layout_box.setCurrentIndex(dialog.layout_box.findData("cards"))
         dialog.pane_box.setCurrentIndex(dialog.pane_box.findData("bottom"))
         dialog.date_box.setCurrentIndex(dialog.date_box.findData("iso"))
 
     edit_settings(world, qtbot, monkeypatch, change)
     window = world.window
-    assert window.column_delegate.row_height == 36 and window.list_view.font().pointSize() == 14
+    app = QApplication.instance()
+    assert isinstance(app, QApplication)
+    assert window.column_delegate.row_height == 36 and scale.message_list() == 1.5  # Roomy, drawn at 1.5 (scale.lpx)
+    assert window.list_view.font().pointSizeF() == round(appearance.system_font_size(app) * 1.5, 2)
     assert window.list_model.columns == ("card",) and window.content_splitter.orientation().name == "Vertical" and window.list_model.date_style == "iso"
 
 
@@ -174,7 +178,7 @@ def test_the_window_stores_an_allowed_sender_and_the_zoom_applies(world: World, 
     assert prefs.allowed_senders(settings_of(world)) == {"new@example.org"}
 
     def change(dialog: SettingsDialog) -> None:
-        dialog.zoom.setValue(150)
+        dialog.reading_slider.setValue(scale.slider_position(1.5))
         dialog.prefer_plain.setChecked(True)
         dialog.remote_always.setChecked(True)
 
@@ -216,18 +220,21 @@ def test_writing_settings_reach_the_composer(world: World, qtbot: QtBot, monkeyp
     def change(dialog: SettingsDialog) -> None:
         dialog.autosave.setValue(0)
         dialog.warn_no_subject.setChecked(False)
-        dialog.compose_font.setValue(16)
+        dialog.reading_slider.setValue(scale.slider_position(1.6))  # one size for reading and writing
         dialog.reply_quote_box.setCurrentIndex(dialog.reply_quote_box.findData("below"))
 
     edit_settings(world, qtbot, monkeypatch, change)
     options = world.window._compose_options()  # noqa: SLF001
-    assert (options.autosave_seconds, options.warn_no_subject, options.font_size, options.reply_below) == (0, False, 16, True)
+    app = QApplication.instance()
+    assert isinstance(app, QApplication)
+    points = round(appearance.system_font_size(app) * 1.6, 2)
+    assert (options.autosave_seconds, options.warn_no_subject, options.font_size, options.reply_below) == (0, False, points, True)
     world.window.start()
     settle(qtbot, world, 3)
     world.window.new_message()
     wait(qtbot, lambda: len(world.window._composers) == 1)  # noqa: SLF001
     composer = world.window._composers[0]  # noqa: SLF001
-    assert not composer.autosave_timer.isActive() and composer.body.font().pointSize() == 16
+    assert not composer.autosave_timer.isActive() and composer.body.font().pointSizeF() == points
     fill(composer, subject="")
     composer.send_button.click()  # no question about the missing subject
     wait(qtbot, lambda: len(world.smtp.received) == 1)
@@ -362,3 +369,20 @@ def test_a_message_window_knows_the_allowed_senders_before_it_shows_the_message(
     window = message_window(world, qtbot, f"<p><img src='{probe.url()}'></p>")
     qtbot.waitUntil(lambda: len(probe.requests) >= 1, timeout=8000)  # shown at once: no banner, no second load
     assert not window.reader.banner_visible()
+
+
+@pytest.mark.parametrize("rich", [True, False])
+def test_new_messages_start_in_the_way_of_writing_chosen(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, rich: bool) -> None:
+    def change(dialog: SettingsDialog) -> None:
+        assert [dialog.compose_html.itemText(index).split(" (")[0] for index in range(dialog.compose_html.count())] == ["Rich text", "Plain text"]
+        dialog.compose_html.setCurrentIndex(dialog.compose_html.findData(rich))
+
+    edit_settings(world, qtbot, monkeypatch, change)
+    assert prefs.get_bool(settings_of(world), "compose_html") is rich
+    world.window.start()
+    settle(qtbot, world, 3)
+    world.window.new_message()
+    wait(qtbot, lambda: len(world.window._composers) == 1)  # noqa: SLF001
+    composer = world.window._composers[0]  # noqa: SLF001
+    assert composer.is_rich() is rich and composer.rich_button.text() == ("Rich text" if rich else "Plain text")
+

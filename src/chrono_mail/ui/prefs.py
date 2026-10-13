@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.3.106"
+__version__ = "prefs.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: list_scale replaces list_font_size; reading_scale (a factor, for reading and writing) replaces reader_zoom (percent) and compose_font_size (points)
 # v0.3.106: interface_scale (a factor) replaces ui_font_size (points)
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
@@ -31,14 +32,14 @@ DEFAULTS: dict[str, object] = {
     "reading_pane": "right",
     "date_style": "short",
     "list_density": "normal",
-    "list_font_size": 0,
+    "list_scale": 1.0,  # the size of the message list: a factor (scale.py); an older list_font_size in points is converted
     "conversations": False,
     "show_favorites": True,
     "show_local_folders": True,
     # reading
     "mark_read": "delay",  # delay: after a moment, never: only when I mark it, window: only when opened in a window of its own
     "mark_read_delay_ms": 700,
-    "reader_zoom": 100,
+    "reading_scale": 1.0,  # the size of the text of messages: a factor (scale.py); an older reader_zoom in percent is converted
     "prefer_plain": False,
     "remote_always": False,
     "remote_senders": "",
@@ -49,7 +50,6 @@ DEFAULTS: dict[str, object] = {
     "reply_quote": "above",  # above: my text above the quote, below: under it, none: no quote
     "autosave_seconds": 30,
     "warn_no_subject": True,
-    "compose_font_size": 0,
 }
 MARK_READ: tuple[str, ...] = ("delay", "never", "window")
 REPLY_QUOTES: tuple[str, ...] = ("above", "below", "none")

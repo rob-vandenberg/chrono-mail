@@ -12,12 +12,14 @@ from chrono_mail.ui.colours import contrast, green, is_dark, red
 from chrono_mail.ui.formatting import AVATAR_HUES, avatar_colour
 from chrono_mail.ui.icons import FOLDER_ICONS, RESOURCES, bundled_icon, folder_icon, theme_icon
 from tests.ui.test_ui_preferences import edit_settings, settings_of
-from tests.ui.world import World, menu_named
+from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.3.106"
+__version__ = "test_ui_appearance.py 0.3.108"
 
 # --- Version history ----------------------------------------------------
+# v0.3.108: The size of messages is a slider for reading and writing: conversion, at once, Cancel
+# v0.3.107: The ticks of the size slider stand above its track
 # v0.3.106: The size of the interface is a factor with a slider on the Appearance page: keys apply each step at once, a drag when it ends
 # v0.0.85: The icons are the program's own Breeze files
 # v0.0.82: Tests of the text size of the interface
@@ -206,9 +208,9 @@ def test_the_sizes_are_together_on_the_appearance_page_and_the_slider_works_at_o
     page = dialog.interface_slider.parentWidget()
     assert page is not None
     labels = [label.text() for label in page.findChildren(QLabel)]
-    for text in ("Sizes", "Interface (text and icons)", "Text size in the message list", "Text size of messages", "Text size when writing", "Small", "Large"):
+    for text in ("Sizes", "Interface (text and icons)", "Message list", "Text of messages", "Small", "Large"):
         assert text in labels
-    for moved in (dialog.list_font, dialog.zoom, dialog.compose_font):
+    for moved in (dialog.list_slider, dialog.reading_slider):
         assert moved.parentWidget() is page
     dialog.interface_scale_tried.connect(window.try_interface_scale)
     try:
@@ -277,16 +279,16 @@ def test_the_settings_window_grows_with_the_interface_within_the_screen(world: W
     try:
         for _ in range(4):  # four steps: 1.00 to 0.80
             qtbot.keyClick(dialog.interface_slider, Keys.Key.Key_Down)
-        assert scale.interface() == 0.8 and abs(dialog.width() - width * 0.8) <= 3 and abs(dialog.height() - height * 0.8) <= 3
+        assert scale.interface() == 0.8 and width * 0.8 - 3 <= dialog.width() < width and height * 0.8 - 3 <= dialog.height() < height  # smaller, never below what the page needs
         assert dialog.interface_slider.minimumWidth() == round(SLIDER_WIDTH * 0.8)
         for _ in range(4):  # and back to 1.00: the size it had
             qtbot.keyClick(dialog.interface_slider, Keys.Key.Key_Up)
-        assert abs(dialog.width() - width) <= 3 and abs(dialog.height() - height) <= 3
+        assert width - 3 <= dialog.width() <= max(width, dialog._needed_size().width()) + 3 and height - 3 <= dialog.height() <= max(height, dialog._needed_size().height()) + 3  # noqa: SLF001 - the size it had, or what its page needs
         dialog.interface_slider.setValue(scale.SLIDER_STEPS)  # Large: never beyond the screen
         screen = dialog.screen()
         assert screen is not None and dialog.width() <= screen.availableGeometry().width() and dialog.height() <= screen.availableGeometry().height()
         dialog.reject()  # Cancel: the size it had
-        assert abs(dialog.width() - width) <= 3 and abs(dialog.height() - height) <= 3
+        assert width - 3 <= dialog.width() <= max(width, dialog._needed_size().width()) + 3 and height - 3 <= dialog.height() <= max(height, dialog._needed_size().height()) + 3  # noqa: SLF001 - the size it had, or what its page needs
     finally:
         window.try_interface_scale(1.0)
 
@@ -306,8 +308,157 @@ def test_the_size_slider_has_ticks_and_a_taller_one_at_the_standard_size(world: 
     gaps = {places[index + 1] - places[index] for index in range(len(places) - 1)}
     assert max(gaps) - min(gaps) <= 1  # every 0.25 the same distance, so one tick left of 1.00 and four right of it
     image = slider.grab().toImage()
-    background = image.pixelColor(places[0] + 3, image.height() - 2).name()
-    high = image.height() - 1 - TICK_LENGTH - 2  # above the short ticks, within the tall one
+    bottom = slider.tick_bottom()  # the ticks stand on the track
+    background = image.pixelColor(places[0] + 3, bottom - 1).name()
+    high = bottom - TICK_LENGTH - 1  # above the short ticks, within the tall one
     assert image.pixelColor(places[1], high).name() != background and image.pixelColor(places[2], high).name() == background
-    assert all(image.pixelColor(x, image.height() - 2).name() != background for x in places)
+    assert all(image.pixelColor(x, bottom).name() != background for x in places[2:])  # they reach the track
+    assert image.pixelColor(places[2], bottom + 1).name() != background  # and the track starts right below them
+
+
+def test_at_the_smallest_size_the_slider_row_does_not_overlap(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtCore import Qt as Keys
+    from PySide6.QtWidgets import QLabel
+
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    window = world.window
+    dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
+    qtbot.addWidget(dialog)
+    dialog.interface_scale_tried.connect(window.try_interface_scale)
+    dialog.show_page("Appearance")
+    dialog.show()
+    qtbot.wait(50)
+    try:
+        qtbot.keyClick(dialog.interface_slider, Keys.Key.Key_Home)  # Small
+        qtbot.wait(50)
+        slider = dialog.interface_slider
+        page = slider.parentWidget()
+        assert page is not None
+        small, large = (next(label for label in page.findChildren(QLabel) if label.text() == text) for text in ("Small", "Large"))
+        row = [small.geometry(), slider.geometry(), large.geometry(), dialog.interface_standard.geometry()]
+        assert all(row[index].right() < row[index + 1].left() for index in range(len(row) - 1))  # side by side, none over another
+    finally:
+        window.try_interface_scale(1.0)
+
+
+def test_an_old_message_size_becomes_a_factor(tmp_path: Path) -> None:
+    assert scale.saved_reading(settings(tmp_path)) == 1.0 and scale.saved_reading(settings(tmp_path, reader_zoom=120)) == 1.2
+    assert scale.saved_reading(settings(tmp_path, reader_zoom=300)) == 2.0 and scale.saved_reading(settings(tmp_path, reader_zoom=50)) == 0.75  # within Small and Large
+    assert scale.saved_reading(settings(tmp_path, reading_scale="1.4", reader_zoom=120)) == 1.4
+
+
+def test_the_message_slider_works_at_once_for_reading_and_writing_and_cancel_puts_it_back(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtCore import Qt as Keys
+    from PySide6.QtWidgets import QDialog
+
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    window = world.window
+    window.start()
+    wait(qtbot, lambda: window.list_model.rowCount() == 3)
+    window.new_message()
+    wait(qtbot, lambda: len(window._composers) == 1)  # noqa: SLF001
+    composer = window._composers[0]  # noqa: SLF001
+    normal = composer.body.font().pointSizeF()
+    seen: list[tuple[int, float]] = []
+
+    def try_and_cancel(self: SettingsDialog) -> QDialog.DialogCode:
+        for _ in range(2):
+            qtbot.keyClick(self.reading_slider, Keys.Key.Key_Up)
+        seen.append((window.reader.zoom, composer.body.font().pointSizeF()))
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(SettingsDialog, "exec", try_and_cancel)
+    window.open_settings("Appearance")
+    assert seen == [(110, round(normal * 1.1, 2))]  # two steps: 1.10, at once in the reading pane and the open composer
+    assert window.reader.zoom == 100 and composer.body.font().pointSizeF() == normal  # Cancel: as they were
+
+
+def test_a_blank_line_stands_above_the_sizes(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QLabel
+
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    window = world.window
+    dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
+    qtbot.addWidget(dialog)
+    dialog.show_page("Appearance")
+    dialog.show()
+    qtbot.wait(50)
+    page = dialog.interface_slider.parentWidget()
+    assert page is not None
+    labels = page.findChildren(QLabel)
+    note = next(label for label in labels if label.text().startswith("Dark needs a style"))
+    sizes = next(label for label in labels if label.text() == "Sizes")
+    assert sizes.geometry().top() - note.geometry().bottom() >= scale.px(18)
+
+
+def test_an_old_list_size_becomes_a_factor(tmp_path: Path) -> None:
+    assert scale.saved_list(settings(tmp_path), 10) == 1.0 and scale.saved_list(settings(tmp_path, list_font_size=0), 10) == 1.0  # System size
+    assert scale.saved_list(settings(tmp_path, list_font_size=12), 10) == 1.2 and scale.saved_list(settings(tmp_path, list_scale="1.6", list_font_size=12), 10) == 1.6
+
+
+@pytest.mark.parametrize("layout", ["columns", "cards"])
+def test_the_list_slider_enlarges_rows_cards_icons_and_text_at_once(world: World, qtbot: QtBot, layout: str) -> None:
+    from PySide6.QtCore import Qt as Keys
+
+    from chrono_mail.ui.delegate import AVATAR_SIZE, CARD_HEADER_HEIGHT, COLUMN_ROW_HEIGHTS, ROW_HEIGHT
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    window = world.window
+    window.start()
+    wait(qtbot, lambda: window.list_model.rowCount() == 3)
+    window.set_list_layout(layout)
+    window.resize(1300, 700)
+    window.show()
+    qtbot.wait(50)
+    font = window.list_view.font().pointSizeF()
+    header_height = window.list_view.header().sizeHint().height()
+    dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
+    qtbot.addWidget(dialog)
+    dialog.list_scale_tried.connect(window.try_list_scale)
+    try:
+        for _ in range(10):  # 1.00 to 1.50, at once
+            qtbot.keyClick(dialog.list_slider, Keys.Key.Key_Up)
+        assert scale.message_list() == 1.5 and window.list_view.font().pointSizeF() == round(font * 1.5, 2)
+        assert scale.lpx(AVATAR_SIZE) == 60 and scale.lpx(CARD_HEADER_HEIGHT) == 54
+        height = window.list_view.sizeHintForRow(0)
+        assert height == (scale.lpx(ROW_HEIGHT) if layout == "cards" else scale.lpx(COLUMN_ROW_HEIGHTS["normal"]))
+        if layout == "columns":
+            icon_column = window.list_model.columns.index("flag")
+            assert window.list_view.columnWidth(icon_column) == scale.lpx(24) and window.list_view.header().sizeHint().height() > header_height
+            header = window.list_view.header()
+            for factor in (0.75, 1.5):  # the columns fill the list exactly at every size
+                window.try_list_scale(factor)
+                assert sum(header.sectionSize(index) for index in range(header.count())) == window.list_view.viewport().width()
+        dialog.list_slider.setValue(scale.slider_position(1.5))
+        dialog.list_reset.click()
+        assert scale.message_list() == 1.0 and window.list_view.font().pointSizeF() == font
+    finally:
+        window.try_list_scale(1.0)
+
+
+def test_the_interface_slider_leaves_the_list_and_message_sizes_alone(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    window = world.window
+    window.start()
+    wait(qtbot, lambda: window.list_model.rowCount() == 3)
+    dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
+    qtbot.addWidget(dialog)
+    for signal, method in ((dialog.interface_scale_tried, window.try_interface_scale), (dialog.list_scale_tried, window.try_list_scale), (dialog.reading_scale_tried, window.try_reading_scale)):
+        signal.connect(method)
+    try:
+        dialog.interface_slider.setValue(scale.SLIDER_STEPS)  # 1. the interface to Large
+        dialog.list_slider.setValue(scale.SLIDER_STEPS)  # 2. the message list to Large
+        dialog.reading_slider.setValue(scale.SLIDER_STEPS)  # and the text of messages
+        list_font = window.list_view.font().pointSizeF()
+        dialog.interface_slider.setValue(0)  # 3. the interface to Small
+        assert scale.interface() == 0.75 and scale.message_list() == 2.0 and window.list_view.font().pointSizeF() == list_font
+        assert window.reader.zoom == 200
+    finally:
+        window.try_interface_scale(1.0)
+        window.try_list_scale(1.0)
+        window.try_reading_scale(1.0)
 
