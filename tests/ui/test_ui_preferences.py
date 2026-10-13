@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtCore import QSettings, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import QDialog, QLabel
 from pytestqt.qtbot import QtBot
@@ -18,9 +18,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.0.76"
+__version__ = "test_ui_preferences.py 0.2.96"
 
 # --- Version history ----------------------------------------------------
+# v0.2.96: The columns are chosen right on the Message list page
 # v0.0.76: Exit has no keyboard shortcut
 # v0.0.74: A message window uses and saves the allowed senders
 # v0.0.52: Ctrl+Q marks as read, Quit is Ctrl+Shift+Q
@@ -117,20 +118,20 @@ def test_the_look_of_the_list_follows_the_settings(world: World, qtbot: QtBot, m
     assert window.list_model.columns == ("card",) and window.content_splitter.orientation().name == "Vertical" and window.list_model.date_style == "iso"
 
 
-def test_the_columns_button_edits_the_columns(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    from chrono_mail.ui.columnsdialog import ColumnsDialog
-
-    def fake_columns(self: ColumnsDialog) -> QDialog.DialogCode:
-        for row in range(self.list.count()):
-            self.list.item(row).setCheckState(self.list.item(row).checkState().Unchecked)
-        self.list.item(0).setCheckState(self.list.item(0).checkState().Checked)
-        return QDialog.DialogCode.Accepted
-
-    monkeypatch.setattr(ColumnsDialog, "exec", fake_columns)
+def test_the_columns_are_chosen_on_the_message_list_page(world: World, qtbot: QtBot) -> None:
     dialog = SettingsDialog(world.backend, settings_of(world), True, None)
     qtbot.addWidget(dialog)
-    dialog.columns_button.click()
-    assert len(dialog._columns) == 1 and dialog.values()["columns"] == dialog._columns[0] and dialog.columns_label.text()  # noqa: SLF001
+    picker = dialog.columns_picker
+    assert not hasattr(dialog, "columns_button") and picker.list.count() > 5
+    for row in range(picker.list.count()):
+        picker.list.item(row).setCheckState(Qt.CheckState.Unchecked)
+    picker.list.item(3).setCheckState(Qt.CheckState.Checked)
+    chosen = str(picker.list.item(3).data(Qt.ItemDataRole.UserRole))
+    assert dialog.values()["columns"] == chosen
+    dialog.layout_box.setCurrentIndex(dialog.layout_box.findData("cards"))
+    assert not picker.list.isEnabled() and not picker.reset_button.isEnabled()
+    dialog.layout_box.setCurrentIndex(dialog.layout_box.findData("columns"))
+    assert picker.list.isEnabled()
 
 
 def test_plain_text_first_and_remote_content_settings(reader: ReaderWidget, qtbot: QtBot, probe: Probe) -> None:

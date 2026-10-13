@@ -3,21 +3,24 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QModelIndex, QSettings, Qt, QUrl
-from PySide6.QtWidgets import QDialog, QLabel, QMessageBox
+from PySide6.QtCore import QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMenu, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.config import ServerRole
 from chrono_mail.ui.sections import CALENDAR, MAIL
 from chrono_mail.ui.accountdialog import AccountDialog
+from chrono_mail.ui.columnsdialog import ListChoice
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.2.94"
+__version__ = "test_ui_window.py 0.2.96"
 
 # --- Version history ----------------------------------------------------
+# v0.2.96: The card layout fills the list; View > Message list; one row height only in the column layout; Message list… only in the column header menu
 # v0.2.94: Group headers in the window; sorting by To; a search follows the sort order
 # v0.1.91: Clear filter and bold filters in the Filter menu
 # v0.1.90: The Filter button and its menu
@@ -222,6 +225,36 @@ def test_sorting_by_to_and_a_search_follows_the_sort(world: World, qtbot: QtBot)
     wait(qtbot, lambda: message_subjects(window) == ["Message 1", "Message 2", "Message 3"])
     window._set_sort("subject", False)  # noqa: SLF001
     wait(qtbot, lambda: message_subjects(window) == ["Message 3", "Message 2", "Message 1"])
+
+
+def test_the_card_layout_fills_the_list(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.resize(1000, 600)
+    assert window.layout_actions["columns"].isChecked() and not window.layout_actions["cards"].isChecked()
+    view_menu = next(menu for menu in window.findChildren(QMenu) if menu.title() == "&View")
+    assert window.act_columns not in view_menu.actions()  # Message list… is in the menu of the column headers, not in View
+    shown: list[QAction] = []
+
+    def read_and_close() -> None:
+        popup = QApplication.activePopupWidget()
+        if isinstance(popup, QMenu):
+            shown.extend(popup.actions())
+            popup.close()
+
+    QTimer.singleShot(200, read_and_close)
+    window._header_menu(QPoint(10, 5))  # noqa: SLF001 - the menu of the column headers; the timer closes it
+    assert window.act_columns in shown
+    window.layout_actions["cards"].trigger()  # View > Message list > Cards
+    assert window.layout_actions["cards"].isChecked() and not window.layout_actions["columns"].isChecked()
+    assert window.settings.value("list_layout") == "cards"
+    assert not window.list_view.uniformRowHeights()  # group headers are lower than cards
+    wait(qtbot, lambda: window.list_view.columnWidth(0) == window.list_view.viewport().width() > 100)
+    window.resize(1300, 600)
+    wait(qtbot, lambda: window.list_view.columnWidth(0) == window.list_view.viewport().width())
+    window.apply_list_choice(ListChoice("columns", window._columns, window._reading_pane, window._date_style))  # noqa: SLF001 - the Message list window
+    assert window.layout_actions["columns"].isChecked() and not window.layout_actions["cards"].isChecked()
+    assert window.list_view.uniformRowHeights()  # the column layout stays fast with any number of messages
 
 
 def test_sorting_changes_the_order(world: World, qtbot: QtBot) -> None:

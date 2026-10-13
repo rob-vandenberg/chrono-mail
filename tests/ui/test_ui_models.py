@@ -8,16 +8,17 @@ from PySide6.QtWidgets import QListView, QTreeView
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_mail import MessageRow
-from chrono_mail.ui.delegate import ROW_HEIGHT, MessageDelegate
+from chrono_mail.ui.delegate import CARD_HEADER_HEIGHT, ROW_HEIGHT, MessageDelegate
 from chrono_mail.ui.foldertree import COUNT_MARGIN, FolderItemDelegate
 from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.models import COUNT_ROLE, FOLDER_ROLE_ROLE, GROUP_HEADER_ROLE, KIND_ROLE, PAGE_SIZE, ROW_ROLE, FolderTreeModel, MessageListModel, ViewKind, ViewSpec, group_name
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.2.94"
+__version__ = "test_ui_models.py 0.2.96"
 
 # --- Version history ----------------------------------------------------
+# v0.2.96: A group header in the card layout is 36 px high
 # v0.2.94: The group layer: headers, folding, positions; the older tests run without headers
 # v0.0.88: A selected card is grey while the list has no focus
 # v0.0.87: Folder names without the unread count; the count drawn bold at the right edge; folder-open and home icons
@@ -449,4 +450,21 @@ def test_a_search_with_headers_grows_as_it_is_scrolled(big: World, qtbot: QtBot)
 def test_group_names_as_the_columns_show_them() -> None:
     assert group_name("sender", "Ann Smith <ann@x.org>") == "Ann Smith" and group_name("sender", "") == "(unknown)"
     assert group_name("subject", "") == "(no subject)" and group_name("to", "") == "(no recipients)" and group_name("date", "Today") == "Today"
+
+
+def test_a_header_in_the_card_layout_is_lower_than_a_card(big: World, qtbot: QtBot) -> None:
+    model = MessageListModel(big.backend)
+    model.show(ViewSpec(big.account_id, "Inbox", sort="size"))
+    wait(qtbot, lambda: model.rowCount() == 251)
+    view = QTreeView()
+    qtbot.addWidget(view)
+    view.setModel(model)
+    delegate = MessageDelegate()
+    view.setItemDelegate(delegate)
+    view.setUniformRowHeights(False)
+    view.resize(400, 600)
+    view.show()
+    wait(qtbot, lambda: view.visualRect(model.index(1, 0)).height() > 0)
+    assert CARD_HEADER_HEIGHT == 36 and ROW_HEIGHT == 74
+    assert view.visualRect(model.index(0, 0)).height() == 36 and view.visualRect(model.index(1, 0)).height() == 74
 

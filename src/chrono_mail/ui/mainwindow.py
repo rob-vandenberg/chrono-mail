@@ -81,9 +81,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.2.94"
+__version__ = "mainwindow.py 0.2.96"
 
 # --- Version history ----------------------------------------------------
+# v0.2.96: In the card layout the one column always fills the list (it kept the width of the first column of the column layout); View > Message list: Columns or Cards; in the card layout the rows are not all one height (group headers are lower than cards); Message list… is no longer in the View menu (it stays in the menu of the column headers)
 # v0.2.94: Group headers in the message list (fold by a click; Show groups in the View menu); sorting by To; searches and combined views follow the sort order
 # v0.1.93: The search field has three looks (not in use, clicked in, search active) and a red ✕ that clears the search; clicking in it shows the last 10 searches
 # v0.1.92: Search box hint "Search (type '?' for help)"; typing "?" opens the search help under the search box
@@ -650,7 +651,14 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction(self.act_search)
         view_menu.addAction(self.act_toggle_folders)
-        view_menu.addAction(self.act_columns)
+        layout_menu = view_menu.addMenu("Message list")
+        self.layout_actions: dict[str, QAction] = {}
+        for value, label in (("columns", "Columns"), ("cards", "Cards")):
+            action = layout_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(self._layout == value)
+            action.triggered.connect(lambda checked=False, chosen=value: self.set_list_layout(chosen))
+            self.layout_actions[value] = action
         pane_menu = view_menu.addMenu("Reading pane")
         self.pane_actions: dict[str, QAction] = {}
         for value, label in (('right', 'At the right'), ('bottom', 'At the bottom'), ('off', 'Off')):
@@ -2086,19 +2094,29 @@ class MainWindow(QMainWindow):
 
     # --- the message list: layout, columns, reading pane -----------------------------------------------------------
 
+    def set_list_layout(self, layout: str) -> None:
+        """View > Message list: the column layout or the card layout, kept in the settings as in the Message list window."""
+        self._layout = layout if layout in ("columns", "cards") else "columns"
+        self.settings.setValue("list_layout", self._layout)
+        self._apply_list_layout()
+
     def _apply_list_layout(self) -> None:
         cards = self._layout == "cards"
+        for value, action in self.layout_actions.items():
+            action.setChecked(value == self._layout)
         self.list_model.date_style = self._date_style
         header = self.list_view.header()
         if cards:
             self.list_model.set_columns((CARD,))
             header.hide()
             self.list_view.setItemDelegate(self.delegate)
-            self.list_view.setUniformRowHeights(True)
+            self.list_view.setUniformRowHeights(False)  # group headers are lower than cards; costs time on very large lists (D-095)
+            self._fit_columns()
         else:
             self.list_model.set_columns(self._columns)
             header.show()
             self.list_view.setItemDelegate(self.column_delegate)
+            self.list_view.setUniformRowHeights(True)  # headers are as high as the rows: fast with any number of messages
             self._fit_columns()
             header.setSortIndicatorShown(True)
             self._show_sort_indicator()
@@ -2174,8 +2192,14 @@ class MainWindow(QMainWindow):
         return [header.logicalIndex(visual) for visual in range(header.count())]
 
     def _fit_columns(self) -> None:
-        """The columns fill exactly the width of the list: icon columns keep their pixels, text columns share the rest."""
-        if self._layout != "columns" or not self.list_model.columns or self.list_model.columns == (CARD,):
+        """The columns fill exactly the width of the list: icon columns keep their pixels, text columns share the rest.
+        In the card layout the one column is the width of the list."""
+        if self.list_model.columns == (CARD,):
+            header = self.list_view.header()
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(0, self.list_view.viewport().width())
+            return
+        if self._layout != "columns" or not self.list_model.columns:
             return
         logical = self._visual_sections()
         order = [self.list_model.columns[index] for index in logical if 0 <= index < len(self.list_model.columns)]

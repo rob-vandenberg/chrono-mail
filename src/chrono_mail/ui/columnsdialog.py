@@ -18,9 +18,10 @@ from PySide6.QtWidgets import (
 from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsdialog.py 0.0.41"
+__version__ = "columnsdialog.py 0.2.96"
 
 # --- Version history ----------------------------------------------------
+# v0.2.96: The column list is a part of its own (ColumnPicker), also shown on the Message list page of Settings
 # v0.0.41: Initial column editor
 
 LAYOUTS: tuple[tuple[str, str], ...] = (("columns", "Columns (a table, one line per message)"), ("cards", "Cards (sender, subject and a preview)"))
@@ -34,6 +35,72 @@ class ListChoice:
     columns: tuple[str, ...]
     reading_pane: str
     date_style: str
+
+
+COLUMNS_TEXT = "Columns (tick the ones to show; the order is the order from left to right):"
+
+
+class ColumnPicker(QWidget):
+    """The columns of the message list: tick the ones to show and put them in order (Move up, Move down, Standard columns)."""
+
+    def __init__(self, shown: tuple[str, ...], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        body = QHBoxLayout(self)
+        body.setContentsMargins(0, 0, 0, 0)
+        self.list = QListWidget(self)
+        body.addWidget(self.list, 1)
+        side = QVBoxLayout()
+        self.up_button = QPushButton("Move up", self)
+        self.down_button = QPushButton("Move down", self)
+        self.reset_button = QPushButton("Standard columns", self)
+        for button in (self.up_button, self.down_button, self.reset_button):
+            side.addWidget(button)
+        side.addStretch(1)
+        body.addLayout(side)
+        self.up_button.clicked.connect(lambda: self._move(-1))
+        self.down_button.clicked.connect(lambda: self._move(1))
+        self.reset_button.clicked.connect(lambda: self.fill(DEFAULT_COLUMNS))
+        self.list.currentRowChanged.connect(self._selection_changed)
+        self.fill(shown)
+
+    def fill(self, shown: tuple[str, ...]) -> None:
+        self.list.clear()
+        ordered = [BY_ID[column_id] for column_id in shown if column_id in BY_ID] + [column for column in COLUMNS if column.column_id not in shown]
+        for column in ordered:
+            item = QListWidgetItem(column.label)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if column.column_id in shown else Qt.CheckState.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, column.column_id)
+            self.list.addItem(item)
+        self.list.setCurrentRow(0)
+        self._selection_changed()
+
+    def set_active(self, active: bool) -> None:
+        """Greyed out while the card layout is chosen (it has no columns)."""
+        self.list.setEnabled(active)
+        self.reset_button.setEnabled(active)
+        self._selection_changed()
+
+    def columns(self) -> tuple[str, ...]:
+        """The ticked columns from left to right; the standard ones when none is ticked (at least one column is always kept)."""
+        shown = tuple(
+            str(self.list.item(row).data(Qt.ItemDataRole.UserRole)) for row in range(self.list.count())
+            if self.list.item(row).checkState() == Qt.CheckState.Checked
+        )
+        return shown or DEFAULT_COLUMNS
+
+    def _selection_changed(self) -> None:
+        row, active = self.list.currentRow(), self.list.isEnabled()
+        self.up_button.setEnabled(active and row > 0)
+        self.down_button.setEnabled(active and 0 <= row < self.list.count() - 1)
+
+    def _move(self, step: int) -> None:
+        row = self.list.currentRow()
+        if not 0 <= row + step < self.list.count():
+            return
+        item = self.list.takeItem(row)
+        self.list.insertItem(row + step, item)
+        self.list.setCurrentRow(row + step)
 
 
 class ColumnsDialog(QDialog):
@@ -61,67 +128,21 @@ class ColumnsDialog(QDialog):
         form.addRow("Reading pane", self.pane_box)
         form.addRow("Dates", self.date_box)
         layout.addLayout(form)
-        layout.addWidget(QLabel("Columns (tick the ones to show; the order is the order from left to right):", self))
-        body = QHBoxLayout()
-        self.list = QListWidget(self)
-        body.addWidget(self.list, 1)
-        side = QVBoxLayout()
-        self.up_button = QPushButton("Move up", self)
-        self.down_button = QPushButton("Move down", self)
-        self.reset_button = QPushButton("Standard columns", self)
-        for button in (self.up_button, self.down_button, self.reset_button):
-            side.addWidget(button)
-        side.addStretch(1)
-        body.addLayout(side)
-        layout.addLayout(body, 1)
+        layout.addWidget(QLabel(COLUMNS_TEXT, self))
+        self.picker = ColumnPicker(current.columns, self)
+        self.list = self.picker.list  # the tests and the older code know the list, and its buttons, by these names
+        self.up_button, self.down_button, self.reset_button = self.picker.up_button, self.picker.down_button, self.picker.reset_button
+        layout.addWidget(self.picker, 1)
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         box.accepted.connect(self.accept)
         box.rejected.connect(self.reject)
         layout.addWidget(box)
-        self.up_button.clicked.connect(lambda: self._move(-1))
-        self.down_button.clicked.connect(lambda: self._move(1))
-        self.reset_button.clicked.connect(lambda: self._fill(DEFAULT_COLUMNS))
-        self.list.currentRowChanged.connect(self._selection_changed)
         self.layout_box.currentIndexChanged.connect(self._layout_changed)
-        self._fill(current.columns)
         self._layout_changed()
 
-    def _fill(self, shown: tuple[str, ...]) -> None:
-        self.list.clear()
-        ordered = [BY_ID[column_id] for column_id in shown if column_id in BY_ID] + [column for column in COLUMNS if column.column_id not in shown]
-        for column in ordered:
-            item = QListWidgetItem(column.label)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked if column.column_id in shown else Qt.CheckState.Unchecked)
-            item.setData(Qt.ItemDataRole.UserRole, column.column_id)
-            self.list.addItem(item)
-        self.list.setCurrentRow(0)
-        self._selection_changed()
-
     def _layout_changed(self) -> None:
-        columns = str(self.layout_box.currentData()) == "columns"
-        self.list.setEnabled(columns)
-        for button in (self.up_button, self.down_button, self.reset_button):
-            button.setEnabled(columns)
-        self._selection_changed()
-
-    def _selection_changed(self) -> None:
-        row, active = self.list.currentRow(), self.list.isEnabled()
-        self.up_button.setEnabled(active and row > 0)
-        self.down_button.setEnabled(active and 0 <= row < self.list.count() - 1)
-
-    def _move(self, step: int) -> None:
-        row = self.list.currentRow()
-        if not 0 <= row + step < self.list.count():
-            return
-        item = self.list.takeItem(row)
-        self.list.insertItem(row + step, item)
-        self.list.setCurrentRow(row + step)
+        self.picker.set_active(str(self.layout_box.currentData()) == "columns")
 
     def choice(self) -> ListChoice:
         """What was asked for. At least one column is always kept (the standard ones when none is ticked)."""
-        shown = tuple(
-            str(self.list.item(row).data(Qt.ItemDataRole.UserRole)) for row in range(self.list.count())
-            if self.list.item(row).checkState() == Qt.CheckState.Checked
-        )
-        return ListChoice(str(self.layout_box.currentData()), shown or DEFAULT_COLUMNS, str(self.pane_box.currentData()), str(self.date_box.currentData()))
+        return ListChoice(str(self.layout_box.currentData()), self.picker.columns(), str(self.pane_box.currentData()), str(self.date_box.currentData()))

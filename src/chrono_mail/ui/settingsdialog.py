@@ -34,16 +34,17 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import DEFAULT_COLUMNS, valid_columns
-from chrono_mail.ui.columnsdialog import DATE_STYLES, LAYOUTS, READING_PANES, ColumnsDialog, ListChoice
+from chrono_mail.ui.columnsdialog import COLUMNS_TEXT, DATE_STYLES, LAYOUTS, READING_PANES, ColumnPicker
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.0.83"
+__version__ = "settingsdialog.py 0.2.96"
 
 # --- Version history ----------------------------------------------------
+# v0.2.96: Message list page: the columns are chosen right on the page (no Choose the columns button)
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.70: The Inboxes section is removed from the folder tree
@@ -227,8 +228,7 @@ class SettingsDialog(QDialog):
         self.show_favorites.setChecked(prefs.get_bool(s, "show_favorites"))
         self.show_local_folders = QCheckBox("Show Local Folders in the folder list", page)
         self.show_local_folders.setChecked(prefs.get_bool(s, "show_local_folders"))
-        self.columns_label = QLabel("", page)
-        self.columns_button = QPushButton("Choose the columns…", page)
+        self.columns_picker = ColumnPicker(self._columns, page)
         form.addRow("Layout", self.layout_box)
         form.addRow("Reading pane", self.pane_box)
         form.addRow("Dates", self.date_box)
@@ -237,28 +237,16 @@ class SettingsDialog(QDialog):
         form.addRow(self.conversations)
         form.addRow(self.show_favorites)
         form.addRow(self.show_local_folders)
-        form.addRow("Columns", self.columns_label)
-        form.addRow("", self.columns_button)
-        self.columns_button.clicked.connect(self._choose_columns)
-        self._show_columns()
+        columns_text = QLabel(COLUMNS_TEXT, page)
+        columns_text.setWordWrap(True)
+        form.addRow(columns_text)
+        form.addRow(self.columns_picker)
+        self.layout_box.currentIndexChanged.connect(self._layout_changed)
+        self._layout_changed()
         return page
 
-    def _show_columns(self) -> None:
-        from chrono_mail.ui.columns import BY_ID
-
-        self.columns_label.setText(", ".join(BY_ID[column_id].label for column_id in self._columns))
-
-    def _choose_columns(self) -> None:
-        dialog = ColumnsDialog(
-            ListChoice(str(self.layout_box.currentData()), self._columns, str(self.pane_box.currentData()), str(self.date_box.currentData())), self
-        )
-        if dialog.exec() == ColumnsDialog.DialogCode.Accepted:
-            choice = dialog.choice()
-            self._columns = choice.columns
-            self.layout_box.setCurrentIndex(max(0, self.layout_box.findData(choice.layout)))
-            self.pane_box.setCurrentIndex(max(0, self.pane_box.findData(choice.reading_pane)))
-            self.date_box.setCurrentIndex(max(0, self.date_box.findData(choice.date_style)))
-            self._show_columns()
+    def _layout_changed(self) -> None:
+        self.columns_picker.set_active(str(self.layout_box.currentData()) == "columns")
 
     def _reading_page(self) -> QWidget:
         s = self._settings
@@ -572,7 +560,7 @@ class SettingsDialog(QDialog):
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_font_size": self.list_font.value(), "conversations": self.conversations.isChecked(),
             "show_favorites": self.show_favorites.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
-            "columns": ",".join(self._columns or DEFAULT_COLUMNS),
+            "columns": ",".join(self.columns_picker.columns() or DEFAULT_COLUMNS),
             "mark_read": str(self.mark_read_box.currentData()), "mark_read_delay_ms": self.mark_read_delay.value(), "reader_zoom": self.zoom.value(),
             "prefer_plain": self.prefer_plain.isChecked(), "remote_always": self.remote_always.isChecked(), "remote_senders": "\n".join(senders),
             "links_ask": self.links_ask.isChecked(),

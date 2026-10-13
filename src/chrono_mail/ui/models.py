@@ -15,9 +15,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon, grey_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.2.94"
+__version__ = "models.py 0.2.96"
 
 # --- Version history ----------------------------------------------------
+# v0.2.96: The rows of the group headers are kept in a list (the card layout measures every row)
 # v0.2.94: Group headers in the message list (by the sort order), folded and unfolded; search and combined views in any sort order; sorting by To
 # v0.1.89: The contact of a row (for the Contact column); grey icons in the headers of Contact and Delete
 # v0.0.87: Folder list: the name without the number and never bold; the number of unread messages in its own role (drawn by the tree); Local Folders uses the home icon
@@ -142,6 +143,7 @@ class MessageListModel(QAbstractTableModel):
         self.show_groups: bool = True
         self._group_counts: list[tuple[str, str, int]] | None = None  # key, name, count of each group; None: no headers
         self._groups: list[_Group] = []
+        self._group_starts: list[int] = []  # the row of each header, for finding the group of a row quickly
         self._display_rows: int = 0
         self._folded: dict[tuple[str, str | None, str], set[str]] = {}  # per folder (or combined view) and sort order: the folded groups, until the program closes
 
@@ -212,6 +214,7 @@ class MessageListModel(QAbstractTableModel):
         """Work out where the headers go and which rows they hide (call between begin and end of a model change)."""
         available = self._available()
         self._groups = []
+        self._group_starts = []
         if self._group_counts is None:
             self._display_rows = available
             return
@@ -227,6 +230,7 @@ class MessageListModel(QAbstractTableModel):
             closed = key in folded
             shown = 0 if closed else known
             self._groups.append(_Group(key, name, display, message, known, shown, closed))
+            self._group_starts.append(display)
             display += 1 + shown
             message += known
         self._display_rows = display
@@ -234,7 +238,7 @@ class MessageListModel(QAbstractTableModel):
     def _group_at(self, row: int) -> _Group | None:
         if not self._groups or row < 0 or row >= self._display_rows:
             return None
-        found = bisect.bisect_right([group.display_start for group in self._groups], row) - 1
+        found = bisect.bisect_right(self._group_starts, row) - 1
         return self._groups[found] if found >= 0 else None
 
     def message_position(self, row: int) -> int | None:
@@ -260,7 +264,7 @@ class MessageListModel(QAbstractTableModel):
         return group is not None and group.display_start == row
 
     def header_rows(self) -> list[int]:
-        return [group.display_start for group in self._groups]
+        return list(self._group_starts)
 
     def toggle_group(self, row: int) -> None:
         """Fold the group of this header row, or open it again."""

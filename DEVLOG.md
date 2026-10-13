@@ -987,3 +987,14 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - The bar of a group header has a fixed colour per scheme (`group_header_colour` in `ui/colours.py`): #2a2a2a dark (was #343434, a veil of the text colour over the list), #e6e6e6 light (unchanged).
 - 0.2.94 was not pushed; it goes out together with this version.
 - Tests run: `tests/ui/test_ui_models.py`, `tests/ui/test_ui_theme.py`, a dark screenshot (header pixel #2a2a2a); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 The card layout fills the list again (version 0.2.96)
+
+**What landed**
+- Since 0.1.89 the card layout's one column kept the width of the first column of the column layout (24 px or so): the column fit stopped Qt from stretching the last column and did nothing itself in the card layout. `_fit_columns` now gives the card column the width of the list (fixed, no drag line), also when switching to the card layout and at every change of width.
+- In the card layout a group header is 36 px high (was 74, as high as a card): the card layout no longer has one row height (the column layout keeps it). Measured with 500,000 rows in one list and the real card delegate: 2.71 s to show instead of 0.51 s, at every rebuild of the list; scrolling stays smooth (the owner's choice; one row at a time would have kept 0.5 s). The model keeps the rows of the headers in a list for quick lookups.
+- View > Message list: Columns or Cards (ticked), above Reading pane; switches at once and is kept in the settings (`list_layout`), the same choice as in the Message list window.
+- Tests run: `tests/ui/test_ui_window.py` (alone, one new test), `tests/ui/test_ui_models.py` (one new), `tests/ui/test_ui_columns.py`, a card screenshot; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+- Message list… is no longer in the View menu; it stays at the bottom of the menu of the column headers. Settings > Message list shows the columns right on the page (ColumnPicker in `ui/columnsdialog.py`: tick boxes, Move up, Move down, Standard columns; greyed out while Layout is Cards); the Columns line and the Choose the columns… button are gone. The Message list window uses the same part.
+- Found, not fixed: `test_the_look_of_the_list_follows_the_settings` (tests/ui/test_ui_preferences.py) fails since 0.1.89 (checked on 0.0.87: passes; 0.1.89 and 0.2.95: fails); it expects the old row padding.
+- Tests run as well: `tests/ui/test_ui_preferences.py` (the columns test rewritten), `tests/ui/test_ui_columns.py`, `tests/ui/test_ui_window.py` (alone; View has no Message list…, the header menu has it), a screenshot of the Settings page.

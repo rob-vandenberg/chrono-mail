@@ -12,9 +12,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.models import CONTACT_ROLE, GROUP_HEADER_ROLE, ROW_ROLE
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.2.95"
+__version__ = "delegate.py 0.2.96"
 
 # --- Version history ----------------------------------------------------
+# v0.2.96: In the card layout a group header is 36 px high
 # v0.2.95: Group headers have a fixed background colour per scheme (darker in the dark scheme)
 # v0.2.94: Group headers: a bar with a chevron and the group's name in bold, in both layouts
 # v0.1.89: ColumnDelegate: fixed row height per density, the Contact icon and the Delete icon on the row under the pointer
@@ -25,6 +26,7 @@ __version__ = "delegate.py 0.2.95"
 # v0.0.13: Initial message row painting
 
 ROW_HEIGHT: int = 74
+CARD_HEADER_HEIGHT: int = 36  # a group header in the card layout
 COLUMN_ROW_HEIGHTS: dict[str, int] = {"compact": 22, "normal": 29, "roomy": 36}  # rows of the column layout, per density
 CELL_ICON: int = 16
 AVATAR_SIZE: int = 40
@@ -88,7 +90,7 @@ class MessageDelegate(QStyledItemDelegate):
 
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
-        return QSize(_rect(option).width(), ROW_HEIGHT)
+        return QSize(_rect(option).width(), CARD_HEADER_HEIGHT if index.data(GROUP_HEADER_ROLE) is not None else ROW_HEIGHT)
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:

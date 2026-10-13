@@ -13,9 +13,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.1.89"
+__version__ = "test_ui_columns.py 0.2.96"
 
 # --- Version history ----------------------------------------------------
+# v0.2.96: The column list of the Message list window is a part of its own
 # v0.1.89: Column fit, row heights, the Contact and Delete columns
 # v0.0.77: Received instead of Date
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -104,7 +105,7 @@ def test_the_column_editor_returns_the_choice(qtbot: QtBot) -> None:
     shown = [dialog.list.item(row).text() for row in range(dialog.list.count()) if dialog.list.item(row).checkState() == Qt.CheckState.Checked]
     assert shown == ["Subject", "Received"] and dialog.list.item(0).text() == "Subject" and dialog.pane_box.currentData() == "bottom" and dialog.date_box.currentData() == "iso"
     dialog.list.setCurrentRow(1)
-    dialog._move(-1)  # noqa: SLF001
+    dialog.up_button.click()
     dialog.list.item(2).setCheckState(Qt.CheckState.Checked)
     third = str(dialog.list.item(2).data(Qt.ItemDataRole.UserRole))
     assert dialog.choice() == ListChoice("columns", ("date", "subject", third), "bottom", "iso")
