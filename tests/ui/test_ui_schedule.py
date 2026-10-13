@@ -14,9 +14,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 0.2.100"
+__version__ = "test_ui_schedule.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: Cancel snooze
 # v0.2.100: The Snoozed until column of the Snoozed folder, its sorting, groups and the cards
 # v0.0.86: The Refresh menu (send and receive), the Snooze button with ready-made times, the Forward menu
 # v0.0.67: Repeating messages
@@ -306,3 +307,30 @@ def test_a_card_shows_when_a_snoozed_message_comes_back(world: World, qtbot: QtB
     assert not image.isNull()  # the card painted with its "Until" text (the text itself is checked below)
     until = getattr(window.list_model.row_at(0), "snoozed_until")
     assert until is not None and coming_date(until)
+
+
+def test_cancel_snooze_brings_a_message_back_now(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    real_clock(world)
+    window = world.window
+    window._fill_snooze_menu()  # noqa: SLF001
+    assert "Cancel snooze" not in [action.text() for action in window.snooze_menu.actions()]  # only in the Snoozed folder
+    window.list_view.selectAll()
+    window.snooze_until(in_hours(30))
+    wait(qtbot, lambda: window._find_tree_item((world.account_id, "folder", "Snoozed")) is not None)  # noqa: SLF001
+    snoozed = window._find_tree_item((world.account_id, "folder", "Snoozed"))  # noqa: SLF001
+    assert snoozed is not None
+    window.tree.setCurrentIndex(snoozed)
+    wait(qtbot, lambda: window.list_model.rowCount() == 3 and window.list_model.row_at(0) is not None)
+    descriptions = world.engine.directories.data_directory.rglob("folder.json")
+    assert sum(1 for path in descriptions if '"Snoozed"' in path.read_text("utf-8")) == 1  # three snoozes at once made one folder
+    window._fill_snooze_menu()  # noqa: SLF001
+    assert window.snooze_menu.actions()[0] is window.act_cancel_snooze
+    target = str(getattr(window.list_model.row_at(0), "message_id"))
+    window.list_view.setCurrentIndex(window.list_model.index(0))
+    window.act_cancel_snooze.trigger()
+    wait(qtbot, lambda: window.list_model.rowCount() == 2)
+    inbox = world.call("message.list", account=world.account_id, folder="Inbox").messages
+    assert [row.message_id for row in inbox] == [target] and inbox[0].flags == ()
+    waiting = [info.message_id for info in world.call("message.snoozed")]
+    assert len(waiting) == 2 and target not in waiting

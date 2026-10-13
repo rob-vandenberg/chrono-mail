@@ -14,9 +14,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_schedule.py 0.2.100"
+__version__ = "test_engine_schedule.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: Waking a snoozed message without a record brings it to the Inbox
 # v0.2.100: The Snoozed folder: rows carry the time they come back, sorting and grouping by it
 # v0.0.86: Ready-made snooze times
 # v0.0.34: Initial send later and snooze tests
@@ -184,6 +185,19 @@ def test_the_snoozed_folder_knows_and_sorts_by_when_messages_come_back(setup: Se
     assert sum(group.count for group in groups) == 3 and keys == sorted(keys, key=["today", "tomorrow", "this_week", "next_week", "later"].index)
     assert all(row.snoozed_until is None for row in rows(setup, "Inbox"))
     assert call(setup.engine, "message.list", account=setup.account_id, folder="Inbox", sort="snoozed").total >= 0  # elsewhere it sorts by date
+
+
+def test_a_snoozed_message_without_a_record_goes_to_the_inbox_when_woken(setup: Setup) -> None:
+    at(setup, 0)
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    target = rows(setup, "Inbox")[0]
+    call(setup.engine, "message.flag", account=setup.account_id, folder="Inbox", message=target.message_id, seen=True)
+    call(setup.engine, "message.snooze", account=setup.account_id, folder="Inbox", message=target.message_id, until=iso(3600))
+    (setup.engine.directories.account_directory(setup.account_id) / "snoozed.json").write_text("{}", "utf-8")  # the record is lost
+    assert call(setup.engine, "message.wake").woken == 0 and len(rows(setup, "Snoozed")) == 1  # nothing comes back by itself
+    assert call(setup.engine, "message.wake", account=setup.account_id, message=target.message_id).woken == 1
+    back = next(row for row in rows(setup, "Inbox") if row.message_id == target.message_id)
+    assert back.flags == () and rows(setup, "Snoozed") == []
 
 
 def test_the_groups_of_the_snoozed_folder() -> None:

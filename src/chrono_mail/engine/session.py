@@ -22,9 +22,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.0.72"
+__version__ = "session.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: A store with two folders of the same path is repaired when it is opened
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.43: tls_context for accepted certificates
@@ -148,7 +149,10 @@ class Engine:
     def open_store(self, settings: AccountSettings, config: AppConfig | None = None) -> Store:
         current = config if config is not None else self.config()
         key = self.data_key(current) if settings.encrypted else None
-        return Store.open(self.store_directory(settings), key, durable=self.durable)
+        store = Store.open(self.store_directory(settings), key, durable=self.durable)
+        if store.damaged_folders:
+            store.merge_duplicate_folders()  # folders made twice by commands that ran at the same time (before 0.2.101)
+        return store
 
     def open_index(self, settings: AccountSettings, store: Store) -> Index:
         """The account's index. A missing or damaged index is rebuilt from the store: it is never the truth."""

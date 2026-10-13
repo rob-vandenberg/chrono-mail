@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,15 +14,26 @@ from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, w
 from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_name, split_info
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 0.0.45"
+__version__ = "store.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: Creating a folder re-reads the folders under a lock (no second folder with the same path when commands run at the same time); ensure_folder; merge_duplicate_folders repairs stores where that happened
 # v0.0.45: deliver can keep a message's identity
 # v0.0.7: Initial encrypted Maildir store
 
 FORMAT_VERSION: int = 1
 TEMPORARY_FILE_MAXIMUM_AGE_SECONDS: float = 36 * 3600  # the Maildir convention
 Checkpoint = Callable[[str], None]
+
+
+_FOLDER_LOCKS: dict[str, threading.RLock] = {}
+_FOLDER_LOCKS_GUARD = threading.Lock()
+
+
+def _folder_lock(root: Path) -> threading.RLock:
+    """One lock per store for changes to its list of folders: commands of this program that run at the same time take turns."""
+    with _FOLDER_LOCKS_GUARD:
+        return _FOLDER_LOCKS.setdefault(str(root.resolve()), threading.RLock())
 
 
 def _no_checkpoint(name: str) -> None:
@@ -153,18 +165,83 @@ class Store:
 
     def create_folder(self, path: tuple[str, ...], role: FolderRole = FolderRole.OTHER) -> Folder:
         folder = Folder(self.account_id, path, role)
-        if path in self._folders:
-            raise StorageError("A folder with this path already exists")
-        directory = self.root / "folders" / f"f-{os.urandom(6).hex()}"
-        try:
-            for name in ("tmp", "new", "cur"):
-                (directory / name).mkdir(parents=True)
-            self._checkpoint("create-folder:before-description")
-            self._write_description(directory, folder)
-        except OSError as error:
-            raise StorageError(f"The folder could not be created: {error.strerror}") from None
-        self._folders[path] = _FolderEntry(directory.name, folder)
-        return folder
+        with _folder_lock(self.root):
+            self.refresh()  # another command may have made it a moment ago
+            if path in self._folders:
+                raise StorageError("A folder with this path already exists")
+            directory = self.root / "folders" / f"f-{os.urandom(6).hex()}"
+            try:
+                for name in ("tmp", "new", "cur"):
+                    (directory / name).mkdir(parents=True)
+                self._checkpoint("create-folder:before-description")
+                self._write_description(directory, folder)
+            except OSError as error:
+                raise StorageError(f"The folder could not be created: {error.strerror}") from None
+            self._folders[path] = _FolderEntry(directory.name, folder)
+            return folder
+
+    def ensure_folder(self, path: tuple[str, ...], role: FolderRole = FolderRole.OTHER) -> tuple[Folder, bool]:
+        """The folder with this path, created when there is none (and whether it was created). Commands that run at the
+        same time get the same folder."""
+        with _folder_lock(self.root):
+            self.refresh()
+            entry = self._folders.get(path)
+            if entry is not None:
+                return entry.folder, False
+            return self.create_folder(path, role), True
+
+    def merge_duplicate_folders(self) -> int:
+        """Repair a store with two folders of the same path (made by commands that ran at the same time before 0.2.101):
+        the messages of the extra folders move into the first one (one rename each, same store id), then each emptied
+        extra folder goes to .deleted. Nothing is erased; repeating it after an interruption finishes the job. Returns the
+        number of messages moved."""
+        moved = 0
+        with _folder_lock(self.root):
+            self.refresh()
+            folders_root = self.root / "folders"
+            for name in list(self.damaged_folders):
+                extra = folders_root / name
+                try:
+                    description = json.loads((extra / "folder.json").read_text("utf-8"))
+                    path = tuple(str(segment) for segment in description["path"])
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue  # really damaged: left alone
+                entry = self._folders.get(path)
+                if entry is None or entry.directory == name:
+                    continue
+                primary = folders_root / entry.directory
+                complete = True
+                for part in ("new", "cur"):
+                    source = extra / part
+                    if not source.is_dir():
+                        continue
+                    for message in sorted(source.iterdir()):
+                        target = primary / part / message.name
+                        if target.exists():
+                            complete = False  # never overwrite: left where it is
+                            continue
+                        self._checkpoint("merge-folders:before-message")
+                        try:
+                            os.rename(message, target)
+                        except OSError as error:
+                            raise StorageError(f"A message could not be moved: {error.strerror}") from None
+                        moved += 1
+                    if self._durable:
+                        fsync_directory(primary / part)
+                        fsync_directory(source)
+                if not complete:
+                    continue
+                self._checkpoint("merge-folders:before-retire")
+                try:
+                    (self.root / ".deleted").mkdir(exist_ok=True)
+                    os.rename(extra, self.root / ".deleted" / name)
+                    if self._durable:
+                        fsync_directory(folders_root)
+                        fsync_directory(self.root / ".deleted")
+                except OSError as error:
+                    raise StorageError(f"The extra folder could not be set aside: {error.strerror}") from None
+            self.refresh()
+        return moved
 
     def rename_folder(self, old: tuple[str, ...], new: tuple[str, ...]) -> None:
         """Rename a folder and everything below it. Safe to repeat after an interruption."""

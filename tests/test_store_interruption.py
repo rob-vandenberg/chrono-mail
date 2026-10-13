@@ -1,4 +1,6 @@
+import json
 import os
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -9,9 +11,10 @@ from chrono_mail.crypto import DataKey, generate_data_key
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_store_interruption.py 0.0.7"
+__version__ = "test_store_interruption.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: Folders made at the same moment; the repair of duplicate folders, interrupted at every step
 # v0.0.7: Initial store interruption tests
 
 # AGENTS.md section 4.1.4: everything that could destroy data is tested for being safe when
@@ -299,3 +302,74 @@ def test_verification_failure_removes_the_bad_copy_and_reports(tmp_path: Path, m
         store.deliver(INBOX, RAW)
     monkeypatch.undo()
     assert len(store.list_messages(INBOX)) == 1  # only the bystander: the unverified copy is gone
+
+
+SNOOZED = ("Snoozed",)
+
+
+def test_folders_made_at_the_same_moment_are_one_folder(tmp_path: Path) -> None:
+    case = Case(tmp_path)
+    stores = [case.restart() for _ in range(6)]  # each command opens the store on its own
+    start = threading.Barrier(len(stores))
+    created: list[bool] = []
+
+    def make(store: Store) -> None:
+        start.wait()
+        created.append(store.ensure_folder(SNOOZED)[1])
+
+    threads = [threading.Thread(target=make, args=(store,)) for store in stores]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert created.count(True) == 1
+    reopened = case.restart()
+    assert reopened.damaged_folders == [] and [folder.path for folder in reopened.list_folders()].count(SNOOZED) == 1
+    with pytest.raises(StorageError, match="already exists"):
+        stores[0].create_folder(SNOOZED)  # a store opened before sees the folder too
+
+
+def make_duplicate(case: Case) -> tuple[list[MessageRef], list[bytes]]:
+    """Snoozed twice on disk (as two commands at the same moment made it before 0.2.101), each with messages."""
+    store = case.restart()
+    store.create_folder(SNOOZED)
+    store.create_folder(("Twin",))
+    contents = [RAW + bytes(f"{number}", "ascii") for number in range(4)]
+    refs = [store.deliver(SNOOZED if number < 2 else ("Twin",), content) for number, content in enumerate(contents)]
+    twin = next(path.parent for path in (store.root / "folders").glob("*/folder.json") if json.loads(path.read_text("utf-8"))["path"] == ["Twin"])
+    description = json.loads((twin / "folder.json").read_text("utf-8"))
+    description["path"] = list(SNOOZED)
+    (twin / "folder.json").write_text(json.dumps(description), "utf-8")
+    return refs, contents
+
+
+def all_readable(store: Store, contents: list[bytes]) -> None:
+    found = sorted(store.read(message.ref) for message in store.list_messages(SNOOZED))
+    assert found == sorted(contents)
+
+
+def test_duplicate_folders_are_merged_and_nothing_is_lost(tmp_path: Path) -> None:
+    case = Case(tmp_path)
+    _, contents = make_duplicate(case)
+    store = case.restart()
+    assert len(store.damaged_folders) == 1 and len(store.list_messages(SNOOZED)) == 2
+    assert store.merge_duplicate_folders() == 2
+    all_readable(store, contents)
+    assert store.damaged_folders == [] and len(list((store.root / ".deleted").iterdir())) == 1
+    assert case.restart().merge_duplicate_folders() == 0
+    case.assert_bystander_intact(case.restart())
+
+
+@pytest.mark.parametrize(("point", "occurrence"), [("merge-folders:before-message", 1), ("merge-folders:before-message", 2), ("merge-folders:before-retire", 1)])
+def test_crash_while_merging_duplicate_folders(tmp_path: Path, point: str, occurrence: int) -> None:
+    case = Case(tmp_path)
+    _, contents = make_duplicate(case)
+    with pytest.raises(SimulatedCrash):
+        case.with_crash(point, occurrence).merge_duplicate_folders()
+    files = [path for path in (case.root / "folders").rglob("*") if path.is_file() and path.parent.name in ("new", "cur")]
+    assert len(files) == 5  # four snoozed and the bystander: every message is still on disk
+    store = case.restart()
+    store.merge_duplicate_folders()  # the next start finishes the job
+    all_readable(case.restart(), contents)
+    assert case.restart().damaged_folders == []
+    case.assert_bystander_intact(case.restart())

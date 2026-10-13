@@ -12,9 +12,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import Pop3State, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_local.py 0.0.45"
+__version__ = "commands_local.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: Folders are made safely (ensure_folder)
 # v0.0.45: Initial Local Folders commands and the move of an account between its own folders and Local Folders
 
 STANDARD_PATHS: dict[FolderRole, tuple[str, ...]] = {role: path for path, role in STANDARD_FOLDERS if role is not FolderRole.OTHER}
@@ -55,8 +56,7 @@ def _target_path(source: Store, path: tuple[str, ...]) -> tuple[tuple[str, ...],
 
 
 def _ensure_folder(store: Store, path: tuple[str, ...], role: FolderRole) -> None:
-    if path not in {folder.path for folder in store.list_folders()}:
-        store.create_folder(path, role)
+    store.ensure_folder(path, role)
 
 
 def _same(a: Store, b: Store, store_id: str, a_where: tuple[tuple[str, ...], str], b_where: tuple[tuple[str, ...], str]) -> bool:

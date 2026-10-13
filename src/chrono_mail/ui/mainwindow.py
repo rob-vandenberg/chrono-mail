@@ -84,9 +84,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.2.100"
+__version__ = "mainwindow.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: Cancel snooze (in the Snoozed folder: the menu of the Snooze button and the right-click menu) brings the message back now
 # v0.2.100: The Snoozed folder has the column Snoozed until (sortable, with its groups; added once after Received, kept off when switched off)
 # v0.2.99: After a delete, move, archive, junk or snooze the list keeps its place and selects the next message (or keeps the selection when another row was deleted); F2 renames the folder while the folder list has the focus
 # v0.2.97: The Message list window sets the row height too
@@ -442,6 +443,7 @@ class MainWindow(QMainWindow):
         self.act_columns = self._action("Message list…", self.edit_columns)
         self.act_junk = self._action("Move to Junk / back to Inbox", lambda: self.junk_selected(self._folder_role != "junk"), "Ctrl+J", "mail-mark-junk")  # one key does both, as the folder decides
         self.act_not_junk = self._action("Not junk", lambda: self.junk_selected(False), None, "mail-mark-notjunk")
+        self.act_cancel_snooze = self._action("Cancel snooze", self.cancel_snooze_selected)
         self.act_not_junk.setEnabled(False)
         self.act_next_unread = self._action("Next unread message", lambda: self.go_to_unread(1), "N")
         self.act_previous_unread = self._action("Previous unread message", lambda: self.go_to_unread(-1), "P")
@@ -522,6 +524,9 @@ class MainWindow(QMainWindow):
     def _fill_snooze_menu(self) -> None:
         """The ready-made times, counted from now, and a choice of one's own."""
         self.snooze_menu.clear()
+        if self._in_snoozed():
+            self.snooze_menu.addAction(self.act_cancel_snooze)
+            self.snooze_menu.addSeparator()
         for name, moment in snooze_presets(datetime.now()):
             label = f"{name} ({_WEEKDAYS[moment.weekday()]} {moment:%H:%M})"
             self.snooze_menu.addAction(label, lambda until=moment.strftime("%Y-%m-%dT%H:%M"): self.snooze_until(until))
@@ -1011,6 +1016,29 @@ class MainWindow(QMainWindow):
         if dialog.exec() != WhenDialog.DialogCode.Accepted:
             return
         self.snooze_until(dialog.chosen())
+
+    def cancel_snooze_selected(self) -> None:
+        """In the Snoozed folder: the selected messages go back now to the folder they came from (unread, as when their time comes)."""
+        rows = self._selected_rows()
+        if not rows or self._account_id is None or not self._in_snoozed():
+            return
+        account = self._account_id
+        remaining = len(rows)
+        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+
+        def done(result: object) -> None:
+            nonlocal remaining
+            remaining -= 1
+            if remaining == 0:
+                self._after_change(f"Brought back {len(rows)} message(s)")
+
+        def failed(error: ChronoMailError) -> None:
+            nonlocal remaining
+            remaining -= 1
+            self._report("Could not cancel the snooze", error)
+
+        for row in rows:
+            self.backend.call("message.wake", {"account": self._account_of(row) or account, "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
 
     def snooze_until(self, until: str) -> None:
         """Put the selected messages away until this local time (2026-10-13T09:00)."""
@@ -2706,6 +2734,8 @@ class MainWindow(QMainWindow):
         menu.addMenu(self.move_menu).setText("Move to")
         menu.addAction(self.act_archive)
         menu.addAction(self.act_snooze)
+        if self._in_snoozed():
+            menu.addAction(self.act_cancel_snooze)
         menu.addAction(self.act_not_junk if self._folder_role == "junk" else self.act_junk)
         menu.addAction(self.act_delete)
         menu.addSeparator()

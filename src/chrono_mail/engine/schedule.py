@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -7,15 +8,17 @@ from chrono_mail.core import StorageError
 from chrono_mail.engine.registry import UsageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "schedule.py 0.2.100"
+__version__ = "schedule.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: SNOOZED_LOCK: the record of snoozed messages is read, changed and written by one command at a time
 # v0.2.100: SNOOZED_FOLDER and SNOOZED_FILE moved here; snooze_group for the group headers of the Snoozed folder
 # v0.0.86: Ready-made snooze times (tomorrow, later this week, this weekend, next week)
 # v0.0.34: Initial times for sending later and snoozing
 
 SNOOZED_FOLDER: str = "Snoozed"
 SNOOZED_FILE: str = "snoozed.json"
+SNOOZED_LOCK = threading.RLock()  # snooze and wake read, change and write snoozed.json: one command at a time
 SNOOZE_GROUPS: tuple[tuple[str, str], ...] = (("today", "Today"), ("tomorrow", "Tomorrow"), ("this_week", "This week"), ("next_week", "Next week"), ("later", "Later"))
 TOLERANCE_SECONDS: int = 60
 MAXIMUM_SECONDS_AHEAD: int = 5 * 366 * 86_400

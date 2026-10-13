@@ -8,9 +8,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "rule_engine.py 0.0.49"
+__version__ = "rule_engine.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: The folder of a rule is made safely (one folder when rules run at the same time)
 # v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rule matching and actions
 
@@ -117,7 +118,7 @@ def _folder_for(mailbox: Mailbox, path: str) -> tuple[str, ...]:
         return mailbox.folder(path)
     except ChronoMailError:
         folder = parse_folder(path)
-        mailbox.store.create_folder(folder)
+        mailbox.store.ensure_folder(folder)
         return folder
 
 

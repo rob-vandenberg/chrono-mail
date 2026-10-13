@@ -9,9 +9,10 @@ from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.0.44"
+__version__ = "imap_sync.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: Local folders are made safely (ensure_folder: one folder when two syncs run at the same time)
 # v0.0.44: the person's choices of folders and roles
 # v0.0.33: Rules
 # v0.0.31: IMAP accounts in the engine and the interface
@@ -228,7 +229,7 @@ def sync_imap(
         for plan in plans:
             if plan.local_path not in existing:
                 try:
-                    store.create_folder(plan.local_path, plan.role)
+                    store.ensure_folder(plan.local_path, plan.role)
                     existing.add(plan.local_path)
                 except ChronoMailError as error:
                     notes.append(f"The local folder for '{_printable(plan.server_name)}' could not be made: {error}")
@@ -544,8 +545,7 @@ def _recover(store: Store, index: Index | None, local: tuple[str, ...], store_id
     """Local messages that the renumbered server folder no longer has: kept, in a folder of their own."""
     target = (RECOVERED, *local)
     try:
-        if target not in {folder.path for folder in store.list_folders()}:
-            store.create_folder(target, FolderRole.OTHER)
+        store.ensure_folder(target, FolderRole.OTHER)
     except ChronoMailError as error:
         counts.failed.append(f"The folder for recovered messages could not be made: {error}")
         return

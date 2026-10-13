@@ -11,15 +11,16 @@ from chrono_mail.engine.commands_mail import MessageParameters, _check_id
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.recurring import MAXIMUM_ATTEMPTS, RECURRING_FILE, Repeat, advance, describe_repeat, index_after, load_repeats, next_due, save_repeats
-from chrono_mail.engine.schedule import SNOOZED_FILE, SNOOZED_FOLDER, describe_when, load_snoozed, parse_when, save_snoozed
+from chrono_mail.engine.schedule import SNOOZED_FILE, SNOOZED_FOLDER, SNOOZED_LOCK, describe_when, load_snoozed, parse_when, save_snoozed
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.mime import Address, OutgoingMessage, ParsedMessage, parse_message
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 0.2.100"
+__version__ = "commands_schedule.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: Snooze and wake change the record one at a time and make folders safely (no second Snoozed folder); waking a message that has no record (Cancel snooze) brings it to the Inbox
 # v0.2.100: The name of the Snoozed folder and its record file live in schedule.py (message.list needs them too)
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.67: Messages that are sent again and again
@@ -330,12 +331,12 @@ def message_snooze(engine: Engine, parameters: SnoozeParameters) -> SnoozeResult
         target = (SNOOZED_FOLDER,)
         if source == target:
             raise UsageError("The message is snoozed already")
-        if target not in {folder.path for folder in mailbox.folders()}:
-            mailbox.store.create_folder(target)
+        mailbox.store.ensure_folder(target)
         path = engine.directories.account_directory(mailbox.account_id) / SNOOZED_FILE
-        entries = load_snoozed(path)
-        entries[reference.store_id] = {"until": until, "folder": "/".join(source)}
-        save_snoozed(path, entries)  # the record first: a message in Snoozed without a record would never come back
+        with SNOOZED_LOCK:
+            entries = load_snoozed(path)
+            entries[reference.store_id] = {"until": until, "folder": "/".join(source)}
+            save_snoozed(path, entries)  # the record first: a message in Snoozed without a record would never come back
         mailbox.move(reference, target)
         return SnoozeResult(reference.store_id, describe_when(until))
 
@@ -370,38 +371,58 @@ class WakeResult:
 
 
 def message_wake(engine: Engine, parameters: WakeParameters) -> WakeResult:
-    """Bring back the snoozed messages whose time has come (or one of them now). They return unread."""
+    """Bring back the snoozed messages whose time has come (or one of them now). They return unread. A message named
+    here that is in Snoozed without a record (its folder of origin is unknown) goes to the Inbox."""
     now, woken, waiting = engine.clock(), 0, 0
-    for account in _accounts(engine, parameters.account):
-        path = engine.directories.account_directory(account) / SNOOZED_FILE
-        entries = load_snoozed(path)
-        if not entries:
-            continue
-        with open_mailbox(engine, account) as mailbox:
-            here: dict[str, MessageRef] = {}
-            if (SNOOZED_FOLDER,) in {f.path for f in mailbox.folders()}:
-                here = {message.ref.store_id: message.ref for message in mailbox.store.list_messages((SNOOZED_FOLDER,))}
-            for store_id, entry in list(entries.items()):
-                if parameters.message and parameters.message != store_id:
-                    waiting += 1
-                    continue
-                if not parameters.message and int(str(entry["until"])) > now:
-                    waiting += 1
-                    continue
-                reference = here.get(store_id)
-                if reference is not None:
-                    try:
-                        target = parse_folder(str(entry["folder"]))
-                        if target not in {f.path for f in mailbox.folders()}:
-                            mailbox.store.create_folder(target)
-                        moved = mailbox.move(reference, target)
-                        mailbox.set_flags(moved, frozenset(mailbox.current_flags(moved) - {MessageFlag.SEEN}))
-                    except ChronoMailError:
-                        continue  # try again next time; the record stays
-                    woken += 1
-                del entries[store_id]  # also when the message is gone: nothing is left to wait for
-            save_snoozed(path, entries)
+    with SNOOZED_LOCK:
+        for account in _accounts(engine, parameters.account):
+            found = _wake_account(engine, account, parameters.message, now)
+            woken, waiting = woken + found[0], waiting + found[1]
     return WakeResult(woken, waiting)
+
+
+def _wake_account(engine: Engine, account: str, wanted: str | None, now: float) -> tuple[int, int]:
+    woken, waiting = 0, 0
+    path = engine.directories.account_directory(account) / SNOOZED_FILE
+    entries = load_snoozed(path)
+    if not entries and not wanted:
+        return 0, 0
+    without_record = wanted is not None and wanted not in entries
+    with open_mailbox(engine, account) as mailbox:
+        here: dict[str, MessageRef] = {}
+        if (SNOOZED_FOLDER,) in {f.path for f in mailbox.folders()}:
+            here = {message.ref.store_id: message.ref for message in mailbox.store.list_messages((SNOOZED_FOLDER,))}
+        for store_id, entry in list(entries.items()):
+            if wanted and wanted != store_id:
+                waiting += 1
+                continue
+            if not wanted and int(str(entry["until"])) > now:
+                waiting += 1
+                continue
+            reference = here.get(store_id)
+            if reference is not None:
+                try:
+                    target = parse_folder(str(entry["folder"]))
+                    mailbox.store.ensure_folder(target)
+                    moved = mailbox.move(reference, target)
+                    mailbox.set_flags(moved, frozenset(mailbox.current_flags(moved) - {MessageFlag.SEEN}))
+                except ChronoMailError:
+                    continue  # try again next time; the record stays
+                woken += 1
+            del entries[store_id]  # also when the message is gone: nothing is left to wait for
+        if without_record and wanted is not None and wanted in here:
+            woken += _back_to_inbox(mailbox, here[wanted])
+        save_snoozed(path, entries)
+    return woken, waiting
+
+
+def _back_to_inbox(mailbox: Mailbox, reference: MessageRef) -> int:
+    """A message in Snoozed without a record of where it came from: to the Inbox, unread."""
+    inbox = next((folder.path for folder in mailbox.folders() if folder.role is FolderRole.INBOX), ("Inbox",))
+    mailbox.store.ensure_folder(inbox, FolderRole.INBOX)
+    moved = mailbox.move(reference, inbox)
+    mailbox.set_flags(moved, frozenset(mailbox.current_flags(moved) - {MessageFlag.SEEN}))
+    return 1
 
 
 # --- messages that repeat ------------------------------------------------------------------------------------------------------------------------

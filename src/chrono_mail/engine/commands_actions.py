@@ -7,9 +7,10 @@ from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_actions.py 0.0.34"
+__version__ = "commands_actions.py 0.2.101"
 
 # --- Version history ----------------------------------------------------
+# v0.2.101: The Archive folder is made safely (one folder when several messages are archived at once)
 # v0.0.34: junk and not junk
 # v0.0.17: Initial bulk actions: archive, mark a whole folder as read, empty Trash or Junk
 
@@ -32,7 +33,7 @@ def archive_folder(mailbox: Mailbox) -> tuple[Folder, bool]:
     for folder in folders:
         if folder.path == (ARCHIVE_NAME,):
             return folder, False
-    return mailbox.store.create_folder((ARCHIVE_NAME,), FolderRole.ARCHIVE), True
+    return mailbox.store.ensure_folder((ARCHIVE_NAME,), FolderRole.ARCHIVE)  # archiving several messages at once makes one folder
 
 
 def message_archive(engine: Engine, parameters: MessageParameters) -> ArchiveResult:
