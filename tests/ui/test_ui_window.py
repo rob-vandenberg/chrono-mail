@@ -3,8 +3,8 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QModelIndex, QPoint, QPointF, QSettings, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QDragLeaveEvent, QDragMoveEvent, QPalette
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QLabel, QMenu, QMessageBox
 from pytestqt.qtbot import QtBot
 
@@ -17,9 +17,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.2.102"
+__version__ = "test_ui_window.py 0.2.103"
 
 # --- Version history ----------------------------------------------------
+# v0.2.103: The indent of a selected folder keeps the list colour; the drop bar; the drag cursors
 # v0.2.102: Unarchive in the Archive folder; the Junk items say where they move to
 # v0.2.99: After a delete the next message is selected (or the selection stays); F2 renames the folder
 # v0.2.97: The choice of the Message list window carries the row height
@@ -446,6 +447,59 @@ def test_in_the_archive_folder_archive_is_unarchive(world: World, qtbot: QtBot) 
     window.act_archive.trigger()
     wait(qtbot, lambda: window.list_model.rowCount() == 0)
     assert target in {row.message_id for row in world.call("message.list", account=world.account_id, folder="Inbox").messages}
+
+
+def test_the_selection_of_a_folder_starts_at_its_icon(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.show()
+    sent = window._find_tree_item((world.account_id, "folder", "Sent"))  # noqa: SLF001
+    assert sent is not None
+    window.tree.setCurrentIndex(sent)
+    window.tree.setFocus()
+    qtbot.wait(100)
+    rect = window.tree.visualRect(sent)
+    image = window.tree.viewport().grab().toImage()
+    background = window.tree.palette().color(QPalette.ColorRole.Window).name()
+    assert image.pixelColor(rect.left() - 6, rect.center().y()).name() == background  # the indent: the colour of the list
+    assert image.pixelColor(rect.left() + 6, rect.center().y()).name() != background  # the folder itself: selected
+
+
+def test_a_folder_that_can_take_a_drop_gets_a_bar_across_the_row(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.show()
+    data = window.list_model.mimeData([window.list_model.index(0, 0)])
+
+    def drag_over(folder: str) -> None:
+        item = window._find_tree_item((world.account_id, "folder", folder))  # noqa: SLF001
+        assert item is not None
+        point = QPointF(window.tree.visualRect(item).center())
+        window.tree.dragMoveEvent(QDragMoveEvent(point, Qt.DropAction.MoveAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier))
+
+    drag_over("Trash")
+    assert window.tree.drop_row is not None and window.tree.drop_row.data(FOLDER_PATH_ROLE) == "Trash"
+    qtbot.wait(50)
+    trash = window._find_tree_item((world.account_id, "folder", "Trash"))  # noqa: SLF001
+    assert trash is not None
+    row = window.tree.visualRect(trash)
+    image = window.tree.viewport().grab().toImage()
+    highlight = window.tree.palette().color(QPalette.ColorRole.Highlight).name()
+    assert image.pixelColor(1, row.center().y()).name() == highlight  # the whole row, also left of the icon
+    drag_over("Inbox")  # where the message is now: no drop
+    assert window.tree.drop_row is None
+    drag_over("Trash")
+    window.tree.dragLeaveEvent(QDragLeaveEvent())
+    assert window.tree.drop_row is None
+
+
+def test_the_drag_has_cursors_of_its_own(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    select(window, 0)
+    drag = window.list_view.make_drag()
+    assert drag is not None
+    assert not drag.dragCursor(Qt.DropAction.MoveAction).isNull() and not drag.dragCursor(Qt.DropAction.IgnoreAction).isNull()
 
 
 def test_after_deleting_the_last_message_the_one_before_is_selected(world: World, qtbot: QtBot) -> None:

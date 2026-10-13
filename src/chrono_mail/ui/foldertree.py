@@ -1,7 +1,7 @@
 from typing import override
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QSize, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QFocusEvent, QFont, QFontMetrics, QIcon, QPainter, QPalette
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt, Signal
+from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDropEvent, QFocusEvent, QFont, QFontMetrics, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeView, QWidget
 
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
@@ -10,9 +10,10 @@ from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, KI
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 0.0.88"
+__version__ = "foldertree.py 0.2.103"
 
 # --- Version history ----------------------------------------------------
+# v0.2.103: The selection and the hover start just before the icon (the indent keeps the colour of the list); a folder that can take dragged messages gets a blue bar across the whole row
 # v0.0.88: The selection is blue while the folder list has the focus and grey without it
 # v0.0.87: The number of unread messages is drawn as a bold number at the right edge
 # v0.0.17: Initial folder tree that accepts dropped messages
@@ -96,6 +97,37 @@ class FolderTree(QTreeView):
         self.folder_delegate = FolderItemDelegate(self)
         self.setItemDelegate(self.folder_delegate)
         self.setProperty("focused", False)
+        self.drop_row: QPersistentModelIndex | None = None  # the folder under the pointer that can take the dragged messages
+
+    @override
+    def drawBranches(self, painter: QPainter, rect: QRect, index: QModelIndex | QPersistentModelIndex) -> None:
+        """The space left of a folder (its indent) keeps the colour of the list: the selection and the hover start just before the icon."""
+        if not self._is_drop_row(index):
+            painter.fillRect(rect, self.palette().color(QPalette.ColorRole.Window))
+        super().drawBranches(painter, rect, index)  # the arrows that open and close a group
+
+    def _is_drop_row(self, index: QModelIndex | QPersistentModelIndex) -> bool:
+        return self.drop_row is not None and self.drop_row.isValid() and QPersistentModelIndex(index) == self.drop_row
+
+    @override
+    def drawRow(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        """The folder that will take a drop: a blue bar across the whole row, the text in the colour for it."""
+        if not self._is_drop_row(index):
+            super().drawRow(painter, option, index)
+            return
+        row = _rect(option)
+        palette = QPalette(_typed(option, "palette", QPalette))
+        painter.fillRect(QRect(0, row.top(), self.viewport().width(), row.height()), palette.color(QPalette.ColorRole.Highlight))
+        palette.setColor(QPalette.ColorRole.Text, palette.color(QPalette.ColorRole.HighlightedText))
+        marked = QStyleOptionViewItem(option)
+        setattr(marked, "palette", palette)
+        super().drawRow(painter, marked, index)
+
+    def _set_drop_row(self, index: QModelIndex | None) -> None:
+        wanted = QPersistentModelIndex(index) if index is not None and index.isValid() else None
+        if wanted != self.drop_row:
+            self.drop_row = wanted
+            self.viewport().update()
 
     @override
     def focusInEvent(self, event: QFocusEvent) -> None:
@@ -129,13 +161,21 @@ class FolderTree(QTreeView):
     @override
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
         if self._target(event) is not None:
+            self._set_drop_row(self.indexAt(event.position().toPoint()))
             event.setDropAction(Qt.DropAction.MoveAction)
             event.accept()
         else:
+            self._set_drop_row(None)
             event.ignore()
 
     @override
+    def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:
+        self._set_drop_row(None)
+        super().dragLeaveEvent(event)
+
+    @override
     def dropEvent(self, event: QDropEvent) -> None:
+        self._set_drop_row(None)
         target = self._target(event)
         dragged = read_messages_mime_data(event.mimeData())
         if target is None or dragged is None:

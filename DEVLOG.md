@@ -1042,3 +1042,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - `message.archive` appends the folder of origin to `archived.log`; new command `message.unarchive`. In the Archive folder Archive becomes Unarchive (toolbar, A, menus). Icon `archive-extract` copied from breeze-dark.
 - "Move to Junk / back to Inbox" is now "Move to Junk"; "Not junk" is "Not junk (move to Inbox)".
 - Tests run: `tests/test_engine_actions.py` (two new), `tests/ui/test_ui_window.py` (alone: one new, the old archive test now expects Unarchive in the Archive folder; the known flaky `test_mark_all_as_read_and_empty_folder` failed once, not rerun), `tests/ui/test_ui_shortcuts.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 Drag and drop: drop bar, own cursors; selection from the icon (version 0.2.103)
+
+**What landed**
+- `FolderTree.drawBranches` paints the indent in the list colour (the selection and hover colour came from Qt filling the indent; a stylesheet `show-decoration-selected: 0` did not help, checked by pixels); `drawRow` draws the drop bar across the whole row; `drop_row` follows `dragMoveEvent`, cleared on leave and drop.
+- `ui/dragcursors.py` (new): `move_cursor`, `no_drop_cursor`, drawn on a 24 grid at the cursor size; `MessageListView.make_drag` sets them for MoveAction and IgnoreAction. The owner's desktop: X11, cursor size 42. Not seen on a real screen here.
+- Tests run: `tests/ui/test_ui_window.py` (alone, three new: indent colour by pixel, drop bar by pixel and its clearing, drag cursors set), `tests/ui/test_ui_dragdrop.py`, `tests/ui/test_ui_icons.py`, `tests/ui/test_ui_models.py`, `tests/ui/test_ui_theme.py`, screenshots; Pyrefly 0 diagnostics, layer check kept; not the full suite.
