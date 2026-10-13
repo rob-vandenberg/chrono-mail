@@ -677,3 +677,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 **Decision:** the Message list window has Row height (Compact, Normal, Roomy) under Dates, the same setting as on Settings > Message list. Like there, it changes the rows of the column layout only; cards keep their height.
 The search field rounds its corners by half its own height (it was a fixed 15 px, round only at the standard text size; the field grows with the text size of the interface).
 **Reason:** the owner's instructions: the window lacked Row height, and the ends of the search field were not fully round.
+
+## D-098 The list keeps its place when messages leave it; F2 renames a folder
+*2026-10-13*
+
+**Decision:** after Delete, Delete permanently, a click on the bin of the Delete column, Move (button, menu, keys, dragging to a folder), Archive, Junk, Not junk and Snooze, the list keeps its scroll position and selects: the selected message when it was not deleted; else the message right after the deleted ones; else, when they were at the end, the one just before them. That message is shown in the reading pane and marked read like any selected message. Nothing is selected when it is in a folded group. Rename folder… has the key F2, which works only while the folder list has the focus.
+**Reason:** the owner's requests (parked on 2026-10-11).

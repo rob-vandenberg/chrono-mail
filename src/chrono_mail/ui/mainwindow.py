@@ -81,9 +81,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.2.97"
+__version__ = "mainwindow.py 0.2.99"
 
 # --- Version history ----------------------------------------------------
+# v0.2.99: After a delete, move, archive, junk or snooze the list keeps its place and selects the next message (or keeps the selection when another row was deleted); F2 renames the folder while the folder list has the focus
 # v0.2.97: The Message list window sets the row height too
 # v0.2.96: In the card layout the one column always fills the list (it kept the width of the first column of the column layout); View > Message list: Columns or Cards; in the card layout the rows are not all one height (group headers are lower than cards); Message list… is no longer in the View menu (it stays in the menu of the column headers)
 # v0.2.94: Group headers in the message list (fold by a click; Show groups in the View menu); sorting by To; searches and combined views follow the sort order
@@ -202,6 +203,7 @@ class MainWindow(QMainWindow):
         self._sort: str = str(settings.value("sort", "date"))
         self._oldest_first: bool = bool_setting(settings, "oldest_first", False)
         self._reselect: str | None = None
+        self._after_delete: tuple[str | None, int, int | None] | None = None  # after a delete: the message to select (id, position) and the scroll position
         self._composers: list[ComposeWindow] = []
         self._checking: bool = False
         self._dav_syncing: bool = False
@@ -489,7 +491,7 @@ class MainWindow(QMainWindow):
         self.act_show_groups.setChecked(bool_setting(self.settings, "show_groups", True))
         self.list_model.show_groups = self.act_show_groups.isChecked()
         self.act_new_folder = self._action("New folder…", self.new_folder)
-        self.act_rename_folder = self._action("Rename folder…", self.rename_folder)
+        self.act_rename_folder = self._action("Rename folder…", self.rename_folder, "F2")
         self.act_delete_folder = self._action("Delete folder…", self.delete_folder)
         self.act_about = self._action("About Chrono Mail", self._about)
 
@@ -1013,6 +1015,7 @@ class MainWindow(QMainWindow):
             return
         account = self._account_id
         remaining = len(rows)
+        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
 
         def done(result: object) -> None:
             nonlocal remaining
@@ -1130,9 +1133,10 @@ class MainWindow(QMainWindow):
         """A key that is a letter by itself (A, N, S ...) works in the message list and the folder list only: it is text anywhere else."""
         text = action.shortcut().toString()
         letter = len(text) == 1 and text.isalpha()
-        action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut if letter else Qt.ShortcutContext.WindowShortcut)
-        if letter:
-            for widget in (self.list_view, self.tree):
+        folder_only = action is self.act_rename_folder  # F2 renames the folder only while the folder list has the focus
+        action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut if letter or folder_only else Qt.ShortcutContext.WindowShortcut)
+        if letter or folder_only:
+            for widget in (self.tree,) if folder_only else (self.list_view, self.tree):
                 widget.addAction(action)
 
     def _mark_read_mode(self) -> str:
@@ -1642,6 +1646,7 @@ class MainWindow(QMainWindow):
 
     def _restore_row_selection(self) -> None:
         self._select_unread_after_load()
+        self._select_after_delete()
         pending = getattr(self, "_reselect", None)
         if not pending:
             return
@@ -1650,6 +1655,55 @@ class MainWindow(QMainWindow):
             self._reselect = None
             index = self.list_model.index(position)
             self.list_view.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+
+    def _keep_place_after_delete(self, message_ids: list[str]) -> None:
+        """Before a delete, move, archive or junk: remember the scroll position and which message to select once the list is back.
+
+        The selected message stays selected when it is not deleted; else the message right after the deleted ones, or the one
+        just before them when they were at the end."""
+        model = self.list_model
+        deleted_ids = set(message_ids)
+        deleted: list[int] = []
+        for message_id in deleted_ids:
+            position = model.message_position(model.find(message_id))
+            if position is not None:
+                deleted.append(position)
+        current = self.list_view.currentIndex()
+        current_row = model.row_at(current.row()) if current.isValid() else None
+        current_position = model.message_position(current.row()) if current.isValid() else None
+        target: tuple[str | None, int] | None = None
+        if current_row is not None and current_position is not None and str(getattr(current_row, "message_id")) not in deleted_ids:
+            target = (str(getattr(current_row, "message_id")), current_position - sum(1 for position in deleted if position < current_position))
+        elif deleted:
+            last, total = max(deleted), model.message_count()
+            after = next((position for position in range(last + 1, total) if position not in deleted), None)
+            before = next((position for position in range(last - 1, -1, -1) if position not in deleted), None)
+            chosen = after if after is not None else before
+            if chosen is not None:
+                message = model.row_at(model.display_row(chosen))
+                target = (str(getattr(message, "message_id")) if message is not None else None, chosen - sum(1 for position in deleted if position < chosen))
+        self._after_delete = None if target is None else (target[0], target[1], self.list_view.verticalScrollBar().value())
+
+    def _select_after_delete(self) -> None:
+        """After the list came back from a delete: the same scroll position, and the message chosen before the delete selected."""
+        pending = self._after_delete
+        if pending is None:
+            return
+        message_id, position, scroll = pending
+        if scroll is not None:
+            self.list_view.verticalScrollBar().setValue(scroll)
+            self._after_delete = (message_id, position, None)  # the list scrolls once; the selection may wait for its page
+        model = self.list_model
+        row = model.find(message_id) if message_id is not None else -1
+        if row < 0:
+            row = model.display_row(position)
+        if row < 0 or row >= model.rowCount():
+            self._after_delete = None  # in a folded group, or gone
+            return
+        if model.row_at(row, fetch=True) is None:
+            return  # its page is on the way: tried again when it has loaded
+        self._after_delete = None
+        self.list_view.selectionModel().setCurrentIndex(model.index(row), QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
 
     # --- actions on messages --------------------------------------------------------------------------------
 
@@ -1693,6 +1747,7 @@ class MainWindow(QMainWindow):
             return
         account = self._account_id
         remaining = len(rows)
+        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
 
         def done(result: object) -> None:
             nonlocal remaining
@@ -1710,6 +1765,7 @@ class MainWindow(QMainWindow):
         account = self._account_id
         remaining = len(rows)
         created = False
+        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
 
         def done(result: object) -> None:
             nonlocal remaining, created
@@ -1733,6 +1789,7 @@ class MainWindow(QMainWindow):
             return
         account, command = self._account_id, "message.junk" if junk else "message.not-junk"
         remaining = len(rows)
+        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
 
         def done(result: object) -> None:
             nonlocal remaining
@@ -1856,6 +1913,7 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(self, "Delete permanently", f"Delete {len(rows)} message(s) for good, without moving them to Trash? This cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
         remaining = len(rows)
+        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
 
         def done(result: object) -> None:
             nonlocal remaining
@@ -1988,6 +2046,7 @@ class MainWindow(QMainWindow):
     def _messages_dropped(self, account: str, target: str, messages: list[tuple[str, str]]) -> None:
         """Messages were dragged to a folder of the tree."""
         remaining = len(messages)
+        self._keep_place_after_delete([message_id for _, message_id in messages])
 
         def done(result: object) -> None:
             nonlocal remaining
@@ -2014,6 +2073,7 @@ class MainWindow(QMainWindow):
             return
         remaining = len(rows)
         account = self._account_id
+        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
 
         def done(result: object) -> None:
             nonlocal remaining

@@ -1011,3 +1011,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **What landed**
 - `test_the_look_of_the_list_follows_the_settings` checked for the row padding of before 0.1.89 ("padding-top: 6px"); since the fixed row heights of D-091 it checks that Roomy gives rows of 36 px. No program code changed.
 - Tests run: `tests/ui/test_ui_preferences.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 The place in the list after a delete; F2 renames a folder (version 0.2.99)
+
+**What landed**
+- Delete, Delete permanently and the bin of the Delete column remember the scroll position and the message to select before they run; when the list is back it scrolls there and selects that message: the selected one when it was not deleted, else the one right after the deleted ones, else the one just before them. A message whose page is not loaded yet is fetched first; one in a folded group is not selected. `ListModel.message_count`.
+- Rename folder… has the key F2, active only while the folder list has the focus (changeable in Settings > Keyboard).
+- The owner: the unread dot on a grey selected row stays as it is (taken off the open items).
+- Tests run: `tests/ui/test_ui_window.py` (alone, four new), `tests/ui/test_ui_models.py`, `tests/ui/test_ui_shortcuts.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+- Move (button, menu, M, Ctrl+Shift+V, dragging to a folder), Archive, Junk, Not junk and Snooze keep the place the same way (the owner's instruction). Tests run again: `tests/ui/test_ui_window.py` (alone, 59 passed, five more); Pyrefly 0 diagnostics, layer check kept; not the full suite.

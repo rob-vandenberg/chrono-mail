@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QLabel, QMenu, QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.config import ServerRole
@@ -17,9 +17,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.2.97"
+__version__ = "test_ui_window.py 0.2.99"
 
 # --- Version history ----------------------------------------------------
+# v0.2.99: After a delete the next message is selected (or the selection stays); F2 renames the folder
 # v0.2.97: The choice of the Message list window carries the row height
 # v0.2.96: The card layout fills the list; View > Message list; one row height only in the column layout; Message list… only in the column header menu
 # v0.2.94: Group headers in the window; sorting by To; a search follows the sort order
@@ -386,6 +387,87 @@ def test_delete_several_messages_at_once(world: World, qtbot: QtBot) -> None:
     wait(qtbot, lambda: world.window.list_model.rowCount() == 0)
     assert world.call("message.list", account=world.account_id, folder="Trash").total == 3
     assert world.window.reader._header.isHidden()  # noqa: SLF001
+
+
+def message_id_at(window: MainWindow, row: int) -> str:
+    return str(getattr(window.list_model.row_at(row), "message_id"))
+
+
+def current_message_id(window: MainWindow) -> str | None:
+    index = window.list_view.currentIndex()
+    row = window.list_model.row_at(index.row()) if index.isValid() else None
+    return None if row is None else str(getattr(row, "message_id"))
+
+
+def test_after_a_delete_the_next_message_is_selected(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    last = message_id_at(window, 2)
+    select(window, 1)
+    window.act_delete.trigger()
+    wait(qtbot, lambda: window.list_model.rowCount() == 2 and current_message_id(window) == last)
+    assert window.list_view.currentIndex().row() == 1 and len(window.list_view.selectionModel().selectedRows()) == 1
+
+
+@pytest.mark.parametrize("how", ["move", "archive", "junk", "snooze", "drag"])
+def test_move_archive_junk_and_snooze_select_the_next_message(world: World, qtbot: QtBot, how: str) -> None:
+    started(qtbot, world)
+    window = world.window
+    last, middle = message_id_at(window, 2), message_id_at(window, 1)
+    select(window, 1)
+    if how == "move":
+        window.move_selected("Trash")
+    elif how == "archive":
+        window.archive_selected()
+    elif how == "junk":
+        window.junk_selected(True)
+    elif how == "snooze":
+        window.snooze_until("2027-06-01T09:00")  # at most five years ahead
+    else:
+        window._messages_dropped(world.account_id, "Trash", [("Inbox", middle)])  # noqa: SLF001 - a drag onto a folder
+    wait(qtbot, lambda: window.list_model.rowCount() == 2 and current_message_id(window) == last)
+
+
+def test_after_deleting_the_last_message_the_one_before_is_selected(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    middle = message_id_at(window, 1)
+    select(window, 2)
+    window.act_delete.trigger()
+    wait(qtbot, lambda: window.list_model.rowCount() == 2 and current_message_id(window) == middle)
+
+
+def test_the_bin_of_another_row_keeps_the_selection(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    first = message_id_at(window, 0)
+    select(window, 0)
+    window._icon_clicked(2, "trash")  # noqa: SLF001 - a click on the bin of the last row
+    wait(qtbot, lambda: window.list_model.rowCount() == 2 and current_message_id(window) == first)
+    assert window.list_view.currentIndex().row() == 0
+
+
+def test_f2_in_the_folder_list_renames_the_folder(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started(qtbot, world)
+    window = world.window
+    asked: list[str] = []
+
+    def get_text(parent: object, title: str, *args: object, **kwargs: object) -> tuple[str, bool]:
+        asked.append(title)
+        return ("", False)
+
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(get_text))
+    assert window.act_rename_folder.shortcut().toString() == "F2"
+    window.show()
+    window.activateWindow()
+    window.list_view.setFocus()
+    qtbot.keyClick(window.list_view, Qt.Key.Key_F2)
+    qtbot.wait(50)
+    assert asked == []  # not in the message list
+    window.tree.setFocus()
+    wait(qtbot, lambda: window.tree.hasFocus())
+    qtbot.keyClick(window.tree, Qt.Key.Key_F2)
+    wait(qtbot, lambda: asked == ["Rename folder"])
 
 
 def test_move_to_another_folder(world: World, qtbot: QtBot) -> None:

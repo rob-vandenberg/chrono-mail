@@ -15,9 +15,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon, grey_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.2.96"
+__version__ = "models.py 0.2.99"
 
 # --- Version history ----------------------------------------------------
+# v0.2.99: message_count (how many messages the view holds)
 # v0.2.96: The rows of the group headers are kept in a list (the card layout measures every row)
 # v0.2.94: Group headers in the message list (by the sort order), folded and unfolded; search and combined views in any sort order; sorting by To
 # v0.1.89: The contact of a row (for the Contact column); grey icons in the headers of Contact and Delete
@@ -249,6 +250,10 @@ class MessageListModel(QAbstractTableModel):
         if group is None or row == group.display_start:
             return None
         return group.message_start + row - group.display_start - 1
+
+    def message_count(self) -> int:
+        """How many messages the view holds (all of a folder, the loaded ones of a search); group headers not counted."""
+        return self._available()
 
     def display_row(self, position: int) -> int:
         """The row of the message at this position among the messages of the view; -1 while its group is folded."""
