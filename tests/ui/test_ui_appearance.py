@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QGuiApplication, QImage, QPalette
 from PySide6.QtWidgets import QApplication, QMenu
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.ui import appearance, icons
+from chrono_mail.ui import appearance, icons, scale
 from chrono_mail.ui.colours import contrast, green, is_dark, red
 from chrono_mail.ui.formatting import AVATAR_HUES, avatar_colour
 from chrono_mail.ui.icons import FOLDER_ICONS, RESOURCES, bundled_icon, folder_icon, theme_icon
@@ -15,9 +15,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.0.85"
+__version__ = "test_ui_appearance.py 0.3.106"
 
 # --- Version history ----------------------------------------------------
+# v0.3.106: The size of the interface is a factor with a slider on the Appearance page: keys apply each step at once, a drag when it ends
 # v0.0.85: The icons are the program's own Breeze files
 # v0.0.82: Tests of the text size of the interface
 # v0.0.73: The menus are inside one Menu button
@@ -163,34 +164,150 @@ def test_refresh_is_a_circle_of_two_arrows_and_the_file_menu_has_no_add_account(
     assert (icons.RESOURCES / "icons" / "view-refresh.svg").exists()
 
 
-def test_the_interface_text_size_is_the_system_size_at_the_first_start_and_never_outside_8_to_48(app: QApplication, tmp_path: Path) -> None:
+def test_the_size_of_the_interface_is_a_factor_and_an_old_text_size_is_converted(tmp_path: Path) -> None:
+    assert scale.saved_factor(settings(tmp_path), 10) == 1.0  # nothing saved: the system's size
+    assert scale.saved_factor(settings(tmp_path, ui_font_size=15), 10) == 1.5  # a size in points of an older version
+    assert scale.saved_factor(settings(tmp_path, ui_font_size=30), 10) == 2.0  # at most Large
+    assert scale.saved_factor(settings(tmp_path, interface_scale="1.23"), 10) == 1.25  # on a step of the slider
+    assert scale.saved_factor(settings(tmp_path, interface_scale="text"), 10) == 1.0
+    assert scale.saved_factor(settings(tmp_path, interface_scale="0.1", ui_font_size=15), 10) == 0.75  # the factor wins; at least Small
+    assert scale.factor_at(scale.slider_position(1.35)) == 1.35 and scale.factor_at(0) == 0.75 and scale.factor_at(scale.SLIDER_STEPS) == 2.0
+
+
+def test_text_icons_and_spacing_follow_the_factor(app: QApplication, tmp_path: Path) -> None:
     from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QStyle
 
     original = QFont(app.font())
     appearance._state.system_font = QFont(original)  # noqa: SLF001 - what start() remembers
     system = appearance.system_font_size(app)
-    assert 8 <= system <= 48
-    first = settings(tmp_path)
-    assert not first.contains("ui_font_size")
-    appearance.apply(app, first)
-    assert int(str(first.value("ui_font_size"))) == system and app.font().pointSizeF() == float(system)  # saved, and never 0
-    appearance.apply(app, settings(tmp_path, ui_font_size=20))
-    assert app.font().pointSizeF() == 20.0
-    for wrong, expected in ((0, 8), (3, 8), (99, 48), ("text", system)):
-        appearance.apply(app, settings(tmp_path, ui_font_size=wrong))
-        assert app.font().pointSizeF() == float(expected if wrong != "text" else 10)  # a damaged value falls back to the placeholder
-    appearance.apply(app, settings(tmp_path, ui_font_size=system))
-    assert app.font().pointSizeF() == float(system)
-    app.setFont(original)  # the other tests start with the size they had
+    try:
+        appearance.apply(app, settings(tmp_path, interface_scale=1.5))
+        style = app.style()
+        assert isinstance(style, scale.ScaledStyle) and app.font().pointSizeF() == system * 1.5
+        normal = style.baseStyle().pixelMetric(QStyle.PixelMetric.PM_ToolBarIconSize)
+        assert style.pixelMetric(QStyle.PixelMetric.PM_ToolBarIconSize) == round(normal * 1.5)
+        assert scale.scale_css("padding: 6px 10px; border: 1px solid; font-size: 20px;") == "padding: 9px 15px; border: 1px solid; font-size: 30px;"
+        appearance.apply(app, settings(tmp_path, interface_scale=1.5), 0.75)  # tried out, not saved
+        assert app.font().pointSizeF() == system * 0.75 and scale.px(40) == 30
+    finally:
+        appearance.apply(app, settings(tmp_path, interface_scale=1.0))
+        app.setFont(original)  # the other tests start with the size they had
 
 
-def test_the_appearance_page_has_the_text_size_with_a_button_for_the_system_size(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_sizes_are_together_on_the_appearance_page_and_the_slider_works_at_once(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QLabel
+
     from chrono_mail.ui.settingsdialog import SettingsDialog
 
-    dialog = SettingsDialog(world.backend, world.window.settings, False, world.window._shortcut_registry(), world.window)  # noqa: SLF001
+    window = world.window
+    dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
     qtbot.addWidget(dialog)
-    assert (dialog.ui_font.minimum(), dialog.ui_font.maximum()) == (8, 48)
-    dialog.ui_font.setValue(30)
-    assert dialog.values()["ui_font_size"] == 30
-    dialog.ui_font_system.click()
-    assert dialog.ui_font.value() == dialog.system_font_points and 8 <= dialog.system_font_points <= 48
+    page = dialog.interface_slider.parentWidget()
+    assert page is not None
+    labels = [label.text() for label in page.findChildren(QLabel)]
+    for text in ("Sizes", "Interface (text and icons)", "Text size in the message list", "Text size of messages", "Text size when writing", "Small", "Large"):
+        assert text in labels
+    for moved in (dialog.list_font, dialog.zoom, dialog.compose_font):
+        assert moved.parentWidget() is page
+    dialog.interface_scale_tried.connect(window.try_interface_scale)
+    try:
+        dialog.interface_slider.setValue(scale.slider_position(1.5))
+        assert scale.interface() == 1.5 and window.section_bar.buttons["mail"].height() == 60  # 40 pixels at 1.5, at once
+        assert dialog.values()["interface_scale"] == 1.5
+        dialog.interface_standard.click()
+        assert scale.interface() == 1.0 and dialog.values()["interface_scale"] == 1.0
+    finally:
+        window.try_interface_scale(1.0)
+
+
+def test_cancel_puts_the_size_of_the_interface_back(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtWidgets import QDialog
+
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    window = world.window
+    seen: list[float] = []
+
+    def try_and_cancel(self: SettingsDialog) -> QDialog.DialogCode:
+        self.interface_slider.setValue(scale.slider_position(1.75))
+        seen.append(scale.interface())
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(SettingsDialog, "exec", try_and_cancel)
+    window.open_settings("Appearance")
+    assert seen == [1.75] and scale.interface() == 1.0 and window.section_bar.buttons["mail"].height() == 40
+
+
+def test_the_keys_change_the_size_a_step_at_a_time_and_a_drag_applies_when_it_ends(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtCore import Qt as Keys
+
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    window = world.window
+    dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
+    qtbot.addWidget(dialog)
+    dialog.interface_scale_tried.connect(window.try_interface_scale)
+    slider = dialog.interface_slider
+    try:
+        for key, expected in ((Keys.Key.Key_Up, 1.05), (Keys.Key.Key_Right, 1.10), (Keys.Key.Key_Down, 1.05), (Keys.Key.Key_Left, 1.00)):
+            qtbot.keyClick(slider, key)
+            assert scale.interface() == expected  # at once, one step
+        slider.setSliderDown(True)  # the handle is held
+        slider.setSliderPosition(scale.slider_position(1.5))
+        assert scale.interface() == 1.0  # nothing changes while dragging
+        slider.setSliderDown(False)  # let go
+        assert scale.interface() == 1.5
+    finally:
+        window.try_interface_scale(1.0)
+
+
+def test_the_settings_window_grows_with_the_interface_within_the_screen(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtCore import Qt as Keys
+
+    from chrono_mail.ui.settingsdialog import SLIDER_WIDTH, SettingsDialog
+
+    window = world.window
+    dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
+    qtbot.addWidget(dialog)
+    dialog.interface_scale_tried.connect(window.try_interface_scale)
+    dialog.show()
+    qtbot.wait(50)
+    width, height = dialog.width(), dialog.height()  # the test screen is 800 pixels: shrink first, then grow back
+    try:
+        for _ in range(4):  # four steps: 1.00 to 0.80
+            qtbot.keyClick(dialog.interface_slider, Keys.Key.Key_Down)
+        assert scale.interface() == 0.8 and abs(dialog.width() - width * 0.8) <= 3 and abs(dialog.height() - height * 0.8) <= 3
+        assert dialog.interface_slider.minimumWidth() == round(SLIDER_WIDTH * 0.8)
+        for _ in range(4):  # and back to 1.00: the size it had
+            qtbot.keyClick(dialog.interface_slider, Keys.Key.Key_Up)
+        assert abs(dialog.width() - width) <= 3 and abs(dialog.height() - height) <= 3
+        dialog.interface_slider.setValue(scale.SLIDER_STEPS)  # Large: never beyond the screen
+        screen = dialog.screen()
+        assert screen is not None and dialog.width() <= screen.availableGeometry().width() and dialog.height() <= screen.availableGeometry().height()
+        dialog.reject()  # Cancel: the size it had
+        assert abs(dialog.width() - width) <= 3 and abs(dialog.height() - height) <= 3
+    finally:
+        window.try_interface_scale(1.0)
+
+
+def test_the_size_slider_has_ticks_and_a_taller_one_at_the_standard_size(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.settingsdialog import TICK_LENGTH, SettingsDialog, SizeSlider
+
+    window = world.window
+    dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
+    qtbot.addWidget(dialog)
+    dialog.show_page("Appearance")
+    dialog.show()
+    qtbot.wait(50)
+    slider = dialog.interface_slider
+    assert isinstance(slider, SizeSlider) and dialog.interface_standard.text() == "Reset"
+    places = [slider.tick_x(factor) for factor in (0.75, 1.0, 1.25, 1.5, 1.75, 2.0)]
+    gaps = {places[index + 1] - places[index] for index in range(len(places) - 1)}
+    assert max(gaps) - min(gaps) <= 1  # every 0.25 the same distance, so one tick left of 1.00 and four right of it
+    image = slider.grab().toImage()
+    background = image.pixelColor(places[0] + 3, image.height() - 2).name()
+    high = image.height() - 1 - TICK_LENGTH - 2  # above the short ticks, within the tall one
+    assert image.pixelColor(places[1], high).name() != background and image.pixelColor(places[2], high).name() == background
+    assert all(image.pixelColor(x, image.height() - 2).name() != background for x in places)
+

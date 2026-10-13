@@ -5,11 +5,13 @@ from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QToolButton, QWidget
 
 from chrono_mail.ui.icons import theme_icon
+from chrono_mail.ui.scale import px
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchfield.py 0.2.97"
+__version__ = "searchfield.py 0.3.106"
 
 # --- Version history ----------------------------------------------------
+# v0.3.106: The magnifying glass, the spacing and the widths follow the size factor of the interface (apply_scale)
 # v0.2.97: The corners are rounded by half the height of the field, so the ends stay round at every text size
 # v0.1.93: Initial search field: grey while not in use, blue while clicked in, orange while a search is active
 
@@ -32,12 +34,10 @@ class SearchField(QFrame):
         super().__init__(parent)
         self.setObjectName("searchPill")
         self.line_edit = QLineEdit(self)
-        self.line_edit.setMinimumWidth(220)
         self.scope = QComboBox(self)
         self.scope.addItem("This folder", "folder")
         self.scope.addItem("All folders", "all")
         self.start_icon = QLabel(self)
-        self.start_icon.setPixmap(theme_icon("edit-find").pixmap(16, 16))
         self.end_button = QToolButton(self)
         self.end_button.setObjectName("searchEnd")
         self.end_button.setAutoRaise(True)
@@ -45,15 +45,14 @@ class SearchField(QFrame):
         self.separator = QFrame(self)
         self.separator.setObjectName("searchSeparator")
         self.separator.setFixedWidth(1)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 1, 6, 1)
-        layout.setSpacing(4)
+        self._layout = QHBoxLayout(self)
+        layout = self._layout
         layout.addWidget(self.start_icon)
         layout.addWidget(self.line_edit, 1)
         layout.addWidget(self.end_button)
         layout.addWidget(self.separator)
         layout.addWidget(self.scope)
-        self.setMinimumWidth(360)
+        self.apply_scale()
         self.focused: bool = False
         self.active: bool = False
         self.corner_radius: int = 0  # half the height, set at every change of height
@@ -63,6 +62,14 @@ class SearchField(QFrame):
             application.focusChanged.connect(self._focus_changed)
         self.line_edit.textChanged.connect(self._update_look)
         self._update_look()
+
+    def apply_scale(self) -> None:
+        """The magnifying glass, the spacing and the widths at the size factor of the interface."""
+        self.start_icon.setPixmap(theme_icon("edit-find").pixmap(px(16), px(16)))
+        self._layout.setContentsMargins(px(10), 1, px(6), 1)
+        self._layout.setSpacing(px(4))
+        self.line_edit.setMinimumWidth(px(220))
+        self.setMinimumWidth(px(360))
 
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:

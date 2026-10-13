@@ -25,11 +25,13 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
+from chrono_mail.ui.scale import px
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 0.0.77"
+__version__ = "reader.py 0.3.106"
 
 # --- Version history ----------------------------------------------------
+# v0.3.106: The sender's circle follows the size factor of the interface
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.42: settings: remote content per sender, plain text first, zoom
 # v0.0.13: Initial reading pane
@@ -168,7 +170,7 @@ class ReaderWidget(QWidget):
         self._subject.setTextFormat(Qt.TextFormat.PlainText)  # a subject is hostile input: never markup
         self._subject.setTextInteractionFlags(self._subject.textInteractionFlags().TextSelectableByMouse)
         self._avatar = QLabel(self._header)
-        self._avatar.setFixedSize(40, 40)
+        self._avatar.setFixedSize(px(40), px(40))
         self._people = QLabel(self._header)
         self._people.setWordWrap(True)
         self._people.setTextFormat(Qt.TextFormat.RichText)  # the lines below are built with html.escape
@@ -238,6 +240,13 @@ class ReaderWidget(QWidget):
         self._stack.setCurrentWidget(self._placeholder)
         self._page.setHtml("")
 
+    def apply_scale(self) -> None:
+        """The sender's circle at the size factor of the interface (the subject and the lines follow the text)."""
+        self._avatar.setFixedSize(px(40), px(40))
+        sheet = self._avatar.styleSheet()
+        if "border-radius" in sheet:  # a circle: half its size
+            self._avatar.setStyleSheet(sheet[: sheet.index("border-radius")] + f"border-radius: {px(40) // 2}px;")
+
     def show_message(self, shown: object) -> None:
         """Display a message.show result."""
         self._header.show()
@@ -257,7 +266,7 @@ class ReaderWidget(QWidget):
         name = display_name(who)
         self._avatar.setText(f'<div style="color:white; font-weight:bold">{html.escape(initials(name))}</div>')
         self._avatar.setAlignment(self._avatar.alignment().AlignCenter)
-        self._avatar.setStyleSheet(f"background-color: {avatar_colour(who).name()}; border-radius: 20px;")
+        self._avatar.setStyleSheet(f"background-color: {avatar_colour(who).name()}; border-radius: {px(40) // 2}px;")
         self._fill_attachments(getattr(shown, "attachments"))
         self._images = {str(image.content_id).lower(): (str(image.content_type), str(image.data_base64)) for image in getattr(shown, "inline_images")}
         html_body = getattr(shown, "html_body")

@@ -40,7 +40,8 @@ from chrono_mail.ui.columns import (
     without_snoozed_column,
 )
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
-from chrono_mail.ui import appearance, prefs, theme
+from chrono_mail.ui import appearance, prefs, scale, theme
+from chrono_mail.ui.scale import px
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.composer import ComposeOptions, ComposeWindow
 from chrono_mail.ui.conversationbar import ConversationBar
@@ -84,9 +85,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.2.102"
+__version__ = "mainwindow.py 0.3.106"
 
 # --- Version history ----------------------------------------------------
+# v0.3.106: The size factor of the interface is tried out while the slider in Settings moves (Cancel puts it back); the fixed sizes of the window follow it
 # v0.2.102: In the Archive folder Archive is Unarchive (back to the folder it came from); Move to Junk and Not junk (move to Inbox) say what they do
 # v0.2.101: Cancel snooze (in the Snoozed folder: the menu of the Snooze button and the right-click menu) brings the message back now
 # v0.2.100: The Snoozed folder has the column Snoozed until (sortable, with its groups; added once after Received, kept off when switched off)
@@ -256,7 +258,7 @@ class MainWindow(QMainWindow):
         self.tree.setHeaderHidden(True)
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.tree.setMinimumWidth(180)
+        self.tree.setMinimumWidth(px(180))
         self.tree.setObjectName("folderTree")
 
         self.list_model = MessageListModel(self.backend, self)
@@ -1089,7 +1091,10 @@ class MainWindow(QMainWindow):
         dialog.add_account_requested.connect(lambda: self.add_account(after=dialog.reload))
         dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False, then=self._sync_calendars))
         dialog.restore_key_requested.connect(self.restore_key)
+        dialog.interface_scale_tried.connect(self.try_interface_scale)
         accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted
+        if not accepted and dialog.interface_slider.value() != scale.slider_position(dialog.interface_scale_saved):
+            self.try_interface_scale(dialog.interface_scale_saved)  # Cancel: the size it had
         if dialog.rules_panel.ran:  # rules and scheduled messages act at once, also when the settings are cancelled
             self._after_change("Rules applied")
         elif dialog.scheduled_panel.changed:
@@ -1107,6 +1112,7 @@ class MainWindow(QMainWindow):
             appearance.apply(app, settings)  # the colours and the style take effect at once
             self.setStyleSheet(theme.stylesheet())  # the colours in it come from the palette: ask for them again
             self._restyle_status()  # the red of an error follows the colours
+            self._apply_scaled_parts()
         self.tray.set_visible(prefs.get_bool(settings, "tray"))
         minutes = self._auto_minutes()
         auto = prefs.get_bool(settings, "auto_check")
@@ -1124,6 +1130,26 @@ class MainWindow(QMainWindow):
         self._apply_shortcuts()
         if self._accounts:
             self._populate_tree()  # the sections of the folder list follow the settings
+
+    def try_interface_scale(self, factor: float) -> None:
+        """Show the interface at this size factor now, without saving it (the slider in Settings moves, or Cancel)."""
+        app = QApplication.instance()
+        if not isinstance(app, QApplication):
+            return
+        appearance.apply(app, self.settings, factor)
+        self.setStyleSheet(theme.stylesheet())
+        self._apply_scaled_parts()
+        self._apply_list_look()  # a list at the system size follows the text of the interface
+
+    def _apply_scaled_parts(self) -> None:
+        """The sizes the style list does not hold, at the size factor of the interface."""
+        self.section_bar.apply_scale()
+        self.search_pill.apply_scale()
+        self.tree.setMinimumWidth(px(180))
+        for reader in (self.reader, *(window.reader for window in self._message_windows)):
+            reader.apply_scale()
+        for window in self._message_windows:
+            window.setStyleSheet(theme.stylesheet())
 
     def _apply_list_look(self) -> None:
         size = prefs.get_int(self.settings, "list_font_size", 0, 24)

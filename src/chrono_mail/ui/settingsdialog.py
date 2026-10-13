@@ -2,8 +2,8 @@ import json
 from collections.abc import Callable
 from typing import override
 
-from PySide6.QtCore import QSettings, Qt, Signal
-from PySide6.QtGui import QKeySequence
+from PySide6.QtCore import QSettings, QSize, Qt, Signal
+from PySide6.QtGui import QKeySequence, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -20,7 +20,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSlider,
     QSpinBox,
+    QStyle,
+    QStyleOptionSlider,
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -29,7 +32,8 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.ui import appearance, prefs
+from chrono_mail.ui import appearance, prefs, scale
+from chrono_mail.ui.scale import px
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
@@ -41,9 +45,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.2.100"
+__version__ = "settingsdialog.py 0.3.106"
 
 # --- Version history ----------------------------------------------------
+# v0.3.106: Appearance has a Sizes section: a slider from Small to Large for the interface (text and icons, applied when the handle is let go, at once with the keys) and the text sizes of the message list, messages and writing (moved here from their pages)
 # v0.2.100: Snoozed until keeps its place when the columns are chosen here (it is not offered here)
 # v0.2.97: The row height choices come from the Message list window (one list for both)
 # v0.2.96: Message list page: the columns are chosen right on the page (no Choose the columns button)
@@ -79,6 +84,50 @@ def _combo(parent: QWidget, choices: tuple[tuple[str, str], ...], current: str) 
     return box
 
 
+SLIDER_WIDTH: int = 200  # pixels at the standard size: the smallest width of the size slider
+MINIMUM_WIDTH: int = 760  # the smallest size of this window at the standard size
+MINIMUM_HEIGHT: int = 520
+TICKS: tuple[float, ...] = (0.75, 1.00, 1.25, 1.50, 1.75, 2.00)  # under the size slider; the one at the standard size is taller
+TICK_LENGTH: int = 4  # pixels at the standard size; the tick at the standard size is twice as long
+
+
+class SizeSlider(QSlider):
+    """The size slider: below its track a tick every 0.25, a taller one at the standard size (1.00)."""
+
+    def tick_x(self, factor: float) -> int:
+        """Where the middle of the handle is at this factor."""
+        option = QStyleOptionSlider()
+        self.initStyleOption(option)
+        style = self.style()
+        groove = style.subControlRect(QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderGroove, self)
+        handle = style.subControlRect(QStyle.ComplexControl.CC_Slider, option, QStyle.SubControl.SC_SliderHandle, self)
+        span = groove.width() - handle.width()
+        offset = QStyle.sliderPositionFromValue(self.minimum(), self.maximum(), scale.slider_position(factor), span)
+        return groove.left() + handle.width() // 2 + offset
+
+    @override
+    def sizeHint(self) -> QSize:
+        size = super().sizeHint()
+        return QSize(size.width(), size.height() + px(2 * TICK_LENGTH + 2))
+
+    @override
+    def minimumSizeHint(self) -> QSize:
+        size = super().minimumSizeHint()
+        return QSize(size.width(), size.height() + px(2 * TICK_LENGTH + 2))
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Text), 1))
+        bottom = self.height() - 1
+        for factor in TICKS:
+            length = px(2 * TICK_LENGTH if factor == scale.STANDARD else TICK_LENGTH)
+            x = self.tick_x(factor)
+            painter.drawLine(x, bottom - length, x, bottom)
+        painter.end()
+
+
 class SettingsDialog(QDialog):
     """The settings window: pages for how the program behaves, how the list and the messages look, writing, the accounts,
     the safety of the stored mail and the keyboard. Nothing is changed until OK; OK writes everything to the settings."""
@@ -86,6 +135,7 @@ class SettingsDialog(QDialog):
     accounts_changed = Signal()
     add_account_requested = Signal()
     restore_key_requested = Signal()
+    interface_scale_tried = Signal(float)  # the slider of the interface moved: the window shows that size at once (not saved yet)
 
     def __init__(
         self, backend: Backend, settings: QSettings, tray_available: bool = True, shortcut_actions: dict[str, tuple[str, str]] | None = None, parent: QWidget | None = None,
@@ -97,11 +147,11 @@ class SettingsDialog(QDialog):
         self._columns: tuple[str, ...] = valid_columns([part for part in str(settings.value("columns", "")).split(",") if part])
         self._shortcut_actions: dict[str, tuple[str, str]] = shortcut_actions or {}
         self.setWindowTitle("Settings")
-        self.setMinimumSize(760, 520)
+        self.setMinimumSize(px(MINIMUM_WIDTH), px(MINIMUM_HEIGHT))
         outer = QVBoxLayout(self)
         body = QHBoxLayout()
         self.sidebar = QListWidget(self)
-        self.sidebar.setFixedWidth(190)
+        self.sidebar.setFixedWidth(px(190))
         self.pages = QStackedWidget(self)
         body.addWidget(self.sidebar)
         body.addWidget(self.pages, 1)
@@ -180,6 +230,35 @@ class SettingsDialog(QDialog):
             self.close_to_tray.setChecked(False)
         self.close_to_tray.setEnabled(on and self.tray.isEnabled())
 
+    def _interface_slider_moved(self, position: int) -> None:
+        factor = scale.factor_at(position)
+        self.interface_scale_tried.emit(factor)
+        self.sidebar.setFixedWidth(px(190))  # this window follows too
+        self.interface_slider.setMinimumWidth(px(SLIDER_WIDTH))
+        self._grow_with(factor)
+
+    def _grow_with(self, factor: float) -> None:
+        """This window grows and shrinks with the size of the interface, in proportion, never beyond the screen, around the same centre."""
+        if factor == self._window_factor:
+            return
+        if self._size_at_standard is None:  # the size it had when the slider first moved, at the standard size
+            self._size_at_standard = (self.width() / self._window_factor, self.height() / self._window_factor)
+        self._window_factor = factor
+        standard_width, standard_height = self._size_at_standard
+        self.setMinimumSize(round(MINIMUM_WIDTH * factor), round(MINIMUM_HEIGHT * factor))  # the smallest size follows too
+        centre = self.geometry().center()
+        width, height = round(standard_width * factor), round(standard_height * factor)
+        screen = self.screen()
+        if screen is not None:
+            room = screen.availableGeometry()
+            width, height = min(width, room.width()), min(height, room.height())
+            self.setMinimumSize(min(self.minimumWidth(), room.width()), min(self.minimumHeight(), room.height()))
+            left = min(max(centre.x() - width // 2, room.left()), room.right() - width + 1)
+            top = min(max(centre.y() - height // 2, room.top()), room.bottom() - height + 1)
+            self.setGeometry(left, top, width, height)
+        else:
+            self.resize(width, height)
+
     def _appearance_page(self) -> QWidget:
         page = QWidget(self)
         form = QFormLayout(page)
@@ -188,19 +267,6 @@ class SettingsDialog(QDialog):
         self.style_box = _combo(page, STYLE_LABELS, prefs.get_text(s, "style", appearance.STYLES))
         form.addRow("Colours", self.scheme_box)
         form.addRow("Style", self.style_box)
-        self.ui_font = QSpinBox(page)
-        self.ui_font.setRange(appearance.MINIMUM_FONT_POINTS, appearance.MAXIMUM_FONT_POINTS)
-        self.ui_font.setSuffix(" pt")
-        self.ui_font.setValue(prefs.get_int(s, "ui_font_size", appearance.MINIMUM_FONT_POINTS, appearance.MAXIMUM_FONT_POINTS))
-        self.ui_font_system = QPushButton("Use the system size", page)
-        app = QApplication.instance()
-        self.system_font_points: int = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
-        self.ui_font_system.clicked.connect(lambda: self.ui_font.setValue(self.system_font_points))
-        font_row = QHBoxLayout()
-        font_row.addWidget(self.ui_font)
-        font_row.addWidget(self.ui_font_system)
-        font_row.addStretch(1)
-        form.addRow("Text size of the interface", font_row)
         note = QLabel(
             "Dark needs a style that can draw it. When the style of the platform cannot (the classic Windows style), Fusion is used while the colours are dark. "
             "Messages in HTML are always shown on a white page: they are written for one. A style given on the command line (-style) is not changed here.",
@@ -208,6 +274,44 @@ class SettingsDialog(QDialog):
         )
         note.setWordWrap(True)
         form.addRow(note)
+        sizes = QLabel("Sizes", page)
+        sizes.setStyleSheet("font-weight: bold;")  # the size keeps following the interface
+        form.addRow(sizes)
+        self.interface_scale_saved: float = scale.interface()  # what Cancel puts back
+        self.interface_slider = SizeSlider(Qt.Orientation.Horizontal, page)
+        self.interface_slider.setRange(0, scale.SLIDER_STEPS)
+        self.interface_slider.setPageStep(4)
+        self.interface_slider.setTracking(False)
+        self.interface_slider.setMinimumWidth(px(SLIDER_WIDTH))  # never squeezed down to its handle
+        self._window_factor: float = self.interface_scale_saved
+        self._size_at_standard: tuple[float, float] | None = None  # while the handle is dragged nothing changes: this window grows too and would move the slider under the pointer; keys and clicks apply each step at once
+        self.interface_slider.setValue(scale.slider_position(self.interface_scale_saved))
+        self.interface_standard = QPushButton("Reset", page)
+        self.interface_standard.clicked.connect(lambda: self.interface_slider.setValue(scale.slider_position(scale.STANDARD)))
+        self.interface_slider.valueChanged.connect(self._interface_slider_moved)
+        slider_row = QHBoxLayout()
+        slider_row.addWidget(QLabel("Small", page))
+        slider_row.addWidget(self.interface_slider, 1)
+        slider_row.addWidget(QLabel("Large", page))
+        slider_row.addWidget(self.interface_standard)
+        form.addRow("Interface (text and icons)", slider_row)
+        self.list_font = QSpinBox(page)
+        self.list_font.setRange(0, 24)
+        self.list_font.setSpecialValueText("System size")
+        self.list_font.setSuffix(" pt")
+        self.list_font.setValue(prefs.get_int(s, "list_font_size", 0, 24))
+        form.addRow("Text size in the message list", self.list_font)
+        self.zoom = QSpinBox(page)
+        self.zoom.setRange(50, 300)
+        self.zoom.setSuffix(" %")
+        self.zoom.setValue(prefs.get_int(s, "reader_zoom", 50, 300))
+        form.addRow("Text size of messages", self.zoom)
+        self.compose_font = QSpinBox(page)
+        self.compose_font.setRange(0, 24)
+        self.compose_font.setSpecialValueText("System size")
+        self.compose_font.setSuffix(" pt")
+        self.compose_font.setValue(prefs.get_int(s, "compose_font_size", 0, 24))
+        form.addRow("Text size when writing", self.compose_font)
         return page
 
     def _list_page(self) -> QWidget:
@@ -218,11 +322,6 @@ class SettingsDialog(QDialog):
         self.pane_box = _combo(page, READING_PANES, prefs.get_text(s, "reading_pane", ("right", "bottom", "off")))
         self.date_box = _combo(page, DATE_STYLES, prefs.get_text(s, "date_style", ("short", "full", "iso")))
         self.density_box = _combo(page, DENSITY_LABELS, prefs.get_text(s, "list_density", prefs.DENSITIES))
-        self.list_font = QSpinBox(page)
-        self.list_font.setRange(0, 24)
-        self.list_font.setSpecialValueText("System size")
-        self.list_font.setSuffix(" pt")
-        self.list_font.setValue(prefs.get_int(s, "list_font_size", 0, 24))
         self.conversations = QCheckBox("Show messages grouped as conversations", page)
         self.conversations.setChecked(prefs.get_bool(s, "conversations"))
         self.show_favorites = QCheckBox("Show Favorites at the top of the folder list (all inboxes, unread, flagged, sent …)", page)
@@ -234,7 +333,6 @@ class SettingsDialog(QDialog):
         form.addRow("Reading pane", self.pane_box)
         form.addRow("Dates", self.date_box)
         form.addRow("Row height", self.density_box)
-        form.addRow("Text size in the list", self.list_font)
         form.addRow(self.conversations)
         form.addRow(self.show_favorites)
         form.addRow(self.show_local_folders)
@@ -260,17 +358,12 @@ class SettingsDialog(QDialog):
         self.mark_read_delay.setSingleStep(100)
         self.mark_read_delay.setSuffix(" ms")
         self.mark_read_delay.setValue(prefs.get_int(s, "mark_read_delay_ms", 0, 10_000))
-        self.zoom = QSpinBox(page)
-        self.zoom.setRange(50, 300)
-        self.zoom.setSuffix(" %")
-        self.zoom.setValue(prefs.get_int(s, "reader_zoom", 50, 300))
         self.prefer_plain = QCheckBox("Show the plain text of a message that has both text and HTML", page)
         self.prefer_plain.setChecked(prefs.get_bool(s, "prefer_plain"))
         self.links_ask = QCheckBox("Ask before opening a link in the web browser", page)
         self.links_ask.setChecked(prefs.get_bool(s, "links_ask"))
         form.addRow("Mark a message as read", self.mark_read_box)
         form.addRow("…after", self.mark_read_delay)
-        form.addRow("Text size of messages", self.zoom)
         form.addRow(self.prefer_plain)
         form.addRow(self.links_ask)
         layout.addLayout(form)
@@ -310,17 +403,11 @@ class SettingsDialog(QDialog):
         self.autosave.setValue(prefs.get_int(s, "autosave_seconds", 0, 600))
         self.warn_no_subject = QCheckBox("Ask before sending a message without a subject", page)
         self.warn_no_subject.setChecked(prefs.get_bool(s, "warn_no_subject"))
-        self.compose_font = QSpinBox(page)
-        self.compose_font.setRange(0, 24)
-        self.compose_font.setSpecialValueText("System size")
-        self.compose_font.setSuffix(" pt")
-        self.compose_font.setValue(prefs.get_int(s, "compose_font_size", 0, 24))
         form.addRow("New messages are sent from", self.default_account)
         form.addRow(self.compose_html)
         form.addRow("Replies", self.reply_quote_box)
         form.addRow("Save a draft every", self.autosave)
         form.addRow(self.warn_no_subject)
-        form.addRow("Text size when writing", self.compose_font)
         form.addRow(QLabel("The signature of each account is set under Accounts.", page))
         return page
 
@@ -557,7 +644,7 @@ class SettingsDialog(QDialog):
         return {
             "check_on_start": self.check_on_start.isChecked(), "auto_check": self.auto_check.isChecked(), "auto_check_minutes": self.interval.value(),
             "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
-            "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()), "ui_font_size": self.ui_font.value(),
+            "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()), "interface_scale": scale.factor_at(self.interface_slider.value()),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_font_size": self.list_font.value(), "conversations": self.conversations.isChecked(),
             "show_favorites": self.show_favorites.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
@@ -577,6 +664,8 @@ class SettingsDialog(QDialog):
 
     @override
     def done(self, result: int) -> None:
+        if result != QDialog.DialogCode.Accepted:
+            self._grow_with(self.interface_scale_saved)  # Cancel: the size it had, before it is remembered
         save_geometry(self, self._settings, "settings_geometry")  # whether the window was closed with OK or with Cancel
         super().done(result)
 

@@ -1062,3 +1062,14 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **What landed**
 - `drag_badge` leaves the cursor's square free (`cursor_size()`: XCURSOR_SIZE, else 32) instead of 22 pixels; the owner found the cursor over the first digit at size 42.
 - Tests run: `tests/ui/test_ui_dragdrop.py` (the badge test checks the free square at 42 and the 32 fallback); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 The interface size slider, step 1a (version 0.3.106)
+
+**What landed**
+- New `ui/scale.py`: the factor, `px`, `scale_css`, slider positions, `saved_factor` (converts `ui_font_size`), `ScaledStyle` (icon and indicator pixel metrics at the factor). `appearance.apply` takes an optional factor to try out. `theme.stylesheet()` is scaled; section buttons, search field, search help and history, reader circle, folder list width and the Settings page list follow `px`.
+- Settings > Appearance > Sizes: the interface slider (Small, Large, Standard) and the three text sizes moved from Message list, Reading and Writing. Live while dragging; Cancel restores.
+- Screenshots at 0.75, 1.00 and 1.50 and of the Appearance page checked. Seen: at 1.50 a list at the system size has its text cut (row heights fixed until step 2); the toolbar no longer fits 1300 px at 1.50 (its overflow arrow appears). The Menu button colour in tests is the same before and after.
+- Tests run: `tests/ui/test_ui_appearance.py` (two old text size tests replaced by four), `tests/ui/test_ui_preferences.py`, `tests/ui/test_ui_window.py` (alone), `tests/ui/test_ui_sections.py`, `tests/ui/test_ui_searchhelp.py`, `tests/ui/test_ui_searchfield.py`, `tests/ui/test_ui_reader.py`, `tests/ui/test_ui_theme.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+- The owner found the size jumping while the handle was dragged (the Settings window grew with it and moved the slider). The slider no longer tracks a drag: the size is applied when the handle is let go; keys and clicks apply each step at once. One more test (keys, drag).
+- The owner found the slider squeezed to its handle at larger sizes (the Settings window kept its size). The Settings window now grows and shrinks with the factor (from its size when the slider first moved, so nothing creeps), its smallest size (760 x 520 at 1.00) follows, never beyond the screen; the slider keeps a smallest width of 200 px at 1.00; Cancel gives the window its size back before it is remembered. One more test (shrink and grow back, Large within the screen, Cancel). On the 800 px test screen the window is capped at 1.15 and the slider touches "Large"; on a real screen there is room.
+- "Standard" is "Reset"; the slider draws ticks below its track at 0.75, 1.25, 1.50, 1.75, 2.00 and a taller one at 1.00 (`SizeSlider`), checked by a picture and a test.

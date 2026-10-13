@@ -7,11 +7,13 @@ from PySide6.QtWidgets import QApplication, QFrame, QListWidget, QListWidgetItem
 
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
 from chrono_mail.ui.icons import theme_icon
+from chrono_mail.ui.scale import px
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchhelp.py 0.1.92"
+__version__ = "searchhelp.py 0.3.106"
 
 # --- Version history ----------------------------------------------------
+# v0.3.106: Icons, spacing and width follow the size factor of the interface
 # v0.1.92: Initial help list under the search box, opened by typing "?"
 
 
@@ -47,7 +49,7 @@ class HelpLineDelegate(QStyledItemDelegate):
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
         metrics = QFontMetrics(_typed(option, "font", QFont))
-        return QSize(320, max(ICON_SIZE, 2 * metrics.height()) + 2 * PADDING)
+        return QSize(px(320), max(px(ICON_SIZE), 2 * metrics.height()) + 2 * px(PADDING))
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -59,10 +61,10 @@ class HelpLineDelegate(QStyledItemDelegate):
         painter.save()
         if selected:
             painter.fillRect(rect, palette.color(QPalette.ColorRole.Highlight))
-        icon_top = rect.top() + (rect.height() - ICON_SIZE) // 2
-        theme_icon(line.icon).paint(painter, rect.left() + PADDING, icon_top, ICON_SIZE, ICON_SIZE)
-        text_left = rect.left() + 2 * PADDING + ICON_SIZE
-        width = rect.right() - text_left - PADDING
+        icon_top = rect.top() + (rect.height() - px(ICON_SIZE)) // 2
+        theme_icon(line.icon).paint(painter, rect.left() + px(PADDING), icon_top, px(ICON_SIZE), px(ICON_SIZE))
+        text_left = rect.left() + 2 * px(PADDING) + px(ICON_SIZE)
+        width = rect.right() - text_left - px(PADDING)
         metrics = QFontMetrics(font)
         top = rect.top() + (rect.height() - 2 * metrics.height()) // 2
         text = palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
@@ -121,7 +123,7 @@ class SearchHelp(QFrame):
     def open_under(self, anchor: QWidget) -> None:
         """Shows the list under this widget, as wide as it, with the first line highlighted."""
         height = sum(self.list.sizeHintForRow(row) for row in range(self.list.count())) + 2 * self.list.frameWidth() + 2
-        self.resize(max(anchor.width(), 320), height + 2)
+        self.resize(max(anchor.width(), px(320)), height + 2)
         self.move(anchor.mapToGlobal(QPoint(0, anchor.height() + 2)))
         self.list.setCurrentRow(0)
         self.show()

@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.0.82"
+__version__ = "prefs.py 0.3.106"
 
 # --- Version history ----------------------------------------------------
+# v0.3.106: interface_scale (a factor) replaces ui_font_size (points)
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.78: Composer: new look (Send in blue on top, rounded fields, flat toolbar) and rich text is the default for new messages
 # v0.0.70: The Inboxes section is removed from the folder tree
@@ -24,7 +25,7 @@ DEFAULTS: dict[str, object] = {
     # appearance
     "color_scheme": "system",  # system, light or dark
     "style": "default",  # default: the platform's own style, or fusion
-    "ui_font_size": 10,  # in points; only used until the first start has saved the size the system gave (appearance.py)
+    "interface_scale": 1.0,  # the size of the interface: a factor of the system's size (scale.py); an older ui_font_size in points is converted
     # message list
     "list_layout": "columns",
     "reading_pane": "right",

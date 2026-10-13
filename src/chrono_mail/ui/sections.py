@@ -4,11 +4,13 @@ from PySide6.QtCore import QObject, QSize, Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QToolBar, QToolButton, QWidget
 
 from chrono_mail.ui.icons import section_icon
+from chrono_mail.ui.scale import px
 
 # --- Version ------------------------------------------------------------
-__version__ = "sections.py 0.0.85"
+__version__ = "sections.py 0.3.106"
 
 # --- Version history ----------------------------------------------------
+# v0.3.106: The buttons follow the size factor of the interface (apply_scale)
 # v0.0.85: Section icons from the program's copy of the Breeze icons
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.73: The section buttons share the width and show the section that is open with a line under it
@@ -44,9 +46,7 @@ class SectionBar(QWidget):
         for section, name, icons, shortcut in SECTIONS:
             button = QToolButton(self)
             button.setIcon(section_icon(SECTION_ICONS[section]))
-            button.setIconSize(QSize(22, 22))
             button.setObjectName("sectionButton")
-            button.setFixedHeight(BUTTON_SIZE)
             button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             button.setCheckable(True)
             button.setToolTip(f"{name} ({shortcut})")
@@ -55,7 +55,14 @@ class SectionBar(QWidget):
             button.clicked.connect(lambda checked=False, chosen=section: self.chosen.emit(chosen))
             layout.addWidget(button)
             self.buttons[section] = button
+        self.apply_scale()
         self.show_section(MAIL)
+
+    def apply_scale(self) -> None:
+        """The icons and the height at the factor of the interface."""
+        for button in self.buttons.values():
+            button.setIconSize(QSize(px(22), px(22)))
+            button.setFixedHeight(px(BUTTON_SIZE))
 
     def show_section(self, section: str) -> None:
         for name, button in self.buttons.items():

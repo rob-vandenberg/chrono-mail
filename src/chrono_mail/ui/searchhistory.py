@@ -7,11 +7,13 @@ from PySide6.QtWidgets import QFrame, QListWidget, QListWidgetItem, QStyledItemD
 
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
 from chrono_mail.ui.icons import grey_icon, theme_icon
+from chrono_mail.ui.scale import px
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchhistory.py 0.1.93"
+__version__ = "searchhistory.py 0.3.106"
 
 # --- Version history ----------------------------------------------------
+# v0.3.106: Icons, spacing and width follow the size factor of the interface
 # v0.1.93: Initial search history: the last 10 searches under the search box
 
 
@@ -53,7 +55,7 @@ def matching(history: list[str], typed: str) -> list[str]:
 
 def remove_rect(row: QRect) -> QRect:
     """Where the ✕ of a history line is drawn and can be clicked."""
-    return QRect(row.right() - PADDING - REMOVE_SIZE, row.top() + (row.height() - REMOVE_SIZE) // 2, REMOVE_SIZE, REMOVE_SIZE)
+    return QRect(row.right() - px(PADDING) - px(REMOVE_SIZE), row.top() + (row.height() - px(REMOVE_SIZE)) // 2, px(REMOVE_SIZE), px(REMOVE_SIZE))
 
 
 class HistoryLineDelegate(QStyledItemDelegate):
@@ -61,7 +63,7 @@ class HistoryLineDelegate(QStyledItemDelegate):
 
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
-        return QSize(320, ICON_SIZE + 2 * PADDING)
+        return QSize(px(320), px(ICON_SIZE) + 2 * px(PADDING))
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -72,11 +74,11 @@ class HistoryLineDelegate(QStyledItemDelegate):
         painter.save()
         if selected:
             painter.fillRect(rect, palette.color(QPalette.ColorRole.Highlight))
-        theme_icon("edit-find").paint(painter, rect.left() + PADDING, rect.top() + (rect.height() - ICON_SIZE) // 2, ICON_SIZE, ICON_SIZE)
+        theme_icon("edit-find").paint(painter, rect.left() + px(PADDING), rect.top() + (rect.height() - px(ICON_SIZE)) // 2, px(ICON_SIZE), px(ICON_SIZE))
         remove = remove_rect(rect)
         grey_icon("edit-delete-remove").paint(painter, remove)
-        text_left = rect.left() + 2 * PADDING + ICON_SIZE
-        text_rect = QRect(text_left, rect.top(), remove.left() - PADDING - text_left, rect.height())
+        text_left = rect.left() + 2 * px(PADDING) + px(ICON_SIZE)
+        text_rect = QRect(text_left, rect.top(), remove.left() - px(PADDING) - text_left, rect.height())
         painter.setFont(font)
         painter.setPen(palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text))
         text = QFontMetrics(font).elidedText(str(index.data(TEXT_ROLE)), Qt.TextElideMode.ElideRight, text_rect.width())
@@ -153,7 +155,7 @@ class SearchHistory(QFrame):
             item.setData(TEXT_ROLE, text)
         self.list.setCurrentRow(-1)
         height = sum(self.list.sizeHintForRow(row) for row in range(self.list.count()))
-        self.resize(max(anchor.width(), 320), height + 2 * self.list.frameWidth() + 4)
+        self.resize(max(anchor.width(), px(320)), height + 2 * self.list.frameWidth() + 4)
         self.move(anchor.mapToGlobal(QPoint(0, anchor.height() + 2)))
         if not self.isVisible():
             self.show()
