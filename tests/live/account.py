@@ -5,14 +5,16 @@ from pathlib import Path
 from typing import Any  # tomllib returns untyped dictionaries
 
 # --- Version ------------------------------------------------------------
-__version__ = "account.py 0.0.28"
+__version__ = "account.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: A second account file (the Kerio server); an accepted certificate; the server names of Sent, Drafts and Trash
 # v0.0.28: IMAP ports
 # v0.0.3: Initial live account loader
 
 ACCOUNT_FILE: Path = Path(__file__).resolve().parent / "account.local.toml"
 EXAMPLE_FILE: Path = ACCOUNT_FILE.with_name("account.example.toml")
+KERIO_FILE: Path = ACCOUNT_FILE.with_name("kerio.local.toml")  # the same kind of file, for the account on the Kerio server
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,10 @@ class LiveAccount:
     pop3_ssl_port: int
     imap_port: int = 143
     imap_ssl_port: int = 993
+    fingerprint: str = ""  # the SHA-256 fingerprint of a certificate accepted for this server ('' for the usual checks)
+    sent_folder: str = "Sent"  # the names of the standard folders on this server
+    drafts_folder: str = "Drafts"
+    trash_folder: str = "Trash"
 
 
 def _text(settings: dict[str, Any], key: str, variable: str) -> str:
@@ -47,10 +53,10 @@ def _number(settings: dict[str, Any], key: str, default: int, variable: str | No
     return int(str(value))
 
 
-def load_live_account() -> LiveAccount:
+def load_live_account(file: Path = ACCOUNT_FILE) -> LiveAccount:
     settings: dict[str, Any] = {}
-    if ACCOUNT_FILE.exists():
-        with ACCOUNT_FILE.open("rb") as handle:
+    if file.exists():
+        with file.open("rb") as handle:
             settings = tomllib.load(handle)
     return LiveAccount(
         host=_text(settings, "host", "CHRONOMAIL_LIVE_HOST"),
@@ -66,4 +72,8 @@ def load_live_account() -> LiveAccount:
         pop3_ssl_port=_number(settings, "pop3_ssl_port", 995),
         imap_port=_number(settings, "imap_port", 143),
         imap_ssl_port=_number(settings, "imap_ssl_port", 993),
+        fingerprint=str(settings.get("fingerprint", "")),
+        sent_folder=str(settings.get("sent_folder", "Sent")),
+        drafts_folder=str(settings.get("drafts_folder", "Drafts")),
+        trash_folder=str(settings.get("trash_folder", "Trash")),
     )

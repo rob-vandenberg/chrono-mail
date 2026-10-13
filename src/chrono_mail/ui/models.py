@@ -15,9 +15,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon, grey_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.3.109"
+__version__ = "models.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: The Favorites heading cannot be selected; settled: the view has finished loading (D-119)
 # v0.3.109: No group headers for the yes/no sorts (unread, flagged, attachment, replied, contact); names of the folder, conversation and preview groups
 # v0.2.99: message_count (how many messages the view holds)
 # v0.2.96: The rows of the group headers are kept in a list (the card layout measures every row)
@@ -142,6 +143,7 @@ class MessageListModel(QAbstractTableModel):
         self._backend: Backend = backend
         self._spec: ViewSpec | None = None
         self._generation: int = 0
+        self.settled: bool = True  # the view has finished loading (or shows nothing): an empty list is really empty
         self._total: int = 0
         self._unread: int = 0
         self._rows: _Rows = _Rows()
@@ -183,6 +185,7 @@ class MessageListModel(QAbstractTableModel):
 
     def show(self, spec: ViewSpec | None) -> None:
         """Start showing something else (or nothing). With groups, their headers are asked for first, then the messages."""
+        self.settled = spec is None or (self.settled and spec == self._spec)  # the same view again (a reload) stays settled
         self.beginResetModel()
         self._generation += 1
         self._spec = spec
@@ -539,6 +542,7 @@ class MessageListModel(QAbstractTableModel):
                     first, last = 0, self._display_rows - 1
                 if first >= 0 and last >= first:
                     self.dataChanged.emit(self.index(first, 0), self.index(last, max(0, self.columnCount() - 1)))
+            self.settled = True
             self.loaded.emit()
 
         self._backend.call("message.list", self._values(spec, page * PAGE_SIZE), arrived, self._failed, owner=self)
@@ -571,6 +575,7 @@ class MessageListModel(QAbstractTableModel):
                 else:
                     self._display_rows = after
             self.counts_changed.emit(len(self._rows.loaded), sum(1 for row in self._rows.loaded if "seen" not in getattr(row, "flags")))
+            self.settled = True
             self.loaded.emit()
 
         def failed(error: ChronoMailError) -> None:
@@ -700,6 +705,7 @@ class FolderTreeModel(QStandardItemModel):
     def _favorites(self, root: QStandardItem, mailboxes: list[object], folders: dict[str, list[object]]) -> None:
         """The same folder of every mailbox in one list: all inboxes, all unread messages and so on."""
         section = self._section(root, "Favorites", "section")
+        section.setSelectable(False)  # a heading: the list never shows it
         for view, label, icon in FAVORITES:
             if view in self.hidden:
                 continue

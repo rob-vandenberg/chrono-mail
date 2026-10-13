@@ -8,9 +8,10 @@ from chrono_mail.engine.session import Engine, index_lock
 from chrono_mail.sync import rebuild_index, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 0.4.118"
+__version__ = "commands_folders.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: Create, rename and delete go through the mailbox: in an IMAP account on the server first (D-118)
 # v0.4.118: The lock of an index file is shared with the rebuild when an account is opened (session.index_lock)
 # v0.3.111: Two rebuilds of the same index wait for each other
 # v0.0.45: maintenance works on the storage of an account
@@ -47,7 +48,7 @@ class FolderResult:
 
 def folder_create(engine: Engine, parameters: FolderParameters) -> FolderResult:
     with open_mailbox(engine, parameters.account) as mailbox:
-        created = mailbox.store.create_folder(parse_folder(parameters.folder))
+        created = mailbox.create_folder(parse_folder(parameters.folder))
         return FolderResult("/".join(created.path))
 
 
@@ -61,8 +62,7 @@ class FolderRenameParameters:
 def folder_rename(engine: Engine, parameters: FolderRenameParameters) -> FolderResult:
     with open_mailbox(engine, parameters.account) as mailbox:
         old, new = mailbox.folder(parameters.folder), parse_folder(parameters.new_name)
-        mailbox.store.rename_folder(old, new)
-        mailbox.index.rename_folder(old, new)
+        mailbox.rename_folder(old, new)
         return FolderResult("/".join(new))
 
 
@@ -98,8 +98,7 @@ def folder_delete(engine: Engine, parameters: FolderDeleteParameters) -> FolderD
                     raise StorageError("The folder is not empty")
         removed = 0
         for path in targets:  # the deepest folders first, so that no folder is ever left without its parent
-            mailbox.store.delete_folder(path, require_empty=not parameters.with_messages)
-            removed += mailbox.index.remove_folder(path)
+            removed += mailbox.delete_folder(path, require_empty=not parameters.with_messages)
         return FolderDeleteResult("/".join(folder), removed, str(mailbox.store.root / ".deleted"), len(targets))
 
 

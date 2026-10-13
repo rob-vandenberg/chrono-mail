@@ -87,9 +87,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.4.120"
+__version__ = "mainwindow.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: An account or group row is selected and shows its Inbox (nothing for an account without one); the Favorites heading is never selected, a click folds it; the first Inbox at start is found inside groups too (D-119)
 # v0.4.120: The engine's notices (an IMAP change waits for the server) in the red line; the IMAP connections close when the program ends
 # v0.4.119: An IMAP folder held back by a safety rule is a question to the person (delete on the server or bring back; remove here or keep), answered with mail.settle
 # v0.4.117: Alt+M opens the Menu (Open the menu, changeable in Settings > Keyboard); the contact addresses are loaded again after the calendar and contacts sync
@@ -762,6 +763,7 @@ class MainWindow(QMainWindow):
         self.contacts_page.compose_requested.connect(self._compose_to)
         self.contacts_page.mail_accounts_source = self._accounts_with_mail
         self.tree.selectionModel().currentChanged.connect(self._tree_changed)
+        self.tree.clicked.connect(self._tree_clicked)
         self.tree.expanded.connect(self._tree_opened)
         self.tree.collapsed.connect(self._tree_closed)
         self.tree.customContextMenuRequested.connect(self._tree_menu)
@@ -930,6 +932,8 @@ class MainWindow(QMainWindow):
     def _mail_title(self) -> str:
         """The window title in the mail section: the folder that is open and its unread messages, then the program."""
         current = self.tree.currentIndex()
+        if current.isValid() and str(current.data(KIND_ROLE)) in ("account", "group"):
+            current = self._inbox_under(current) or current  # the row shows its Inbox
         name = str(current.data(NAME_ROLE) or "") if current.isValid() else ""
         if not name:
             return "Chrono Mail"
@@ -1533,11 +1537,27 @@ class MainWindow(QMainWindow):
 
         return walk(QModelIndex())
 
+    def _inbox_under(self, row: QModelIndex) -> QModelIndex | None:
+        """The Inbox of an account row, or the All Inboxes of a group row; None when there is none."""
+        wanted = "groupinbox" if str(row.data(KIND_ROLE)) == "group" else "folder"
+        children = [self.tree_model.index(child, 0, row) for child in range(self.tree_model.rowCount(row))]
+        return next((index for index in children if index.data(KIND_ROLE) == wanted and index.data(FOLDER_ROLE_ROLE) == "inbox"), None)
+
+    def _tree_clicked(self, index: QModelIndex) -> None:
+        """A click on a heading folds it open or shut (a heading is never selected)."""
+        if str(index.data(KIND_ROLE)) == "section":
+            self.tree.setExpanded(index, not self.tree.isExpanded(index))
+
     def _first_inbox(self) -> QModelIndex | None:
-        for row in range(self.tree_model.rowCount(QModelIndex())):
-            account = self.tree_model.index(row, 0, QModelIndex())
-            if account.data(KIND_ROLE) != "account":
-                continue
+        """The Inbox of the first account, also when the accounts are in groups."""
+        top = [self.tree_model.index(row, 0, QModelIndex()) for row in range(self.tree_model.rowCount(QModelIndex()))]
+        accounts: list[QModelIndex] = []
+        for index in top:
+            if index.data(KIND_ROLE) == "account":
+                accounts.append(index)
+            elif index.data(KIND_ROLE) == "group":
+                accounts.extend(child for child in (self.tree_model.index(row, 0, index) for row in range(self.tree_model.rowCount(index))) if child.data(KIND_ROLE) == "account")
+        for account in accounts:
             for child in range(self.tree_model.rowCount(account)):
                 index = self.tree_model.index(child, 0, account)
                 if index.data(FOLDER_ROLE_ROLE) == "inbox":
@@ -1548,8 +1568,25 @@ class MainWindow(QMainWindow):
         if self._updating_tree or not current.isValid():
             return
         kind = str(current.data(KIND_ROLE))
-        if kind in ("account", "section", "group"):
+        if kind == "section":  # a heading is never what the list shows: the highlight goes back to the folder that is shown
+            if previous.isValid() and str(previous.data(KIND_ROLE)) != "section":
+                self._updating_tree = True
+                self.tree.setCurrentIndex(previous)
+                self._updating_tree = False
             return
+        if kind in ("account", "group"):  # the row stays selected and shows its Inbox: never a folder of another account
+            inbox = self._inbox_under(current)
+            if inbox is None:  # an account without an Inbox: an empty list that says so
+                self._account_id, self._folder, self._combined, self._tree_kind = None, None, None, "none"
+                self.act_empty_folder.setEnabled(False)
+                self.act_mark_all_read.setEnabled(False)
+                self._clear_reader()
+                self._shown = None
+                self.list_model.show(None)
+                self._update_unread_summary()
+                return
+            current = inbox
+            kind = str(current.data(KIND_ROLE))
         self._tree_key_kind = kind
         self._tree_path = str(current.data(FOLDER_PATH_ROLE) or "")
         self._combined = "inboxes" if kind == "groupinbox" else (str(current.data(FOLDER_PATH_ROLE)) if kind == "favorite" else None)

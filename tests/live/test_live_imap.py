@@ -7,12 +7,15 @@ import pytest
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ServerSettings
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
+from chrono_mail.protocols.tls import context_for
 from tests.live.account import LiveAccount
+from tests.live.conftest import IMAP_SERVERS, imap_account
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_imap.py 0.0.43"
+__version__ = "test_live_imap.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: Against both servers (DirectAdmin and Kerio); an accepted certificate
 # v0.0.43: Certificate exceptions
 # v0.0.32: IMAP IDLE: new mail pushed to the window
 # v0.0.30: IMAP sync, store to server
@@ -27,9 +30,15 @@ MESSAGE = b"From: live@example.com\r\nTo: live@example.com\r\nSubject: Chrono Ma
 
 def connect(account: LiveAccount, secure: bool, password: str | None = None) -> ImapClient:
     settings = ServerSettings(account.host, account.imap_ssl_port if secure else account.imap_port, ConnectionSecurity.TLS if secure else ConnectionSecurity.STARTTLS, account.user)
-    client = ImapClient(settings, password or account.password, LIMITS)
+    client = ImapClient(settings, password or account.password, LIMITS, ssl_context=context_for(frozenset({account.fingerprint}) if account.fingerprint else frozenset()))
     client.connect()
     return client
+
+
+@pytest.fixture(params=IMAP_SERVERS)
+def live_account(request: pytest.FixtureRequest) -> LiveAccount:
+    """Every IMAP test runs against both servers."""
+    return imap_account(str(request.param))
 
 
 @pytest.fixture
@@ -238,6 +247,7 @@ def test_an_imap_account_in_the_engine_against_the_real_server(live_account: Liv
             "kind": "imap", "display_name": "Live", "email_address": live_account.user, "username": live_account.user, "password": live_account.password,
             "incoming_host": live_account.host, "incoming_port": live_account.imap_ssl_port, "incoming_security": "tls",
             "outgoing_host": live_account.host, "outgoing_port": live_account.smtp_ssl_port, "outgoing_security": "tls",
+            "trusted_certificate": (live_account.fingerprint,) if live_account.fingerprint else (),
         },
     )
     account = str(getattr(created, "account_id"))
@@ -290,6 +300,9 @@ def test_idle_sees_a_new_message_on_the_real_server(live_account: LiveAccount, i
 
 def test_the_real_servers_certificate_is_trusted_by_the_usual_checks(live_account: LiveAccount) -> None:
     from chrono_mail.protocols.tls import inspect_certificate, valid_fingerprint
+
+    if live_account.fingerprint:
+        pytest.skip("this server has a certificate of its own, accepted by an exception")
 
     for kind, port, security in (("imap", live_account.imap_ssl_port, ConnectionSecurity.TLS), ("imap", live_account.imap_port, ConnectionSecurity.STARTTLS), ("pop3", live_account.pop3_ssl_port, ConnectionSecurity.TLS), ("smtp", live_account.smtp_ssl_port, ConnectionSecurity.TLS)):
         info = inspect_certificate(live_account.host, port, security, kind)

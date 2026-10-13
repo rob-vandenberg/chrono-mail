@@ -17,9 +17,10 @@ from chrono_mail.mime import Address, OutgoingMessage, ParsedMessage, parse_mess
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 0.4.120"
+__version__ = "commands_schedule.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: The Snoozed folder and the folder a message wakes up in are made on the server first in an IMAP account (D-118)
 # v0.4.120: The Sent copy of a scheduled or repeating message goes to the server at once (IMAP)
 # v0.2.101: Snooze and wake change the record one at a time and make folders safely (no second Snoozed folder); waking a message that has no record (Cancel snooze) brings it to the Inbox
 # v0.2.100: The name of the Snoozed folder and its record file live in schedule.py (message.list needs them too)
@@ -335,7 +336,7 @@ def message_snooze(engine: Engine, parameters: SnoozeParameters) -> SnoozeResult
         target = (SNOOZED_FOLDER,)
         if source == target:
             raise UsageError("The message is snoozed already")
-        mailbox.store.ensure_folder(target)
+        mailbox.ensure_folder(target)
         path = engine.directories.account_directory(mailbox.account_id) / SNOOZED_FILE
         with SNOOZED_LOCK:
             entries = load_snoozed(path)
@@ -407,7 +408,7 @@ def _wake_account(engine: Engine, account: str, wanted: str | None, now: float) 
             if reference is not None:
                 try:
                     target = parse_folder(str(entry["folder"]))
-                    mailbox.store.ensure_folder(target)
+                    mailbox.ensure_folder(target)
                     moved = mailbox.move(reference, target)
                     mailbox.set_flags(moved, frozenset(mailbox.current_flags(moved) - {MessageFlag.SEEN}))
                 except ChronoMailError:
@@ -423,7 +424,7 @@ def _wake_account(engine: Engine, account: str, wanted: str | None, now: float) 
 def _back_to_inbox(mailbox: Mailbox, reference: MessageRef) -> int:
     """A message in Snoozed without a record of where it came from: to the Inbox, unread."""
     inbox = next((folder.path for folder in mailbox.folders() if folder.role is FolderRole.INBOX), ("Inbox",))
-    mailbox.store.ensure_folder(inbox, FolderRole.INBOX)
+    mailbox.ensure_folder(inbox, FolderRole.INBOX)
     moved = mailbox.move(reference, inbox)
     mailbox.set_flags(moved, frozenset(mailbox.current_flags(moved) - {MessageFlag.SEEN}))
     return 1

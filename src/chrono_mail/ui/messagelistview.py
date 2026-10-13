@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing import override
 
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QFocusEvent, QFontMetrics, QIcon, QMouseEvent, QPainter, QPixmap, QResizeEvent
+from PySide6.QtGui import QColor, QDrag, QFocusEvent, QFontMetrics, QIcon, QMouseEvent, QPainter, QPaintEvent, QPalette, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QApplication, QHeaderView, QTreeView, QWidget
 
 from chrono_mail.ui.models import HEADER_ICON_ROLE
@@ -12,9 +12,10 @@ from chrono_mail.ui.scale import lpx
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 0.3.108"
+__version__ = "messagelistview.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: An empty list says "There are no messages to show in this view." once it has finished loading (D-119)
 # v0.3.108: The grey icons of the column header follow the size factor of the message list
 # v0.2.105: The badge hangs just past the bottom-right corner of the cursor, by the desktop's cursor size (it covered the first digit)
 # v0.2.104: The drag is offered as the copy kind, so the desktop shows its arrow with a plus (not its hand); the messages are still moved
@@ -123,6 +124,9 @@ class ListHeader(QHeaderView):
             icon.paint(painter, QRect(rect.center().x() - size // 2 + 1, rect.center().y() - size // 2 + 1, size, size))
 
 
+EMPTY_TEXT: str = "There are no messages to show in this view."
+
+
 class MessageListView(QTreeView):
     """The message list. Dragging messages shows a small badge with their number, never the rows. The selection is grey while the list has no focus."""
 
@@ -167,6 +171,18 @@ class MessageListView(QTreeView):
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self.width_changed.emit()
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        super().paintEvent(event)
+        model = self.model()
+        if model is None or model.rowCount() > 0 or not bool(getattr(model, "settled", True)):
+            return  # never while the list is still loading
+        painter = QPainter(self.viewport())
+        painter.setPen(self.palette().color(QPalette.ColorRole.Text))
+        height = QFontMetrics(self.font()).height()
+        painter.drawText(QRect(0, lpx(10), self.viewport().width(), height), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, EMPTY_TEXT)
+        painter.end()
 
     @override
     def focusInEvent(self, event: QFocusEvent) -> None:

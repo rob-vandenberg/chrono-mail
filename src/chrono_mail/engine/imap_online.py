@@ -3,18 +3,19 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 from chrono_mail.config import AccountSettings, ServerRole
-from chrono_mail.core import AccountKind, AuthenticationError, ConfigurationError, MessageFlag, ProtocolError
+from chrono_mail.core import AccountKind, AuthenticationError, ConfigurationError, FolderRole, MessageFlag, ProtocolError
 from chrono_mail.engine.session import OUTBOX, Engine, ImapLink
 from chrono_mail.protocols.imap import ImapClient, ImapRefused
 from chrono_mail.sync import ImapState, plan_folders
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_online.py 0.4.120"
+__version__ = "imap_online.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: folders too: make, rename (the old names unsubscribed), delete, empty and mark all read on the server first; a message gone from the server is refused (D-118)
 # v0.4.120: Initial: the actions of an IMAP account are done on the server first, and here only when the server confirmed (D-117)
 
-# IMAP is the server's mailbox: an action (marks, move, copy, delete, a draft, the Sent copy) is done on the server first,
+# IMAP is the server's mailbox: an action (marks, move, copy, delete, a draft, the Sent copy, folders) is done on the server first,
 # and only when the server confirmed it is the same done here, and the sync state updated at once, so that the next sync
 # has nothing left to do. A refusal of the server is an error and nothing changes here. When the server cannot be reached
 # the action is done here only and the next sync sends it (the comparison of D-050); a delete for good is noted so that the
@@ -22,6 +23,22 @@ __version__ = "imap_online.py 0.4.120"
 
 LOCAL_ONLY: frozenset[str] = frozenset({OUTBOX[0], "Recovered"})  # first parts of the local folders that never exist on a server
 OFFLINE_NOTICE: str = "The server of {account} could not be reached: the change is made there at the next mail check"
+UNREACHABLE: str = "The server of {account} cannot be reached: a folder is only renamed or deleted while the server can be reached"
+LEAVE_OUT_UNREACHABLE: str = "The server of {account} cannot be reached: a folder is only left out while the server can be reached"
+BATCH: int = 500  # UIDs per command, so that a command line stays short
+
+
+class GoneFromServer(ImapRefused):
+    """The message is no longer on the server (deleted there by another program): the action is not done here either."""
+
+    def __init__(self, local: tuple[str, ...], uid: int) -> None:
+        super().__init__("This message is no longer on the server; the next mail check removes it here too")
+        self.local: tuple[str, ...] = local
+        self.uid: int = uid
+
+
+def _uid_batches(uids: tuple[int, ...]) -> list[str]:
+    return [",".join(str(uid) for uid in uids[start : start + BATCH]) for start in range(0, len(uids), BATCH)]
 
 
 def is_imap(settings: AccountSettings) -> bool:
@@ -57,7 +74,7 @@ class ServerSession:
 
     # --- the connection --------------------------------------------------------------------------------------------
 
-    def _client(self) -> ImapClient | None:
+    def _client(self, notice: bool = True) -> ImapClient | None:
         """The open connection (made or made again when needed); None when the server cannot be reached."""
         if self.offline:
             return None
@@ -75,15 +92,21 @@ class ServerSession:
             client = ImapClient(self.settings.account.incoming, password, ssl_context=self.engine.tls_context(self.settings))
             client.connect()
         except (ProtocolError, AuthenticationError, ConfigurationError):
-            self._go_offline()
+            self._go_offline(notice)
             return None
         link.client = client
         return client
 
-    def _go_offline(self) -> None:
+    def _go_offline(self, notice: bool = True) -> None:
         self.offline = True
         self.link.close()
-        self.engine.notice(OFFLINE_NOTICE.format(account=self.settings.account.email_address))
+        if notice:
+            self.engine.notice(OFFLINE_NOTICE.format(account=self.settings.account.email_address))
+
+    def _unreachable(self, text: str = UNREACHABLE) -> ProtocolError:
+        """For a step that cannot wait for the next check (rename or delete a folder): an error, and nothing changes here."""
+        self._go_offline(notice=False)
+        return ProtocolError(text.format(account=self.settings.account.email_address))
 
     def _lost(self, error: ProtocolError) -> None:
         """A step failed: a refusal of the server is the person's error; anything else means the server cannot be reached."""
@@ -112,14 +135,26 @@ class ServerSession:
             folders = self._folders(client, fresh=True)  # made since the folders were last listed
         if local in folders or not create:
             return folders.get(local)
-        delimiter = self.link.delimiter
-        if delimiter in "".join(local):
+        name = self._server_name(local)
+        if name is None:
             return None
-        name = delimiter.join(("INBOX" if local[0] == "Inbox" else local[0], *local[1:]))
         client.create_folder(name)
         client.subscribe(name)
         folders[local] = name
         return name
+
+    def _server_name(self, local: tuple[str, ...]) -> str | None:
+        """The name a new local folder gets on the server (as the sync makes it); None when it cannot be written there."""
+        delimiter = self.link.delimiter
+        if delimiter in "".join(local):
+            return None
+        return delimiter.join(("INBOX" if local[0] == "Inbox" else local[0], *local[1:]))
+
+    def _leave(self, client: ImapClient, server: str) -> None:
+        """Close a server folder before it is renamed or deleted (some servers refuse that for the open folder)."""
+        if client.selected == server:
+            client.select("INBOX", read_only=True)
+        self.link.validity.pop(server, None)
 
     def _select(self, client: ImapClient, local: tuple[str, ...], server: str) -> bool:
         """Open a server folder; False when the server numbers its messages differently than the sync state knows."""
@@ -144,6 +179,8 @@ class ServerSession:
         server = self.server_folder(client, local, create=False)
         if server is None or not self._select(client, local, server):
             return None
+        if not client.uid_fetch(str(uid), "(UID)"):
+            raise GoneFromServer(local, uid)
         return local, uid, server
 
     # --- the steps --------------------------------------------------------------------------------------------------
@@ -242,6 +279,9 @@ class ServerSession:
             if "UIDPLUS" not in client.capabilities:
                 return lambda: self._note_deleted(store_id)  # only marked there: the sync removes it when it can, never held back
             client.uid_expunge(str(uid))
+        except GoneFromServer as gone:
+            where, number = gone.local, gone.uid
+            return lambda: self.state.unmap(where, number)  # deleted there already: what the person wanted
         except ProtocolError as error:
             self._lost(error)
             return lambda: self._note_deleted(store_id)
@@ -271,6 +311,136 @@ class ServerSession:
                 self.state.map(local, result.uid, new_store_id, flag_names(flags))
             else:
                 self.state.mark_uploaded(new_store_id)
+
+        return commit
+
+    # --- folders ----------------------------------------------------------------------------------------------------
+
+    def synchronised_folders(self) -> dict[str, tuple[tuple[str, ...], FolderRole]]:
+        """Server folder -> (local folder, role) of every folder that is synchronised now. Only while the server can be reached."""
+        client = self._client(notice=False)
+        if client is None:
+            raise self._unreachable(LEAVE_OUT_UNREACHABLE)
+        try:
+            listed = client.list_folders()
+            subscribed = frozenset(entry.name for entry in client.list_folders(subscribed_only=True))
+        except ImapRefused:
+            raise
+        except ProtocolError:
+            raise self._unreachable(LEAVE_OUT_UNREACHABLE) from None
+        plans, _ = plan_folders(listed, subscribed, frozenset(self.state.forced), dict(self.state.roles))
+        return {plan.server_name: (plan.local_path, plan.role) for plan in plans if plan.server_name not in self.state.hidden}
+
+    def make_folder(self, local: tuple[str, ...]) -> None:
+        """Make a folder on the server (and subscribe to it). When the server cannot be reached the next sync makes it."""
+        client = self._client()
+        if client is None:
+            return
+        try:
+            self.server_folder(client, local, create=True)
+        except ProtocolError as error:
+            self._lost(error)
+
+    def rename_folder(self, old: tuple[str, ...], new: tuple[str, ...]) -> Commit:
+        """Rename a folder on the server; the server renames the folders below it too. Never left for the next sync."""
+        client = self._client(notice=False)
+        if client is None:
+            raise self._unreachable()
+        try:
+            folders = self._folders(client, fresh=True)
+            old_server = folders.get(old)
+            if old_server is None:
+                return _nothing  # not on the server (made here while offline): the next sync makes it under its new name
+            new_server = self._server_name(new)
+            if new_server is None:
+                raise ImapRefused("The new name cannot be used on the server")
+            below = {path: name for path, name in folders.items() if path[: len(old)] == old and name.startswith(old_server)}
+            renamed = {name: new_server + name[len(old_server) :] for name in below.values()}
+            for name in below.values():
+                self._leave(client, name)
+            client.rename_folder(old_server, new_server)
+        except ImapRefused:
+            raise
+        except ProtocolError:
+            raise self._unreachable() from None
+        self.link.folders = None
+        for before, after in renamed.items():  # a subscription is a name: most servers leave it on the old one
+            try:
+                client.subscribe(after)
+            except ProtocolError:
+                pass  # the folder is renamed; a missing subscription only hides it until the person shows it again
+            try:
+                client.unsubscribe(before)
+            except ProtocolError:
+                pass  # a leftover subscription of a name that no longer exists does no harm
+
+        def commit() -> None:
+            self.state.rename_folder(old, new, renamed)
+
+        return commit
+
+    def delete_folder(self, local: tuple[str, ...]) -> Commit:
+        """Delete one folder on the server, with its mail. Never left for the next sync."""
+        client = self._client(notice=False)
+        if client is None:
+            raise self._unreachable()
+        try:
+            server = self._folders(client, fresh=True).get(local)
+            if server is None:
+                return _nothing  # not on the server: only here
+            self._leave(client, server)
+            client.delete_folder(server)
+        except ImapRefused:
+            raise
+        except ProtocolError:
+            raise self._unreachable() from None
+        self.link.folders = None
+        return lambda: self.state.forget_folder(local, server)
+
+    def empty_folder(self, local: tuple[str, ...]) -> Commit | None:
+        """Delete every message of a server folder for good, also those not downloaded yet. None when that cannot be done
+        for the folder as a whole (offline, no UIDPLUS, numbering unknown): then each message is deleted on its own."""
+        client = self._client()
+        if client is None:
+            return None
+        try:
+            server = self.server_folder(client, local, create=False)
+            if server is None or "UIDPLUS" not in client.capabilities or not self._select(client, local, server):
+                return None
+            uids = client.uid_search("ALL")
+            for batch in _uid_batches(uids):
+                client.uid_store(batch, ["\\Deleted"], "add")
+                client.uid_expunge(batch)  # these UIDs only: a message that arrived meanwhile stays
+        except ProtocolError as error:
+            self._lost(error)
+            return None
+
+        def commit() -> None:
+            for uid in self.state.folder_entries(local):
+                self.state.unmap(local, uid)
+
+        return commit
+
+    def mark_folder_read(self, local: tuple[str, ...]) -> Commit | None:
+        """Mark every message of a server folder as read, also those not downloaded yet. None when that cannot be done for
+        the folder as a whole (offline, numbering unknown): then each message is marked on its own."""
+        client = self._client()
+        if client is None:
+            return None
+        try:
+            server = self.server_folder(client, local, create=False)
+            if server is None or not self._select(client, local, server):
+                return None
+            for batch in _uid_batches(client.uid_search("UNSEEN")):
+                client.uid_store(batch, ["\\Seen"], "add")
+        except ProtocolError as error:
+            self._lost(error)
+            return None
+
+        def commit() -> None:
+            for uid, entry in self.state.folder_entries(local).items():
+                if "\\seen" not in entry.flags:
+                    self.state.set_flags(local, uid, entry.flags | {"\\seen"})
 
         return commit
 

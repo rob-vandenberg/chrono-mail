@@ -6,9 +6,10 @@ from pathlib import Path
 from chrono_mail.core import StorageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_state.py 0.4.120"
+__version__ = "imap_state.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: folders renamed ("w") and deleted ("y") on the server by the person (D-118)
 # v0.4.120: messages deleted by the person while the server could not be reached ("k")
 # v0.0.44: folder choices and roles
 # v0.0.31: folders deleted here are hidden
@@ -25,6 +26,8 @@ __version__ = "imap_state.py 0.4.120"
 #   {"e": "r", "n": server folder name, "r": role}                       the person says which standard folder (sent, drafts, trash, junk, archive) this server folder is
 #   {"e": "a", "s": store id}                                           the message was sent to the server (so that it is not sent twice)
 #   {"e": "k", "s": store id}                                           the person deleted the message for good here while the server could not be reached
+#   {"e": "w", "f": [old path], "t": [new path], "p": [[old name, new name], ...]}   the person renamed the folder (and those below it) on the server
+#   {"e": "y", "f": [path], "n": server folder name}                     the person deleted the folder on the server: everything known about it is forgotten
 # Appending (with fsync) cannot damage earlier lines; a line cut off by a crash is ignored; unknown events are ignored (later
 # versions add more, for example the changes waiting to be sent). If the file is lost the next sync downloads again and
 # matches by Message-ID: duplicates are avoided where possible, never a loss. The file is rewritten compactly when it has
@@ -102,6 +105,23 @@ class ImapState:
             self.hidden.add(name)
             self.validity.pop(tuple(str(part) for part in where), None)
             self.entries.pop(tuple(str(part) for part in where), None)
+            return
+        if kind == "w":
+            old, new, pairs = event["f"], event["t"], event["p"]
+            if not isinstance(old, list) or not old or not isinstance(new, list) or not new or not isinstance(pairs, list):
+                raise ValueError("bad folder rename")
+            names: dict[str, str] = {}
+            for pair in pairs:
+                if not isinstance(pair, list) or len(pair) != 2 or not all(isinstance(name, str) and name for name in pair):
+                    raise ValueError("bad folder rename")
+                names[str(pair[0])] = str(pair[1])
+            self._rename(tuple(str(part) for part in old), tuple(str(part) for part in new), names)
+            return
+        if kind == "y":
+            where, name = event["f"], event["n"]
+            if not isinstance(where, list) or not where or not isinstance(name, str) or not name:
+                raise ValueError("bad folder")
+            self._forget(tuple(str(part) for part in where), name)
             return
         if kind == "a":
             stored = event["s"]
@@ -187,6 +207,39 @@ class ImapState:
             self.roles[server_name] = role
         else:
             self.roles.pop(server_name, None)
+
+    def rename_folder(self, old: tuple[str, ...], new: tuple[str, ...], names: dict[str, str]) -> None:
+        """The person renamed a folder on the server: what is known about it and the folders below it moves to the new
+        paths, and the choices made for the server folders (by their old name) go to their new names."""
+        self._append({"e": "w", "f": list(old), "t": list(new), "p": [[before, after] for before, after in sorted(names.items())]})
+        self._rename(old, new, names)
+
+    def _rename(self, old: tuple[str, ...], new: tuple[str, ...], names: dict[str, str]) -> None:
+        for path in [path for path in self.validity if path[: len(old)] == old]:
+            self.validity[new + path[len(old) :]] = self.validity.pop(path)
+        for path in [path for path in self.entries if path[: len(old)] == old]:
+            self.entries[new + path[len(old) :]] = self.entries.pop(path)
+        for before, after in names.items():
+            if before in self.roles:
+                self.roles[after] = self.roles.pop(before)
+            if before in self.forced:
+                self.forced.discard(before)
+                self.forced.add(after)
+            if before in self.hidden:
+                self.hidden.discard(before)
+                self.hidden.add(after)
+
+    def forget_folder(self, folder: tuple[str, ...], server_name: str) -> None:
+        """The person deleted the folder on the server: its UIDs and the choices made for it are forgotten."""
+        self._append({"e": "y", "f": list(folder), "n": server_name})
+        self._forget(folder, server_name)
+
+    def _forget(self, folder: tuple[str, ...], server_name: str) -> None:
+        self.validity.pop(folder, None)
+        self.entries.pop(folder, None)
+        self.roles.pop(server_name, None)
+        self.forced.discard(server_name)
+        self.hidden.discard(server_name)
 
     def mark_uploaded(self, store_id: str) -> None:
         """Remember that a local message was sent to the server. Call right after the server accepted it."""

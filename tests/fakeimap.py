@@ -9,9 +9,10 @@ from chrono_mail.protocols.imap import decode_folder_name, encode_folder_name
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeimap.py 0.0.32"
+__version__ = "fakeimap.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: RENAME takes the folders below along and leaves the subscriptions on the old names, as real servers do; UNSUBSCRIBE
 # v0.0.32: IDLE
 # v0.0.30: IMAP sync, store to server
 # v0.0.28: Initial fake IMAP server
@@ -109,6 +110,7 @@ class FakeImapServer(ScriptedServer):
         self._user, self._password, self._starttls, self._fault = user, password, starttls_context, fault
         self._uidplus, self._move, self._sasl_ir, self._plain = uidplus, move, sasl_ir, plain
         self.refuse_appends: bool = False
+        self.stale_subscriptions: set[str] = set()  # subscribed names of folders that no longer exist
         self.idle_pushes: list[str] = []
         self._idle = idle
 
@@ -287,7 +289,11 @@ class FakeImapServer(ScriptedServer):
                 if old not in self.folders or new in self.folders:
                     conversation.send_line(f"{tag} NO cannot rename")
                 else:
-                    self.folders[new] = self.folders.pop(old)
+                    for name in [name for name in self.folders if name == old or name.startswith(old + "/")]:
+                        moved = self.folders[new + name[len(old) :]] = self.folders.pop(name)  # the folders below it go along (RFC 3501)
+                        if moved.subscribed:  # a subscription is a name: it stays on the old one
+                            self.stale_subscriptions.add(name)
+                            moved.subscribed = False
                     conversation.send_line(f"{tag} OK renamed")
             elif verb == "DELETE":
                 name = self._folder_argument(argument)
@@ -300,6 +306,12 @@ class FakeImapServer(ScriptedServer):
                 folder = self.folders.get(self._folder_argument(argument))
                 if folder is not None:
                     folder.subscribed = True
+                conversation.send_line(f"{tag} OK done")
+            elif verb == "UNSUBSCRIBE":
+                name = self._folder_argument(argument)
+                self.stale_subscriptions.discard(name)
+                if name in self.folders:
+                    self.folders[name].subscribed = False
                 conversation.send_line(f"{tag} OK done")
             elif verb == "APPEND":
                 return self._append(conversation, tag, argument, selected)

@@ -11,16 +11,24 @@ from chrono_mail.engine import Engine, build_registry
 from chrono_mail.protocols.imap import ImapClient
 from tests.enginefactory import make_engine
 from tests.live.account import LiveAccount
+from tests.live.conftest import IMAP_SERVERS, imap_account
 from tests.live.test_live_imap import connect
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_imap_online.py 0.4.121"
+__version__ = "test_live_imap_online.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: Folders made, renamed (with a folder below), marked read, emptied and deleted on the real server at once (D-118); against both servers (DirectAdmin and Kerio)
 # v0.4.121: Initial live tests: every action of an IMAP account is on the real server at once, before any sync (D-117)
 
 pytestmark = pytest.mark.live
 REGISTRY = build_registry()
+
+
+@pytest.fixture(params=IMAP_SERVERS)
+def live_account(request: pytest.FixtureRequest) -> LiveAccount:
+    """Every IMAP test runs against both servers."""
+    return imap_account(str(request.param))
 
 
 def message(token: str, number: int) -> bytes:
@@ -56,6 +64,7 @@ def setup(live_account: LiveAccount, token: str, tmp_path: Path) -> Generator[tu
         engine, "account.add", kind="imap", display_name="Live", email_address=live_account.user, username=live_account.user, password=live_account.password,
         incoming_host=live_account.host, incoming_port=live_account.imap_ssl_port, incoming_security="tls",
         outgoing_host=live_account.host, outgoing_port=live_account.smtp_ssl_port, outgoing_security="tls",
+        trusted_certificate=(live_account.fingerprint,) if live_account.fingerprint else (),
     )
     imap = connect(live_account, secure=True)
     folders = [f"ChronoMailOnline-{token}-A", f"ChronoMailOnline-{token}-B", f"ChronoMailOnline-{token}-C"]
@@ -67,7 +76,7 @@ def setup(live_account: LiveAccount, token: str, tmp_path: Path) -> Generator[tu
             with suppress(Exception):
                 imap.select("INBOX", read_only=True)
                 imap.delete_folder(name)
-        for name in ("INBOX", "Sent", "Drafts", "Trash"):  # whatever this test left in the account's own folders
+        for name in ("INBOX", live_account.sent_folder, live_account.drafts_folder, live_account.trash_folder):  # whatever this test left in the account's own folders
             with suppress(Exception):
                 imap.select(name)
                 found = imap.uid_search(f"SUBJECT {token}")
@@ -126,14 +135,15 @@ def test_drafts_and_the_sent_copy_are_on_the_real_server_at_once(setup: tuple[En
     engine, account, imap, _ = setup
     run(engine, "mail.fetch", account=account)
     draft = run(engine, "draft.save", account=account, subject=f"Draft {token} v1", body="one")
-    assert len(on_server(imap, "Drafts", f"SUBJECT {token}")) == 1
+    drafts, sent_folder = live_account.drafts_folder, live_account.sent_folder
+    assert len(on_server(imap, drafts, f"SUBJECT {token}")) == 1
     replaced = run(engine, "draft.save", account=account, subject=f"Draft {token} v2", body="two", replace_message=draft.message_id)
-    assert len(on_server(imap, "Drafts", f"SUBJECT {token}")) == 1 and len(on_server(imap, "Drafts", f"SUBJECT {token} SUBJECT v2")) == 1
+    assert len(on_server(imap, drafts, f"SUBJECT {token}")) == 1 and len(on_server(imap, drafts, f"SUBJECT {token} SUBJECT v2")) == 1
     run(engine, "message.delete", account=account, folder="Drafts", message=replaced.message_id, permanent=True)
-    assert on_server(imap, "Drafts", f"SUBJECT {token}") == ()
+    assert on_server(imap, drafts, f"SUBJECT {token}") == ()
 
     sent = run(engine, "mail.send", account=account, to=live_account.user, subject=f"Sent {token}", body="hello")
-    assert sent.sent and len(on_server(imap, "Sent", f"SUBJECT {token}")) == 1  # in Sent on the server at once
+    assert sent.sent and len(on_server(imap, sent_folder, f"SUBJECT {token}")) == 1  # in Sent on the server at once
     deadline = time.monotonic() + 60
     while not on_server(imap, "INBOX", f"SUBJECT {token}") and time.monotonic() < deadline:
         time.sleep(2)
@@ -142,4 +152,61 @@ def test_drafts_and_the_sent_copy_are_on_the_real_server_at_once(setup: tuple[En
     sent_rows = [row for row in rows(engine, account, "Sent") if token in row.subject]
     assert len(sent_rows) == 1  # no second copy from the sync
     run(engine, "message.delete", account=account, folder="Sent", message=sent_rows[0].message_id, permanent=True)
-    assert on_server(imap, "Sent", f"SUBJECT {token}") == ()
+    assert on_server(imap, sent_folder, f"SUBJECT {token}") == ()
+
+
+def test_folders_are_made_renamed_marked_read_and_deleted_on_the_real_server_at_once(setup: tuple[Engine, str, ImapClient, list[str]], token: str) -> None:
+    engine, account, imap, (first, renamed, _) = setup
+    run(engine, "mail.fetch", account=account)
+    delimiter = next((entry.delimiter for entry in imap.list_folders() if entry.delimiter), "/")
+    names = {entry.name for entry in imap.list_folders()}
+    try:
+        run(engine, "folder.create", account=account, folder=first)
+        run(engine, "folder.create", account=account, folder=f"{first}/Sub")
+        names = {entry.name for entry in imap.list_folders()}
+        assert first in names and f"{first}{delimiter}Sub" in names  # on the server at once
+        for number in range(1, 4):
+            imap.append(first, message(token, number))
+        imap.append(f"{first}{delimiter}Sub", message(token, 9))
+        assert run(engine, "mail.fetch", account=account).blocked == ()
+        assert len(rows(engine, account, first)) == 3 and len(rows(engine, account, f"{first}/Sub")) == 1
+
+        run(engine, "folder.rename", account=account, folder=first, new_name=renamed)
+        names = {entry.name for entry in imap.list_folders()}
+        assert first not in names and f"{first}{delimiter}Sub" not in names
+        assert renamed in names and f"{renamed}{delimiter}Sub" in names
+        assert len(on_server(imap, renamed)) == 3 and len(on_server(imap, f"{renamed}{delimiter}Sub")) == 1
+        synced = run(engine, "mail.fetch", account=account)
+        assert synced.blocked == () and synced.downloaded == 0
+        assert len(on_server(imap, renamed)) == 3 and len(on_server(imap, f"{renamed}{delimiter}Sub")) == 1  # nothing uploaded twice
+        assert first not in {entry.name for entry in imap.list_folders()}  # the old name did not come back
+
+        imap.append(renamed, message(token, 4))  # not downloaded yet
+        run(engine, "folder.mark-read", account=account, folder=renamed)
+        assert on_server(imap, renamed, "UNSEEN") == () and len(on_server(imap, renamed)) == 4
+
+        run(engine, "folder.delete", account=account, folder=renamed, with_messages=True, include_subfolders=True)
+        names = {entry.name for entry in imap.list_folders()}
+        assert renamed not in names and f"{renamed}{delimiter}Sub" not in names
+        assert run(engine, "mail.fetch", account=account).blocked == ()
+        local = {item.path for item in run(engine, "folder.list", account=account)}
+        assert renamed not in local and first not in local
+    finally:
+        for name in (f"{first}{delimiter}Sub", first, f"{renamed}{delimiter}Sub", renamed):
+            with suppress(Exception):
+                imap.select("INBOX", read_only=True)
+                imap.delete_folder(name)
+
+
+def test_emptying_trash_empties_it_on_the_real_server(setup: tuple[Engine, str, ImapClient, list[str]], live_account: LiveAccount, token: str) -> None:
+    engine, account, imap, _ = setup
+    trash = live_account.trash_folder
+    run(engine, "mail.fetch", account=account)
+    if on_server(imap, trash):
+        pytest.skip("the Trash of the test account is not empty; this test empties it as a whole")
+    for number in range(1, 3):
+        imap.append(trash, message(token, number))
+    run(engine, "mail.fetch", account=account)
+    imap.append(trash, message(token, 3))  # not downloaded yet
+    run(engine, "folder.empty", account=account, folder="Trash")
+    assert on_server(imap, trash, "ALL") == () and rows(engine, account, "Trash") == []

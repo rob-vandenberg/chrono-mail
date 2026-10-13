@@ -10,9 +10,10 @@ from typing import Self
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 0.0.32"
+__version__ = "imap.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: UNSUBSCRIBE
 # v0.0.32: IDLE
 # v0.0.30: uid_move tells the new UID
 # v0.0.28: Initial IMAP client
@@ -676,3 +677,6 @@ class ImapClient:
 
     def subscribe(self, folder: str) -> None:
         self._command(f"SUBSCRIBE {quote(encode_folder_name(folder))}")
+
+    def unsubscribe(self, folder: str) -> None:
+        self._command(f"UNSUBSCRIBE {quote(encode_folder_name(folder))}")

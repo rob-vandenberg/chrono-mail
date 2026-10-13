@@ -3,7 +3,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from chrono_mail.core import Folder, FolderRole, MessageFlag, StorageError
+from chrono_mail.core import Folder, FolderRole, StorageError
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
@@ -11,9 +11,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_actions.py 0.3.112"
+__version__ = "commands_actions.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: Empty folder and Mark all as read do the server folder as a whole first; the Archive folder is made on the server first (D-118)
 # v0.3.112: Moving a message whose file is gone to Junk removes it from the index (gone)
 # v0.2.102: Archiving notes the folder a message came from (archived.log); message.unarchive moves it back there (the Inbox when unknown)
 # v0.2.101: The Archive folder is made safely (one folder when several messages are archived at once)
@@ -72,7 +73,7 @@ def archive_folder(mailbox: Mailbox) -> tuple[Folder, bool]:
     for folder in folders:
         if folder.path == (ARCHIVE_NAME,):
             return folder, False
-    return mailbox.store.ensure_folder((ARCHIVE_NAME,), FolderRole.ARCHIVE)  # archiving several messages at once makes one folder
+    return mailbox.ensure_folder((ARCHIVE_NAME,), FolderRole.ARCHIVE)  # archiving several messages at once makes one folder
 
 
 def message_archive(engine: Engine, parameters: MessageParameters) -> ArchiveResult:
@@ -101,7 +102,7 @@ def message_unarchive(engine: Engine, parameters: MessageParameters) -> ArchiveR
         if target == archive.path:
             target = mailbox.role_folder(FolderRole.INBOX)
         else:
-            _, created = mailbox.store.ensure_folder(target)
+            _, created = mailbox.ensure_folder(target)
         moved = mailbox.move(reference, target)
         return ArchiveResult(moved.store_id, "/".join(target), created)
 
@@ -155,12 +156,7 @@ def folder_mark_read(engine: Engine, parameters: FolderActionParameters) -> Mark
     """Mark every unread message of a folder as read."""
     with open_mailbox(engine, parameters.account) as mailbox:
         path = mailbox.folder(parameters.folder)
-        changed = 0
-        for message in mailbox.store.list_messages(path):
-            if MessageFlag.SEEN not in message.flags:
-                mailbox.set_flags(message.ref, message.flags | {MessageFlag.SEEN})
-                changed += 1
-        return MarkReadResult("/".join(path), changed)
+        return MarkReadResult("/".join(path), mailbox.mark_folder_read(path))
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,11 +172,7 @@ def folder_empty(engine: Engine, parameters: FolderActionParameters) -> EmptyRes
         role = next((folder.role for folder in mailbox.folders() if folder.path == path), FolderRole.OTHER)
         if role not in (FolderRole.TRASH, FolderRole.JUNK):
             raise UsageError("Only the Trash and Junk folders can be emptied")
-        removed = 0
-        for message in mailbox.store.list_messages(path):
-            mailbox.delete(message.ref, permanent=True)
-            removed += 1
-        return EmptyResult("/".join(path), removed)
+        return EmptyResult("/".join(path), mailbox.empty_folder(path))
 
 
 def register(registry: CommandRegistry) -> None:

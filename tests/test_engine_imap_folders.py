@@ -14,9 +14,10 @@ from tests.test_engine_imap import World, world  # noqa: F401 - world is a fixtu
 __all__ = ["setup", "world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap_folders.py 0.0.44"
+__version__ = "test_engine_imap_folders.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: A folder left out is no longer shown here (D-120)
 # v0.0.44: Initial tests of folder choices, roles and the check interval per account
 
 
@@ -40,7 +41,8 @@ def test_a_folder_can_be_left_out_and_put_back(world: World) -> None:
     assert (result.hidden, result.shown) == (1, 0) and not folders(world)["Projects"].shown and folders(world)["Projects"].local_path == ""
     world.imap.add("Projects", raw_message(subject="q", message_id="<q@x>"))
     world.fetch()
-    assert [row.subject for row in world.rows("Projects")] == ["p"]  # what is here stays, nothing new comes
+    assert "Projects" not in {item.path for item in call(world.engine, "folder.list", account=world.account)}  # ignored completely (D-120)
+    assert len(world.imap.uids("Projects")) == 2  # its mail stays on the server
     call(world.engine, "account.set-folders", account=world.account, show=["Projects"])
     world.fetch()
     assert sorted(row.subject for row in world.rows("Projects")) == ["p", "q"] and folders(world)["Projects"].shown

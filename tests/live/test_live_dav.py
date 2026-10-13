@@ -1,4 +1,6 @@
+import time
 import tomllib
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -6,13 +8,16 @@ import pytest
 from chrono_mail.pim.contact import Contact, Labeled, contact_to_text, parse_contacts
 from chrono_mail.pim.ical import Event, EventSeries, Task, events_to_text, new_uid, parse_events, parse_tasks, tasks_to_text
 from chrono_mail.protocols.dav import DavClient, RemoteCollection
+from tests.live.account import KERIO_FILE, load_live_account
+from tests.live.test_live_imap import connect
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_dav.py 0.0.66"
+__version__ = "test_live_dav.py 0.5.123"
 
 # --- Version history ----------------------------------------------------
+# v0.5.123: The items Kerio keeps in Deleted Items after the test deleted them are removed, found by their unique UID
 # v0.0.66: Live test of the synchronisation
 # v0.0.65: Initial live tests of the CalDAV and CardDAV client
 
@@ -28,6 +33,32 @@ def dav() -> DavClient:
         values = tomllib.load(handle)
     trusted = frozenset({str(values["fingerprint"])}) if values.get("fingerprint") else frozenset()
     return DavClient(str(values["url"]), str(values["user"]), str(values["password"]), trusted)
+
+
+MONTHS: tuple[str, ...] = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def remove_from_deleted_items(uid: str, expected: int) -> None:
+    """Kerio keeps a deleted calendar, task or contact item in the mail folder Deleted Items as a message. Remove the ones
+    this test made, found by their unique UID (Kerio's search does not look inside them), so nothing else is touched."""
+    if not KERIO_FILE.exists():
+        return
+    account = load_live_account(KERIO_FILE)
+    today = date.today()
+    with connect(account, secure=True) as imap:
+        ours: list[int] = []
+        deadline = time.monotonic() + 20
+        while len(ours) < expected and time.monotonic() < deadline:
+            imap.select(account.trash_folder)
+            recent = imap.uid_search(f"SINCE {today.day}-{MONTHS[today.month - 1]}-{today.year}")
+            fetched = imap.uid_fetch(",".join(str(number) for number in recent), "(UID BODY.PEEK[])") if recent else ()
+            ours = [item.uid for item in fetched if uid.encode() in (item.data or b"")]
+            if len(ours) < expected:
+                time.sleep(1)
+        if ours:
+            numbers = ",".join(str(number) for number in ours)
+            imap.uid_store(numbers, ["\\Deleted"], "add")
+            imap.uid_expunge(numbers)  # these UIDs only; inside Deleted Items this is final
 
 
 def collection(dav: DavClient, kind: str) -> RemoteCollection:
@@ -88,6 +119,7 @@ def test_an_event_a_task_and_a_contact_are_made_changed_and_deleted_and_the_serv
         finally:
             dav.delete(href)
         assert href not in {item.href for item in dav.items(target)}
+    remove_from_deleted_items(uid, len(cases))
 
 
 def test_the_synchronisation_brings_the_server_data_here_and_back(dav: DavClient, tmp_path: Path) -> None:
@@ -114,5 +146,6 @@ def test_the_synchronisation_brings_the_server_data_here_and_back(dav: DavClient
         store.delete(contacts.collection_id, created)  # always remove the test item from the server
         report = sync_dav(dav, store, state, durable=False)
     assert report.deleted_on_server == 1
+    remove_from_deleted_items(uid, 1)
     remote = collection(dav, "contacts")
     assert not any("Chrono Mail Sync Test" in body for _, body in dav.fetch(remote, [item.href for item in dav.items(remote)]).values())
