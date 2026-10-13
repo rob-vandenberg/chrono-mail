@@ -87,9 +87,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.123"
+__version__ = "mainwindow.py 0.5.124"
 
 # --- Version history ----------------------------------------------------
+# v0.5.124: Show on startup: a chosen folder, Calendar, Contacts or Tasks, or the last selected folder (D-121)
 # v0.5.123: An account or group row is selected and shows its Inbox (nothing for an account without one); the Favorites heading is never selected, a click folds it; the first Inbox at start is found inside groups too (D-119)
 # v0.4.120: The engine's notices (an IMAP change waits for the server) in the red line; the IMAP connections close when the program ends
 # v0.4.119: An IMAP folder held back by a safety rule is a question to the person (delete on the server or bring back; remove here or keep), answered with mail.settle
@@ -810,7 +811,8 @@ class MainWindow(QMainWindow):
 
     def _restore_state(self) -> None:
         restore_geometry(self, self.settings, "geometry")
-        saved_section = str(self.settings.value("last_section", MAIL))
+        startup = str(self.settings.value("startup_view", "") or "")
+        saved_section = startup.split("\t", 1)[1] if startup.startswith("section\t") else MAIL if startup.startswith("mail\t") else str(self.settings.value("last_section", MAIL))
         if saved_section != MAIL:
             self.switch_section(saved_section)
         sizes = self.settings.value("splitter2")
@@ -1139,7 +1141,7 @@ class MainWindow(QMainWindow):
         """File > Settings: the way the program behaves, how it looks, writing, the accounts, rules, scheduled messages, the keys and the safety of the mail."""
         dialog = SettingsDialog(
             self.backend, self.settings, self.tray.available, self._shortcut_registry(), self,
-            accounts=self._mail_accounts(), folders=self._rule_folders, current_folder=self._rule_folder_now,
+            accounts=self._mail_accounts(), folders=self._rule_folders, current_folder=self._rule_folder_now, startup_choices=self._startup_choices(),
         )
         if page is not None:
             dialog.show_page(page)
@@ -1448,10 +1450,15 @@ class MainWindow(QMainWindow):
     def _populate_tree(self, select_saved: bool = False) -> None:
         """Rebuild the tree (new counts) and keep the selection; the message list is only reloaded when the selection really changed."""
         keep = self._selection_key()
+        wanted: list[tuple[str, str, str]] = [keep] if keep is not None else []
         if keep is None and select_saved:
+            startup = str(self.settings.value("startup_view", "") or "").split("\t")
+            if startup[0] == "mail" and len(startup) == 4:
+                wanted.append((startup[1], startup[2], startup[3]))  # the folder chosen in Settings; when it is gone, the last selected one
             saved_account, saved_folder = str(self.settings.value("last_account", "")), str(self.settings.value("last_folder", ""))
             saved_kind = str(self.settings.value("last_kind", "folder"))
-            keep = (saved_account, saved_kind, saved_folder) if saved_folder and (saved_account or saved_kind in ("favorite", "groupinbox")) else None
+            if saved_folder and (saved_account or saved_kind in ("favorite", "groupinbox")):
+                wanted.append((saved_account, saved_kind, saved_folder))
         self._updating_tree = True
         self.tree_model.pins = [(str(getattr(pin, "pin_id")), str(getattr(pin, "account")), str(getattr(pin, "folder")), str(getattr(pin, "name"))) for pin in getattr(self._sidebar, "pins", ())]
         self.tree_model.groups = [(str(getattr(group, "group_id")), str(getattr(group, "name")), tuple(str(m) for m in getattr(group, "accounts"))) for group in getattr(self._sidebar, "groups", ())]
@@ -1459,7 +1466,7 @@ class MainWindow(QMainWindow):
         self.tree_model.show_favorites = bool_setting(self.settings, "show_favorites", True)
         self.tree_model.show_local_folders = bool_setting(self.settings, "show_local_folders", True)
         self.tree_model.populate(self._accounts, self._folders)
-        target = self._find_tree_item(keep) if keep is not None else None
+        target = next((found for found in (self._find_tree_item(key) for key in wanted) if found is not None), None)
         if target is None:
             target = self._first_inbox()
         if target is not None and target.isValid():
@@ -1468,6 +1475,41 @@ class MainWindow(QMainWindow):
         self._updating_tree = False
         if target is not None and target.isValid() and self._key_of(target) != (self._account_id, self._tree_key_kind, self._tree_path):
             self._tree_changed(target, QModelIndex())
+
+    def _startup_choices(self) -> list[tuple[str, str, bool, int]]:
+        """The choices of Settings > General > Show on startup: (text, value, can be chosen, depth). The last selected folder,
+        the Favorites, Local Folders, Calendar, Contacts, Tasks, then the other accounts and groups, as the folder list has them."""
+        choices: list[tuple[str, str, bool, int]] = [("Last selected folder", "", True, 0)]
+
+        def name(index: QModelIndex) -> str:
+            return str(index.data(NAME_ROLE) or index.data(Qt.ItemDataRole.DisplayRole) or "")
+
+        def walk(parent: QModelIndex, depth: int) -> None:
+            for row in range(self.tree_model.rowCount(parent)):
+                index = self.tree_model.index(row, 0, parent)
+                if str(index.data(KIND_ROLE)) in ("account", "group"):
+                    choices.append((name(index), "-", False, depth))  # a heading
+                else:
+                    choices.append((name(index), "mail\t" + "\t".join(self._key_of(index)), True, depth))
+                walk(index, depth + 1)
+
+        top = [self.tree_model.index(row, 0, QModelIndex()) for row in range(self.tree_model.rowCount(QModelIndex()))]
+        local_ids = {str(getattr(account, "account_id")) for account in self._accounts if str(getattr(account, "kind", "")) == "local"}
+        for index in top:
+            if str(index.data(KIND_ROLE)) == "section":
+                for row in range(self.tree_model.rowCount(index)):
+                    favorite = self.tree_model.index(row, 0, index)
+                    choices.append((f"Favorites {name(favorite)}", "mail\t" + "\t".join(self._key_of(favorite)), True, 0))
+        local = [index for index in top if str(index.data(KIND_ROLE)) == "account" and str(index.data(ACCOUNT_ROLE)) in local_ids]
+        for index in local:
+            choices.append((name(index), "-", False, 0))
+            walk(index, 1)
+        choices.extend((label, f"section\t{section}", True, 0) for label, section in (("Calendar", CALENDAR), ("Contacts", CONTACTS), ("Tasks", TASKS)))
+        for index in top:
+            if str(index.data(KIND_ROLE)) in ("account", "group") and index not in local:
+                choices.append((name(index), "-", False, 0))
+                walk(index, 1)
+        return choices
 
     def _load_tree_state(self) -> dict[str, bool]:
         """Which headings, accounts and folders the person opened or closed in the folder list (kept in the settings)."""

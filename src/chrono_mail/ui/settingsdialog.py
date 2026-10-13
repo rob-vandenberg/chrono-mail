@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing import override
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSettings, QSize, Qt, Signal
-from PySide6.QtGui import QFont, QKeySequence, QPainter, QPaintEvent, QPalette, QPen
+from PySide6.QtGui import QFont, QKeySequence, QPainter, QPaintEvent, QPalette, QPen, QStandardItemModel
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -49,9 +49,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.3.115"
+__version__ = "settingsdialog.py 0.5.124"
 
 # --- Version history ----------------------------------------------------
+# v0.5.124: General: Show on startup (D-121)
 # v0.3.115: The rows of the page list are 2 points higher than their text needs, times the interface factor
 # v0.3.113: The page list has its own text size: the desktop's size plus 2 points, times the interface factor
 # v0.3.112: Repair the search index (index.reconcile: only what differs from the stored files)
@@ -183,8 +184,10 @@ class SettingsDialog(QDialog):
     def __init__(
         self, backend: Backend, settings: QSettings, tray_available: bool = True, shortcut_actions: dict[str, tuple[str, str]] | None = None, parent: QWidget | None = None,
         accounts: list[object] | None = None, folders: Callable[[], list[str]] | None = None, current_folder: Callable[[], tuple[str, str] | None] | None = None,
+        startup_choices: list[tuple[str, str, bool, int]] | None = None,
     ) -> None:
         super().__init__(parent)
+        self._startup_choices: list[tuple[str, str, bool, int]] = startup_choices or [("Last selected folder", "", True, 0)]  # text, value, can be chosen, depth
         self._backend: Backend = backend
         self._settings: QSettings = settings
         self._columns: tuple[str, ...] = valid_columns([part for part in str(settings.value("columns", "")).split(",") if part])
@@ -252,6 +255,16 @@ class SettingsDialog(QDialog):
         s = self._settings
         page = QWidget(self)
         form = QFormLayout(page)
+        self.startup_box = QComboBox(page)
+        for text, value, choosable, depth in self._startup_choices:
+            self.startup_box.addItem("    " * depth + text, value)
+            choices = self.startup_box.model()
+            if not choosable and isinstance(choices, QStandardItemModel):
+                heading = choices.item(self.startup_box.count() - 1)
+                if heading is not None:
+                    heading.setEnabled(False)  # an account or group: its folders are below it
+        self.startup_box.setCurrentIndex(max(0, self.startup_box.findData(str(s.value("startup_view", "") or ""))))  # a folder that is gone: the last selected one
+        form.addRow("Show on startup:", self.startup_box)
         self.check_on_start = QCheckBox("Check for new mail when the program starts", page)
         self.check_on_start.setChecked(prefs.get_bool(s, "check_on_start"))
         self.auto_check = QCheckBox("Check for new mail automatically", page)
@@ -738,7 +751,7 @@ class SettingsDialog(QDialog):
         """Every setting of the dialog under its key in the settings file."""
         senders = sorted({line.strip().lower() for line in self.remote_senders.toPlainText().splitlines() if "@" in line})
         return {
-            "check_on_start": self.check_on_start.isChecked(), "auto_check": self.auto_check.isChecked(), "auto_check_minutes": self.interval.value(),
+            "startup_view": str(self.startup_box.currentData() or ""), "check_on_start": self.check_on_start.isChecked(), "auto_check": self.auto_check.isChecked(), "auto_check_minutes": self.interval.value(),
             "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
             "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()), "interface_scale": scale.factor_at(self.interface_slider.value()),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),

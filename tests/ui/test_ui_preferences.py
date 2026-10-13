@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QItemSelectionModel, QSettings, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QKeySequence
+from PySide6.QtGui import QDesktopServices, QKeySequence, QStandardItemModel
 from PySide6.QtWidgets import QApplication, QDialog, QLabel
 from pytestqt.qtbot import QtBot
 
@@ -21,9 +21,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.4.119"
+__version__ = "test_ui_preferences.py 0.5.124"
 
 # --- Version history ----------------------------------------------------
+# v0.5.124: Show on startup: its list and the value saved (D-121)
 # v0.4.119: A folder held back by a safety rule is a question; the answer is sent with mail.settle
 # v0.3.116: The list is shown again after an action in which a message failed; the error stays
 # v0.3.112: Repair the search index; one warning for messages whose file is gone
@@ -488,3 +489,23 @@ def test_a_folder_held_back_is_a_question_and_the_answer_is_sent(world: World, m
     assert asked[0][1] == ["Delete them on the server too", "Bring them back here"]
     window._ask_about_blocked(world.account_id, held)  # noqa: SLF001
     assert calls == [("mail.settle", {"account": world.account_id, "folder": "Trash", "choice": "restore_here"})]
+
+
+def test_show_on_startup_offers_the_choices_and_saves_the_one_picked(world: World, qtbot: QtBot) -> None:
+    world.window.start()
+    wait(qtbot, lambda: world.window.tree_model.rowCount() > 0 and world.window.list_model.rowCount() == 3)
+    choices = world.window._startup_choices()  # noqa: SLF001
+    dialog = SettingsDialog(world.backend, settings_of(world), True, None, startup_choices=choices)
+    qtbot.addWidget(dialog)
+    box = dialog.startup_box
+    assert box.count() == len(choices) and box.currentIndex() == 0 and box.currentText() == "Last selected folder"
+    heading = next(position for position, choice in enumerate(choices) if not choice[2])
+    model = box.model()
+    assert isinstance(model, QStandardItemModel) and not model.item(heading).isEnabled()  # an account cannot be picked
+    inbox = f"mail\t{world.account_id}\tfolder\tInbox"
+    box.setCurrentIndex(box.findData(inbox))
+    assert box.currentText().strip() == "Inbox" and dialog.values()["startup_view"] == inbox
+    dialog.save()
+    again = SettingsDialog(world.backend, settings_of(world), True, None, startup_choices=choices)
+    qtbot.addWidget(again)
+    assert again.startup_box.currentData() == inbox
