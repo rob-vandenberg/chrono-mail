@@ -3,9 +3,10 @@ from PySide6.QtWidgets import QAbstractItemView
 from chrono_mail.ui.colours import SEPARATOR, selection_grey
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.1.89"
+__version__ = "theme.py 0.1.90"
 
 # --- Version history ----------------------------------------------------
+# v0.1.90: The Filter button: blue and bold while a filter is on, its ▾ placed as on the toolbar buttons; Qt's own second menu arrow hidden on Sorted by
 # v0.1.89: Column headers 4 px padding left and right, so that the symbols fit in a 24 px column
 # v0.0.88: Selection grey while the folder list or message list has no focus; black 1 px lines between the panes and the column headers; Sorted by in bold
 # v0.0.86: Split toolbar buttons (Refresh, Snooze): the arrow part beside the text
@@ -67,6 +68,10 @@ QSplitter#mainSplitter::handle, QSplitter#contentSplitter::handle {{ background:
 QSplitter#mainSplitter::handle:horizontal, QSplitter#contentSplitter::handle:horizontal {{ width: 1px; }}
 QSplitter#mainSplitter::handle:vertical, QSplitter#contentSplitter::handle:vertical {{ height: 1px; }}
 QToolButton#sortButton {{ font-weight: bold; color: palette(text); }}
+QToolButton#sortButton::menu-indicator {{ image: none; width: 0; }}
+QToolButton#filterButton {{ padding-right: 22px; }}
+QToolButton#filterButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 7px; }}
+QToolButton#filterButton:checked {{ color: palette(highlight); font-weight: bold; background: transparent; border: 0; }}
 QFrame#readerHeader {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner QPushButton {{ background: {HOVER}; border: 0; border-radius: 4px; padding: 5px 12px; }}

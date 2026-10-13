@@ -919,3 +919,23 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - On a grey (unfocused) selection the unread dot of the column layout is drawn in the text colour instead of blue (since 0.0.88).
 - New contacts that arrive by the calendar and contacts sync show their icon only after the next Refresh.
+
+## 2026-10-13 Main screen restyle step 6: Filter button with a menu (version 0.1.90)
+
+**What landed**
+- The three toggle buttons Unread, Flagged and Attachments above the list are replaced by a Filter button: the funnel `view-filter`, the word "Filter" and a ▾. A click on either opens the menu: "Filter by" (greyed out), Flagged (`flag`), Unread (`mail-unread`), With attachments (`mail-attachment`, newly copied from breeze-dark `actions/22`). Several can be on at once, as before.
+- While at least one filter is on, the funnel, "Filter" and the ▾ are blue and "Filter" is bold (`_show_filter_state`, the button is checked; the icon is drawn blue in the checked state like the section buttons). The ▾ is part of the button, placed as on the toolbar buttons (Snooze, Move to).
+- The entries keep the names `filter_unread`, `filter_flagged`, `filter_attachments`; the filter logic is unchanged.
+- Qt's own menu arrow is hidden on the Sorted by button; it showed there as a second small arrow under its ▾.
+- Tests run: `tests/ui/test_ui_window.py` (alone, one new test; after the last change one test failed once and passed on the second run, the failing test was not recorded), `tests/ui/test_ui_icons.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+**Still open**
+- Step 7 (search help), after the owner's go-ahead. "Select" next to the Filter button later.
+
+## 2026-10-13 Filter menu: Clear filter and bold filters (version 0.1.91)
+
+**What landed**
+- The filters that are on are bold in the Filter menu (with an icon on an entry, Qt showed no tick, so there was no way to see which were on).
+- "Clear filter" at the bottom of the menu, below a line: greyed out while no filter is on; a click turns all three off and the list reloads once. It does not remove the advanced filters.
+- 0.1.90 was not pushed; it goes out together with this version.
+- Tests run: `tests/ui/test_ui_window.py` (alone, the filter test extended); Pyrefly 0 diagnostics, layer check kept; not the full suite.

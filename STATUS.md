@@ -1,20 +1,20 @@
 # STATUS.md
 
-*Last updated: 2026-10-13, version 0.1.89. Kept up to date before every push.*
+*Last updated: 2026-10-13, version 0.1.91. Kept up to date before every push.*
 
 ## Where we are
 
 - **Milestones 0 to 4 are done:** POP3 and SMTP, IMAP with IDLE, local calendars, tasks and contacts, CalDAV and CardDAV sync, scheduled and recurring mail, accounts told apart by login, server and protocol. Open in milestone 1: 1.13 (Flatpak) and 1.14 (Windows run).
 - **UI restyle (D-083, D-084): steps 1 to 3 of 5 are done** (0.0.73 to 0.0.82): main window with the blue Menu button and section buttons, message list and reading pane, composer (rich text by default, D-085). Settings > Appearance has the text size of the interface (0.0.82).
-- **Main screen restyle, second round (D-086), eight steps, one at a time.** Step 1 done (0.0.85): window title "<folder> (<unread>) - Chrono Mail", icons on Mark and Move to, Archive in the toolbar, menu arrows beside the text; all icons are now the program's own copy of the Breeze icons (D-087). Step 2 done (0.0.86): Refresh sends and receives and has a menu (send and receive all, receive all, send all, one account); Send All (`mail.send-outbox`); our Outbox and Sent copies keep Bcc (D-088); a Snooze button with ready-made times (a click anywhere opens its menu); Forward has Forward as attachment; message buttons are greyed out while no message is selected. Step 3 done (0.0.87, D-089): folder names are plain (never bold) and the unread number is drawn in bold at the right edge, only when above zero; other folders use `folder-open-symbolic`, Local Folders `user-home-symbolic`. Step 4 done (0.0.88, D-090): the selection in the folder list and the message list is blue only with the focus and grey without it; 1 px black lines between the panes and the column headers; "Sorted by" in bold. Step 5 done (0.1.89, D-091): the columns always fill the list (column fit, no horizontal scrollbar, no drag line at the right edge), icon columns 24 px, rows 22/29/36 px, a Contact column (opens the contact) and a Delete column (bin on the row under the pointer).
+- **Main screen restyle, second round (D-086), eight steps, one at a time.** Step 1 done (0.0.85): window title "<folder> (<unread>) - Chrono Mail", icons on Mark and Move to, Archive in the toolbar, menu arrows beside the text; all icons are now the program's own copy of the Breeze icons (D-087). Step 2 done (0.0.86): Refresh sends and receives and has a menu (send and receive all, receive all, send all, one account); Send All (`mail.send-outbox`); our Outbox and Sent copies keep Bcc (D-088); a Snooze button with ready-made times (a click anywhere opens its menu); Forward has Forward as attachment; message buttons are greyed out while no message is selected. Step 3 done (0.0.87, D-089): folder names are plain (never bold) and the unread number is drawn in bold at the right edge, only when above zero; other folders use `folder-open-symbolic`, Local Folders `user-home-symbolic`. Step 4 done (0.0.88, D-090): the selection in the folder list and the message list is blue only with the focus and grey without it; 1 px black lines between the panes and the column headers; "Sorted by" in bold. Step 5 done (0.1.89, D-091): the columns always fill the list (column fit, no horizontal scrollbar, no drag line at the right edge), icon columns 24 px, rows 22/29/36 px, a Contact column (opens the contact) and a Delete column (bin on the row under the pointer). Step 6 done (0.1.90 and 0.1.91, D-092): the Unread, Flagged and Attachments buttons are replaced by a Filter button (funnel, "Filter", ▾) with a menu: Filter by, Flagged, Unread, With attachments (several at once); the funnel, "Filter" and the ▾ are blue ("Filter" also bold) while a filter is on; the filters that are on are bold in the menu, and "Clear filter" at the bottom (below a line) turns them all off.
 - 0.0.83: the size and position of the main window, message windows, composers and the Settings window are remembered, and only used when the window is reachable on a connected screen.
-- Design decisions: D-001 to D-091 in `DECISIONS.md`.
+- Design decisions: D-001 to D-092 in `DECISIONS.md`.
 - Tests: 1643 offline tests, 48 opt-in (live, credential store, performance).
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main`. The repository was recreated on 2026-10-12; the author of the first commit was changed to the owner (history rewritten, all tags kept).
 
 ## Next task
 
-Main screen restyle step 6 (D-086), after the owner's go-ahead. Steps 6 to 8: filter menu; search help; group headers.
+Main screen restyle step 7 (D-086), after the owner's go-ahead: search help. Then step 8: group headers. "Select" next to the Filter button comes later (the owner's instruction).
 
 Also waiting:
 1. After deleting a message, the selection stays in place with the next message selected (it now jumps to the top).

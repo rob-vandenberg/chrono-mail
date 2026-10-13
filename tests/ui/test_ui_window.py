@@ -15,9 +15,11 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, KIND_ROLE, ROW_R
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.87"
+__version__ = "test_ui_window.py 0.1.91"
 
 # --- Version history ----------------------------------------------------
+# v0.1.91: Clear filter and bold filters in the Filter menu
+# v0.1.90: The Filter button and its menu
 # v0.0.87: The folder list draws the unread count itself; the labels add it from COUNT_ROLE
 # v0.0.86: Message buttons are greyed out while no message is selected
 # v0.0.85: The window title names the open folder and its unread messages
@@ -199,6 +201,33 @@ def test_quick_filters(world: World, qtbot: QtBot) -> None:
     wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
     assert subjects(world.window) == [first.subject]
     world.window.filter_flagged.setChecked(False)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
+
+
+def test_filter_button_menu(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    settle(qtbot, world, 3)
+    button = world.window.filter_button
+    assert button.text() == "Filter" and button.menu() is world.window.filter_menu
+    entries = world.window.filter_menu.actions()
+    assert [entry.text() for entry in entries] == ["Filter by", "Flagged", "Unread", "With attachments", "", "Clear filter"]
+    assert not entries[0].isEnabled() and all(entry.isCheckable() for entry in entries[1:4])
+    assert entries[4].isSeparator() and entries[5] is world.window.filter_clear
+    assert not button.isChecked() and not world.window.filter_clear.isEnabled()
+    world.window.filter_unread.setChecked(True)
+    assert button.isChecked() and world.window.filter_clear.isEnabled()
+    assert world.window.filter_unread.font().bold() and not world.window.filter_flagged.font().bold()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3 and world.window.view_spec() is not None)
+    spec = world.window.view_spec()
+    assert spec is not None and spec.unread
+    world.window.filter_unread.setChecked(False)
+    assert not button.isChecked() and not world.window.filter_unread.font().bold()
+    world.window.filter_unread.setChecked(True)
+    world.window.filter_flagged.setChecked(True)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 0)
+    world.window.filter_clear.trigger()
+    assert not any(entry.isChecked() for entry in entries[1:4]) and not button.isChecked()
+    assert not world.window.filter_clear.isEnabled()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
 
 

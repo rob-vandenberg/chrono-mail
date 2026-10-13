@@ -47,7 +47,7 @@ from chrono_mail.ui.conversationbar import ConversationBar
 from chrono_mail.ui.delegate import COLUMN_ROW_HEIGHTS, ColumnDelegate, MessageDelegate
 from chrono_mail.ui.foldertree import FolderTree
 from chrono_mail.ui.messagelistview import MessageListView
-from chrono_mail.ui.icons import application_icon, theme_icon
+from chrono_mail.ui.icons import application_icon, section_icon, theme_icon
 from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.models import (
     ACCOUNT_ROLE,
@@ -81,9 +81,11 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.1.89"
+__version__ = "mainwindow.py 0.1.91"
 
 # --- Version history ----------------------------------------------------
+# v0.1.91: Clear filter at the bottom of the Filter menu; the filters that are on are bold in the menu
+# v0.1.90: The Unread, Flagged and Attachments buttons are replaced by a Filter button (funnel) with a menu: Filter by, Flagged, Unread, With attachments; the button is blue and bold while a filter is on
 # v0.1.89: The columns always fill the list (column fit); fixed row heights; Contact and Delete columns; Delete and Contact added once to a saved set of columns
 # v0.0.88: Object names for the two splitters (1 px lines) and the Sorted by button (bold)
 # v0.0.86: Refresh sends and receives and has a menu (send and receive all, receive all, send all, one account only); a Snooze button with ready-made times; Forward has a menu with Forward as attachment; the Snooze button opens its menu wherever it is clicked; message buttons and actions are greyed out while no message is selected
@@ -296,9 +298,25 @@ class MainWindow(QMainWindow):
         self.sort_button.setAutoRaise(True)
         self.sort_menu = QMenu(self.sort_button)
         self.sort_button.setMenu(self.sort_menu)
-        self.filter_unread = self._filter_button("Unread", header)
-        self.filter_flagged = self._filter_button("Flagged", header)
-        self.filter_attachments = self._filter_button("Attachments", header)
+        self.filter_button = QToolButton(header)
+        self.filter_button.setObjectName("filterButton")
+        self.filter_button.setText("Filter")
+        self.filter_button.setIcon(section_icon("view-filter"))  # blue while a filter is on
+        self.filter_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.filter_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.filter_button.setAutoRaise(True)
+        self.filter_button.setCheckable(True)  # checked = at least one filter is on; set by _show_filter_state only
+        self.filter_menu = QMenu(self.filter_button)
+        heading = self.filter_menu.addAction("Filter by")
+        heading.setEnabled(False)
+        self.filter_flagged = self._filter_entry("Flagged", "flag")
+        self.filter_unread = self._filter_entry("Unread", "mail-unread")
+        self.filter_attachments = self._filter_entry("With attachments", "mail-attachment")
+        self.filter_menu.addSeparator()
+        self.filter_clear = self.filter_menu.addAction("Clear filter")
+        self.filter_clear.setEnabled(False)
+        self.filter_clear.triggered.connect(self._clear_filters)
+        self.filter_button.setMenu(self.filter_menu)
         self.count_label = QLabel("", header)
         self.filter_chip = QToolButton(header)
         self.filter_chip.setAutoRaise(True)
@@ -307,9 +325,7 @@ class MainWindow(QMainWindow):
         self.filter_chip.hide()
         header_layout.addWidget(self.sort_button)
         header_layout.addStretch(1)
-        header_layout.addWidget(self.filter_unread)
-        header_layout.addWidget(self.filter_flagged)
-        header_layout.addWidget(self.filter_attachments)
+        header_layout.addWidget(self.filter_button)
         header_layout.addWidget(self.filter_chip)
         header_layout.addWidget(self.count_label)
         list_layout.addWidget(header)
@@ -365,13 +381,29 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.splitter)
         self._update_sort_menu()
 
-    @staticmethod
-    def _filter_button(text: str, parent: QWidget) -> QToolButton:
-        button = QToolButton(parent)
-        button.setText(text)
-        button.setCheckable(True)
-        button.setAutoRaise(True)
-        return button
+    def _filter_entry(self, text: str, icon: str) -> QAction:
+        action = self.filter_menu.addAction(theme_icon(icon), text)
+        action.setCheckable(True)
+        return action
+
+    def _show_filter_state(self) -> None:
+        """The Filter button is blue and bold while at least one filter is on; in the menu the filters that are on are bold."""
+        entries = (self.filter_flagged, self.filter_unread, self.filter_attachments)
+        for entry in entries:
+            font = entry.font()
+            font.setBold(entry.isChecked())
+            entry.setFont(font)
+        on = any(entry.isChecked() for entry in entries)
+        self.filter_button.setChecked(on)
+        self.filter_clear.setEnabled(on)
+
+    def _clear_filters(self) -> None:
+        for entry in (self.filter_flagged, self.filter_unread, self.filter_attachments):
+            entry.blockSignals(True)
+            entry.setChecked(False)
+            entry.blockSignals(False)
+        self._show_filter_state()
+        self._apply_view()
 
     def _action(self, text: str, handler: Callable[..., object], shortcut: str | None = None, icon: str | None = None) -> QAction:
         action = QAction(text, self)
@@ -691,6 +723,7 @@ class MainWindow(QMainWindow):
         self.scope.currentIndexChanged.connect(self._scope_changed)
         self.filter_chip.clicked.connect(self._clear_advanced)
         for button in (self.filter_unread, self.filter_flagged, self.filter_attachments):
+            button.toggled.connect(self._show_filter_state)
             button.toggled.connect(self._apply_view)
         self.reader.attachment_save_requested.connect(self._save_attachment)
         self.reader.link_activated.connect(self._open_link)
@@ -1364,6 +1397,7 @@ class MainWindow(QMainWindow):
         self.filter_attachments.blockSignals(True)
         self.filter_attachments.setChecked(False)
         self.filter_attachments.blockSignals(False)
+        self._show_filter_state()
 
     def _search_text_changed(self, text: str) -> None:
         if not text:
@@ -1400,6 +1434,7 @@ class MainWindow(QMainWindow):
             button.blockSignals(True)
             button.setChecked(on)
             button.blockSignals(False)
+        self._show_filter_state()
         self._apply_view()
 
     def _focus_search(self) -> None:
