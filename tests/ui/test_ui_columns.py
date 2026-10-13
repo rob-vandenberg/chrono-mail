@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from PySide6.QtCore import QSettings, Qt
+from PySide6.QtCore import QPoint, QSettings, Qt
 from PySide6.QtWidgets import QDialog, QHeaderView, QToolBar
 from pytestqt.qtbot import QtBot
 
@@ -13,9 +13,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.2.97"
+__version__ = "test_ui_columns.py 0.3.109"
 
 # --- Version history ----------------------------------------------------
+# v0.3.109: The icon columns sort too (yes first); a click on Delete leaves the sort arrow where it was
 # v0.2.97: Row height in the Message list window
 # v0.2.96: The column list of the Message list window is a part of its own
 # v0.1.89: Column fit, row heights, the Contact and Delete columns
@@ -75,7 +76,7 @@ def test_clicking_a_column_header_sorts_and_clicking_again_reverses(world: World
     world.window.start()
     settle(qtbot, world, 3)
     columns = world.window.list_model.columns
-    subject, size, tick = columns.index("subject"), columns.index("size"), columns.index("flag")
+    subject, size = columns.index("subject"), columns.index("size")
     world.window.list_view.header().sectionClicked.emit(subject)
     wait(qtbot, lambda: world.window._sort == "subject" and world.window._oldest_first)  # noqa: SLF001
     wait(qtbot, lambda: world.window.list_model.index(0, subject).data() == "Message 1")  # A to Z
@@ -84,8 +85,26 @@ def test_clicking_a_column_header_sorts_and_clicking_again_reverses(world: World
     wait(qtbot, lambda: world.window.list_model.index(0, subject).data() == "Message 3")
     world.window.list_view.header().sectionClicked.emit(size)
     wait(qtbot, lambda: world.window._sort == "size")  # noqa: SLF001
-    world.window.list_view.header().sectionClicked.emit(tick)  # a column that cannot sort changes nothing
-    assert world.window._sort == "size"  # noqa: SLF001
+
+
+def test_an_icon_column_sorts_yes_first_and_delete_does_not_sort(world: World, qtbot: QtBot) -> None:
+    world.window.start()
+    settle(qtbot, world, 3)
+    columns = world.window.list_model.columns
+    subject, flag, trash = columns.index("subject"), columns.index("flag"), columns.index("trash")
+    first = next(row_of(world.window, position) for position in range(3) if row_of(world.window, position).subject == "Message 1")
+    world.call("message.flag", account=world.account_id, folder="Inbox", message=first.message_id, flagged=True)
+    header = world.window.list_view.header()
+    header.sectionClicked.emit(flag)
+    wait(qtbot, lambda: world.window._sort == "flagged" and not world.window._oldest_first)  # noqa: SLF001
+    wait(qtbot, lambda: world.window.list_model.index(0, subject).data() == "Message 1")  # the flagged message on top
+    assert header.sortIndicatorSection() == flag and world.window.sort_button.text() == "Sorted by Flagged ▾"
+    header.sectionClicked.emit(flag)
+    wait(qtbot, lambda: world.window.list_model.index(2, subject).data() == "Message 1")  # and at the bottom
+    middle = QPoint(header.sectionViewportPosition(trash) + header.sectionSize(trash) // 2, header.height() // 2)
+    qtbot.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, pos=middle)  # a real click: Qt moves the arrow by itself
+    # the one column that cannot sort changes nothing, also not the arrow
+    assert world.window._sort == "flagged" and header.sortIndicatorSection() == flag  # noqa: SLF001
 
 
 def test_columns_can_be_toggled_from_the_header_and_are_remembered(world: World, qtbot: QtBot) -> None:

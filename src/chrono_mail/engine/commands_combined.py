@@ -5,17 +5,18 @@ from datetime import datetime
 import string
 
 from chrono_mail.core import Folder, FolderRole
-from chrono_mail.engine.commands_mail import MessageRow, _rows, date_bounds
+from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, MessageRow, _rows, contact_address_set, date_bounds, from_contacts
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, option
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import SearchFilter, SortField
-from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, GroupCount
+from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 0.2.94"
+__version__ = "commands_combined.py 0.3.109"
 
 # --- Version history ----------------------------------------------------
+# v0.3.109: Sort orders unread, flagged, attachment, replied, contact, folder, conversation and preview (newest first within the same value)
 # v0.2.94: Combined views in any sort order; message.combined-groups: their groups for the group headers
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Initial combined views over the mailboxes of all accounts (Favorites)
@@ -29,14 +30,34 @@ class CombinedParameters:
     view: Literal["inboxes", "unread", "flagged", "outbox", "sent", "drafts", "junk", "trash"] = field(metadata=option("inboxes, unread, flagged, outbox, sent, drafts, junk or trash"))
     accounts: tuple[str, ...] = field(default=(), metadata=option("Only the mailboxes of these accounts (default: all)"))
     query: str = field(default="", metadata=option("Words to find in these messages (as in message.search)"))
-    sort: Literal["date", "subject", "sender", "to", "size"] = field(default="date", metadata=option("The sort order"))
+    sort: Literal["date", "subject", "sender", "to", "size", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview"] = field(
+        default="date", metadata=option("The sort order (unread ... contact: yes first unless oldest_first)")
+    )
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
     offset: int = field(default=0, metadata=option("How many results to skip (not for message.combined-groups)"))
     limit: int = field(default=50, metadata=option("How many results to show (not for message.combined-groups)"))
 
 
 _NO_CASE = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)  # as SQLite's NOCASE: only A to Z
-_TEXT_OF_SORT: dict[str, str] = {"subject": "subject", "sender": "sender", "to": "recipients"}
+_TEXT_OF_SORT: dict[str, str] = {"subject": "subject", "sender": "sender", "to": "recipients", "folder": "folder", "preview": "preview"}
+_NEWEST_WITHIN: frozenset[str] = frozenset({"unread", "flagged", "attachment", "replied", CONTACT_SORT, "folder", "conversation", "preview"})  # same value: newest first, either way
+
+
+def _newest_key(row: MessageRow) -> tuple[bool, float]:
+    return (row.date is not None, row.date.timestamp() if row.date is not None else 0.0)
+
+
+def _value_key(row: MessageRow, sort: str) -> int | str:
+    """The value the new sort orders compare (yes/no as 1 and 0), as the index orders it."""
+    if sort == "unread":
+        return int("seen" not in row.flags)
+    if sort in ("flagged", "replied"):
+        return int(sort in row.flags)
+    if sort == "attachment":
+        return int(row.attachments)
+    if sort == "conversation":
+        return row.thread_size
+    return str(getattr(row, _TEXT_OF_SORT[sort])).translate(_NO_CASE)
 
 
 def _row_key(row: MessageRow, sort: str) -> tuple[bool, float] | int | str:
@@ -77,21 +98,35 @@ def message_combined(engine: Engine, parameters: CombinedParameters) -> tuple[Me
     """The messages of one kind of folder in every mailbox (all inboxes, all unread, all flagged and so on), newest first unless another order is asked for."""
     view = parameters.view
     want = parameters.offset + parameters.limit
-    sort, descending = SortField(parameters.sort), not parameters.oldest_first
+    contact = parameters.sort == CONTACT_SORT
+    sort, descending = SortField.DATE if contact else SortField(parameters.sort), not parameters.oldest_first
     found: list[MessageRow] = []
+    from_contact: dict[tuple[str, str], bool] = {}  # (account, store id) -> from (or to) a contact
+    known = contact_address_set(engine) if contact else frozenset[str]()
     for account in _places(engine, parameters.accounts):
         with open_mailbox(engine, account) as mailbox:
             for folder in mailbox.folders():
                 if _chosen(view, folder):
-                    rows = mailbox.index.search(parameters.query, folder.path, _filters(view), 0, want, sort, descending)
+                    rows = mailbox.index.search(parameters.query, folder.path, _filters(view), 0, EVERYTHING if contact else want, sort, descending)
+                    if contact:  # the index does not know the contacts: every message is looked at
+                        from_contact.update(((account, store_id), yes) for store_id, yes in from_contacts(mailbox, rows, known).items())
                     found.extend(replace(row, account=account) for row in _rows(mailbox, rows))
-    found.sort(key=lambda row: _row_key(row, parameters.sort), reverse=descending)
+    if parameters.sort in _NEWEST_WITHIN:
+        found.sort(key=_newest_key, reverse=True)
+        if contact:
+            found.sort(key=lambda row: from_contact.get((row.account, row.message_id), False), reverse=descending)
+        else:
+            found.sort(key=lambda row: _value_key(row, parameters.sort), reverse=descending)
+    else:
+        found.sort(key=lambda row: _row_key(row, parameters.sort), reverse=descending)
     return tuple(found[parameters.offset:want])
 
 
 def message_combined_groups(engine: Engine, parameters: CombinedParameters) -> tuple[GroupCount, ...]:
     """The groups of a combined view, in the order of message.combined with the same options, each with its number of messages."""
     view = parameters.view
+    if parameters.sort == CONTACT_SORT or SortField(parameters.sort) in YES_NO_SORTS:
+        return ()  # the yes/no sorts have no group headers
     sort, descending = SortField(parameters.sort), not parameters.oldest_first
     bounds = date_bounds(datetime.now())
     counts: dict[str, GroupCount] = {}

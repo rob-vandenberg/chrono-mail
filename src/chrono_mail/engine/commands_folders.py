@@ -1,3 +1,4 @@
+import threading
 from dataclasses import dataclass, field
 
 from chrono_mail.core import StorageError
@@ -8,9 +9,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.sync import rebuild_index, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 0.0.45"
+__version__ = "commands_folders.py 0.3.111"
 
 # --- Version history ----------------------------------------------------
+# v0.3.111: Two rebuilds of the same index wait for each other
 # v0.0.45: maintenance works on the storage of an account
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.12: Initial folder and maintenance commands
@@ -111,11 +113,22 @@ class IndexResult:
     seconds: float
 
 
+_REBUILD_LOCKS: dict[str, threading.Lock] = {}  # index file -> held while it is rebuilt
+_REBUILD_LOCKS_GUARD: threading.Lock = threading.Lock()
+
+
+def _rebuild_lock(path: str) -> threading.Lock:
+    with _REBUILD_LOCKS_GUARD:
+        return _REBUILD_LOCKS.setdefault(path, threading.Lock())
+
+
 def index_rebuild(engine: Engine, parameters: AccountParameters) -> IndexResult:
     settings = engine.storage_settings(engine.resolve_account(parameters.account))
     store = engine.open_store(settings)
-    index, report = rebuild_index(store, engine.directories.index_file(settings.account.account_id), lambda done: engine.progress("Rebuilding the index", done, None))
-    index.close()
+    path = engine.directories.index_file(settings.account.account_id)
+    with _rebuild_lock(str(path.resolve())):  # accounts in Local Folders share one index: a second rebuild would build the same file at the same time
+        index, report = rebuild_index(store, path, lambda done: engine.progress("Rebuilding the index", done, None))
+        index.close()
     return IndexResult(report.indexed, report.unreadable, report.seconds)
 
 

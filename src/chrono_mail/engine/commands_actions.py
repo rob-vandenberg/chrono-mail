@@ -8,11 +8,13 @@ from chrono_mail.engine.commands_mail import MessageParameters, _check_id
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import Engine
+from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_actions.py 0.2.102"
+__version__ = "commands_actions.py 0.3.112"
 
 # --- Version history ----------------------------------------------------
+# v0.3.112: Moving a message whose file is gone to Junk removes it from the index (gone)
 # v0.2.102: Archiving notes the folder a message came from (archived.log); message.unarchive moves it back there (the Inbox when unknown)
 # v0.2.101: The Archive folder is made safely (one folder when several messages are archived at once)
 # v0.0.34: junk and not junk
@@ -108,6 +110,7 @@ def message_unarchive(engine: Engine, parameters: MessageParameters) -> ArchiveR
 class JunkResult:
     message_id: str
     folder: str
+    gone: bool = False  # the file of the message no longer existed: it was only removed from the index
 
 
 def message_junk(engine: Engine, parameters: MessageParameters) -> JunkResult:
@@ -117,7 +120,11 @@ def message_junk(engine: Engine, parameters: MessageParameters) -> JunkResult:
         junk = mailbox.role_folder(FolderRole.JUNK)
         if reference.folder_path == junk:
             raise UsageError("The message is in the Junk folder already")
-        moved = mailbox.move(reference, junk)
+        try:
+            moved = mailbox.move(reference, junk)
+        except MessageNotFoundError:
+            mailbox.forget(reference)  # a missing file is a deleted message
+            return JunkResult(reference.store_id, "/".join(junk), gone=True)
         return JunkResult(moved.store_id, "/".join(junk))
 
 

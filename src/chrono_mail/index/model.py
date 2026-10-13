@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.2.94"
+__version__ = "model.py 0.3.109"
 
 # --- Version history ----------------------------------------------------
+# v0.3.109: Sorting by unread, flagged, attachment, replied, folder, messages in conversation and preview
 # v0.2.94: Sorting by recipients (to); group headers of the message list (GroupCount, DATE_GROUPS, SIZE_GROUPS)
 # v0.0.23: people in index entries, KnownAddress
 # v0.0.18: Conversations: counts, grouped list, conversation bar
@@ -39,6 +40,16 @@ class SortField(Enum):
     SENDER = "sender"
     SIZE = "size"
     RECIPIENTS = "to"
+    UNREAD = "unread"
+    FLAGGED = "flagged"
+    ATTACHMENT = "attachment"
+    REPLIED = "replied"
+    FOLDER = "folder"
+    CONVERSATION = "conversation"
+    PREVIEW = "preview"
+
+
+YES_NO_SORTS: frozenset[SortField] = frozenset({SortField.UNREAD, SortField.FLAGGED, SortField.ATTACHMENT, SortField.REPLIED})  # no group headers
 
 
 DATE_GROUPS: tuple[tuple[str, str], ...] = (  # key, name; newest first. The boundaries are given by the caller (local time)

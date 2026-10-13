@@ -729,3 +729,39 @@ Step 2 (0.3.108): "Message list" (`list_scale`; an older `list_font_size` in poi
 **Decision:** the composer's on and off button "Rich text" at the bottom right is a button at the bottom left that shows the way of writing ("Rich text" or "Plain text") with a menu to choose (the chosen one ticked); choosing Plain text still asks first when formatting would be lost. Settings > Writing chooses in a list how new messages start ("New messages are written in": Rich text or Plain text; was a tick box); Rich text when nothing is saved (D-085), and a saved choice is never overruled.
 **Reason:** the owner could not tell from the on and off look whether rich text was on.
 
+
+## D-106 Every column of the message list sorts, except Delete
+*2026-10-13*
+
+**Decision:** this changes D-056 (only From / To, From, To, Subject, Received and Size sorted). A click on any column header sorts by it, except Delete (it holds nothing per message; a click on it leaves the sort arrow where it was, which Qt would otherwise move by itself). The icon columns Unread, Flagged, Attachment, Replied and Contact put the "yes" messages on top at the first click and at the bottom at the second, and have no group headers (their icon says it all). Folder and Preview sort A to Z first, Messages in conversation the largest number first; they have group headers: one per folder (named as the column shows it), one per number ("1 message", "2 messages"), one per preview ("(no preview)"). In all eight new orders, messages with the same value are listed newest first in both directions. The eight orders are also in the Sorted by menu. Index schema 5 adds an index per sort for Unread, Flagged, Replied, Attachment and Preview (every index is rebuilt once at the next start); the Unread one is on the read bit itself (`flags & 1`) so that SQLite also seeks it for unread counts (just as fast as the partial index of D-031, which it now takes instead). Contact cannot be sorted by the index (it does not know the contacts): the engine reads all messages of the folder, search or combined view and sorts them in memory, as for Snoozed until (D-099); Messages in conversation is counted per message by SQLite. Both may take a second or more in a folder of hundreds of thousands of messages (not measured).
+**Reason:** the owner's bug report: the icon columns showed the sort arrow but did not sort; the owner wants all columns sortable.
+
+## D-107 Index changes wait for each other; a message whose file is gone counts as deleted
+*2026-10-13*
+
+**Decision:** every change to the mail index starts with `BEGIN IMMEDIATE` instead of a deferred `BEGIN`, so changes from several connections at once wait for each other (up to the 30-second timeout) instead of failing. A missing message file raises `MessageNotFoundError` (a `StorageError`, text "Message not found"). Deleting a message whose file is gone, to Trash or for good, removes its line from the index and reports "deleted": the file is the truth, and a missing file is a deleted message.
+**Reason:** the owner deleted about 60 messages at once; the window runs the deletes in parallel, and with a deferred BEGIN SQLite answers "database is locked" at once (without waiting) when another connection wrote in between. The file was removed first and the failed index update was ignored, so 17 messages stayed in the list without a file and could not be deleted ("Message not found"). Measured outside the program: 60 removals at once from separate connections, 53 to 57 failed with a deferred BEGIN and none with BEGIN IMMEDIATE.
+
+## D-108 Maintenance once per place where mail is kept
+*2026-10-13*
+
+**Decision:** the Maintenance buttons of Settings > Security and storage (check all stored mail, rebuild the search index) run once per place where mail is kept: accounts that keep their mail in Local Folders are left out, the Local Folders line covers them. `index.rebuild` holds a lock per index file, so two rebuilds of the same index in one program wait for each other (the command line tool at the same moment is not covered). The report under the buttons can be selected and copied.
+**Reason:** the owner's rebuild ran four rebuilds of the shared Local Folders index at once (three POP3 accounts and Local Folders); all built the same work file and three failed with "No such file or directory" or "disk I/O error". The one that finished first left a sound index (checked).
+
+## D-109 Messages whose file is gone: delete-type actions remove them, all actions warn
+*2026-10-13*
+
+**Decision:** this extends D-107. The actions that are a kind of delete (Delete, Delete for good, Move to Trash, Move to Junk) treat a message whose file is gone as deleted: its line leaves the index and the command answers "gone" (`message.delete` outcome, `message.junk` field `gone`). Every other action (Move, also by dragging, Copy, Archive, Unarchive, Not junk, Snooze, Cancel snooze, Flag, Mark read or unread, opening) leaves the index alone and shows its error. In both cases the window warns once per action (a timer gathers the answers of its messages): a window "Messages missing" and the red line at the bottom, "Some messages no longer exist on disk. Go to Settings > Security and storage and click Repair the search index." Settings > Security and storage has a Repair the search index button (`index.reconcile`, once per place where mail is kept): it removes index lines whose file is gone and adds files the index lacks, without reading all mail; the report says how many were removed, added and corrected. The index is never repaired by itself.
+**Reason:** the owner's instructions: a missing file is a deleted message, but only an action that deletes may draw that conclusion on its own; the person decides when the index is repaired.
+
+## D-110 The page list of Settings is 2 points larger
+*2026-10-13*
+
+**Decision:** the list of pages on the left of the Settings window has its own text size: the desktop's general font size plus 2 points, times the size factor of the interface (it follows the slider at once, like the rest). With the program's present desktop size of 9 points that is 11 points at the standard size. Every other text keeps the desktop's size times its slider (D-104).
+**Reason:** the owner's request; it stays tied to the desktop's size, like every other text size. Found while answering: the Qt that comes with the program (pip PySide6) gets "Sans Serif 9" from the desktop, while the owner's KDE uses its default (Noto Sans 10 points, not checked) because the KDE settings file has no font line; [Speculation] the Qt of the program cannot read KDE's font settings.
+
+## D-111 IMAP: messages gone on both sides are forgotten
+*2026-10-13*
+
+**Decision:** when a synchronised message is gone from the server and its file is gone here too, the sync forgets it (removes it from the account's IMAP state) without a note, and it does not count for the rule that refuses to remove mail here when most of a folder vanished from the server (D-049). Nothing is deleted anywhere by this. It is not done while the store looks damaged or empty (the same guard as deleting on the server, D-050).
+**Reason:** after the owner deleted about 60 messages here, the server deletion was (rightly) refused at every check; emptying them on the server as well would have made the other rule refuse at every check, because the state still remembered them. The owner can now empty that Trash on the server once and the warning stops.

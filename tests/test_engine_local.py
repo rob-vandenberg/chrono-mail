@@ -19,9 +19,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 0.2.94"
+__version__ = "test_engine_local.py 0.3.109"
 
 # --- Version history ----------------------------------------------------
+# v0.3.109: Combined views in the new sort orders (no groups for the yes/no sorts)
 # v0.2.94: Combined views in any sort order and their groups
 # v0.0.49: Rules without conditions for one account
 # v0.0.47: Pinned favorites, account groups and search in combined views
@@ -348,11 +349,18 @@ def test_a_rule_for_one_account_files_its_mail_in_a_folder_of_local_folders_and_
 def test_combined_views_follow_the_sort_and_their_groups_match(two: Two) -> None:
     call(two.engine, "mail.fetch", account=two.a)
     call(two.engine, "mail.fetch", account=two.b)
-    for sort in ("date", "subject", "sender", "to", "size"):
+    for sort in ("date", "subject", "sender", "to", "size", "folder", "conversation", "preview", "unread", "flagged", "attachment", "replied", "contact"):
         for oldest_first in (False, True):
             rows = call(two.engine, "message.combined", view="inboxes", sort=sort, oldest_first=oldest_first, limit=100)
             groups = call(two.engine, "message.combined-groups", view="inboxes", sort=sort, oldest_first=oldest_first)
-            assert sum(group.count for group in groups) == len(rows) == 4
+            assert len(rows) == 4
+            if sort in ("unread", "flagged", "attachment", "replied", "contact"):
+                assert groups == ()  # the icon columns have no group headers
+                if not oldest_first:
+                    newest = [row.date for row in rows]
+                    assert newest == sorted(newest, key=lambda moment: moment.timestamp() if moment else 0.0, reverse=True)  # all the same value: newest first
+            else:
+                assert sum(group.count for group in groups) == 4
     by_subject = [row.subject for row in call(two.engine, "message.combined", view="inboxes", sort="subject", oldest_first=True)]
     assert by_subject == sorted(by_subject, key=str.lower)
     groups = call(two.engine, "message.combined-groups", view="inboxes", sort="subject", oldest_first=True)

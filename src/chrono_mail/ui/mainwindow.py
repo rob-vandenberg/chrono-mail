@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError, program_version
+from chrono_mail.store import MessageNotFoundError
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.engine.schedule import snooze_presets
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
@@ -53,6 +54,7 @@ from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.models import (
     ACCOUNT_ROLE,
     CONTACT_ROLE,
+    YES_NO_SORTS,
     FOLDER_PATH_ROLE,
     FOLDER_ROLE_ROLE,
     GROUP_ROLE,
@@ -85,9 +87,11 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.3.108"
+__version__ = "mainwindow.py 0.3.112"
 
 # --- Version history ----------------------------------------------------
+# v0.3.112: A message whose file is gone gives one warning per action (a window and the red line) with the advice to repair the search index
+# v0.3.109: Every column but Delete sorts (icon columns: yes first; Messages in conversation: largest first; Folder and Preview: A to Z), the eight new sorts in the Sorted by menu; a click on Delete leaves the sort arrow where it was
 # v0.3.108: The message list has its own size factor (text, rows, cards, icons and columns), tried out at once from Settings; the size of the text of messages is a factor for reading and writing, tried out at once from Settings (Cancel puts it back); open composers follow
 # v0.3.106: The size factor of the interface is tried out while the slider in Settings moves (Cancel puts it back); the fixed sizes of the window follow it
 # v0.2.102: In the Archive folder Archive is Unarchive (back to the folder it came from); Move to Junk and Not junk (move to Inbox) say what they do
@@ -155,11 +159,16 @@ AUTO_CHECK_MINUTES: int = 5
 DUE_CHECK_MS: int = 60_000
 WATCH_SECONDS: int = 300
 WATCH_RETRY_MS: int = 60_000
-SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Received"), ("subject", "Subject"), ("sender", "Sender"), ("to", "To"), ("size", "Size"), ("snoozed", "Snoozed until"))
+SORT_CHOICES: tuple[tuple[str, str], ...] = (
+    ("date", "Received"), ("subject", "Subject"), ("sender", "Sender"), ("to", "To"), ("size", "Size"),
+    ("unread", "Unread"), ("flagged", "Flagged"), ("attachment", "Attachment"), ("replied", "Replied"), ("contact", "Contact"),
+    ("folder", "Folder"), ("conversation", "Messages in conversation"), ("preview", "Preview"), ("snoozed", "Snoozed until"),
+)
 _WEEKDAYS: tuple[str, ...] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # in the snooze menu, English like the rest of the interface
 _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-outbox", "drafts": "document-edit", "trash": "user-trash", "junk": "mail-mark-junk", "archive": "folder-archive", "other": "folder"}
 
 
+MISSING_WARNING: str = "Some messages no longer exist on disk. Go to Settings > Security and storage and click Repair the search index."
 SIDEBAR_KEY: str = "sidebar"  # stands for the sidebar answer among the folder lists that are awaited
 
 
@@ -249,6 +258,10 @@ class MainWindow(QMainWindow):
         self._mark_read_timer = QTimer(self)
         self._mark_read_timer.setSingleShot(True)
         self._mark_read_timer.timeout.connect(self._mark_shown_as_read)
+        self._missing_timer = QTimer(self)  # the answers of an action come one message at a time: one warning for all of them
+        self._missing_timer.setSingleShot(True)
+        self._missing_timer.setInterval(300)
+        self._missing_timer.timeout.connect(self._show_missing_warning)
 
     # --- construction ---------------------------------------------------------------------------------
 
@@ -1261,6 +1274,17 @@ class MainWindow(QMainWindow):
 
     def _report(self, title: str, error: ChronoMailError) -> None:
         self.show_status(f"{title}: {error}", error=True)
+        if isinstance(error, MessageNotFoundError):
+            self._missing_timer.start()
+
+    def _note_gone(self, result: object) -> None:
+        """A delete or a move to Junk found the file of its message gone (it only left the index): warn about it."""
+        if getattr(result, "outcome", "") == "gone" or getattr(result, "gone", False):
+            self._missing_timer.start()
+
+    def _show_missing_warning(self) -> None:
+        self.show_status(MISSING_WARNING, error=True)
+        QMessageBox.warning(self, "Messages missing", MISSING_WARNING)
 
     # --- accounts and folders ----------------------------------------------------------------------------
 
@@ -1860,6 +1884,7 @@ class MainWindow(QMainWindow):
         def done(result: object) -> None:
             nonlocal remaining
             remaining -= 1
+            self._note_gone(result)
             if remaining == 0:
                 self._after_change(f"Deleted {len(rows)} message(s)" if in_trash else f"Moved {len(rows)} message(s) to Trash")
 
@@ -1935,6 +1960,7 @@ class MainWindow(QMainWindow):
         def done(result: object) -> None:
             nonlocal remaining
             remaining -= 1
+            self._note_gone(result)
             if remaining == 0:
                 self._after_change(f"Moved {len(rows)} message(s) to Junk" if junk else f"Moved {len(rows)} message(s) back to the Inbox")
 
@@ -2059,6 +2085,7 @@ class MainWindow(QMainWindow):
         def done(result: object) -> None:
             nonlocal remaining
             remaining -= 1
+            self._note_gone(result)
             if remaining == 0:
                 self._after_change(f"Deleted {len(rows)} message(s) for good")
 
@@ -2325,7 +2352,11 @@ class MainWindow(QMainWindow):
         self.list_model.refresh_cells()
 
     def _show_sort_indicator(self) -> None:
-        sort_of = {"sender": ("from_to", "from"), "subject": ("subject",), "date": ("date",), "size": ("size",), "to": ("to",), "snoozed": (SNOOZED_COLUMN,)}
+        sort_of = {
+            "sender": ("from_to", "from"), "subject": ("subject",), "date": ("date",), "size": ("size",), "to": ("to",), "snoozed": (SNOOZED_COLUMN,),
+            "unread": ("status",), "flagged": ("flag",), "attachment": ("attachment",), "replied": ("replied",), "contact": ("contact",),
+            "folder": ("folder",), "conversation": ("conversation",), "preview": ("preview",),
+        }
         header = self.list_view.header()
         for position, column_id in enumerate(self.list_model.columns):
             if column_id in sort_of.get(self._effective_sort(), ()):
@@ -2339,11 +2370,13 @@ class MainWindow(QMainWindow):
             return
         sort = BY_ID[columns[section]].sort
         if sort is None:
+            self._show_sort_indicator()  # Qt moved the arrow to the clicked column by itself: put it back
             return
         if sort == self._effective_sort():
             self._set_sort(sort, not self._oldest_first)
         else:
-            self._set_sort(sort, sort != "date" and sort != "size")  # text columns A to Z first, dates and sizes newest and largest first, snoozed soonest first
+            # text columns A to Z first, dates, sizes and conversations newest and largest first, the icon columns yes first, snoozed soonest first
+            self._set_sort(sort, sort not in ("date", "size", "conversation") and sort not in YES_NO_SORTS)
         self._show_sort_indicator()
 
     def _columns_moved(self, logical: int, old_visual: int, new_visual: int) -> None:

@@ -10,6 +10,8 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.ui import appearance, prefs, scale
 from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.reader import ReaderWidget
+from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.ui.mainwindow import MISSING_WARNING
 from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.test_ui_composer import fill, new_composer
 from tests.ui.test_ui_reader import Probe, load, probe, reader, shown  # noqa: F401 - fixtures
@@ -18,9 +20,11 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.3.108"
+__version__ = "test_ui_preferences.py 0.3.112"
 
 # --- Version history ----------------------------------------------------
+# v0.3.112: Repair the search index; one warning for messages whose file is gone
+# v0.3.111: Maintenance once per place where mail is kept; its report can be selected
 # v0.3.108: The size of messages, read and written, is set with its slider
 # v0.2.100: Snoozed until keeps its place when the columns are chosen in Settings
 # v0.2.98: Roomy is checked by the row height (36 px), not by the old row padding
@@ -307,6 +311,19 @@ def test_the_security_page_shows_the_key_and_can_check_and_rebuild(world: World,
     assert any(str(world.engine.directories.data_directory) in label.text() for label in dialog.findChildren(QLabel))
 
 
+def test_maintenance_works_once_on_local_folders_shared_by_accounts(world: World, qtbot: QtBot) -> None:
+    world.call("account.set-storage", account=world.account_id, storage="local")  # the account's mail moves into Local Folders
+    dialog = SettingsDialog(world.backend, settings_of(world), True, None)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    assert dialog.maintenance_label.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
+    for button, done in ((dialog.rebuild_button, "messages indexed"), (dialog.verify_button, "messages checked")):
+        button.click()
+        wait(qtbot, lambda: done in dialog.maintenance_label.text() and button.isEnabled())
+        lines = dialog.maintenance_label.text().split("<br>")
+        assert len(lines) == 1 and lines[0].startswith("Local Folders: 3 "), lines  # one line, no error from a second run on the same index
+
+
 def test_keys_can_be_changed_checked_for_clashes_and_reset(world: World, qtbot: QtBot) -> None:
     window = world.window
     registry = window._shortcut_registry()  # noqa: SLF001
@@ -386,3 +403,38 @@ def test_new_messages_start_in_the_way_of_writing_chosen(world: World, qtbot: Qt
     composer = world.window._composers[0]  # noqa: SLF001
     assert composer.is_rich() is rich and composer.rich_button.text() == ("Rich text" if rich else "Plain text")
 
+
+
+def lose_files(world: World, message_ids: list[str]) -> None:
+    """The files of these messages disappear; the index still lists them."""
+    with open_mailbox(world.engine, world.account_id) as mailbox:
+        for message_id in message_ids:
+            for path in mailbox.store.root.rglob(f"{message_id}*"):
+                path.unlink()
+
+
+def test_repair_removes_messages_whose_file_is_gone(world: World, qtbot: QtBot) -> None:
+    world.window.start()
+    settle(qtbot, world, 3)
+    lose_files(world, [row_of(world.window, 0).message_id])
+    dialog = SettingsDialog(world.backend, settings_of(world), True, None)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.repair_button.click()
+    wait(qtbot, lambda: "removed" in dialog.maintenance_label.text() and dialog.repair_button.isEnabled())
+    assert f"{world.account_id}" not in dialog.maintenance_label.text() and ": 1 removed (no file), 0 added, 0 corrected" in dialog.maintenance_label.text()
+
+
+def test_messages_whose_file_is_gone_give_one_warning_per_action(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    rows = [row_of(window, position) for position in range(3)]
+    lose_files(world, [row.message_id for row in rows])
+    window._delete_rows(rows[:2])  # noqa: SLF001 - two messages to Trash: they are gone, removed from the list
+    wait(qtbot, lambda: window.list_model.message_count() == 1 and window.status_label.text() == MISSING_WARNING)
+    assert [shown for shown in world.dialogs.shown if shown[1] == "Messages missing"] == [("warning", "Messages missing", MISSING_WARNING)]
+    window.list_view.setCurrentIndex(window.list_model.index(0, 0))
+    window.mark_selected(flagged=True)  # flagging only warns: the message stays in the list
+    wait(qtbot, lambda: len([shown for shown in world.dialogs.shown if shown[1] == "Messages missing"]) == 2)
+    assert window.list_model.message_count() == 1 and window.status_label.text() == MISSING_WARNING

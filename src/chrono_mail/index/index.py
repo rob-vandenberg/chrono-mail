@@ -17,6 +17,7 @@ from chrono_mail.index.model import (
     IndexEntry,
     KnownAddress,
     SearchFilter,
+    YES_NO_SORTS,
     SortField,
     flags_from_bits,
     flags_to_bits,
@@ -24,9 +25,11 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.2.94"
+__version__ = "index.py 0.3.110"
 
 # --- Version history ----------------------------------------------------
+# v0.3.110: A change takes the write lock at its start (BEGIN IMMEDIATE), so changes made at the same time wait for each other instead of failing
+# v0.3.109: Sorting by unread, flagged, attachment, replied, folder, messages in conversation and preview (newest first within the same value); groups by folder, conversation size and preview
 # v0.2.94: Sorting by recipients; a search in any sort order; the groups of a folder or a search (group headers)
 # v0.0.23: addresses seen in messages, suggest
 # v0.0.19: OR and NOT (and a minus) in search words
@@ -41,10 +44,28 @@ _SORT_COLUMN: dict[SortField, str] = {
     SortField.SENDER: "m.sender COLLATE NOCASE",
     SortField.SIZE: "m.size",
     SortField.RECIPIENTS: "m.recipients COLLATE NOCASE",
+    SortField.UNREAD: "(m.flags & 1)",  # 0 for unread, so that SQLite seeks it for unread counts too; _order turns its direction round
+    SortField.FLAGGED: "((m.flags & 4) <> 0)",  # the other yes/no keys are 1 for yes: the newest-first direction puts yes on top
+    SortField.REPLIED: "((m.flags & 2) <> 0)",
+    SortField.ATTACHMENT: "m.has_attachments",
+    SortField.FOLDER: "m.folder COLLATE NOCASE",
+    SortField.CONVERSATION: "(SELECT count(*) FROM messages c WHERE c.thread_key = m.thread_key)",
+    SortField.PREVIEW: "m.preview COLLATE NOCASE",
 }
-_TEXT_GROUP_COLUMN: dict[SortField, str] = {SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender", SortField.RECIPIENTS: "m.recipients"}
+_NEWEST_WITHIN: frozenset[SortField] = YES_NO_SORTS | {SortField.FOLDER, SortField.CONVERSATION, SortField.PREVIEW}  # messages with the same value: newest first, either way
+_TEXT_GROUP_COLUMN: dict[SortField, str] = {
+    SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender", SortField.RECIPIENTS: "m.recipients", SortField.FOLDER: "m.folder", SortField.PREVIEW: "m.preview",
+}
 _FIELD_COLUMN: dict[str, str] = {"from": "sender", "to": "recipients", "subject": "subject", "body": "body"}
 _TERM: re.Pattern[str] = re.compile(r'(-?)(?:(\w+):)?("[^"]*"?|\S+)')
+
+
+def _order(sort: SortField, descending: bool) -> str:
+    """The ORDER BY of a list or a search."""
+    direction = "DESC" if descending != (sort is SortField.UNREAD) else "ASC"
+    if sort in _NEWEST_WITHIN:
+        return f"{_SORT_COLUMN[sort]} {direction}, m.date DESC, m.id DESC"
+    return f"{_SORT_COLUMN[sort]} {direction}, m.id {direction}"
 
 
 def _folder_key(path: tuple[str, ...]) -> str:
@@ -166,7 +187,7 @@ class Index:
 
     @contextmanager
     def _transaction(self) -> Generator[None]:
-        self._connection.execute("BEGIN")
+        self._connection.execute("BEGIN IMMEDIATE")  # a deferred BEGIN fails at once with "database is locked" when another connection wrote in between
         try:
             yield
         except BaseException:
@@ -304,11 +325,10 @@ class Index:
         unread_only: bool = False,
     ) -> list[IndexedMessage]:
         """One screenful of a folder, in the chosen order."""
-        direction = "DESC" if descending else "ASC"
         sql = (
             f"SELECT {_COLUMNS} FROM messages m WHERE m.folder = ?"
             + (" AND (m.flags & 1) = 0" if unread_only else "")
-            + f" ORDER BY {_SORT_COLUMN[sort]} {direction}, m.id {direction} LIMIT ? OFFSET ?"
+            + f" ORDER BY {_order(sort, descending)} LIMIT ? OFFSET ?"
         )
         rows = self._connection.execute(sql, (_folder_key(folder), max(0, limit), max(0, offset))).fetchall()
         return [_row(row) for row in rows]
@@ -356,8 +376,7 @@ class Index:
     ) -> list[IndexedMessage]:
         """Messages matching the words and the filters, newest first unless another order is asked for. An empty query lists by filters only."""
         source, where, parameters = self._search_parts(query, folder, filters)
-        direction = "DESC" if descending else "ASC"
-        sql = f"SELECT {_COLUMNS} FROM {source}{where} ORDER BY {_SORT_COLUMN[sort]} {direction}, m.id {direction} LIMIT ? OFFSET ?"
+        sql = f"SELECT {_COLUMNS} FROM {source}{where} ORDER BY {_order(sort, descending)} LIMIT ? OFFSET ?"
         parameters.extend([max(0, limit), max(0, offset)])
         try:
             return [_row(row) for row in self._connection.execute(sql, parameters).fetchall()]
@@ -374,7 +393,10 @@ class Index:
         descending: bool = True,
     ) -> list[GroupCount]:
         """The groups of a folder or a search in the order the messages are listed (search with the same arguments), each
-        with its number of messages: date groups when sorted by date, size groups by size, one group per text otherwise."""
+        with its number of messages: date groups when sorted by date, size groups by size, one group per number of messages
+        in the conversation, none for the yes/no sorts (unread, flagged ...), one group per text otherwise."""
+        if sort in YES_NO_SORTS:
+            return []
         source, where, parameters = self._search_parts(query, folder, filters)
         if sort is SortField.DATE:
             cases = " ".join(f"WHEN m.date >= ? THEN {position}" for position in range(len(bounds.starts())))
@@ -389,6 +411,12 @@ class Index:
             key = f"CASE {cases} ELSE {len(SIZE_GROUPS) - 1} END"
             sql = f"SELECT {key} AS g, count(*) FROM {source}{where} GROUP BY g ORDER BY g {'DESC' if descending else 'ASC'}"
             names = tuple((group_key, name) for group_key, name, _ in SIZE_GROUPS)
+        elif sort is SortField.CONVERSATION:
+            sql = f"SELECT {_SORT_COLUMN[sort]} AS g, count(*) FROM {source}{where} GROUP BY g ORDER BY g {'DESC' if descending else 'ASC'}"
+            try:
+                return [GroupCount(f"{int(size):09d}", str(int(size)), int(count)) for size, count in self._connection.execute(sql, parameters).fetchall()]
+            except sqlite3.OperationalError as error:
+                raise StorageError(f"The search could not be run: {error}") from None
         else:
             column = _TEXT_GROUP_COLUMN[sort]
             sql = (
@@ -396,9 +424,12 @@ class Index:
                 f" GROUP BY {column} COLLATE NOCASE ORDER BY {column} COLLATE NOCASE {'DESC' if descending else 'ASC'}"
             )
             try:
-                return [GroupCount(str(key), str(value), int(count)) for key, value, count in self._connection.execute(sql, parameters).fetchall()]
+                found_text = self._connection.execute(sql, parameters).fetchall()
             except sqlite3.OperationalError as error:
                 raise StorageError(f"The search could not be run: {error}") from None
+            if sort is SortField.FOLDER:  # named as the Folder column shows it
+                return [GroupCount(str(key), "/".join(_folder_path(str(value))), int(count)) for key, value, count in found_text]
+            return [GroupCount(str(key), str(value), int(count)) for key, value, count in found_text]
         try:
             found = self._connection.execute(sql, parameters).fetchall()
         except sqlite3.OperationalError as error:

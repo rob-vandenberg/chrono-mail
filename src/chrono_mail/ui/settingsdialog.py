@@ -3,7 +3,7 @@ from collections.abc import Callable
 from typing import override
 
 from PySide6.QtCore import QRect, QSettings, QSize, Qt, Signal
-from PySide6.QtGui import QKeySequence, QPainter, QPaintEvent, QPalette, QPen
+from PySide6.QtGui import QFont, QKeySequence, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -47,9 +47,12 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.3.108"
+__version__ = "settingsdialog.py 0.3.113"
 
 # --- Version history ----------------------------------------------------
+# v0.3.113: The page list has its own text size: the desktop's size plus 2 points, times the interface factor
+# v0.3.112: Repair the search index (index.reconcile: only what differs from the stored files)
+# v0.3.111: Maintenance works once per place where mail is kept (accounts in Local Folders are covered by its line); its report can be selected and copied
 # v0.3.108: The message list is a size slider too (Message list)
 # v0.3.108: Writing: new messages are written in Rich text or Plain text, chosen in a list (was a tick box); a blank line above Sizes
 # v0.3.108: The text of messages (read and written) is a size slider too (one part for both, _size_row)
@@ -90,6 +93,7 @@ def _combo(parent: QWidget, choices: tuple[tuple[str, str], ...], current: str) 
     return box
 
 
+SIDEBAR_EXTRA_POINTS: float = 2.0  # the page list: the desktop's font size plus this, times the size factor of the interface
 SLIDER_WIDTH: int = 200  # pixels at the standard size: the smallest width of the size slider
 MINIMUM_WIDTH: int = 760  # the smallest size of this window at the standard size
 MINIMUM_HEIGHT: int = 520
@@ -174,6 +178,7 @@ class SettingsDialog(QDialog):
         body = QHBoxLayout()
         self.sidebar = QListWidget(self)
         self.sidebar.setFixedWidth(px(190))
+        self._size_sidebar_text(scale.interface())
         self.pages = QStackedWidget(self)
         body.addWidget(self.sidebar)
         body.addWidget(self.pages, 1)
@@ -201,6 +206,14 @@ class SettingsDialog(QDialog):
         self.sidebar.setCurrentRow(0)
         self.reload()
         restore_geometry(self, settings, "settings_geometry")
+
+    def _size_sidebar_text(self, factor: float) -> None:
+        """The page list is a little larger than the rest: the desktop's size plus SIDEBAR_EXTRA_POINTS, times the factor."""
+        app = QApplication.instance()
+        system = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
+        font = QFont(self.sidebar.font())
+        font.setPointSizeF(round((system + SIDEBAR_EXTRA_POINTS) * factor, 2))
+        self.sidebar.setFont(font)
 
     def _add_page(self, title: str, page: QWidget) -> None:
         self.sidebar.addItem(QListWidgetItem(title))
@@ -280,6 +293,7 @@ class SettingsDialog(QDialog):
         factor = scale.factor_at(position)
         self.interface_scale_tried.emit(factor)
         self.sidebar.setFixedWidth(px(190))  # this window follows too
+        self._size_sidebar_text(factor)
         for slider in (self.interface_slider, self.list_slider, self.reading_slider):
             slider.setMinimumWidth(px(SLIDER_WIDTH))
         self._grow_with(factor)
@@ -500,16 +514,19 @@ class SettingsDialog(QDialog):
         maintenance = QGroupBox("Maintenance", page)
         maintenance_layout = QVBoxLayout(maintenance)
         self.verify_button = QPushButton("Check that all stored mail can be read", maintenance)
+        self.repair_button = QPushButton("Repair the search index", maintenance)
         self.rebuild_button = QPushButton("Rebuild the search index", maintenance)
         self.maintenance_label = QLabel("", maintenance)
         self.maintenance_label.setWordWrap(True)
-        for widget in (self.verify_button, self.rebuild_button, self.maintenance_label):
+        self.maintenance_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        for widget in (self.verify_button, self.repair_button, self.rebuild_button, self.maintenance_label):
             maintenance_layout.addWidget(widget)
         layout.addWidget(maintenance)
         layout.addStretch(1)
         self.recovery_button.clicked.connect(lambda: RecoveryDialog(self._backend, self).exec())
         self.restore_button.clicked.connect(self.restore_key_requested)
         self.verify_button.clicked.connect(lambda: self._maintain("store.verify", "Checking"))
+        self.repair_button.clicked.connect(lambda: self._maintain("index.reconcile", "Repairing"))
         self.rebuild_button.clicked.connect(lambda: self._maintain("index.rebuild", "Rebuilding"))
         self._backend.call("key.status", {}, self._key_status, lambda error: self.key_label.setText(str(error)), owner=self)
         return page
@@ -524,17 +541,20 @@ class SettingsDialog(QDialog):
 
     def _maintain(self, command: str, verb: str) -> None:
         self.verify_button.setEnabled(False)
+        self.repair_button.setEnabled(False)
         self.rebuild_button.setEnabled(False)
         self.maintenance_label.setText(f"{verb}…")
         report: list[str] = []
 
         def finished() -> None:
             self.verify_button.setEnabled(True)
+            self.repair_button.setEnabled(True)
             self.rebuild_button.setEnabled(True)
             self.maintenance_label.setText("<br>".join(report) or "No accounts.")
 
         def listed(result: object) -> None:
-            accounts = [str(getattr(account, "account_id")) for account in (result if isinstance(result, (tuple, list)) else [])]
+            # Accounts that keep their mail in Local Folders share its store and index: the Local Folders line covers them
+            accounts = [str(getattr(account, "account_id")) for account in (result if isinstance(result, (tuple, list)) else []) if getattr(account, "storage", "own") != "local"]
             names = {str(getattr(account, "account_id")): str(getattr(account, "label")) for account in (result if isinstance(result, (tuple, list)) else [])}
             if not accounts:
                 finished()
@@ -546,6 +566,9 @@ class SettingsDialog(QDialog):
                     if command == "store.verify":
                         damaged = tuple(getattr(outcome, "damaged"))
                         report.append(f"{names[account]}: {getattr(outcome, 'checked')} messages checked, " + (f"<span style='color:{red()}'>{len(damaged)} damaged</span>" if damaged else "all can be read"))
+                    elif command == "index.reconcile":
+                        changes = f"{getattr(outcome, 'removed')} removed (no file), {getattr(outcome, 'added')} added, {getattr(outcome, 'corrected')} corrected"
+                        report.append(f"{names[account]}: {changes}")
                     else:
                         report.append(f"{names[account]}: {getattr(outcome, 'messages')} messages indexed")
                     remaining.remove(account)

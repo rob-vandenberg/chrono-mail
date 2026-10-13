@@ -14,9 +14,10 @@ from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, w
 from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_name, split_info
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 0.2.101"
+__version__ = "store.py 0.3.110"
 
 # --- Version history ----------------------------------------------------
+# v0.3.110: MessageNotFoundError: the file of a message is not in the store
 # v0.2.101: Creating a folder re-reads the folders under a lock (no second folder with the same path when commands run at the same time); ensure_folder; merge_duplicate_folders repairs stores where that happened
 # v0.0.45: deliver can keep a message's identity
 # v0.0.7: Initial encrypted Maildir store
@@ -38,6 +39,10 @@ def _folder_lock(root: Path) -> threading.RLock:
 
 def _no_checkpoint(name: str) -> None:
     """Crash points: tests replace this to simulate a crash at a named step."""
+
+
+class MessageNotFoundError(StorageError):
+    """The file of a message is not in the store (any more)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,7 +372,7 @@ class Store:
                     parsed = parse_name(entry.name)
                     if parsed is not None and parsed[0] == store_id:
                         return Path(entry.path)
-        raise StorageError("Message not found")
+        raise MessageNotFoundError("Message not found")
 
     def read(self, ref: MessageRef, hint: str | None = None) -> bytes:
         """The raw message. Raises CryptoError when the file is damaged."""

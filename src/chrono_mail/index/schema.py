@@ -1,13 +1,14 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 0.0.23"
+__version__ = "schema.py 0.3.109"
 
 # --- Version history ----------------------------------------------------
+# v0.3.109: Schema 5: indexes for sorting by unread, flagged, replied, attachment and preview
 # v0.0.23: Schema 4: the addresses seen in messages (for completing addresses)
 # v0.0.14: Schema 3: previews are cleaned (older indexes are rebuilt)
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 4
+SCHEMA_VERSION: int = 5
 MINIMUM_SQLITE_VERSION: tuple[int, int, int] = (3, 43, 0)  # contentless FTS5 tables that allow deletes
 FOLDER_SEPARATOR: str = "\x1f"
 
@@ -33,6 +34,12 @@ STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX messages_by_subject ON messages (folder, subject COLLATE NOCASE, id)",
     "CREATE INDEX messages_by_sender ON messages (folder, sender COLLATE NOCASE, id)",
     "CREATE INDEX messages_by_size ON messages (folder, size, id)",
+    # The sort keys of the yes/no sorts are written exactly like _SORT_COLUMN in index.py, or SQLite does not use these indexes.
+    "CREATE INDEX messages_by_unread ON messages (folder, (flags & 1), date DESC, id DESC)",  # also serves unread counts: (flags & 1) = 0 is a seek
+    "CREATE INDEX messages_by_flagged ON messages (folder, ((flags & 4) <> 0), date, id)",
+    "CREATE INDEX messages_by_replied ON messages (folder, ((flags & 2) <> 0), date, id)",
+    "CREATE INDEX messages_by_attachment ON messages (folder, has_attachments, date, id)",
+    "CREATE INDEX messages_by_preview ON messages (folder, preview COLLATE NOCASE, date, id)",
     "CREATE INDEX messages_by_thread ON messages (thread_key)",
     "CREATE INDEX messages_by_message_id ON messages (message_id)",
     # Every address seen in a From, To or Cc, with how often (counts only grow; a rebuild recounts exactly).

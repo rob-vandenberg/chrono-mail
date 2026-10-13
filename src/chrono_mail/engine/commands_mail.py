@@ -4,13 +4,14 @@ import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
-from email.utils import parseaddr
+from email.utils import getaddresses, parseaddr
 from pathlib import Path
 from typing import Literal
 
 from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag
 from chrono_mail.engine.commands_accounts import AccountParameters
+from chrono_mail.engine.commands_addressbook import AddressesParameters, contact_addresses
 from chrono_mail.engine.commands_rules import apply_to_new
 from chrono_mail.engine.recurring import RECURRING_FILE, Repeat, load_repeats, save_repeats
 from chrono_mail.engine.schedule import SNOOZE_GROUPS, SNOOZED_FILE, SNOOZED_FOLDER, describe_when, load_snoozed, parse_when, snooze_group
@@ -26,9 +27,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.2.100"
+__version__ = "commands_mail.py 0.3.109"
 
 # --- Version history ----------------------------------------------------
+# v0.3.109: Sort orders unread, flagged, attachment, replied, contact (sorted here: the index does not know the contacts), folder, conversation and preview
 # v0.2.100: Rows of the Snoozed folder carry the time they come back (snoozed_until); sort order "snoozed" with its groups (Today, Tomorrow, This week, Next week, Later)
 # v0.2.94: Sorting by recipients (to); search results in any sort order; message.groups: the groups of a folder or a search for the group headers
 # v0.0.86: Forward as attachment: the original message attached as an .eml file (attach_source_message)
@@ -109,6 +111,35 @@ def _by_snooze(messages: list[IndexedMessage], times: dict[str, int], soonest_fi
     """The messages of the Snoozed folder by the time they come back. The index does not know these times, so the whole
     folder is sorted here; the Snoozed folder holds what a person put away by hand, not hundreds of thousands of messages."""
     return sorted(messages, key=lambda message: times.get(message.store_id, LATER), reverse=not soonest_first)
+
+
+CONTACT_SORT: str = "contact"
+_RECIPIENT_ROLES: frozenset[FolderRole] = frozenset({FolderRole.SENT, FolderRole.DRAFTS})  # with Outbox: the folders where a row shows its recipients
+
+
+def contact_address_set(engine: Engine) -> frozenset[str]:
+    """Every e-mail address of every contact, in lower case."""
+    return frozenset(entry.address for entry in contact_addresses(engine, AddressesParameters()))
+
+
+def from_contacts(mailbox: Mailbox, messages: list[IndexedMessage], known: frozenset[str]) -> dict[str, bool]:
+    """store id -> whether the message is from a contact (in Sent, Drafts and Outbox: to a contact, the first recipient),
+    as the Contact column shows it."""
+    to_folders = {folder.path for folder in mailbox.folders() if folder.role in _RECIPIENT_ROLES} | {OUTBOX}
+    result: dict[str, bool] = {}
+    for message in messages:
+        found = getaddresses([message.recipients if message.folder in to_folders and message.recipients else message.sender])
+        result[message.store_id] = bool(found) and found[0][1].strip().lower() in known
+    return result
+
+
+def _by_contact(engine: Engine, mailbox: Mailbox, newest_first: list[IndexedMessage], contacts_first: bool) -> list[IndexedMessage]:
+    """The messages from a contact first or last, newest first within each part. The index does not know the contacts, so all messages are sorted here."""
+    contact = from_contacts(mailbox, newest_first, contact_address_set(engine))
+    return sorted(newest_first, key=lambda message: contact[message.store_id], reverse=contacts_first)  # a stable sort: newest first stays within each part
+
+
+EVERYTHING: int = 2**62  # a limit that takes every message
 
 
 def _snooze_sort(sort: str, folder: tuple[str, ...] | None) -> bool:
@@ -362,7 +393,9 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
 class ListParameters:
     account: str = field(metadata=option("The account"))
     folder: str = field(default="Inbox", metadata=option("The folder, for example Inbox or Archive/2026"))
-    sort: Literal["date", "subject", "sender", "to", "size", "snoozed"] = field(default="date", metadata=option("The sort order (snoozed: when it comes back, only in the Snoozed folder)"))
+    sort: Literal["date", "subject", "sender", "to", "size", "snoozed", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview"] = field(
+        default="date", metadata=option("The sort order (snoozed: when it comes back, only in the Snoozed folder; unread ... contact: yes first unless oldest_first)")
+    )
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
     offset: int = field(default=0, metadata=option("How many messages to skip"))
     limit: int = field(default=50, metadata=option("How many messages to show"))
@@ -385,13 +418,16 @@ def message_list(engine: Engine, parameters: ListParameters) -> ListResult:
         if times is not None and _snooze_sort(parameters.sort, folder):
             everything = mailbox.index.page(folder, SortField.DATE, True, 0, total, parameters.unread_only)
             rows = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
+        elif parameters.sort == CONTACT_SORT:
+            everything = mailbox.index.page(folder, SortField.DATE, True, 0, total, parameters.unread_only)
+            rows = _by_contact(engine, mailbox, everything, not parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         else:
             rows = mailbox.index.page(folder, _sort_field(parameters.sort), not parameters.oldest_first, parameters.offset, parameters.limit, parameters.unread_only)
         return ListResult("/".join(folder), total, mailbox.index.count(folder, unread_only=True), _rows(mailbox, rows, times))
 
 
 def _sort_field(sort: str) -> SortField:
-    return SortField.DATE if sort == "snoozed" else SortField(sort)
+    return SortField.DATE if sort in ("snoozed", CONTACT_SORT) else SortField(sort)
 
 
 @dataclass(frozen=True, slots=True)
@@ -498,7 +534,9 @@ class SearchParameters:
     minimum_size: int | None = field(default=None, metadata=option("Only messages of at least this many bytes"))
     maximum_size: int | None = field(default=None, metadata=option("Only messages of at most this many bytes"))
     conversations: bool = field(default=False, metadata=option("Show only the newest message of each conversation (not together with words to find)"))
-    sort: Literal["date", "subject", "sender", "to", "size", "snoozed"] = field(default="date", metadata=option("The sort order (snoozed: when it comes back, only in the Snoozed folder)"))
+    sort: Literal["date", "subject", "sender", "to", "size", "snoozed", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview"] = field(
+        default="date", metadata=option("The sort order (snoozed: when it comes back, only in the Snoozed folder; unread ... contact: yes first unless oldest_first)")
+    )
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
     offset: int = field(default=0, metadata=option("How many results to skip (not for message.groups)"))
     limit: int = field(default=50, metadata=option("How many results to show (not for message.groups)"))
@@ -543,6 +581,9 @@ def message_search(engine: Engine, parameters: SearchParameters) -> tuple[Messag
         if times is not None and _snooze_sort(parameters.sort, folder) and folder is not None:
             everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, mailbox.index.count(folder), SortField.DATE, True)
             found = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
+        elif parameters.sort == CONTACT_SORT:
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, EVERYTHING, SortField.DATE, True)
+            found = _by_contact(engine, mailbox, everything, not parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         else:
             found = mailbox.index.search(parameters.query, folder, _search_filter(parameters), parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first)
         return _rows(mailbox, found, times)
@@ -550,6 +591,8 @@ def message_search(engine: Engine, parameters: SearchParameters) -> tuple[Messag
 
 def message_groups(engine: Engine, parameters: SearchParameters) -> tuple[GroupCount, ...]:
     """The groups of a folder or a search, in the order of message.search (or message.list) with the same options, each with its number of messages."""
+    if parameters.sort == CONTACT_SORT:
+        return ()  # a yes/no sort has no group headers
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         if folder is not None and _snooze_sort(parameters.sort, folder):

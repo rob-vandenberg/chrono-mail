@@ -15,9 +15,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon, grey_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.2.99"
+__version__ = "models.py 0.3.109"
 
 # --- Version history ----------------------------------------------------
+# v0.3.109: No group headers for the yes/no sorts (unread, flagged, attachment, replied, contact); names of the folder, conversation and preview groups
 # v0.2.99: message_count (how many messages the view holds)
 # v0.2.96: The rows of the group headers are kept in a list (the card layout measures every row)
 # v0.2.94: Group headers in the message list (by the sort order), folded and unfolded; search and combined views in any sort order; sorting by To
@@ -68,6 +69,9 @@ class _Group:
     folded: bool
 
 
+YES_NO_SORTS: frozenset[str] = frozenset({"unread", "flagged", "attachment", "replied", "contact"})  # the icon columns: no group headers
+
+
 def group_name(sort: str, value: str) -> str:
     """The text of a group header: the date or size group's name, or the sender, recipients or subject as the columns show them."""
     if sort == "sender":
@@ -76,6 +80,10 @@ def group_name(sort: str, value: str) -> str:
         return value or "(no recipients)"
     if sort == "subject":
         return value or "(no subject)"
+    if sort == "conversation":
+        return "1 message" if value == "1" else f"{value} messages"
+    if sort == "preview":
+        return value or "(no preview)"
     return value
 
 
@@ -186,7 +194,7 @@ class MessageListModel(QAbstractTableModel):
         if spec is None:
             self.counts_changed.emit(0, 0)
             return
-        if self.show_groups:
+        if self.show_groups and spec.sort not in YES_NO_SORTS:
             self._request_groups(spec)
         else:
             self._request_first(spec)

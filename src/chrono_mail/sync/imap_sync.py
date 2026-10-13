@@ -9,9 +9,10 @@ from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.2.101"
+__version__ = "imap_sync.py 0.3.114"
 
 # --- Version history ----------------------------------------------------
+# v0.3.114: Messages gone from the server and from the store are forgotten and do not count for the removal safety rule
 # v0.2.101: Local folders are made safely (ensure_folder: one folder when two syncs run at the same time)
 # v0.0.44: the person's choices of folders and roles
 # v0.0.33: Rules
@@ -358,6 +359,13 @@ def _remove_gone(store: Store, index: Index | None, state: ImapState, view: _Fol
     gone = [uid for uid in mapped if uid not in view.on_server]
     if not gone:
         return
+    if not store.damaged_folders and store.list_folders():  # gone on both sides: nothing is left to remove anywhere, only the memory of it
+        for uid in [uid for uid in gone if mapped[uid].store_id not in view.locations]:
+            state.unmap(local, uid)
+        mapped = state.folder_entries(local)
+        gone = [uid for uid in mapped if uid not in view.on_server]
+        if not gone:
+            return
     if len(mapped) >= REMOVAL_RATIO_MINIMUM_COUNT and len(gone) / len(mapped) > REMOVAL_RATIO_LIMIT:
         counts.note = "most messages are gone from the server; nothing was removed here"
         return

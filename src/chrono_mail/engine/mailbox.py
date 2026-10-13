@@ -14,12 +14,14 @@ from chrono_mail.core import (
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 from chrono_mail.index import Index, entry_from_raw
-from chrono_mail.store import Store
+from chrono_mail.store import MessageNotFoundError, Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 0.0.45"
+__version__ = "mailbox.py 0.3.112"
 
 # --- Version history ----------------------------------------------------
+# v0.3.112: Such a delete reports "gone"; forget
+# v0.3.110: Deleting a message whose file is gone removes it from the index and counts as deleted
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.16: deliver
 # v0.0.12: Initial mailbox helper
@@ -106,17 +108,27 @@ class Mailbox:
         return copied
 
     def delete(self, ref: MessageRef, permanent: bool) -> str:
-        """Move to Trash, or remove for good when permanent or when it is already in Trash. Returns what happened."""
+        """Move to Trash, or remove for good when permanent or when it is already in Trash. Returns what happened.
+        A message whose file is gone is deleted already: only its line in the index is removed, and the answer is "gone"."""
         try:
             trash = self.role_folder(FolderRole.TRASH)
         except StorageError:
             trash = ()
-        if permanent or not trash or ref.folder_path == trash:
-            self.store.delete(ref, hint=self.hint(ref.store_id))
-            self._index(lambda: self.index.remove(ref.store_id))
-            return "deleted"
-        self.move(ref, trash)
-        return "moved to Trash"
+        try:
+            if permanent or not trash or ref.folder_path == trash:
+                self.store.delete(ref, hint=self.hint(ref.store_id))
+            else:
+                self.move(ref, trash)
+                return "moved to Trash"
+        except MessageNotFoundError:
+            self.forget(ref)  # the index pointed at nothing
+            return "gone"
+        self._index(lambda: self.index.remove(ref.store_id))
+        return "deleted"
+
+    def forget(self, ref: MessageRef) -> None:
+        """Remove the line of a message whose file is gone from the index."""
+        self._index(lambda: self.index.remove(ref.store_id))
 
     def _index(self, change: Callable[[], None]) -> None:
         """The store is the truth: if the index cannot be updated, the next reconcile repairs it."""

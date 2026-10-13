@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_search.py 0.2.94"
+__version__ = "test_engine_search.py 0.3.109"
 
 # --- Version history ----------------------------------------------------
+# v0.3.109: Sorting by contact, attachment and preview through the commands; no groups for the yes/no sorts
 # v0.2.94: Search results in any sort order; message.groups; date group boundaries
 # v0.0.19: Initial tests of the advanced search options
 
@@ -96,3 +97,25 @@ def test_date_group_boundaries_are_local_midnights_from_monday() -> None:
     assert date_bounds(datetime(2026, 1, 5, 8, 0).astimezone()).last_month.replace(tzinfo=None) == datetime(2025, 12, 1)
     assert timedelta(0) <= bounds.today - bounds.yesterday <= timedelta(hours=25)
 
+
+
+def test_the_new_sorts_through_the_commands(setup: Setup) -> None:
+    fill(setup)
+    book = next(made.collection for made in call(setup.engine, "pim.enable") if made.kind == "contacts")
+    call(setup.engine, "contact.add", collection=book, name="Bob", email=("home|bob@x.org",))
+
+    def listed(command: str, **values: object) -> list[str]:
+        if command == "message.list":
+            return [row.subject for row in call(setup.engine, command, account=setup.account_id, folder="Inbox", **values).messages]
+        rows: list[Any] = list(call(setup.engine, command, account=setup.account_id, **values))
+        return [row.subject for row in rows]
+
+    for command in ("message.list", "message.search"):
+        assert listed(command, sort="contact") == ["Dogs", "Both", "Cats"]  # from a contact first, then newest first
+        assert listed(command, sort="contact", oldest_first=True) == ["Both", "Cats", "Dogs"]
+        assert listed(command, sort="attachment") == ["Dogs", "Both", "Cats"]
+        assert listed(command, sort="preview", oldest_first=True) == ["Cats", "Dogs", "Both"]  # all about cats, all about dogs, cats and dogs
+    for sort in ("unread", "flagged", "attachment", "replied", "contact"):
+        assert call(setup.engine, "message.groups", account=setup.account_id, folder="Inbox", sort=sort) == ()
+    groups: list[Any] = list(call(setup.engine, "message.groups", account=setup.account_id, folder="Inbox", sort="conversation"))
+    assert [(group.value, group.count) for group in groups] == [("1", 3)]

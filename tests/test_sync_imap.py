@@ -15,9 +15,10 @@ from tests.fakeimap import FakeImapServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_imap.py 0.0.44"
+__version__ = "test_sync_imap.py 0.3.114"
 
 # --- Version history ----------------------------------------------------
+# v0.3.114: Messages gone on both sides are forgotten without a warning
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.31: IMAP accounts in the engine and the interface
 # v0.0.30: IMAP sync, store to server
@@ -409,6 +410,20 @@ def test_nothing_is_deleted_on_the_server_when_most_of_a_folder_is_missing_here(
     report = world.sync()
     assert of(report, "Inbox").expunged == 0 and "missing from the store" in (of(report, "Inbox").note or "")
     assert len(world.server.uids("INBOX")) == 12
+
+
+def test_messages_gone_on_both_sides_are_forgotten_without_a_warning(world: World) -> None:
+    uids = [world.server.add("INBOX", mail(number)) for number in range(1, 13)]
+    world.sync()
+    for message in world.store.list_messages(INBOX)[:9]:
+        world.store.delete(message.ref)
+    assert "missing from the store" in (of(world.sync(), "Inbox").note or "")  # blocked: the server keeps all 12
+    for uid in uids:
+        if world.state.entries[INBOX][uid].store_id not in world.store.all_store_ids():
+            world.server.remove("INBOX", uid)  # the person empties them on the server too
+    report = world.sync()
+    assert of(report, "Inbox").note is None and of(report, "Inbox").removed == 0 and len(world.state.entries[INBOX]) == 3
+    assert len(world.messages(INBOX)) == 3 and len(world.server.uids("INBOX")) == 3
 
 
 def test_nothing_is_deleted_on_the_server_when_the_store_is_damaged(world: World) -> None:

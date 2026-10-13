@@ -1,4 +1,5 @@
 import json
+import threading
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
@@ -7,8 +8,9 @@ from typing import Any, override  # command results are command-specific datacla
 import pytest
 
 from chrono_mail.config import ServerRole
-from chrono_mail.core import AuthenticationError, ConfigurationError, CryptoError, MessageFormatError, ProtocolError, StorageError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AuthenticationError, ConfigurationError, CryptoError, MessageFormatError, ProtocolError, StorageError
 from chrono_mail.engine import Engine, UsageError, build_registry
+from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.crypto import DataKey, InMemoryKeyStore
 from tests.enginefactory import make_engine
 from tests.fakepop3 import FakePop3Server
@@ -16,9 +18,12 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.0.69"
+__version__ = "test_engine_commands.py 0.3.112"
 
 # --- Version history ----------------------------------------------------
+# v0.3.112: A delete or a move to Junk of a message whose file is gone answers "gone"
+# v0.3.111: Two rebuilds of the shared Local Folders index at once both succeed
+# v0.3.110: Deleting a message whose file is gone removes it from the list
 # v0.0.69: The same e-mail address may be used by several accounts
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
@@ -323,6 +328,48 @@ def test_delete_moves_to_trash_and_then_deletes_for_good(setup: Setup) -> None:
     assert getattr(call(setup.engine, "message.list", account=setup.account_id, folder="Trash"), "total") == 0
     other = [row.message_id for row in getattr(call(setup.engine, "message.list", account=setup.account_id), "messages")][0]
     assert getattr(call(setup.engine, "message.delete", account=setup.account_id, folder="Inbox", message=other, permanent=True), "outcome") == "deleted"
+
+
+def test_deleting_a_message_whose_file_is_gone_removes_it_from_the_list(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    before = getattr(call(setup.engine, "message.list", account=setup.account_id), "messages")
+    gone = [row.message_id for row in before][:2]
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        for message_id in gone:
+            files = list(mailbox.store.root.rglob(f"{message_id}*"))
+            assert len(files) == 1
+            files[0].unlink()  # the file is lost; the index still lists the message
+    to_trash = call(setup.engine, "message.delete", account=setup.account_id, folder="Inbox", message=gone[0])
+    for_good = call(setup.engine, "message.delete", account=setup.account_id, folder="Inbox", message=gone[1], permanent=True)
+    assert getattr(to_trash, "outcome") == getattr(for_good, "outcome") == "gone"
+    after = getattr(call(setup.engine, "message.list", account=setup.account_id), "messages")
+    assert len(after) == len(before) - 2 and not {row.message_id for row in after} & set(gone)
+    assert getattr(call(setup.engine, "message.list", account=setup.account_id, folder="Trash"), "total") == 0
+    third = [row.message_id for row in after][0]
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        next(mailbox.store.root.rglob(f"{third}*")).unlink()
+    junk = call(setup.engine, "message.junk", account=setup.account_id, folder="Inbox", message=third)
+    assert getattr(junk, "gone") and len(getattr(call(setup.engine, "message.list", account=setup.account_id), "messages")) == len(after) - 1
+    assert getattr(call(setup.engine, "message.list", account=setup.account_id, folder="Junk"), "total") == 0
+
+
+def test_two_rebuilds_of_the_same_index_at_once_both_succeed(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    call(setup.engine, "account.set-storage", account=setup.account_id, storage="local")  # the account now shares the Local Folders index
+    results: list[object] = []
+
+    def rebuild(account: str) -> None:
+        try:
+            results.append(call(setup.engine, "index.rebuild", account=account))
+        except Exception as error:  # noqa: BLE001 - any failure is the finding
+            results.append(error)
+
+    workers = [threading.Thread(target=rebuild, args=(account,)) for account in (setup.account_id, LOCAL_ACCOUNT_ID, setup.account_id)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert [getattr(result, "messages", result) for result in results] == [3, 3, 3]
 
 
 def test_folder_commands(setup: Setup) -> None:

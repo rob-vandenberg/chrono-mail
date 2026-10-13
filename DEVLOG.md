@@ -1097,3 +1097,46 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Found in pictures and fixed: the column header text kept its own size (fixed by a font-size rule on the header); at 0.75 the columns were 30 px too wide (the header's smallest section stayed 24 px).
 - A mistake: a test command named a file that does not exist, so pytest ran the whole suite once (186 s): 3 failed, 1738 passed; the names of the 3 were not kept. Afterwards the related files were run: `tests/ui/test_ui_appearance.py` (two new), `tests/ui/test_ui_preferences.py`, `tests/ui/test_ui_columns.py`, `tests/ui/test_ui_columnfit.py`, `tests/ui/test_ui_models.py`, `tests/ui/test_ui_dragdrop.py`, `tests/ui/test_ui_theme.py`, `tests/ui/test_ui_schedule.py`: all passed; `tests/ui/test_ui_window.py` alone: once 1 failed (name not kept), on a second run all passed. Pyrefly 0 diagnostics, layer check kept.
 - The owner found the list size falling back when the interface slider moved: trying out the interface size redrew the list at its saved size, not the one being tried. It keeps the size it shows now. One more test (the owner's three steps, and the size of messages).
+
+## 2026-10-13 Every column sorts except Delete (version 0.3.109)
+
+**What landed**
+- The owner's bug: a click on an icon column showed the sort arrow but did not sort. Cause: those columns had no sort order (D-056), the click was ignored, and Qt moved the arrow by itself.
+- New sort orders unread, flagged, attachment, replied, contact, folder, conversation and preview in the index (`SortField`, `YES_NO_SORTS`, `_order`: newest first within the same value), the engine (`message.list`, `message.search`, `message.groups`, `message.combined`, `message.combined-groups`; contact sorted in memory with `from_contacts`), the columns, the Sorted by menu and the arrow. No group headers for the icon columns; groups per folder, per number of messages in the conversation and per preview. A click on Delete puts the arrow back (D-106).
+- Index schema 5 with five new indexes. Found while testing: the unread count took the new Unread index instead of the partial index; the Unread index is now on `(flags & 1)` so the count seeks it (folder and read bit). The test of the partial index accepts either index; the partial index is now unused (not removed: not in the changelist).
+- Tests run: `tests/test_index_index.py` (three new tests, two changed), `tests/test_engine_search.py` (one new), `tests/test_engine_local.py` (combined views in the new orders), `tests/ui/test_ui_columns.py` (one new, with a real click on Delete; checked that it fails without the fix), `tests/ui/test_ui_models.py`, `tests/ui/test_ui_schedule.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+- Not measured: the speed of the Contact and Messages in conversation sorts with 500,000 messages.
+
+## 2026-10-13 Index changes wait for each other; deleting a message without a file (version 0.3.110)
+
+**What landed**
+- The owner's bug: 17 messages in the Trash of the IMAP test account could not be deleted ("Could not delete: Message not found"). Found by comparing the owner's index with the store (read only, with the owner's permission): the account has no message files at all, the index 17 rows. Cause: parallel deletes; the index update of some failed with "database is locked" (deferred BEGIN, no waiting) after the file was removed, and the failure was ignored (D-107).
+- `Index._transaction` uses BEGIN IMMEDIATE; `MessageNotFoundError` in the store; `Mailbox.delete` removes the index line of a message whose file is gone and reports "deleted".
+- Tests run: `tests/test_index_index.py` (one new: 60 removals at once; checked that it fails with a deferred BEGIN), `tests/test_engine_commands.py` (one new: delete to Trash and for good of messages whose files are gone), `tests/test_store_store.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+- Seen, not changed: the IMAP test account now has no stored messages, so the safety rule blocks every deletion on its server ("most messages are missing from the store"); about 60 deleted messages stay on the server.
+
+## 2026-10-13 Maintenance once per place where mail is kept (version 0.3.111)
+
+**What landed**
+- The owner's rebuild showed three red errors. Cause: one rebuild per account, all at once, while three POP3 accounts share the Local Folders index (D-108). The owner's indexes were checked read-only afterwards: both match their stores, the shared one passes SQLite's quick check; the 17 messages without a file are gone.
+- Settings > Security and storage: Maintenance skips accounts whose mail is in Local Folders; the report is selectable. `index.rebuild` locks per index file.
+- Tests run: `tests/test_engine_commands.py` (one new: three rebuilds of the shared index at once; checked that it fails without the lock), `tests/test_index_rebuild.py`, `tests/ui/test_ui_preferences.py` (one new: one line for Local Folders, selectable report); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 Messages whose file is gone: warning and Repair (version 0.3.112)
+
+**What landed**
+- `Mailbox.delete` answers "gone" for a message whose file is gone; `Mailbox.forget`; `message.junk` removes such a message from the index (`JunkResult.gone`). Other actions unchanged in the engine (D-109).
+- The window: one warning per action (window and red line) for every "Message not found" error and every "gone" answer (`MISSING_WARNING`, `_missing_timer`). Settings: Repair the search index.
+- Tests run: `tests/test_engine_commands.py` (the 0.3.110 test now expects "gone" and covers Move to Junk), `tests/test_engine_actions.py`, `tests/ui/test_ui_preferences.py` (two new: Repair removes a message without a file; one warning for a delete of two such messages, one for a flag, the flagged message stays), `tests/ui/test_ui_window.py` (alone); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+- Seen, not changed: in the window, a failed delete or move to Junk does not count down, so the list is not refreshed after an error.
+
+## 2026-10-13 The page list of Settings is 2 points larger (version 0.3.113)
+
+- `SettingsDialog._size_sidebar_text`: (desktop size + 2) × interface factor, also while the slider is tried out (D-110).
+- Tests run: `tests/ui/test_ui_appearance.py` (one new), `tests/ui/test_ui_preferences.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 IMAP: messages gone on both sides are forgotten (version 0.3.114)
+
+- `_remove_gone` unmaps messages that are neither on the server nor in the store before the safety rule counts (D-111).
+- Tests run: `tests/test_sync_imap.py` (one new), `tests/test_engine_imap.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+- For the owner's test account: empty the Trash on the server once (webmail); the next check forgets the messages and the red line stops.

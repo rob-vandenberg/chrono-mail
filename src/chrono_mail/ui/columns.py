@@ -6,9 +6,10 @@ from email.utils import getaddresses
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 0.2.100"
+__version__ = "columns.py 0.3.109"
 
 # --- Version history ----------------------------------------------------
+# v0.3.109: Every column but Delete sorts: Unread, Flagged, Attachment, Replied, Contact, Folder, Messages in conversation, Preview
 # v0.2.100: Snoozed until: a column of the Snoozed folder only (sorts by the time a message comes back), added once after Received
 # v0.2.94: A click on the To column sorts by To
 # v0.1.89: Icon columns 24 px; Contact and Delete columns, added once to a saved set of columns; the address of the person a row shows
@@ -23,17 +24,17 @@ class Column:
     column_id: str
     label: str  # in the column editor and the header
     width: int
-    sort: str | None = None  # the sort order a click on the header gives (date, subject, sender, to, size, snoozed), if any
+    sort: str | None = None  # the sort order a click on the header gives (date, subject, sender, to, size, snoozed, unread ...), if any
     right: bool = False
     symbol: bool = False  # a narrow column holding a symbol; its header shows the symbol
 
 
 COLUMNS: tuple[Column, ...] = (
-    Column("status", "Unread", 24, symbol=True),
-    Column("flag", "Flagged", 24, symbol=True),
-    Column("attachment", "Attachment", 24, symbol=True),
-    Column("replied", "Replied", 24, symbol=True),
-    Column("contact", "Contact", 24, symbol=True),
+    Column("status", "Unread", 24, "unread", symbol=True),
+    Column("flag", "Flagged", 24, "flagged", symbol=True),
+    Column("attachment", "Attachment", 24, "attachment", symbol=True),
+    Column("replied", "Replied", 24, "replied", symbol=True),
+    Column("contact", "Contact", 24, "contact", symbol=True),
     Column("trash", "Delete", 24, symbol=True),
     Column("from_to", "From / To", 170, "sender"),
     Column("from", "From", 200, "sender"),
@@ -42,9 +43,9 @@ COLUMNS: tuple[Column, ...] = (
     Column("date", "Received", 110, "date"),
     Column("size", "Size", 64, "size", right=True),
     Column("snoozed", "Snoozed until", 110, "snoozed"),
-    Column("folder", "Folder", 110),
-    Column("conversation", "Messages in conversation", 60, right=True),
-    Column("preview", "Preview", 320),
+    Column("folder", "Folder", 110, "folder"),
+    Column("conversation", "Messages in conversation", 60, "conversation", right=True),
+    Column("preview", "Preview", 320, "preview"),
 )
 DEFAULT_COLUMNS: tuple[str, ...] = ("status", "flag", "attachment", "from_to", "subject", "date", "size", "contact", "trash")
 NEW_COLUMNS: tuple[str, ...] = ("contact", "trash")  # added once to a set of columns saved before they existed

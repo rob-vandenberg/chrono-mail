@@ -15,9 +15,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.3.108"
+__version__ = "test_ui_appearance.py 0.3.113"
 
 # --- Version history ----------------------------------------------------
+# v0.3.113: The page list of Settings is 2 points larger than the desktop's size, times the factor
 # v0.3.108: The size of messages is a slider for reading and writing: conversion, at once, Cancel
 # v0.3.107: The ticks of the size slider stand above its track
 # v0.3.106: The size of the interface is a factor with a slider on the Appearance page: keys apply each step at once, a drag when it ends
@@ -219,6 +220,25 @@ def test_the_sizes_are_together_on_the_appearance_page_and_the_slider_works_at_o
         assert dialog.values()["interface_scale"] == 1.5
         dialog.interface_standard.click()
         assert scale.interface() == 1.0 and dialog.values()["interface_scale"] == 1.0
+    finally:
+        window.try_interface_scale(1.0)
+
+
+def test_the_page_list_of_settings_is_two_points_larger_and_follows_the_slider(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.settingsdialog import SettingsDialog
+
+    window = world.window
+    dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
+    qtbot.addWidget(dialog)
+    app = QApplication.instance()
+    assert isinstance(app, QApplication)
+    system = appearance.system_font_size(app)
+    assert dialog.sidebar.font().pointSizeF() == system + 2
+    dialog.interface_scale_tried.connect(window.try_interface_scale)
+    try:
+        dialog.interface_slider.setValue(scale.slider_position(1.5))
+        assert dialog.sidebar.font().pointSizeF() == (system + 2) * 1.5
+        assert QApplication.font().pointSizeF() == system * 1.5  # the rest of the window: the desktop's size times the factor
     finally:
         window.try_interface_scale(1.0)
 

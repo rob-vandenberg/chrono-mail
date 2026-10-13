@@ -1,5 +1,6 @@
 import dataclasses
 import sqlite3
+import threading
 from collections.abc import Iterator
 from email.utils import format_datetime
 from datetime import UTC, datetime, timedelta
@@ -9,13 +10,16 @@ import pytest
 
 from chrono_mail.core import MessageFlag, MessageRef, StorageError
 from chrono_mail.index import Index, IndexedMessage, IndexEntry, ParsedQuery, SearchFilter, SortField, entry_from_raw, match_expression, parse_query
-from chrono_mail.index.model import DateBounds
+from chrono_mail.index.index import _order
+from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.2.94"
+__version__ = "test_index_index.py 0.3.110"
 
 # --- Version history ----------------------------------------------------
+# v0.3.110: Changes made at the same time from several connections all succeed
+# v0.3.109: Sorting by unread, flagged, replied, attachment, folder, conversation and preview
 # v0.2.94: Sorting by recipients, search in any order, groups
 # v0.0.23: Address completion
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
@@ -282,7 +286,8 @@ def test_unread_counts_use_the_partial_index(tmp_path: Path) -> None:
     index = filled(tmp_path, 50)
     plan = " | ".join(str(row[3]) for row in index._connection.execute(  # noqa: SLF001
         "EXPLAIN QUERY PLAN SELECT count(*) FROM messages m WHERE m.folder = ? AND (m.flags & 1) = 0", ("Inbox",)))
-    assert "messages_unread" in plan, plan
+    # Since schema 5 SQLite may take the index of the Unread sort instead: it seeks the folder and the read bit, just as fast.
+    assert "messages_unread" in plan or "messages_by_unread (folder=? AND <expr>=?)" in plan, plan
     assert index.count(INBOX, unread_only=True) == 25
 
 
@@ -475,6 +480,9 @@ def test_groups_count_what_the_list_shows_in_the_same_order(tmp_path: Path) -> N
         for descending in (True, False):
             listed = index.search("", INBOX, SearchFilter(unread=True), 0, 100, sort, descending)
             groups = index.groups(bounds_at(29), "", INBOX, SearchFilter(unread=True), sort, descending)
+            if sort in YES_NO_SORTS:
+                assert groups == []  # the icon columns have no group headers
+                continue
             assert sum(group.count for group in groups) == len(listed) == 15
             position = 0
             for group in groups:  # every group is one unbroken run of the list
@@ -504,3 +512,83 @@ def test_text_groups_ignore_case_and_a_search_narrows_them(tmp_path: Path) -> No
     assert [group.key for group in index.groups(bounds_at(0), "hello", INBOX, sort=SortField.SUBJECT)] == ["hello"]
     index.close()
 
+
+
+def numbers(messages: list[IndexedMessage]) -> list[int]:
+    return [int(message.subject.rsplit(" ", 1)[1]) for message in messages]
+
+
+def test_yes_no_sorts_put_yes_first_and_the_newest_first_either_way(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    flags = {0: SEEN, 1: frozenset[MessageFlag](), 2: frozenset({MessageFlag.SEEN, MessageFlag.FLAGGED, MessageFlag.REPLIED}), 3: frozenset({MessageFlag.FLAGGED}), 4: SEEN}
+    index.add_many(make_entry(number, flags=flags[number], attachment="yes" if number in (1, 4) else "") for number in range(5))
+    expected = {
+        SortField.UNREAD: ([3, 1, 4, 2, 0], [4, 2, 0, 3, 1]),
+        SortField.FLAGGED: ([3, 2, 4, 1, 0], [4, 1, 0, 3, 2]),
+        SortField.REPLIED: ([2, 4, 3, 1, 0], [4, 3, 1, 0, 2]),
+        SortField.ATTACHMENT: ([4, 1, 3, 2, 0], [3, 2, 0, 4, 1]),
+    }
+    for sort, (yes_first, yes_last) in expected.items():
+        assert numbers(index.page(INBOX, sort, descending=True)) == yes_first
+        assert numbers(index.page(INBOX, sort, descending=False)) == yes_last
+        assert numbers(index.search("", INBOX, sort=sort, descending=True)) == yes_first
+        assert index.groups(bounds_at(4), folder=INBOX, sort=sort) == []
+    index.close()
+
+
+def test_folder_conversation_and_preview_sorts_and_their_groups(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    index.add_many([make_entry(0), make_entry(1, folder=ARCHIVE), make_entry(2), make_entry(3, folder=ARCHIVE)])
+    assert numbers(index.search("", None, sort=SortField.FOLDER, descending=False)) == [3, 1, 2, 0]  # Archive first, newest first within
+    assert numbers(index.search("", None, sort=SortField.FOLDER, descending=True)) == [2, 0, 3, 1]
+    folders = index.groups(bounds_at(3), folder=None, sort=SortField.FOLDER, descending=False)
+    assert [(group.key, group.value, group.count) for group in folders] == [("archive", "Archive", 2), ("inbox", "Inbox", 2)]
+    index.close()
+    talk = Index(tmp_path / "talk.sqlite")
+    for number, references in ((0, None), (1, "<m0@example.com>"), (2, None)):
+        raw = raw_message(subject=f"Subject number {number}", date=BASE + timedelta(days=number), message_id=f"<m{number}@example.com>", references=references, body=("banana", "Apple", "cherry")[number])
+        store_id = f"{number:032x}"
+        talk.add(entry_from_raw(MessageRef("account1", INBOX, store_id), f"new/{store_id}", frozenset(), len(raw), raw))
+    assert numbers(talk.page(INBOX, SortField.CONVERSATION, descending=True)) == [1, 0, 2]
+    assert numbers(talk.page(INBOX, SortField.CONVERSATION, descending=False)) == [2, 1, 0]
+    sizes = talk.groups(bounds_at(2), folder=INBOX, sort=SortField.CONVERSATION)
+    assert [(group.value, group.count) for group in sizes] == [("2", 2), ("1", 1)]
+    assert numbers(talk.page(INBOX, SortField.PREVIEW, descending=False)) == [1, 0, 2]  # Apple, banana, cherry: case is ignored
+    previews = talk.groups(bounds_at(2), folder=INBOX, sort=SortField.PREVIEW, descending=True)
+    assert [group.value for group in previews] == ["cherry", "banana", "Apple"]
+    talk.close()
+
+
+@pytest.mark.parametrize("sort", [*YES_NO_SORTS, SortField.PREVIEW])
+def test_the_new_sorts_of_a_folder_use_their_sqlite_index(tmp_path: Path, sort: SortField) -> None:
+    index = filled(tmp_path, 5)
+    for descending in (True, False):
+        plan = str(index._connection.execute(f"EXPLAIN QUERY PLAN SELECT m.id FROM messages m WHERE m.folder = ? ORDER BY {_order(sort, descending)} LIMIT 5", ("Inbox",)).fetchall())  # noqa: SLF001
+        assert f"messages_by_{sort.value}" in plan
+    plan = str(index._connection.execute(f"EXPLAIN QUERY PLAN SELECT m.id FROM messages m WHERE m.folder = ? ORDER BY {_order(sort, True)} LIMIT 5", ("Inbox",)).fetchall())  # noqa: SLF001
+    assert "TEMP B-TREE" not in plan  # yes first, newest first: read straight from the index
+    index.close()
+
+
+def test_changes_made_at_the_same_time_all_succeed(tmp_path: Path) -> None:
+    # With a deferred BEGIN, most of 60 removals from separate connections at once failed with "database is locked".
+    filled(tmp_path, 60).close()
+    failures: list[str] = []
+
+    def remove(number: int) -> None:
+        index = Index(tmp_path / "index.sqlite")
+        index.count(INBOX)  # the connection has read before, like a worker's
+        try:
+            index.remove(f"{number:032x}")
+        except StorageError as error:
+            failures.append(str(error))
+        index.close()
+
+    workers = [threading.Thread(target=remove, args=(number,)) for number in range(60)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    index = Index(tmp_path / "index.sqlite")
+    assert failures == [] and index.message_count() == 0
+    index.close()
