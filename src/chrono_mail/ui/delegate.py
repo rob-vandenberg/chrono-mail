@@ -1,20 +1,22 @@
 from collections.abc import Callable
 from typing import override
 
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPalette
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, QRect, QSize, Qt
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPalette, QPen
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
-from chrono_mail.ui.colours import selection_grey
+from chrono_mail.ui.colours import group_header_colour, selection_grey
 
 from chrono_mail.ui.formatting import avatar_colour, display_name, initials, short_date
 from chrono_mail.ui.icons import theme_icon
-from chrono_mail.ui.models import CONTACT_ROLE, ROW_ROLE
+from chrono_mail.ui.models import CONTACT_ROLE, GROUP_HEADER_ROLE, ROW_ROLE
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.1.89"
+__version__ = "delegate.py 0.2.95"
 
 # --- Version history ----------------------------------------------------
+# v0.2.95: Group headers have a fixed background colour per scheme (darker in the dark scheme)
+# v0.2.94: Group headers: a bar with a chevron and the group's name in bold, in both layouts
 # v0.1.89: ColumnDelegate: fixed row height per density, the Contact icon and the Delete icon on the row under the pointer
 # v0.0.88: A selected row is grey while the list has no focus
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
@@ -49,6 +51,34 @@ def _is_selected(option: QStyleOptionViewItem) -> bool:
     return isinstance(state, QStyle.StateFlag) and bool(state & QStyle.StateFlag.State_Selected)
 
 
+def paint_group_header(painter: QPainter, option: QStyleOptionViewItem, header: object) -> bool:
+    """Draws a group header (a bar over the whole row: a chevron, open or folded, and the name in bold); False on a message row."""
+    if not isinstance(header, tuple) or len(header) != 2:
+        return False
+    name, folded = str(header[0]), bool(header[1])
+    full = _rect(option)
+    palette = _typed(option, "palette", QPalette)
+    painter.save()
+    active = QPalette.ColorGroup.Active  # a header is not "enabled" (the arrow keys pass it), but it is drawn in the colours of text
+    painter.fillRect(full, QColor(group_header_colour(palette)))
+    text = palette.color(active, QPalette.ColorRole.Text)
+    painter.setPen(QPen(text, 1.4))
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    middle = QPoint(full.left() + 14, full.center().y() + 1)
+    if folded:
+        painter.drawPolyline([QPoint(middle.x() - 2, middle.y() - 4), QPoint(middle.x() + 2, middle.y()), QPoint(middle.x() - 2, middle.y() + 4)])
+    else:
+        painter.drawPolyline([QPoint(middle.x() - 4, middle.y() - 2), QPoint(middle.x(), middle.y() + 2), QPoint(middle.x() + 4, middle.y() - 2)])
+    font = QFont(_typed(option, "font", QFont))
+    font.setBold(True)
+    painter.setFont(font)
+    painter.setPen(text)
+    area = QRect(full.left() + 28, full.top(), full.width() - 36, full.height())
+    painter.drawText(area, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, QFontMetrics(font).elidedText(name, Qt.TextElideMode.ElideRight, area.width()))
+    painter.restore()
+    return True
+
+
 class MessageDelegate(QStyledItemDelegate):
     """Paints one message as a row: avatar, sender and date, subject, and a line of preview."""
 
@@ -62,6 +92,8 @@ class MessageDelegate(QStyledItemDelegate):
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        if paint_group_header(painter, option, index.data(GROUP_HEADER_ROLE)):
+            return
         row = index.data(ROW_ROLE)
         painter.save()
         selected = _is_selected(option)
@@ -174,6 +206,8 @@ class ColumnDelegate(QStyledItemDelegate):
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        if paint_group_header(painter, option, index.data(GROUP_HEADER_ROLE)):
+            return
         super().paint(painter, option, index)
         column_id = self.column_of(index.column())
         state: object = getattr(option, "state")

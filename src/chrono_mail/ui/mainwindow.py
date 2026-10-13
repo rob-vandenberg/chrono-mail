@@ -81,9 +81,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.1.93"
+__version__ = "mainwindow.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: Group headers in the message list (fold by a click; Show groups in the View menu); sorting by To; searches and combined views follow the sort order
 # v0.1.93: The search field has three looks (not in use, clicked in, search active) and a red ✕ that clears the search; clicking in it shows the last 10 searches
 # v0.1.92: Search box hint "Search (type '?' for help)"; typing "?" opens the search help under the search box
 # v0.1.91: Clear filter at the bottom of the Filter menu; the filters that are on are bold in the menu
@@ -142,7 +143,7 @@ AUTO_CHECK_MINUTES: int = 5
 DUE_CHECK_MS: int = 60_000
 WATCH_SECONDS: int = 300
 WATCH_RETRY_MS: int = 60_000
-SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Received"), ("subject", "Subject"), ("sender", "Sender"), ("size", "Size"))
+SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Received"), ("subject", "Subject"), ("sender", "Sender"), ("to", "To"), ("size", "Size"))
 _WEEKDAYS: tuple[str, ...] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # in the snooze menu, English like the rest of the interface
 _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-outbox", "drafts": "document-edit", "trash": "user-trash", "junk": "mail-mark-junk", "archive": "folder-archive", "other": "folder"}
 
@@ -284,6 +285,7 @@ class MainWindow(QMainWindow):
         self.list_view.header().setMinimumSectionSize(MINIMUM_ICON)
         self.list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.list_view.column_of = self._column_id
+        self.list_view.is_header = self.list_model.is_header
         self.list_view.header().setSectionsClickable(True)
         self.list_view.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
@@ -480,6 +482,10 @@ class MainWindow(QMainWindow):
         self.act_conversations = QAction("Show conversations", self)
         self.act_conversations.setCheckable(True)
         self.act_conversations.setChecked(bool_setting(self.settings, "conversations", False))
+        self.act_show_groups = QAction("Show groups", self)
+        self.act_show_groups.setCheckable(True)
+        self.act_show_groups.setChecked(bool_setting(self.settings, "show_groups", True))
+        self.list_model.show_groups = self.act_show_groups.isChecked()
         self.act_new_folder = self._action("New folder…", self.new_folder)
         self.act_rename_folder = self._action("Rename folder…", self.rename_folder)
         self.act_delete_folder = self._action("Delete folder…", self.delete_folder)
@@ -655,6 +661,7 @@ class MainWindow(QMainWindow):
             self.pane_actions[value] = action
         view_menu.addAction(self.act_advanced)
         view_menu.addAction(self.act_conversations)
+        view_menu.addAction(self.act_show_groups)
         view_menu.addAction(self.act_auto)
         help_menu = root.addMenu("&Help")
         help_menu.addAction(self.act_about)
@@ -695,6 +702,10 @@ class MainWindow(QMainWindow):
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self.tree.messages_dropped.connect(self._messages_dropped)
         self.act_conversations.toggled.connect(self._toggle_conversations)
+        self.act_show_groups.toggled.connect(self._toggle_groups)
+        self.list_model.groups_changed.connect(self._span_group_headers)
+        self.list_model.modelReset.connect(self._span_group_headers)  # a reset (another layout, other columns) forgets the spans
+        self.list_view.header_clicked.connect(self.list_model.toggle_group)
         self.conversation_bar.message_chosen.connect(self._show_conversation_member)
         self.list_view.selectionModel().currentChanged.connect(self._row_changed)
         self.list_view.selectionModel().selectionChanged.connect(self._update_message_actions)
@@ -774,6 +785,16 @@ class MainWindow(QMainWindow):
     def _clear_reader(self) -> None:
         self.reader.clear()
         self.conversation_bar.clear()
+
+    def _toggle_groups(self, on: bool) -> None:
+        self.settings.setValue("show_groups", on)
+        self.list_model.show_groups = on
+        self._apply_view()
+
+    def _span_group_headers(self) -> None:
+        """A group header is one bar over all columns (the view keeps a span with its row as rows come and go)."""
+        for row in self.list_model.header_rows():
+            self.list_view.setFirstColumnSpanned(row, QModelIndex(), True)
 
     def _toggle_conversations(self, on: bool) -> None:
         self.settings.setValue("conversations", on)
@@ -1802,6 +1823,8 @@ class MainWindow(QMainWindow):
         count = self.list_model.rowCount()
         current = self.list_view.currentIndex().row() if self.list_view.currentIndex().isValid() else (-1 if step > 0 else count)
         position = current + step
+        while 0 <= position < count and self.list_model.is_header(position):  # group headers are passed
+            position += step
         if 0 <= position < count:
             self.list_view.setCurrentIndex(self.list_model.index(position))
             self.list_view.scrollTo(self.list_model.index(position))
@@ -2082,7 +2105,7 @@ class MainWindow(QMainWindow):
         self.list_model.refresh_cells()
 
     def _show_sort_indicator(self) -> None:
-        sort_of = {"sender": ("from_to", "from"), "subject": ("subject",), "date": ("date",), "size": ("size",)}
+        sort_of = {"sender": ("from_to", "from"), "subject": ("subject",), "date": ("date",), "size": ("size",), "to": ("to",)}
         header = self.list_view.header()
         for position, column_id in enumerate(self.list_model.columns):
             if column_id in sort_of.get(self._sort, ()):

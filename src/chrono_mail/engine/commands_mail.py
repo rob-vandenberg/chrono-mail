@@ -3,7 +3,7 @@ import mimetypes
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from email.utils import parseaddr
 from pathlib import Path
 from typing import Literal
@@ -19,15 +19,17 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
+from chrono_mail.index.model import DateBounds, GroupCount
 from chrono_mail.mime import Address, Attachment, OutgoingMessage, ParsedMessage, build_message, parse_message
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.0.86"
+__version__ = "commands_mail.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: Sorting by recipients (to); search results in any sort order; message.groups: the groups of a folder or a search for the group headers
 # v0.0.86: Forward as attachment: the original message attached as an .eml file (attach_source_message)
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.67: Messages that are sent again and again
@@ -336,7 +338,7 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
 class ListParameters:
     account: str = field(metadata=option("The account"))
     folder: str = field(default="Inbox", metadata=option("The folder, for example Inbox or Archive/2026"))
-    sort: Literal["date", "subject", "sender", "size"] = field(default="date", metadata=option("The sort order"))
+    sort: Literal["date", "subject", "sender", "to", "size"] = field(default="date", metadata=option("The sort order"))
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
     offset: int = field(default=0, metadata=option("How many messages to skip"))
     limit: int = field(default=50, metadata=option("How many messages to show"))
@@ -462,8 +464,21 @@ class SearchParameters:
     minimum_size: int | None = field(default=None, metadata=option("Only messages of at least this many bytes"))
     maximum_size: int | None = field(default=None, metadata=option("Only messages of at most this many bytes"))
     conversations: bool = field(default=False, metadata=option("Show only the newest message of each conversation (not together with words to find)"))
-    offset: int = field(default=0, metadata=option("How many results to skip"))
-    limit: int = field(default=50, metadata=option("How many results to show"))
+    sort: Literal["date", "subject", "sender", "to", "size"] = field(default="date", metadata=option("The sort order"))
+    oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
+    offset: int = field(default=0, metadata=option("How many results to skip (not for message.groups)"))
+    limit: int = field(default=50, metadata=option("How many results to show (not for message.groups)"))
+
+
+def date_bounds(now: datetime) -> DateBounds:
+    """Where the date groups begin, in the local time of this moment: today, yesterday, this week (from Monday), last week, this month, last month."""
+    today = now.astimezone().date()
+    this_week = today - timedelta(days=today.weekday())
+    this_month = today.replace(day=1)
+    last_month = (this_month - timedelta(days=1)).replace(day=1)
+    days = (today, today - timedelta(days=1), this_week, this_week - timedelta(days=7), this_month, last_month)
+    starts = [datetime.combine(day, time.min).astimezone() for day in days]  # each day's own midnight, also across a change to or from summer time
+    return DateBounds(starts[0], starts[1], starts[2], starts[3], starts[4], starts[5])
 
 
 def _day(text: str | None, name: str, end: bool) -> datetime | None:
@@ -479,15 +494,27 @@ def _day(text: str | None, name: str, end: bool) -> datetime | None:
     return moment.astimezone()
 
 
+def _search_filter(parameters: SearchParameters) -> SearchFilter:
+    return SearchFilter(
+        unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments,
+        date_from=_day(parameters.date_from, "date_from", end=False), date_to=_day(parameters.date_to, "date_to", end=True),
+        minimum_size=parameters.minimum_size, maximum_size=parameters.maximum_size, newest_per_thread=parameters.conversations,
+    )
+
+
 def message_search(engine: Engine, parameters: SearchParameters) -> tuple[MessageRow, ...]:
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
-        filters = SearchFilter(
-            unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments,
-            date_from=_day(parameters.date_from, "date_from", end=False), date_to=_day(parameters.date_to, "date_to", end=True),
-            minimum_size=parameters.minimum_size, maximum_size=parameters.maximum_size, newest_per_thread=parameters.conversations,
-        )
-        return _rows(mailbox, mailbox.index.search(parameters.query, folder, filters, parameters.offset, parameters.limit))
+        found = mailbox.index.search(parameters.query, folder, _search_filter(parameters), parameters.offset, parameters.limit, SortField(parameters.sort), not parameters.oldest_first)
+        return _rows(mailbox, found)
+
+
+def message_groups(engine: Engine, parameters: SearchParameters) -> tuple[GroupCount, ...]:
+    """The groups of a folder or a search, in the order of message.search (or message.list) with the same options, each with its number of messages."""
+    with open_mailbox(engine, parameters.account) as mailbox:
+        folder = mailbox.folder(parameters.folder) if parameters.folder else None
+        found = mailbox.index.groups(date_bounds(datetime.now()), parameters.query, folder, _search_filter(parameters), SortField(parameters.sort), not parameters.oldest_first)
+        return tuple(found)
 
 
 def message_thread(engine: Engine, parameters: MessageParameters) -> tuple[MessageRow, ...]:
@@ -675,6 +702,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register("message.thread", "List the messages of the conversation a message belongs to", MessageParameters, message_thread)
     registry.register("message.show", "Show one message", MessageParameters, message_show)
     registry.register("message.search", "Search messages", SearchParameters, message_search)
+    registry.register("message.groups", "The groups of a folder or a search (date, size, sender, recipients or subject, as sorted) with their number of messages", SearchParameters, message_groups)
     registry.register("message.attachment.save", "Save one attachment of a message to a file", AttachmentSaveParameters, message_attachment_save)
     registry.register("message.compose", "Prepare a reply, a reply to all, or a forward of a message", ComposeParameters, message_compose)
     registry.register("message.flag", "Change the read, flagged or replied marks of a message", FlagParameters, message_flag)

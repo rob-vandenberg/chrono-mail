@@ -11,13 +11,14 @@ from chrono_mail.engine.commands_mail import MessageRow
 from chrono_mail.ui.delegate import ROW_HEIGHT, MessageDelegate
 from chrono_mail.ui.foldertree import COUNT_MARGIN, FolderItemDelegate
 from chrono_mail.ui.icons import folder_icon
-from chrono_mail.ui.models import COUNT_ROLE, FOLDER_ROLE_ROLE, KIND_ROLE, PAGE_SIZE, ROW_ROLE, FolderTreeModel, MessageListModel, ViewKind, ViewSpec
+from chrono_mail.ui.models import COUNT_ROLE, FOLDER_ROLE_ROLE, GROUP_HEADER_ROLE, KIND_ROLE, PAGE_SIZE, ROW_ROLE, FolderTreeModel, MessageListModel, ViewKind, ViewSpec, group_name
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.0.88"
+__version__ = "test_ui_models.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: The group layer: headers, folding, positions; the older tests run without headers
 # v0.0.88: A selected card is grey while the list has no focus
 # v0.0.87: Folder names without the unread count; the count drawn bold at the right edge; folder-open and home icons
 # v0.0.70: The Inboxes section is removed from the folder tree
@@ -37,6 +38,7 @@ def big(tmp_path: Path, qtbot: QtBot, dialogs: Dialogs) -> Generator[World]:
 
 def model_for(world: World, qtbot: QtBot) -> MessageListModel:
     model = MessageListModel(world.backend)
+    model.show_groups = False  # these tests count rows without headers; the tests of the groups switch them on
     return model
 
 
@@ -131,6 +133,7 @@ def test_flag_changes_update_rows_and_counts_without_fetching(big: World, qtbot:
     model.replace_flags("0" * 32, ("seen",))  # a message that is not loaded: nothing happens
     assert counts[-1] == (250, 250)
     query = MessageListModel(big.backend)
+    query.show_groups = False  # written before group headers existed
     query.show(ViewSpec(big.account_id, "Inbox", query="number"))
     wait(qtbot, lambda: query.rowCount() == PAGE_SIZE)
     query.replace_flags(rows(query)[3].message_id, ("seen",))
@@ -198,6 +201,7 @@ def render(world: World, qtbot: QtBot, palette: QPalette | None = None, width: i
     qtbot.addWidget(view)
     delegate = MessageDelegate()
     model = MessageListModel(world.backend)
+    model.show_groups = False  # written before group headers existed
     view.setModel(model)
     view.setItemDelegate(delegate)
     view.setUniformItemSizes(True)
@@ -247,6 +251,7 @@ def test_rows_in_the_sent_folder_show_the_recipients(world: World, qtbot: QtBot)
     delegate = MessageDelegate()
     delegate.show_recipients = True
     model = MessageListModel(world.backend)
+    model.show_groups = False  # written before group headers existed
     view.setModel(model)
     view.setItemDelegate(delegate)
     view.resize(480, 200)
@@ -278,6 +283,7 @@ def test_the_preview_of_the_selected_row_stays_readable(world: World, qtbot: QtB
     view = QListView()
     qtbot.addWidget(view)
     model = MessageListModel(world.backend)
+    model.show_groups = False  # written before group headers existed
     view.setModel(model)
     view.setItemDelegate(MessageDelegate())
     view.setUniformItemSizes(True)
@@ -381,6 +387,7 @@ def test_a_selected_card_is_grey_while_the_list_has_no_focus(world: World, qtbot
     view = QListView()
     qtbot.addWidget(view)
     model = MessageListModel(world.backend)
+    model.show_groups = False  # written before group headers existed
     view.setModel(model)
     view.setItemDelegate(MessageDelegate())
     view.resize(480, ROW_HEIGHT * 4)
@@ -395,3 +402,51 @@ def test_a_selected_card_is_grey_while_the_list_has_no_focus(world: World, qtbot
         qtbot.wait(100)
         image = view.viewport().grab().toImage()
         assert image.pixelColor(image.width() - 12, 5).name() == expected
+
+
+# --- group headers -------------------------------------------------------------------------------------------------------
+
+
+def test_one_header_over_a_folder_and_folding_it(big: World, qtbot: QtBot) -> None:
+    model = MessageListModel(big.backend)
+    model.show(ViewSpec(big.account_id, "Inbox", sort="size"))
+    wait(qtbot, lambda: model.rowCount() == 251)
+    assert model.is_header(0) and model.row_at(0) is None and model.message_position(1) == 0 and model.display_row(0) == 1
+    assert model.index(0, 0).data(GROUP_HEADER_ROLE) == ("Tiny", False) and not model.flags(model.index(0, 0)) & Qt.ItemFlag.ItemIsSelectable
+    assert model.index(1, 0).data(GROUP_HEADER_ROLE) is None and model.flags(model.index(1, 0)) & Qt.ItemFlag.ItemIsSelectable
+    first = rows(model)[0]
+    model.toggle_group(0)
+    assert model.rowCount() == 1 and model.index(0, 0).data(GROUP_HEADER_ROLE) == ("Tiny", True) and model.find(first.message_id) == -1
+    model.reload()  # folded stays folded: per folder and sort order, until the program closes
+    wait(qtbot, lambda: model.index(0, 0).data(GROUP_HEADER_ROLE) == ("Tiny", True))
+    assert model.rowCount() == 1
+    model.toggle_group(0)
+    assert model.rowCount() == 251 and model.find(first.message_id) == 1
+
+
+def test_a_header_per_subject_and_rows_between_them(big: World, qtbot: QtBot) -> None:
+    model = MessageListModel(big.backend)
+    model.show(ViewSpec(big.account_id, "Inbox", sort="subject", oldest_first=True))
+    wait(qtbot, lambda: model.rowCount() == 500)
+    assert model.header_rows()[:3] == [0, 2, 4]
+    assert model.index(2, 0).data(GROUP_HEADER_ROLE) == ("Subject 001", False)
+    wait(qtbot, lambda: model.row_at(3) is not None)
+    assert getattr(model.row_at(3), "subject") == "Subject 001"
+    model.toggle_group(2)
+    assert model.rowCount() == 499 and model.header_rows()[:3] == [0, 2, 3] and model.message_position(4) == 2
+
+
+def test_a_search_with_headers_grows_as_it_is_scrolled(big: World, qtbot: QtBot) -> None:
+    model = MessageListModel(big.backend)
+    model.show(ViewSpec(big.account_id, "Inbox", query="number", sort="subject", oldest_first=True))
+    wait(qtbot, lambda: model.rowCount() == 2 * PAGE_SIZE)
+    assert model.is_header(0) and getattr(model.row_at(1), "subject") == "Subject 000"
+    model.fetchMore()
+    wait(qtbot, lambda: model.rowCount() == 4 * PAGE_SIZE)
+    assert model.is_header(2 * PAGE_SIZE) and getattr(model.row_at(2 * PAGE_SIZE + 1), "subject") == f"Subject {PAGE_SIZE:03d}"
+
+
+def test_group_names_as_the_columns_show_them() -> None:
+    assert group_name("sender", "Ann Smith <ann@x.org>") == "Ann Smith" and group_name("sender", "") == "(unknown)"
+    assert group_name("subject", "") == "(no subject)" and group_name("to", "") == "(no recipients)" and group_name("date", "Today") == "Today"
+

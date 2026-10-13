@@ -1,3 +1,4 @@
+import dataclasses
 import sqlite3
 from collections.abc import Iterator
 from email.utils import format_datetime
@@ -8,12 +9,14 @@ import pytest
 
 from chrono_mail.core import MessageFlag, MessageRef, StorageError
 from chrono_mail.index import Index, IndexedMessage, IndexEntry, ParsedQuery, SearchFilter, SortField, entry_from_raw, match_expression, parse_query
+from chrono_mail.index.model import DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.0.23"
+__version__ = "test_index_index.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: Sorting by recipients, search in any order, groups
 # v0.0.23: Address completion
 # v0.0.19: Advanced search: OR, NOT, dates, sizes, dialog
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
@@ -429,3 +432,75 @@ def test_a_rebuild_recounts_the_addresses(tmp_path: Path) -> None:
     index.remove(f"{1:032x}")
     assert index.suggest("bob")[0].as_recipient == 1  # counts only grow until a rebuild
     index.close()
+
+
+def bounds_at(day: int) -> DateBounds:
+    """Group boundaries as if "today" were BASE + day days (Thursday 2026-01-01 + day); weeks start on Monday."""
+    today = BASE + timedelta(days=day)
+    this_week = today - timedelta(days=today.weekday())
+    this_month = today.replace(day=1)
+    last_month = (this_month - timedelta(days=1)).replace(day=1)
+    return DateBounds(today, today - timedelta(days=1), this_week, this_week - timedelta(days=7), this_month, last_month)
+
+
+def test_sort_by_recipients_and_a_search_in_any_order(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    index.add_many(make_entry(number, to=name) for number, name in enumerate(["carol@x.org", "Alice@x.org", "bob@x.org"]))
+    assert [message.recipients for message in index.page(INBOX, SortField.RECIPIENTS, descending=False)] == ["Alice@x.org", "bob@x.org", "carol@x.org"]
+    found = index.search("Body", INBOX, sort=SortField.RECIPIENTS, descending=True)
+    assert [message.recipients for message in found] == ["carol@x.org", "bob@x.org", "Alice@x.org"]
+    assert subjects(index.search("Body", INBOX)) == ["Subject number 2", "Subject number 1", "Subject number 0"]  # newest first unless asked
+    index.close()
+
+
+def test_date_groups_follow_the_list_both_ways(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    index.add_many(make_entry(number) for number in (0, 20, 25, 31, 38, 42, 43, 44))
+    bounds = bounds_at(44)  # Saturday 2026-02-14: this week from Monday 9 Feb, last week from 2 Feb, this month from 1 Feb, last month January
+    groups = index.groups(bounds, folder=INBOX)
+    assert [(group.value, group.count) for group in groups] == [
+        ("Today", 1), ("Yesterday", 1), ("Earlier this week", 1), ("Last week", 1), ("Earlier this month", 1), ("Last month", 3),
+    ]
+    assert [group.key for group in index.groups(bounds, folder=INBOX, descending=False)] == ["last_month", "this_month", "last_week", "this_week", "yesterday", "today"]
+    old = Index(tmp_path / "old.sqlite")
+    old.add_many([make_entry(1), make_entry(2)])
+    assert [(group.value, group.count) for group in old.groups(bounds_at(100), folder=INBOX)] == [("Older", 2)]
+    index.close()
+    old.close()
+
+
+def test_groups_count_what_the_list_shows_in_the_same_order(tmp_path: Path) -> None:
+    index = filled(tmp_path, 30)
+    for sort in SortField:
+        for descending in (True, False):
+            listed = index.search("", INBOX, SearchFilter(unread=True), 0, 100, sort, descending)
+            groups = index.groups(bounds_at(29), "", INBOX, SearchFilter(unread=True), sort, descending)
+            assert sum(group.count for group in groups) == len(listed) == 15
+            position = 0
+            for group in groups:  # every group is one unbroken run of the list
+                run = listed[position:position + group.count]
+                if sort in (SortField.SENDER, SortField.SUBJECT, SortField.RECIPIENTS):
+                    attribute = {SortField.SENDER: "sender", SortField.SUBJECT: "subject", SortField.RECIPIENTS: "recipients"}[sort]
+                    assert {str(getattr(message, attribute)).lower() for message in run} == {group.key}
+                position += group.count
+    index.close()
+
+
+def test_size_groups(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    sizes = (500, 20_000, 200_000, 2_000_000, 20_000_000, 600)
+    index.add_many(dataclasses.replace(make_entry(number), size=size) for number, size in enumerate(sizes))
+    groups = index.groups(bounds_at(0), folder=INBOX, sort=SortField.SIZE)
+    assert [(group.value, group.count) for group in groups] == [("Huge", 1), ("Large", 1), ("Medium", 1), ("Small", 1), ("Tiny", 2)]
+    assert [group.key for group in index.groups(bounds_at(0), folder=INBOX, sort=SortField.SIZE, descending=False)] == ["tiny", "small", "medium", "large", "huge"]
+    index.close()
+
+
+def test_text_groups_ignore_case_and_a_search_narrows_them(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    index.add_many(make_entry(number, subject=subject) for number, subject in enumerate(["Hello", "hello", "Apples", "Zebra"]))
+    groups = index.groups(bounds_at(0), folder=INBOX, sort=SortField.SUBJECT, descending=False)
+    assert [(group.key, group.count) for group in groups] == [("apples", 1), ("hello", 2), ("zebra", 1)]
+    assert [group.key for group in index.groups(bounds_at(0), "hello", INBOX, sort=SortField.SUBJECT)] == ["hello"]
+    index.close()
+

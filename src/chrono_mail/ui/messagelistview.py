@@ -10,9 +10,10 @@ from chrono_mail.ui.models import HEADER_ICON_ROLE
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 0.1.89"
+__version__ = "messagelistview.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: A click on a group header folds or unfolds it
 # v0.1.89: Clicks on the Contact and Delete icons; tells when the width of its rows changes; a header that centres its icons and remembers where a column drag started
 # v0.0.88: The selection is blue while the message list has the focus and grey without it
 # v0.0.48: Initial message list that drags a small badge instead of the selected rows
@@ -109,6 +110,7 @@ class MessageListView(QTreeView):
     """The message list. Dragging messages shows a small badge with their number, never the rows. The selection is grey while the list has no focus."""
 
     icon_clicked = Signal(int, str)  # row, column id ("contact" or "trash")
+    header_clicked = Signal(int)  # the row of a group header: fold or unfold it
     width_changed = Signal()  # the room for the columns changed (window, pane or scroll bar)
     ICON_COLUMNS: tuple[str, ...] = ("contact", "trash")
 
@@ -119,10 +121,16 @@ class MessageListView(QTreeView):
         self.setProperty("focused", False)
         self.setMouseTracking(True)  # the Delete icon shows on the row under the pointer
         self.column_of: Callable[[int], str] = lambda column: ""  # the column id at a model column
+        self.is_header: Callable[[int], bool] = lambda row: False  # whether a row is a group header
 
     @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
         index = self.indexAt(event.position().toPoint())
+        if index.isValid() and self.is_header(index.row()):
+            event.accept()
+            if event.button() == Qt.MouseButton.LeftButton:
+                self.header_clicked.emit(index.row())
+            return
         column_id = self.column_of(index.column()) if index.isValid() else ""
         if event.button() == Qt.MouseButton.LeftButton and column_id in self.ICON_COLUMNS:
             event.accept()  # the click acts on that one message and leaves the selection alone
@@ -133,7 +141,7 @@ class MessageListView(QTreeView):
     @override
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         index = self.indexAt(event.position().toPoint())
-        if index.isValid() and self.column_of(index.column()) in self.ICON_COLUMNS:
+        if index.isValid() and (self.is_header(index.row()) or self.column_of(index.column()) in self.ICON_COLUMNS):
             event.accept()  # a quick second click on an icon does not open the message
             return
         super().mouseDoubleClickEvent(event)

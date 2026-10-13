@@ -3,7 +3,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QModelIndex, QSettings, QUrl
+from PySide6.QtCore import QModelIndex, QSettings, Qt, QUrl
 from PySide6.QtWidgets import QDialog, QLabel, QMessageBox
 from pytestqt.qtbot import QtBot
 
@@ -11,13 +11,14 @@ from chrono_mail.config import ServerRole
 from chrono_mail.ui.sections import CALENDAR, MAIL
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.mainwindow import MainWindow
-from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
+from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.1.91"
+__version__ = "test_ui_window.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: Group headers in the window; sorting by To; a search follows the sort order
 # v0.1.91: Clear filter and bold filters in the Filter menu
 # v0.1.90: The Filter button and its menu
 # v0.0.87: The folder list draws the unread count itself; the labels add it from COUNT_ROLE
@@ -177,6 +178,50 @@ def test_a_big_folder_is_loaded_page_by_page(tmp_path: Path, qtbot: QtBot, dialo
         assert len({row_of(world.window, row).message_id for row in (0, 99, 150, 249)}) == 4
         world.window.list_view.scrollToBottom()
         qtbot.wait(100)
+
+
+def message_subjects(window: MainWindow) -> list[str]:
+    """The subjects of the message rows, without the group headers."""
+    model = window.list_model
+    return [str(getattr(model.row_at(row), "subject")) for row in range(model.rowCount()) if not model.is_header(row) and model.row_at(row) is not None]
+
+
+def test_group_headers_fold_with_a_click_and_the_arrows_pass_them(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.act_show_groups.setChecked(True)
+    assert window.settings.value("show_groups") in (True, "true")
+    window._set_sort("subject", True)  # noqa: SLF001
+    wait(qtbot, lambda: window.list_model.rowCount() == 6 and window.list_model.row_at(5) is not None)
+    model = window.list_model
+    assert model.header_rows() == [0, 2, 4] and model.index(0, 0).data(GROUP_HEADER_ROLE) == ("Message 1", False)
+    assert all(window.list_view.isFirstColumnSpanned(row, QModelIndex()) for row in (0, 2, 4))
+    window.list_view.setCurrentIndex(model.index(1, 0))
+    window._step_message(1)  # noqa: SLF001
+    assert window.list_view.currentIndex().row() == 3  # the header at row 2 is passed
+    window._step_message(-1)  # noqa: SLF001
+    assert window.list_view.currentIndex().row() == 1
+    rect = window.list_view.visualRect(model.index(2, 0))
+    qtbot.mouseClick(window.list_view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+    assert model.rowCount() == 5 and model.index(2, 0).data(GROUP_HEADER_ROLE) == ("Message 2", True)
+    assert message_subjects(window) == ["Message 1", "Message 3"]
+    window.act_show_groups.setChecked(False)
+    wait(qtbot, lambda: model.rowCount() == 3 and not model.header_rows())
+
+
+def test_sorting_by_to_and_a_search_follows_the_sort(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    assert "To" in [action.text() for action in window.sort_menu.actions()]
+    window._set_sort("to", False)  # noqa: SLF001
+    assert window.sort_button.text() == "Sorted by To ▾" and window.view_spec() is not None and getattr(window.view_spec(), "sort") == "to"
+    wait(qtbot, lambda: len(message_subjects(window)) == 3)
+    window._set_sort("subject", True)  # noqa: SLF001
+    window.search_box.setText("Message")
+    window.search_box.returnPressed.emit()
+    wait(qtbot, lambda: message_subjects(window) == ["Message 1", "Message 2", "Message 3"])
+    window._set_sort("subject", False)  # noqa: SLF001
+    wait(qtbot, lambda: message_subjects(window) == ["Message 3", "Message 2", "Message 1"])
 
 
 def test_sorting_changes_the_order(world: World, qtbot: QtBot) -> None:
@@ -686,6 +731,7 @@ def test_a_conversation_row_is_painted_with_its_count_at_any_width(world: World,
     images = []
     for conversations in (False, True):
         model = MessageListModel(world.backend)
+        model.show_groups = False  # written before group headers existed
         view = QListView()
         qtbot.addWidget(view)
         view.setModel(model)
@@ -701,6 +747,7 @@ def test_a_conversation_row_is_painted_with_its_count_at_any_width(world: World,
         narrow = QListView()
         qtbot.addWidget(narrow)
         narrow_model = MessageListModel(world.backend)
+        narrow_model.show_groups = False  # written before group headers existed
         narrow.setModel(narrow_model)
         narrow.setItemDelegate(MessageDelegate())
         narrow.resize(width, ROW_HEIGHT * 3)

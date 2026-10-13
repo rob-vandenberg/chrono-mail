@@ -1,3 +1,4 @@
+import bisect
 import dataclasses
 from dataclasses import dataclass, field
 from collections.abc import Sequence
@@ -9,14 +10,15 @@ from PySide6.QtGui import QBrush, QFont, QGuiApplication, QPalette, QStandardIte
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.columns import BY_ID, CARD, SYMBOLS, cell_text, person_address
+from chrono_mail.ui.columns import BY_ID, CARD, SYMBOLS, cell_text, display_name, person_address
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon, grey_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.1.89"
+__version__ = "models.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: Group headers in the message list (by the sort order), folded and unfolded; search and combined views in any sort order; sorting by To
 # v0.1.89: The contact of a row (for the Contact column); grey icons in the headers of Contact and Delete
 # v0.0.87: Folder list: the name without the number and never bold; the number of unread messages in its own role (drawn by the tree); Local Folders uses the home icon
 # v0.0.85: A folder item keeps its plain name (for the window title)
@@ -48,6 +50,31 @@ COUNT_ROLE: int = Qt.ItemDataRole.UserRole + 10  # the number of unread messages
 ROW_PLACEHOLDER: None = None
 HEADER_ICON_ROLE: int = Qt.ItemDataRole.UserRole + 12  # a header icon that the list header draws in the middle of the column
 HEADER_ICONS: dict[str, str] = {"contact": "user", "trash": "edit-delete"}  # columns whose header is a grey icon
+GROUP_HEADER_ROLE: int = Qt.ItemDataRole.UserRole + 13  # (name, folded) on a group header row, None on a message row
+
+
+@dataclass(frozen=True, slots=True)
+class _Group:
+    """One group header in the list and the messages under it: where it is in the list (display rows) and in the messages."""
+
+    key: str
+    name: str
+    display_start: int  # the row of the header
+    message_start: int  # the position of its first message in the messages of the view
+    count: int  # its messages that are known (loaded, for a search)
+    shown: int  # of those, the rows under the header: 0 while folded
+    folded: bool
+
+
+def group_name(sort: str, value: str) -> str:
+    """The text of a group header: the date or size group's name, or the sender, recipients or subject as the columns show them."""
+    if sort == "sender":
+        return display_name(value) or "(unknown)"
+    if sort == "to":
+        return value or "(no recipients)"
+    if sort == "subject":
+        return value or "(no subject)"
+    return value
 
 
 class ViewKind(Enum):
@@ -96,6 +123,7 @@ class MessageListModel(QAbstractTableModel):
     """The rows of one folder or search, fetched a page at a time through engine commands."""
 
     counts_changed = Signal(int, int)  # total, unread
+    groups_changed = Signal()  # the group header rows moved (the window spans them over all columns)
     load_failed = Signal(str)
     loaded = Signal()
 
@@ -111,6 +139,11 @@ class MessageListModel(QAbstractTableModel):
         self.recipients_first: bool = False  # in Sent, Drafts and Outbox the From / To column shows the recipients
         self.date_style: str = "short"
         self.contacts: dict[str, tuple[str, str]] = {}  # address (lower case) -> (contact id, address book)
+        self.show_groups: bool = True
+        self._group_counts: list[tuple[str, str, int]] | None = None  # key, name, count of each group; None: no headers
+        self._groups: list[_Group] = []
+        self._display_rows: int = 0
+        self._folded: dict[tuple[str, str | None, str], set[str]] = {}  # per folder (or combined view) and sort order: the folded groups, until the program closes
 
     # --- the columns --------------------------------------------------------------------------
 
@@ -138,20 +171,133 @@ class MessageListModel(QAbstractTableModel):
         return self._spec
 
     def show(self, spec: ViewSpec | None) -> None:
-        """Start showing something else (or nothing)."""
+        """Start showing something else (or nothing). With groups, their headers are asked for first, then the messages."""
         self.beginResetModel()
         self._generation += 1
         self._spec = spec
         self._total = self._unread = 0
         self._rows = _Rows()
+        self._group_counts = None
+        self._layout_groups()
         self.endResetModel()
         if spec is None:
             self.counts_changed.emit(0, 0)
             return
+        if self.show_groups:
+            self._request_groups(spec)
+        else:
+            self._request_first(spec)
+
+    def _request_first(self, spec: ViewSpec) -> None:
         if spec.kind is ViewKind.FOLDER:
             self._request_page(0)
         else:
             self._request_more()
+
+    # --- group headers ------------------------------------------------------------------------
+
+    def _fold_key(self) -> tuple[str, str | None, str]:
+        spec = self._spec
+        if spec is None:
+            return ("", None, "")
+        return (spec.combined or spec.account, spec.folder if spec.combined is None else ",".join(spec.combined_accounts), spec.sort)
+
+    def _available(self) -> int:
+        """How many messages of the view are known: all of a folder (fetched as they are scrolled to), the loaded ones of a search."""
+        if self._spec is not None and self._spec.kind is ViewKind.QUERY:
+            return len(self._rows.loaded)
+        return self._total
+
+    def _layout_groups(self) -> None:
+        """Work out where the headers go and which rows they hide (call between begin and end of a model change)."""
+        available = self._available()
+        self._groups = []
+        if self._group_counts is None:
+            self._display_rows = available
+            return
+        folded = self._folded.get(self._fold_key(), set())
+        display = message = 0
+        last = len(self._group_counts) - 1
+        for number, (key, name, count) in enumerate(self._group_counts):
+            if message >= available:
+                break
+            known = available - message if number == last else min(count, available - message)  # a message that arrived since the counts were made joins the last group
+            if known <= 0:
+                continue
+            closed = key in folded
+            shown = 0 if closed else known
+            self._groups.append(_Group(key, name, display, message, known, shown, closed))
+            display += 1 + shown
+            message += known
+        self._display_rows = display
+
+    def _group_at(self, row: int) -> _Group | None:
+        if not self._groups or row < 0 or row >= self._display_rows:
+            return None
+        found = bisect.bisect_right([group.display_start for group in self._groups], row) - 1
+        return self._groups[found] if found >= 0 else None
+
+    def message_position(self, row: int) -> int | None:
+        """The position among the messages of the view of the message at this row; None on a group header."""
+        if self._group_counts is None:
+            return row if 0 <= row < self._display_rows else None
+        group = self._group_at(row)
+        if group is None or row == group.display_start:
+            return None
+        return group.message_start + row - group.display_start - 1
+
+    def display_row(self, position: int) -> int:
+        """The row of the message at this position among the messages of the view; -1 while its group is folded."""
+        if self._group_counts is None:
+            return position
+        for group in self._groups:
+            if group.message_start <= position < group.message_start + group.count:
+                return group.display_start + 1 + position - group.message_start if not group.folded else -1
+        return -1
+
+    def is_header(self, row: int) -> bool:
+        group = self._group_at(row)
+        return group is not None and group.display_start == row
+
+    def header_rows(self) -> list[int]:
+        return [group.display_start for group in self._groups]
+
+    def toggle_group(self, row: int) -> None:
+        """Fold the group of this header row, or open it again."""
+        group = self._group_at(row)
+        if group is None or group.display_start != row:
+            return
+        folded = self._folded.setdefault(self._fold_key(), set())
+        if group.folded:
+            folded.discard(group.key)
+            self.beginInsertRows(QModelIndex(), row + 1, row + group.count)
+            self._layout_groups()
+            self.endInsertRows()
+        else:
+            folded.add(group.key)
+            self.beginRemoveRows(QModelIndex(), row + 1, row + group.shown)
+            self._layout_groups()
+            self.endRemoveRows()
+        self.dataChanged.emit(self.index(row, 0), self.index(row, max(0, self.columnCount() - 1)))
+        self.groups_changed.emit()
+
+    def _request_groups(self, spec: ViewSpec) -> None:
+        generation = self._generation
+
+        def arrived(result: object) -> None:
+            if generation != self._generation:
+                return
+            groups: list[object] = list(result) if isinstance(result, (tuple, list)) else []
+            self._group_counts = [(str(getattr(group, "key")), group_name(spec.sort, str(getattr(group, "value"))), int(getattr(group, "count"))) for group in groups]
+            self._request_first(spec)
+
+        def failed(error: ChronoMailError) -> None:
+            if generation == self._generation:
+                self._request_first(spec)  # without headers rather than without messages
+
+        command = "message.combined-groups" if spec.combined is not None else "message.groups"
+        values = {name: value for name, value in self._values(spec, 0).items() if name not in ("offset", "limit")}
+        self._backend.call(command, values, arrived, failed, owner=self)
 
     def reload(self) -> None:
         """Fetch the same view again (after mail arrived or messages were changed)."""
@@ -161,11 +307,7 @@ class MessageListModel(QAbstractTableModel):
 
     @override
     def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
-        if parent.isValid():
-            return 0
-        if self._spec is not None and self._spec.kind is ViewKind.QUERY:
-            return len(self._rows.loaded)
-        return self._total
+        return 0 if parent.isValid() else self._display_rows
 
     @override
     def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
@@ -194,6 +336,15 @@ class MessageListModel(QAbstractTableModel):
     def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
         if not index.isValid():
             return None
+        group = self._group_at(index.row())
+        if group is not None and group.display_start == index.row():
+            if role == GROUP_HEADER_ROLE:
+                return (group.name, group.folded)
+            if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
+                return group.name if index.column() == 0 else None
+            return None
+        if role == GROUP_HEADER_ROLE:
+            return None
         if role == ROW_ROLE:
             return self.row_at(index.row(), fetch=True)
         column_id = self._columns[index.column()] if 0 <= index.column() < len(self._columns) else CARD
@@ -220,6 +371,8 @@ class MessageListModel(QAbstractTableModel):
 
     @override
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
+        if index.isValid() and self.is_header(index.row()):
+            return Qt.ItemFlag.ItemNeverHasChildren  # not enabled: the arrow keys pass it, it cannot be selected
         base = super().flags(index)
         return base | Qt.ItemFlag.ItemIsDragEnabled if index.isValid() else base
 
@@ -253,7 +406,12 @@ class MessageListModel(QAbstractTableModel):
             self._request_more()
 
     def row_at(self, row: int, fetch: bool = False) -> object:
-        """The message row at this position, or None while its page is still being fetched."""
+        """The message at this row of the list, or None on a group header or while its page is still being fetched."""
+        position = self.message_position(row)
+        return None if position is None else self._message_at(position, fetch)
+
+    def _message_at(self, row: int, fetch: bool = False) -> object:
+        """The message at this position among the messages of the view."""
         if self._spec is None or row < 0:
             return None
         if self._spec.kind is ViewKind.QUERY:
@@ -268,10 +426,10 @@ class MessageListModel(QAbstractTableModel):
 
     def replace_flags(self, message_id: str, flags: tuple[str, ...]) -> None:
         """Show new flags on a loaded row without fetching anything (after a flag change)."""
-        position = self.find(message_id)
+        position = self._find_position(message_id)
         if position < 0:
             return
-        row = self.row_at(position)
+        row = self._message_at(position)
         if row is None or not dataclasses.is_dataclass(row) or isinstance(row, type):
             return
         was_unread = "seen" not in getattr(row, "flags")
@@ -287,7 +445,9 @@ class MessageListModel(QAbstractTableModel):
                 self._unread = max(0, self._unread + (1 if now_unread else -1))
                 self.counts_changed.emit(self._total, self._unread)
         last = max(0, self.columnCount() - 1)
-        self.dataChanged.emit(self.index(position, 0), self.index(position, last))  # every column of the row: each cell is drawn on its own
+        shown = self.display_row(position)
+        if shown >= 0:
+            self.dataChanged.emit(self.index(shown, 0), self.index(shown, last))  # every column of the row: each cell is drawn on its own
 
     def message_ids(self) -> list[str]:
         """The ids of the rows that are loaded now (for finding a message again after a reload)."""
@@ -296,7 +456,12 @@ class MessageListModel(QAbstractTableModel):
         return [str(getattr(row, "message_id")) for row in rows]
 
     def find(self, message_id: str) -> int:
-        """The position of a loaded message, or -1."""
+        """The row of a loaded message in the list, or -1 (also while its group is folded)."""
+        position = self._find_position(message_id)
+        return self.display_row(position) if position >= 0 else -1
+
+    def _find_position(self, message_id: str) -> int:
+        """The position of a loaded message among the messages of the view, or -1."""
         if self._spec is None:
             return -1
         if self._spec.kind is ViewKind.QUERY:
@@ -314,13 +479,13 @@ class MessageListModel(QAbstractTableModel):
 
     def _values(self, spec: ViewSpec, offset: int) -> dict[str, object]:
         if spec.combined is not None:
-            combined: dict[str, object] = {"view": spec.combined, "query": spec.query, "offset": offset, "limit": PAGE_SIZE}
+            combined: dict[str, object] = {"view": spec.combined, "query": spec.query, "sort": spec.sort, "oldest_first": spec.oldest_first, "offset": offset, "limit": PAGE_SIZE}
             if spec.combined_accounts:
                 combined["accounts"] = list(spec.combined_accounts)
             return combined
         if spec.kind is ViewKind.FOLDER:
             return {"account": spec.account, "folder": spec.folder, "sort": spec.sort, "oldest_first": spec.oldest_first, "offset": offset, "limit": PAGE_SIZE}
-        values: dict[str, object] = {"account": spec.account, "query": spec.query, "offset": offset, "limit": PAGE_SIZE}
+        values: dict[str, object] = {"account": spec.account, "query": spec.query, "sort": spec.sort, "oldest_first": spec.oldest_first, "offset": offset, "limit": PAGE_SIZE}
         if spec.folder is not None:
             values["folder"] = spec.folder
         if spec.conversations:
@@ -346,12 +511,17 @@ class MessageListModel(QAbstractTableModel):
                 self.beginResetModel()
                 self._total, self._unread = int(getattr(result, "total")), int(getattr(result, "unread"))
                 self._rows.pages[0] = rows
+                self._layout_groups()
                 self.endResetModel()
+                self.groups_changed.emit()
                 self.counts_changed.emit(self._total, self._unread)
             else:
                 self._rows.pages[page] = rows
-                first = page * PAGE_SIZE
-                self.dataChanged.emit(self.index(first, 0), self.index(min(first + len(rows), self._total) - 1, max(0, self.columnCount() - 1)))
+                first, last = self.display_row(page * PAGE_SIZE), self.display_row(min((page + 1) * PAGE_SIZE, self._total) - 1)
+                if self._group_counts is not None:  # folded groups may hide either end: redraw from the first row to the last
+                    first, last = 0, self._display_rows - 1
+                if first >= 0 and last >= first:
+                    self.dataChanged.emit(self.index(first, 0), self.index(last, max(0, self.columnCount() - 1)))
             self.loaded.emit()
 
         self._backend.call("message.list", self._values(spec, page * PAGE_SIZE), arrived, self._failed, owner=self)
@@ -372,9 +542,17 @@ class MessageListModel(QAbstractTableModel):
             if len(rows) < PAGE_SIZE:
                 self._rows.exhausted = True
             if rows:
-                self.beginInsertRows(QModelIndex(), offset, offset + len(rows) - 1)
+                before = self._display_rows
                 self._rows.loaded.extend(rows)
-                self.endInsertRows()
+                self._layout_groups()  # new messages only ever add rows at the end (to the last group or under new headers)
+                after, self._display_rows = self._display_rows, before
+                if after > before:
+                    self.beginInsertRows(QModelIndex(), before, after - 1)
+                    self._display_rows = after
+                    self.endInsertRows()
+                    self.groups_changed.emit()
+                else:
+                    self._display_rows = after
             self.counts_changed.emit(len(self._rows.loaded), sum(1 for row in self._rows.loaded if "seen" not in getattr(row, "flags")))
             self.loaded.emit()
 

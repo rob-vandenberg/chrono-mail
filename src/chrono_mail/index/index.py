@@ -9,6 +9,10 @@ from pathlib import Path
 
 from chrono_mail.core import MessageFlag, StorageError
 from chrono_mail.index.model import (
+    DATE_GROUPS,
+    SIZE_GROUPS,
+    DateBounds,
+    GroupCount,
     IndexedMessage,
     IndexEntry,
     KnownAddress,
@@ -20,9 +24,10 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.0.23"
+__version__ = "index.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: Sorting by recipients; a search in any sort order; the groups of a folder or a search (group headers)
 # v0.0.23: addresses seen in messages, suggest
 # v0.0.19: OR and NOT (and a minus) in search words
 # v0.0.18: Conversations: counts, grouped list, conversation bar
@@ -35,7 +40,9 @@ _SORT_COLUMN: dict[SortField, str] = {
     SortField.SUBJECT: "m.subject COLLATE NOCASE",
     SortField.SENDER: "m.sender COLLATE NOCASE",
     SortField.SIZE: "m.size",
+    SortField.RECIPIENTS: "m.recipients COLLATE NOCASE",
 }
+_TEXT_GROUP_COLUMN: dict[SortField, str] = {SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender", SortField.RECIPIENTS: "m.recipients"}
 _FIELD_COLUMN: dict[str, str] = {"from": "sender", "to": "recipients", "subject": "subject", "body": "body"}
 _TERM: re.Pattern[str] = re.compile(r'(-?)(?:(\w+):)?("[^"]*"?|\S+)')
 
@@ -344,8 +351,62 @@ class Index:
         filters: SearchFilter = SearchFilter(),
         offset: int = 0,
         limit: int = 100,
+        sort: SortField = SortField.DATE,
+        descending: bool = True,
     ) -> list[IndexedMessage]:
-        """Messages matching the words and the filters, newest first. An empty query lists by filters only."""
+        """Messages matching the words and the filters, newest first unless another order is asked for. An empty query lists by filters only."""
+        source, where, parameters = self._search_parts(query, folder, filters)
+        direction = "DESC" if descending else "ASC"
+        sql = f"SELECT {_COLUMNS} FROM {source}{where} ORDER BY {_SORT_COLUMN[sort]} {direction}, m.id {direction} LIMIT ? OFFSET ?"
+        parameters.extend([max(0, limit), max(0, offset)])
+        try:
+            return [_row(row) for row in self._connection.execute(sql, parameters).fetchall()]
+        except sqlite3.OperationalError as error:
+            raise StorageError(f"The search could not be run: {error}") from None
+
+    def groups(
+        self,
+        bounds: DateBounds,
+        query: str = "",
+        folder: tuple[str, ...] | None = None,
+        filters: SearchFilter = SearchFilter(),
+        sort: SortField = SortField.DATE,
+        descending: bool = True,
+    ) -> list[GroupCount]:
+        """The groups of a folder or a search in the order the messages are listed (search with the same arguments), each
+        with its number of messages: date groups when sorted by date, size groups by size, one group per text otherwise."""
+        source, where, parameters = self._search_parts(query, folder, filters)
+        if sort is SortField.DATE:
+            cases = " ".join(f"WHEN m.date >= ? THEN {position}" for position in range(len(bounds.starts())))
+            key = f"CASE WHEN m.date IS NULL THEN {len(DATE_GROUPS) - 1} {cases} ELSE {len(DATE_GROUPS) - 2} END"
+            parameters = [_epoch(start) for start in bounds.starts()] + parameters
+            no_date = len(DATE_GROUPS) - 1  # messages without a date come last when the newest are first, and first otherwise
+            order = "g ASC" if descending else f"CASE WHEN g = {no_date} THEN {no_date + 1} ELSE g END DESC"
+            sql = f"SELECT {key} AS g, count(*) FROM {source}{where} GROUP BY g ORDER BY {order}"
+            names = DATE_GROUPS
+        elif sort is SortField.SIZE:
+            cases = " ".join(f"WHEN m.size < {limit} THEN {position}" for position, (_, _, limit) in enumerate(SIZE_GROUPS) if limit is not None)
+            key = f"CASE {cases} ELSE {len(SIZE_GROUPS) - 1} END"
+            sql = f"SELECT {key} AS g, count(*) FROM {source}{where} GROUP BY g ORDER BY g {'DESC' if descending else 'ASC'}"
+            names = tuple((group_key, name) for group_key, name, _ in SIZE_GROUPS)
+        else:
+            column = _TEXT_GROUP_COLUMN[sort]
+            sql = (
+                f"SELECT lower({column}), {column}, count(*) FROM {source}{where}"
+                f" GROUP BY {column} COLLATE NOCASE ORDER BY {column} COLLATE NOCASE {'DESC' if descending else 'ASC'}"
+            )
+            try:
+                return [GroupCount(str(key), str(value), int(count)) for key, value, count in self._connection.execute(sql, parameters).fetchall()]
+            except sqlite3.OperationalError as error:
+                raise StorageError(f"The search could not be run: {error}") from None
+        try:
+            found = self._connection.execute(sql, parameters).fetchall()
+        except sqlite3.OperationalError as error:
+            raise StorageError(f"The search could not be run: {error}") from None
+        return [GroupCount(names[int(position)][0], names[int(position)][1], int(count)) for position, count in found]
+
+    def _search_parts(self, query: str, folder: tuple[str, ...] | None, filters: SearchFilter) -> tuple[str, str, list[object]]:
+        """The FROM and WHERE of a search, and the values for its question marks."""
         conditions: list[str] = []
         parameters: list[object] = []
         source = "messages m"
@@ -391,12 +452,7 @@ class Index:
             conditions.append("m.size <= ?")
             parameters.append(filters.maximum_size)
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
-        sql = f"SELECT {_COLUMNS} FROM {source}{where} ORDER BY m.date DESC, m.id DESC LIMIT ? OFFSET ?"
-        parameters.extend([max(0, limit), max(0, offset)])
-        try:
-            return [_row(row) for row in self._connection.execute(sql, parameters).fetchall()]
-        except sqlite3.OperationalError as error:
-            raise StorageError(f"The search could not be run: {error}") from None
+        return source, where, parameters
 
     def check(self) -> bool:
         """Run SQLite's integrity check (slow on a large index)."""

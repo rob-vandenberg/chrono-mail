@@ -1,9 +1,10 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any  # command results are command-specific dataclasses
 
 import pytest
 
 from chrono_mail.engine import UsageError
+from chrono_mail.engine.commands_mail import date_bounds
 from chrono_mail.engine.mailbox import open_mailbox
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
@@ -11,9 +12,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_search.py 0.0.19"
+__version__ = "test_engine_search.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: Search results in any sort order; message.groups; date group boundaries
 # v0.0.19: Initial tests of the advanced search options
 
 
@@ -63,3 +65,34 @@ def test_bad_dates_are_reported(setup: Setup) -> None:
         with pytest.raises(UsageError, match="must be a date"):
             call(setup.engine, "message.search", account=setup.account_id, date_from=bad)
     assert found(setup, date_from="  ") == ["Both", "Cats", "Dogs"]
+
+
+def test_search_follows_the_sort_order(setup: Setup) -> None:
+    fill(setup)
+
+    def listed(**values: object) -> list[str]:
+        rows: list[Any] = list(call(setup.engine, "message.search", account=setup.account_id, query="all OR cats", **values))
+        return [row.subject for row in rows]
+
+    assert listed() == ["Both", "Dogs", "Cats"]
+    assert listed(sort="subject", oldest_first=True) == ["Both", "Cats", "Dogs"]
+    assert listed(sort="sender", oldest_first=True)[-1] == "Dogs"
+    assert listed(sort="size")[0] == "Dogs"
+
+
+def test_groups_through_the_command(setup: Setup) -> None:
+    fill(setup)
+    groups: list[Any] = list(call(setup.engine, "message.groups", account=setup.account_id, folder="Inbox", sort="sender", oldest_first=True))
+    assert [(group.value, group.count) for group in groups] == [("Ann <ann@x.org>", 2), ("Bob <bob@x.org>", 1)]
+    sizes: list[Any] = list(call(setup.engine, "message.groups", account=setup.account_id, query="cats", sort="size"))
+    assert [(group.key, group.count) for group in sizes] == [("tiny", 2)]
+
+
+def test_date_group_boundaries_are_local_midnights_from_monday() -> None:
+    bounds = date_bounds(datetime(2026, 2, 14, 15, 30).astimezone())  # a Saturday
+    starts = [moment.replace(tzinfo=None) for moment in bounds.starts()]
+    assert starts == [datetime(2026, 2, 14), datetime(2026, 2, 13), datetime(2026, 2, 9), datetime(2026, 2, 2), datetime(2026, 2, 1), datetime(2026, 1, 1)]
+    assert all(moment.utcoffset() is not None for moment in bounds.starts())
+    assert date_bounds(datetime(2026, 1, 5, 8, 0).astimezone()).last_month.replace(tzinfo=None) == datetime(2025, 12, 1)
+    assert timedelta(0) <= bounds.today - bounds.yesterday <= timedelta(hours=25)
+

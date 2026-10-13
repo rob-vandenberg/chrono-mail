@@ -6,9 +6,10 @@ from email.utils import getaddresses
 from chrono_mail.ui.formatting import display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 0.1.89"
+__version__ = "columns.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: A click on the To column sorts by To
 # v0.1.89: Icon columns 24 px; Contact and Delete columns, added once to a saved set of columns; the address of the person a row shows
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.41: Initial columns of the message list
@@ -21,7 +22,7 @@ class Column:
     column_id: str
     label: str  # in the column editor and the header
     width: int
-    sort: str | None = None  # the sort order a click on the header gives (date, subject, sender, size), if any
+    sort: str | None = None  # the sort order a click on the header gives (date, subject, sender, to, size), if any
     right: bool = False
     symbol: bool = False  # a narrow column holding a symbol; its header shows the symbol
 
@@ -35,7 +36,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("trash", "Delete", 24, symbol=True),
     Column("from_to", "From / To", 170, "sender"),
     Column("from", "From", 200, "sender"),
-    Column("to", "To", 200),
+    Column("to", "To", 200, "to"),
     Column("subject", "Subject", 300, "subject"),
     Column("date", "Received", 110, "date"),
     Column("size", "Size", 64, "size", right=True),

@@ -19,9 +19,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 0.0.78"
+__version__ = "world.py 0.2.94"
 
 # --- Version history ----------------------------------------------------
+# v0.2.94: The tests start without group headers; the tests of the groups switch them on
 # v0.0.78: The tests start new messages in plain text
 # v0.0.73: The menus are inside one Menu button
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -170,6 +171,7 @@ def build_world(tmp_path: Path, qtbot: QtBot, dialogs: Dialogs, messages: dict[s
         settings = QSettings(str(settings_path), QSettings.Format.IniFormat)
         settings.setValue("check_on_start", False)  # tests decide for themselves when mail is checked
         settings.setValue("compose_html", False)  # the tests that write a message start in plain text; rich text is the default of the program
+        settings.setValue("show_groups", False)  # the tests of the list count rows without headers; the tests of the groups switch them on
         window = MainWindow(backend, settings)
         qtbot.addWidget(window)
         window.show()

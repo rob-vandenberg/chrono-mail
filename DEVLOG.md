@@ -963,3 +963,27 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 **Still open**
 - The field has square corners (was so before; under Problems in STATUS).
 - Step 8 (group headers), after the owner's go-ahead.
+
+## 2026-10-13 Main screen restyle step 8: group headers, sorting by To, searches follow the sort (version 0.2.94)
+
+**What landed**
+- The owner moved the minor version: 0.2.94.
+- Index: sort field `to` (recipients, case ignored as the other texts); `search` takes a sort and a direction (newest first stays the default); `groups` counts the groups of a folder or a search in list order with one GROUP BY query: date groups by local midnights (Today, Yesterday, Earlier this week from Monday, Last week, Earlier this month, Last month, Older, No date), size groups (under 10 KB, 100 KB, 1 MB, 10 MB, above), or one group per sender, recipients or subject (case ignored).
+- Engine: `message.list`, `message.search` and `message.combined` accept every sort and oldest first; new `message.groups` and `message.combined-groups` (combined views merge the groups of all mailboxes); `date_bounds` makes the date boundaries in local time, each day at its own midnight.
+- List model: a group layer. The groups are asked for first, then the messages (still 100 at a time); headers sit before their group's messages; positions in the list and among the messages are told apart (`message_position`, `display_row`, `row_at` gives None on a header); a header is not enabled, so the arrow keys pass it and it cannot be selected; folding removes and inserts the rows of one group; folded groups are kept per folder (or combined view) and sort order until the program closes. A search adds rows (and headers) at the end as it is scrolled.
+- Window: View > Show groups (setting `show_groups`, on by default); "To" in the Sorted by menu and on the To column header; the headers are spanned over all columns (again after every reset of the list); a click on a header folds or unfolds it; next / previous message passes headers. Headers are drawn as a bar with a chevron and the name in bold, in the colours of text, in both layouts.
+- The search field has round ends: rounding 15 px (16 px was more than half its 30 px height, which Qt drew square).
+- The tests of the window and the list start with Show groups off (`tests/ui/world.py`, the owner's permission); the new tests switch it on.
+- Tests run: `tests/test_index_index.py` (5 new), `tests/test_engine_search.py` (3 new), `tests/test_engine_local.py` (1 new), `tests/test_engine_commands.py`, `tests/test_cli.py`, `tests/test_engine_conversations.py`, `tests/ui/test_ui_models.py` (4 new), `tests/ui/test_ui_columns.py`, `tests/ui/test_ui_searchfield.py`, `tests/ui/test_ui_theme.py`, `tests/ui/test_ui_window.py` (alone, 2 new); Pyrefly 0 diagnostics, layer check kept; not the full suite and not the 500,000-message test.
+
+**Still open**
+- In the card layout the headers are as tall as a card (uniform row heights).
+- Switching to the card layout while the program runs leaves its column 24 px wide (also in 0.1.93).
+- The speed of the group query on 500,000 messages is not measured.
+
+## 2026-10-13 Group headers darker in the dark scheme (version 0.2.95)
+
+**What landed**
+- The bar of a group header has a fixed colour per scheme (`group_header_colour` in `ui/colours.py`): #2a2a2a dark (was #343434, a veil of the text colour over the list), #e6e6e6 light (unchanged).
+- 0.2.94 was not pushed; it goes out together with this version.
+- Tests run: `tests/ui/test_ui_models.py`, `tests/ui/test_ui_theme.py`, a dark screenshot (header pixel #2a2a2a); Pyrefly 0 diagnostics, layer check kept; not the full suite.

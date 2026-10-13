@@ -1,9 +1,10 @@
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 0.0.88"
+__version__ = "colours.py 0.2.95"
 
 # --- Version history ----------------------------------------------------
+# v0.2.95: The background of a group header in the message list
 # v0.0.88: Grey of a selection in a list without the focus; black separator lines
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.51: Initial colours for messages and marks that suit both a light and a dark scheme
@@ -14,6 +15,8 @@ GREEN_ON_LIGHT: str = "#17703c"
 GREEN_ON_DARK: str = "#4cc26b"
 SELECTION_GREY_ON_LIGHT: str = "#d6d6d6"  # a selection in a folder list or message list that does not have the focus
 SELECTION_GREY_ON_DARK: str = "#4a4a4a"
+GROUP_HEADER_ON_LIGHT: str = "#e6e6e6"  # the bar of a group header in the message list
+GROUP_HEADER_ON_DARK: str = "#2a2a2a"
 SEPARATOR: str = "#000000"  # the thin lines between the panes and between the column headers, in both schemes
 
 
@@ -74,6 +77,10 @@ def green(palette: QPalette | None = None) -> str:
 
 def selection_grey(palette: QPalette | None = None) -> str:
     return SELECTION_GREY_ON_DARK if is_dark(palette) else SELECTION_GREY_ON_LIGHT
+
+
+def group_header_colour(palette: QPalette | None = None) -> str:
+    return GROUP_HEADER_ON_DARK if is_dark(palette) else GROUP_HEADER_ON_LIGHT
 
 
 def red_style(palette: QPalette | None = None) -> str:
