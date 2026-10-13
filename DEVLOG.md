@@ -998,3 +998,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Message list… is no longer in the View menu; it stays at the bottom of the menu of the column headers. Settings > Message list shows the columns right on the page (ColumnPicker in `ui/columnsdialog.py`: tick boxes, Move up, Move down, Standard columns; greyed out while Layout is Cards); the Columns line and the Choose the columns… button are gone. The Message list window uses the same part.
 - Found, not fixed: `test_the_look_of_the_list_follows_the_settings` (tests/ui/test_ui_preferences.py) fails since 0.1.89 (checked on 0.0.87: passes; 0.1.89 and 0.2.95: fails); it expects the old row padding.
 - Tests run as well: `tests/ui/test_ui_preferences.py` (the columns test rewritten), `tests/ui/test_ui_columns.py`, `tests/ui/test_ui_window.py` (alone; View has no Message list…, the header menu has it), a screenshot of the Settings page.
+
+## 2026-10-13 Row height in the Message list window (version 0.2.97)
+
+**What landed**
+- The Message list window (menu of the column headers) has Row height (Compact, Normal, Roomy) under Dates, the same setting (`list_density`) as Settings > Message list; OK saves it and the list takes it at once. The three choices live once, in `ui/columnsdialog.py`.
+- Tests run: `tests/ui/test_ui_columns.py`, `tests/ui/test_ui_preferences.py`, `tests/ui/test_ui_window.py` (alone); Pyrefly 0 diagnostics, layer check kept; not the full suite. The only failure is the known old one (`test_the_look_of_the_list_follows_the_settings`, padding since 0.1.89).
+- The search field's ends are fully round at every text size: its corners are rounded by half its height, set by the field at every change of height (was a fixed 15 px in `ui/theme.py`, round only at 30 px high; at a larger interface text size the field is about 40 px). Tests run: `tests/ui/test_ui_searchfield.py` (one new), screenshots at 40 px (grey and blue looks); Pyrefly 0 diagnostics, layer check kept; not the full suite.

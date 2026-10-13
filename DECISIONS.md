@@ -670,3 +670,10 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** Settings > Message list shows the list of columns (tick to show, Move up, Move down, Standard columns) right on the page instead of a Choose the columns… button; it is greyed out while the card layout is chosen. The Message list… window is no longer in the View menu (View has Message list > Columns / Cards for the layout); it stays at the bottom of the menu of the column headers. Both use the same column list.
 **Reason:** the owner's instruction: the Settings window is big enough, and the same choice should not be in the View menu twice.
+
+## D-097 The Message list window also has Row height
+*2026-10-13*
+
+**Decision:** the Message list window has Row height (Compact, Normal, Roomy) under Dates, the same setting as on Settings > Message list. Like there, it changes the rows of the column layout only; cards keep their height.
+The search field rounds its corners by half its own height (it was a fixed 15 px, round only at the standard text size; the field grows with the text size of the interface).
+**Reason:** the owner's instructions: the window lacked Row height, and the ends of the search field were not fully round.

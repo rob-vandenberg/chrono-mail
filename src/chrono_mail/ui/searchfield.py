@@ -1,14 +1,16 @@
 from typing import override
 
 from PySide6.QtCore import QEvent, QObject, Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QApplication, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QToolButton, QWidget
 
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchfield.py 0.1.93"
+__version__ = "searchfield.py 0.2.97"
 
 # --- Version history ----------------------------------------------------
+# v0.2.97: The corners are rounded by half the height of the field, so the ends stay round at every text size
 # v0.1.93: Initial search field: grey while not in use, blue while clicked in, orange while a search is active
 
 
@@ -54,12 +56,21 @@ class SearchField(QFrame):
         self.setMinimumWidth(360)
         self.focused: bool = False
         self.active: bool = False
+        self.corner_radius: int = 0  # half the height, set at every change of height
         self.line_edit.installEventFilter(self)
         application = QApplication.instance()
         if isinstance(application, QApplication):
             application.focusChanged.connect(self._focus_changed)
         self.line_edit.textChanged.connect(self._update_look)
         self._update_look()
+
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        radius = self.height() // 2  # more than half the height and Qt draws square corners
+        if radius != self.corner_radius:
+            self.corner_radius = radius
+            self.setStyleSheet(f"QFrame#searchPill {{ border-radius: {radius}px; }}")
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:

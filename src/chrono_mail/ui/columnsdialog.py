@@ -18,15 +18,17 @@ from PySide6.QtWidgets import (
 from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsdialog.py 0.2.96"
+__version__ = "columnsdialog.py 0.2.97"
 
 # --- Version history ----------------------------------------------------
+# v0.2.97: Row height (compact, normal, roomy) in the Message list window
 # v0.2.96: The column list is a part of its own (ColumnPicker), also shown on the Message list page of Settings
 # v0.0.41: Initial column editor
 
 LAYOUTS: tuple[tuple[str, str], ...] = (("columns", "Columns (a table, one line per message)"), ("cards", "Cards (sender, subject and a preview)"))
 READING_PANES: tuple[tuple[str, str], ...] = (("right", "At the right of the list"), ("bottom", "Below the list"), ("off", "Off (open a message in its own window)"))
 DATE_STYLES: tuple[tuple[str, str], ...] = (("short", "Short (time today, weekday, date)"), ("full", "Date and time"), ("iso", "2026-10-11 09:30"))
+DENSITY_LABELS: tuple[tuple[str, str], ...] = (("compact", "Compact"), ("normal", "Normal"), ("roomy", "Roomy"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,7 @@ class ListChoice:
     columns: tuple[str, ...]
     reading_pane: str
     date_style: str
+    density: str
 
 
 COLUMNS_TEXT = "Columns (tick the ones to show; the order is the order from left to right):"
@@ -104,7 +107,7 @@ class ColumnPicker(QWidget):
 
 
 class ColumnsDialog(QDialog):
-    """Chooses how the message list looks: columns or cards, which columns in which order, and where the reading pane is."""
+    """Chooses how the message list looks: columns or cards, which columns in which order, where the reading pane is, the dates and the row height."""
 
     def __init__(self, current: ListChoice, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -124,9 +127,14 @@ class ColumnsDialog(QDialog):
         for value, label in DATE_STYLES:
             self.date_box.addItem(label, value)
         self.date_box.setCurrentIndex(max(0, self.date_box.findData(current.date_style)))
+        self.density_box = QComboBox(self)
+        for value, label in DENSITY_LABELS:
+            self.density_box.addItem(label, value)
+        self.density_box.setCurrentIndex(max(0, self.density_box.findData(current.density)))
         form.addRow("Layout", self.layout_box)
         form.addRow("Reading pane", self.pane_box)
         form.addRow("Dates", self.date_box)
+        form.addRow("Row height", self.density_box)
         layout.addLayout(form)
         layout.addWidget(QLabel(COLUMNS_TEXT, self))
         self.picker = ColumnPicker(current.columns, self)
@@ -145,4 +153,6 @@ class ColumnsDialog(QDialog):
 
     def choice(self) -> ListChoice:
         """What was asked for. At least one column is always kept (the standard ones when none is ticked)."""
-        return ListChoice(str(self.layout_box.currentData()), self.picker.columns(), str(self.pane_box.currentData()), str(self.date_box.currentData()))
+        return ListChoice(
+            str(self.layout_box.currentData()), self.picker.columns(), str(self.pane_box.currentData()), str(self.date_box.currentData()), str(self.density_box.currentData()),
+        )

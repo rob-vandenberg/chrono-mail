@@ -13,9 +13,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.2.96"
+__version__ = "test_ui_columns.py 0.2.97"
 
 # --- Version history ----------------------------------------------------
+# v0.2.97: Row height in the Message list window
 # v0.2.96: The column list of the Message list window is a part of its own
 # v0.1.89: Column fit, row heights, the Contact and Delete columns
 # v0.0.77: Received instead of Date
@@ -100,15 +101,17 @@ def test_columns_can_be_toggled_from_the_header_and_are_remembered(world: World,
 
 
 def test_the_column_editor_returns_the_choice(qtbot: QtBot) -> None:
-    dialog = ColumnsDialog(ListChoice("columns", ("subject", "date"), "bottom", "iso"))
+    dialog = ColumnsDialog(ListChoice("columns", ("subject", "date"), "bottom", "iso", "roomy"))
     qtbot.addWidget(dialog)
+    assert dialog.density_box.currentData() == "roomy"
     shown = [dialog.list.item(row).text() for row in range(dialog.list.count()) if dialog.list.item(row).checkState() == Qt.CheckState.Checked]
     assert shown == ["Subject", "Received"] and dialog.list.item(0).text() == "Subject" and dialog.pane_box.currentData() == "bottom" and dialog.date_box.currentData() == "iso"
     dialog.list.setCurrentRow(1)
     dialog.up_button.click()
     dialog.list.item(2).setCheckState(Qt.CheckState.Checked)
     third = str(dialog.list.item(2).data(Qt.ItemDataRole.UserRole))
-    assert dialog.choice() == ListChoice("columns", ("date", "subject", third), "bottom", "iso")
+    dialog.density_box.setCurrentIndex(dialog.density_box.findData("compact"))
+    assert dialog.choice() == ListChoice("columns", ("date", "subject", third), "bottom", "iso", "compact")
     dialog.reset_button.click()
     assert dialog.choice().columns == DEFAULT_COLUMNS
     dialog.layout_box.setCurrentIndex(dialog.layout_box.findData("cards"))
@@ -126,6 +129,7 @@ def test_the_window_applies_the_editor_and_keeps_it(world: World, qtbot: QtBot, 
         self.layout_box.setCurrentIndex(self.layout_box.findData("cards"))
         self.pane_box.setCurrentIndex(self.pane_box.findData("bottom"))
         self.date_box.setCurrentIndex(self.date_box.findData("iso"))
+        self.density_box.setCurrentIndex(self.density_box.findData("roomy"))
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(ColumnsDialog, "exec", fake_exec)
@@ -133,6 +137,7 @@ def test_the_window_applies_the_editor_and_keeps_it(world: World, qtbot: QtBot, 
     settings: QSettings = world.window.settings
     assert world.window.list_model.columns == ("card",) and world.window.list_view.header().isHidden() and world.window.list_model.date_style == "iso"
     assert world.window.content_splitter.orientation() == Qt.Orientation.Vertical and str(settings.value("list_layout")) == "cards" and str(settings.value("reading_pane")) == "bottom"
+    assert str(settings.value("list_density")) == "roomy" and world.window.column_delegate.row_height == 36
     assert world.window.pane_actions["bottom"].isChecked() and not world.window.pane_actions["right"].isChecked()
     row = row_of(world.window, 0)
     assert row is not None

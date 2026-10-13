@@ -7,9 +7,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_searchfield.py 0.1.93"
+__version__ = "test_ui_searchfield.py 0.2.97"
 
 # --- Version history ----------------------------------------------------
+# v0.2.97: The ends stay round when the field is higher
 # v0.1.93: Initial tests of the looks of the search field and the search history
 
 
@@ -123,3 +124,14 @@ def test_a_question_mark_shows_the_help_instead_of_the_history(world: World, qtb
     qtbot.keyClick(world.window.search_history.list, Qt.Key.Key_Question, delay=0)
     wait(qtbot, world.window.search_help.isVisible)
     assert not world.window.search_history.isVisible()
+
+
+def test_the_ends_stay_round_at_any_height(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    world.window.resize(1900, 700)  # wide enough for the whole toolbar (else the field is in its overflow menu)
+    world.window.show()  # a hidden window gets no sizes
+    field = world.window.search_pill
+    wait(qtbot, lambda: field.corner_radius == field.height() // 2 > 0)
+    field.setFixedHeight(40)  # as with a larger text size
+    wait(qtbot, lambda: field.corner_radius == 20)
+    assert "border-radius: 20px" in field.styleSheet()

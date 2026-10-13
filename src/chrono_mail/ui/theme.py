@@ -3,9 +3,10 @@ from PySide6.QtWidgets import QAbstractItemView
 from chrono_mail.ui.colours import SEPARATOR, selection_grey
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.2.94"
+__version__ = "theme.py 0.2.97"
 
 # --- Version history ----------------------------------------------------
+# v0.2.97: The rounding of the search field is set by the field itself (half its height)
 # v0.2.94: The search field has round ends (rounding 15 px, half its height; 16 px was more than half and Qt drew square corners)
 # v0.1.93: The search field: grey border while not in use, blue while clicked in, orange while a search is active; a thin line before This folder
 # v0.1.90: The Filter button: blue and bold while a filter is on, its ▾ placed as on the toolbar buttons; Qt's own second menu arrow hidden on Sorted by
@@ -54,7 +55,7 @@ QToolBar#mainToolbar QToolButton::menu-indicator {{ subcontrol-origin: padding; 
 QToolButton#menuButton, QToolBar#mainToolbar QToolButton#menuButton {{ background: palette(highlight); color: palette(highlighted-text); font-weight: 600; border: 0; border-radius: 4px; padding: 6px 14px; margin-right: 6px; }}
 QToolButton#menuButton:hover, QToolBar#mainToolbar QToolButton#menuButton:hover {{ background: palette(link); }}
 QToolButton#menuButton::menu-indicator {{ image: none; width: 0; }}
-QFrame#searchPill {{ border: 1px solid palette(mid); border-radius: 15px; background: palette(base); }}
+QFrame#searchPill {{ border: 1px solid palette(mid); background: palette(base); }}
 QFrame#searchPill QLineEdit {{ border: 0; background: transparent; padding: 5px 2px; }}
 QFrame#searchPill QComboBox {{ border: 0; background: transparent; padding: 2px 6px; }}
 QFrame#searchPill QLabel {{ border: 0; background: transparent; }}

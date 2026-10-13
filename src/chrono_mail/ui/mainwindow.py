@@ -81,9 +81,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.2.96"
+__version__ = "mainwindow.py 0.2.97"
 
 # --- Version history ----------------------------------------------------
+# v0.2.97: The Message list window sets the row height too
 # v0.2.96: In the card layout the one column always fills the list (it kept the width of the first column of the column layout); View > Message list: Columns or Cards; in the card layout the rows are not all one height (group headers are lower than cards); Message list… is no longer in the View menu (it stays in the menu of the column headers)
 # v0.2.94: Group headers in the message list (fold by a click; Show groups in the View menu); sorting by To; searches and combined views follow the sort order
 # v0.1.93: The search field has three looks (not in use, clicked in, search active) and a red ✕ that clears the search; clicking in it shows the last 10 searches
@@ -2281,16 +2282,18 @@ class MainWindow(QMainWindow):
         self._apply_list_layout()
 
     def edit_columns(self) -> None:
-        """View > Message list: layout, columns, reading pane and date style."""
-        dialog = ColumnsDialog(ListChoice(self._layout, self._columns, self._reading_pane, self._date_style), self)
+        """Message list…: layout, columns, reading pane, date style and row height."""
+        density = prefs.get_text(self.settings, "list_density", prefs.DENSITIES)
+        dialog = ColumnsDialog(ListChoice(self._layout, self._columns, self._reading_pane, self._date_style, density), self)
         if dialog.exec() != ColumnsDialog.DialogCode.Accepted:
             return
         self.apply_list_choice(dialog.choice())
 
     def apply_list_choice(self, choice: ListChoice) -> None:
         self._layout, self._columns, self._date_style = choice.layout, choice.columns, choice.date_style
-        for key, value in (("list_layout", self._layout), ("columns", ",".join(self._columns)), ("date_style", self._date_style)):
+        for key, value in (("list_layout", self._layout), ("columns", ",".join(self._columns)), ("date_style", self._date_style), ("list_density", choice.density)):
             self.settings.setValue(key, value)
+        self._apply_list_look()
         self._apply_list_layout()
         self.set_reading_pane(choice.reading_pane)
 

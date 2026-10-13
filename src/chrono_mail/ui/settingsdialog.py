@@ -34,16 +34,17 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import DEFAULT_COLUMNS, valid_columns
-from chrono_mail.ui.columnsdialog import COLUMNS_TEXT, DATE_STYLES, LAYOUTS, READING_PANES, ColumnPicker
+from chrono_mail.ui.columnsdialog import COLUMNS_TEXT, DATE_STYLES, DENSITY_LABELS, LAYOUTS, READING_PANES, ColumnPicker
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.2.96"
+__version__ = "settingsdialog.py 0.2.97"
 
 # --- Version history ----------------------------------------------------
+# v0.2.97: The row height choices come from the Message list window (one list for both)
 # v0.2.96: Message list page: the columns are chosen right on the page (no Choose the columns button)
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
@@ -67,7 +68,6 @@ MARK_READ_LABELS: tuple[tuple[str, str], ...] = (
 QUOTE_LABELS: tuple[tuple[str, str], ...] = (("above", "My answer above the quoted text"), ("below", "My answer below the quoted text"), ("none", "Do not quote the original"))
 SCHEME_LABELS: tuple[tuple[str, str], ...] = (("system", "Follow the system"), ("light", "Light"), ("dark", "Dark"))
 STYLE_LABELS: tuple[tuple[str, str], ...] = (("default", "The style of the platform"), ("fusion", "Fusion"))
-DENSITY_LABELS: tuple[tuple[str, str], ...] = (("compact", "Compact"), ("normal", "Normal"), ("roomy", "Roomy"))
 
 
 def _combo(parent: QWidget, choices: tuple[tuple[str, str], ...], current: str) -> QComboBox:

@@ -17,9 +17,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.2.96"
+__version__ = "test_ui_window.py 0.2.97"
 
 # --- Version history ----------------------------------------------------
+# v0.2.97: The choice of the Message list window carries the row height
 # v0.2.96: The card layout fills the list; View > Message list; one row height only in the column layout; Message list… only in the column header menu
 # v0.2.94: Group headers in the window; sorting by To; a search follows the sort order
 # v0.1.91: Clear filter and bold filters in the Filter menu
@@ -252,7 +253,7 @@ def test_the_card_layout_fills_the_list(world: World, qtbot: QtBot) -> None:
     wait(qtbot, lambda: window.list_view.columnWidth(0) == window.list_view.viewport().width() > 100)
     window.resize(1300, 600)
     wait(qtbot, lambda: window.list_view.columnWidth(0) == window.list_view.viewport().width())
-    window.apply_list_choice(ListChoice("columns", window._columns, window._reading_pane, window._date_style))  # noqa: SLF001 - the Message list window
+    window.apply_list_choice(ListChoice("columns", window._columns, window._reading_pane, window._date_style, "normal"))  # noqa: SLF001 - the Message list window
     assert window.layout_actions["columns"].isChecked() and not window.layout_actions["cards"].isChecked()
     assert window.list_view.uniformRowHeights()  # the column layout stays fast with any number of messages
 
