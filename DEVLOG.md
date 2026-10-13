@@ -901,3 +901,21 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - Step 5 (message list columns and row height, together with the column-fit item), after the owner's go-ahead.
+
+## 2026-10-13 Main screen restyle step 5: message list columns, row height, Contact and Delete columns, column fit (version 0.1.89)
+
+**What landed**
+- The owner moved the minor version: 0.1.89.
+- Column fit (`ui/columnfit.py`, pure arithmetic): the columns always fill exactly the width of the list, never a horizontal scrollbar. Text columns are saved as shares of the width left after the icon columns, icon columns in pixels (settings key `column_layout`; the old `column_widths` pixels are taken over once). A line next to an icon column changes that icon column (between two icon columns the one farther from the text columns), and all text columns give or take in proportion while other icon columns keep their width; a line between two text columns changes the left one and the text columns to its right give or take; a drag stops at 50 px (text) or 24 px (icon). A resize changes the text columns in proportion. The last column has no drag line at its right edge (fixed resize mode).
+- Icon columns are 24 px and never narrower; the column headers have 4 px padding left and right (was 8) so the symbols fit.
+- Fixed row heights in the column layout (`ColumnDelegate` in `ui/delegate.py`): compact 22, normal 29, roomy 36 px (was text height plus padding).
+- New Contact column: the `user` icon when the sender (the recipient in Sent, Drafts and Outbox) is a contact; a click opens the Contacts section with that contact selected; no icon, no action. New command `contact.addresses` (all addresses of all contacts, lower case), loaded at start, at every Refresh and when going back from Contacts to Mail.
+- The headers of Contact and Delete are grey icons (`grey_icon` in `ui/icons.py`, every colour grey, also the red of the bin), drawn in the middle of the column by `ListHeader` (`ui/messagelistview.py`; Qt puts a header icon at the left).
+- `ListHeader` drags column lines itself: it keeps the widths and the pointer position of the press and reports the whole distance, and the window works out all widths from the start of the drag. Qt reports the left column at its width at the press plus the whole distance, which made the line run ahead of the pointer (twice, four times) when the right-hand column was the one that changed, and never below its smallest width.
+- New Delete column: a bin on the row under the pointer; a click deletes that one message (as Delete) without changing the selection.
+- Contact and Delete are in the default columns, at the right; they are added once to a saved set of columns (setting `columns_contact_and_delete_added`).
+- Tests run: `tests/ui/test_ui_columnfit.py` (new, 9), `tests/ui/test_ui_columns.py` (7 new, one drags a line with the mouse pixel by pixel), `tests/ui/test_ui_icons.py`, `tests/test_engine_pim.py` (1 new), `tests/ui/test_ui_models.py`, `tests/ui/test_ui_theme.py`, `tests/ui/test_ui_contacts.py`, `tests/ui/test_ui_window.py` (alone), `tests/test_appinfo.py`, `tests/test_legal_names.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+**Still open**
+- On a grey (unfocused) selection the unread dot of the column layout is drawn in the text colour instead of blue (since 0.0.88).
+- New contacts that arrive by the calendar and contacts sync show their icon only after the next Refresh.

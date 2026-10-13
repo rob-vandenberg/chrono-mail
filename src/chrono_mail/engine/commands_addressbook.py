@@ -10,9 +10,10 @@ from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, cont
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 0.0.63"
+__version__ = "commands_addressbook.py 0.1.89"
 
 # --- Version history ----------------------------------------------------
+# v0.1.89: contact.addresses: every e-mail address of every contact, for the contact column of the message list
 # v0.0.63: The tasks section
 # v0.0.62: The contacts section
 # v0.0.60: Initial contact commands
@@ -112,6 +113,36 @@ class ListParameters:
     tag: str = field(default="", metadata=option("Only contacts with this tag"))
     limit: int = field(default=200, metadata=option("How many contacts at most"))
     offset: int = field(default=0, metadata=option("How many to skip"))
+
+
+@dataclass(frozen=True, slots=True)
+class AddressesParameters:
+    pass
+
+
+@dataclass(frozen=True, slots=True)
+class ContactAddress:
+    address: str  # in lower case
+    item: str
+    collection: str
+
+
+def contact_addresses(engine: Engine, parameters: AddressesParameters) -> tuple[ContactAddress, ...]:
+    """Every e-mail address of every contact, in lower case, each once (the first contact that has it). A contact that cannot be read is left out."""
+    found: dict[str, ContactAddress] = {}
+    for account in pim_account_ids(engine):
+        with open_pim(engine, account) as store:
+            for indexed in store.index.query(ItemQuery(CollectionKind.CONTACTS, (), "", "", limit=10**6)):
+                try:
+                    contacts = parse_contacts(store.get(indexed.collection, indexed.item_id))
+                except StorageError:
+                    continue
+                for contact in contacts[:1]:
+                    for email in contact.emails:
+                        address = email.value.strip().lower()
+                        if address and address not in found:
+                            found[address] = ContactAddress(address, indexed.item_id, indexed.collection)
+    return tuple(found[address] for address in sorted(found))
 
 
 def contact_list(engine: Engine, parameters: ListParameters) -> ContactList:
@@ -418,6 +449,7 @@ def contact_export(engine: Engine, parameters: ExportParameters) -> ExportResult
 def register(registry: CommandRegistry) -> None:
     registry.register("contact.list", "List contacts, sorted by family name", ListParameters, contact_list)
     registry.register("contact.show", "Show a contact", ItemParameters, contact_show)
+    registry.register("contact.addresses", "List the e-mail addresses of all contacts", AddressesParameters, contact_addresses)
     registry.register("contact.add", "Add a contact", AddParameters, contact_add)
     registry.register("contact.edit", "Change a contact", EditParameters, contact_edit)
     registry.register("contact.delete", "Delete a contact", ItemParameters, contact_delete, destructive=True)

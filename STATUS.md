@@ -1,20 +1,20 @@
 # STATUS.md
 
-*Last updated: 2026-10-13, version 0.0.88. Kept up to date before every push.*
+*Last updated: 2026-10-13, version 0.1.89. Kept up to date before every push.*
 
 ## Where we are
 
 - **Milestones 0 to 4 are done:** POP3 and SMTP, IMAP with IDLE, local calendars, tasks and contacts, CalDAV and CardDAV sync, scheduled and recurring mail, accounts told apart by login, server and protocol. Open in milestone 1: 1.13 (Flatpak) and 1.14 (Windows run).
 - **UI restyle (D-083, D-084): steps 1 to 3 of 5 are done** (0.0.73 to 0.0.82): main window with the blue Menu button and section buttons, message list and reading pane, composer (rich text by default, D-085). Settings > Appearance has the text size of the interface (0.0.82).
-- **Main screen restyle, second round (D-086), eight steps, one at a time.** Step 1 done (0.0.85): window title "<folder> (<unread>) - Chrono Mail", icons on Mark and Move to, Archive in the toolbar, menu arrows beside the text; all icons are now the program's own copy of the Breeze icons (D-087). Step 2 done (0.0.86): Refresh sends and receives and has a menu (send and receive all, receive all, send all, one account); Send All (`mail.send-outbox`); our Outbox and Sent copies keep Bcc (D-088); a Snooze button with ready-made times (a click anywhere opens its menu); Forward has Forward as attachment; message buttons are greyed out while no message is selected. Step 3 done (0.0.87, D-089): folder names are plain (never bold) and the unread number is drawn in bold at the right edge, only when above zero; other folders use `folder-open-symbolic`, Local Folders `user-home-symbolic`. Step 4 done (0.0.88, D-090): the selection in the folder list and the message list is blue only with the focus and grey without it; 1 px black lines between the panes and the column headers; "Sorted by" in bold.
+- **Main screen restyle, second round (D-086), eight steps, one at a time.** Step 1 done (0.0.85): window title "<folder> (<unread>) - Chrono Mail", icons on Mark and Move to, Archive in the toolbar, menu arrows beside the text; all icons are now the program's own copy of the Breeze icons (D-087). Step 2 done (0.0.86): Refresh sends and receives and has a menu (send and receive all, receive all, send all, one account); Send All (`mail.send-outbox`); our Outbox and Sent copies keep Bcc (D-088); a Snooze button with ready-made times (a click anywhere opens its menu); Forward has Forward as attachment; message buttons are greyed out while no message is selected. Step 3 done (0.0.87, D-089): folder names are plain (never bold) and the unread number is drawn in bold at the right edge, only when above zero; other folders use `folder-open-symbolic`, Local Folders `user-home-symbolic`. Step 4 done (0.0.88, D-090): the selection in the folder list and the message list is blue only with the focus and grey without it; 1 px black lines between the panes and the column headers; "Sorted by" in bold. Step 5 done (0.1.89, D-091): the columns always fill the list (column fit, no horizontal scrollbar, no drag line at the right edge), icon columns 24 px, rows 22/29/36 px, a Contact column (opens the contact) and a Delete column (bin on the row under the pointer).
 - 0.0.83: the size and position of the main window, message windows, composers and the Settings window are remembered, and only used when the window is reachable on a connected screen.
-- Design decisions: D-001 to D-090 in `DECISIONS.md`.
-- Tests: 1626 offline tests, 48 opt-in (live, credential store, performance).
+- Design decisions: D-001 to D-091 in `DECISIONS.md`.
+- Tests: 1643 offline tests, 48 opt-in (live, credential store, performance).
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main`. The repository was recreated on 2026-10-12; the author of the first commit was changed to the owner (history rewritten, all tags kept).
 
 ## Next task
 
-Main screen restyle step 5 (D-086), after the owner's go-ahead, together with the column-fit item of the backlog. Steps 5 to 8: message list columns and row height; filter menu; search help; group headers.
+Main screen restyle step 6 (D-086), after the owner's go-ahead. Steps 6 to 8: filter menu; search help; group headers.
 
 Also waiting:
 1. After deleting a message, the selection stays in place with the next message selected (it now jumps to the top).
@@ -25,7 +25,6 @@ Also waiting:
 
 - UI restyle step 5: Calendar, Tasks and Contacts.
 - Text-size settings together in one place (now on four pages; not decided).
-- Message list in columns always fits the window, never a horizontal scrollbar: dragging the line between two columns changes the column to its left and the columns to its right proportionally (the columns further left keep their width); a change of window width changes all columns proportionally; text columns are saved as shares of the width left after the icon columns; the icon columns (unread, flag, attachment, ...) keep a width in pixels, can be resized, and do not take part in the proportional resizing (widening one takes the space from the text columns to its right). Smallest width: 50 px for a text column, the icon width plus a few pixels on each side for an icon column; a drag stops there.
 - The "•••" button in the section bar with its menu (needs features Chrono Mail does not have yet).
 - A right-hand strip like the reference's.
 - Composer additions (attachment chips, emoji, font colour, importance, quick text, signature button, "…" menu, split Send button): only what the owner approves.
@@ -35,6 +34,7 @@ Also waiting:
 
 ## Problems
 
+- On a grey (unfocused) selection in the column layout the unread dot is drawn in the text colour instead of blue (since 0.0.88).
 - Two tests fail now and then: `tests/ui/test_ui_window.py::test_mark_all_as_read_and_empty_folder` and `tests/ui/test_ui_shortcuts.py::test_marking_as_read_redraws_every_cell_of_the_selected_rows`. Not fixed.
 - Not verified whether the real program can crash when it quits (the crashes seen were all from test runs).
 - Older certificate exceptions apply to every server of an account; Settings has no way to see or remove exceptions per server.

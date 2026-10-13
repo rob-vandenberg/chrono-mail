@@ -3,9 +3,10 @@ from PySide6.QtWidgets import QAbstractItemView
 from chrono_mail.ui.colours import SEPARATOR, selection_grey
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.0.88"
+__version__ = "theme.py 0.1.89"
 
 # --- Version history ----------------------------------------------------
+# v0.1.89: Column headers 4 px padding left and right, so that the symbols fit in a 24 px column
 # v0.0.88: Selection grey while the folder list or message list has no focus; black 1 px lines between the panes and the column headers; Sorted by in bold
 # v0.0.86: Split toolbar buttons (Refresh, Snooze): the arrow part beside the text
 # v0.0.85: The arrow of a toolbar button with a menu sits beside its text, not in the corner
@@ -61,7 +62,7 @@ QTreeView#folderTree::item:selected {{ background: palette(highlight); color: pa
 QTreeView#folderTree[focused="false"]::item:selected {{ background: {grey}; color: palette(text); }}
 QTreeView#messageList {{ border: 0; outline: 0; }}
 QTreeView#messageList[focused="false"]::item:selected {{ background: {grey}; color: palette(text); }}
-QTreeView#messageList QHeaderView::section {{ background: palette(window); border: 0; border-bottom: 1px solid {SEPARATOR}; border-right: 1px solid {SEPARATOR}; padding: 5px 8px; }}
+QTreeView#messageList QHeaderView::section {{ background: palette(window); border: 0; border-bottom: 1px solid {SEPARATOR}; border-right: 1px solid {SEPARATOR}; padding: 5px 4px; }}
 QSplitter#mainSplitter::handle, QSplitter#contentSplitter::handle {{ background: {SEPARATOR}; }}
 QSplitter#mainSplitter::handle:horizontal, QSplitter#contentSplitter::handle:horizontal {{ width: 1px; }}
 QSplitter#mainSplitter::handle:vertical, QSplitter#contentSplitter::handle:vertical {{ height: 1px; }}

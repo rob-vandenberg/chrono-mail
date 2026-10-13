@@ -17,9 +17,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 0.0.61"
+__version__ = "collectionpanel.py 0.1.89"
 
 # --- Version history ----------------------------------------------------
+# v0.1.89: A collection can be asked for before the list is loaded (to open a contact from the message list)
 # v0.0.61: Initial panel with the calendars, task lists or address books of all accounts
 
 ROLE_COLLECTION: int = Qt.ItemDataRole.UserRole + 1
@@ -58,6 +59,7 @@ class CollectionPanel(QWidget):
 
     def __init__(self, backend: Backend, settings: QSettings, kind: str, multiple: bool, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.prefer: str = ""  # the collection to choose at the next load, when nothing else is asked for
         self._backend: Backend = backend
         self._settings: QSettings = settings
         self.kind: str = kind
@@ -109,7 +111,8 @@ class CollectionPanel(QWidget):
     def reload(self, then_choose: str = "") -> None:
         def listed(result: object) -> None:
             self.collections = list(result) if isinstance(result, (tuple, list)) else []
-            keep = then_choose or self.current_id()
+            keep = then_choose or self.prefer or self.current_id()
+            self.prefer = ""
             hidden = self._hidden()
             self._loading = True
             self.tree.clear()

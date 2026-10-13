@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStackedWidget,
-    QStyledItemDelegate,
     QToolBar,
     QToolButton,
     QTreeView,
@@ -38,19 +37,21 @@ from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.engine.schedule import snooze_presets
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.columns import BY_ID, CARD, DEFAULT_COLUMNS, column_widths, valid_columns
+from chrono_mail.ui.columnfit import MINIMUM_ICON, ColumnLayout, drag, fit, layout_from_pixels, read_layout
+from chrono_mail.ui.columns import BY_ID, CARD, DEFAULT_COLUMNS, column_widths, valid_columns, with_new_columns
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
 from chrono_mail.ui import appearance, prefs, theme
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.composer import ComposeOptions, ComposeWindow
 from chrono_mail.ui.conversationbar import ConversationBar
-from chrono_mail.ui.delegate import MessageDelegate
+from chrono_mail.ui.delegate import COLUMN_ROW_HEIGHTS, ColumnDelegate, MessageDelegate
 from chrono_mail.ui.foldertree import FolderTree
 from chrono_mail.ui.messagelistview import MessageListView
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.models import (
     ACCOUNT_ROLE,
+    CONTACT_ROLE,
     FOLDER_PATH_ROLE,
     FOLDER_ROLE_ROLE,
     GROUP_ROLE,
@@ -80,9 +81,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.88"
+__version__ = "mainwindow.py 0.1.89"
 
 # --- Version history ----------------------------------------------------
+# v0.1.89: The columns always fill the list (column fit); fixed row heights; Contact and Delete columns; Delete and Contact added once to a saved set of columns
 # v0.0.88: Object names for the two splitters (1 px lines) and the Sorted by button (bold)
 # v0.0.86: Refresh sends and receives and has a menu (send and receive all, receive all, send all, one account only); a Snooze button with ready-made times; Forward has a menu with Forward as attachment; the Snooze button opens its menu wherever it is clicked; message buttons and actions are greyed out while no message is selected
 # v0.0.85: Window title: the open folder and its unread messages, then the program; icons on Mark and Move to; Archive in the toolbar; Snooze uses the clock icon by its own name
@@ -244,12 +246,15 @@ class MainWindow(QMainWindow):
 
         self.list_model = MessageListModel(self.backend, self)
         self.delegate = MessageDelegate()
-        self.plain_delegate = QStyledItemDelegate(self)
+        self.column_delegate = ColumnDelegate()
+        self.column_delegate.column_of = self._column_id
         self._layout: str = str(self.settings.value("list_layout", "columns"))
         if self._layout not in ("columns", "cards"):
             self._layout = "columns"
-        self._columns: tuple[str, ...] = valid_columns([part for part in str(self.settings.value("columns", "")).split(",") if part])
-        self._widths: dict[str, int] = column_widths(str(self.settings.value("column_widths", "")))
+        self._columns: tuple[str, ...] = self._saved_columns()
+        self._widths: dict[str, int] = column_widths(str(self.settings.value("column_widths", "")))  # pixels saved by versions before 0.1.89, taken over once
+        self._column_layout: ColumnLayout | None = read_layout(str(self.settings.value("column_layout", "")))
+        self._fitting: bool = False  # the program itself is setting the widths of the columns
         self._reading_pane: str = str(self.settings.value("reading_pane", "right"))
         if self._reading_pane not in ("right", "bottom", "off"):
             self._reading_pane = "right"
@@ -271,7 +276,10 @@ class MainWindow(QMainWindow):
         self.list_view.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.list_view.setFrameShape(QTreeView.Shape.NoFrame)
         self.list_view.header().setSectionsMovable(True)
-        self.list_view.header().setStretchLastSection(True)
+        self.list_view.header().setStretchLastSection(False)  # the columns fill the list themselves (column fit)
+        self.list_view.header().setMinimumSectionSize(MINIMUM_ICON)
+        self.list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.list_view.column_of = self._column_id
         self.list_view.header().setSectionsClickable(True)
         self.list_view.header().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
@@ -670,6 +678,9 @@ class MainWindow(QMainWindow):
         self.list_view.header().sectionClicked.connect(self._header_clicked)
         self.list_view.header().sectionMoved.connect(self._columns_moved)
         self.list_view.header().sectionResized.connect(self._column_resized)
+        self.list_view.width_changed.connect(self._fit_columns)
+        self.list_view.icon_clicked.connect(self._icon_clicked)
+        self.list_view.list_header.column_dragged.connect(self._column_line_dragged)
         self.reader.sender_allowed.connect(self._sender_allowed)
         self.list_view.header().customContextMenuRequested.connect(self._header_menu)
         self.list_model.counts_changed.connect(self._counts_changed)
@@ -1008,7 +1019,7 @@ class MainWindow(QMainWindow):
         self.act_auto.setChecked(auto)
         self.act_conversations.setChecked(prefs.get_bool(settings, "conversations"))
         self._layout = prefs.get_text(settings, "list_layout", ("columns", "cards"))
-        self._columns = valid_columns([part for part in str(settings.value("columns", "")).split(",") if part])
+        self._columns = self._saved_columns()
         self._date_style = prefs.get_text(settings, "date_style", ("short", "full", "iso"))
         self._apply_list_layout()
         self._apply_list_look()
@@ -1024,8 +1035,8 @@ class MainWindow(QMainWindow):
         if size > 0:
             font.setPointSize(size)
         self.list_view.setFont(font)
-        padding = {"compact": 0, "normal": 2, "roomy": 6}[prefs.get_text(self.settings, "list_density", prefs.DENSITIES)]
-        self.list_view.setStyleSheet(f"QTreeView::item {{ padding-top: {padding}px; padding-bottom: {padding}px; }}")
+        self.column_delegate.row_height = COLUMN_ROW_HEIGHTS[prefs.get_text(self.settings, "list_density", prefs.DENSITIES)]
+        self.list_view.doItemsLayout()
 
     def _apply_reader_preferences(self) -> None:
         for reader in (self.reader, *(window.reader for window in self._message_windows)):
@@ -1104,6 +1115,7 @@ class MainWindow(QMainWindow):
         """Called once the window is shown: make sure the key is there, load the accounts (or ask for the
         first one), then check for mail."""
         check = self.check_mail if bool_setting(self.settings, "check_on_start", True) else None
+        self._load_contact_addresses()
         self._with_key(lambda: self.reload_accounts(select_saved=True, then=check))
 
     def _with_key(self, then: Callable[[], None]) -> None:
@@ -1557,7 +1569,9 @@ class MainWindow(QMainWindow):
             self._set_flags([(str(getattr(row, "folder")), str(getattr(row, "message_id"))) for row in rows if self._account_of(row) == account], values, account)
 
     def delete_selected(self) -> None:
-        rows = self._selected_rows()
+        self._delete_rows(self._selected_rows())
+
+    def _delete_rows(self, rows: list[object]) -> None:
         if not rows or self._account_id is None:
             return
         in_trash = self._folder_role == "trash"
@@ -1668,9 +1682,12 @@ class MainWindow(QMainWindow):
         elif self._section != MAIL and section == MAIL:
             for name, enabled in self._mail_action_states.items():
                 getattr(self, f"act_{name}").setEnabled(enabled)
+        came_from = self._section
         self._section = section
         if section == MAIL:
             self._update_message_actions()
+            if came_from == CONTACTS:
+                self._load_contact_addresses()  # contacts may have been added or changed
         else:
             self.act_delete.setEnabled(True)  # Delete of the calendar, contacts and tasks
         index = self._stack_index(section)
@@ -1974,9 +1991,8 @@ class MainWindow(QMainWindow):
         else:
             self.list_model.set_columns(self._columns)
             header.show()
-            self.list_view.setItemDelegate(self.plain_delegate)
-            for position, column_id in enumerate(self._columns):
-                self.list_view.setColumnWidth(position, self._widths.get(column_id, BY_ID[column_id].width))
+            self.list_view.setItemDelegate(self.column_delegate)
+            self._fit_columns()
             header.setSortIndicatorShown(True)
             self._show_sort_indicator()
         self.list_model.refresh_cells()
@@ -2009,12 +2025,103 @@ class MainWindow(QMainWindow):
         if self._layout == "columns" and tuple(order) != self._columns and set(order) == set(self._columns):
             self._columns = tuple(order)
             self.settings.setValue("columns", ",".join(order))
+        self._fit_columns()  # the last column has no drag line at its right edge
 
     def _column_resized(self, section: int, old: int, new: int) -> None:
+        """A column edge was dragged: the column changes, the text columns to its right take or give the difference (column fit)."""
+        header = self.list_view.header()
+        if self._fitting or self._layout != "columns" or not header.isVisible() or not 0 <= section < len(self.list_model.columns):
+            return
+        logical = self._visual_sections()
+        order = [self.list_model.columns[index] for index in logical]
+        icon = [BY_ID[column_id].symbol for column_id in order]
+        position = logical.index(section)
+        widths = [header.sectionSize(index) for index in logical]
+        widths[position] = old
+        self._apply_drag(logical, order, icon, drag(icon, widths, position, new))
+
+    def _column_line_dragged(self, section: int, distance: int) -> None:
+        """A column line is dragged with the mouse: all widths are worked out from the widths at the press and the whole distance moved."""
+        start = self.list_view.list_header.drag_start_sizes
+        if self._layout != "columns" or len(start) != len(self.list_model.columns) or not 0 <= section < len(start):
+            return
+        logical = self._visual_sections()
+        order = [self.list_model.columns[index] for index in logical]
+        icon = [BY_ID[column_id].symbol for column_id in order]
+        widths = [start[index] for index in logical]
+        position = logical.index(section)
+        self._apply_drag(logical, order, icon, drag(icon, widths, position, widths[position] + distance))
+
+    def _apply_drag(self, logical: list[int], order: list[str], icon: list[bool], result: list[int]) -> None:
+        self._set_column_widths(logical, result)
+        self._column_layout = layout_from_pixels(order, icon, result)
+        self.settings.setValue("column_layout", self._column_layout.to_text())
+
+    def _column_id(self, column: int) -> str:
         columns = self.list_model.columns
-        if self._layout == "columns" and 0 <= section < len(columns) and new >= 16 and self.list_view.header().isVisible():
-            self._widths[columns[section]] = new
-            self.settings.setValue("column_widths", json.dumps(self._widths))
+        return columns[column] if 0 <= column < len(columns) else ""
+
+    def _visual_sections(self) -> list[int]:
+        """The model columns in the order they are shown."""
+        header = self.list_view.header()
+        return [header.logicalIndex(visual) for visual in range(header.count())]
+
+    def _fit_columns(self) -> None:
+        """The columns fill exactly the width of the list: icon columns keep their pixels, text columns share the rest."""
+        if self._layout != "columns" or not self.list_model.columns or self.list_model.columns == (CARD,):
+            return
+        logical = self._visual_sections()
+        order = [self.list_model.columns[index] for index in logical if 0 <= index < len(self.list_model.columns)]
+        if len(order) != len(logical):
+            return
+        icon = [BY_ID[column_id].symbol for column_id in order]
+        if self._column_layout is None:
+            self._column_layout = layout_from_pixels(order, icon, [self._widths.get(column_id, BY_ID[column_id].width) for column_id in order])
+        widths = fit(order, icon, self._column_layout, [BY_ID[column_id].width for column_id in order], self.list_view.viewport().width())
+        self._set_column_widths(logical, widths)
+
+    def _set_column_widths(self, logical: list[int], widths: list[int]) -> None:
+        header = self.list_view.header()
+        self._fitting = True
+        try:
+            for position, (section, width) in enumerate(zip(logical, widths)):
+                last = position == len(logical) - 1
+                header.setSectionResizeMode(section, QHeaderView.ResizeMode.Fixed if last else QHeaderView.ResizeMode.Interactive)  # no drag line at the right edge of the last column
+                header.resizeSection(section, width)
+        finally:
+            self._fitting = False
+
+    def _saved_columns(self) -> tuple[str, ...]:
+        """The saved columns; the Contact and Delete columns are added once to a set saved before they existed."""
+        columns = valid_columns([part for part in str(self.settings.value("columns", "")).split(",") if part])
+        if not bool_setting(self.settings, "columns_contact_and_delete_added", False):
+            columns = with_new_columns(columns)
+            self.settings.setValue("columns", ",".join(columns))
+            self.settings.setValue("columns_contact_and_delete_added", True)
+        return columns
+
+    def _icon_clicked(self, row: int, column_id: str) -> None:
+        """A click on the Delete icon deletes that message; a click on the Contact icon opens the contact."""
+        message = self.list_model.row_at(row)
+        if message is None:
+            return
+        if column_id == "trash":
+            self._delete_rows([message])
+            return
+        found = self.list_model.index(row, 0).data(CONTACT_ROLE)
+        if column_id == "contact" and isinstance(found, tuple) and len(found) == 2:
+            self.contacts_page.show_contact(str(found[0]), str(found[1]))
+            self.switch_section(CONTACTS)
+
+    def _load_contact_addresses(self) -> None:
+        """The addresses of the contacts, for the Contact column."""
+
+        def arrived(result: object) -> None:
+            entries = result if isinstance(result, tuple) else ()
+            self.list_model.contacts = {str(getattr(entry, "address")): (str(getattr(entry, "item")), str(getattr(entry, "collection"))) for entry in entries}
+            self.list_model.refresh_cells()
+
+        self.backend.call("contact.addresses", {}, arrived, lambda error: None, owner=self)
 
     def _header_menu(self, position: QPoint) -> None:
         menu = QMenu(self)
@@ -2159,6 +2266,7 @@ class MainWindow(QMainWindow):
 
     def check_accounts(self, only: set[str] | None) -> None:
         """Check these accounts (all when None) for new mail."""
+        self._load_contact_addresses()  # Refresh also brings contacts that came from a server
         mail_ids = {str(getattr(account, "account_id")) for account in self._mail_accounts()}
         wanted = mail_ids if only is None else only & mail_ids
         if only is None:

@@ -9,14 +9,15 @@ from PySide6.QtGui import QBrush, QFont, QGuiApplication, QPalette, QStandardIte
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.columns import BY_ID, CARD, SYMBOLS, cell_text
+from chrono_mail.ui.columns import BY_ID, CARD, SYMBOLS, cell_text, person_address
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
-from chrono_mail.ui.icons import folder_icon
+from chrono_mail.ui.icons import folder_icon, grey_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.87"
+__version__ = "models.py 0.1.89"
 
 # --- Version history ----------------------------------------------------
+# v0.1.89: The contact of a row (for the Contact column); grey icons in the headers of Contact and Delete
 # v0.0.87: Folder list: the name without the number and never bold; the number of unread messages in its own role (drawn by the tree); Local Folders uses the home icon
 # v0.0.85: A folder item keeps its plain name (for the window title)
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
@@ -42,8 +43,11 @@ FOLDER_ROLE_ROLE: int = Qt.ItemDataRole.UserRole + 6
 GROUP_ROLE: int = Qt.ItemDataRole.UserRole + 7
 PIN_ROLE: int = Qt.ItemDataRole.UserRole + 8
 NAME_ROLE: int = Qt.ItemDataRole.UserRole + 9  # the folder's name without the number of unread messages
+CONTACT_ROLE: int = Qt.ItemDataRole.UserRole + 11  # (contact id, address book) of the person a row shows, or None
 COUNT_ROLE: int = Qt.ItemDataRole.UserRole + 10  # the number of unread messages the folder list draws at the right edge (0: none)
 ROW_PLACEHOLDER: None = None
+HEADER_ICON_ROLE: int = Qt.ItemDataRole.UserRole + 12  # a header icon that the list header draws in the middle of the column
+HEADER_ICONS: dict[str, str] = {"contact": "user", "trash": "edit-delete"}  # columns whose header is a grey icon
 
 
 class ViewKind(Enum):
@@ -106,6 +110,7 @@ class MessageListModel(QAbstractTableModel):
         self._columns: tuple[str, ...] = (CARD,)
         self.recipients_first: bool = False  # in Sent, Drafts and Outbox the From / To column shows the recipients
         self.date_style: str = "short"
+        self.contacts: dict[str, tuple[str, str]] = {}  # address (lower case) -> (contact id, address book)
 
     # --- the columns --------------------------------------------------------------------------
 
@@ -179,6 +184,8 @@ class MessageListModel(QAbstractTableModel):
             return SYMBOLS.get(column.column_id, column.label)
         if role == Qt.ItemDataRole.ToolTipRole:
             return column.label
+        if role == HEADER_ICON_ROLE and column.column_id in HEADER_ICONS:
+            return grey_icon(HEADER_ICONS[column.column_id])
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return int(Qt.AlignmentFlag.AlignCenter) if column.symbol else int(Qt.AlignmentFlag.AlignVCenter | (Qt.AlignmentFlag.AlignRight if column.right else Qt.AlignmentFlag.AlignLeft))
         return None
@@ -198,6 +205,8 @@ class MessageListModel(QAbstractTableModel):
             return int(Qt.AlignmentFlag.AlignCenter) if column.symbol else int(Qt.AlignmentFlag.AlignVCenter | (Qt.AlignmentFlag.AlignRight if column.right else Qt.AlignmentFlag.AlignLeft))
         if row is None:
             return "…" if role == Qt.ItemDataRole.DisplayRole and index.column() == 0 else None
+        if role == CONTACT_ROLE:
+            return self.contacts.get(person_address(row, self.recipients_first))
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return cell_text(column_id, row, self.recipients_first, self.date_style)
         if role == Qt.ItemDataRole.ForegroundRole and column_id == "status":

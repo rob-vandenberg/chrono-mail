@@ -8,9 +8,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_pim.py 0.0.65"
+__version__ = "test_engine_pim.py 0.1.89"
 
 # --- Version history ----------------------------------------------------
+# v0.1.89: contact.addresses
 # v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.60: Initial tests of the collection, tag and contact commands
 
@@ -150,3 +151,14 @@ def test_enabling_from_several_threads_at_once_makes_one_set(tmp_path: Path) -> 
     for thread in threads:
         thread.join()
     assert errors == [] and [c.name for c in call(engine, "collection.list")] == ["Calendar", "Contacts", "Tasks"]
+
+
+def test_the_addresses_of_all_contacts_are_listed_once_in_lower_case(engine: Engine) -> None:
+    assert call(engine, "contact.addresses") == ()
+    call(engine, "pim.enable")
+    book = books(engine)["contacts"]
+    john = call(engine, "contact.add", collection=book, name="John", email=("work|John@Example.com", "home|john@home.example"))
+    call(engine, "contact.add", collection=book, name="Johnny", email=("john@example.com",))  # the same address again
+    call(engine, "contact.add", collection=book, name="No address")
+    found = call(engine, "contact.addresses")
+    assert [(entry.address, entry.item, entry.collection) for entry in found] == [("john@example.com", john.item, book), ("john@home.example", john.item, book)]

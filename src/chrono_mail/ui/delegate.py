@@ -1,18 +1,21 @@
+from collections.abc import Callable
 from typing import override
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
 from chrono_mail.ui.colours import selection_grey
 
 from chrono_mail.ui.formatting import avatar_colour, display_name, initials, short_date
-from chrono_mail.ui.models import ROW_ROLE
+from chrono_mail.ui.icons import theme_icon
+from chrono_mail.ui.models import CONTACT_ROLE, ROW_ROLE
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.0.88"
+__version__ = "delegate.py 0.1.89"
 
 # --- Version history ----------------------------------------------------
+# v0.1.89: ColumnDelegate: fixed row height per density, the Contact icon and the Delete icon on the row under the pointer
 # v0.0.88: A selected row is grey while the list has no focus
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.18: Conversations: counts, grouped list, conversation bar
@@ -20,6 +23,8 @@ __version__ = "delegate.py 0.0.88"
 # v0.0.13: Initial message row painting
 
 ROW_HEIGHT: int = 74
+COLUMN_ROW_HEIGHTS: dict[str, int] = {"compact": 22, "normal": 29, "roomy": 36}  # rows of the column layout, per density
+CELL_ICON: int = 16
 AVATAR_SIZE: int = 40
 QUIET_ALPHA: int = 170
 QUIET_ALPHA_SELECTED: int = 255  # on the highlight, secondary text is as strong as the main text: the theme's own pairing is the limit
@@ -152,3 +157,34 @@ class MessageDelegate(QStyledItemDelegate):
         line.setAlpha(28)
         painter.setPen(line)
         painter.drawLine(rect.left() + MARGIN, rect.bottom(), rect.right(), rect.bottom())
+
+
+class ColumnDelegate(QStyledItemDelegate):
+    """A cell of the column layout: rows of a fixed height; the Contact column shows a person when the sender is a contact,
+    the Delete column a bin on the row under the pointer."""
+
+    def __init__(self, parent: object | None = None) -> None:
+        super().__init__(None)
+        self.row_height: int = COLUMN_ROW_HEIGHTS["normal"]
+        self.column_of: Callable[[int], str] = lambda column: ""  # the column id at a model column
+
+    @override
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
+        return QSize(super().sizeHint(option, index).width(), self.row_height)
+
+    @override
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        super().paint(painter, option, index)
+        column_id = self.column_of(index.column())
+        state: object = getattr(option, "state")
+        hovered = isinstance(state, QStyle.StateFlag) and bool(state & QStyle.StateFlag.State_MouseOver)
+        if column_id == "contact" and index.data(CONTACT_ROLE):
+            self._icon(painter, option, theme_icon("user"))
+        elif column_id == "trash" and hovered:
+            self._icon(painter, option, theme_icon("edit-delete"))
+
+    @staticmethod
+    def _icon(painter: QPainter, option: QStyleOptionViewItem, icon: QIcon) -> None:
+        full = _rect(option)
+        area = QRect(full.center().x() - CELL_ICON // 2 + 1, full.center().y() - CELL_ICON // 2 + 1, CELL_ICON, CELL_ICON)
+        icon.paint(painter, area)

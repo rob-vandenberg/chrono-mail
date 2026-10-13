@@ -34,9 +34,10 @@ from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 0.0.62"
+__version__ = "contactsview.py 0.1.89"
 
 # --- Version history ----------------------------------------------------
+# v0.1.89: show_contact: one contact is shown, from the Contact column of the message list
 # v0.0.62: Initial contacts section: list, detail pane, editor, tags, move, import and export
 
 ROW_ROLE: int = Qt.ItemDataRole.UserRole + 1
@@ -141,6 +142,8 @@ class ContactsPage(PimPage):
         self.mail_accounts_source: Callable[[], list[str]] = lambda: []
         self._generation: int = 0
         self._tags_loaded: bool = False
+        self._show_item: str = ""  # the contact to select when the list of its address book has loaded
+        self._show_collection: str = ""
         side = QWidget()
         side_layout = QVBoxLayout(side)
         side_layout.setContentsMargins(0, 0, 0, 0)
@@ -303,7 +306,21 @@ class ContactsPage(PimPage):
         item = self.tag_list.currentItem()
         return str(item.data(ROW_ROLE) or "") if item is not None else ""
 
+    def show_contact(self, item: str, collection: str) -> None:
+        """Show this contact: its address book is chosen, the search and the tag filter are cleared, and the contact is selected."""
+        self._show_item, self._show_collection = item, collection
+        self.search.blockSignals(True)
+        self.search.clear()
+        self.search.blockSignals(False)
+        self.tag_list.blockSignals(True)
+        self.tag_list.setCurrentRow(-1)
+        self.tag_list.blockSignals(False)
+        self.panel.prefer = collection
+        if self._enabled:  # otherwise the first load of the address books chooses it
+            self.panel.reload(then_choose=collection)
+
     def reload_list(self, keep: str = "") -> None:
+        keep = keep or self._show_item
         collection = self.panel.current_id()
         if not collection:
             self.model.load([], 0)
@@ -324,6 +341,8 @@ class ContactsPage(PimPage):
             self.count_label.setText(f"Contacts ({self.model.total})")
             self.status(f"{self.model.total} contact(s)")
             positions = [position for position in (self.model.position_of(item) for item in selected) if position >= 0]
+            if collection == self._show_collection:
+                self._show_item = self._show_collection = ""
             if positions:
                 self.list.selectionModel().clear()
                 for position in positions:
