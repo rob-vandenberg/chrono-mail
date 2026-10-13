@@ -1005,3 +1005,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - The Message list window (menu of the column headers) has Row height (Compact, Normal, Roomy) under Dates, the same setting (`list_density`) as Settings > Message list; OK saves it and the list takes it at once. The three choices live once, in `ui/columnsdialog.py`.
 - Tests run: `tests/ui/test_ui_columns.py`, `tests/ui/test_ui_preferences.py`, `tests/ui/test_ui_window.py` (alone); Pyrefly 0 diagnostics, layer check kept; not the full suite. The only failure is the known old one (`test_the_look_of_the_list_follows_the_settings`, padding since 0.1.89).
 - The search field's ends are fully round at every text size: its corners are rounded by half its height, set by the field at every change of height (was a fixed 15 px in `ui/theme.py`, round only at 30 px high; at a larger interface text size the field is about 40 px). Tests run: `tests/ui/test_ui_searchfield.py` (one new), screenshots at 40 px (grey and blue looks); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 The old failing preferences test is fixed (version 0.2.98)
+
+**What landed**
+- `test_the_look_of_the_list_follows_the_settings` checked for the row padding of before 0.1.89 ("padding-top: 6px"); since the fixed row heights of D-091 it checks that Roomy gives rows of 36 px. No program code changed.
+- Tests run: `tests/ui/test_ui_preferences.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.

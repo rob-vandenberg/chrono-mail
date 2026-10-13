@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-13, version 0.2.97. Kept up to date before every push.*
+*Last updated: 2026-10-13, version 0.2.98. Kept up to date before every push.*
 
 ## Where we are
 
@@ -34,7 +34,6 @@ Also waiting:
 
 ## Problems
 
-- `tests/ui/test_ui_preferences.py::test_the_look_of_the_list_follows_the_settings` fails since 0.1.89 (it expects the old row padding "padding-top: 6px"; step 5 made the row heights fixed). Found on 2026-10-13, not fixed.
 - In the card layout a list of 500,000 messages takes about 2.7 s to show (0.5 s in the column layout): the card rows have two heights since the group headers became lower (the owner's choice).
 
 - On a grey (unfocused) selection in the column layout the unread dot is drawn in the text colour instead of blue (since 0.0.88).

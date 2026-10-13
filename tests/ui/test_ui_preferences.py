@@ -18,9 +18,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.2.96"
+__version__ = "test_ui_preferences.py 0.2.98"
 
 # --- Version history ----------------------------------------------------
+# v0.2.98: Roomy is checked by the row height (36 px), not by the old row padding
 # v0.2.96: The columns are chosen right on the Message list page
 # v0.0.76: Exit has no keyboard shortcut
 # v0.0.74: A message window uses and saves the allowed senders
@@ -114,7 +115,7 @@ def test_the_look_of_the_list_follows_the_settings(world: World, qtbot: QtBot, m
 
     edit_settings(world, qtbot, monkeypatch, change)
     window = world.window
-    assert "padding-top: 6px" in window.list_view.styleSheet() and window.list_view.font().pointSize() == 14
+    assert window.column_delegate.row_height == 36 and window.list_view.font().pointSize() == 14
     assert window.list_model.columns == ("card",) and window.content_splitter.orientation().name == "Vertical" and window.list_model.date_style == "iso"
 
 
