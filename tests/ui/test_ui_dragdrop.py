@@ -9,9 +9,10 @@ from tests.ui.world import account_node, World, row_of, wait
 from tests.ui.test_ui_window import started
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dragdrop.py 0.2.104"
+__version__ = "test_ui_dragdrop.py 0.2.105"
 
 # --- Version history ----------------------------------------------------
+# v0.2.105: The badge starts past the cursor, by the desktop's cursor size
 # v0.2.104: The drag is offered as the copy kind (the desktop's arrow with a plus) and the drop still moves
 # v0.0.48: Dragging messages shows a small badge, not the selected rows
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -89,13 +90,18 @@ def test_dragging_shows_a_small_badge_and_not_the_selected_rows(world: World, qt
     from PySide6.QtCore import QItemSelectionModel
     from PySide6.QtGui import QDrag
 
-    from chrono_mail.ui.messagelistview import BADGE_OFFSET, MessageListView, drag_badge
+    from chrono_mail.ui.messagelistview import MessageListView, drag_badge
 
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
+    monkeypatch.setenv("XCURSOR_SIZE", "42")
     one, many = drag_badge(1), drag_badge(300)
-    assert many.width() > one.width() and many.height() == one.height() <= 60  # as high as one line, whatever the selection
-    assert one.toImage().pixelColor(2, 2).alpha() == 0 and BADGE_OFFSET > 0  # the corner near the pointer is empty
+    assert many.width() - 42 > one.width() - 42 > 0 and many.height() == one.height() <= 42 + 60  # as high as one line, whatever the selection
+    image = one.toImage()
+    assert image.pixelColor(41, 41).alpha() == 0 and image.pixelColor(41, 50).alpha() == 0  # the cursor's square stays free
+    assert image.pixelColor(52, 42 + (image.height() - 42) // 2).alpha() > 0  # the badge starts right past it
+    monkeypatch.setenv("XCURSOR_SIZE", "nonsense")
+    assert drag_badge(1).height() == one.height() - 42 + 32  # unknown: the usual 32 pixels
     view = world.window.list_view
     assert isinstance(view, MessageListView)
     for row in range(3):

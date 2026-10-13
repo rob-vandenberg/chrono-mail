@@ -707,3 +707,9 @@ The search field rounds its corners by half its own height (it was a fixed 15 px
 
 **Decision:** in the folder list the indent left of a folder keeps the colour of the list (`FolderTree.drawBranches` paints it, then lets Qt draw the arrows that open and close a group), so the selection (blue or grey) and the hover start just before the icon. While messages are dragged, the folder under the pointer that can take them gets a bar in the highlight colour across the whole row, the text in the colour for it; folders that cannot take them (their own folder, Outbox, other accounts) get none. The drag uses the desktop's own cursors (changed in 0.2.104; the cursors drawn by the program in 0.2.103 were black and too small): it is offered to Qt as the copy kind, so the theme shows its arrow with a green plus where the messages can be dropped (the move kind shows a hand) and its arrow with a red no-entry sign elsewhere; the folder list still moves the messages. Every theme, size and platform then brings its own cursors. The badge "N messages" stays.
 **Reason:** the owner's request: on Linux the theme's drag cursor was a hand that covered about three folders, and nothing showed where a drop would land; the colour left of the icon was a bug (Qt filled the indent of a selected or hovered row by itself).
+
+## D-103 The drag badge hangs past the cursor
+*2026-10-13*
+
+**Decision:** the badge "N messages" of a drag starts right of and below the cursor's square: its distance from the pointer is the desktop's cursor size (XCURSOR_SIZE on Linux, else 32 pixels), instead of a fixed 22 pixels (D-063).
+**Reason:** with the desktop's own drag cursors (D-102) at the owner's size 42 the cursor covered the first digit, so "20 messages" read as "0 messages".

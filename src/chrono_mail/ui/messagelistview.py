@@ -1,3 +1,4 @@
+import os
 from collections.abc import Callable
 from typing import override
 
@@ -10,9 +11,10 @@ from chrono_mail.ui.models import HEADER_ICON_ROLE
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 0.2.104"
+__version__ = "messagelistview.py 0.2.105"
 
 # --- Version history ----------------------------------------------------
+# v0.2.105: The badge hangs just past the bottom-right corner of the cursor, by the desktop's cursor size (it covered the first digit)
 # v0.2.104: The drag is offered as the copy kind, so the desktop shows its arrow with a plus (not its hand); the messages are still moved
 # v0.2.103: The drag has its own cursors (arrow with a move sign where the messages can go, with a red cross elsewhere) instead of the theme's large hand
 # v0.2.94: A click on a group header folds or unfolds it
@@ -20,7 +22,16 @@ __version__ = "messagelistview.py 0.2.104"
 # v0.0.88: The selection is blue while the message list has the focus and grey without it
 # v0.0.48: Initial message list that drags a small badge instead of the selected rows
 
-BADGE_OFFSET: int = 22  # the badge hangs this far right of and below the pointer, so that it never covers what is dropped on
+STANDARD_CURSOR_SIZE: int = 32  # pixels, when the desktop does not say how large its cursor is
+
+
+def cursor_size() -> int:
+    """The size of the desktop's cursor (XCURSOR_SIZE on Linux), else the usual 32 pixels."""
+    try:
+        size = int(os.environ.get("XCURSOR_SIZE", ""))
+    except ValueError:
+        return STANDARD_CURSOR_SIZE
+    return size if 16 <= size <= 256 else STANDARD_CURSOR_SIZE
 
 
 def drag_badge(count: int) -> QPixmap:
@@ -29,11 +40,12 @@ def drag_badge(count: int) -> QPixmap:
     font = QApplication.font()
     metrics = QFontMetrics(font)
     width, height = metrics.horizontalAdvance(text) + 20, metrics.height() + 10
-    pixmap = QPixmap(width + BADGE_OFFSET, height + BADGE_OFFSET)
+    offset = cursor_size()  # the badge hangs just past the bottom-right corner of the cursor, so the cursor never covers it
+    pixmap = QPixmap(width + offset, height + offset)
     pixmap.fill(Qt.GlobalColor.transparent)  # empty margin above and left: the pointer stays free
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    area = QRect(BADGE_OFFSET, BADGE_OFFSET, width, height)
+    area = QRect(offset, offset, width, height)
     painter.setBrush(QColor(40, 90, 160, 230))
     painter.setPen(Qt.PenStyle.NoPen)
     painter.drawRoundedRect(area, 8, 8)

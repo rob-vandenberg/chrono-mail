@@ -1056,3 +1056,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - The owner saw the drawn cursors black and tiny. The theme (Breeze_Light, size 42) has dnd-copy (arrow with a green plus) and no-drop (arrow with a red sign); dnd-move, move and closedhand are the hand. The drag is now offered as the copy kind and the folder list takes it as such and moves the messages; `ui/dragcursors.py` is removed.
 - Not known: why the hand looked huge on the owner's screen (at size 42 it is normal in the theme file); the owner checks the new cursors.
 - Tests run: `tests/ui/test_ui_dragdrop.py` (the drag is of the copy kind; drops still move), `tests/ui/test_ui_window.py` (alone; the cursor test removed); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 The drag badge clears the cursor (version 0.2.105)
+
+**What landed**
+- `drag_badge` leaves the cursor's square free (`cursor_size()`: XCURSOR_SIZE, else 32) instead of 22 pixels; the owner found the cursor over the first digit at size 42.
+- Tests run: `tests/ui/test_ui_dragdrop.py` (the badge test checks the free square at 42 and the 32 fallback); Pyrefly 0 diagnostics, layer check kept; not the full suite.
