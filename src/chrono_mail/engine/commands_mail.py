@@ -27,9 +27,11 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.3.109"
+__version__ = "commands_mail.py 0.4.120"
 
 # --- Version history ----------------------------------------------------
+# v0.4.120: The IMAP sync holds the account's link (no action changes its messages meanwhile); the Sent copy goes to the server at once
+# v0.4.119: mail.fetch reports IMAP folders held back by a safety rule (blocked); mail.settle runs the sync with the person's answer for one
 # v0.3.109: Sort orders unread, flagged, attachment, replied, contact (sorted here: the index does not know the contacts), folder, conversation and preview
 # v0.2.100: Rows of the Snoozed folder carry the time they come back (snoozed_until); sort order "snoozed" with its groups (Today, Tomorrow, This week, Next week, Later)
 # v0.2.94: Sorting by recipients (to); search results in any sort order; message.groups: the groups of a folder or a search for the group headers
@@ -151,6 +153,13 @@ def _snooze_sort(sort: str, folder: tuple[str, ...] | None) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
+class BlockedFolder:
+    folder: str
+    kind: str  # missing_here: most of its messages were deleted here; gone_from_server: most are gone from the server
+    count: int
+
+
+@dataclass(frozen=True, slots=True)
 class FetchResult:
     downloaded: int
     already_known: int
@@ -160,6 +169,7 @@ class FetchResult:
     index_problems: int
     aborted: str | None
     rule_actions: int = 0  # what the rules did to the new messages
+    blocked: tuple[BlockedFolder, ...] = ()  # IMAP folders a safety rule held back: the person decides (mail.settle)
 
 
 def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
@@ -192,18 +202,44 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
     )
 
 
-def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str) -> FetchResult:
-    """mail.fetch for an IMAP account: the two-way sync of store and server."""
-    state = ImapState(engine.directories.imap_state_file(mailbox.account_id), durable=engine.durable)
-    with ImapClient(mailbox.settings.account.incoming, password, ssl_context=engine.tls_context(mailbox.settings)) as client:
-        report = sync_imap(
-            client, mailbox.store, mailbox.index, state, ImapSyncOptions(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES),
-            progress=lambda folder, done, total: engine.progress(f"Downloading {folder}", done, total),
-        )
+def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tuple[tuple[tuple[str, ...], str], ...] = ()) -> FetchResult:
+    """mail.fetch for an IMAP account: the two-way sync of store and server (confirmed: the person's answers for blocked folders)."""
+    link = engine.imap_link(mailbox.account_id)
+    with link.lock:  # the actions done on the server first wait until the sync is done, and the other way round
+        link.folders = None  # the sync may make, renumber or forget folders
+        link.validity.clear()
+        state = ImapState(engine.directories.imap_state_file(mailbox.account_id), durable=engine.durable)
+        with ImapClient(mailbox.settings.account.incoming, password, ssl_context=engine.tls_context(mailbox.settings)) as client:
+            report = sync_imap(
+                client, mailbox.store, mailbox.index, state, ImapSyncOptions(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES, confirmed=confirmed),
+                progress=lambda folder, done, total: engine.progress(f"Downloading {folder}", done, total),
+            )
     inbox = mailbox.role_folder(FolderRole.INBOX)
     ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
-    remarks = (*report.failed, *report.notes, *(f"{item.folder}: {item.note}" for item in report.folders if item.note), *ruled.failed)
-    return FetchResult(report.downloaded, 0, tuple(remarks), 0, None, 0, report.aborted, ruled.actions)
+    notes = (f"{item.folder}: {item.note}" for item in report.folders if item.note and item.blocked is None)  # a blocked folder is a question, not an error
+    remarks = (*report.failed, *report.notes, *notes, *ruled.failed)
+    blocked = tuple(BlockedFolder(item.folder, item.blocked, item.blocked_count) for item in report.folders if item.blocked is not None)
+    return FetchResult(report.downloaded, 0, tuple(remarks), 0, None, 0, report.aborted, ruled.actions, blocked)
+
+
+@dataclass(frozen=True, slots=True)
+class SettleParameters:
+    account: str = field(metadata=option("The IMAP account"))
+    folder: str = field(metadata=option("The folder a safety rule held back (as mail.fetch reported it)"))
+    choice: Literal["delete_on_server", "restore_here", "remove_here", "keep_here"] = field(
+        metadata=option("Most messages missing here: delete_on_server or restore_here; most gone from the server: remove_here or keep_here")
+    )
+
+
+def mail_settle(engine: Engine, parameters: SettleParameters) -> FetchResult:
+    """Synchronise an IMAP account once with the person's answer for a folder that a safety rule held back."""
+    with open_mailbox(engine, parameters.account) as mailbox:
+        if mailbox.settings.account.kind is not AccountKind.IMAP:
+            raise UsageError("Only an IMAP account can have a folder held back")
+        password = engine.passwords.get(mailbox.settings.account.account_id, ServerRole.INCOMING)
+        if password is None:
+            raise ConfigurationError("No password is stored for this account")
+        return _imap_fetch(engine, mailbox, password, ((mailbox.folder(parameters.folder), parameters.choice),))
 
 
 def _addresses(values: tuple[str, ...]) -> tuple[Address, ...]:
@@ -364,6 +400,8 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
         if parameters.send_at:
             return _schedule(engine, mailbox, outgoing, parameters)
         outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings, outgoing=True))
+        if outcome.sent:
+            mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
         if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
             try:
                 source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
@@ -788,6 +826,7 @@ def message_compose(engine: Engine, parameters: ComposeParameters) -> ComposeRes
 
 def register(registry: CommandRegistry) -> None:
     registry.register("mail.fetch", "Download new messages from the POP3 server", AccountParameters, mail_fetch)
+    registry.register("mail.settle", "Answer for an IMAP folder that a safety rule held back (may delete on the server or here)", SettleParameters, mail_settle, destructive=True)
     registry.register("mail.send", "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send)
     registry.register("message.list", "List the messages of a folder", ListParameters, message_list)
     registry.register("message.thread", "List the messages of the conversation a message belongs to", MessageParameters, message_thread)

@@ -87,9 +87,11 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.4.117"
+__version__ = "mainwindow.py 0.4.120"
 
 # --- Version history ----------------------------------------------------
+# v0.4.120: The engine's notices (an IMAP change waits for the server) in the red line; the IMAP connections close when the program ends
+# v0.4.119: An IMAP folder held back by a safety rule is a question to the person (delete on the server or bring back; remove here or keep), answered with mail.settle
 # v0.4.117: Alt+M opens the Menu (Open the menu, changeable in Settings > Keyboard); the contact addresses are loaded again after the calendar and contacts sync
 # v0.3.116: Delete, Delete for good, Move to Junk, Move (also by dragging), Archive and Copy refresh the list also when a message failed (the error stays)
 # v0.3.112: A message whose file is gone gives one warning per action (a window and the red line) with the advice to repair the search index
@@ -171,6 +173,27 @@ _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-out
 
 
 MISSING_WARNING: str = "Some messages no longer exist on disk. Go to Settings > Security and storage and click Repair the search index."
+BLOCKED_QUESTIONS: dict[str, tuple[str, tuple[tuple[str, str, str], ...]]] = {  # kind -> question, (button, choice, what was done)
+    "missing_here": (
+        "{count} messages that you deleted in Chrono Mail are still in {folder} on the server of {account}. What should happen?",
+        (("Delete them on the server too", "delete_on_server", "deleted on the server"), ("Bring them back here", "restore_here", "brought back")),
+    ),
+    "gone_from_server": (
+        "{count} messages in {folder} of {account} are gone from the server, but are still here. What should happen?",
+        (("Remove them here too", "remove_here", "removed here"), ("Keep them here", "keep_here", "kept and uploaded again")),
+    ),
+}
+
+
+def ask_choice(parent: QWidget, title: str, text: str, buttons: list[str]) -> int | None:
+    """A question with buttons of its own: the position of the button that was clicked, None when the window was closed."""
+    box = QMessageBox(QMessageBox.Icon.Question, title, text, QMessageBox.StandardButton.NoButton, parent)
+    made = [box.addButton(label, QMessageBox.ButtonRole.AcceptRole) for label in buttons]
+    box.exec()
+    clicked = box.clickedButton()
+    return next((position for position, button in enumerate(made) if button is clicked), None)
+
+
 SIDEBAR_KEY: str = "sidebar"  # stands for the sidebar answer among the folder lists that are awaited
 
 
@@ -260,6 +283,7 @@ class MainWindow(QMainWindow):
         self._mark_read_timer = QTimer(self)
         self._mark_read_timer.setSingleShot(True)
         self._mark_read_timer.timeout.connect(self._mark_shown_as_read)
+        self._asking_blocked: bool = False  # a question about a folder held back by a safety rule is open
         self._missing_timer = QTimer(self)  # the answers of an action come one message at a time: one warning for all of them
         self._missing_timer.setSingleShot(True)
         self._missing_timer.setInterval(300)
@@ -778,6 +802,7 @@ class MainWindow(QMainWindow):
         self.reader.link_activated.connect(self._open_link)
         self.backend.busy_changed.connect(self._busy_changed)
         self.backend.progress.connect(self._progress)
+        self.backend.notice.connect(self._notice)
 
     # --- state ------------------------------------------------------------------------------------------
 
@@ -819,6 +844,7 @@ class MainWindow(QMainWindow):
         for timer in self._account_timers.values():
             timer.stop()
         self.backend.wait_for_done(3000)
+        self.backend.engine.close_imap_links()  # log out of the connections kept open for the actions on the server
         self.tray.set_visible(False)
         event.accept()
         self.closed_for_good.emit()
@@ -1276,6 +1302,10 @@ class MainWindow(QMainWindow):
 
     def _busy_changed(self, count: int) -> None:
         self.progress_bar.setVisible(count > 0)
+
+    def _notice(self, text: str) -> None:
+        """Something the engine wants the person to know (an IMAP change waits for the server)."""
+        self.show_status(text, error=True)
 
     def _progress(self, what: str, done: int, total: object) -> None:
         self.show_status(f"{what}… {done}" + (f" of {total}" if total else ""))
@@ -2654,6 +2684,7 @@ class MainWindow(QMainWindow):
         totals = {"new": 0}
         new_by_account: dict[str, int] = {}
         problems: list[str] = []
+        blocked: list[tuple[str, object]] = []  # (account, folder held back by a safety rule)
 
         def finish() -> None:
             self._checking = False
@@ -2663,6 +2694,13 @@ class MainWindow(QMainWindow):
             else:
                 self.show_status(f"Mail checked: {totals['new']} new message(s)" if totals["new"] else "Mail checked: nothing new")
             self._notify_new_mail(new_by_account)
+            if not self._asking_blocked:  # a check during an open question (the timer) does not ask a second time
+                self._asking_blocked = True
+                try:
+                    for account_id, item in blocked:
+                        self._ask_about_blocked(account_id, item)
+                finally:
+                    self._asking_blocked = False
             if totals["new"]:
                 self._reselect = self._shown[2] if self._shown is not None else None  # keep the message that is being read
                 self.list_model.reload()
@@ -2674,6 +2712,7 @@ class MainWindow(QMainWindow):
                 new_by_account[account_id] = int(getattr(result, "downloaded"))
                 for text in getattr(result, "failed"):
                     problems.append(str(text))
+                blocked.extend((account_id, item) for item in getattr(result, "blocked", ()))
                 if getattr(result, "aborted"):
                     problems.append(str(getattr(result, "aborted")))
                 remaining.discard(account_id)
@@ -2694,6 +2733,25 @@ class MainWindow(QMainWindow):
         self.show_status("Checking for mail…")
         for account_id in list(remaining):
             self.backend.call("mail.fetch", {"account": account_id}, make_done(account_id), make_failed(account_id), owner=self)
+
+    def _ask_about_blocked(self, account_id: str, item: object) -> None:
+        """A safety rule held an IMAP folder back: the person decides, and the account is synchronised with that answer."""
+        kind, folder, count = str(getattr(item, "kind")), str(getattr(item, "folder")), int(getattr(item, "count"))
+        if kind not in BLOCKED_QUESTIONS:
+            return
+        account = next((account for account in self._accounts if str(getattr(account, "account_id")) == account_id), None)
+        name = str(getattr(account, "shown_name", "") or getattr(account, "email_address", "")) if account is not None else account_id
+        question, answers = BLOCKED_QUESTIONS[kind]
+        chosen = ask_choice(self, "Messages out of step", question.format(count=count, folder=folder, account=name), [label for label, _, _ in answers])
+        if chosen is None:
+            return  # asked again at the next check
+        _, choice, done_text = answers[chosen]
+
+        def done(result: object) -> None:
+            self._after_change(f"{folder} of {name}: {count} message(s) {done_text}")
+
+        self.show_status(f"{folder} of {name}: synchronising…")
+        self.backend.call("mail.settle", {"account": account_id, "folder": folder, "choice": choice}, done, lambda error: self._report(f"Could not settle {folder}", error), owner=self)
 
     def _sync_calendars(self) -> None:
         """Bring the calendars, task lists and address books of the accounts that have a server in step with it (in the background)."""

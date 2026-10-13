@@ -9,9 +9,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 0.0.32"
+__version__ = "backend.py 0.4.120"
 
 # --- Version history ----------------------------------------------------
+# v0.4.120: notice: what the engine wants the person to know (an IMAP change waits for the server)
 # v0.0.32: commands that wait have a pool of their own
 # v0.0.13: Initial UI backend
 
@@ -59,6 +60,7 @@ class Backend(QObject):
 
     progress = Signal(str, int, object)  # what, done, total (None when unknown)
     busy_changed = Signal(int)  # number of commands running
+    notice = Signal(str)  # something the person should know, from any thread
 
     def __init__(self, engine: Engine, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -74,6 +76,7 @@ class Backend(QObject):
         self._ids = itertools.count(1)
         self._pending: dict[int, _Pending] = {}
         engine.progress = lambda what, done, total: self.progress.emit(what, done, total)
+        engine.notice = self.notice.emit
 
     def call(
         self, command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False

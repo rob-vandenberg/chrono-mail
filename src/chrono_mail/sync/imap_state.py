@@ -6,9 +6,10 @@ from pathlib import Path
 from chrono_mail.core import StorageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_state.py 0.0.44"
+__version__ = "imap_state.py 0.4.120"
 
 # --- Version history ----------------------------------------------------
+# v0.4.120: messages deleted by the person while the server could not be reached ("k")
 # v0.0.44: folder choices and roles
 # v0.0.31: folders deleted here are hidden
 # v0.0.30: uploaded messages
@@ -23,6 +24,7 @@ __version__ = "imap_state.py 0.0.44"
 #   {"e": "d", "n": server folder name, "v": true|false}                  the person chose not to synchronise the folder (true) or to synchronise it though it is not subscribed (false)
 #   {"e": "r", "n": server folder name, "r": role}                       the person says which standard folder (sent, drafts, trash, junk, archive) this server folder is
 #   {"e": "a", "s": store id}                                           the message was sent to the server (so that it is not sent twice)
+#   {"e": "k", "s": store id}                                           the person deleted the message for good here while the server could not be reached
 # Appending (with fsync) cannot damage earlier lines; a line cut off by a crash is ignored; unknown events are ignored (later
 # versions add more, for example the changes waiting to be sent). If the file is lost the next sync downloads again and
 # matches by Message-ID: duplicates are avoided where possible, never a loss. The file is rewritten compactly when it has
@@ -45,6 +47,7 @@ class ImapState:
         self.validity: dict[tuple[str, ...], int] = {}
         self.entries: dict[tuple[str, ...], dict[int, ImapEntry]] = {}
         self.uploaded: set[str] = set()
+        self.deleted_here: set[str] = set()  # deleted for good by the person, not yet on the server: never held back by a safety rule
         self.hidden: set[str] = set()
         self.forced: set[str] = set()  # folders to synchronise even though the server does not list them as subscribed
         self.roles: dict[str, str] = {}  # server folder name -> chosen role
@@ -105,6 +108,12 @@ class ImapState:
             if not isinstance(stored, str) or len(stored) != 32:
                 raise ValueError("bad store id")
             self.uploaded.add(stored)
+            return
+        if kind == "k":
+            deleted = event["s"]
+            if not isinstance(deleted, str) or len(deleted) != 32:
+                raise ValueError("bad store id")
+            self.deleted_here.add(deleted)
             return
         raw_folder = event["f"]
         if not isinstance(raw_folder, list) or not all(isinstance(part, str) for part in raw_folder) or not raw_folder:
@@ -184,6 +193,11 @@ class ImapState:
         self._append({"e": "a", "s": store_id})
         self.uploaded.add(store_id)
 
+    def note_deleted(self, store_id: str) -> None:
+        """The person deleted this message for good here and the server could not be reached: the next sync deletes it there."""
+        self._append({"e": "k", "s": store_id})
+        self.deleted_here.add(store_id)
+
     def set_validity(self, folder: tuple[str, ...], validity: int) -> None:
         """The folder's UIDVALIDITY. A new value forgets every UID of the folder (they mean something else now)."""
         self._append({"e": "v", "f": list(folder), "v": validity})
@@ -205,6 +219,7 @@ class ImapState:
     def unmap(self, folder: tuple[str, ...], uid: int) -> None:
         if uid in self.entries.get(folder, {}):
             self._append({"e": "x", "f": list(folder), "u": uid})
+            self.deleted_here.discard(self.entries[folder][uid].store_id)
             del self.entries[folder][uid]
 
     # --- reading ------------------------------------------------------------------------------------------------
@@ -237,6 +252,8 @@ class ImapState:
         lines.extend(json.dumps({"e": "d", "n": name, "v": False}, separators=(",", ":"), ensure_ascii=False) for name in sorted(self.forced))
         lines.extend(json.dumps({"e": "r", "n": name, "r": role}, separators=(",", ":"), ensure_ascii=False) for name, role in sorted(self.roles.items()))
         lines.extend(json.dumps({"e": "a", "s": store_id}, separators=(",", ":")) for store_id in sorted(self.uploaded))
+        mapped = {entry.store_id for entries in self.entries.values() for entry in entries.values()}
+        lines.extend(json.dumps({"e": "k", "s": store_id}, separators=(",", ":")) for store_id in sorted(self.deleted_here & mapped))
         temporary = self.path.with_name(self.path.name + ".new")
         try:
             descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)

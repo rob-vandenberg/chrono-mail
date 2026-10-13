@@ -17,14 +17,16 @@ from chrono_mail.config import (
 from chrono_mail.core import ConfigurationError, CryptoError, FolderRole, StorageError
 from chrono_mail.crypto import DataKey, KeyStore
 from chrono_mail.index import Index
+from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.tls import context_for
 from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.4.118"
+__version__ = "session.py 0.4.120"
 
 # --- Version history ----------------------------------------------------
+# v0.4.120: One open IMAP connection per account for the actions done on the server first (ImapLink), closed when the program ends; notice
 # v0.4.118: An index is rebuilt by one command at a time (index_lock); the others wait and open the new one
 # v0.2.101: A store with two folders of the same path is repaired when it is opened
 # v0.0.72: Accepted certificates belong to one server (host and port)
@@ -48,6 +50,29 @@ Progress = Callable[[str, int, int | None], None]
 
 def _no_progress(what: str, done: int, total: int | None) -> None:
     """Progress reports are optional."""
+
+
+def _no_notice(text: str) -> None:
+    """Notices (an action that waits for the server) are optional."""
+
+
+@dataclass
+class ImapLink:
+    """The open connection of one IMAP account for the actions that are done on the server first. Its lock is held for
+    a whole action and for a whole sync of the account, so the two never change the same messages at once."""
+
+    lock: threading.RLock = field(default_factory=threading.RLock)
+    client: ImapClient | None = None
+    folders: dict[tuple[str, ...], str] | None = None  # local folder -> server folder, as the sync plans them
+    delimiter: str = "/"  # the server's separator in folder names
+    validity: dict[str, int] = field(default_factory=dict)  # server folder -> UIDVALIDITY seen when it was selected
+
+    def close(self) -> None:
+        client, self.client = self.client, None
+        self.folders = None
+        self.validity.clear()
+        if client is not None:
+            client.logout()
 
 
 
@@ -77,8 +102,24 @@ class Engine:
     durable: bool = True
     progress: Progress = field(default=_no_progress)
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)  # set when the program is ending: long waits stop
+    notice: Callable[[str], None] = field(default=_no_notice)  # tells the person something they should know (an action waits for the server)
+    _imap_links: dict[str, ImapLink] = field(default_factory=dict, init=False, repr=False)
+    _imap_links_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)
     _cache_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
+    def imap_link(self, account_id: str) -> ImapLink:
+        """The open connection of an IMAP account (made when it is first needed)."""
+        with self._imap_links_lock:
+            return self._imap_links.setdefault(account_id, ImapLink())
+
+    def close_imap_links(self) -> None:
+        """The program ends: log out of every open IMAP connection."""
+        with self._imap_links_lock:
+            links = list(self._imap_links.values())
+        for link in links:
+            with link.lock:
+                link.close()
 
     def tls_context(self, settings: AccountSettings, outgoing: bool = False) -> ssl.SSLContext | None:
         """The TLS context for the incoming (or outgoing) server of an account; None means the usual checks apply to it,

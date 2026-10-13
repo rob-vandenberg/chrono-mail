@@ -7,6 +7,7 @@ import pytest
 
 from chrono_mail.core import AuthenticationError, ProtocolError
 from chrono_mail.engine import Engine
+from chrono_mail.engine.mailbox import open_mailbox
 from tests.enginefactory import make_engine
 from tests.fakeimap import FakeImapServer
 from tests.fakesmtp import FakeSmtpServer
@@ -14,9 +15,11 @@ from tests.mailfactory import raw_message
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap.py 0.0.31"
+__version__ = "test_engine_imap.py 0.4.120"
 
 # --- Version history ----------------------------------------------------
+# v0.4.120: Actions reach the server at once (no longer at the next fetch); the held-back test loses files instead of deleting
+# v0.4.119: mail.fetch reports a folder held back by a safety rule; mail.settle answers
 # v0.0.31: Initial tests of IMAP accounts in the engine
 
 
@@ -71,23 +74,21 @@ def test_fetch_downloads_the_server_folders_and_their_flags(world: World) -> Non
     assert world.fetch().downloaded == 0
 
 
-def test_commands_on_an_imap_account_reach_the_server_at_the_next_fetch(world: World) -> None:
+def test_commands_on_an_imap_account_reach_the_server_at_once(world: World) -> None:
     uid = world.imap.add("INBOX", mail(1))
     world.imap.add("INBOX", mail(2))
     world.fetch()
     first = next(row for row in world.rows("Inbox") if row.subject == "Message 1")
     call(world.engine, "message.flag", account=world.account, folder="Inbox", message=first.message_id, seen=True, flagged=True)
-    assert world.imap.flags_of("INBOX", uid) == set()  # nothing happens on the server until the next sync
-    world.fetch()
-    assert world.imap.flags_of("INBOX", uid) == {"\\Seen", "\\Flagged"}
+    assert world.imap.flags_of("INBOX", uid) == {"\\Seen", "\\Flagged"}  # on the server at once, before any sync
     call(world.engine, "message.delete", account=world.account, folder="Inbox", message=first.message_id)  # to Trash
-    result = world.fetch()
-    assert world.imap.uids("INBOX") == [2] and len(world.imap.uids("Trash")) == 1 and result.downloaded == 0
+    assert world.imap.uids("INBOX") == [2] and len(world.imap.uids("Trash")) == 1
     trash = world.rows("Trash")
     assert [row.subject for row in trash] == ["Message 1"]
     call(world.engine, "message.delete", account=world.account, folder="Trash", message=trash[0].message_id)  # for good
-    world.fetch()
     assert world.imap.uids("Trash") == [] and world.rows("Trash") == []
+    result = world.fetch()  # nothing left to do
+    assert result.downloaded == 0 and result.failed == () and world.imap.uids("INBOX") == [2] and len(world.rows("Inbox")) == 1
 
 
 def test_messages_removed_on_the_server_disappear_here(world: World) -> None:
@@ -102,9 +103,8 @@ def test_messages_removed_on_the_server_disappear_here(world: World) -> None:
 def test_a_sent_message_is_copied_to_the_sent_folder_on_the_server(world: World) -> None:
     result = call(world.engine, "mail.send", account=world.account, to="you@example.com", subject="Outgoing", body="hello")
     assert result.sent and len(world.smtp.received) == 1
-    assert world.imap.uids("Sent") == []
+    (uid,) = world.imap.uids("Sent")  # in Sent on the server at once
     world.fetch()
-    (uid,) = world.imap.uids("Sent")
     assert b"Subject: Outgoing" in world.imap.raw_of("Sent", uid)
     world.fetch()
     assert len(world.imap.uids("Sent")) == 1 and len(world.rows("Sent")) == 1
@@ -158,3 +158,17 @@ def test_the_account_state_file_is_the_imap_one(world: World) -> None:
     world.imap.add("INBOX", mail(1))
     world.fetch()
     assert world.engine.directories.imap_state_file(world.account).exists() and not world.engine.directories.pop3_state_file(world.account).exists()
+
+
+def test_a_folder_held_back_is_reported_without_an_error_and_settled_by_the_person(world: World) -> None:
+    for number in range(1, 13):
+        world.imap.add("INBOX", mail(number))
+    world.fetch()
+    with open_mailbox(world.engine, world.account) as mailbox:  # 9 files are lost (not deleted by the person)
+        for row in world.rows("Inbox")[:9]:
+            mailbox.store.delete(mailbox.reference(("Inbox",), row.message_id))
+    result = world.fetch()
+    assert [(item.folder, item.kind, item.count) for item in result.blocked] == [("Inbox", "missing_here", 9)]
+    assert not any("missing from the store" in text for text in result.failed)  # a question, not a red error line
+    settled = call(world.engine, "mail.settle", account=world.account, folder="Inbox", choice="delete_on_server")
+    assert settled.blocked == () and len(world.imap.uids("INBOX")) == 3 and world.fetch().blocked == ()

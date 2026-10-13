@@ -119,7 +119,12 @@ IMAP accounts use the same encrypted store, index, engine commands and window as
   5. Pending local changes are sent last (section 8.3).
 - Safety rules (they follow AGENTS.md 4.1): nothing is removed from the server unless the local copy is stored and verified; a changed UIDVALIDITY never deletes local mail: the local messages are kept until the folder has been downloaded again and matched by Message-ID, and those with no match are moved to a local folder `Recovered/<folder>`; a server that answers with something unexpected makes the sync of that folder fail, never the whole program.
 
-### 8.3 Local changes (changed by D-050: compared, not queued)
+### 8.3 Local changes (changed by D-117: on the server first)
+
+Since 0.4.120 (D-117) every action of the person in an IMAP account is done on the server first, over one open connection per account (`engine/imap_online.py`), and here only when the server confirmed it; the sync state is updated at once. A refusal of the server changes nothing here. When the server cannot be reached the action is done here only and the comparison below sends it at the next sync; a delete for good made then is noted in the state, so the safety rules never hold it back. The text below describes the comparison, which stays as that fallback.
+
+#### The comparison (D-050)
+
 
 The text below is the first design; D-050 replaced the pending list by a comparison of the store, the remembered state and the server, run at every sync.
 

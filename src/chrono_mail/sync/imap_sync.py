@@ -9,9 +9,11 @@ from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.3.114"
+__version__ = "imap_sync.py 0.4.120"
 
 # --- Version history ----------------------------------------------------
+# v0.4.120: Messages the person deleted here while offline are always deleted on the server; only unexplained losses can hold a folder back
+# v0.4.119: A folder blocked by a safety rule is reported (FolderReport.blocked); the person's answer for it (ImapSyncOptions.confirmed) deletes on the server, brings the messages back, removes them here or uploads them again
 # v0.3.114: Messages gone from the server and from the store are forgotten and do not count for the removal safety rule
 # v0.2.101: Local folders are made safely (ensure_folder: one folder when two syncs run at the same time)
 # v0.0.44: the person's choices of folders and roles
@@ -50,6 +52,13 @@ class ImapSyncOptions:
     maximum_message_bytes: int = 256 * 1024 * 1024
     batch_bytes: int = 4 * 1024 * 1024
     batch_messages: int = 50
+    # The person's answer for a folder that a safety rule blocked: (local folder, choice). Choices: "delete_on_server" or
+    # "restore_here" when most of it is missing here, "remove_here" or "keep_here" when most of it is gone from the server.
+    confirmed: tuple[tuple[tuple[str, ...], str], ...] = ()
+
+
+BLOCKED_MISSING_HERE: str = "missing_here"  # most mapped messages of the folder are missing from the store
+BLOCKED_GONE_FROM_SERVER: str = "gone_from_server"  # most mapped messages of the folder are gone from the server
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +82,8 @@ class FolderReport:
     failed: tuple[str, ...] = ()
     note: str | None = None
     new_references: tuple[MessageRef, ...] = ()  # the messages downloaded into this folder
+    blocked: str | None = None  # a safety rule held the folder back (BLOCKED_...): the person is asked
+    blocked_count: int = 0  # how many messages it is about
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,11 +197,13 @@ class _Counts:
     failed: list[str] = field(default_factory=list)
     note: str | None = None
     new: list[MessageRef] = field(default_factory=list)
+    blocked: str | None = None
+    blocked_count: int = 0
 
     def report(self, folder: str) -> FolderReport:
         return FolderReport(
             folder, self.downloaded, self.adopted, self.flags_updated, self.removed, self.recovered, self.flags_sent, self.expunged, self.uploaded,
-            tuple(self.failed), self.note, tuple(self.new),
+            tuple(self.failed), self.note, tuple(self.new), self.blocked, self.blocked_count,
         )
 
 
@@ -340,8 +353,9 @@ def _sync_folder(
     if info.exists > 0:
         on_server = {item.uid: item for item in client.uid_fetch("1:*", "(UID FLAGS RFC822.SIZE)")}
     view = _Folder(plan, {message.ref.store_id: message for message in store.list_messages(local)}, on_server, store.locate_all())
-    _remove_gone(store, index, state, view, counts)
-    _push_expunges(client, store, state, view, counts)
+    choice = dict(options.confirmed).get(local)
+    _remove_gone(store, index, state, view, counts, choice)
+    _push_expunges(client, store, state, view, counts, choice)
     _push_flags(client, state, view, counts)
     _update_flags(store, index, state, view, counts)
     pool = _unmapped(store, index, state, view)
@@ -353,7 +367,7 @@ def _sync_folder(
     _upload(client, store, state, options, view, counts)
 
 
-def _remove_gone(store: Store, index: Index | None, state: ImapState, view: _Folder, counts: _Counts) -> None:
+def _remove_gone(store: Store, index: Index | None, state: ImapState, view: _Folder, counts: _Counts, choice: str | None = None) -> None:
     local = view.plan.local_path
     mapped = state.folder_entries(local)
     gone = [uid for uid in mapped if uid not in view.on_server]
@@ -366,8 +380,13 @@ def _remove_gone(store: Store, index: Index | None, state: ImapState, view: _Fol
         gone = [uid for uid in mapped if uid not in view.on_server]
         if not gone:
             return
-    if len(mapped) >= REMOVAL_RATIO_MINIMUM_COUNT and len(gone) / len(mapped) > REMOVAL_RATIO_LIMIT:
+    if choice == "keep_here":  # the person keeps them: forgotten as server copies, so they are uploaded again as local messages
+        for uid in gone:
+            state.unmap(local, uid)
+        return
+    if len(mapped) >= REMOVAL_RATIO_MINIMUM_COUNT and len(gone) / len(mapped) > REMOVAL_RATIO_LIMIT and choice != "remove_here":
         counts.note = "most messages are gone from the server; nothing was removed here"
+        counts.blocked, counts.blocked_count = BLOCKED_GONE_FROM_SERVER, len(gone)
         return
     for uid in gone:
         entry = mapped[uid]
@@ -384,9 +403,10 @@ def _remove_gone(store: Store, index: Index | None, state: ImapState, view: _Fol
         counts.removed += 1
 
 
-def _push_expunges(client: ImapClient, store: Store, state: ImapState, view: _Folder, counts: _Counts) -> None:
+def _push_expunges(client: ImapClient, store: Store, state: ImapState, view: _Folder, counts: _Counts, choice: str | None = None) -> None:
     """Messages that were deleted for good here are removed on the server. This is the one step that destroys mail on
-    the server, so it refuses to run when the store looks wrong or when most of a folder seems to have disappeared."""
+    the server, so it refuses to run when the store looks wrong or when most of a folder seems to have disappeared without
+    the person deleting it. Messages the person deleted (noted while the server could not be reached) always go."""
     local = view.plan.local_path
     mapped = state.folder_entries(local)
     missing = [uid for uid, entry in mapped.items() if entry.store_id not in view.locations and uid in view.on_server]
@@ -395,8 +415,16 @@ def _push_expunges(client: ImapClient, store: Store, state: ImapState, view: _Fo
     if store.damaged_folders or not store.list_folders():
         counts.note = "the store looks damaged or empty; nothing was deleted on the server"
         return
-    if len(mapped) >= REMOVAL_RATIO_MINIMUM_COUNT and len(missing) / len(mapped) > REMOVAL_RATIO_LIMIT:
+    unexplained = [uid for uid in missing if mapped[uid].store_id not in state.deleted_here]  # not deleted by the person
+    if choice == "restore_here":  # the person wants them back: forgotten as mapped, so they are downloaded again in this run
+        for uid in unexplained:
+            state.unmap(local, uid)
+        missing = [uid for uid in missing if uid not in unexplained]
+    elif len(mapped) >= REMOVAL_RATIO_MINIMUM_COUNT and len(unexplained) / len(mapped) > REMOVAL_RATIO_LIMIT and choice != "delete_on_server":
         counts.note = "most messages are missing from the store; nothing was deleted on the server"
+        counts.blocked, counts.blocked_count = BLOCKED_MISSING_HERE, len(unexplained)
+        missing = [uid for uid in missing if uid not in unexplained]  # the person's own deletes still go
+    if not missing:
         return
     uids = ",".join(str(uid) for uid in missing)
     client.uid_store(uids, ["\\Deleted"], "add")

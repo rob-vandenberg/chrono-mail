@@ -17,9 +17,10 @@ from chrono_mail.mime import Address, OutgoingMessage, ParsedMessage, parse_mess
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 0.2.101"
+__version__ = "commands_schedule.py 0.4.120"
 
 # --- Version history ----------------------------------------------------
+# v0.4.120: The Sent copy of a scheduled or repeating message goes to the server at once (IMAP)
 # v0.2.101: Snooze and wake change the record one at a time and make folders safely (no second Snoozed folder); waking a message that has no record (Cancel snooze) brings it to the Inbox
 # v0.2.100: The name of the Snoozed folder and its record file live in schedule.py (message.list needs them too)
 # v0.0.72: Accepted certificates belong to one server (host and port)
@@ -188,6 +189,7 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                     continue
                 if outcome.sent:
                     sent += 1
+                    mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
                     _mark_replied(mailbox, parsed)
                 else:
                     failed.append(f"{parsed.subject}: {outcome.error} (it stays in the Outbox and is not sent again by itself)")
@@ -239,6 +241,8 @@ def _send_repeats(engine: Engine, members: list[AccountSettings], mailbox: Mailb
                 )
                 if not outcome.sent:
                     error = outcome.error or "the server refused the message"
+                else:
+                    mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
             except ChronoMailError as problem:
                 error = str(problem)
             if not error:

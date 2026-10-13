@@ -15,9 +15,10 @@ from tests.fakeimap import FakeImapServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_imap.py 0.3.114"
+__version__ = "test_sync_imap.py 0.4.119"
 
 # --- Version history ----------------------------------------------------
+# v0.4.119: A folder held back by a safety rule is reported; the person's four answers
 # v0.3.114: Messages gone on both sides are forgotten without a warning
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.31: IMAP accounts in the engine and the interface
@@ -424,6 +425,47 @@ def test_messages_gone_on_both_sides_are_forgotten_without_a_warning(world: Worl
     report = world.sync()
     assert of(report, "Inbox").note is None and of(report, "Inbox").removed == 0 and len(world.state.entries[INBOX]) == 3
     assert len(world.messages(INBOX)) == 3 and len(world.server.uids("INBOX")) == 3
+
+
+def deleted_here(world: World) -> None:
+    """12 messages synchronised, 9 deleted for good here: the safety rule holds the Inbox back."""
+    for number in range(1, 13):
+        world.server.add("INBOX", mail(number))
+    world.sync()
+    for message in world.store.list_messages(INBOX)[:9]:
+        world.store.delete(message.ref)
+
+
+def test_a_folder_held_back_is_reported_and_the_person_may_delete_on_the_server(world: World) -> None:
+    deleted_here(world)
+    report = world.sync()
+    assert (of(report, "Inbox").blocked, of(report, "Inbox").blocked_count) == ("missing_here", 9)
+    report = world.sync(ImapSyncOptions(confirmed=((INBOX, "delete_on_server"),)))
+    assert of(report, "Inbox").expunged == 9 and of(report, "Inbox").blocked is None and len(world.server.uids("INBOX")) == 3
+    assert of(world.sync(), "Inbox").blocked is None
+
+
+def test_or_bring_the_messages_back_here(world: World) -> None:
+    deleted_here(world)
+    report = world.sync(ImapSyncOptions(confirmed=((INBOX, "restore_here"),)))
+    assert of(report, "Inbox").downloaded == 9 and len(world.store.list_messages(INBOX)) == 12 and len(world.server.uids("INBOX")) == 12
+    assert of(world.sync(), "Inbox").blocked is None
+
+
+def test_most_gone_from_the_server_is_reported_and_the_person_may_remove_or_keep(world: World) -> None:
+    uids = [world.server.add("INBOX", mail(number)) for number in range(1, 13)]
+    world.sync()
+    for uid in uids[:9]:
+        world.server.remove("INBOX", uid)
+    report = world.sync()
+    assert (of(report, "Inbox").blocked, of(report, "Inbox").blocked_count) == ("gone_from_server", 9) and len(world.store.list_messages(INBOX)) == 12
+    report = world.sync(ImapSyncOptions(confirmed=((INBOX, "keep_here"),)))
+    assert of(report, "Inbox").uploaded == 9 and len(world.server.uids("INBOX")) == 12 and of(world.sync(), "Inbox").blocked is None
+    for uid in world.server.uids("INBOX")[:9]:
+        world.server.remove("INBOX", uid)
+    assert of(world.sync(), "Inbox").blocked == "gone_from_server"
+    report = world.sync(ImapSyncOptions(confirmed=((INBOX, "remove_here"),)))
+    assert of(report, "Inbox").removed == 9 and len(world.store.list_messages(INBOX)) == 3
 
 
 def test_nothing_is_deleted_on_the_server_when_the_store_is_damaged(world: World) -> None:

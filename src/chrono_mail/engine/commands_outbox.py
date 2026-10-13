@@ -10,9 +10,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.sync import send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 0.0.86"
+__version__ = "commands_outbox.py 0.4.120"
 
 # --- Version history ----------------------------------------------------
+# v0.4.120: The Sent copy goes to the server at once (IMAP)
 # v0.0.86: Initial Send All: send what waits in the Outbox
 
 
@@ -75,6 +76,7 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                     continue
                 if outcome.sent:
                     sent += 1
+                    mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
                     _mark_replied(mailbox, parsed)
                     if outcome.warning:
                         failed.append(f"{parsed.subject}: {outcome.warning}")

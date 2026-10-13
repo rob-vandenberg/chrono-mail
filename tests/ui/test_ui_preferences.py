@@ -21,9 +21,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.3.116"
+__version__ = "test_ui_preferences.py 0.4.119"
 
 # --- Version history ----------------------------------------------------
+# v0.4.119: A folder held back by a safety rule is a question; the answer is sent with mail.settle
 # v0.3.116: The list is shown again after an action in which a message failed; the error stays
 # v0.3.112: Repair the search index; one warning for messages whose file is gone
 # v0.3.111: Maintenance once per place where mail is kept; its report can be selected
@@ -458,3 +459,32 @@ def test_the_list_is_refreshed_when_a_message_of_an_action_fails_and_the_error_s
         window.list_view.selectionModel().select(window.list_model.index(position, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
     window.move_selected("Trash")
     wait(qtbot, lambda: window.list_model.message_count() == 1 and window.status_label.text() == MISSING_WARNING)
+
+
+def test_a_folder_held_back_is_a_question_and_the_answer_is_sent(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    from chrono_mail.ui import mainwindow
+
+    window = world.window
+    window.reload_accounts(select_saved=False)
+    asked: list[tuple[str, list[str]]] = []
+    answers: list[int | None] = [None, 1]
+
+    def ask(parent: object, title: str, text: str, buttons: list[str]) -> int | None:
+        asked.append((text, buttons))
+        return answers.pop(0)
+
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def record(command: str, values: dict[str, object], *rest: object, **named: object) -> None:
+        calls.append((command, values))
+
+    monkeypatch.setattr(mainwindow, "ask_choice", ask)
+    monkeypatch.setattr(window.backend, "call", record)
+    held = SimpleNamespace(kind="missing_here", folder="Trash", count=58)
+    window._ask_about_blocked(world.account_id, held)  # noqa: SLF001 - the window is closed: nothing happens, asked again later
+    assert calls == [] and "58 messages that you deleted in Chrono Mail are still in Trash on the server of" in asked[0][0]
+    assert asked[0][1] == ["Delete them on the server too", "Bring them back here"]
+    window._ask_about_blocked(world.account_id, held)  # noqa: SLF001
+    assert calls == [("mail.settle", {"account": world.account_id, "folder": "Trash", "choice": "restore_here"})]
