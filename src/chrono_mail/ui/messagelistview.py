@@ -1,13 +1,16 @@
 from typing import override
 
 from PySide6.QtCore import QPoint, QRect, Qt
-from PySide6.QtGui import QColor, QDrag, QFontMetrics, QPainter, QPixmap
-from PySide6.QtWidgets import QApplication, QTreeView
+from PySide6.QtGui import QColor, QDrag, QFocusEvent, QFontMetrics, QPainter, QPixmap
+from PySide6.QtWidgets import QApplication, QTreeView, QWidget
+
+from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 0.0.48"
+__version__ = "messagelistview.py 0.0.88"
 
 # --- Version history ----------------------------------------------------
+# v0.0.88: The selection is blue while the message list has the focus and grey without it
 # v0.0.48: Initial message list that drags a small badge instead of the selected rows
 
 BADGE_OFFSET: int = 22  # the badge hangs this far right of and below the pointer, so that it never covers what is dropped on
@@ -35,7 +38,22 @@ def drag_badge(count: int) -> QPixmap:
 
 
 class MessageListView(QTreeView):
-    """The message list. Dragging messages shows a small badge with their number, never the rows."""
+    """The message list. Dragging messages shows a small badge with their number, never the rows. The selection is grey while the list has no focus."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setProperty("focused", False)
+
+    @override
+    def focusInEvent(self, event: QFocusEvent) -> None:
+        super().focusInEvent(event)
+        show_focus(self, True)
+
+    @override
+    def focusOutEvent(self, event: QFocusEvent) -> None:
+        super().focusOutEvent(event)
+        if event.reason() != Qt.FocusReason.PopupFocusReason:  # a context menu leaves the selection as it is
+            show_focus(self, False)
 
     @override
     def startDrag(self, supportedActions: Qt.DropAction) -> None:

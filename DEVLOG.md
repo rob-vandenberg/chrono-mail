@@ -890,3 +890,14 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - Step 4 of the restyle (selection colours and separator lines), after the owner's go-ahead.
+
+## 2026-10-13 Main screen restyle step 4: selection colours, separator lines, Sorted by (version 0.0.88)
+
+**What landed**
+- The selection in the folder list and the message list is blue only while that list has the focus, grey otherwise (`#d6d6d6` light, `#4a4a4a` dark, `selection_grey` in `ui/colours.py`), with text, icon and unread number in the colour of text. The lists set a `focused` property on focus in and out (`show_focus` in `ui/theme.py`); a context menu (popup focus) leaves the selection blue. The card layout (`MessageDelegate`) paints the same grey, with the unread dot staying blue.
+- 1 px black lines between the panes (the two splitters, `mainSplitter` and `contentSplitter`, replace the dotted grip) and between and under the column headers (`SEPARATOR` = `#000000`, both schemes).
+- "Sorted by" is bold in the colour of text (`sortButton`).
+- Tests run: `tests/ui/test_ui_theme.py` (two new tests), `tests/ui/test_ui_models.py` (one new test), `tests/ui/test_ui_window.py` (alone: one test failed once and passed on the second run; the failing test was not recorded, the known flaky tests are in STATUS); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+**Still open**
+- Step 5 (message list columns and row height, together with the column-fit item), after the owner's go-ahead.

@@ -1,20 +1,23 @@
 from typing import Any
 
 import pytest
-from PySide6.QtGui import QColor, QIcon, QPalette
-from PySide6.QtWidgets import QFrame, QToolButton
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QColor, QFocusEvent, QIcon, QPalette
+from PySide6.QtWidgets import QAbstractItemView, QApplication, QFrame, QToolButton
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import theme
+from chrono_mail.ui.colours import SEPARATOR, selection_grey
 from chrono_mail.ui.columns import BY_ID, READ_MARK, cell_text
 from chrono_mail.ui.icons import TintedSvgEngine, section_icon
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SECTIONS, TASKS
-from tests.ui.world import World, dialogs, menu_named, world  # noqa: F401
+from tests.ui.world import World, dialogs, menu_named, settle, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 0.0.85"
+__version__ = "test_ui_theme.py 0.0.88"
 
 # --- Version history ----------------------------------------------------
+# v0.0.88: Selection grey without the focus, black 1 px lines between the panes and the column headers, Sorted by in bold
 # v0.0.85: Mark and Move to have icons, Archive is in the toolbar, the menu arrows sit beside the text; section icons are Breeze files
 # v0.0.82: The Menu button shows the three-bar character U+2630
 # v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
@@ -136,7 +139,7 @@ def test_the_composer_has_send_first_and_the_look_of_the_main_window(world: Worl
 
 def test_the_column_headers_of_the_list_have_a_line_between_them() -> None:
     rule = next(line for line in theme.stylesheet().splitlines() if line.startswith("QTreeView#messageList QHeaderView::section"))
-    assert "border-right: 1px solid palette(mid)" in rule  # the place to grab a column edge
+    assert f"border-right: 1px solid {SEPARATOR}" in rule and f"border-bottom: 1px solid {SEPARATOR}" in rule and SEPARATOR == "#000000"  # the place to grab a column edge
 
 
 def test_the_menu_button_is_the_first_button_of_every_toolbar_and_the_menu_bar_row_is_gone(world: World) -> None:
@@ -164,3 +167,44 @@ def test_mark_and_move_to_have_icons_and_archive_is_in_the_toolbar(world: World)
     mark = next(action for action in actions if window.toolbar.widgetForAction(action) is window.mark_button)
     assert actions[actions.index(mark) + 1] is window.act_archive
     assert "QToolBar#mainToolbar QToolButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center;".replace("{{", "{") in theme.stylesheet()
+
+
+def focus(view: QAbstractItemView, focus_in: bool, reason: Qt.FocusReason = Qt.FocusReason.OtherFocusReason) -> None:
+    QApplication.sendEvent(view, QFocusEvent(QEvent.Type.FocusIn if focus_in else QEvent.Type.FocusOut, reason))
+
+
+def test_the_selection_is_blue_with_the_focus_and_grey_without(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.resize(1100, 600)
+    window.show()
+    window.start()
+    settle(qtbot, world, 3)
+    window.list_view.setCurrentIndex(window.list_model.index(0, 1))
+    blue = window.palette().color(QPalette.ColorRole.Highlight).name()
+
+    def colour(view: QAbstractItemView) -> str:
+        qtbot.wait(50)
+        rect = view.visualRect(view.currentIndex())
+        return view.viewport().grab().toImage().pixelColor(rect.center().x(), rect.center().y()).name()
+
+    for view in (window.tree, window.list_view):
+        assert view.currentIndex().isValid()
+        focus(view, True)
+        assert view.property("focused") is True and colour(view) == blue
+        focus(view, False, Qt.FocusReason.PopupFocusReason)  # a context menu leaves the selection blue
+        assert view.property("focused") is True and colour(view) == blue
+        focus(view, False)
+        assert view.property("focused") is False and colour(view) == selection_grey()
+    rect = window.tree.visualRect(window.tree.currentIndex())
+    image = window.tree.viewport().grab().toImage()
+    darkest = min(image.pixelColor(x, y).lightness() for x in range(rect.right() - 30, rect.right()) for y in range(rect.top(), rect.bottom()))
+    assert darkest < 80  # on grey the number is drawn in the colour of text, not white
+
+
+def test_thin_black_lines_between_the_panes_and_sorted_by_in_bold(world: World) -> None:
+    window = world.window
+    sheet = theme.stylesheet()
+    for splitter, name in ((window.splitter, "mainSplitter"), (window.content_splitter, "contentSplitter")):
+        assert splitter.objectName() == name and splitter.handleWidth() == 1 and f"QSplitter#{name}::handle" in sheet
+    assert f"::handle {{ background: {SEPARATOR}; }}" in sheet
+    assert window.sort_button.objectName() == "sortButton" and "QToolButton#sortButton { font-weight: bold; color: palette(text); }" in sheet

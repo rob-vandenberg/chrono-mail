@@ -80,9 +80,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.0.86"
+__version__ = "mainwindow.py 0.0.88"
 
 # --- Version history ----------------------------------------------------
+# v0.0.88: Object names for the two splitters (1 px lines) and the Sorted by button (bold)
 # v0.0.86: Refresh sends and receives and has a menu (send and receive all, receive all, send all, one account only); a Snooze button with ready-made times; Forward has a menu with Forward as attachment; the Snooze button opens its menu wherever it is clicked; message buttons and actions are greyed out while no message is selected
 # v0.0.85: Window title: the open folder and its unread messages, then the program; icons on Mark and Move to; Archive in the toolbar; Snooze uses the clock icon by its own name
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
@@ -282,6 +283,7 @@ class MainWindow(QMainWindow):
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(10, 6, 10, 6)
         self.sort_button = QToolButton(header)
+        self.sort_button.setObjectName("sortButton")
         self.sort_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.sort_button.setAutoRaise(True)
         self.sort_menu = QMenu(self.sort_button)
@@ -308,6 +310,10 @@ class MainWindow(QMainWindow):
         self.reader = ReaderWidget(self)
         self.splitter = QSplitter(Qt.Orientation.Horizontal, self)
         self.content_splitter = QSplitter(Qt.Orientation.Horizontal, self)  # the list and the reading pane, side by side or one above the other
+        self.splitter.setObjectName("mainSplitter")
+        self.content_splitter.setObjectName("contentSplitter")
+        self.splitter.setHandleWidth(1)
+        self.content_splitter.setHandleWidth(1)
         self.side_stack = QStackedWidget(self)  # the left side: the folders of the mail, or the sidebar of the section that is shown
         self.side_stack.addWidget(self.tree)
         self.content_stack = QStackedWidget(self)

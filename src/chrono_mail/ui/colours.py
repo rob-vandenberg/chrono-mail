@@ -1,9 +1,10 @@
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 0.0.56"
+__version__ = "colours.py 0.0.88"
 
 # --- Version history ----------------------------------------------------
+# v0.0.88: Grey of a selection in a list without the focus; black separator lines
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
 # v0.0.51: Initial colours for messages and marks that suit both a light and a dark scheme
 
@@ -11,6 +12,9 @@ RED_ON_LIGHT: str = "#c0392b"
 RED_ON_DARK: str = "#ff8077"
 GREEN_ON_LIGHT: str = "#17703c"
 GREEN_ON_DARK: str = "#4cc26b"
+SELECTION_GREY_ON_LIGHT: str = "#d6d6d6"  # a selection in a folder list or message list that does not have the focus
+SELECTION_GREY_ON_DARK: str = "#4a4a4a"
+SEPARATOR: str = "#000000"  # the thin lines between the panes and between the column headers, in both schemes
 
 
 def _palette(window: str, base: str, text: str, button: str, highlight: str, highlighted_text: str, link: str, disabled: str, shades: tuple[str, str, str, str]) -> QPalette:
@@ -66,6 +70,10 @@ def red(palette: QPalette | None = None) -> str:
 def green(palette: QPalette | None = None) -> str:
     """The colour of 'it worked' marks."""
     return GREEN_ON_DARK if is_dark(palette) else GREEN_ON_LIGHT
+
+
+def selection_grey(palette: QPalette | None = None) -> str:
+    return SELECTION_GREY_ON_DARK if is_dark(palette) else SELECTION_GREY_ON_LIGHT
 
 
 def red_style(palette: QPalette | None = None) -> str:

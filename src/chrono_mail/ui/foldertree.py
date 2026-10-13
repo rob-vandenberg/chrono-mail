@@ -1,17 +1,19 @@
 from typing import override
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QSize, Qt, Signal
-from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QFont, QFontMetrics, QPainter, QPalette
+from PySide6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent, QFocusEvent, QFont, QFontMetrics, QIcon, QPainter, QPalette
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeView, QWidget
 
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
 from chrono_mail.ui.dragdata import read_messages_mime_data
 from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, KIND_ROLE
+from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 0.0.87"
+__version__ = "foldertree.py 0.0.88"
 
 # --- Version history ----------------------------------------------------
+# v0.0.88: The selection is blue while the folder list has the focus and grey without it
 # v0.0.87: The number of unread messages is drawn as a bold number at the right edge
 # v0.0.17: Initial folder tree that accepts dropped messages
 
@@ -26,6 +28,22 @@ class FolderItemDelegate(QStyledItemDelegate):
     def count_text(index: QModelIndex | QPersistentModelIndex) -> str:
         count = int(index.data(COUNT_ROLE) or 0)
         return str(count) if count > 0 else ""
+
+    @staticmethod
+    def has_focus(option: QStyleOptionViewItem) -> bool:
+        found: object = getattr(option, "widget")
+        return not isinstance(found, QWidget) or found.property("focused") is not False
+
+    @override
+    def initStyleOption(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        super().initStyleOption(option, index)
+        if _is_selected(option) and not self.has_focus(option):  # on the grey selection the icon keeps the colour of text
+            icon = _typed(option, "icon", QIcon)
+            normal = icon.pixmap(_typed(option, "decorationSize", QSize), QIcon.Mode.Normal)
+            plain = QIcon()
+            plain.addPixmap(normal, QIcon.Mode.Normal)
+            plain.addPixmap(normal, QIcon.Mode.Selected)
+            setattr(option, "icon", plain)
 
     @override
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
@@ -50,7 +68,7 @@ class FolderItemDelegate(QStyledItemDelegate):
         palette = _typed(option, "palette", QPalette)
         painter.save()
         painter.setFont(bold)
-        painter.setPen(palette.color(QPalette.ColorRole.HighlightedText if _is_selected(option) else QPalette.ColorRole.Text))
+        painter.setPen(palette.color(QPalette.ColorRole.HighlightedText if _is_selected(option) and self.has_focus(option) else QPalette.ColorRole.Text))
         painter.drawText(full.adjusted(0, 0, -COUNT_MARGIN, 0), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), count)
         painter.restore()
 
@@ -77,6 +95,18 @@ class FolderTree(QTreeView):
         self.setDropIndicatorShown(True)
         self.folder_delegate = FolderItemDelegate(self)
         self.setItemDelegate(self.folder_delegate)
+        self.setProperty("focused", False)
+
+    @override
+    def focusInEvent(self, event: QFocusEvent) -> None:
+        super().focusInEvent(event)
+        show_focus(self, True)
+
+    @override
+    def focusOutEvent(self, event: QFocusEvent) -> None:
+        super().focusOutEvent(event)
+        if event.reason() != Qt.FocusReason.PopupFocusReason:  # a context menu leaves the selection as it is
+            show_focus(self, False)
 
     def _target(self, event: QDragMoveEvent | QDropEvent) -> tuple[str, str] | None:
         """The (account, folder) under the pointer when the dragged messages may go there."""

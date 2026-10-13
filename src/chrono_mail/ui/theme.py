@@ -1,7 +1,12 @@
+from PySide6.QtWidgets import QAbstractItemView
+
+from chrono_mail.ui.colours import SEPARATOR, selection_grey
+
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.0.86"
+__version__ = "theme.py 0.0.88"
 
 # --- Version history ----------------------------------------------------
+# v0.0.88: Selection grey while the folder list or message list has no focus; black 1 px lines between the panes and the column headers; Sorted by in bold
 # v0.0.86: Split toolbar buttons (Refresh, Snooze): the arrow part beside the text
 # v0.0.85: The arrow of a toolbar button with a menu sits beside its text, not in the corner
 # v0.0.81: The Menu button is the first, blue button of every toolbar and the row of the menu bar is gone; New is a plain toolbar button
@@ -14,9 +19,18 @@ __version__ = "theme.py 0.0.86"
 HOVER: str = "rgba(128, 128, 128, 0.22)"  # a veil that suits a light and a dark window alike
 
 
+def show_focus(view: QAbstractItemView, focused: bool) -> None:
+    """Tells the stylesheet whether the view has the focus: its selection is blue with it and grey without it."""
+    view.setProperty("focused", focused)
+    view.style().unpolish(view)
+    view.style().polish(view)
+    view.viewport().update()
+
+
 def stylesheet() -> str:
     """The look of the main window, for the light and the dark scheme alike: it takes all its colours from the palette (the blue is the highlight colour, the same as in the menus).
     The rules name their widgets (object names), so nothing else in the program changes."""
+    grey = selection_grey()
     return f"""
 QMenuBar {{ background: palette(window); border: 0; padding: 2px 6px; }}
 QMenuBar::item {{ padding: 5px 12px; background: transparent; border-radius: 4px; }}
@@ -44,8 +58,14 @@ QTreeView#folderTree {{ border: 0; background: palette(window); outline: 0; padd
 QTreeView#folderTree::item {{ padding: 4px 4px; border-radius: 4px; min-height: 22px; }}
 QTreeView#folderTree::item:hover:!selected {{ background: {HOVER}; }}
 QTreeView#folderTree::item:selected {{ background: palette(highlight); color: palette(highlighted-text); }}
+QTreeView#folderTree[focused="false"]::item:selected {{ background: {grey}; color: palette(text); }}
 QTreeView#messageList {{ border: 0; outline: 0; }}
-QTreeView#messageList QHeaderView::section {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); border-right: 1px solid palette(mid); padding: 5px 8px; }}
+QTreeView#messageList[focused="false"]::item:selected {{ background: {grey}; color: palette(text); }}
+QTreeView#messageList QHeaderView::section {{ background: palette(window); border: 0; border-bottom: 1px solid {SEPARATOR}; border-right: 1px solid {SEPARATOR}; padding: 5px 8px; }}
+QSplitter#mainSplitter::handle, QSplitter#contentSplitter::handle {{ background: {SEPARATOR}; }}
+QSplitter#mainSplitter::handle:horizontal, QSplitter#contentSplitter::handle:horizontal {{ width: 1px; }}
+QSplitter#mainSplitter::handle:vertical, QSplitter#contentSplitter::handle:vertical {{ height: 1px; }}
+QToolButton#sortButton {{ font-weight: bold; color: palette(text); }}
 QFrame#readerHeader {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner QPushButton {{ background: {HOVER}; border: 0; border-radius: 4px; padding: 5px 12px; }}

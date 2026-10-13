@@ -628,3 +628,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** in the folder list a folder's name is never bold and carries no number. The number of unread messages is drawn in bold at the right edge, only when it is above zero. Other folders use the icon `folder-open-symbolic`, the Local Folders root `user-home-symbolic` (breeze-dark, copied like the other icons, D-087); every other icon stays.
 **Reason:** the owner's instruction and screenshot of the reference (step 3 of D-086).
+
+## D-090 Selection grey without the focus; black separator lines; Sorted by in bold
+*2026-10-13*
+
+**Decision:** in the folder list and the message list the selection is blue only while that list has the keyboard focus; without it the selection is grey (`#d6d6d6` light, `#4a4a4a` dark) with the text, icons and numbers in the colour of text. A context menu does not count as losing the focus. The lines between the panes and between and under the column headers are 1 px and black (`#000000`) in both schemes. "Sorted by" is bold in the colour of text.
+**Reason:** the owner's instructions after comparing with the reference (step 4 of D-086).

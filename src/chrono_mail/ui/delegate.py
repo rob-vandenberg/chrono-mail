@@ -2,15 +2,18 @@ from typing import override
 
 from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette
-from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
+
+from chrono_mail.ui.colours import selection_grey
 
 from chrono_mail.ui.formatting import avatar_colour, display_name, initials, short_date
 from chrono_mail.ui.models import ROW_ROLE
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.0.77"
+__version__ = "delegate.py 0.0.88"
 
 # --- Version history ----------------------------------------------------
+# v0.0.88: A selected row is grey while the list has no focus
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.18: Conversations: counts, grouped list, conversation bar
 # v0.0.14: secondary text on a selected row has more contrast
@@ -59,9 +62,11 @@ class MessageDelegate(QStyledItemDelegate):
         selected = _is_selected(option)
         full = _rect(option)
         palette = _typed(option, "palette", QPalette)
-        background = palette.color(QPalette.ColorRole.Highlight) if selected else palette.color(QPalette.ColorRole.Base)
+        found: object = getattr(option, "widget")
+        focused = not isinstance(found, QWidget) or found.property("focused") is not False  # grey while the list has no focus
+        background = (palette.color(QPalette.ColorRole.Highlight) if focused else QColor(selection_grey(palette))) if selected else palette.color(QPalette.ColorRole.Base)
         painter.fillRect(full, background)
-        text = palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
+        text = palette.color(QPalette.ColorRole.HighlightedText if selected and focused else QPalette.ColorRole.Text)
         quiet = QColor(text)
         quiet.setAlpha(QUIET_ALPHA_SELECTED if selected else QUIET_ALPHA)  # secondary text must stay readable on the highlight
         if row is None:  # the page with this row is still on its way
@@ -136,7 +141,7 @@ class MessageDelegate(QStyledItemDelegate):
         painter.drawText(preview_rect, Qt.AlignmentFlag.AlignVCenter, QFontMetrics(small).elidedText(preview, Qt.TextElideMode.ElideRight, preview_rect.width()))
         if unread:  # a blue dot in the left margin (white on the selected row, which is blue itself)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Highlight))
+            painter.setBrush(palette.color(QPalette.ColorRole.HighlightedText if selected and focused else QPalette.ColorRole.Highlight))
             painter.drawEllipse(QRect(rect.left() + 2, rect.top() + (rect.height() - UNREAD_DOT) // 2, UNREAD_DOT, UNREAD_DOT))
         self._separator(painter, full, palette)
         painter.restore()

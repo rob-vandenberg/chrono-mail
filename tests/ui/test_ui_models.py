@@ -15,9 +15,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_ROLE_ROLE, KIND_ROLE, PAGE_
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.0.87"
+__version__ = "test_ui_models.py 0.0.88"
 
 # --- Version history ----------------------------------------------------
+# v0.0.88: A selected card is grey while the list has no focus
 # v0.0.87: Folder names without the unread count; the count drawn bold at the right edge; folder-open and home icons
 # v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
@@ -372,3 +373,25 @@ def test_local_folders_and_other_folders_use_their_icons() -> None:
 
     assert picture(top.data(Qt.ItemDataRole.DecorationRole)) == picture(folder_icon("local")) != picture(folder_icon("account"))
     assert picture(model.index(3, 0, top).data(Qt.ItemDataRole.DecorationRole)) == picture(folder_icon("other"))
+
+
+def test_a_selected_card_is_grey_while_the_list_has_no_focus(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.colours import selection_grey
+
+    view = QListView()
+    qtbot.addWidget(view)
+    model = MessageListModel(world.backend)
+    view.setModel(model)
+    view.setItemDelegate(MessageDelegate())
+    view.resize(480, ROW_HEIGHT * 4)
+    view.show()
+    model.show(ViewSpec(world.account_id, "Inbox"))
+    wait(qtbot, lambda: model.rowCount() > 0 and model.row_at(0) is not None)
+    view.setCurrentIndex(model.index(0))
+    blue = view.palette().color(QPalette.ColorRole.Highlight).name()
+    for focused, expected in ((True, blue), (False, selection_grey())):
+        view.setProperty("focused", focused)
+        view.viewport().update()
+        qtbot.wait(100)
+        image = view.viewport().grab().toImage()
+        assert image.pixelColor(image.width() - 12, 5).name() == expected
