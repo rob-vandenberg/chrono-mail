@@ -1156,3 +1156,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - AGENTS.md sections 4.5 and 7: related tests, never the full suite. `act_open_menu` (Alt+M) and `MainWindow.open_menu`; `_load_contact_addresses` after `dav.sync`; schema 6 without `messages_unread` (D-114).
 - Tests run: `tests/test_index_index.py`, `tests/test_index_rebuild.py`, `tests/ui/test_ui_shortcuts.py` (one new; the key table has Alt+M), `tests/ui/test_ui_dav.py` (one new; checked that it fails without the change), `tests/ui/test_ui_preferences.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
 - `tests/ui/test_ui_shortcuts.py` was run several times while looking for a problem: once the test process crashed (no test name kept) and once one test failed (name not kept; the file holds the known flaky `test_marking_as_read_redraws_every_cell_of_the_selected_rows`); the other runs passed. Not investigated further.
+
+## 2026-10-13 One rebuild at a time when accounts are opened (version 0.4.118)
+
+- The owner's start after 0.4.117: "Rebuilding the index", then the program quit once; another start showed "Folders: Unexpected error: FileNotFoundError ... index.sqlite.new". Cause: parallel automatic rebuilds of the shared Local Folders index (D-115). The owner's indexes were checked read-only afterwards: both format 6, complete, quick check ok.
+- `session.index_lock` used by `open_index` and `index.rebuild`.
+- Tests run: `tests/test_engine_commands.py` (one new: six commands open an old index at once; checked that it fails without the change), `tests/test_engine_local.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.

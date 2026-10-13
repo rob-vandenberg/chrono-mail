@@ -22,9 +22,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.2.101"
+__version__ = "session.py 0.4.118"
 
 # --- Version history ----------------------------------------------------
+# v0.4.118: An index is rebuilt by one command at a time (index_lock); the others wait and open the new one
 # v0.2.101: A store with two folders of the same path is repaired when it is opened
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
@@ -48,6 +49,16 @@ Progress = Callable[[str, int, int | None], None]
 def _no_progress(what: str, done: int, total: int | None) -> None:
     """Progress reports are optional."""
 
+
+
+_INDEX_LOCKS: dict[str, threading.Lock] = {}  # index file -> held while it is rebuilt
+_INDEX_LOCKS_GUARD: threading.Lock = threading.Lock()
+
+
+def index_lock(path: Path) -> threading.Lock:
+    """The lock of one index file: two rebuilds of the same file would build the same work file at the same time."""
+    with _INDEX_LOCKS_GUARD:
+        return _INDEX_LOCKS.setdefault(str(path.resolve()), threading.Lock())
 
 @dataclass
 class Engine:
@@ -162,6 +173,12 @@ class Engine:
                 return Index(path)
         except StorageError:
             pass
-        self.progress("Rebuilding the index", 0, None)
-        index, _ = rebuild_index(store, path, lambda done: self.progress("Rebuilding the index", done, None))
-        return index
+        with index_lock(path):  # commands that open the same index at once (accounts in Local Folders) rebuild it once
+            try:
+                if path.exists():
+                    return Index(path)  # rebuilt by another command while this one waited
+            except StorageError:
+                pass
+            self.progress("Rebuilding the index", 0, None)
+            index, _ = rebuild_index(store, path, lambda done: self.progress("Rebuilding the index", done, None))
+            return index

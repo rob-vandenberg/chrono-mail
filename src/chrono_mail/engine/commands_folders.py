@@ -1,17 +1,17 @@
-import threading
 from dataclasses import dataclass, field
 
 from chrono_mail.core import StorageError
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.mailbox import open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import Engine, index_lock
 from chrono_mail.sync import rebuild_index, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 0.3.111"
+__version__ = "commands_folders.py 0.4.118"
 
 # --- Version history ----------------------------------------------------
+# v0.4.118: The lock of an index file is shared with the rebuild when an account is opened (session.index_lock)
 # v0.3.111: Two rebuilds of the same index wait for each other
 # v0.0.45: maintenance works on the storage of an account
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
@@ -113,20 +113,11 @@ class IndexResult:
     seconds: float
 
 
-_REBUILD_LOCKS: dict[str, threading.Lock] = {}  # index file -> held while it is rebuilt
-_REBUILD_LOCKS_GUARD: threading.Lock = threading.Lock()
-
-
-def _rebuild_lock(path: str) -> threading.Lock:
-    with _REBUILD_LOCKS_GUARD:
-        return _REBUILD_LOCKS.setdefault(path, threading.Lock())
-
-
 def index_rebuild(engine: Engine, parameters: AccountParameters) -> IndexResult:
     settings = engine.storage_settings(engine.resolve_account(parameters.account))
     store = engine.open_store(settings)
     path = engine.directories.index_file(settings.account.account_id)
-    with _rebuild_lock(str(path.resolve())):  # accounts in Local Folders share one index: a second rebuild would build the same file at the same time
+    with index_lock(path):  # accounts in Local Folders share one index: a second rebuild would build the same file at the same time
         index, report = rebuild_index(store, path, lambda done: engine.progress("Rebuilding the index", done, None))
         index.close()
     return IndexResult(report.indexed, report.unreadable, report.seconds)

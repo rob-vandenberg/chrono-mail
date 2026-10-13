@@ -1,4 +1,5 @@
 import json
+import sqlite3
 import threading
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -18,9 +19,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.3.112"
+__version__ = "test_engine_commands.py 0.4.118"
 
 # --- Version history ----------------------------------------------------
+# v0.4.118: Commands that open an index of an old format at the same moment rebuild it once, without errors
 # v0.3.112: A delete or a move to Junk of a message whose file is gone answers "gone"
 # v0.3.111: Two rebuilds of the shared Local Folders index at once both succeed
 # v0.3.110: Deleting a message whose file is gone removes it from the list
@@ -370,6 +372,28 @@ def test_two_rebuilds_of_the_same_index_at_once_both_succeed(setup: Setup) -> No
     for worker in workers:
         worker.join()
     assert [getattr(result, "messages", result) for result in results] == [3, 3, 3]
+
+
+def test_commands_that_open_an_old_index_at_once_all_succeed(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    call(setup.engine, "account.set-storage", account=setup.account_id, storage="local")  # the account shares the Local Folders index
+    path = setup.engine.directories.index_file(LOCAL_ACCOUNT_ID)
+    with sqlite3.connect(path) as connection:
+        connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema'")  # an old format: the next command rebuilds it
+    results: list[object] = []
+
+    def listed(account: str) -> None:
+        try:
+            results.append(call(setup.engine, "message.list", account=account, folder="Inbox"))
+        except Exception as error:  # noqa: BLE001 - any failure is the finding
+            results.append(error)
+
+    workers = [threading.Thread(target=listed, args=(account,)) for account in (setup.account_id, LOCAL_ACCOUNT_ID) * 3]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert [getattr(result, "total", result) for result in results] == [3] * 6
 
 
 def test_folder_commands(setup: Setup) -> None:

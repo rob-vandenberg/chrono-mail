@@ -783,3 +783,9 @@ Step 2 (0.3.108): "Message list" (`list_scale`; an older `list_font_size` in poi
 
 **Decision:** the action "Open the menu" (standard key Alt+M, changeable in Settings > Keyboard) opens the Menu button of the section that is shown; the window itself listens for the key, as the menu bar is hidden. When the calendar and contacts sync finishes, the window loads the contact addresses again, so the Contact column knows a contact from a server at once. Index schema 6 drops the partial index for unread counts (D-031): the index of the Unread sort (D-106) serves them by seeking the folder and the read bit; every index is rebuilt once. AGENTS.md now says that only the tests related to a change must pass (the owner's rule), not the whole suite. The owner moved the minor version to 0.4 after the milestone release 0.3.116.
 **Reason:** the owner's choice of the smallest backlog items.
+
+## D-115 An index is rebuilt by one command at a time, also when an account is opened
+*2026-10-13*
+
+**Decision:** the lock per index file of D-108 moves to `engine/session.py` (`index_lock`) and is also taken by `Engine.open_index`, the automatic rebuild of a missing, damaged or old index when an account is opened. A command that finds the index being rebuilt waits, then opens the new index; only one rebuild runs.
+**Reason:** after the change of format in 0.4.117 the owner's program started several commands at once that open the shared Local Folders index; each rebuilt it at the same time, and the others failed with "No such file or directory" (index.sqlite.new). The owner also saw the program quit once while it rebuilt; whether that came from the same cause is not known.
