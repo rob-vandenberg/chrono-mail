@@ -1,8 +1,9 @@
+import dataclasses
 import json
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSettings, Qt, QUrl
+from PySide6.QtCore import QItemSelectionModel, QSettings, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import QApplication, QDialog, QLabel
 from pytestqt.qtbot import QtBot
@@ -20,9 +21,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.3.112"
+__version__ = "test_ui_preferences.py 0.3.116"
 
 # --- Version history ----------------------------------------------------
+# v0.3.116: The list is shown again after an action in which a message failed; the error stays
 # v0.3.112: Repair the search index; one warning for messages whose file is gone
 # v0.3.111: Maintenance once per place where mail is kept; its report can be selected
 # v0.3.108: The size of messages, read and written, is set with its slider
@@ -438,3 +440,21 @@ def test_messages_whose_file_is_gone_give_one_warning_per_action(world: World, q
     window.mark_selected(flagged=True)  # flagging only warns: the message stays in the list
     wait(qtbot, lambda: len([shown for shown in world.dialogs.shown if shown[1] == "Messages missing"]) == 2)
     assert window.list_model.message_count() == 1 and window.status_label.text() == MISSING_WARNING
+
+
+def test_the_list_is_refreshed_when_a_message_of_an_action_fails_and_the_error_stays(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    rows = [row_of(window, position) for position in range(3)]
+    broken = dataclasses.replace(rows[1], folder="No such folder")  # its delete fails
+    window._delete_rows([rows[0], broken])  # noqa: SLF001
+    wait(qtbot, lambda: window.list_model.message_count() == 2)  # shown again: the deleted one is gone, the failed one stays
+    assert window.status_label.text().startswith("Could not delete")
+    lose_files(world, [rows[2].message_id])  # its move fails: the file is gone
+    window.list_view.selectionModel().clearSelection()
+    for row in (rows[1], rows[2]):
+        position = next(index for index in range(window.list_model.rowCount()) if row_of(window, index) is not None and row_of(window, index).message_id == row.message_id)
+        window.list_view.selectionModel().select(window.list_model.index(position, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    window.move_selected("Trash")
+    wait(qtbot, lambda: window.list_model.message_count() == 1 and window.status_label.text() == MISSING_WARNING)

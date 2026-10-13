@@ -87,9 +87,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.3.112"
+__version__ = "mainwindow.py 0.3.116"
 
 # --- Version history ----------------------------------------------------
+# v0.3.116: Delete, Delete for good, Move to Junk, Move (also by dragging), Archive and Copy refresh the list also when a message failed (the error stays)
 # v0.3.112: A message whose file is gone gives one warning per action (a window and the red line) with the advice to repair the search index
 # v0.3.109: Every column but Delete sorts (icon columns: yes first; Messages in conversation: largest first; Folder and Preview: A to Z), the eight new sorts in the Sorted by menu; a click on Delete leaves the sort arrow where it was
 # v0.3.108: The message list has its own size factor (text, rows, cards, icons and columns), tried out at once from Settings; the size of the text of messages is a factor for reading and writing, tried out at once from Settings (Cancel puts it back); open composers follow
@@ -1878,18 +1879,10 @@ class MainWindow(QMainWindow):
         if in_trash and QMessageBox.question(self, "Delete", f"Delete {len(rows)} message(s) for good? This cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
         account = self._account_id
-        remaining = len(rows)
         self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
-
-        def done(result: object) -> None:
-            nonlocal remaining
-            remaining -= 1
-            self._note_gone(result)
-            if remaining == 0:
-                self._after_change(f"Deleted {len(rows)} message(s)" if in_trash else f"Moved {len(rows)} message(s) to Trash")
-
+        done, failed = self._answers(len(rows), f"Deleted {len(rows)} message(s)" if in_trash else f"Moved {len(rows)} message(s) to Trash", "Could not delete", self._note_gone)
         for row in rows:
-            self.backend.call("message.delete", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not delete", error), owner=self)
+            self.backend.call("message.delete", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
 
     def _show_archive_action(self) -> None:
         """In the Archive folder the Archive button, key and menu item are Unarchive."""
@@ -1933,18 +1926,28 @@ class MainWindow(QMainWindow):
         created = False
         self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
 
+        failures = 0
+
         def done(result: object) -> None:
             nonlocal remaining, created
             created = created or bool(getattr(result, "created_folder"))
             remaining -= 1
             if remaining == 0:
-                self._after_change(f"Archived {len(rows)} message(s)")
+                self._after_change(f"Archived {len(rows)} message(s)", keep_status=failures > 0)
+
+        def failed(error: ChronoMailError) -> None:
+            nonlocal remaining, failures
+            remaining -= 1
+            failures += 1
+            self._report("Could not archive", error)
+            if remaining == 0:
+                self._after_change(f"Archived {len(rows)} message(s)", keep_status=True)
 
         for row in rows:
             if str(getattr(row, "folder")) == "Archive":
                 remaining -= 1  # already there
                 continue
-            self.backend.call("message.archive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not archive", error), owner=self)
+            self.backend.call("message.archive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
         if remaining == 0:
             self.show_status("The selected message(s) are in the archive already")
 
@@ -1954,20 +1957,9 @@ class MainWindow(QMainWindow):
         if not rows or self._account_id is None:
             return
         account, command = self._account_id, "message.junk" if junk else "message.not-junk"
-        remaining = len(rows)
         self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
-
-        def done(result: object) -> None:
-            nonlocal remaining
-            remaining -= 1
-            self._note_gone(result)
-            if remaining == 0:
-                self._after_change(f"Moved {len(rows)} message(s) to Junk" if junk else f"Moved {len(rows)} message(s) back to the Inbox")
-
-        def failed(error: ChronoMailError) -> None:
-            nonlocal remaining
-            remaining -= 1
-            self._report("Could not move", error)
+        finished = f"Moved {len(rows)} message(s) to Junk" if junk else f"Moved {len(rows)} message(s) back to the Inbox"
+        done, failed = self._answers(len(rows), finished, "Could not move", self._note_gone)
 
         for row in rows:
             self.backend.call(command, {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
@@ -2079,20 +2071,12 @@ class MainWindow(QMainWindow):
             return
         if QMessageBox.question(self, "Delete permanently", f"Delete {len(rows)} message(s) for good, without moving them to Trash? This cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
-        remaining = len(rows)
         self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
-
-        def done(result: object) -> None:
-            nonlocal remaining
-            remaining -= 1
-            self._note_gone(result)
-            if remaining == 0:
-                self._after_change(f"Deleted {len(rows)} message(s) for good")
-
+        done, failed = self._answers(len(rows), f"Deleted {len(rows)} message(s) for good", "Could not delete", self._note_gone)
         for row in rows:
             self.backend.call(
                 "message.delete", {"account": self._account_of(row) or self._account_id, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "permanent": True},
-                done, lambda error: self._report("Could not delete", error), owner=self,
+                done, failed, owner=self,
             )
 
     def _popup_folders(self, how: str) -> None:
@@ -2114,18 +2098,11 @@ class MainWindow(QMainWindow):
         rows = self._selected_rows()
         if not rows:
             return
-        remaining = len(rows)
-
-        def done(result: object) -> None:
-            nonlocal remaining
-            remaining -= 1
-            if remaining == 0:
-                self._after_change(f"Copied {len(rows)} message(s) to {target}")
-
+        done, failed = self._answers(len(rows), f"Copied {len(rows)} message(s) to {target}", "Could not copy")
         for row in rows:
             self.backend.call(
                 "message.copy", {"account": self._account_of(row), "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target},
-                done, lambda error: self._report("Could not copy", error), owner=self,
+                done, failed, owner=self,
             )
 
     def go_to_folder(self) -> None:
@@ -2213,17 +2190,10 @@ class MainWindow(QMainWindow):
 
     def _messages_dropped(self, account: str, target: str, messages: list[tuple[str, str]]) -> None:
         """Messages were dragged to a folder of the tree."""
-        remaining = len(messages)
         self._keep_place_after_delete([message_id for _, message_id in messages])
-
-        def done(result: object) -> None:
-            nonlocal remaining
-            remaining -= 1
-            if remaining == 0:
-                self._after_change(f"Moved {len(messages)} message(s) to {target}")
-
+        done, failed = self._answers(len(messages), f"Moved {len(messages)} message(s) to {target}", "Could not move")
         for folder, message_id in messages:
-            self.backend.call("message.move", {"account": account, "folder": folder, "message": message_id, "target": target}, done, lambda error: self._report("Could not move", error), owner=self)
+            self.backend.call("message.move", {"account": account, "folder": folder, "message": message_id, "target": target}, done, failed, owner=self)
 
     def _fill_move_menu(self) -> None:
         self.move_menu.clear()
@@ -2239,22 +2209,41 @@ class MainWindow(QMainWindow):
         rows = self._selected_rows()
         if not rows or self._account_id is None:
             return
-        remaining = len(rows)
         account = self._account_id
         self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+        done, failed = self._answers(len(rows), f"Moved {len(rows)} message(s) to {target}", "Could not move")
+        for row in rows:
+            self.backend.call("message.move", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target}, done, failed, owner=self)
+
+    def _answers(self, count: int, finished: str, title: str, each: Callable[[object], None] | None = None) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
+        """The answers of an action on several messages, one per message: when all are in, failed ones too, the list is
+        shown again; the summary only when none failed, else the error stays in the red line."""
+        remaining, failures = count, 0
+
+        def finish() -> None:
+            if remaining == 0:
+                self._after_change(finished, keep_status=failures > 0)
 
         def done(result: object) -> None:
             nonlocal remaining
             remaining -= 1
-            if remaining == 0:
-                self._after_change(f"Moved {len(rows)} message(s) to {target}")
+            if each is not None:
+                each(result)
+            finish()
 
-        for row in rows:
-            self.backend.call("message.move", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target}, done, lambda error: self._report("Could not move", error), owner=self)
+        def failed(error: ChronoMailError) -> None:
+            nonlocal remaining, failures
+            remaining -= 1
+            failures += 1
+            self._report(title, error)
+            finish()
 
-    def _after_change(self, text: str) -> None:
-        """Something changed in the store: show the same folder again and update the counts."""
-        self.show_status(text)
+        return done, failed
+
+    def _after_change(self, text: str, keep_status: bool = False) -> None:
+        """Something changed in the store: show the same folder again and update the counts (keep_status: an error is shown)."""
+        if not keep_status:
+            self.show_status(text)
         self._show_request += 1  # whatever was being opened may no longer exist
         self._clear_reader()
         self._shown = None

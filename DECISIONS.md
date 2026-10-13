@@ -771,3 +771,9 @@ Step 2 (0.3.108): "Message list" (`list_scale`; an older `list_font_size` in poi
 
 **Decision:** each row of the page list of Settings is 2 points (in pixels at the screen's resolution, about 3 at the standard size) higher than its text needs, times the size factor of the interface; the text stays in the middle (`TallerRows`, a delegate that adds the height).
 **Reason:** the owner's request, together with the 2 points larger text (D-110).
+
+## D-113 An action on several messages always ends with the list shown again
+*2026-10-13*
+
+**Decision:** Delete, Delete for good, Move to Junk (and Not junk), Move (menu and dragging), Archive and Copy count a failed message as answered too (`MainWindow._answers`); when every message has answered, the list and the folder counts are shown again. The summary ("Deleted 3 message(s)") is shown only when none failed; otherwise the red error line stays.
+**Reason:** a failed message was never counted, so the list was not shown again after the action (found in 0.3.112; the owner asked for it to be fixed, also for Move, Archive and Copy).

@@ -1145,3 +1145,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 - `TallerRows` delegate; `_size_sidebar_text` sets its extra height with the font, also while the slider is tried out (D-112).
 - Tests run: `tests/ui/test_ui_appearance.py` (the page list test checks the row height at 1.0 and 1.5), `tests/ui/test_ui_preferences.py`; Pyrefly 0 diagnostics; not the full suite.
+
+## 2026-10-13 The list is shown again after a failed message (version 0.3.116)
+
+- `MainWindow._answers` (done and failed handlers for an action on several messages) and `_after_change(keep_status=...)`; used by Delete, Delete for good, Move to Junk, Move (menu and dragging), Copy; Archive counts its failures the same way (D-113).
+- Tests run: `tests/ui/test_ui_preferences.py` (one new: a delete with one failing message and a move with a missing file; checked that it fails without the change), `tests/ui/test_ui_dragdrop.py`, `tests/ui/test_ui_window.py` (alone); Pyrefly 0 diagnostics, layer check kept; not the full suite.
