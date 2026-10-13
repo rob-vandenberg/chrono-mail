@@ -18,9 +18,10 @@ from tests.live.account import LiveAccount
 from tests.ui.world import Dialogs, dialogs, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_ui.py 0.0.13"
+__version__ = "test_live_ui.py 0.4.122"
 
 # --- Version history ----------------------------------------------------
+# v0.4.122: The Trash list has group header rows: they are skipped when the message is looked for
 # v0.0.13: Initial live user interface test
 
 pytestmark = pytest.mark.live
@@ -92,7 +93,7 @@ def test_send_receive_read_and_delete_through_the_window(live_window: tuple[Main
         assert trash is not None
         window.tree.setCurrentIndex(trash)
         wait(qtbot, lambda: window._folder == "Trash" and window.list_model.rowCount() >= 1)  # noqa: SLF001
-        row = next(r for r in range(window.list_model.rowCount()) if token in row_of(window, r).subject)
+        row = next(r for r in range(window.list_model.rowCount()) if row_of(window, r) is not None and token in row_of(window, r).subject)  # header bars are not messages
         window.list_view.setCurrentIndex(window.list_model.index(row))
         dialogs.answer = QMessageBox.StandardButton.Yes
         window.act_delete.trigger()
