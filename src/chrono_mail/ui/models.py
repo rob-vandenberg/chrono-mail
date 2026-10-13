@@ -14,9 +14,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.0.85"
+__version__ = "models.py 0.0.87"
 
 # --- Version history ----------------------------------------------------
+# v0.0.87: Folder list: the name without the number and never bold; the number of unread messages in its own role (drawn by the tree); Local Folders uses the home icon
 # v0.0.85: A folder item keeps its plain name (for the window title)
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.70: The Inboxes section is removed from the folder tree
@@ -41,6 +42,7 @@ FOLDER_ROLE_ROLE: int = Qt.ItemDataRole.UserRole + 6
 GROUP_ROLE: int = Qt.ItemDataRole.UserRole + 7
 PIN_ROLE: int = Qt.ItemDataRole.UserRole + 8
 NAME_ROLE: int = Qt.ItemDataRole.UserRole + 9  # the folder's name without the number of unread messages
+COUNT_ROLE: int = Qt.ItemDataRole.UserRole + 10  # the number of unread messages the folder list draws at the right edge (0: none)
 ROW_PLACEHOLDER: None = None
 
 
@@ -451,7 +453,7 @@ class FolderTreeModel(QStandardItemModel):
         account_id = str(getattr(account, "account_id"))
         top = QStandardItem("Local Folders" if str(getattr(account, "kind", "pop3")) == "local" else str(getattr(account, "shown_name")))
         top.setEditable(False)
-        top.setIcon(folder_icon("account"))
+        top.setIcon(folder_icon("local" if str(getattr(account, "kind", "pop3")) == "local" else "account"))
         top.setData("account", KIND_ROLE)
         top.setData(account_id, ACCOUNT_ROLE)
         parent.appendRow(top)
@@ -536,12 +538,10 @@ class FolderTreeModel(QStandardItemModel):
 
     @staticmethod
     def _label(item: QStandardItem, name: str, unread: int) -> None:
-        """The folder's name, with the number of unread messages after it, and in bold when there are some."""
-        item.setText(f"{name}  ({unread})" if unread else name)
+        """The folder's name; the number of unread messages is drawn by the folder list at the right edge, in bold."""
+        item.setText(name)
         item.setData(name, NAME_ROLE)
-        font = item.font()
-        font.setBold(unread > 0)
-        item.setFont(font)
+        item.setData(unread, COUNT_ROLE)
 
     @staticmethod
     def _folder_item(account_id: str, path: tuple[str, ...], role: str, unread: int) -> QStandardItem:

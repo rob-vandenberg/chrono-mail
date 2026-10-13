@@ -11,13 +11,14 @@ from chrono_mail.config import ServerRole
 from chrono_mail.ui.sections import CALENDAR, MAIL
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.mainwindow import MainWindow
-from chrono_mail.ui.models import FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
+from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, KIND_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.0.86"
+__version__ = "test_ui_window.py 0.0.87"
 
 # --- Version history ----------------------------------------------------
+# v0.0.87: The folder list draws the unread count itself; the labels add it from COUNT_ROLE
 # v0.0.86: Message buttons are greyed out while no message is selected
 # v0.0.85: The window title names the open folder and its unread messages
 # v0.0.77: Received instead of Date
@@ -56,7 +57,8 @@ def tree_labels(window: MainWindow) -> list[str]:
     def walk(parent: QModelIndex, depth: int) -> None:
         for row in range(window.tree_model.rowCount(parent)):
             index = window.tree_model.index(row, 0, parent)
-            labels.append("  " * depth + str(index.data()))
+            count = int(index.data(COUNT_ROLE) or 0)
+            labels.append("  " * depth + str(index.data()) + (f"  ({count})" if count else ""))
             walk(index, depth + 1)
 
     walk(QModelIndex(), 0)
@@ -132,7 +134,7 @@ def test_the_window_title_follows_the_open_folder(world: World, qtbot: QtBot) ->
 
 def test_the_inbox_is_selected_at_the_start(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
-    assert world.window.tree.currentIndex().data() == "Inbox  (3)"
+    assert world.window.tree.currentIndex().data() == "Inbox" and world.window.tree.currentIndex().data(COUNT_ROLE) == 3
     assert world.window._folder == "Inbox" and world.window._account_id == world.account_id  # noqa: SLF001
 
 
@@ -748,7 +750,7 @@ def test_next_unread_goes_on_to_the_next_folder_with_unread_mail(world: World, q
 def test_the_favorites_show_the_same_folder_of_every_mailbox_and_can_be_switched_off(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     favorites = world.window.tree_model.index(0, 0)
-    assert favorites.data() == "Favorites" and world.window.tree_model.index(0, 0, favorites).data() == "All Inboxes  (3)"
+    assert favorites.data() == "Favorites" and world.window.tree_model.index(0, 0, favorites).data() == "All Inboxes" and world.window.tree_model.index(0, 0, favorites).data(COUNT_ROLE) == 3
     world.window.tree.setCurrentIndex(world.window.tree_model.index(0, 0, favorites))
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
     row = world.window.list_model.row_at(0)
@@ -794,7 +796,7 @@ def test_the_folder_list_menu_offers_favorites_and_groups(world: World, qtbot: Q
     started(qtbot, world)
     account = account_node(world.window)
     inbox = world.window.tree_model.index(2, 0, account)  # Unread, Flagged, Inbox
-    assert inbox.data() == "Inbox  (3)"
+    assert inbox.data() == "Inbox" and inbox.data(COUNT_ROLE) == 3
 
     def offered(index: QModelIndex) -> list[str]:
         menu = QMenu()

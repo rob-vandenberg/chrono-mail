@@ -879,3 +879,14 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 **Still open**
 - Messages already in the Outbox from before 0.0.86 have no Bcc header. "Forward as Original" and "Resend" of the reference are not built. The tray menu's Refresh still only receives.
+
+## 2026-10-13 Main screen restyle step 3: unread counts and folder icons (version 0.0.87)
+
+**What landed**
+- The folder list shows the name only, never bold; the number of unread messages is drawn in bold at the right edge (8 px from it) by `FolderItemDelegate` (`ui/foldertree.py`), and not at all when nothing is unread. A long name is shortened (…) before it reaches the number. The count is kept in the new `COUNT_ROLE` (`ui/models.py`); `NAME_ROLE` and `UNREAD_ROLE` are unchanged.
+- Icons: other folders use `folder-open-symbolic`, the Local Folders root uses `user-home-symbolic` (both copied from breeze-dark `places/22`; the owner's choice). All other icons are unchanged.
+- Side effect: Rename… of a pinned favorite now offers the plain name (it offered "Inbox  (5)").
+- Tests run: `tests/ui/test_ui_models.py` (two new tests: the count at the right edge and no count without unread; the two new icons), `tests/ui/test_ui_window.py` (alone), `tests/ui/test_ui_icons.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+**Still open**
+- Step 4 of the restyle (selection colours and separator lines), after the owner's go-ahead.

@@ -3,19 +3,22 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPalette
-from PySide6.QtWidgets import QListView
+from PySide6.QtGui import QColor, QFont, QIcon, QImage, QPainter, QPalette
+from PySide6.QtWidgets import QListView, QTreeView
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_mail import MessageRow
 from chrono_mail.ui.delegate import ROW_HEIGHT, MessageDelegate
-from chrono_mail.ui.models import FOLDER_ROLE_ROLE, KIND_ROLE, PAGE_SIZE, ROW_ROLE, FolderTreeModel, MessageListModel, ViewKind, ViewSpec
+from chrono_mail.ui.foldertree import COUNT_MARGIN, FolderItemDelegate
+from chrono_mail.ui.icons import folder_icon
+from chrono_mail.ui.models import COUNT_ROLE, FOLDER_ROLE_ROLE, KIND_ROLE, PAGE_SIZE, ROW_ROLE, FolderTreeModel, MessageListModel, ViewKind, ViewSpec
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.0.70"
+__version__ = "test_ui_models.py 0.0.87"
 
 # --- Version history ----------------------------------------------------
+# v0.0.87: Folder names without the unread count; the count drawn bold at the right edge; folder-open and home icons
 # v0.0.70: The Inboxes section is removed from the folder tree
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
@@ -168,10 +171,13 @@ def test_tree_with_nested_and_virtual_folders() -> None:
             walk(index, depth + 1)
 
     walk(QModelIndex(), 0)
-    assert labels == ["me@example.com", "  Unread", "  Flagged", "  Inbox  (4)", "  Drafts", "  Sent", "  Alpha", "  Archive", "    2026", "      Q1  (2)", "  Zeta", "  Trash"]
+    assert labels == ["me@example.com", "  Unread", "  Flagged", "  Inbox", "  Drafts", "  Sent", "  Alpha", "  Archive", "    2026", "      Q1", "  Zeta", "  Trash"]
     top = model.index(0, 0)
     kinds = [model.index(row, 0, top).data(KIND_ROLE) for row in range(model.rowCount(top))]
     assert kinds[:3] == ["unread", "flagged", "folder"] and model.index(2, 0, top).data(FOLDER_ROLE_ROLE) == "inbox"
+    inbox, drafts = model.index(2, 0, top), model.index(3, 0, top)
+    assert inbox.data(COUNT_ROLE) == 4 and drafts.data(COUNT_ROLE) == 0
+    assert not inbox.data(Qt.ItemDataRole.FontRole) or not QFont(inbox.data(Qt.ItemDataRole.FontRole)).bold()  # the name is never bold
 
 
 def test_tree_with_two_accounts_and_no_accounts() -> None:
@@ -316,10 +322,53 @@ def test_favorites_and_local_folders_in_the_tree() -> None:
     assert tops(model) == ["Favorites", "one@example.com", "two@example.com", "Local Folders"]
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
-    assert labels[:2] == ["All Inboxes  (7)", "Unread  (7)"] and labels[-1] == "Trash  (7)" and len(labels) == 8  # shared mail counted once
+    counts = [model.index(row, 0, favorites).data(COUNT_ROLE) for row in range(model.rowCount(favorites))]
+    assert labels[:2] == ["All Inboxes", "Unread"] and labels[-1] == "Trash" and counts[:2] == [7, 7] and counts[-1] == 7 and len(labels) == 8  # shared mail counted once
     model.show_favorites = model.show_local_folders = False
     model.populate(accounts, folders)
     assert tops(model) == ["one@example.com", "two@example.com"]
     model.show_favorites = True
     model.populate(accounts[:1], folders)
     assert tops(model) == ["Favorites", "one@example.com"]
+
+
+def test_the_unread_count_is_drawn_bold_at_the_right_edge(qtbot: QtBot) -> None:
+    model = FolderTreeModel()
+    model.show_favorites = False
+    model.populate([Account("a" * 32, "me@example.com")], {"a" * 32: [Info("Inbox", "inbox", 85), Info("Drafts", "drafts")]})
+    view = QTreeView()
+    qtbot.addWidget(view)
+    view.setHeaderHidden(True)
+    view.setItemDelegate(FolderItemDelegate(view))
+    view.setModel(model)
+    view.expandAll()
+    view.resize(300, 200)
+    view.show()
+    qtbot.waitExposed(view)
+    image = view.viewport().grab().toImage()
+    background = image.pixelColor(image.width() - 2, 1)
+
+    def inked(row_index: QModelIndex, left: int, right: int) -> bool:
+        rect = view.visualRect(row_index)
+        return any(image.pixelColor(x, y) != background for x in range(left, right) for y in range(rect.top() + 2, rect.bottom() - 1))
+
+    top = model.index(0, 0)
+    inbox, drafts = model.index(2, 0, top), model.index(3, 0, top)
+    edge = view.viewport().width() - COUNT_MARGIN
+    assert inked(inbox, edge - 20, edge) and not inked(inbox, edge, view.viewport().width())  # the number ends at the margin
+    assert not inked(drafts, edge - 40, view.viewport().width())  # no number when nothing is unread
+
+
+def test_local_folders_and_other_folders_use_their_icons() -> None:
+    assert not folder_icon("local").isNull() and not folder_icon("other").isNull()
+    model = FolderTreeModel()
+    model.show_favorites = False
+    model.populate([Place("1" * 32, "-", "local")], {"1" * 32: [Info("Inbox", "inbox"), Info("Projects", "other")]})
+    top = model.index(0, 0)
+    assert top.data() == "Local Folders"
+
+    def picture(icon: object) -> QImage:
+        return QIcon(icon).pixmap(22, 22).toImage() if isinstance(icon, QIcon) else QImage()
+
+    assert picture(top.data(Qt.ItemDataRole.DecorationRole)) == picture(folder_icon("local")) != picture(folder_icon("account"))
+    assert picture(model.index(3, 0, top).data(Qt.ItemDataRole.DecorationRole)) == picture(folder_icon("other"))

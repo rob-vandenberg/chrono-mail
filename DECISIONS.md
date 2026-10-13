@@ -622,3 +622,9 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** the copy kept in the Outbox and in Sent is built with the Bcc header, so no information is lost; Bcc is taken out (`without_bcc`, header block only, the rest byte for byte the same) just before the message goes to the server. A message that failed to send therefore still has its Bcc recipients in the Outbox. New command `mail.send-outbox` (Send All) sends what waits in the Outbox (not scheduled or repeating messages) as it is stored, to its To, Cc and Bcc, and moves it to Sent only after the server accepted it; a crash between the server's acceptance and the move leaves it in the Outbox (it may then be sent twice by a later Send All, never lost). Clicking Refresh (and F5) is Send and Receive All, as in the reference (its Refresh menu starts with Send and Receive All); the menu has Send and Receive All, Receive All, Send All and one entry per account. Forward has a menu with Forward as attachment: compose kind `forward_attachment` (no quoted text) and `mail.send` option `attach_source_message`, which attaches the original unchanged as `<subject>.eml` (message/rfc822, never base64, RFC 2046 section 5.2.1).
 **Reason:** the owner's instructions: locally we keep all information about a message, including Bcc; Refresh does what the reference does. Messages already in the Outbox from before this version have no Bcc header.
+
+## D-089 Folder list: plain names, bold unread numbers at the right edge
+*2026-10-13*
+
+**Decision:** in the folder list a folder's name is never bold and carries no number. The number of unread messages is drawn in bold at the right edge, only when it is above zero. Other folders use the icon `folder-open-symbolic`, the Local Folders root `user-home-symbolic` (breeze-dark, copied like the other icons, D-087); every other icon stays.
+**Reason:** the owner's instruction and screenshot of the reference (step 3 of D-086).

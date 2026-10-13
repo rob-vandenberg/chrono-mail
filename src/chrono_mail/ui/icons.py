@@ -8,9 +8,10 @@ from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPalett
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 0.0.85"
+__version__ = "icons.py 0.0.87"
 
 # --- Version history ----------------------------------------------------
+# v0.0.87: Other folders use folder-open-symbolic; Local Folders uses user-home-symbolic
 # v0.0.85: Every icon comes from the program's own copy of the Breeze icons (LGPL), on every platform; no icon theme of the desktop and no Lucide icons any more
 # v0.0.76: Section icons in plain colours, blue while the section is open
 # v0.0.63: The tasks section
@@ -32,8 +33,9 @@ FOLDER_ICONS: dict[str, tuple[str, ...]] = {
     "junk": ("mail-mark-junk", "dialog-warning", "folder"),
     "archive": ("folder-archive", "archive-insert", "folder"),
     "outbox": ("mail-folder-outbox", "mail-send", "folder"),
-    "other": ("folder", "folder-open"),
+    "other": ("folder-open-symbolic", "folder"),
     "account": ("mail-message", "user-identity", "folder"),
+    "local": ("user-home-symbolic", "folder"),
     "unread": ("mail-unread", "mail-unread-new", "mail-message-new"),
     "flagged": ("mail-mark-important", "flag", "emblem-important"),
 }
