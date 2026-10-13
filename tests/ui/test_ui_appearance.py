@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor, QGuiApplication, QImage, QPalette
-from PySide6.QtWidgets import QApplication, QMenu
+from PySide6.QtWidgets import QApplication, QListWidget, QMenu
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import appearance, icons, scale
@@ -15,9 +15,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.3.113"
+__version__ = "test_ui_appearance.py 0.3.115"
 
 # --- Version history ----------------------------------------------------
+# v0.3.115: The rows of the page list of Settings are 2 points higher than their text needs
 # v0.3.113: The page list of Settings is 2 points larger than the desktop's size, times the factor
 # v0.3.108: The size of messages is a slider for reading and writing: conversion, at once, Cancel
 # v0.3.107: The ticks of the size slider stand above its track
@@ -234,10 +235,19 @@ def test_the_page_list_of_settings_is_two_points_larger_and_follows_the_slider(w
     assert isinstance(app, QApplication)
     system = appearance.system_font_size(app)
     assert dialog.sidebar.font().pointSizeF() == system + 2
+
+    def rows_are_two_points_higher(factor: float) -> None:
+        plain = QListWidget()  # the same text without the extra height
+        plain.setFont(dialog.sidebar.font())
+        plain.addItem(dialog.sidebar.item(0).text())
+        assert dialog.sidebar.sizeHintForRow(0) == plain.sizeHintForRow(0) + round(2 * factor * dialog.logicalDpiY() / 72) > plain.sizeHintForRow(0)
+
+    rows_are_two_points_higher(1.0)
     dialog.interface_scale_tried.connect(window.try_interface_scale)
     try:
         dialog.interface_slider.setValue(scale.slider_position(1.5))
         assert dialog.sidebar.font().pointSizeF() == (system + 2) * 1.5
+        rows_are_two_points_higher(1.5)
         assert QApplication.font().pointSizeF() == system * 1.5  # the rest of the window: the desktop's size times the factor
     finally:
         window.try_interface_scale(1.0)

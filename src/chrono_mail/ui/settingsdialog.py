@@ -2,7 +2,7 @@ import json
 from collections.abc import Callable
 from typing import override
 
-from PySide6.QtCore import QRect, QSettings, QSize, Qt, Signal
+from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QRect, QSettings, QSize, Qt, Signal
 from PySide6.QtGui import QFont, QKeySequence, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
     QStyle,
     QStyleOptionSlider,
     QStackedWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -47,9 +49,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.3.113"
+__version__ = "settingsdialog.py 0.3.115"
 
 # --- Version history ----------------------------------------------------
+# v0.3.115: The rows of the page list are 2 points higher than their text needs, times the interface factor
 # v0.3.113: The page list has its own text size: the desktop's size plus 2 points, times the interface factor
 # v0.3.112: Repair the search index (index.reconcile: only what differs from the stored files)
 # v0.3.111: Maintenance works once per place where mail is kept (accounts in Local Folders are covered by its line); its report can be selected and copied
@@ -94,6 +97,7 @@ def _combo(parent: QWidget, choices: tuple[tuple[str, str], ...], current: str) 
 
 
 SIDEBAR_EXTRA_POINTS: float = 2.0  # the page list: the desktop's font size plus this, times the size factor of the interface
+SIDEBAR_ROW_EXTRA_POINTS: float = 2.0  # and its rows this much higher than the text needs (half above, half below)
 SLIDER_WIDTH: int = 200  # pixels at the standard size: the smallest width of the size slider
 MINIMUM_WIDTH: int = 760  # the smallest size of this window at the standard size
 MINIMUM_HEIGHT: int = 520
@@ -152,6 +156,19 @@ class SizeSlider(QSlider):
         return self._groove().top()
 
 
+class TallerRows(QStyledItemDelegate):
+    """Rows that are a number of pixels higher than their text needs; the text stays in the middle."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.extra: int = 0
+
+    @override
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
+        size = super().sizeHint(option, index)
+        return QSize(size.width(), size.height() + self.extra)
+
+
 class SettingsDialog(QDialog):
     """The settings window: pages for how the program behaves, how the list and the messages look, writing, the accounts,
     the safety of the stored mail and the keyboard. Nothing is changed until OK; OK writes everything to the settings."""
@@ -178,6 +195,8 @@ class SettingsDialog(QDialog):
         body = QHBoxLayout()
         self.sidebar = QListWidget(self)
         self.sidebar.setFixedWidth(px(190))
+        self.sidebar_rows = TallerRows(self.sidebar)
+        self.sidebar.setItemDelegate(self.sidebar_rows)
         self._size_sidebar_text(scale.interface())
         self.pages = QStackedWidget(self)
         body.addWidget(self.sidebar)
@@ -208,12 +227,15 @@ class SettingsDialog(QDialog):
         restore_geometry(self, settings, "settings_geometry")
 
     def _size_sidebar_text(self, factor: float) -> None:
-        """The page list is a little larger than the rest: the desktop's size plus SIDEBAR_EXTRA_POINTS, times the factor."""
+        """The page list is a little larger than the rest: the desktop's size plus SIDEBAR_EXTRA_POINTS, times the factor;
+        its rows SIDEBAR_ROW_EXTRA_POINTS higher than the text needs, times the factor."""
         app = QApplication.instance()
         system = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
         font = QFont(self.sidebar.font())
         font.setPointSizeF(round((system + SIDEBAR_EXTRA_POINTS) * factor, 2))
+        self.sidebar_rows.extra = round(SIDEBAR_ROW_EXTRA_POINTS * factor * self.logicalDpiY() / 72)  # points to pixels
         self.sidebar.setFont(font)
+        self.sidebar.doItemsLayout()  # the rows take their new height at once
 
     def _add_page(self, title: str, page: QWidget) -> None:
         self.sidebar.addItem(QListWidgetItem(title))

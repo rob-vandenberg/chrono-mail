@@ -1140,3 +1140,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - `_remove_gone` unmaps messages that are neither on the server nor in the store before the safety rule counts (D-111).
 - Tests run: `tests/test_sync_imap.py` (one new), `tests/test_engine_imap.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
 - For the owner's test account: empty the Trash on the server once (webmail); the next check forgets the messages and the red line stops.
+
+## 2026-10-13 The rows of the Settings page list are higher (version 0.3.115)
+
+- `TallerRows` delegate; `_size_sidebar_text` sets its extra height with the font, also while the slider is tried out (D-112).
+- Tests run: `tests/ui/test_ui_appearance.py` (the page list test checks the row height at 1.0 and 1.5), `tests/ui/test_ui_preferences.py`; Pyrefly 0 diagnostics; not the full suite.

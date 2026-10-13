@@ -765,3 +765,9 @@ Step 2 (0.3.108): "Message list" (`list_scale`; an older `list_font_size` in poi
 
 **Decision:** when a synchronised message is gone from the server and its file is gone here too, the sync forgets it (removes it from the account's IMAP state) without a note, and it does not count for the rule that refuses to remove mail here when most of a folder vanished from the server (D-049). Nothing is deleted anywhere by this. It is not done while the store looks damaged or empty (the same guard as deleting on the server, D-050).
 **Reason:** after the owner deleted about 60 messages here, the server deletion was (rightly) refused at every check; emptying them on the server as well would have made the other rule refuse at every check, because the state still remembered them. The owner can now empty that Trash on the server once and the warning stops.
+
+## D-112 The rows of the Settings page list are 2 points higher
+*2026-10-13*
+
+**Decision:** each row of the page list of Settings is 2 points (in pixels at the screen's resolution, about 3 at the standard size) higher than its text needs, times the size factor of the interface; the text stays in the middle (`TallerRows`, a delegate that adds the height).
+**Reason:** the owner's request, together with the 2 points larger text (D-110).
