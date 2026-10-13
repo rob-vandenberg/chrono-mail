@@ -1035,3 +1035,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Cancel snooze in the Snoozed folder (Snooze button menu and right-click menu); the list keeps its place.
 - Bug found while testing it: three snoozes at once with no Snoozed folder yet made three Snoozed folders on disk (verified: three `folder.json` with path Snoozed, one message each); the store used the first and set the others aside as damaged, the wake forgot their records without moving them. Fixed in `Store.create_folder` (refresh under a per-store lock) and `ensure_folder`, used by snooze, wake, archive, rules, IMAP sync and Local Folders; `SNOOZED_LOCK` for `snoozed.json`; `merge_duplicate_folders` at store open repairs existing stores; a woken message without a record goes to the Inbox.
 - Tests run: `tests/test_store_interruption.py` (five new: six folders made at once, the merge, crashes at three points), `tests/test_store_store.py`, `tests/test_engine_schedule.py` (one new), `tests/test_engine_actions.py`, `tests/test_engine_rules.py`, `tests/test_engine_local.py`, `tests/test_engine_imap.py`, `tests/test_engine_imap_folders.py`, `tests/test_sync_imap.py`, `tests/ui/test_ui_schedule.py` (one new: three snoozes at once give one folder, then Cancel snooze), `tests/ui/test_ui_window.py` (alone), `tests/ui/test_ui_shortcuts.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 Unarchive; clearer Junk items (version 0.2.102)
+
+**What landed**
+- `message.archive` appends the folder of origin to `archived.log`; new command `message.unarchive`. In the Archive folder Archive becomes Unarchive (toolbar, A, menus). Icon `archive-extract` copied from breeze-dark.
+- "Move to Junk / back to Inbox" is now "Move to Junk"; "Not junk" is "Not junk (move to Inbox)".
+- Tests run: `tests/test_engine_actions.py` (two new), `tests/ui/test_ui_window.py` (alone: one new, the old archive test now expects Unarchive in the Archive folder; the known flaky `test_mark_all_as_read_and_empty_folder` failed once, not rerun), `tests/ui/test_ui_shortcuts.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.

@@ -17,9 +17,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.2.99"
+__version__ = "test_ui_window.py 0.2.102"
 
 # --- Version history ----------------------------------------------------
+# v0.2.102: Unarchive in the Archive folder; the Junk items say where they move to
 # v0.2.99: After a delete the next message is selected (or the selection stays); F2 renames the folder
 # v0.2.97: The choice of the Message list window carries the row height
 # v0.2.96: The card layout fills the list; View > Message list; one row height only in the column layout; Message list… only in the column header menu
@@ -428,6 +429,25 @@ def test_move_archive_junk_and_snooze_select_the_next_message(world: World, qtbo
     wait(qtbot, lambda: window.list_model.rowCount() == 2 and current_message_id(window) == last)
 
 
+def test_in_the_archive_folder_archive_is_unarchive(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    assert window.act_archive.text() == "Archive" and window.act_junk.text() == "Move to Junk" and window.act_not_junk.text() == "Not junk (move to Inbox)"
+    target = message_id_at(window, 0)
+    select(window, 0)
+    window.act_archive.trigger()
+    wait(qtbot, lambda: window._find_tree_item((world.account_id, "folder", "Archive")) is not None)  # noqa: SLF001
+    archive = window._find_tree_item((world.account_id, "folder", "Archive"))  # noqa: SLF001
+    assert archive is not None
+    window.tree.setCurrentIndex(archive)
+    wait(qtbot, lambda: window.list_model.rowCount() == 1 and window.list_model.row_at(0) is not None)
+    assert window.act_archive.text() == "Unarchive"
+    select(window, 0)
+    window.act_archive.trigger()
+    wait(qtbot, lambda: window.list_model.rowCount() == 0)
+    assert target in {row.message_id for row in world.call("message.list", account=world.account_id, folder="Inbox").messages}
+
+
 def test_after_deleting_the_last_message_the_one_before_is_selected(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     window = world.window
@@ -741,8 +761,9 @@ def test_archive_moves_the_selected_messages_and_creates_the_folder(world: World
     wait(qtbot, lambda: any(label.strip().startswith("Archive") for label in tree_labels(world.window)))
     open_folder(world, qtbot, "Archive", 1)
     select(world.window, 0)
-    world.window.act_archive.trigger()  # already archived
-    wait(qtbot, lambda: "archive already" in world.window.status_label.text())
+    world.window.act_archive.trigger()  # in the Archive folder it is Unarchive
+    wait(qtbot, lambda: "Unarchived 1" in world.window.status_label.text())
+    assert world.call("message.list", account=world.account_id, folder="Archive").total == 0
 
 
 def test_mark_all_as_read_and_empty_folder(world: World, qtbot: QtBot) -> None:

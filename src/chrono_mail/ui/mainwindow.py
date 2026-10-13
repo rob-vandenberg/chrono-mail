@@ -84,9 +84,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.2.101"
+__version__ = "mainwindow.py 0.2.102"
 
 # --- Version history ----------------------------------------------------
+# v0.2.102: In the Archive folder Archive is Unarchive (back to the folder it came from); Move to Junk and Not junk (move to Inbox) say what they do
 # v0.2.101: Cancel snooze (in the Snoozed folder: the menu of the Snooze button and the right-click menu) brings the message back now
 # v0.2.100: The Snoozed folder has the column Snoozed until (sortable, with its groups; added once after Received, kept off when switched off)
 # v0.2.99: After a delete, move, archive, junk or snooze the list keeps its place and selects the next message (or keeps the selection when another row was deleted); F2 renames the folder while the folder list has the focus
@@ -441,8 +442,8 @@ class MainWindow(QMainWindow):
         self.act_print = self._action("Print…", self.print_selected, "Ctrl+P", "document-print")
         self.act_open = self._action("Open", self.open_selected, "Return", "document-open")
         self.act_columns = self._action("Message list…", self.edit_columns)
-        self.act_junk = self._action("Move to Junk / back to Inbox", lambda: self.junk_selected(self._folder_role != "junk"), "Ctrl+J", "mail-mark-junk")  # one key does both, as the folder decides
-        self.act_not_junk = self._action("Not junk", lambda: self.junk_selected(False), None, "mail-mark-notjunk")
+        self.act_junk = self._action("Move to Junk", lambda: self.junk_selected(self._folder_role != "junk"), "Ctrl+J", "mail-mark-junk")  # one key does both, as the folder decides
+        self.act_not_junk = self._action("Not junk (move to Inbox)", lambda: self.junk_selected(False), None, "mail-mark-notjunk")
         self.act_cancel_snooze = self._action("Cancel snooze", self.cancel_snooze_selected)
         self.act_not_junk.setEnabled(False)
         self.act_next_unread = self._action("Next unread message", lambda: self.go_to_unread(1), "N")
@@ -1440,6 +1441,7 @@ class MainWindow(QMainWindow):
         self._folder_role = str(current.data(FOLDER_ROLE_ROLE) or "other")
         self.act_empty_folder.setEnabled(kind == "folder" and self._folder_role in ("trash", "junk"))
         self.act_not_junk.setEnabled(kind == "folder" and self._folder_role == "junk")
+        self._show_archive_action()
         self.act_mark_all_read.setEnabled(kind == "folder")
         self._select_quick_filters_for(kind)
         self._advanced = None
@@ -1808,7 +1810,40 @@ class MainWindow(QMainWindow):
         for row in rows:
             self.backend.call("message.delete", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, lambda error: self._report("Could not delete", error), owner=self)
 
+    def _show_archive_action(self) -> None:
+        """In the Archive folder the Archive button, key and menu item are Unarchive."""
+        archived = self._tree_kind == "folder" and self._folder_role == "archive"
+        self.act_archive.setText("Unarchive" if archived else "Archive")
+        self.act_archive.setIconText("Unarchive" if archived else "Archive")
+        self.act_archive.setIcon(theme_icon("archive-extract" if archived else "archive-insert"))
+
+    def unarchive_selected(self) -> None:
+        """Back to the folder each message was archived from (the Inbox when that is not known)."""
+        rows = self._selected_rows()
+        if not rows or self._account_id is None:
+            return
+        account = self._account_id
+        remaining = len(rows)
+        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+
+        def done(result: object) -> None:
+            nonlocal remaining
+            remaining -= 1
+            if remaining == 0:
+                self._after_change(f"Unarchived {len(rows)} message(s)")
+
+        def failed(error: ChronoMailError) -> None:
+            nonlocal remaining
+            remaining -= 1
+            self._report("Could not unarchive", error)
+
+        for row in rows:
+            self.backend.call("message.unarchive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+
     def archive_selected(self) -> None:
+        if self._tree_kind == "folder" and self._folder_role == "archive":
+            self.unarchive_selected()
+            return
         rows = self._selected_rows()
         if not rows or self._account_id is None:
             return

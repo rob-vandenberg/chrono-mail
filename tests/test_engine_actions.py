@@ -8,9 +8,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_actions.py 0.0.34"
+__version__ = "test_engine_actions.py 0.2.102"
 
 # --- Version history ----------------------------------------------------
+# v0.2.102: Unarchive: back to the folder of origin, read or unread unchanged
 # v0.0.34: Junk and unread navigation
 # v0.0.17: Initial tests of archive, mark folder as read, empty Trash and Junk
 
@@ -41,6 +42,35 @@ def test_archiving_a_message_that_is_archived_already_says_so(setup: Setup) -> N
     moved = call(setup.engine, "message.archive", account=setup.account_id, folder="Inbox", message=inbox[0].message_id)
     with pytest.raises(UsageError, match="already in the archive"):
         call(setup.engine, "message.archive", account=setup.account_id, folder="Archive", message=moved.message_id)
+
+
+def test_unarchive_moves_back_to_where_the_message_came_from(setup: Setup) -> None:
+    inbox = fetched(setup)
+    call(setup.engine, "folder.create", account=setup.account_id, folder="Projects")
+    call(setup.engine, "message.move", account=setup.account_id, folder="Inbox", message=inbox[0].message_id, target="Projects")
+    call(setup.engine, "message.flag", account=setup.account_id, folder="Projects", message=inbox[0].message_id, seen=True)
+    for folder, row in (("Projects", inbox[0]), ("Inbox", inbox[1])):
+        call(setup.engine, "message.archive", account=setup.account_id, folder=folder, message=row.message_id)
+    back = call(setup.engine, "message.unarchive", account=setup.account_id, folder="Archive", message=inbox[0].message_id)
+    assert back.folder == "Projects" and [row.message_id for row in rows(setup, "Projects")] == [inbox[0].message_id]
+    assert rows(setup, "Projects")[0].flags == ("seen",)  # read stays read
+    call(setup.engine, "message.unarchive", account=setup.account_id, folder="Archive", message=inbox[1].message_id)
+    assert inbox[1].message_id in {row.message_id for row in rows(setup, "Inbox")} and rows(setup, "Archive") == []
+    with pytest.raises(UsageError, match="not in the archive"):
+        call(setup.engine, "message.unarchive", account=setup.account_id, folder="Inbox", message=inbox[1].message_id)
+
+
+def test_unarchive_without_a_note_goes_to_the_inbox_and_a_lost_folder_is_made_again(setup: Setup) -> None:
+    inbox = fetched(setup)
+    call(setup.engine, "folder.create", account=setup.account_id, folder="Archive")
+    call(setup.engine, "message.move", account=setup.account_id, folder="Inbox", message=inbox[0].message_id, target="Archive")  # archived before 0.2.102
+    assert call(setup.engine, "message.unarchive", account=setup.account_id, folder="Archive", message=inbox[0].message_id).folder == "Inbox"
+    call(setup.engine, "folder.create", account=setup.account_id, folder="Old")
+    call(setup.engine, "message.move", account=setup.account_id, folder="Inbox", message=inbox[1].message_id, target="Old")
+    call(setup.engine, "message.archive", account=setup.account_id, folder="Old", message=inbox[1].message_id)
+    call(setup.engine, "folder.delete", account=setup.account_id, folder="Old")
+    back = call(setup.engine, "message.unarchive", account=setup.account_id, folder="Archive", message=inbox[1].message_id)
+    assert back.folder == "Old" and back.created_folder and len(rows(setup, "Old")) == 1
 
 
 def test_an_existing_folder_called_archive_is_used(setup: Setup) -> None:
