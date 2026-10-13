@@ -8,12 +8,16 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.whendialog import WhenDialog, presets
 from tests.ui.test_ui_composer import fill, new_composer
+from chrono_mail.ui.columns import keep_snoozed_column, with_snoozed_column
+from chrono_mail.ui.formatting import coming_date
+from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 0.0.86"
+__version__ = "test_ui_schedule.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: The Snoozed until column of the Snoozed folder, its sorting, groups and the cards
 # v0.0.86: The Refresh menu (send and receive), the Snooze button with ready-made times, the Forward menu
 # v0.0.67: Repeating messages
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
@@ -233,3 +237,72 @@ def test_forward_has_a_menu_with_forward_as_attachment(world: World, qtbot: QtBo
     button = world.window.toolbar.widgetForAction(world.window.act_forward)
     assert isinstance(button, QToolButton) and button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup
     assert [action.text() for action in world.window.forward_menu.actions()] == ["Forward as attachment"]
+
+
+def test_snoozed_until_is_placed_after_received_and_keeps_its_place() -> None:
+    assert with_snoozed_column(("subject", "date", "size")) == ("subject", "date", "snoozed", "size")
+    assert with_snoozed_column(("subject",)) == ("subject", "snoozed") and with_snoozed_column(("snoozed", "date")) == ("snoozed", "date")
+    assert keep_snoozed_column(("size", "subject", "date"), ("subject", "snoozed", "date", "size")) == ("size", "subject", "snoozed", "date")
+    assert keep_snoozed_column(("size",), ("snoozed", "subject", "size")) == ("snoozed", "size")
+    assert keep_snoozed_column(("size",), ("subject", "size")) == ("size",)  # switched off: stays off
+
+
+def test_a_coming_time_is_short() -> None:
+    now = datetime(2026, 10, 14, 15, 0).astimezone()  # a Wednesday
+    assert coming_date(datetime(2026, 10, 14, 18, 0).astimezone(), now) == "18:00"
+    monday = datetime(2026, 10, 19, 9, 0).astimezone()
+    assert coming_date(monday, now) == monday.strftime("%a 09:00")  # the weekday in the language of the system, like all dates
+    november, january = datetime(2026, 11, 2, 9, 0).astimezone(), datetime(2027, 1, 4, 9, 0).astimezone()
+    assert coming_date(november, now) == november.strftime("%d %b 09:00") and coming_date(january, now) == january.strftime("%d %b %Y 09:00")
+
+
+def test_the_snoozed_folder_has_a_snoozed_until_column(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    real_clock(world)
+    window = world.window
+    assert "snoozed" not in window.list_model.columns and "snoozed" in window._columns  # noqa: SLF001 - only in the Snoozed folder
+    window.list_view.selectAll()
+    window.snooze_until(in_hours(30))
+    wait(qtbot, lambda: window._find_tree_item((world.account_id, "folder", "Snoozed")) is not None)  # noqa: SLF001
+    snoozed = window._find_tree_item((world.account_id, "folder", "Snoozed"))  # noqa: SLF001
+    assert snoozed is not None
+    window.tree.setCurrentIndex(snoozed)
+    wait(qtbot, lambda: window.list_model.rowCount() == 3 and window.list_model.row_at(0) is not None)
+    columns = window.list_model.columns
+    assert columns.index("snoozed") == columns.index("date") + 1
+    cell = window.list_model.index(0, columns.index("snoozed")).data()
+    assert cell and cell == coming_date(getattr(window.list_model.row_at(0), "snoozed_until"))
+    assert "Snoozed until" in [action.text() for action in window.sort_menu.actions()]
+    window._header_clicked(columns.index("snoozed"))  # noqa: SLF001 - a click on its header sorts by it, soonest first
+    assert window._sort == "snoozed" and window._oldest_first and window.sort_button.text() == "Sorted by Snoozed until ▾"  # noqa: SLF001
+    window.act_show_groups.setChecked(True)
+    wait(qtbot, lambda: bool(window.list_model.header_rows()) and window.list_model.index(0, 0).data() in ("Tomorrow", "Today", "This week", "Next week"))
+    window._toggle_column("snoozed")  # noqa: SLF001 - switched off
+    assert "snoozed" not in window.list_model.columns and "snoozed" not in str(window.settings.value("columns"))
+    assert "snoozed" not in window._saved_columns()  # noqa: SLF001 - and it stays off
+    inbox = window._find_tree_item((world.account_id, "folder", "Inbox"))  # noqa: SLF001
+    assert inbox is not None
+    window.tree.setCurrentIndex(inbox)
+    wait(qtbot, lambda: window.sort_button.text() == "Sorted by Received ▾")
+    assert "Snoozed until" not in [action.text() for action in window.sort_menu.actions()]
+
+
+def test_a_card_shows_when_a_snoozed_message_comes_back(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    real_clock(world)
+    window = world.window
+    window.list_view.selectAll()
+    window.snooze_until(in_hours(30))
+    wait(qtbot, lambda: window._find_tree_item((world.account_id, "folder", "Snoozed")) is not None)  # noqa: SLF001
+    snoozed = window._find_tree_item((world.account_id, "folder", "Snoozed"))  # noqa: SLF001
+    assert snoozed is not None
+    window.tree.setCurrentIndex(snoozed)
+    wait(qtbot, lambda: window.list_model.rowCount() == 3 and getattr(window.list_model.row_at(0), "snoozed_until", None) is not None)
+    window.layout_actions["cards"].trigger()
+    window.resize(1200, 700)
+    window.show()
+    qtbot.wait(100)
+    image = window.list_view.viewport().grab().toImage()
+    assert not image.isNull()  # the card painted with its "Until" text (the text itself is checked below)
+    until = getattr(window.list_model.row_at(0), "snoozed_until")
+    assert until is not None and coming_date(until)

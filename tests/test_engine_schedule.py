@@ -7,16 +7,17 @@ from chrono_mail.config import ServerRole
 
 from chrono_mail.engine import UsageError
 from chrono_mail.engine.mailbox import open_mailbox
-from chrono_mail.engine.schedule import describe_when, load_snoozed, parse_when, snooze_presets
+from chrono_mail.engine.schedule import describe_when, load_snoozed, parse_when, snooze_group, snooze_presets
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_schedule.py 0.0.86"
+__version__ = "test_engine_schedule.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: The Snoozed folder: rows carry the time they come back, sorting and grouping by it
 # v0.0.86: Ready-made snooze times
 # v0.0.34: Initial send later and snooze tests
 
@@ -163,6 +164,36 @@ def test_wake_now_and_odd_cases(setup: Setup) -> None:
         mailbox.delete(victim, permanent=True)
     at(setup, 2 * 86400)
     assert call(setup.engine, "message.wake").woken == 0 and call(setup.engine, "message.snoozed") == ()
+
+
+def test_the_snoozed_folder_knows_and_sorts_by_when_messages_come_back(setup: Setup) -> None:
+    at(setup, 0)
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    first, second, third = rows(setup, "Inbox")[:3]
+    for row, hours in ((first, 72), (second, 1), (third, 480)):
+        call(setup.engine, "message.snooze", account=setup.account_id, folder="Inbox", message=row.message_id, until=iso(hours * 3600))
+    listed = call(setup.engine, "message.list", account=setup.account_id, folder="Snoozed", sort="snoozed", oldest_first=True).messages
+    assert [row.message_id for row in listed] == [second.message_id, first.message_id, third.message_id]
+    assert listed[0].snoozed_until == datetime.fromtimestamp(int(datetime.fromisoformat(iso(3600)).timestamp())).astimezone()
+    latest_first = call(setup.engine, "message.list", account=setup.account_id, folder="Snoozed", sort="snoozed", offset=1, limit=1).messages
+    assert [row.message_id for row in latest_first] == [first.message_id]
+    found = call(setup.engine, "message.search", account=setup.account_id, folder="Snoozed", sort="snoozed", oldest_first=True)
+    assert [row.message_id for row in found] == [second.message_id, first.message_id, third.message_id]
+    groups = call(setup.engine, "message.groups", account=setup.account_id, folder="Snoozed", sort="snoozed", oldest_first=True)
+    keys = [group.key for group in groups]
+    assert sum(group.count for group in groups) == 3 and keys == sorted(keys, key=["today", "tomorrow", "this_week", "next_week", "later"].index)
+    assert all(row.snoozed_until is None for row in rows(setup, "Inbox"))
+    assert call(setup.engine, "message.list", account=setup.account_id, folder="Inbox", sort="snoozed").total >= 0  # elsewhere it sorts by date
+
+
+def test_the_groups_of_the_snoozed_folder() -> None:
+    now = datetime(2026, 10, 14, 15, 0).astimezone()  # a Wednesday
+    def at_day(day: int, hour: int = 9) -> int:
+        return int(datetime(2026, 10, day, hour, 0).astimezone().timestamp())
+    assert snooze_group(at_day(14, 8), now) == "today" and snooze_group(at_day(14, 20), now) == "today"
+    assert snooze_group(at_day(15), now) == "tomorrow" and snooze_group(at_day(18), now) == "this_week"
+    assert snooze_group(at_day(19), now) == "next_week" and snooze_group(at_day(25), now) == "next_week"
+    assert snooze_group(at_day(26), now) == "later" and snooze_group(None, now) == "later"
 
 
 def test_a_damaged_snooze_file_is_an_empty_list(tmp_path: Any) -> None:  # noqa: ANN401

@@ -33,7 +33,7 @@ from chrono_mail.ui import appearance, prefs
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.columns import DEFAULT_COLUMNS, valid_columns
+from chrono_mail.ui.columns import DEFAULT_COLUMNS, keep_snoozed_column, valid_columns
 from chrono_mail.ui.columnsdialog import COLUMNS_TEXT, DATE_STYLES, DENSITY_LABELS, LAYOUTS, READING_PANES, ColumnPicker
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.rulespanel import RulesPanel
@@ -41,9 +41,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.2.97"
+__version__ = "settingsdialog.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: Snoozed until keeps its place when the columns are chosen here (it is not offered here)
 # v0.2.97: The row height choices come from the Message list window (one list for both)
 # v0.2.96: Message list page: the columns are chosen right on the page (no Choose the columns button)
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
@@ -560,7 +561,7 @@ class SettingsDialog(QDialog):
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_font_size": self.list_font.value(), "conversations": self.conversations.isChecked(),
             "show_favorites": self.show_favorites.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
-            "columns": ",".join(self.columns_picker.columns() or DEFAULT_COLUMNS),
+            "columns": ",".join(keep_snoozed_column(self.columns_picker.columns() or DEFAULT_COLUMNS, self._columns)),
             "mark_read": str(self.mark_read_box.currentData()), "mark_read_delay_ms": self.mark_read_delay.value(), "reader_zoom": self.zoom.value(),
             "prefer_plain": self.prefer_plain.isChecked(), "remote_always": self.remote_always.isChecked(), "remote_senders": "\n".join(senders),
             "links_ask": self.links_ask.isChecked(),

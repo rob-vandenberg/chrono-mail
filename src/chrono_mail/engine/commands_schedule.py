@@ -11,15 +11,16 @@ from chrono_mail.engine.commands_mail import MessageParameters, _check_id
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.recurring import MAXIMUM_ATTEMPTS, RECURRING_FILE, Repeat, advance, describe_repeat, index_after, load_repeats, next_due, save_repeats
-from chrono_mail.engine.schedule import describe_when, load_snoozed, parse_when, save_snoozed
+from chrono_mail.engine.schedule import SNOOZED_FILE, SNOOZED_FOLDER, describe_when, load_snoozed, parse_when, save_snoozed
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.mime import Address, OutgoingMessage, ParsedMessage, parse_message
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 0.0.72"
+__version__ = "commands_schedule.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: The name of the Snoozed folder and its record file live in schedule.py (message.list needs them too)
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.67: Messages that are sent again and again
 # v0.0.45: accounts that share Local Folders: the sender is found by the From address
@@ -27,8 +28,6 @@ __version__ = "commands_schedule.py 0.0.72"
 # v0.0.34: Initial send later and snooze
 
 SEND_AT: str = "x-chrono-mail-send-at"
-SNOOZED_FOLDER: str = "Snoozed"
-SNOOZED_FILE: str = "snoozed.json"
 KIND: str = "x-chrono-mail-kind"
 _REPEAT_LOCK = threading.Lock()  # two checks at the same moment must not send the same message twice
 

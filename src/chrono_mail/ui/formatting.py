@@ -4,9 +4,10 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from PySide6.QtGui import QColor
 
 # --- Version ------------------------------------------------------------
-__version__ = "formatting.py 0.0.64"
+__version__ = "formatting.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: coming_date: a time still to come (time today, weekday and time this week, else the date and time)
 # v0.0.64: The calendar section
 # v0.0.14: avatar colours from 72 hues with guaranteed contrast
 # v0.0.13: Initial display helpers
@@ -39,6 +40,21 @@ def avatar_colour(text: str) -> QColor:
     digest = hashlib.sha256(text.lower().encode("utf-8", "replace")).digest()
     hue = int.from_bytes(digest[:2], "big") % AVATAR_HUES
     return QColor.fromHslF(hue / AVATAR_HUES, AVATAR_SATURATION, AVATAR_LIGHTNESS)
+
+
+def coming_date(moment: datetime | None, now: datetime | None = None) -> str:
+    """A time still to come, short: the time today, the weekday and time in the next six days, otherwise the date and time; local time."""
+    if moment is None:
+        return ""
+    local = moment.astimezone()
+    current = (now or datetime.now(UTC)).astimezone()
+    if local.date() <= current.date():
+        return local.strftime("%H:%M")
+    if local.date() - current.date() < timedelta(days=7):
+        return local.strftime("%a %H:%M")
+    if local.year == current.year:
+        return local.strftime("%d %b %H:%M")
+    return local.strftime("%d %b %Y %H:%M")
 
 
 def short_date(moment: datetime | None, now: datetime | None = None) -> str:

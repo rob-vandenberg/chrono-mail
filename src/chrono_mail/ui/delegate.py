@@ -7,14 +7,15 @@ from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem,
 
 from chrono_mail.ui.colours import group_header_colour, selection_grey
 
-from chrono_mail.ui.formatting import avatar_colour, display_name, initials, short_date
+from chrono_mail.ui.formatting import avatar_colour, coming_date, display_name, initials, short_date
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.models import CONTACT_ROLE, GROUP_HEADER_ROLE, ROW_ROLE
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.2.96"
+__version__ = "delegate.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: A card of a snoozed message shows when it comes back ("Until Mon 09:00") in place of the date
 # v0.2.96: In the card layout a group header is 36 px high
 # v0.2.95: Group headers have a fixed background colour per scheme (darker in the dark scheme)
 # v0.2.94: Group headers: a bar with a chevron and the group's name in bold, in both layouts
@@ -140,7 +141,8 @@ class MessageDelegate(QStyledItemDelegate):
         strong = QFont(base)
         strong.setBold(unread)
         # first line: who, and the date at the right
-        date_text = short_date(getattr(row, "date"))
+        until = getattr(row, "snoozed_until", None)
+        date_text = f"Until {coming_date(until)}" if until is not None else short_date(getattr(row, "date"))
         small = QFont(base)
         small.setPointSizeF(base.pointSizeF() * 0.9)
         painter.setFont(small)

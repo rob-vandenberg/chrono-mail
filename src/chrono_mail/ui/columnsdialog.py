@@ -15,12 +15,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS
+from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS, SNOOZED_COLUMN
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsdialog.py 0.2.97"
+__version__ = "columnsdialog.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: Snoozed until is not in the column list (it belongs to the Snoozed folder)
 # v0.2.97: Row height (compact, normal, roomy) in the Message list window
 # v0.2.96: The column list is a part of its own (ColumnPicker), also shown on the Message list page of Settings
 # v0.0.41: Initial column editor
@@ -69,6 +70,7 @@ class ColumnPicker(QWidget):
     def fill(self, shown: tuple[str, ...]) -> None:
         self.list.clear()
         ordered = [BY_ID[column_id] for column_id in shown if column_id in BY_ID] + [column for column in COLUMNS if column.column_id not in shown]
+        ordered = [column for column in ordered if column.column_id != SNOOZED_COLUMN]  # chosen in the Snoozed folder itself
         for column in ordered:
             item = QListWidgetItem(column.label)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)

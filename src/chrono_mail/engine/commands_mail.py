@@ -13,7 +13,7 @@ from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, F
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_rules import apply_to_new
 from chrono_mail.engine.recurring import RECURRING_FILE, Repeat, load_repeats, save_repeats
-from chrono_mail.engine.schedule import describe_when, parse_when
+from chrono_mail.engine.schedule import SNOOZE_GROUPS, SNOOZED_FILE, SNOOZED_FOLDER, describe_when, load_snoozed, parse_when, snooze_group
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
@@ -26,9 +26,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.2.94"
+__version__ = "commands_mail.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: Rows of the Snoozed folder carry the time they come back (snoozed_until); sort order "snoozed" with its groups (Today, Tomorrow, This week, Next week, Later)
 # v0.2.94: Sorting by recipients (to); search results in any sort order; message.groups: the groups of a folder or a search for the group headers
 # v0.0.86: Forward as attachment: the original message attached as an .eml file (attach_source_message)
 # v0.0.72: Accepted certificates belong to one server (host and port)
@@ -77,19 +78,42 @@ class MessageRow:
     recipients: str
     thread_size: int = 1  # messages in the conversation, in all folders
     account: str = ""  # only filled in the combined views (message.combined): the account the row belongs to
+    snoozed_until: datetime | None = None  # in the Snoozed folder: when the message comes back
 
 
-def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage]) -> tuple[MessageRow, ...]:
-    """Message rows with the size of their conversations."""
+def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage], snoozed: dict[str, int] | None = None) -> tuple[MessageRow, ...]:
+    """Message rows with the size of their conversations and, for the Snoozed folder, the time they come back."""
     found = list(messages)
     sizes = mailbox.index.thread_sizes([message.thread_key for message in found])
+    times = snoozed or {}
     return tuple(
         MessageRow(
             message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, _flag_names(message.flags),
             message.has_attachments, message.preview, message.recipients, sizes.get(message.thread_key, 1),
+            snoozed_until=datetime.fromtimestamp(times[message.store_id]).astimezone() if message.folder == SNOOZED and message.store_id in times else None,
         )
         for message in found
     )
+
+
+SNOOZED: tuple[str, ...] = (SNOOZED_FOLDER,)
+LATER: int = 2**62  # sorts a snoozed message without a record after all others
+
+
+def _snoozed_times(engine: Engine, mailbox: Mailbox) -> dict[str, int]:
+    """store id -> when the message comes back (seconds), from the account's record of snoozed messages."""
+    return {store_id: int(str(entry["until"])) for store_id, entry in load_snoozed(engine.directories.account_directory(mailbox.account_id) / SNOOZED_FILE).items()}
+
+
+def _by_snooze(messages: list[IndexedMessage], times: dict[str, int], soonest_first: bool) -> list[IndexedMessage]:
+    """The messages of the Snoozed folder by the time they come back. The index does not know these times, so the whole
+    folder is sorted here; the Snoozed folder holds what a person put away by hand, not hundreds of thousands of messages."""
+    return sorted(messages, key=lambda message: times.get(message.store_id, LATER), reverse=not soonest_first)
+
+
+def _snooze_sort(sort: str, folder: tuple[str, ...] | None) -> bool:
+    """Sorting by the time a message comes back is only possible in the Snoozed folder; elsewhere it is sorting by date."""
+    return sort == "snoozed" and folder == SNOOZED
 
 
 # --- fetching and sending -----------------------------------------------------------------------
@@ -338,7 +362,7 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
 class ListParameters:
     account: str = field(metadata=option("The account"))
     folder: str = field(default="Inbox", metadata=option("The folder, for example Inbox or Archive/2026"))
-    sort: Literal["date", "subject", "sender", "to", "size"] = field(default="date", metadata=option("The sort order"))
+    sort: Literal["date", "subject", "sender", "to", "size", "snoozed"] = field(default="date", metadata=option("The sort order (snoozed: when it comes back, only in the Snoozed folder)"))
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
     offset: int = field(default=0, metadata=option("How many messages to skip"))
     limit: int = field(default=50, metadata=option("How many messages to show"))
@@ -356,8 +380,18 @@ class ListResult:
 def message_list(engine: Engine, parameters: ListParameters) -> ListResult:
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder)
-        rows = mailbox.index.page(folder, SortField(parameters.sort), not parameters.oldest_first, parameters.offset, parameters.limit, parameters.unread_only)
-        return ListResult("/".join(folder), mailbox.index.count(folder), mailbox.index.count(folder, unread_only=True), _rows(mailbox, rows))
+        total = mailbox.index.count(folder)
+        times = _snoozed_times(engine, mailbox) if folder == SNOOZED else None
+        if times is not None and _snooze_sort(parameters.sort, folder):
+            everything = mailbox.index.page(folder, SortField.DATE, True, 0, total, parameters.unread_only)
+            rows = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
+        else:
+            rows = mailbox.index.page(folder, _sort_field(parameters.sort), not parameters.oldest_first, parameters.offset, parameters.limit, parameters.unread_only)
+        return ListResult("/".join(folder), total, mailbox.index.count(folder, unread_only=True), _rows(mailbox, rows, times))
+
+
+def _sort_field(sort: str) -> SortField:
+    return SortField.DATE if sort == "snoozed" else SortField(sort)
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,7 +498,7 @@ class SearchParameters:
     minimum_size: int | None = field(default=None, metadata=option("Only messages of at least this many bytes"))
     maximum_size: int | None = field(default=None, metadata=option("Only messages of at most this many bytes"))
     conversations: bool = field(default=False, metadata=option("Show only the newest message of each conversation (not together with words to find)"))
-    sort: Literal["date", "subject", "sender", "to", "size"] = field(default="date", metadata=option("The sort order"))
+    sort: Literal["date", "subject", "sender", "to", "size", "snoozed"] = field(default="date", metadata=option("The sort order (snoozed: when it comes back, only in the Snoozed folder)"))
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
     offset: int = field(default=0, metadata=option("How many results to skip (not for message.groups)"))
     limit: int = field(default=50, metadata=option("How many results to show (not for message.groups)"))
@@ -505,15 +539,29 @@ def _search_filter(parameters: SearchParameters) -> SearchFilter:
 def message_search(engine: Engine, parameters: SearchParameters) -> tuple[MessageRow, ...]:
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
-        found = mailbox.index.search(parameters.query, folder, _search_filter(parameters), parameters.offset, parameters.limit, SortField(parameters.sort), not parameters.oldest_first)
-        return _rows(mailbox, found)
+        times = _snoozed_times(engine, mailbox) if folder in (SNOOZED, None) else None
+        if times is not None and _snooze_sort(parameters.sort, folder) and folder is not None:
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, mailbox.index.count(folder), SortField.DATE, True)
+            found = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
+        else:
+            found = mailbox.index.search(parameters.query, folder, _search_filter(parameters), parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first)
+        return _rows(mailbox, found, times)
 
 
 def message_groups(engine: Engine, parameters: SearchParameters) -> tuple[GroupCount, ...]:
     """The groups of a folder or a search, in the order of message.search (or message.list) with the same options, each with its number of messages."""
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
-        found = mailbox.index.groups(date_bounds(datetime.now()), parameters.query, folder, _search_filter(parameters), SortField(parameters.sort), not parameters.oldest_first)
+        if folder is not None and _snooze_sort(parameters.sort, folder):
+            times, now = _snoozed_times(engine, mailbox), datetime.fromtimestamp(engine.clock()).astimezone()
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, mailbox.index.count(folder), SortField.DATE, True)
+            counts: dict[str, int] = {}
+            for message in everything:
+                key = snooze_group(times.get(message.store_id), now)
+                counts[key] = counts.get(key, 0) + 1
+            order = SNOOZE_GROUPS if parameters.oldest_first else tuple(reversed(SNOOZE_GROUPS))
+            return tuple(GroupCount(key, name, counts[key]) for key, name in order if counts.get(key))
+        found = mailbox.index.groups(date_bounds(datetime.now()), parameters.query, folder, _search_filter(parameters), _sort_field(parameters.sort), not parameters.oldest_first)
         return tuple(found)
 
 

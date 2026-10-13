@@ -683,3 +683,9 @@ The search field rounds its corners by half its own height (it was a fixed 15 px
 
 **Decision:** after Delete, Delete permanently, a click on the bin of the Delete column, Move (button, menu, keys, dragging to a folder), Archive, Junk, Not junk and Snooze, the list keeps its scroll position and selects: the selected message when it was not deleted; else the message right after the deleted ones; else, when they were at the end, the one just before them. That message is shown in the reading pane and marked read like any selected message. Nothing is selected when it is in a folded group. Rename folder… has the key F2, which works only while the folder list has the focus.
 **Reason:** the owner's requests (parked on 2026-10-11).
+
+## D-099 The Snoozed folder shows when its messages come back
+*2026-10-13*
+
+**Decision:** the Snoozed folder has a column Snoozed until: shown by default after Received (added once to saved sets of columns), movable like every column, and when switched off it stays off. It exists only in the Snoozed folder: other folders, the column list of Settings and the Message list window do not offer it, and choosing columns there keeps it where it was. A click on its header sorts by it (soonest first; "Snoozed until" is in the Sorted by menu of the Snoozed folder only, and elsewhere that choice sorts by Received); its groups are Today (also times that passed), Tomorrow, This week, Next week and Later. It follows the Dates setting; in the short style a time to come is written as the time today, the weekday and time in the next six days, else the date and time. A card in the Snoozed folder says "Until …" where the date is. The rows of message.list and message.search carry `snoozed_until`; the sort order `snoozed` reads the whole Snoozed folder and sorts it in memory, because the times are kept in `snoozed.json`, not in the index (the Snoozed folder holds what a person put away by hand).
+**Reason:** the owner's request.

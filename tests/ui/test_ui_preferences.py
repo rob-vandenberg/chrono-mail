@@ -18,9 +18,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.2.98"
+__version__ = "test_ui_preferences.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: Snoozed until keeps its place when the columns are chosen in Settings
 # v0.2.98: Roomy is checked by the row height (36 px), not by the old row padding
 # v0.2.96: The columns are chosen right on the Message list page
 # v0.0.76: Exit has no keyboard shortcut
@@ -128,7 +129,7 @@ def test_the_columns_are_chosen_on_the_message_list_page(world: World, qtbot: Qt
         picker.list.item(row).setCheckState(Qt.CheckState.Unchecked)
     picker.list.item(3).setCheckState(Qt.CheckState.Checked)
     chosen = str(picker.list.item(3).data(Qt.ItemDataRole.UserRole))
-    assert dialog.values()["columns"] == chosen
+    assert dialog.values()["columns"] == f"{chosen},snoozed"  # Snoozed until is not offered here and keeps its place
     dialog.layout_box.setCurrentIndex(dialog.layout_box.findData("cards"))
     assert not picker.list.isEnabled() and not picker.reset_button.isEnabled()
     dialog.layout_box.setCurrentIndex(dialog.layout_box.findData("columns"))

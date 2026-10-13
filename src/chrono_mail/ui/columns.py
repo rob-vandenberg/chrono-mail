@@ -3,12 +3,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from email.utils import getaddresses
 
-from chrono_mail.ui.formatting import display_name, file_size, short_date
+from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 0.2.94"
+__version__ = "columns.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: Snoozed until: a column of the Snoozed folder only (sorts by the time a message comes back), added once after Received
 # v0.2.94: A click on the To column sorts by To
 # v0.1.89: Icon columns 24 px; Contact and Delete columns, added once to a saved set of columns; the address of the person a row shows
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
@@ -22,7 +23,7 @@ class Column:
     column_id: str
     label: str  # in the column editor and the header
     width: int
-    sort: str | None = None  # the sort order a click on the header gives (date, subject, sender, to, size), if any
+    sort: str | None = None  # the sort order a click on the header gives (date, subject, sender, to, size, snoozed), if any
     right: bool = False
     symbol: bool = False  # a narrow column holding a symbol; its header shows the symbol
 
@@ -40,12 +41,15 @@ COLUMNS: tuple[Column, ...] = (
     Column("subject", "Subject", 300, "subject"),
     Column("date", "Received", 110, "date"),
     Column("size", "Size", 64, "size", right=True),
+    Column("snoozed", "Snoozed until", 110, "snoozed"),
     Column("folder", "Folder", 110),
     Column("conversation", "Messages in conversation", 60, right=True),
     Column("preview", "Preview", 320),
 )
 DEFAULT_COLUMNS: tuple[str, ...] = ("status", "flag", "attachment", "from_to", "subject", "date", "size", "contact", "trash")
 NEW_COLUMNS: tuple[str, ...] = ("contact", "trash")  # added once to a set of columns saved before they existed
+SNOOZED_COLUMN: str = "snoozed"  # shown in the Snoozed folder only; not in the column lists of Settings and the Message list window
+SNOOZED_FOLDER_PATH: str = "Snoozed"
 BY_ID: dict[str, Column] = {column.column_id: column for column in COLUMNS}
 SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎", "replied": "↩", "contact": "", "trash": ""}  # Contact and Delete draw icons, their headers stay empty
 READ_MARK: str = "○"  # the dot of an unread message turns into an empty circle when it is read
@@ -63,6 +67,32 @@ def valid_columns(wanted: list[str]) -> tuple[str, ...]:
 def with_new_columns(columns: tuple[str, ...]) -> tuple[str, ...]:
     """A saved set of columns with the columns that are new since it was saved added at the right."""
     return columns + tuple(column_id for column_id in NEW_COLUMNS if column_id not in columns)
+
+
+def with_snoozed_column(columns: tuple[str, ...]) -> tuple[str, ...]:
+    """Snoozed until added after Received (at the end without Received), once."""
+    if SNOOZED_COLUMN in columns:
+        return columns
+    if "date" in columns:
+        place = columns.index("date") + 1
+        return columns[:place] + (SNOOZED_COLUMN,) + columns[place:]
+    return columns + (SNOOZED_COLUMN,)
+
+
+def keep_snoozed_column(chosen: tuple[str, ...], before: tuple[str, ...]) -> tuple[str, ...]:
+    """A set of columns chosen where Snoozed until is not offered, with Snoozed until kept where it was (after the column it
+    followed, else at the start) when it was in the set before."""
+    if SNOOZED_COLUMN not in before or SNOOZED_COLUMN in chosen:
+        return chosen
+    place = before.index(SNOOZED_COLUMN)
+    after = next((column_id for column_id in reversed(before[:place]) if column_id in chosen), None)
+    position = chosen.index(after) + 1 if after is not None else 0
+    return chosen[:position] + (SNOOZED_COLUMN,) + chosen[position:]
+
+
+def without_snoozed_column(columns: tuple[str, ...]) -> tuple[str, ...]:
+    shown = tuple(column_id for column_id in columns if column_id != SNOOZED_COLUMN)
+    return shown or DEFAULT_COLUMNS
 
 
 def person_address(row: object, recipients_first: bool) -> str:
@@ -127,6 +157,9 @@ def cell_text(column_id: str, row: object, recipients_first: bool, date_style: s
         return date_text(getattr(row, "date"), date_style)
     if column_id == "size":
         return file_size(int(getattr(row, "size")))
+    if column_id == SNOOZED_COLUMN:
+        until = getattr(row, "snoozed_until", None)
+        return coming_date(until) if date_style == "short" else date_text(until, date_style)
     if column_id == "folder":
         return str(getattr(row, "folder"))
     if column_id == "conversation":

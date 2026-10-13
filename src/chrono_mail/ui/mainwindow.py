@@ -35,7 +35,10 @@ from chrono_mail.engine.schedule import snooze_presets
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columnfit import MINIMUM_ICON, ColumnLayout, drag, fit, layout_from_pixels, read_layout
-from chrono_mail.ui.columns import BY_ID, CARD, DEFAULT_COLUMNS, column_widths, valid_columns, with_new_columns
+from chrono_mail.ui.columns import (
+    BY_ID, CARD, DEFAULT_COLUMNS, SNOOZED_COLUMN, SNOOZED_FOLDER_PATH, column_widths, keep_snoozed_column, valid_columns, with_new_columns, with_snoozed_column,
+    without_snoozed_column,
+)
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
 from chrono_mail.ui import appearance, prefs, theme
 from chrono_mail.ui.colours import red
@@ -81,9 +84,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.2.99"
+__version__ = "mainwindow.py 0.2.100"
 
 # --- Version history ----------------------------------------------------
+# v0.2.100: The Snoozed folder has the column Snoozed until (sortable, with its groups; added once after Received, kept off when switched off)
 # v0.2.99: After a delete, move, archive, junk or snooze the list keeps its place and selects the next message (or keeps the selection when another row was deleted); F2 renames the folder while the folder list has the focus
 # v0.2.97: The Message list window sets the row height too
 # v0.2.96: In the card layout the one column always fills the list (it kept the width of the first column of the column layout); View > Message list: Columns or Cards; in the card layout the rows are not all one height (group headers are lower than cards); Message list… is no longer in the View menu (it stays in the menu of the column headers)
@@ -146,7 +150,7 @@ AUTO_CHECK_MINUTES: int = 5
 DUE_CHECK_MS: int = 60_000
 WATCH_SECONDS: int = 300
 WATCH_RETRY_MS: int = 60_000
-SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Received"), ("subject", "Subject"), ("sender", "Sender"), ("to", "To"), ("size", "Size"))
+SORT_CHOICES: tuple[tuple[str, str], ...] = (("date", "Received"), ("subject", "Subject"), ("sender", "Sender"), ("to", "To"), ("size", "Size"), ("snoozed", "Snoozed until"))
 _WEEKDAYS: tuple[str, ...] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # in the snooze menu, English like the rest of the interface
 _ICONS: dict[str, str] = {"inbox": "mail-folder-inbox", "sent": "mail-folder-outbox", "drafts": "document-edit", "trash": "user-trash", "junk": "mail-mark-junk", "archive": "folder-archive", "other": "folder"}
 
@@ -1419,6 +1423,9 @@ class MainWindow(QMainWindow):
         self._clear_reader()
         self._shown = None
         self._update_unread_summary()
+        self._update_sort_menu()
+        if self._layout == "columns" and self.list_model.columns != self._list_columns():
+            self._apply_list_layout()  # Snoozed until comes or goes
         self._apply_view()
 
     def _select_quick_filters_for(self, kind: str) -> None:
@@ -1543,7 +1550,7 @@ class MainWindow(QMainWindow):
             folder = None
         grouped = self.act_conversations.isChecked() and self._tree_kind == "folder" and not (query or unread or flagged or attachments or self._advanced is not None)
         return ViewSpec(
-            self._account_id, folder, query, self._sort, self._oldest_first, unread, flagged, attachments,
+            self._account_id, folder, query, self._effective_sort(), self._oldest_first, unread, flagged, attachments,
             date_from=advanced.date_from if advanced else None, date_to=advanced.date_to if advanced else None,
             minimum_size=advanced.minimum_size if advanced else None, maximum_size=advanced.maximum_size if advanced else None,
             conversations=grouped,
@@ -1556,10 +1563,13 @@ class MainWindow(QMainWindow):
 
     def _update_sort_menu(self) -> None:
         self.sort_menu.clear()
+        sort = self._effective_sort()
         for value, label in SORT_CHOICES:
+            if value == "snoozed" and not self._in_snoozed():
+                continue  # only the Snoozed folder knows when its messages come back
             action = self.sort_menu.addAction(label)
             action.setCheckable(True)
-            action.setChecked(value == self._sort)
+            action.setChecked(value == sort)
             action.triggered.connect(lambda checked=False, chosen=value: self._set_sort(chosen, self._oldest_first))
         self.sort_menu.addSeparator()
         for flag, label in ((False, "Newest / Z–A / largest first"), (True, "Oldest / A–Z / smallest first")):
@@ -1567,8 +1577,20 @@ class MainWindow(QMainWindow):
             action.setCheckable(True)
             action.setChecked(flag == self._oldest_first)
             action.triggered.connect(lambda checked=False, chosen=flag: self._set_sort(self._sort, chosen))
-        label = dict(SORT_CHOICES)[self._sort]
+        label = dict(SORT_CHOICES).get(sort, "Received")
         self.sort_button.setText(f"Sorted by {label} ▾")
+
+    def _in_snoozed(self) -> bool:
+        """The Snoozed folder of an account is shown (its messages know when they come back)."""
+        return self._combined is None and self._tree_kind == "folder" and self._folder == SNOOZED_FOLDER_PATH
+
+    def _effective_sort(self) -> str:
+        """The chosen sort order; sorting by Snoozed until is sorting by Received outside the Snoozed folder."""
+        return "date" if self._sort == "snoozed" and not self._in_snoozed() else self._sort
+
+    def _list_columns(self) -> tuple[str, ...]:
+        """The columns of the list: Snoozed until only in the Snoozed folder."""
+        return self._columns if self._in_snoozed() else without_snoozed_column(self._columns)
 
     def _set_sort(self, sort: str, oldest_first: bool) -> None:
         self._sort, self._oldest_first = sort, oldest_first
@@ -2174,7 +2196,7 @@ class MainWindow(QMainWindow):
             self.list_view.setUniformRowHeights(False)  # group headers are lower than cards; costs time on very large lists (D-095)
             self._fit_columns()
         else:
-            self.list_model.set_columns(self._columns)
+            self.list_model.set_columns(self._list_columns())
             header.show()
             self.list_view.setItemDelegate(self.column_delegate)
             self.list_view.setUniformRowHeights(True)  # headers are as high as the rows: fast with any number of messages
@@ -2184,10 +2206,10 @@ class MainWindow(QMainWindow):
         self.list_model.refresh_cells()
 
     def _show_sort_indicator(self) -> None:
-        sort_of = {"sender": ("from_to", "from"), "subject": ("subject",), "date": ("date",), "size": ("size",), "to": ("to",)}
+        sort_of = {"sender": ("from_to", "from"), "subject": ("subject",), "date": ("date",), "size": ("size",), "to": ("to",), "snoozed": (SNOOZED_COLUMN,)}
         header = self.list_view.header()
         for position, column_id in enumerate(self.list_model.columns):
-            if column_id in sort_of.get(self._sort, ()):
+            if column_id in sort_of.get(self._effective_sort(), ()):
                 header.setSortIndicator(position, Qt.SortOrder.AscendingOrder if self._oldest_first else Qt.SortOrder.DescendingOrder)
                 return
         header.setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
@@ -2199,18 +2221,19 @@ class MainWindow(QMainWindow):
         sort = BY_ID[columns[section]].sort
         if sort is None:
             return
-        if sort == self._sort:
+        if sort == self._effective_sort():
             self._set_sort(sort, not self._oldest_first)
         else:
-            self._set_sort(sort, sort != "date" and sort != "size")  # text columns A to Z first, dates and sizes newest and largest first
+            self._set_sort(sort, sort != "date" and sort != "size")  # text columns A to Z first, dates and sizes newest and largest first, snoozed soonest first
         self._show_sort_indicator()
 
     def _columns_moved(self, logical: int, old_visual: int, new_visual: int) -> None:
         header = self.list_view.header()
         order = [self.list_model.columns[header.logicalIndex(visual)] for visual in range(header.count())]
-        if self._layout == "columns" and tuple(order) != self._columns and set(order) == set(self._columns):
-            self._columns = tuple(order)
-            self.settings.setValue("columns", ",".join(order))
+        columns = keep_snoozed_column(tuple(order), self._columns)  # outside the Snoozed folder its column keeps its place
+        if self._layout == "columns" and columns != self._columns and set(order) == set(self.list_model.columns):
+            self._columns = columns
+            self.settings.setValue("columns", ",".join(columns))
         self._fit_columns()  # the last column has no drag line at its right edge
 
     def _column_resized(self, section: int, old: int, new: int) -> None:
@@ -2284,12 +2307,17 @@ class MainWindow(QMainWindow):
             self._fitting = False
 
     def _saved_columns(self) -> tuple[str, ...]:
-        """The saved columns; the Contact and Delete columns are added once to a set saved before they existed."""
+        """The saved columns; the Contact and Delete columns, and Snoozed until, are added once to a set saved before they existed
+        (switched off later, they stay off)."""
         columns = valid_columns([part for part in str(self.settings.value("columns", "")).split(",") if part])
         if not bool_setting(self.settings, "columns_contact_and_delete_added", False):
             columns = with_new_columns(columns)
             self.settings.setValue("columns", ",".join(columns))
             self.settings.setValue("columns_contact_and_delete_added", True)
+        if not bool_setting(self.settings, "columns_snoozed_added", False):
+            columns = with_snoozed_column(columns)
+            self.settings.setValue("columns", ",".join(columns))
+            self.settings.setValue("columns_snoozed_added", True)
         return columns
 
     def _icon_clicked(self, row: int, column_id: str) -> None:
@@ -2319,6 +2347,8 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         chosen = set(self._columns)
         for column_id, column in BY_ID.items():
+            if column_id == SNOOZED_COLUMN and not self._in_snoozed():
+                continue
             action = menu.addAction(column.label)
             action.setCheckable(True)
             action.setChecked(column_id in chosen)
@@ -2350,7 +2380,7 @@ class MainWindow(QMainWindow):
         self.apply_list_choice(dialog.choice())
 
     def apply_list_choice(self, choice: ListChoice) -> None:
-        self._layout, self._columns, self._date_style = choice.layout, choice.columns, choice.date_style
+        self._layout, self._columns, self._date_style = choice.layout, keep_snoozed_column(choice.columns, self._columns), choice.date_style
         for key, value in (("list_layout", self._layout), ("columns", ",".join(self._columns)), ("date_style", self._date_style), ("list_density", choice.density)):
             self.settings.setValue(key, value)
         self._apply_list_look()

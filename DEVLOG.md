@@ -1020,3 +1020,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - The owner: the unread dot on a grey selected row stays as it is (taken off the open items).
 - Tests run: `tests/ui/test_ui_window.py` (alone, four new), `tests/ui/test_ui_models.py`, `tests/ui/test_ui_shortcuts.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
 - Move (button, menu, M, Ctrl+Shift+V, dragging to a folder), Archive, Junk, Not junk and Snooze keep the place the same way (the owner's instruction). Tests run again: `tests/ui/test_ui_window.py` (alone, 59 passed, five more); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 The Snoozed until column (version 0.2.100)
+
+**What landed**
+- Engine: rows carry `snoozed_until` in the Snoozed folder; sort order `snoozed` for message.list, message.search and message.groups (only in the Snoozed folder, elsewhere it is date), groups by `snooze_group` (Today, Tomorrow, This week, Next week, Later, on the engine clock). SNOOZED_FOLDER and SNOOZED_FILE moved to `engine/schedule.py`.
+- Window: the column Snoozed until (`ui/columns.py`, added once after Received, setting `columns_snoozed_added`), only in the Snoozed folder; kept in place when columns are chosen in Settings or the Message list window (`keep_snoozed_column`); Sorted by menu entry in Snoozed only; cards show "Until …" (`coming_date` in `ui/formatting.py`; weekdays follow the system language).
+- Tests run: `tests/test_engine_schedule.py` (two new), `tests/ui/test_ui_schedule.py` (four new), `tests/ui/test_ui_columns.py`, `tests/ui/test_ui_models.py`, `tests/ui/test_ui_preferences.py` (one expectation: Snoozed until keeps its place), `tests/ui/test_ui_window.py` (alone: 58 passed; the known flaky `test_mark_all_as_read_and_empty_folder` failed once, not rerun), screenshots of both layouts; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+- Seen: in a narrow list the header "Snoozed until" is cut off at its default share.
