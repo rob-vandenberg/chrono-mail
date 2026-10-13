@@ -10,9 +10,10 @@ from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, KI
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 0.2.103"
+__version__ = "foldertree.py 0.2.104"
 
 # --- Version history ----------------------------------------------------
+# v0.2.104: Dragged messages are taken as the copy kind (for the desktop's arrow with a plus) and still moved
 # v0.2.103: The selection and the hover start just before the icon (the indent keeps the colour of the list); a folder that can take dragged messages gets a blue bar across the whole row
 # v0.0.88: The selection is blue while the folder list has the focus and grey without it
 # v0.0.87: The number of unread messages is drawn as a bold number at the right edge
@@ -162,7 +163,7 @@ class FolderTree(QTreeView):
     def dragMoveEvent(self, event: QDragMoveEvent) -> None:
         if self._target(event) is not None:
             self._set_drop_row(self.indexAt(event.position().toPoint()))
-            event.setDropAction(Qt.DropAction.MoveAction)
+            event.setDropAction(Qt.DropAction.CopyAction)  # the cursor with a plus; the messages are moved
             event.accept()
         else:
             self._set_drop_row(None)
@@ -181,6 +182,6 @@ class FolderTree(QTreeView):
         if target is None or dragged is None:
             event.ignore()
             return
-        event.setDropAction(Qt.DropAction.MoveAction)
+        event.setDropAction(Qt.DropAction.CopyAction)  # the cursor with a plus; the messages are moved
         event.accept()
         self.messages_dropped.emit(target[0], target[1], dragged[1])

@@ -9,9 +9,10 @@ from tests.ui.world import account_node, World, row_of, wait
 from tests.ui.test_ui_window import started
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dragdrop.py 0.0.48"
+__version__ = "test_ui_dragdrop.py 0.2.104"
 
 # --- Version history ----------------------------------------------------
+# v0.2.104: The drag is offered as the copy kind (the desktop's arrow with a plus) and the drop still moves
 # v0.0.48: Dragging messages shows a small badge, not the selected rows
 # v0.0.46: Favorites, Inboxes and Local Folders in the folder list; combined views
 # v0.0.17: Initial drag and drop tests
@@ -27,13 +28,13 @@ def folder_point(world: World, name: str) -> QPoint:
 
 
 def drop(world: World, point: QPoint, data: QMimeData) -> bool:
-    event = QDropEvent(QPointF(point), Qt.DropAction.MoveAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    event = QDropEvent(QPointF(point), Qt.DropAction.CopyAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     world.window.tree.dropEvent(event)
     return event.isAccepted()
 
 
 def move_probe(world: World, point: QPoint, data: QMimeData) -> bool:
-    event = QDragMoveEvent(point, Qt.DropAction.MoveAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    event = QDragMoveEvent(QPointF(point), Qt.DropAction.CopyAction, data, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
     event.setAccepted(False)
     world.window.tree.dragMoveEvent(event)
     return event.isAccepted()
@@ -100,12 +101,15 @@ def test_dragging_shows_a_small_badge_and_not_the_selected_rows(world: World, qt
     for row in range(3):
         view.selectionModel().select(world.window.list_model.index(row), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
     started: list[tuple[int, int]] = []
+    kinds: list[object] = []
 
     def fake_exec(self: QDrag, *args: object) -> object:
         started.append((self.pixmap().width(), self.pixmap().height()))
+        kinds.extend(args)
         assert self.mimeData().hasFormat("application/x-chrono-mail-messages") or self.mimeData().formats()
         return Qt.DropAction.IgnoreAction
 
     monkeypatch.setattr(QDrag, "exec", fake_exec)
     view.startDrag(Qt.DropAction.MoveAction)
     assert started == [(drag_badge(3).width(), drag_badge(3).height())]
+    assert kinds and all(kind == Qt.DropAction.CopyAction for kind in kinds)  # the copy kind: the desktop's arrow with a plus, not its hand

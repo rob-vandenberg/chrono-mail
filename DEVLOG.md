@@ -1049,3 +1049,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - `FolderTree.drawBranches` paints the indent in the list colour (the selection and hover colour came from Qt filling the indent; a stylesheet `show-decoration-selected: 0` did not help, checked by pixels); `drawRow` draws the drop bar across the whole row; `drop_row` follows `dragMoveEvent`, cleared on leave and drop.
 - `ui/dragcursors.py` (new): `move_cursor`, `no_drop_cursor`, drawn on a 24 grid at the cursor size; `MessageListView.make_drag` sets them for MoveAction and IgnoreAction. The owner's desktop: X11, cursor size 42. Not seen on a real screen here.
 - Tests run: `tests/ui/test_ui_window.py` (alone, three new: indent colour by pixel, drop bar by pixel and its clearing, drag cursors set), `tests/ui/test_ui_dragdrop.py`, `tests/ui/test_ui_icons.py`, `tests/ui/test_ui_models.py`, `tests/ui/test_ui_theme.py`, screenshots; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 The desktop's own drag cursors (version 0.2.104)
+
+**What landed**
+- The owner saw the drawn cursors black and tiny. The theme (Breeze_Light, size 42) has dnd-copy (arrow with a green plus) and no-drop (arrow with a red sign); dnd-move, move and closedhand are the hand. The drag is now offered as the copy kind and the folder list takes it as such and moves the messages; `ui/dragcursors.py` is removed.
+- Not known: why the hand looked huge on the owner's screen (at size 42 it is normal in the theme file); the owner checks the new cursors.
+- Tests run: `tests/ui/test_ui_dragdrop.py` (the drag is of the copy kind; drops still move), `tests/ui/test_ui_window.py` (alone; the cursor test removed); Pyrefly 0 diagnostics, layer check kept; not the full suite.

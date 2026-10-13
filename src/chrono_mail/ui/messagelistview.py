@@ -5,15 +5,15 @@ from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QFocusEvent, QFontMetrics, QIcon, QMouseEvent, QPainter, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QApplication, QHeaderView, QTreeView, QWidget
 
-from chrono_mail.ui.dragcursors import move_cursor, no_drop_cursor
 from chrono_mail.ui.models import HEADER_ICON_ROLE
 
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 0.2.103"
+__version__ = "messagelistview.py 0.2.104"
 
 # --- Version history ----------------------------------------------------
+# v0.2.104: The drag is offered as the copy kind, so the desktop shows its arrow with a plus (not its hand); the messages are still moved
 # v0.2.103: The drag has its own cursors (arrow with a move sign where the messages can go, with a red cross elsewhere) instead of the theme's large hand
 # v0.2.94: A click on a group header folds or unfolds it
 # v0.1.89: Clicks on the Contact and Delete icons; tells when the width of its rows changes; a header that centres its icons and remembers where a column drag started
@@ -168,11 +168,12 @@ class MessageListView(QTreeView):
     def startDrag(self, supportedActions: Qt.DropAction) -> None:
         drag = self.make_drag()
         if drag is not None:
-            drag.exec(Qt.DropAction.MoveAction, Qt.DropAction.MoveAction)
+            drag.exec(Qt.DropAction.CopyAction, Qt.DropAction.CopyAction)  # the cursor of the copy kind; the folder list moves them
 
     def make_drag(self) -> QDrag | None:
-        """The drag of the selected messages: their ids, a small badge, and cursors of the normal size (the theme's drag
-        cursor is a hand that some desktops draw very large)."""
+        """The drag of the selected messages: their ids and a small badge. The cursors are the desktop's own: offered as
+        the copy kind, the drag shows the arrow with a plus over a folder that takes it (the move kind shows a hand) and
+        the arrow with a no-entry sign elsewhere."""
         indexes = [index for index in self.selectedIndexes() if index.column() == 0]
         model = self.model()
         data = model.mimeData(indexes) if indexes else None
@@ -182,6 +183,4 @@ class MessageListView(QTreeView):
         drag.setMimeData(data)
         drag.setPixmap(drag_badge(len(indexes)))
         drag.setHotSpot(QPoint(0, 0))
-        drag.setDragCursor(move_cursor(), Qt.DropAction.MoveAction)
-        drag.setDragCursor(no_drop_cursor(), Qt.DropAction.IgnoreAction)
         return drag

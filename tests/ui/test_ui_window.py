@@ -17,9 +17,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.2.103"
+__version__ = "test_ui_window.py 0.2.104"
 
 # --- Version history ----------------------------------------------------
+# v0.2.104: The drag cursors are the desktop's (tested in test_ui_dragdrop.py)
 # v0.2.103: The indent of a selected folder keeps the list colour; the drop bar; the drag cursors
 # v0.2.102: Unarchive in the Archive folder; the Junk items say where they move to
 # v0.2.99: After a delete the next message is selected (or the selection stays); F2 renames the folder
@@ -491,15 +492,6 @@ def test_a_folder_that_can_take_a_drop_gets_a_bar_across_the_row(world: World, q
     drag_over("Trash")
     window.tree.dragLeaveEvent(QDragLeaveEvent())
     assert window.tree.drop_row is None
-
-
-def test_the_drag_has_cursors_of_its_own(world: World, qtbot: QtBot) -> None:
-    started(qtbot, world)
-    window = world.window
-    select(window, 0)
-    drag = window.list_view.make_drag()
-    assert drag is not None
-    assert not drag.dragCursor(Qt.DropAction.MoveAction).isNull() and not drag.dragCursor(Qt.DropAction.IgnoreAction).isNull()
 
 
 def test_after_deleting_the_last_message_the_one_before_is_selected(world: World, qtbot: QtBot) -> None:
