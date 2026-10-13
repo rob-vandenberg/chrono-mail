@@ -15,9 +15,10 @@ from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.3.110"
+__version__ = "test_index_index.py 0.4.117"
 
 # --- Version history ----------------------------------------------------
+# v0.4.117: Unread counts use the index of the Unread sort (the partial index is gone)
 # v0.3.110: Changes made at the same time from several connections all succeed
 # v0.3.109: Sorting by unread, flagged, replied, attachment, folder, conversation and preview
 # v0.2.94: Sorting by recipients, search in any order, groups
@@ -281,13 +282,12 @@ def test_rows_carry_the_preview(tmp_path: Path) -> None:
     assert index.get(f"{1:032x}") is not None
 
 
-def test_unread_counts_use_the_partial_index(tmp_path: Path) -> None:
-    # Measured with 300,000 messages in one folder: 454 ms without the partial index, 0.5 ms with it.
+def test_unread_counts_seek_the_index_of_the_unread_sort(tmp_path: Path) -> None:
+    # Measured with 300,000 messages in one folder: 454 ms when every message of the folder is read, 0.5 ms with a partial index (D-031); schema 6 seeks the Unread sort index instead.
     index = filled(tmp_path, 50)
     plan = " | ".join(str(row[3]) for row in index._connection.execute(  # noqa: SLF001
         "EXPLAIN QUERY PLAN SELECT count(*) FROM messages m WHERE m.folder = ? AND (m.flags & 1) = 0", ("Inbox",)))
-    # Since schema 5 SQLite may take the index of the Unread sort instead: it seeks the folder and the read bit, just as fast.
-    assert "messages_unread" in plan or "messages_by_unread (folder=? AND <expr>=?)" in plan, plan
+    assert "messages_by_unread (folder=? AND <expr>=?)" in plan, plan  # only the unread entries of the folder are visited
     assert index.count(INBOX, unread_only=True) == 25
 
 

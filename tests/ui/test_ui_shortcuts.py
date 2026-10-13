@@ -1,20 +1,22 @@
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
-from PySide6.QtWidgets import QMenu, QMessageBox
+from PySide6.QtWidgets import QMenu, QMessageBox, QToolButton
 from pytestqt.qtbot import QtBot
 
 from tests.ui.test_ui_window import select, started
 from tests.ui.world import World, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_shortcuts.py 0.0.61"
+__version__ = "test_ui_shortcuts.py 0.4.117"
 
 # --- Version history ----------------------------------------------------
+# v0.4.117: Alt+M opens the Menu of the section that is shown
 # v0.0.61: The four section buttons and the sidebars of the calendar, task and contact sections
 # v0.0.54: A flag change redraws every column of the row
 # v0.0.53: Initial tests of the standard shortcuts
 
 DEFAULT_KEYS: dict[str, str] = {
+    "open_menu": "Alt+M",
     "refresh": "F5", "new": "Ctrl+N", "reply": "Ctrl+R", "reply_all": "Ctrl+Shift+R", "forward": "Ctrl+F", "toggle_flag": "Ins", "toggle_read": "R",
     "read": "Ctrl+Q", "unread": "Ctrl+U", "snooze": "S", "copy_to": "Ctrl+Shift+C", "quick_copy": "C", "move_to": "Ctrl+Shift+V", "quick_move": "M",
     "archive": "A", "junk": "Ctrl+J", "print": "Ctrl+P", "delete": "Del", "delete_forever": "Shift+Del", "save_as": "Ctrl+Shift+S", "open": "Return",
@@ -151,3 +153,17 @@ def test_marking_as_read_redraws_every_cell_of_the_selected_rows(world: World, q
     wait(qtbot, lambda: all("seen" in row_of(window, position).flags for position in range(3)))
     last = window.list_model.columnCount() - 1
     assert {(top, 0, top, last) for top in range(3)} <= set(changed)  # from the first column to the last, for every row
+
+
+def test_alt_m_opens_the_menu_of_the_section_that_is_shown(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.show()
+    opened: list[object] = []
+
+    def show_menu(button: QToolButton) -> None:
+        opened.append(button)
+
+    monkeypatch.setattr(QToolButton, "showMenu", show_menu)  # a real menu would wait for a click
+    assert window.act_open_menu in window.actions() and "open_menu" in window._shortcut_registry()  # noqa: SLF001 - changeable in Settings > Keyboard
+    window.act_open_menu.trigger()
+    assert opened == [window.menu_buttons[0]]  # the mail section: the first toolbar

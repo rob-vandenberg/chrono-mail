@@ -777,3 +777,9 @@ Step 2 (0.3.108): "Message list" (`list_scale`; an older `list_font_size` in poi
 
 **Decision:** Delete, Delete for good, Move to Junk (and Not junk), Move (menu and dragging), Archive and Copy count a failed message as answered too (`MainWindow._answers`); when every message has answered, the list and the folder counts are shown again. The summary ("Deleted 3 message(s)") is shown only when none failed; otherwise the red error line stays.
 **Reason:** a failed message was never counted, so the list was not shown again after the action (found in 0.3.112; the owner asked for it to be fixed, also for Move, Archive and Copy).
+
+## D-114 Alt+M opens the Menu; contacts from a server are known at once; schema 6
+*2026-10-13*
+
+**Decision:** the action "Open the menu" (standard key Alt+M, changeable in Settings > Keyboard) opens the Menu button of the section that is shown; the window itself listens for the key, as the menu bar is hidden. When the calendar and contacts sync finishes, the window loads the contact addresses again, so the Contact column knows a contact from a server at once. Index schema 6 drops the partial index for unread counts (D-031): the index of the Unread sort (D-106) serves them by seeking the folder and the read bit; every index is rebuilt once. AGENTS.md now says that only the tests related to a change must pass (the owner's rule), not the whole suite. The owner moved the minor version to 0.4 after the milestone release 0.3.116.
+**Reason:** the owner's choice of the smallest backlog items.

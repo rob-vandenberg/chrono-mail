@@ -1,14 +1,15 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 0.3.109"
+__version__ = "schema.py 0.4.117"
 
 # --- Version history ----------------------------------------------------
+# v0.4.117: Schema 6: the partial index for unread counts is gone (the index of the Unread sort serves them)
 # v0.3.109: Schema 5: indexes for sorting by unread, flagged, replied, attachment and preview
 # v0.0.23: Schema 4: the addresses seen in messages (for completing addresses)
 # v0.0.14: Schema 3: previews are cleaned (older indexes are rebuilt)
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 5
+SCHEMA_VERSION: int = 6
 MINIMUM_SQLITE_VERSION: tuple[int, int, int] = (3, 43, 0)  # contentless FTS5 tables that allow deletes
 FOLDER_SEPARATOR: str = "\x1f"
 
@@ -50,8 +51,6 @@ STATEMENTS: tuple[str, ...] = (
         as_recipient INTEGER NOT NULL,
         last INTEGER
     )""",
-    # Unread counts per folder without scanning every message: the WHERE must be written exactly like the queries (D-030).
-    "CREATE INDEX messages_unread ON messages (folder) WHERE (flags & 1) = 0",
     """CREATE VIRTUAL TABLE text USING fts5 (
         subject, sender, recipients, body,
         content = '', contentless_delete = 1,

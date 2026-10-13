@@ -87,9 +87,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.3.116"
+__version__ = "mainwindow.py 0.4.117"
 
 # --- Version history ----------------------------------------------------
+# v0.4.117: Alt+M opens the Menu (Open the menu, changeable in Settings > Keyboard); the contact addresses are loaded again after the calendar and contacts sync
 # v0.3.116: Delete, Delete for good, Move to Junk, Move (also by dragging), Archive and Copy refresh the list also when a message failed (the error stays)
 # v0.3.112: A message whose file is gone gives one warning per action (a window and the red line) with the advice to repair the search index
 # v0.3.109: Every column but Delete sorts (icon columns: yes first; Messages in conversation: largest first; Folder and Preview: A to Z), the eight new sorts in the Sorted by menu; a click on Delete leaves the sort arrow where it was
@@ -501,6 +502,7 @@ class MainWindow(QMainWindow):
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
         self.act_accounts = self._action("Accounts…", lambda: self.open_settings("Accounts"), None, "user-identity")
         self.act_quit = self._action("Exit", self.quit_program, None, "application-exit")
+        self.act_open_menu = self._action("Open the menu", self.open_menu, "Alt+M")
         self.act_search = self._action("Search", lambda: self._in_section("search"), "Ctrl+E")
         self.act_advanced = self._action("Advanced search…", self.advanced_search, "Ctrl+Shift+F")
         self.act_auto = QAction("Check for mail automatically", self)
@@ -718,6 +720,7 @@ class MainWindow(QMainWindow):
             toolbar.insertWidget(toolbar.actions()[0], button)
             self.menu_buttons.append(button)
         self.addActions(self._menu_actions(root))
+        self.addAction(self.act_open_menu)  # not in a menu: the window itself listens for its key
         bar.hide()
 
     def _build_status(self) -> None:
@@ -1090,6 +1093,13 @@ class MainWindow(QMainWindow):
 
     def _rule_folder_now(self) -> tuple[str, str] | None:
         return (self._account_id, self._folder) if self._account_id is not None and self._folder is not None and self._tree_kind == "folder" else None
+
+    def open_menu(self) -> None:
+        """Alt+M: open the Menu button of the section that is shown."""
+        for button in self.menu_buttons:
+            if button.isVisible():
+                button.showMenu()
+                return
 
     def _shortcut_registry(self) -> dict[str, tuple[str, str]]:
         """Every action that can be given keys: its name, the text, and the standard keys."""
@@ -2693,6 +2703,7 @@ class MainWindow(QMainWindow):
 
         def done(result: object) -> None:
             self._dav_syncing = False
+            self._load_contact_addresses()  # contacts that came from a server get their icon in the message list at once
             rows: list[object] = list(result) if isinstance(result, tuple) else []
             problems = [str(text) for row in rows for text in getattr(row, "errors", ())]
             if sum(int(getattr(row, "pulled", 0)) + int(getattr(row, "deleted_here", 0)) + int(getattr(row, "created", 0)) for row in rows):

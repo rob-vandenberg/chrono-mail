@@ -1150,3 +1150,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 - `MainWindow._answers` (done and failed handlers for an action on several messages) and `_after_change(keep_status=...)`; used by Delete, Delete for good, Move to Junk, Move (menu and dragging), Copy; Archive counts its failures the same way (D-113).
 - Tests run: `tests/ui/test_ui_preferences.py` (one new: a delete with one failing message and a move with a missing file; checked that it fails without the change), `tests/ui/test_ui_dragdrop.py`, `tests/ui/test_ui_window.py` (alone); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 Small items (version 0.4.117)
+
+- AGENTS.md sections 4.5 and 7: related tests, never the full suite. `act_open_menu` (Alt+M) and `MainWindow.open_menu`; `_load_contact_addresses` after `dav.sync`; schema 6 without `messages_unread` (D-114).
+- Tests run: `tests/test_index_index.py`, `tests/test_index_rebuild.py`, `tests/ui/test_ui_shortcuts.py` (one new; the key table has Alt+M), `tests/ui/test_ui_dav.py` (one new; checked that it fails without the change), `tests/ui/test_ui_preferences.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+- `tests/ui/test_ui_shortcuts.py` was run several times while looking for a problem: once the test process crashed (no test name kept) and once one test failed (name not kept; the file holds the known flaky `test_marking_as_read_redraws_every_cell_of_the_selected_rows`); the other runs passed. Not investigated further.

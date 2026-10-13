@@ -68,7 +68,7 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 ### 4.5 Tests are the gate
 
 1. Every change comes with tests.
-2. A task is only done when: all tests pass, Pyrefly strict reports zero errors, the layer check passes.
+2. A task is only done when: the tests related to the change pass (never the full suite, the owner's rule), Pyrefly strict reports zero errors, the layer check passes.
 3. Protocol code is tested against a real mail server (SMTP, POP3, later IMAP, including their TLS variants), not only against mocks. No mail server is installed on the development machine: the tests use the Dovecot/Exim servers on the user's DirectAdmin hosts through opt-in `live` tests (`pytest -m live`, D-020). The default run (`pytest`) stays offline and excludes them.
 4. Performance target: the app stays responsive with **500,000 messages**. Heavy operations are measured against a generated test mailbox of that size.
 
@@ -102,7 +102,7 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 
 ## 7. Before you finish a task
 
-1. All tests pass, Pyrefly strict reports zero errors, the layer check passes.
+1. The tests related to the change pass (never the full suite, the owner's rule), Pyrefly strict reports zero errors, the layer check passes.
 2. `ROADMAP.md`: update the task's status.
 3. `STATUS.md`: rewrite it (current state, next task, open questions).
 4. `DEVLOG.md`: append a short entry (what landed, numbers, what is still open).
