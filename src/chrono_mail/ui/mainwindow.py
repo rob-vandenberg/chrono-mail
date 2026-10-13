@@ -6,18 +6,15 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QCursor, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QCursor, QDesktopServices, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
-    QComboBox,
     QFileDialog,
-    QFrame,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -73,6 +70,9 @@ from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.printing import print_message
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
+from chrono_mail.ui.searchfield import SearchField
+from chrono_mail.ui.searchhelp import HelpLine, SearchHelp, send_key
+from chrono_mail.ui.searchhistory import SearchHistory, history_text, matching, read_history, with_search
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTIONS, TASKS, SectionBar
 from chrono_mail.ui.settingsdialog import SettingsDialog
@@ -81,9 +81,11 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.1.91"
+__version__ = "mainwindow.py 0.1.93"
 
 # --- Version history ----------------------------------------------------
+# v0.1.93: The search field has three looks (not in use, clicked in, search active) and a red ✕ that clears the search; clicking in it shows the last 10 searches
+# v0.1.92: Search box hint "Search (type '?' for help)"; typing "?" opens the search help under the search box
 # v0.1.91: Clear filter at the bottom of the Filter menu; the filters that are on are bold in the menu
 # v0.1.90: The Unread, Flagged and Attachments buttons are replaced by a Filter button (funnel) with a menu: Filter by, Flagged, Unread, With attachments; the button is blue and bold while a filter is on
 # v0.1.89: The columns always fill the list (column fit); fixed row heights; Contact and Delete columns; Delete and Contact added once to a saved set of columns
@@ -558,25 +560,20 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self.move_button)
         self.toolbar.addAction(self.act_delete)
         self.toolbar.addWidget(self._stretch())
-        self.scope = QComboBox(self)
-        self.scope.addItem("This folder", "folder")
-        self.scope.addItem("All folders", "all")
-        self.search_box = QLineEdit(self)
-        self.search_box.setPlaceholderText("Search (from:  to:  subject:  body:  OR  -word)")
-        self.search_box.setClearButtonEnabled(True)
-        self.search_box.setMinimumWidth(220)
-        pill = QFrame(self)
-        pill.setObjectName("searchPill")
-        pill_layout = QHBoxLayout(pill)
-        pill_layout.setContentsMargins(10, 1, 6, 1)
-        pill_layout.setSpacing(4)
-        magnifier = QLabel(pill)
-        magnifier.setPixmap(theme_icon("edit-find").pixmap(16, 16))
-        pill_layout.addWidget(magnifier)
-        pill_layout.addWidget(self.search_box, 1)
-        pill_layout.addWidget(self.scope)
-        pill.setMinimumWidth(360)
-        self.toolbar.addWidget(pill)
+        self.search_pill = SearchField(self)
+        self.search_box = self.search_pill.line_edit
+        self.scope = self.search_pill.scope
+        self.toolbar.addWidget(self.search_pill)
+        self.search_pill.clicked.connect(self._show_search_history)
+        self.search_pill.cleared.connect(self._clear_search)
+        self._search_history: list[str] = read_history(str(self.settings.value("search_history", "")))
+        self.search_history = SearchHistory(self)
+        self.search_history.picked.connect(self._search_history_picked)
+        self.search_history.removed.connect(self._search_history_removed)
+        self.search_history.typed.connect(self._search_help_typed)
+        self.search_help = SearchHelp(self)
+        self.search_help.picked.connect(self._search_help_picked)
+        self.search_help.typed.connect(self._search_help_typed)
         for page in self.pages.values():  # the toolbars of the other sections: one is shown at a time, in the same place
             self.addToolBar(page.toolbar)
             page.toolbar.hide()
@@ -718,7 +715,7 @@ class MainWindow(QMainWindow):
         self.list_model.counts_changed.connect(self._counts_changed)
         self.list_model.load_failed.connect(self._load_failed)
         self.list_model.loaded.connect(self._restore_row_selection)
-        self.search_box.returnPressed.connect(self._apply_view)
+        self.search_box.returnPressed.connect(self._run_search)
         self.search_box.textChanged.connect(self._search_text_changed)
         self.scope.currentIndexChanged.connect(self._scope_changed)
         self.filter_chip.clicked.connect(self._clear_advanced)
@@ -1384,6 +1381,7 @@ class MainWindow(QMainWindow):
         self.search_box.blockSignals(True)
         self.search_box.clear()
         self.search_box.blockSignals(False)
+        self.search_pill.set_active(False)
         self._clear_reader()
         self._shown = None
         self._update_unread_summary()
@@ -1400,10 +1398,60 @@ class MainWindow(QMainWindow):
         self._show_filter_state()
 
     def _search_text_changed(self, text: str) -> None:
+        if text == "?":
+            self.search_history.hide()
+            self.search_help.open_under(self.search_pill)
+            return
+        if self.search_history.isVisible():
+            self.search_history.show_entries(matching(self._search_history, text), self.search_pill)
         if not text:
             self._advanced = None
             self.filter_chip.hide()
+            self.search_pill.set_active(False)
             self._apply_view()
+
+    def _run_search(self) -> None:
+        """Enter in the search box: the search is kept in the history and the field shows that a search is active."""
+        self.search_history.hide()
+        text = self.search_box.text().strip()
+        if text:
+            self._search_history = with_search(self._search_history, text)
+            self.settings.setValue("search_history", history_text(self._search_history))
+        self.search_pill.set_active(bool(text))
+        self._apply_view()
+
+    def _clear_search(self) -> None:
+        """The red ✕: the search ends and the whole folder is shown again."""
+        self.search_box.clear()
+        self.search_pill.set_active(False)
+        self.search_box.setFocus()
+
+    def _show_search_history(self) -> None:
+        if self.search_box.text() != "?":
+            self.search_history.show_entries(matching(self._search_history, self.search_box.text()), self.search_pill)
+
+    def _search_history_picked(self, text: str) -> None:
+        self.search_box.blockSignals(True)
+        self.search_box.setText(text)
+        self.search_box.blockSignals(False)
+        self.search_box.setFocus()
+        self._run_search()
+
+    def _search_history_removed(self, text: str) -> None:
+        self._search_history = [entry for entry in self._search_history if entry != text]
+        self.settings.setValue("search_history", history_text(self._search_history))
+        self.search_history.show_entries(matching(self._search_history, self.search_box.text()), self.search_pill)
+
+    def _search_help_picked(self, line: HelpLine) -> None:
+        """Puts what the picked help line stands for in the search box, in place of the "?"."""
+        self.search_box.blockSignals(True)
+        self.search_box.setText(line.inserted)
+        self.search_box.blockSignals(False)
+        self.search_box.setCursorPosition(len(line.inserted) - line.cursor_back)
+        self.search_box.setFocus()
+
+    def _search_help_typed(self, event: QKeyEvent) -> None:
+        send_key(self.search_box, event)
 
     def _scope_changed(self) -> None:
         if self.search_box.text() or self._advanced is not None:
@@ -1427,6 +1475,7 @@ class MainWindow(QMainWindow):
         self.search_box.blockSignals(True)
         self.search_box.setText(wanted.query)
         self.search_box.blockSignals(False)
+        self.search_pill.set_active(bool(wanted.query.strip()))
         self.scope.blockSignals(True)
         self.scope.setCurrentIndex(1 if wanted.all_folders else 0)
         self.scope.blockSignals(False)

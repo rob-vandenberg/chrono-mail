@@ -646,3 +646,15 @@ Every design decision, with its reason and the alternatives that were rejected. 
 
 **Decision:** the toggle buttons Unread, Flagged and Attachments above the message list are replaced by one Filter button (funnel icon `view-filter`, the word "Filter", a ▾) with a menu: a greyed-out heading "Filter by", then Flagged, Unread and With attachments, each with an icon (`flag`, `mail-unread`, `mail-attachment`). Several filters can be on at once; the list then shows the messages that match all of them. The filters that are on are bold in the menu. Below a line, "Clear filter" turns them all off (greyed out while none is on); it does not remove the advanced filters. While a filter is on, the funnel, the word and the ▾ are blue and the word is bold. The ▾ is part of the button, as on the toolbar buttons. Filters the program does not have (Encrypted, Signed, With tracking pixel, Invitations, With note) are not shown; With tag comes with tags. The filtering itself is unchanged.
 **Reason:** the owner's instructions and screenshots of the reference (step 6 of D-086).
+
+## D-093 Search help opens by typing "?"
+*2026-10-13*
+
+**Decision:** the search box hint is "Search (type '?' for help)". When the box holds only "?", a list opens under it with one line per thing the search understands: words (search in subject, sender, recipients and message text), subject, body, from, to, "exact phrase" and -word, each with an icon, the name and a grey explanation. Picking a line puts its search word in the box in place of the "?" (for a phrase, two quotes with the cursor between them) and does not search yet. Search words the program does not understand (cc, bcc, flag, before, after and the others of the reference) are not listed; OR works but is not listed (the owner's choice). The icon is Breeze's `dialog-question`, as Breeze has no blue round question mark.
+**Reason:** the owner's instructions and screenshot of the reference (step 7 of D-086); the "This folder / All folders" selector stays (the owner's earlier choice).
+
+## D-094 The search field shows its state and keeps the last 10 searches
+*2026-10-13*
+
+**Decision:** the search field has three looks: not in use (grey border, magnifying glass at the start, the hint in italics), clicked in (blue border, hint "Start search", magnifying glass at the end) and a search active (from Enter until it is cleared, also without the focus: orange border, a red ✕ at the end that clears the search). "This folder / All folders" stays at the end, after a thin line; the reference's search menu (▾) and options icon are left out because the program has no such functions. Clicking in the field shows the last 10 searches (newest first, each once, one history for all accounts, kept in the settings), without the time of the search; typing narrows the list, a click on a line runs that search again, and its ✕ removes it.
+**Reason:** the owner's instructions and screenshots of the reference.

@@ -939,3 +939,27 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - "Clear filter" at the bottom of the menu, below a line: greyed out while no filter is on; a click turns all three off and the list reloads once. It does not remove the advanced filters.
 - 0.1.90 was not pushed; it goes out together with this version.
 - Tests run: `tests/ui/test_ui_window.py` (alone, the filter test extended); Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+## 2026-10-13 Main screen restyle step 7: search help (version 0.1.92)
+
+**What landed**
+- The search box hint is "Search (type '?' for help)".
+- When the search box holds only "?", a help list opens under it (`ui/searchhelp.py`): per line an icon (32 px), the name, and a grey explanation. Lines: words (magnifier `edit-find`), subject, body, from, to, "exact phrase", -word (`dialog-question`, newly copied from breeze-dark `status/22`). The first line is highlighted.
+- Arrows move, Enter or a click picks a line, Escape or a click elsewhere closes it; any other key closes it and goes to the search box. Picking puts the search word in place of the "?" (`from:`, `""` with the cursor between the quotes, `-`; words leaves the box empty) without starting a search.
+- OR still works but has no line (the owner's choice).
+- Tests run: `tests/ui/test_ui_searchhelp.py` (new, 5), `tests/ui/test_ui_window.py` (alone), `tests/ui/test_ui_icons.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+**Still open**
+- Step 8 (group headers), after the owner's go-ahead.
+
+## 2026-10-13 Search field looks and search history (version 0.1.93)
+
+**What landed**
+- The search field is its own widget (`ui/searchfield.py`, object name `searchPill` kept) with three looks, set by the property `look` for the stylesheet: not in use (grey border, magnifying glass at the start, "Search (type '?' for help)" in italics); clicked in (blue border, hint "Start search", magnifying glass at the end); search active after Enter until it is cleared (orange border `#f0a030`, red ✕ `edit-delete-remove` at the end, newly copied from breeze-dark `actions/22`; a click clears the search and shows the whole folder). A thin line stands before "This folder / All folders", which stays. Qt's own clear button is gone.
+- The field counts as clicked in while the search text or one of its own lists (history, help) has the keyboard (`focusChanged`); the lists take the keyboard when they open, which first made the field fall back to "not in use".
+- Search history (`ui/searchhistory.py`): the last 10 searches, newest first, each once, one list for all accounts, kept in the settings (`search_history`). A click in the field shows it; typing narrows it to the searches that contain the text and closes it when none do; a click on a line runs that search, its grey ✕ removes it. "?" shows the help instead.
+- Tests run: `tests/ui/test_ui_searchfield.py` (new, 7), `tests/ui/test_ui_searchhelp.py`, `tests/ui/test_ui_theme.py`, `tests/ui/test_ui_advancedsearch.py`, `tests/ui/test_ui_window.py` (alone), `tests/ui/test_ui_icons.py`; Pyrefly 0 diagnostics, layer check kept; not the full suite.
+
+**Still open**
+- The field has square corners (was so before; under Problems in STATUS).
+- Step 8 (group headers), after the owner's go-ahead.

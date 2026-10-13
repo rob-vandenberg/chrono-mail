@@ -3,9 +3,10 @@ from PySide6.QtWidgets import QAbstractItemView
 from chrono_mail.ui.colours import SEPARATOR, selection_grey
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.1.90"
+__version__ = "theme.py 0.1.93"
 
 # --- Version history ----------------------------------------------------
+# v0.1.93: The search field: grey border while not in use, blue while clicked in, orange while a search is active; a thin line before This folder
 # v0.1.90: The Filter button: blue and bold while a filter is on, its ▾ placed as on the toolbar buttons; Qt's own second menu arrow hidden on Sorted by
 # v0.1.89: Column headers 4 px padding left and right, so that the symbols fit in a 24 px column
 # v0.0.88: Selection grey while the folder list or message list has no focus; black 1 px lines between the panes and the column headers; Sorted by in bold
@@ -19,6 +20,7 @@ __version__ = "theme.py 0.1.90"
 # v0.0.73: Initial look of the main window: the Menu button, the toolbar, the search field, the folder list and the section buttons
 
 HOVER: str = "rgba(128, 128, 128, 0.22)"  # a veil that suits a light and a dark window alike
+SEARCH_ACTIVE: str = "#f0a030"  # the border of the search field while a search is active
 
 
 def show_focus(view: QAbstractItemView, focused: bool) -> None:
@@ -55,6 +57,10 @@ QFrame#searchPill {{ border: 1px solid palette(mid); border-radius: 16px; backgr
 QFrame#searchPill QLineEdit {{ border: 0; background: transparent; padding: 5px 2px; }}
 QFrame#searchPill QComboBox {{ border: 0; background: transparent; padding: 2px 6px; }}
 QFrame#searchPill QLabel {{ border: 0; background: transparent; }}
+QFrame#searchPill[look="focused"] {{ border: 1px solid palette(highlight); }}
+QFrame#searchPill[look="active"] {{ border: 1px solid {SEARCH_ACTIVE}; }}
+QFrame#searchSeparator {{ background: palette(mid); border: 0; margin: 4px 0; }}
+QToolButton#searchEnd {{ border: 0; padding: 0 2px; }}
 QLabel#sideHeading {{ font-size: 20px; font-weight: 600; padding: 12px 14px 6px 14px; }}
 QTreeView#folderTree {{ border: 0; background: palette(window); outline: 0; padding: 2px 6px; }}
 QTreeView#folderTree::item {{ padding: 4px 4px; border-radius: 4px; min-height: 22px; }}
