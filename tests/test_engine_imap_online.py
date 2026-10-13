@@ -1,3 +1,4 @@
+import threading
 from collections.abc import Generator
 from pathlib import Path
 from typing import Any  # command results are command-specific dataclasses
@@ -16,9 +17,10 @@ from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap_online.py 0.4.120"
+__version__ = "test_engine_imap_online.py 0.4.121"
 
 # --- Version history ----------------------------------------------------
+# v0.4.121: Many actions at once, a mail check while deleting, a connection the server closed, a renumbered folder
 # v0.4.120: Initial tests: the actions of an IMAP account are done on the server first (D-117)
 
 
@@ -160,3 +162,63 @@ def test_a_server_without_move_or_single_removal_loses_nothing(old_server: World
     call(world.engine, "message.delete", account=world.account, folder="Inbox", message=rows[1].message_id, permanent=True)
     assert sum("\\Deleted" in world.imap.flags_of("INBOX", uid) for uid in world.imap.uids("INBOX")) == 2
     assert [row.subject for row in world.rows("Inbox")] == [rows[2].subject] and len(world.rows("Junk")) == 1
+
+
+def test_many_actions_at_the_same_moment_all_reach_the_server(world: World) -> None:
+    rows = filled(world, 40)
+    errors: list[BaseException] = []
+
+    def delete(message_id: str) -> None:
+        try:
+            call(world.engine, "message.delete", account=world.account, folder="Inbox", message=message_id, permanent=True)
+        except BaseException as error:  # noqa: BLE001 - any failure is the finding
+            errors.append(error)
+
+    workers = [threading.Thread(target=delete, args=(row.message_id,)) for row in rows[:30]]  # the window runs several at once
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    assert errors == [] and len(world.imap.uids("INBOX")) == 10 and len(world.rows("Inbox")) == 10
+    in_step(world, ("Inbox", "INBOX"))
+
+
+def test_a_mail_check_while_deleting_loses_nothing_and_holds_nothing_back(world: World) -> None:
+    rows = filled(world, 30)
+    world.imap.add("INBOX", mail(99))  # new mail for the check
+    errors: list[BaseException] = []
+
+    def delete_all() -> None:
+        for row in rows[:20]:
+            try:
+                call(world.engine, "message.delete", account=world.account, folder="Inbox", message=row.message_id, permanent=True)
+            except BaseException as error:  # noqa: BLE001
+                errors.append(error)
+
+    deleting = threading.Thread(target=delete_all)
+    deleting.start()
+    checked = world.fetch()
+    deleting.join()
+    assert errors == [] and checked.blocked == () and checked.failed == ()
+    assert len(world.imap.uids("INBOX")) == 11 and len(world.rows("Inbox")) == 11  # 10 kept, 1 new, 20 deleted on both sides
+    in_step(world, ("Inbox", "INBOX"))
+
+
+def test_a_connection_the_server_closed_is_made_again(world: World) -> None:
+    rows = filled(world, 2)
+    call(world.engine, "message.flag", account=world.account, folder="Inbox", message=rows[0].message_id, flagged=True)
+    link = world.engine.imap_link(world.account)
+    assert link.client is not None
+    link.client.close()  # the server dropped the idle connection
+    call(world.engine, "message.flag", account=world.account, folder="Inbox", message=rows[1].message_id, flagged=True)
+    assert all("\\Flagged" in world.imap.flags_of("INBOX", uid) for uid in world.imap.uids("INBOX"))
+
+
+def test_a_folder_the_server_renumbered_is_left_to_the_sync_and_nothing_is_lost(world: World) -> None:
+    rows = filled(world, 3)
+    world.imap.new_uid_validity("INBOX")
+    call(world.engine, "message.delete", account=world.account, folder="Inbox", message=rows[0].message_id, permanent=True)
+    assert len(world.imap.uids("INBOX")) == 3  # the UIDs mean something else now: nothing is touched on the server by number
+    world.fetch()  # the sync matches the messages again by their Message-ID
+    # Nothing is lost: the delete made while the numbers did not match is not done, and the message is shown again.
+    assert sorted(row.subject for row in world.rows("Inbox")) == ["Message 1", "Message 2", "Message 3"] and len(world.imap.uids("INBOX")) == 3
