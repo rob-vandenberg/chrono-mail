@@ -15,9 +15,10 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon, grey_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.123"
+__version__ = "models.py 0.5.125"
 
 # --- Version history ----------------------------------------------------
+# v0.5.125: A list with messages that is reloaded does not say for a moment that it is empty
 # v0.5.123: The Favorites heading cannot be selected; settled: the view has finished loading (D-119)
 # v0.3.109: No group headers for the yes/no sorts (unread, flagged, attachment, replied, contact); names of the folder, conversation and preview groups
 # v0.2.99: message_count (how many messages the view holds)
@@ -185,7 +186,7 @@ class MessageListModel(QAbstractTableModel):
 
     def show(self, spec: ViewSpec | None) -> None:
         """Start showing something else (or nothing). With groups, their headers are asked for first, then the messages."""
-        self.settled = spec is None or (self.settled and spec == self._spec)  # the same view again (a reload) stays settled
+        self.settled = spec is None or (self.settled and spec == self._spec and self._available() == 0)  # an empty view reloaded stays settled; one with messages waits for them
         self.beginResetModel()
         self._generation += 1
         self._spec = spec

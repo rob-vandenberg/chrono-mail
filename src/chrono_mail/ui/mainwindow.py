@@ -87,9 +87,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.124"
+__version__ = "mainwindow.py 0.5.125"
 
 # --- Version history ----------------------------------------------------
+# v0.5.125: A message deleted or moved right after it was clicked no longer reports that messages are missing
 # v0.5.124: Show on startup: a chosen folder, Calendar, Contacts or Tasks, or the last selected folder (D-121)
 # v0.5.123: An account or group row is selected and shows its Inbox (nothing for an account without one); the Favorites heading is never selected, a click folds it; the first Inbox at start is found inside groups too (D-119)
 # v0.4.120: The engine's notices (an IMAP change waits for the server) in the red line; the IMAP connections close when the program ends
@@ -1923,6 +1924,9 @@ class MainWindow(QMainWindow):
         current = self.list_view.currentIndex()
         current_row = model.row_at(current.row()) if current.isValid() else None
         current_position = model.message_position(current.row()) if current.isValid() else None
+        if current_row is not None and str(getattr(current_row, "message_id", "")) in deleted_ids:
+            self._show_request += 1  # the message that is being opened is moved away: its opening no longer counts
+            self._mark_read_timer.stop()
         target: tuple[str | None, int] | None = None
         if current_row is not None and current_position is not None and str(getattr(current_row, "message_id")) not in deleted_ids:
             target = (str(getattr(current_row, "message_id")), current_position - sum(1 for position in deleted if position < current_position))

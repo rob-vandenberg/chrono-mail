@@ -8,9 +8,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import REGISTRY, World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tree_rows.py 0.5.123"
+__version__ = "test_ui_tree_rows.py 0.5.125"
 
 # --- Version history ----------------------------------------------------
+# v0.5.125: A list with messages that is reloaded is not settled until its messages are back
 # v0.5.123: Initial tests: an account or group row stays selected and shows its Inbox, a heading is never selected, an empty list says so (D-119)
 
 
@@ -133,3 +134,12 @@ def test_an_empty_list_says_so_once_it_has_loaded(world: World, qtbot: QtBot) ->
     assert with_text != without_text, EMPTY_TEXT
     differs = [y for y in range(with_text.height()) if any(with_text.pixelColor(x, y) != without_text.pixelColor(x, y) for x in range(with_text.width()))]
     assert differs and max(differs) < 60  # one line of text at the top of the list
+
+
+def test_a_list_with_messages_that_is_reloaded_never_says_it_is_empty(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.list_model.reload()  # what every change in the folder does
+    assert window.list_model.rowCount() == 0 and not window.list_model.settled  # no "no messages" while they come back
+    wait(qtbot, lambda: window.list_model.rowCount() == 3)
+    assert window.list_model.settled

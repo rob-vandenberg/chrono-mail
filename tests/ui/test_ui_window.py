@@ -17,9 +17,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.2.104"
+__version__ = "test_ui_window.py 0.5.125"
 
 # --- Version history ----------------------------------------------------
+# v0.5.125: Mark all as read: the test waits until the list is shown again
 # v0.2.104: The drag cursors are the desktop's (tested in test_ui_dragdrop.py)
 # v0.2.103: The indent of a selected folder keeps the list colour; the drop bar; the drag cursors
 # v0.2.102: Unarchive in the Archive folder; the Junk items say where they move to
@@ -816,7 +817,7 @@ def test_mark_all_as_read_and_empty_folder(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     world.window.act_mark_all_read.trigger()
     wait(qtbot, lambda: world.call("folder.list", account=world.account_id)[3].unread == 0 and "as read" in world.window.status_label.text())
-    assert all("seen" in row_of(world.window, position).flags for position in range(3))
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3 and all((row := row_of(world.window, position)) is not None and "seen" in row.flags for position in range(3)))  # the list is shown again
     select(world.window, 0)
     world.window.delete_selected()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
