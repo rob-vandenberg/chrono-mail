@@ -8,11 +8,13 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.core import ChronoMailError, ConfigurationError
 from chrono_mail.ui.backend import Backend
 from tests.enginefactory import make_engine
+from tests.ui.world import World, dialogs, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_backend.py 0.0.13"
+__version__ = "test_ui_backend.py 0.5.126"
 
 # --- Version history ----------------------------------------------------
+# v0.5.126: Changes of the same message run in the order they were given; different messages at the same time
 # v0.0.13: Initial UI backend tests
 
 
@@ -104,3 +106,35 @@ def test_progress_reports_reach_the_gui(backend: Backend, qtbot: QtBot) -> None:
 
 def test_run_now_is_synchronous(backend: Backend) -> None:
     assert backend.run_now("account.list", {}) == ()
+
+
+def test_changes_of_the_same_message_end_in_the_order_they_were_given(world: World, qtbot: QtBot) -> None:
+    backend = world.backend
+    (message,) = [row for row in world.call("message.list", account=world.account_id, folder="Inbox").messages][:1]
+    values = {"account": world.account_id, "folder": "Inbox", "message": message.message_id}
+    for _ in range(30):  # unread, then read at once: read must always be what stays
+        backend.call("message.flag", {**values, "seen": False}, lambda result: None, owner=None, in_order=True)
+        backend.call("message.flag", {**values, "seen": True}, lambda result: None, owner=None, in_order=True)
+    qtbot.waitUntil(lambda: backend._pending == {}, timeout=20_000)  # noqa: SLF001
+    assert "seen" in world.call("message.list", account=world.account_id, folder="Inbox").messages[0].flags
+    assert backend._queued == {}  # noqa: SLF001 - nothing left waiting
+
+
+def test_changes_of_different_messages_do_not_wait_for_each_other(world: World, qtbot: QtBot) -> None:
+    backend = world.backend
+    rows = world.call("message.list", account=world.account_id, folder="Inbox").messages
+    for row in rows:
+        backend.call("message.flag", {"account": world.account_id, "folder": "Inbox", "message": row.message_id, "flagged": True}, lambda result: None, in_order=True)
+    assert len(backend._queued) == len(rows) and all(waiting == [] for waiting in backend._queued.values())  # noqa: SLF001 - all started at once
+    qtbot.waitUntil(lambda: backend._pending == {}, timeout=10_000)  # noqa: SLF001
+    assert all("flagged" in row.flags for row in world.call("message.list", account=world.account_id, folder="Inbox").messages)
+
+
+def test_changes_still_waiting_their_turn_are_done_before_the_program_ends(world: World) -> None:
+    backend = world.backend
+    message = world.call("message.list", account=world.account_id, folder="Inbox").messages[0]
+    values = {"account": world.account_id, "folder": "Inbox", "message": message.message_id}
+    for flagged in (True, False, True):
+        backend.call("message.flag", {**values, "flagged": flagged}, lambda result: None, in_order=True)
+    assert backend.wait_for_done(10_000) and backend._queued == {}  # noqa: SLF001
+    assert "flagged" in world.call("message.list", account=world.account_id, folder="Inbox").messages[0].flags

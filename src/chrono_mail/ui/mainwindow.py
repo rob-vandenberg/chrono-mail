@@ -87,9 +87,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.125"
+__version__ = "mainwindow.py 0.5.126"
 
 # --- Version history ----------------------------------------------------
+# v0.5.126: The changes of a message (marks, delete, move, copy, archive, junk, snooze) run in the order they were given
 # v0.5.125: A message deleted or moved right after it was clicked no longer reports that messages are missing
 # v0.5.124: Show on startup: a chosen folder, Calendar, Contacts or Tasks, or the last selected folder (D-121)
 # v0.5.123: An account or group row is selected and shows its Inbox (nothing for an account without one); the Favorites heading is never selected, a click folds it; the first Inbox at start is found inside groups too (D-119)
@@ -1092,7 +1093,7 @@ class MainWindow(QMainWindow):
             self._report("Could not cancel the snooze", error)
 
         for row in rows:
-            self.backend.call("message.wake", {"account": self._account_of(row) or account, "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+            self.backend.call("message.wake", {"account": self._account_of(row) or account, "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
 
     def snooze_until(self, until: str) -> None:
         """Put the selected messages away until this local time (2026-10-13T09:00)."""
@@ -1115,7 +1116,7 @@ class MainWindow(QMainWindow):
             self._report("Could not snooze", error)
 
         for row in rows:
-            self.backend.call("message.snooze", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "until": until}, done, failed, owner=self)
+            self.backend.call("message.snooze", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "until": until}, done, failed, owner=self, in_order=True)
 
     def open_rules(self) -> None:
         """Settings > Rules: what is done with mail as it arrives (also reachable by a key chosen for it)."""
@@ -1980,7 +1981,7 @@ class MainWindow(QMainWindow):
             return done
 
         for folder, message_id in targets:
-            self.backend.call("message.flag", {"account": account_id, "folder": folder, "message": message_id, **values}, make_done(message_id), lambda error: self._report("Could not change the message", error), owner=self)
+            self.backend.call("message.flag", {"account": account_id, "folder": folder, "message": message_id, **values}, make_done(message_id), lambda error: self._report("Could not change the message", error), owner=self, in_order=True)
 
     def mark_selected(self, seen: bool | None = None, flagged: bool | None = None) -> None:
         values: dict[str, bool] = {}
@@ -2005,7 +2006,7 @@ class MainWindow(QMainWindow):
         self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
         done, failed = self._answers(len(rows), f"Deleted {len(rows)} message(s)" if in_trash else f"Moved {len(rows)} message(s) to Trash", "Could not delete", self._note_gone)
         for row in rows:
-            self.backend.call("message.delete", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+            self.backend.call("message.delete", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
 
     def _show_archive_action(self) -> None:
         """In the Archive folder the Archive button, key and menu item are Unarchive."""
@@ -2035,7 +2036,7 @@ class MainWindow(QMainWindow):
             self._report("Could not unarchive", error)
 
         for row in rows:
-            self.backend.call("message.unarchive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+            self.backend.call("message.unarchive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
 
     def archive_selected(self) -> None:
         if self._tree_kind == "folder" and self._folder_role == "archive":
@@ -2070,7 +2071,7 @@ class MainWindow(QMainWindow):
             if str(getattr(row, "folder")) == "Archive":
                 remaining -= 1  # already there
                 continue
-            self.backend.call("message.archive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+            self.backend.call("message.archive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
         if remaining == 0:
             self.show_status("The selected message(s) are in the archive already")
 
@@ -2085,7 +2086,7 @@ class MainWindow(QMainWindow):
         done, failed = self._answers(len(rows), finished, "Could not move", self._note_gone)
 
         for row in rows:
-            self.backend.call(command, {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self)
+            self.backend.call(command, {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
 
     # --- the sections: mail, calendar, tasks, contacts ---------------------------------------------------------
 
@@ -2199,7 +2200,7 @@ class MainWindow(QMainWindow):
         for row in rows:
             self.backend.call(
                 "message.delete", {"account": self._account_of(row) or self._account_id, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "permanent": True},
-                done, failed, owner=self,
+                done, failed, owner=self, in_order=True,
             )
 
     def _popup_folders(self, how: str) -> None:
@@ -2225,7 +2226,7 @@ class MainWindow(QMainWindow):
         for row in rows:
             self.backend.call(
                 "message.copy", {"account": self._account_of(row), "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target},
-                done, failed, owner=self,
+                done, failed, owner=self, in_order=True,
             )
 
     def go_to_folder(self) -> None:
@@ -2316,7 +2317,7 @@ class MainWindow(QMainWindow):
         self._keep_place_after_delete([message_id for _, message_id in messages])
         done, failed = self._answers(len(messages), f"Moved {len(messages)} message(s) to {target}", "Could not move")
         for folder, message_id in messages:
-            self.backend.call("message.move", {"account": account, "folder": folder, "message": message_id, "target": target}, done, failed, owner=self)
+            self.backend.call("message.move", {"account": account, "folder": folder, "message": message_id, "target": target}, done, failed, owner=self, in_order=True)
 
     def _fill_move_menu(self) -> None:
         self.move_menu.clear()
@@ -2336,7 +2337,7 @@ class MainWindow(QMainWindow):
         self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
         done, failed = self._answers(len(rows), f"Moved {len(rows)} message(s) to {target}", "Could not move")
         for row in rows:
-            self.backend.call("message.move", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target}, done, failed, owner=self)
+            self.backend.call("message.move", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target}, done, failed, owner=self, in_order=True)
 
     def _answers(self, count: int, finished: str, title: str, each: Callable[[object], None] | None = None) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
         """The answers of an action on several messages, one per message: when all are in, failed ones too, the list is

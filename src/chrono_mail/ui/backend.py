@@ -1,17 +1,19 @@
 import itertools
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import override
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QObject, QRunnable, QThreadPool, Signal, Slot
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 0.4.120"
+__version__ = "backend.py 0.5.126"
 
 # --- Version history ----------------------------------------------------
+# v0.5.126: in_order: the commands that change the same message run one after the other, in the order they were given
 # v0.4.120: notice: what the engine wants the person to know (an IMAP change waits for the server)
 # v0.0.32: commands that wait have a pool of their own
 # v0.0.13: Initial UI backend
@@ -75,14 +77,19 @@ class Backend(QObject):
         self._done.finished.connect(self._deliver)
         self._ids = itertools.count(1)
         self._pending: dict[int, _Pending] = {}
+        self._queued: dict[str, list[_Task]] = {}  # per message changed: the commands waiting for the one that runs
+        self._queue_of: dict[int, str] = {}  # request -> its message
         engine.progress = lambda what, done, total: self.progress.emit(what, done, total)
         engine.notice = self.notice.emit
 
     def call(
-        self, command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False
+        self, command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False,
+        in_order: bool = False,
     ) -> int:
         """Start a command. The callbacks run on the GUI thread; owner (if given) ends the interest in the answer.
-        A command that only waits (waiting=True) has a pool of its own and does not count as busy."""
+        A command that only waits (waiting=True) has a pool of its own and does not count as busy. Commands that change a
+        message (in_order=True) wait for the ones given earlier for the same message, so the last one given is what stays;
+        commands for different messages still run at the same time."""
         request = next(self._ids)
         task = _Task(request, self.engine, self.registry, command, dict(values), self._done)
         if waiting:
@@ -91,6 +98,13 @@ class Backend(QObject):
             return request
         self._pending[request] = _Pending(on_success, on_error, owner)
         self.busy_changed.emit(len(self._pending))
+        if in_order:
+            key = f"{values.get('account', '')}\t{values.get('message', '')}"
+            self._queue_of[request] = key
+            if key in self._queued:
+                self._queued[key].append(task)  # started when the one before it is done
+                return request
+            self._queued[key] = []
         self._pool.start(task)
         return request
 
@@ -100,6 +114,13 @@ class Backend(QObject):
 
     @Slot(int, object, object)
     def _deliver(self, request: int, result: object, error: object) -> None:
+        key = self._queue_of.pop(request, None)
+        if key is not None:
+            waiting = self._queued.get(key, [])
+            if waiting:
+                self._pool.start(waiting.pop(0))  # the next change of the same message
+            else:
+                self._queued.pop(key, None)
         pending = self._background.pop(request, None)
         if pending is None:
             pending = self._pending.pop(request, None)
@@ -115,7 +136,16 @@ class Backend(QObject):
             pending.on_success(result)
 
     def wait_for_done(self, milliseconds: int = 10_000) -> bool:
-        return self._pool.waitForDone(milliseconds) and self._waiting_pool.waitForDone(milliseconds)
+        """Wait for the running commands, and for the changes still waiting their turn (their start comes with the answer
+        of the one before, so the answers are delivered meanwhile)."""
+        deadline = time.monotonic() + milliseconds / 1000
+        while True:
+            left = max(0, int((deadline - time.monotonic()) * 1000))
+            finished = self._pool.waitForDone(left)
+            QCoreApplication.processEvents()  # delivers the answers, which start what waits for them
+            if not self._queued or not finished or time.monotonic() >= deadline:
+                break
+        return finished and not self._queued and self._waiting_pool.waitForDone(max(0, int((deadline - time.monotonic()) * 1000)))
 
 
 def _alive(owner: QObject) -> bool:
