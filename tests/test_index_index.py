@@ -5,19 +5,21 @@ from collections.abc import Iterator
 from email.utils import format_datetime
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal, override
 
 import pytest
 
 from chrono_mail.core import MessageFlag, MessageRef, StorageError
 from chrono_mail.index import Index, IndexedMessage, IndexEntry, ParsedQuery, SearchFilter, SortField, entry_from_raw, match_expression, parse_query
-from chrono_mail.index.index import _order
+from chrono_mail.index.index import IndexBuilder, _order
 from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.4.117"
+__version__ = "test_index_index.py 0.5.130"
 
 # --- Version history ----------------------------------------------------
+# v0.5.130: A failed open closes its connection (old format, unreadable format, damaged), so the rebuild can replace the files on Windows
 # v0.4.117: Unread counts use the index of the Unread sort (the partial index is gone)
 # v0.3.110: Changes made at the same time from several connections all succeed
 # v0.3.109: Sorting by unread, flagged, replied, attachment, folder, conversation and preview
@@ -591,4 +593,66 @@ def test_changes_made_at_the_same_time_all_succeed(tmp_path: Path) -> None:
         worker.join()
     index = Index(tmp_path / "index.sqlite")
     assert failures == [] and index.message_count() == 0
+    index.close()
+
+
+class RecordedConnection(sqlite3.Connection):
+    """A connection that records that it was closed (Linux cannot show the Windows file lock itself)."""
+
+    closed: list[bool] = []
+
+    @override
+    def close(self) -> None:
+        RecordedConnection.closed.append(True)
+        super().close()
+
+
+@pytest.fixture
+def recorded(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    real = sqlite3.connect
+    RecordedConnection.closed = []
+
+    def connect(database: str | Path, isolation_level: Literal["DEFERRED", "EXCLUSIVE", "IMMEDIATE"] | None = "DEFERRED", timeout: float = 5.0) -> sqlite3.Connection:
+        return real(database, isolation_level=isolation_level, timeout=timeout, factory=RecordedConnection)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    return RecordedConnection.closed
+
+
+def _schema(path: Path, value: str) -> None:
+    connection = sqlite3.connect(path)
+    connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (value,))
+    connection.commit()
+    connection.close()
+
+
+@pytest.mark.parametrize("value", ["4", "x"])
+def test_an_old_or_unreadable_format_closes_its_connection_before_it_is_reported(tmp_path: Path, value: str, recorded: list[bool]) -> None:
+    path = tmp_path / "index.sqlite"
+    filled(tmp_path, 1).close()
+    _schema(path, value)
+    recorded.clear()
+    with pytest.raises(StorageError, match="unknown format; rebuild"):
+        Index(path)
+    assert recorded == [True]  # else Windows cannot delete the -wal file for the rebuild (WinError 32)
+
+
+def test_a_damaged_index_closes_its_connection_before_it_is_reported(tmp_path: Path, recorded: list[bool]) -> None:
+    path = tmp_path / "index.sqlite"
+    path.write_bytes(b"this is not a database" * 100)
+    with pytest.raises(StorageError, match="damaged; rebuild"):
+        Index(path)
+    assert recorded == [True]
+
+
+def test_after_a_failed_open_the_rebuild_replaces_the_files_and_the_index_opens(tmp_path: Path) -> None:
+    path = tmp_path / "index.sqlite"
+    filled(tmp_path, 3).close()
+    _schema(path, "4")
+    with pytest.raises(StorageError):
+        Index(path)
+    builder = IndexBuilder(path)
+    builder.finish().close()
+    index = Index(path)
+    assert index.count(("Inbox",)) == 0  # the new, empty index of the current format
     index.close()

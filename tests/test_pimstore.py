@@ -1,6 +1,8 @@
+import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal, override
 
 import pytest
 
@@ -8,13 +10,14 @@ from chrono_mail.core import CollectionKind, CryptoError, StorageError
 from chrono_mail.crypto import generate_data_key
 from chrono_mail.pim.contact import Contact, Labeled, contact_to_text
 from chrono_mail.pim.ical import Event, EventSeries, Reminder, Task, complete_task, events_to_text, tasks_to_text
-from chrono_mail.pimstore import ItemQuery, PimStore
+from chrono_mail.pimstore import ItemQuery, PimIndex, PimStore
 from chrono_mail.pimstore.extract import epoch
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pimstore.py 0.0.62"
+__version__ = "test_pimstore.py 0.5.130"
 
 # --- Version history ----------------------------------------------------
+# v0.5.130: A failed open of the item index closes its connection
 # v0.0.62: The contacts section
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.59: Initial tests of the store and the index for calendars, tasks and contacts
@@ -292,3 +295,48 @@ def test_several_writers_at_the_same_time_wait_for_each_other(tmp_path: Path) ->
     assert errors == []
     check = PimStore.open(tmp_path / "pim", key, durable=False)
     assert len(check.item_ids(book.collection_id)) == 60 and len(check.index.item_ids()) == 60
+
+
+class RecordedConnection(sqlite3.Connection):
+    """A connection that records that it was closed (Linux cannot show the Windows file lock itself)."""
+
+    closed: list[bool] = []
+
+    @override
+    def close(self) -> None:
+        RecordedConnection.closed.append(True)
+        super().close()
+
+
+@pytest.fixture
+def recorded(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    real = sqlite3.connect
+    RecordedConnection.closed = []
+
+    def connect(database: str | Path, isolation_level: Literal["DEFERRED", "EXCLUSIVE", "IMMEDIATE"] | None = "DEFERRED", timeout: float = 5.0) -> sqlite3.Connection:
+        return real(database, isolation_level=isolation_level, timeout=timeout, factory=RecordedConnection)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    return RecordedConnection.closed
+
+
+@pytest.mark.parametrize("value", ["0", "x"])
+def test_an_item_index_of_another_format_closes_its_connection_before_it_is_reported(tmp_path: Path, value: str, recorded: list[bool]) -> None:
+    path = tmp_path / "items.sqlite"
+    PimIndex(path).close()
+    connection = sqlite3.connect(path)
+    connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (value,))
+    connection.commit()
+    connection.close()
+    recorded.clear()
+    with pytest.raises(StorageError, match="unknown format"):
+        PimIndex(path)
+    assert recorded == [True]
+
+
+def test_a_damaged_item_index_closes_its_connection_before_it_is_reported(tmp_path: Path, recorded: list[bool]) -> None:
+    path = tmp_path / "items.sqlite"
+    path.write_bytes(b"this is not a database" * 100)
+    with pytest.raises(StorageError, match="damaged"):
+        PimIndex(path)
+    assert recorded == [True]

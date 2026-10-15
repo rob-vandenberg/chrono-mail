@@ -10,9 +10,10 @@ from chrono_mail.pimstore.extract import Extract, tag_text
 from chrono_mail.pimstore.schema import MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.0.62"
+__version__ = "index.py 0.5.130"
 
 # --- Version history ----------------------------------------------------
+# v0.5.130: A failed open closes its connection (Windows could not delete the -wal file for the rebuild); an unreadable format number counts as an unknown format
 # v0.0.62: The contacts section
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.59: Initial index of calendars, tasks and contacts
@@ -91,19 +92,30 @@ class PimIndex:
         self.path: Path = path
         try:
             self._connection: sqlite3.Connection = sqlite3.connect(path, isolation_level=None, timeout=30)
-            self._connection.execute("PRAGMA journal_mode = WAL")
-            self._connection.execute("PRAGMA synchronous = NORMAL")
-            if self._connection.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0:
-                with self._transaction():
-                    for statement in STATEMENTS:
-                        self._connection.execute(statement)
-                    self._connection.execute("INSERT INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
-            else:
-                version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
-                if version is None or int(version[0]) != SCHEMA_VERSION:
-                    raise StorageError("The index has an unknown format; rebuild it")
         except sqlite3.DatabaseError:
             raise StorageError("The index is damaged; rebuild it") from None
+        try:
+            self._open()
+        except BaseException as error:
+            # Closed before the error goes on: the rebuild that follows deletes the -wal file, and Windows cannot delete
+            # a file that is still open (WinError 32); the connection would only be freed by the garbage collector.
+            self._connection.close()
+            if isinstance(error, sqlite3.DatabaseError):
+                raise StorageError("The index is damaged; rebuild it") from None
+            raise
+
+    def _open(self) -> None:
+        self._connection.execute("PRAGMA journal_mode = WAL")
+        self._connection.execute("PRAGMA synchronous = NORMAL")
+        if self._connection.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0:
+            with self._transaction():
+                for statement in STATEMENTS:
+                    self._connection.execute(statement)
+                self._connection.execute("INSERT INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
+        else:
+            version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
+            if version is None or str(version[0]) != str(SCHEMA_VERSION):
+                raise StorageError("The index has an unknown format; rebuild it")
 
     def close(self) -> None:
         self._connection.close()

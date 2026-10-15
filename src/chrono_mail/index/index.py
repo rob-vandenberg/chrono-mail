@@ -25,9 +25,10 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.3.110"
+__version__ = "index.py 0.5.130"
 
 # --- Version history ----------------------------------------------------
+# v0.5.130: A failed open closes its connection (Windows could not delete the -wal file for the rebuild); an unreadable format number counts as an unknown format
 # v0.3.110: A change takes the write lock at its start (BEGIN IMMEDIATE), so changes made at the same time wait for each other instead of failing
 # v0.3.109: Sorting by unread, flagged, attachment, replied, folder, messages in conversation and preview (newest first within the same value); groups by folder, conversation size and preview
 # v0.2.94: Sorting by recipients; a search in any sort order; the groups of a folder or a search (group headers)
@@ -164,17 +165,28 @@ class Index:
         self.path: Path = path
         try:
             self._connection: sqlite3.Connection = sqlite3.connect(path, isolation_level=None, timeout=30)  # waits for another writer
-            self._connection.execute("PRAGMA journal_mode = WAL")
-            self._connection.execute("PRAGMA synchronous = NORMAL")
-            self._connection.execute("PRAGMA temp_store = MEMORY")
-            if self._connection.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0:
-                self._create_schema()
-            else:
-                version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
-                if version is None or int(version[0]) != SCHEMA_VERSION:
-                    raise StorageError("The index has an unknown format; rebuild it")
         except sqlite3.DatabaseError:
             raise StorageError("The index is damaged; rebuild it") from None
+        try:
+            self._open()
+        except BaseException as error:
+            # Closed before the error goes on: the rebuild that follows deletes the -wal file, and Windows cannot delete
+            # a file that is still open (WinError 32); the connection would only be freed by the garbage collector.
+            self._connection.close()
+            if isinstance(error, sqlite3.DatabaseError):
+                raise StorageError("The index is damaged; rebuild it") from None
+            raise
+
+    def _open(self) -> None:
+        self._connection.execute("PRAGMA journal_mode = WAL")
+        self._connection.execute("PRAGMA synchronous = NORMAL")
+        self._connection.execute("PRAGMA temp_store = MEMORY")
+        if self._connection.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0:
+            self._create_schema()
+        else:
+            version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
+            if version is None or str(version[0]) != str(SCHEMA_VERSION):
+                raise StorageError("The index has an unknown format; rebuild it")
 
     def _create_schema(self) -> None:
         with self._transaction():
