@@ -14,3 +14,6 @@ PROMPT-NEW-SESSION.md
 # built program folders and installers (packaging/)
 build/
 dist/
+
+# samples exported from other mail programs (private mail and passwords): NEVER in git
+chrono-mail-import-samples/

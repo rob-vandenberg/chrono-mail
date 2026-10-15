@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # --- Version ------------------------------------------------------------
-# build_in_container.sh 0.5.129
+# build_in_container.sh 0.5.131
 # --- Version history ----------------------------------------------------
+# v0.5.131: Only pyproject.toml, README.md, LICENSE, src and packaging are copied into the container (never private files); the program's own package information, so that it knows its version (About said "version unknown")
 # v0.5.129: Time-zone files once (tzdata.zoneinfo comes with the package; only the file zones is added)
 # v0.5.127: Initial: runs inside the Ubuntu 22.04 container of build_linux.sh
 #
@@ -22,9 +23,10 @@ apt-get install -y -qq python3.14 python3.14-venv python3.14-dev gcc g++ patchel
     libxrandr2 libxtst6 libxi6 libasound2 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-shape0 libxcb-xinerama0 \
     libxcb-image0 libxcb-render-util0 >/dev/null
 
-# The project is copied, so that building it does not write into the read-only source.
+# Only what the build needs is copied (so that building does not write into the read-only source). Never the whole
+# project folder: it may hold private files (chrono-mail-import-samples/ holds the owner's own mail).
 mkdir -p /work
-tar -C /src --exclude=./.venv --exclude=./.git --exclude=./build --exclude=./dist --exclude='*/__pycache__' -cf - . | tar -C /work -xf -
+tar -C /src --exclude='*/__pycache__' -cf - pyproject.toml README.md LICENSE src packaging | tar -C /work -xf -
 python3.14 -m venv /work/venv
 /work/venv/bin/pip install -q --upgrade pip
 # Nuitka 4.3 corrupts compiled inner functions with PySide6 and Python 3.14 (startup crash, Nuitka issue 4081); 4.2.2 is
@@ -43,6 +45,7 @@ cd /work
     --include-package=secretstorage \
     --include-package=jeepney \
     --include-distribution-metadata=keyring \
+    --include-distribution-metadata=chrono-mail \
     --include-package=tzdata \
     --include-package-data=tzdata:zones \
     --include-package-data=dateutil \

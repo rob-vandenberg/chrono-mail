@@ -1,6 +1,7 @@
 # --- Version ------------------------------------------------------------
-# build_windows.ps1 0.5.129
+# build_windows.ps1 0.5.131
 # --- Version history ----------------------------------------------------
+# v0.5.131: The program's own package information, so that it knows its version (About said "version unknown")
 # v0.5.129: First run on Windows: Inno Setup in Program Files (x86) is found; time-zone files once; only the parts of win32ctypes the password store uses
 # v0.5.127: Initial: the Windows program folder and setup.exe (written on Linux; first run on the Windows machine)
 #
@@ -36,6 +37,7 @@ if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
     --include-package=win32ctypes.core `
     --include-package=win32ctypes.pywin32 `
     --include-distribution-metadata=keyring `
+    --include-distribution-metadata=chrono-mail `
     --include-package=tzdata `
     --include-package-data=tzdata:zones `
     --include-package-data=dateutil `

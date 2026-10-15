@@ -1,6 +1,6 @@
 # PACKAGING.md: making the installers
 
-*Version 0.5.129. Read this file completely before building. It is written for the agent (and the person) that builds
+*Version 0.5.131. Read this file completely before building. It is written for the agent (and the person) that builds
 the installers on one of the two machines. The project rules (AGENTS.md, DEVELOPMENT-RULES.md) apply: change no code and
 release nothing without the owner's "Proceed"; report every problem instead of working around it.*
 
@@ -39,7 +39,14 @@ packs that folder into the .deb and the .rpm; on Windows **Inno Setup** makes th
 5. **Linux: build on an old system.** A program built on a new Linux does not run on an older one. The Linux build runs
    in an Ubuntu 22.04 container (podman). PySide6 6.12 itself needs glibc 2.34, so 22.04 (glibc 2.35) is about the oldest
    possible; the packages run on Ubuntu 22.04+, Debian 12+, Fedora 36+, Linux Mint 21+, openSUSE with glibc 2.35+.
-6. **Test outside the build machine.** A test on the developer's own desktop can pass for the wrong reason (system Qt
+6. **The program's own version.** The packaged program has no `pyproject.toml` next to it, so it learns its version
+   from its package information; Nuitka includes that only when told: `--include-distribution-metadata=chrono-mail`
+   (both build scripts). Without it the About window says "version unknown" (seen on Windows in 0.5.130).
+7. **Only the needed files go into the Linux build container:** `pyproject.toml`, `README.md`, `LICENSE`, `src`,
+   `packaging`. Never the whole project folder: it can hold private files (the owner's mail exports in
+   `chrono-mail-import-samples/`, which must never leave the machine or reach git). Until 0.5.131 the whole folder was
+   copied into the (throwaway) container.
+8. **Test outside the build machine.** A test on the developer's own desktop can pass for the wrong reason (system Qt
    present). The Linux packages were tested in bare containers (Ubuntu 22.04, Ubuntu 26.04, Fedora 43) as a normal user.
    Never test as root: the HTML viewer refuses to run as root.
 
