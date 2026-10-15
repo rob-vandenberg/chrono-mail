@@ -10,3 +10,7 @@ tests/live/kerio.local.toml
 # hand-over notes between sessions (private)
 TRANSFER.md
 PROMPT-NEW-SESSION.md
+
+# built program folders and installers (packaging/)
+build/
+dist/
