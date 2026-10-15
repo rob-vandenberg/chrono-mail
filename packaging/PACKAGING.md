@@ -1,6 +1,6 @@
 # PACKAGING.md: making the installers
 
-*Version 0.5.127. Read this file completely before building. It is written for the agent (and the person) that builds
+*Version 0.5.129. Read this file completely before building. It is written for the agent (and the person) that builds
 the installers on one of the two machines. The project rules (AGENTS.md, DEVELOPMENT-RULES.md) apply: change no code and
 release nothing without the owner's "Proceed"; report every problem instead of working around it.*
 
@@ -95,11 +95,26 @@ person chooses, for themselves only), makes a Start menu entry (and a desktop ic
 uninstaller under Settings > Apps. Its `AppId` in `packaging/chrono-mail.iss` must never change: Windows recognises
 updates by it.
 
-### 4.3 The first run of this script
+### 4.3 The first runs of this script
 
-`packaging/build_windows.ps1` and `packaging/chrono-mail.iss` were written on Linux and had **not been run on Windows**
-when this file was written. Expect small fixes on the first run. Report each one to the owner with the exact error,
-fix it only after the owner's "Proceed", and write what changed in this file and in DEVLOG.md.
+`packaging/build_windows.ps1` and `packaging/chrono-mail.iss` were written on Linux. Their first run on DEVELOPMENT
+(2026-10-15, `chrono-mail_0.5.128_setup.exe`) worked after three fixes, made in 0.5.129:
+
+1. Inno Setup in `Program Files (x86)` was never found: PowerShell reads `$env:ProgramFiles(x86)` as the variable
+   `ProgramFiles` followed by the text `(x86)`; it must be written `${env:ProgramFiles(x86)}`.
+2. The time-zone files were included twice (604 "Duplicate data file" warnings): `--include-package=tzdata` already
+   brings `tzdata\zoneinfo`; only the one file `zones` is added (`--include-package-data=tzdata:zones`). The Linux build
+   had the same fault and got the same fix (605 of 605 files, no warnings).
+3. `--include-package=win32ctypes` also took `win32ctypes.tests`; only `win32ctypes.core` and `win32ctypes.pywin32` (the
+   parts keyring's Windows backend uses) are included now.
+
+Build facts of that run: Nuitka 4.2.2 with Visual Studio Build Tools 18 (cl 14.5), Inno Setup 6.7.3 (installed for the
+user), program folder 485 MB, setup.exe 130 MB.
+
+**Still to test on Windows:** the password store (Windows Credential Manager) in the installed program.
+
+Report every new problem to the owner with the exact error, fix it only after the owner's "Proceed", and write what
+changed in this file and in DEVLOG.md.
 
 ### 4.4 Test before uploading
 

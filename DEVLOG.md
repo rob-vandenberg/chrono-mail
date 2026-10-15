@@ -1240,3 +1240,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - New `TRANSFER-WINDOWS.md` for the Claude app on DEVELOPMENT (the Windows machine builds, tests and releases the setup.exe and may write code): its role, the rules, getting started, the file map, the checks on Windows, the installer, working together with the Kubuntu machine, open points. `AGENTS.md` lists it.
 - Found while answering the owner: Chrono Mail has no protection against running twice (two copies would share the same mail); reported, not fixed.
 - No code changed; no tests run.
+
+## 2026-10-15 The first Windows build; its three fixes (version 0.5.129)
+
+- The Windows machine (DEVELOPMENT) built `chrono-mail_0.5.128_setup.exe`: it worked after three fixes in `packaging/build_windows.ps1`, made there without a version and applied here: `${env:ProgramFiles(x86)}` (PowerShell read `$env:ProgramFiles(x86)` as `C:\Program Files(x86)`); `--include-package-data=tzdata:zones` (the time-zone files were included twice, 604 warnings); `win32ctypes.core` and `win32ctypes.pywin32` instead of all of `win32ctypes` (its tests were included). Build facts: Nuitka 4.2.2, Visual Studio Build Tools 18 (cl 14.5), Inno Setup 6.7.3, program folder 485 MB, setup.exe 130 MB. `packaging/PACKAGING.md` section 4.3 says so.
+- The Linux build had the same time-zone fault: `packaging/build_in_container.sh` got the same change. Rebuilt: no duplicate warnings, 605 of 605 tzdata files, three starts with an empty environment kept running.
+- Reported from Windows (not fixed): with two copies of Chrono Mail running, the index rebuild after a format change fails with WinError 32 on `index.sqlite-wal` (`index/index.py` lines 510-513): Windows cannot delete a file the other copy has open. It is the known missing protection against running twice; on Linux the delete succeeds silently.
+- Still to test on Windows: the password store in the installed program.

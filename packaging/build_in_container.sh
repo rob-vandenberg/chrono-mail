@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # --- Version ------------------------------------------------------------
-# build_in_container.sh 0.5.127
+# build_in_container.sh 0.5.129
 # --- Version history ----------------------------------------------------
+# v0.5.129: Time-zone files once (tzdata.zoneinfo comes with the package; only the file zones is added)
 # v0.5.127: Initial: runs inside the Ubuntu 22.04 container of build_linux.sh
 #
 # Runs inside the container started by build_linux.sh: /src is the project (read only), /out receives the program folder,
@@ -43,7 +44,7 @@ cd /work
     --include-package=jeepney \
     --include-distribution-metadata=keyring \
     --include-package=tzdata \
-    --include-package-data=tzdata \
+    --include-package-data=tzdata:zones \
     --include-package-data=dateutil \
     --output-dir=/out \
     --output-filename=chrono-mail \
