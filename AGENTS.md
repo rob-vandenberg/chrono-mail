@@ -15,6 +15,7 @@ Chrono Mail is an open-source desktop email client for Linux (Windows and macOS 
 | `ROADMAP.md` | Milestones and tasks, each with a status | When picking or finishing a task |
 | `DECISIONS.md` | Every design decision, with its reason | Before proposing to change a design choice |
 | `DEVLOG.md` | Append-only log, one entry per completed task | When you need history |
+| `TRANSFER-WINDOWS.md` | Hand-over for the Windows machine (DEVELOPMENT): its role (Windows runs, the setup.exe), the rules, the file map | On the Windows machine, first |
 
 ## 2. Naming
 
