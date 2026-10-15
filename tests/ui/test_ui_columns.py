@@ -13,9 +13,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.3.109"
+__version__ = "test_ui_columns.py 0.5.140"
 
 # --- Version history ----------------------------------------------------
+# v0.5.140: the first column can be dragged, and the new order is saved; a group row still starts at the left edge
 # v0.3.109: The icon columns sort too (yes first); a click on Delete leaves the sort arrow where it was
 # v0.2.97: Row height in the Message list window
 # v0.2.96: The column list of the Message list window is a part of its own
@@ -323,3 +324,34 @@ def test_a_line_dragged_with_the_mouse_stays_under_the_pointer(world: World, qtb
         assert header.sectionSize(column) == before + 10  # the column grew by exactly the distance moved
         assert sum(header.sectionSize(index) for index in range(header.count())) == world.window.list_view.viewport().width()
     assert header.sectionSize(contact) == 34  # Contact kept its width while Delete grew
+
+
+def test_the_first_column_can_be_dragged_to_another_place(world: World, qtbot: QtBot) -> None:
+    shown(world, qtbot)
+    window, header = world.window, world.window.list_view.header()
+    first = window.list_model.columns[header.logicalIndex(0)]
+    assert header.isFirstSectionMovable()
+    header.moveSection(0, 2)  # what a drag of the first column header does
+    assert window.list_model.columns[header.logicalIndex(2)] == first
+    order = str(window.settings.value("columns")).split(",")
+    assert order.index(first) == 2  # remembered
+
+
+def test_a_group_row_starts_at_the_left_edge_whatever_the_order_of_the_columns(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtGui import QColor
+
+    from chrono_mail.ui.colours import group_header_colour
+
+    shown(world, qtbot)
+    window, view = world.window, world.window.list_view
+    window.act_show_groups.setChecked(True)  # View > Show groups
+    wait(qtbot, lambda: bool(window.list_model.header_rows()) and world.backend._pending == {})  # noqa: SLF001
+    header_rows = window.list_model.header_rows()
+    view.header().moveSection(0, 1)  # the first column (Unread) to second place
+    qtbot.wait(50)
+    row_rect = view.visualRect(window.list_model.index(header_rows[0], 0))
+    image = view.viewport().grab().toImage()
+    ratio = image.devicePixelRatio()
+    left = image.pixelColor(int(3 * ratio), int(row_rect.center().y() * ratio))
+    assert left == QColor(group_header_colour(view.palette()))  # the bar, not an empty cell
+

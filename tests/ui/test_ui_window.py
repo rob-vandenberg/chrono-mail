@@ -17,9 +17,11 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.5.125"
+__version__ = "test_ui_window.py 0.5.139"
 
 # --- Version history ----------------------------------------------------
+# v0.5.139: a reload keeps the old rows until the new ones arrive: the unread test waits for the new ones
+# v0.5.135: the Filter menu has Tagged with
 # v0.5.125: Mark all as read: the test waits until the list is shown again
 # v0.2.104: The drag cursors are the desktop's (tested in test_ui_dragdrop.py)
 # v0.2.103: The indent of a selected folder keeps the list colour; the drop bar; the drag cursors
@@ -294,9 +296,9 @@ def test_filter_button_menu(world: World, qtbot: QtBot) -> None:
     button = world.window.filter_button
     assert button.text() == "Filter" and button.menu() is world.window.filter_menu
     entries = world.window.filter_menu.actions()
-    assert [entry.text() for entry in entries] == ["Filter by", "Flagged", "Unread", "With attachments", "", "Clear filter"]
+    assert [entry.text() for entry in entries] == ["Filter by", "Flagged", "Unread", "With attachments", "Tagged with", "", "Clear filter"]
     assert not entries[0].isEnabled() and all(entry.isCheckable() for entry in entries[1:4])
-    assert entries[4].isSeparator() and entries[5] is world.window.filter_clear
+    assert entries[4].menu() is world.window.filter_tag_menu and entries[5].isSeparator() and entries[6] is world.window.filter_clear
     assert not button.isChecked() and not world.window.filter_clear.isEnabled()
     world.window.filter_unread.setChecked(True)
     assert button.isChecked() and world.window.filter_clear.isEnabled()
@@ -981,7 +983,7 @@ def test_next_and_previous_unread_inside_the_list(world: World, qtbot: QtBot) ->
     first, second, third = (row_of(world.window, position).message_id for position in range(3))
     world.call("message.flag", account=world.account_id, folder="Inbox", message=second, seen=True)
     world.window.list_model.reload()
-    wait(qtbot, lambda: world.window.list_model.rowCount() == 3 and row_of(world.window, 1) is not None)
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3 and row_of(world.window, 1) is not None and "seen" in row_of(world.window, 1).flags)  # the reloaded rows (the old ones stay until then)
     select(world.window, 0)
     assert world.window.go_to_unread(1) and world.window.list_view.currentIndex().row() == 2  # the read one in the middle is skipped
     assert world.window.go_to_unread(-1) and world.window.list_view.currentIndex().row() == 0

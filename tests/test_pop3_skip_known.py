@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -5,7 +6,7 @@ from chrono_mail.config import Pop3DeletePolicy, Pop3Options
 from chrono_mail.core import LOCAL_ACCOUNT_ID, ConnectionSecurity, MessageFlag, ServerSettings
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.protocols.pop3 import Pop3Client
-from chrono_mail.sync import fetch_pop3
+from chrono_mail.sync import FetchReport, fetch_pop3
 from tests.enginefactory import make_engine
 from tests.fakepop3 import FakePop3Server
 from tests.fakesmtp import FakeSmtpServer
@@ -14,9 +15,10 @@ from tests.test_engine_commands import add_account, call
 from tests.test_sync_pop3 import CLIENT_LIMITS, INBOX, LIMIT, World, make_world, messages
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pop3_skip_known.py 0.5.132"
+__version__ = "test_pop3_skip_known.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: the header (TOP) is enough for a message that is here; a server without TOP still works
 # v0.5.132: Initial tests: a message that is already here is recorded as downloaded, not stored twice
 
 
@@ -32,7 +34,7 @@ def test_a_message_that_is_already_here_is_recorded_not_stored_again(tmp_path: P
         settings_options = Pop3Options()
 
         def already_here(raw: bytes) -> str | None:
-            return present if raw == messages()["uid1"] else None
+            return present if _header_of(raw) == _header_of(messages()["uid1"]) else None
 
         server = ServerSettings("127.0.0.1", world.server.port, ConnectionSecurity.NONE, "user")
         with Pop3Client(server, "secret", CLIENT_LIMITS) as client:
@@ -48,9 +50,9 @@ def test_the_delete_policy_checks_the_copy_that_was_already_here(tmp_path: Path)
     world, present = _world_with_first_message_stored(tmp_path)
     try:
         def already_here(raw: bytes) -> str | None:
-            if raw == messages()["uid1"]:
+            if _header_of(raw) == _header_of(messages()["uid1"]):
                 return present
-            if raw == messages()["uid2"]:
+            if _header_of(raw) == _header_of(messages()["uid2"]):
                 return "0" * 32  # a copy that is not in the store: its server copy must stay
             return None
 
@@ -93,3 +95,36 @@ def test_without_the_setting_the_same_message_is_downloaded_again(tmp_path: Path
             mailbox.ensure_folder(("Imported",))
             mailbox.deliver(("Imported",), old, frozenset({MessageFlag.SEEN}))
         assert call(engine, "mail.fetch", account=account).downloaded == 1  # the normal behaviour: a POP3 download knows nothing of other copies
+
+
+def _fetch_with(world: World, already_here: Callable[[bytes], str | None]) -> FetchReport:
+    server = ServerSettings("127.0.0.1", world.server.port, ConnectionSecurity.NONE, "user")
+    with Pop3Client(server, "secret", CLIENT_LIMITS) as client:
+        return fetch_pop3(client, world.store, world.index, world.state, INBOX, Pop3Options(), LIMIT, lambda: world.clock[0], already_here=already_here)
+
+
+def _header_of(raw: bytes) -> bytes:
+    return raw.split(b"\r\n\r\n", 1)[0]
+
+
+def test_a_message_that_is_here_is_recognised_by_its_header_without_downloading_it(tmp_path: Path) -> None:
+    world, present = _world_with_first_message_stored(tmp_path)
+    try:
+        report = _fetch_with(world, lambda raw: present if _header_of(raw) == _header_of(messages()["uid1"]) else None)
+        assert (report.downloaded, report.already_here) == (2, 1)
+        assert "RETR 1" not in world.server.commands and "TOP 1 0" in world.server.commands
+        assert world.state.records["uid1"].store_id == present
+    finally:
+        world.server.__exit__(None, None, None)
+
+
+def test_a_server_without_top_still_finds_the_message_that_is_here(tmp_path: Path) -> None:
+    world, present = _world_with_first_message_stored(tmp_path)
+    world.server.refuse_top = True
+    try:
+        report = _fetch_with(world, lambda raw: present if raw == messages()["uid1"] else None)
+        assert (report.downloaded, report.already_here) == (2, 1)
+        assert len(world.store.list_messages(INBOX)) == 3
+    finally:
+        world.server.__exit__(None, None, None)
+

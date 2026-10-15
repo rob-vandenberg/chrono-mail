@@ -15,9 +15,10 @@ from tests.test_engine_imap import World, world  # noqa: F401 - world is a fixtu
 __all__ = ["setup", "world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_rules.py 0.0.33"
+__version__ = "test_engine_rules.py 0.5.136"
 
 # --- Version history ----------------------------------------------------
+# v0.5.136: tags in rules: the condition tag is / is not, the actions add_tag and remove_tag
 # v0.0.33: Initial rules tests
 
 
@@ -238,3 +239,39 @@ def test_messages_in_other_folders_are_not_touched_by_arrival_rules(world: World
 
 def test_the_flag_names_the_rules_use_are_the_real_ones() -> None:
     assert MessageFlag.SEEN in MessageFlag and Action("mark_read").type == "mark_read"
+
+
+# --- tags in rules ------------------------------------------------------------------------------------------------------------------------------
+
+
+def test_tag_conditions_and_actions_have_a_written_form() -> None:
+    assert format_condition(parse_condition("tag:is:Work")) == "tag:is:Work" and format_condition(parse_condition("tag:is_not:Home")) == "tag:is_not:Home"
+    assert format_action(parse_action("add_tag:Work")) == "add_tag:Work" and format_action(parse_action("remove_tag:Home")) == "remove_tag:Home"
+    for bad in ("tag:contains:x", "tag:is:"):
+        with pytest.raises((UsageError, ConfigurationError)):
+            parse_condition(bad)
+    for bad in ("add_tag", "remove_tag:", "add_tag:" + "x" * 101):
+        with pytest.raises(ConfigurationError):
+            parse_action(bad)
+
+
+def test_a_tag_condition_looks_at_the_tags_of_the_message() -> None:
+    raw = raw_message(subject="Hi")
+    assert condition_holds(parse_condition("tag:is:work"), Subject.of(raw, ("Work",)))
+    assert not condition_holds(parse_condition("tag:is_not:WORK"), Subject.of(raw, ("Work",)))
+    assert condition_holds(parse_condition("tag:is_not:Work"), Subject.of(raw))
+
+
+def test_rules_add_and_remove_tags_and_a_later_rule_sees_them(setup: Setup) -> None:
+    put(setup, "Invoice 7", "Billing <billing@example.org>")
+    put(setup, "Weekly news", "News <news@example.org>")
+    add_rule(setup, "Invoices", ["subject:contains:invoice"], ["add_tag:Money", "add_tag:Work"])
+    add_rule(setup, "Work money", ["tag:is:money"], ["remove_tag:Work", "flag"])
+    add_rule(setup, "Untagged", ["tag:is_not:Money"], ["add_tag:Other"])
+    result = call(setup.engine, "rule.run", account=setup.account_id, folder="Inbox")
+    assert result.failed == ()
+    inbox = rows(setup, "Inbox")
+    assert inbox["Invoice 7"].tags == ("Money",) and inbox["Invoice 7"].flags == ("flagged",)
+    assert inbox["Weekly news"].tags == ("Other",)
+    assert {item.name: item.colour for item in call(setup.engine, "tag.list")}["Money"] == "#808080"  # a tag a rule makes gets a colour
+

@@ -25,9 +25,10 @@ from chrono_mail.engine.commands_emclient import ImportResult, ScanResult
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 0.5.132"
+__version__ = "importdialog.py 0.5.137"
 
 # --- Version history ----------------------------------------------------
+# v0.5.137: Tags: a type of its own; the summaries count the categories and the tagged messages
 # v0.5.132: Initial version: Menu > File > Import…, the program (eM Client) chosen in the window; the summary scrolls
 
 MENU_TEXT: str = "Import…"  # the program to import from is chosen in the window (more programs later)
@@ -64,6 +65,8 @@ def scan_summary(scan: ScanResult) -> str:
         lines.append(f"Read, flagged and replied marks for {scan.marks:,} messages.")
     if scan.contacts:
         lines.append(f"Contacts: {scan.contacts}.")
+    if scan.tags or scan.tagged:
+        lines.append(f"Tags: {scan.tags} categories; {scan.tagged} tagged messages.")
     return "\n".join(lines) if lines else "Nothing to import was found."
 
 
@@ -83,6 +86,8 @@ def merge(total: ImportResult, batch: ImportResult) -> ImportResult:
         messages_duplicate=total.messages_duplicate + batch.messages_duplicate,
         messages_failed=total.messages_failed + batch.messages_failed,
         messages_left=batch.messages_left,
+        tags_added=total.tags_added + batch.tags_added,
+        messages_tagged=total.messages_tagged + batch.messages_tagged,
         notes=total.notes + batch.notes,
     )
 
@@ -97,6 +102,8 @@ def import_summary(result: ImportResult, stopped: bool) -> str:
         lines.append(f"Rules imported: {result.rules_added}" + (f"; not imported: {_listed(result.rules_not_imported)}" if result.rules_not_imported else "") + ".")
     if result.contacts_added or result.contacts_existing:
         lines.append(f"Contacts imported: {result.contacts_added}; already here: {result.contacts_existing}.")
+    if result.tags_added or result.messages_tagged:
+        lines.append(f"Tags made: {result.tags_added}; messages that got their tags: {result.messages_tagged}.")
     if result.messages_imported or result.messages_duplicate or result.messages_failed:
         lines.append(f"Messages imported: {result.messages_imported:,}; already here: {result.messages_duplicate:,}; failed: {len(result.messages_failed)}.")
     if result.messages_failed:
@@ -150,7 +157,8 @@ class ImportDialog(QDialog):
         self.rules = QCheckBox("Rules", self)
         self.mail = QCheckBox("Mail", self)
         self.contacts = QCheckBox("Contacts", self)
-        for box in (self.accounts, self.rules, self.mail, self.contacts):
+        self.tags = QCheckBox("Tags", self)
+        for box in (self.accounts, self.rules, self.mail, self.contacts, self.tags):
             box.setChecked(True)
             right.addWidget(box)
         right.addSpacing(8)
@@ -252,7 +260,7 @@ class ImportDialog(QDialog):
         self._running = True
         self._stop = False
         self._result = ImportResult()
-        for widget in (self.import_button, self.close_button, self.accounts, self.rules, self.mail, self.contacts, self.settings_file, self.mail_folder, self.backup_file):
+        for widget in (self.import_button, self.close_button, self.accounts, self.rules, self.mail, self.contacts, self.tags, self.settings_file, self.mail_folder, self.backup_file):
             widget.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.progress.setVisible(True)
@@ -264,7 +272,7 @@ class ImportDialog(QDialog):
     def _next(self) -> None:
         values: dict[str, object] = {
             **self._sources(), "accounts": self.accounts.isChecked(), "rules": self.rules.isChecked(), "mail": self.mail.isChecked(),
-            "contacts": self.contacts.isChecked(), "batch": BATCH,
+            "contacts": self.contacts.isChecked(), "tags": self.tags.isChecked(), "batch": BATCH,
         }
         self._backend.call("import.emclient", values, self._batch_done, self._failed, owner=self)
 
@@ -289,7 +297,7 @@ class ImportDialog(QDialog):
 
     def _finish(self) -> None:
         self._running = False
-        for widget in (self.import_button, self.close_button, self.accounts, self.rules, self.mail, self.contacts, self.settings_file, self.mail_folder, self.backup_file):
+        for widget in (self.import_button, self.close_button, self.accounts, self.rules, self.mail, self.contacts, self.tags, self.settings_file, self.mail_folder, self.backup_file):
             widget.setEnabled(True)
         self.stop_button.setEnabled(False)
 

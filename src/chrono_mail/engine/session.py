@@ -23,9 +23,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.4.120"
+__version__ = "session.py 0.5.138"
 
 # --- Version history ----------------------------------------------------
+# v0.5.138: ImapLink.keywords: per server folder, whether the server keeps keywords (tags)
 # v0.4.120: One open IMAP connection per account for the actions done on the server first (ImapLink), closed when the program ends; notice
 # v0.4.118: An index is rebuilt by one command at a time (index_lock); the others wait and open the new one
 # v0.2.101: A store with two folders of the same path is repaired when it is opened
@@ -66,6 +67,7 @@ class ImapLink:
     folders: dict[tuple[str, ...], str] | None = None  # local folder -> server folder, as the sync plans them
     delimiter: str = "/"  # the server's separator in folder names
     validity: dict[str, int] = field(default_factory=dict)  # server folder -> UIDVALIDITY seen when it was selected
+    keywords: dict[str, bool] = field(default_factory=dict)  # server folder -> the server keeps keywords there (PERMANENTFLAGS with \\*)
 
     def close(self) -> None:
         client, self.client = self.client, None

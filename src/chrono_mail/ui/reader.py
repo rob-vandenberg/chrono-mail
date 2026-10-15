@@ -28,9 +28,10 @@ from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_
 from chrono_mail.ui.scale import px
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 0.3.106"
+__version__ = "reader.py 0.5.135"
 
 # --- Version history ----------------------------------------------------
+# v0.5.135: The tags of the message below the people (set_tags)
 # v0.3.106: The sender's circle follows the size factor of the interface
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.42: settings: remote content per sender, plain text first, zoom
@@ -183,6 +184,10 @@ class ReaderWidget(QWidget):
         row.addWidget(self._date, 0)
         header_layout.addWidget(self._subject)
         header_layout.addLayout(row)
+        self._tags = QLabel(self._header)  # the message's tags as small coloured labels; hidden without tags
+        self._tags.setTextFormat(Qt.TextFormat.RichText)
+        self._tags.hide()
+        header_layout.addWidget(self._tags)
         layout.addWidget(self._header)
 
         self._attachments = QWidget(self)
@@ -286,6 +291,11 @@ class ReaderWidget(QWidget):
             self._stack.setCurrentWidget(self._text)
             self._text.setHtml(f'<pre style="white-space: pre-wrap; font-family: inherit; margin: 0">{linkify(str(text_body or ""))}</pre>')
             self._text.moveCursor(self._text.textCursor().MoveOperation.Start)
+
+    def set_tags(self, labels: str) -> None:
+        """The tags of the shown message (rich text from TagColourBook.html); empty hides the line."""
+        self._tags.setText(labels)
+        self._tags.setVisible(bool(labels))
 
     def _fill_attachments(self, attachments: tuple[object, ...]) -> None:
         while self._attachments_layout.count() > 1:

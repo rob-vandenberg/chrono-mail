@@ -15,9 +15,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_ROLE_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.2.96"
+__version__ = "test_ui_models.py 0.5.139"
 
 # --- Version history ----------------------------------------------------
+# v0.5.139: a reload (after a delete, in a folder and in Unread) never leaves the list empty for a moment
 # v0.2.96: A group header in the card layout is 36 px high
 # v0.2.94: The group layer: headers, folding, positions; the older tests run without headers
 # v0.0.88: A selected card is grey while the list has no focus
@@ -467,4 +468,44 @@ def test_a_header_in_the_card_layout_is_lower_than_a_card(big: World, qtbot: QtB
     wait(qtbot, lambda: view.visualRect(model.index(1, 0)).height() > 0)
     assert CARD_HEADER_HEIGHT == 36 and ROW_HEIGHT == 74
     assert view.visualRect(model.index(0, 0)).height() == 36 and view.visualRect(model.index(1, 0)).height() == 74
+
+
+def _counted_resets(window: object) -> list[int]:
+    """The number of rows each time the list was reset (an empty list on screen shows as a 0)."""
+    model = getattr(window, "list_model")
+    seen: list[int] = []
+    model.modelReset.connect(lambda: seen.append(model.rowCount()))
+    return seen
+
+
+def _delete_first(world: World, qtbot: QtBot, rows_before: int) -> list[int]:
+    window = world.window
+    seen = _counted_resets(window)
+    window.list_view.setCurrentIndex(window.list_model.index(next(row for row in range(window.list_model.rowCount()) if window.list_model.row_at(row) is not None)))
+    window.delete_selected()
+    wait(qtbot, lambda: window.list_model.rowCount() < rows_before and world.backend._pending == {})  # noqa: SLF001
+    return seen
+
+
+def test_a_delete_in_a_folder_never_leaves_the_list_empty(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    wait(qtbot, lambda: window.list_model.rowCount() >= 3 and world.backend._pending == {})  # noqa: SLF001
+    before = window.list_model.rowCount()
+    seen = _delete_first(world, qtbot, before)
+    assert seen and 0 not in seen  # the new rows replaced the old ones at once
+    assert window.list_model.rowCount() == before - 1
+
+
+def test_a_delete_in_unread_never_leaves_the_list_empty(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    wait(qtbot, lambda: window.list_model.rowCount() >= 3 and world.backend._pending == {})  # noqa: SLF001
+    unread = window._find_tree_item(("", "favorite", "unread"))  # noqa: SLF001
+    assert unread is not None
+    window.tree.setCurrentIndex(unread)
+    wait(qtbot, lambda: window._combined == "unread" and window.list_model.rowCount() >= 3 and world.backend._pending == {})  # noqa: SLF001
+    before = window.list_model.rowCount()
+    seen = _delete_first(world, qtbot, before)
+    assert seen and 0 not in seen
 

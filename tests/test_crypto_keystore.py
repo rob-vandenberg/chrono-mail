@@ -8,9 +8,10 @@ from chrono_mail.crypto import InMemoryKeyStore, KeyringKeyStore, KeyStore, gene
 from tests.doubles import BrokenBackend, MemoryBackend
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_crypto_keystore.py 0.0.6"
+__version__ = "test_crypto_keystore.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: an error of the desktop's password service is a CryptoError with its reason
 # v0.0.6: Initial key store tests
 
 
@@ -87,3 +88,15 @@ def test_unavailable_credential_store_raises_crypto_error_without_key_bytes() ->
         with pytest.raises(CryptoError) as raised:
             action()
         assert key.reveal().hex() not in str(raised.value)
+
+
+def test_an_error_of_the_desktop_password_service_is_a_crypto_error_with_its_reason() -> None:
+    from tests.doubles import SessionLostBackend
+
+    store = KeyringKeyStore("chrono-mail-test", SessionLostBackend())
+    key = generate_data_key()
+    for action in (lambda: store.save(key), lambda: store.load(key.key_id), lambda: store.delete(key.key_id)):
+        with pytest.raises(CryptoError) as raised:
+            action()
+        assert "Can't find session" in str(raised.value) and key.reveal().hex() not in str(raised.value)
+

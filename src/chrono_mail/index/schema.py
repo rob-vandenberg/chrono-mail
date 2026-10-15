@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 0.4.117"
+__version__ = "schema.py 0.5.134"
 
 # --- Version history ----------------------------------------------------
+# v0.5.134: Schema 7: the tags of each message (a column to show them, a table to find them); schema 6 is upgraded in place
 # v0.4.117: Schema 6: the partial index for unread counts is gone (the index of the Unread sort serves them)
 # v0.3.109: Schema 5: indexes for sorting by unread, flagged, replied, attachment and preview
 # v0.0.23: Schema 4: the addresses seen in messages (for completing addresses)
@@ -9,9 +10,15 @@ __version__ = "schema.py 0.4.117"
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 6
+SCHEMA_VERSION: int = 7
 MINIMUM_SQLITE_VERSION: tuple[int, int, int] = (3, 43, 0)  # contentless FTS5 tables that allow deletes
 FOLDER_SEPARATOR: str = "\x1f"
+
+TAG_STATEMENTS: tuple[str, ...] = (
+    "CREATE TABLE message_tags (store_id TEXT NOT NULL, tag TEXT NOT NULL)",  # tag: the name folded (casefold), to find messages by tag
+    "CREATE INDEX message_tags_by_tag ON message_tags (tag, store_id)",
+    "CREATE INDEX message_tags_by_message ON message_tags (store_id)",
+)
 
 STATEMENTS: tuple[str, ...] = (
     "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -29,7 +36,8 @@ STATEMENTS: tuple[str, ...] = (
         message_id TEXT,
         thread_key TEXT NOT NULL,
         has_attachments INTEGER NOT NULL,
-        preview TEXT NOT NULL DEFAULT ''
+        preview TEXT NOT NULL DEFAULT '',
+        tags TEXT NOT NULL DEFAULT ''
     )""",
     "CREATE INDEX messages_by_date ON messages (folder, date DESC, id DESC)",
     "CREATE INDEX messages_by_subject ON messages (folder, subject COLLATE NOCASE, id)",
@@ -43,6 +51,7 @@ STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX messages_by_preview ON messages (folder, preview COLLATE NOCASE, date, id)",
     "CREATE INDEX messages_by_thread ON messages (thread_key)",
     "CREATE INDEX messages_by_message_id ON messages (message_id)",
+    *TAG_STATEMENTS,
     # Every address seen in a From, To or Cc, with how often (counts only grow; a rebuild recounts exactly).
     """CREATE TABLE addresses (
         address TEXT PRIMARY KEY COLLATE NOCASE,
@@ -57,3 +66,7 @@ STATEMENTS: tuple[str, ...] = (
         tokenize = 'unicode61 remove_diacritics 2'
     )""",
 )
+
+# Schema 6 to 7 without a rebuild: the tags were new, so every message starts without any.
+UPGRADE_6_TO_7: tuple[str, ...] = ("ALTER TABLE messages ADD COLUMN tags TEXT NOT NULL DEFAULT ''", *TAG_STATEMENTS)
+

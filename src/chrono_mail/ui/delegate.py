@@ -11,11 +11,14 @@ from chrono_mail.ui.formatting import avatar_colour, coming_date, display_name, 
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.models import CONTACT_ROLE, GROUP_HEADER_ROLE, ROW_ROLE
 from chrono_mail.ui.scale import lpx
+from chrono_mail.ui.tagchips import TagColourBook, paint_chips
+from chrono_mail.ui.tagging import paint_tag_marks
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.3.108"
+__version__ = "delegate.py 0.5.135"
 
 # --- Version history ----------------------------------------------------
+# v0.5.135: Tags: the Tag column (small coloured tags, the names as pills on the selected row) and the tags of a card at the right of its last line
 # v0.3.108: Rows, cards, group headers, the circle, the dot and the icons follow the size factor of the message list (lpx)
 # v0.2.100: A card of a snoozed message shows when it comes back ("Until Mon 09:00") in place of the date
 # v0.2.96: In the card layout a group header is 36 px high
@@ -90,6 +93,7 @@ class MessageDelegate(QStyledItemDelegate):
     def __init__(self, parent: object | None = None) -> None:
         super().__init__(None)
         self.show_recipients: bool = False  # in Sent, Drafts and Outbox the people shown are the recipients
+        self.tag_book: TagColourBook = TagColourBook()
 
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
@@ -176,10 +180,12 @@ class MessageDelegate(QStyledItemDelegate):
             painter.setFont(base)
             painter.setPen(text)
             painter.drawText(QRect(right - marks_width, top + line, marks_width, line), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, marks)
-        # third line: preview
+        # third line: preview, with the tags at the right
+        tags: tuple[str, ...] = getattr(row, "tags", ())
+        chips = paint_chips(painter, QRect(left + (right - left) // 2, top + 2 * line, (right - left) // 2, line), tags, self.tag_book, base) if tags else 0
         painter.setFont(small)
         painter.setPen(quiet)
-        preview_rect = QRect(left, top + 2 * line, right - left, line)
+        preview_rect = QRect(left, top + 2 * line, right - left - chips, line)
         preview = str(getattr(row, "preview")) or " "
         painter.drawText(preview_rect, Qt.AlignmentFlag.AlignVCenter, QFontMetrics(small).elidedText(preview, Qt.TextElideMode.ElideRight, preview_rect.width()))
         if unread:  # a blue dot in the left margin (white on the selected row, which is blue itself)
@@ -205,6 +211,7 @@ class ColumnDelegate(QStyledItemDelegate):
         super().__init__(None)
         self.row_height: int = COLUMN_ROW_HEIGHTS["normal"]
         self.column_of: Callable[[int], str] = lambda column: ""  # the column id at a model column
+        self.tag_book: TagColourBook = TagColourBook()
 
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
@@ -222,6 +229,10 @@ class ColumnDelegate(QStyledItemDelegate):
             self._icon(painter, option, theme_icon("user"))
         elif column_id == "trash" and hovered:
             self._icon(painter, option, theme_icon("edit-delete"))
+        elif column_id == "tag":
+            row = index.data(ROW_ROLE)
+            tags: tuple[str, ...] = getattr(row, "tags", ()) if row is not None else ()
+            paint_tag_marks(painter, _rect(option), tags, self.tag_book, _is_selected(option), _typed(option, "font", QFont))
 
     @staticmethod
     def _icon(painter: QPainter, option: QStyleOptionViewItem, icon: QIcon) -> None:

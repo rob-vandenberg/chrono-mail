@@ -23,9 +23,10 @@ from chrono_mail.config.rules import HEADER_NAME
 from chrono_mail.core import ChronoMailError, MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "emclient_source.py 0.5.132"
+__version__ = "emclient_source.py 0.5.137"
 
 # --- Version history ----------------------------------------------------
+# v0.5.137: Categories (as tags, with colour and what they are for), the categories of the messages in the backup, and the category parts of rules
 # v0.5.132: Initial version: settings file, mail export and backup of eM Client; every rule as it is (also the blocked-senders rule and rules written as a script)
 
 
@@ -180,8 +181,7 @@ _SIMPLE_ACTIONS: dict[str, str] = {"markAsRead": "mark_read", "markAsFlagged": "
 _IGNORED: frozenset[str] = frozenset({"active", "dataEntered", "invocation", "name", "usingAccount", "expandFolder"})
 _ACTION_NAMES: dict[str, str] = {
     "forwardToPeople": "forward", "forwardToPeopleAsAttachment": "forward as attachment", "moveCopyToFolder": "copy to a folder",
-    "archive": "archive", "addNote": "add a note", "addCategories": "add categories", "removeCategories": "remove categories",
-    "skipNotification": "no notification",
+    "archive": "archive", "addNote": "add a note", "skipNotification": "no notification",
 }
 
 
@@ -232,6 +232,16 @@ def _composed(name: str, enabled: bool, account_uid: str | None, element: Elemen
             groups.append(tuple(Condition(_CONDITION_FIELDS[tag], "contains", word[:500]) for word in words))
         elif tag == "hasAttachment":
             groups.append((Condition("attachment", "is", "yes"),))
+        elif tag == "hasCategory":
+            names = _words(element, tag)
+            if not names:
+                return refused("a category condition without a category")
+            groups.append(tuple(Condition("tag", "is", name[:100]) for name in names))
+        elif tag in ("addCategories", "removeCategories"):
+            names = _words(element, tag)
+            if not names:
+                return refused("a category action without a category")
+            actions.extend(Action("add_tag" if tag == "addCategories" else "remove_tag", name[:100]) for name in names)
         elif tag == "moveToFolder":
             move = _move(_text(element, "moveToFolderData"))
             if move is None:
@@ -443,10 +453,45 @@ def _scripted(name: str, enabled: bool, account_uid: str | None, script: str) ->
 
 
 @dataclass(frozen=True, slots=True)
+class SourceCategory:
+    """A category of eM Client: a tag in Chrono Mail."""
+
+    name: str
+    colour: str  # #rrggbb
+    kinds: tuple[str, ...]  # mail, events, contacts, tasks
+
+
+_KIND_OF_TYPE: dict[str, str] = {"mail": "mail", "event": "events", "task": "tasks", "contact": "contacts"}
+ALL_KINDS: tuple[str, ...] = ("mail", "events", "contacts", "tasks")
+MAXIMUM_CATEGORIES: int = 2000
+
+
+def _kinds(text: str) -> tuple[str, ...]:
+    """'Contact, Event, Task, Note' -> the kinds Chrono Mail has; All, None, or only Notes (Chrono Mail has no notes) -> all."""
+    found = {_KIND_OF_TYPE[part.strip().lower()] for part in text.split(",") if part.strip().lower() in _KIND_OF_TYPE}
+    return tuple(kind for kind in ALL_KINDS if kind in found) or ALL_KINDS
+
+
+def _categories(root: ElementTree.Element) -> tuple[SourceCategory, ...]:
+    element = _child(root, "categories")
+    found: list[SourceCategory] = []
+    for item in [] if element is None else [child for child in element if _local(child.tag) == "category"][:MAXIMUM_CATEGORIES]:
+        name = " ".join(_text(item, "name").split())[:100]
+        colour = _text(item, "color").lower()
+        if not name:
+            continue
+        if re.fullmatch(r"#[0-9a-f]{6}", colour) is None:
+            colour = "#808080"
+        found.append(SourceCategory(name, colour, _kinds(_text(item, "parentTypes"))))
+    return tuple(found)
+
+
+@dataclass(frozen=True, slots=True)
 class SettingsExport:
     accounts: tuple[SourceAccount, ...]
     rules: tuple[SourceRule, ...]
     passwords_encrypted: bool
+    categories: tuple[SourceCategory, ...] = ()
 
 
 def read_settings(path: Path) -> SettingsExport:
@@ -468,7 +513,7 @@ def read_settings(path: Path) -> SettingsExport:
     rules_element = _child(root, "rules")
     uids = {account.uid for account in accounts}
     rules = () if rules_element is None else tuple(_rule(item, uids) for item in list(rules_element)[:MAXIMUM_RULES] if _local(item.tag) == "rule")
-    return SettingsExport(accounts, rules, crypted)
+    return SettingsExport(accounts, rules, crypted, _categories(root))
 
 
 # --- the mail export ------------------------------------------------------------------------------
@@ -537,11 +582,12 @@ class SourceContact:
 class BackupData:
     """What the backup adds to the mail export: the marks of each message and the contacts."""
 
-    marks: dict[tuple[str, str], list[frozenset[MessageFlag]]] = field(default_factory=dict)  # (folder key, id:… or date:…) -> marks
+    marks: dict[tuple[str, str], list[tuple[frozenset[MessageFlag], tuple[str, ...]]]] = field(default_factory=dict)  # (folder key, id:… or date:…) -> marks and tags
     contacts: tuple[SourceContact, ...] = ()
+    tagged: tuple[tuple[str | None, int | None, tuple[str, ...]], ...] = ()  # (Message-ID, date, tags) of every message with categories
 
-    def take_marks(self, folder: tuple[str, ...], message_id: str | None, moment: int | None) -> frozenset[MessageFlag] | None:
-        """The marks of this message in the backup (each found entry is used once), or None when it is not there."""
+    def take(self, folder: tuple[str, ...], message_id: str | None, moment: int | None) -> tuple[frozenset[MessageFlag], tuple[str, ...]] | None:
+        """The marks and tags of this message in the backup (each found entry is used once), or None when it is not there."""
         keys = ([f"id:{message_id}"] if message_id else []) + ([f"date:{moment}"] if moment is not None else [])
         for key in keys:
             waiting = self.marks.get((folder_key(folder), key))
@@ -549,15 +595,34 @@ class BackupData:
                 return waiting.pop(0)
         return None
 
+    def take_marks(self, folder: tuple[str, ...], message_id: str | None, moment: int | None) -> frozenset[MessageFlag] | None:
+        found = self.take(folder, message_id, moment)
+        return found[0] if found is not None else None
+
 
 def _seconds(ticks: object) -> int | None:
     return (ticks - _TICKS_AT_1970) // 10_000_000 if isinstance(ticks, int) and ticks > _TICKS_AT_1970 else None
 
 
-def _marks(connection: sqlite3.Connection, folders: dict[int, str]) -> dict[tuple[str, str], list[frozenset[MessageFlag]]]:
-    found: dict[tuple[str, str], list[frozenset[MessageFlag]]] = {}
-    rows = connection.execute("SELECT folder, messageId, date, flags, replyDate FROM MailItems ORDER BY id")
-    for folder, message_id, date, flags, replied in rows:
+def _message_tags(connection: sqlite3.Connection) -> dict[int, tuple[str, ...]]:
+    """message id in the backup -> the names of its categories (none when the backup has no such table)."""
+    found: dict[int, list[str]] = {}
+    try:
+        rows = connection.execute("SELECT id, categoryName FROM MailCategoryNames ORDER BY rowid").fetchall()
+    except sqlite3.Error:
+        return {}
+    for identifier, name in rows:
+        if isinstance(identifier, int) and isinstance(name, str) and " ".join(name.split()):
+            found.setdefault(identifier, []).append(" ".join(name.split())[:100])
+    return {identifier: tuple(dict.fromkeys(names)) for identifier, names in found.items()}
+
+
+def _marks(connection: sqlite3.Connection, folders: dict[int, str]) -> tuple[dict[tuple[str, str], list[tuple[frozenset[MessageFlag], tuple[str, ...]]]], tuple[tuple[str | None, int | None, tuple[str, ...]], ...]]:
+    found: dict[tuple[str, str], list[tuple[frozenset[MessageFlag], tuple[str, ...]]]] = {}
+    tags_of = _message_tags(connection)
+    tagged: list[tuple[str | None, int | None, tuple[str, ...]]] = []
+    rows = connection.execute("SELECT id, folder, messageId, date, flags, replyDate FROM MailItems ORDER BY id")
+    for row_id, folder, message_id, date, flags, replied in rows:
         path = folders.get(folder) if isinstance(folder, int) else None
         if path is None or not isinstance(flags, int):
             continue
@@ -569,9 +634,12 @@ def _marks(connection: sqlite3.Connection, folders: dict[int, str]) -> dict[tupl
         identifier = message_id.strip().strip("<>").lower() if isinstance(message_id, str) else ""
         moment = _seconds(date)
         key = f"id:{identifier}" if identifier else (f"date:{moment}" if moment is not None else None)  # without a Message-ID: by its date
+        tags = tags_of.get(row_id, ()) if isinstance(row_id, int) else ()
+        if tags:
+            tagged.append((identifier or None, moment, tags))
         if key is not None:
-            found.setdefault((path, key), []).append(frozenset(marks))
-    return found
+            found.setdefault((path, key), []).append((frozenset(marks), tags))
+    return found, tuple(tagged)
 
 
 def _texts(connection: sqlite3.Connection, sql: str) -> dict[int, list[str]]:
@@ -642,7 +710,7 @@ def read_backup(backup: Path, work: Path) -> BackupData:
                 connection.close()
             connection = _open_database(folder / "1.dat")
             try:
-                marks = _marks(connection, folders)
+                marks, tagged = _marks(connection, folders)
             finally:
                 connection.close()
             contacts: tuple[SourceContact, ...] = ()
@@ -654,4 +722,4 @@ def read_backup(backup: Path, work: Path) -> BackupData:
                     connection.close()
         except sqlite3.Error as error:
             raise ImportSourceError(f"The backup's database cannot be read: {error}") from None
-    return BackupData(marks, contacts)
+    return BackupData(marks, contacts, tagged)

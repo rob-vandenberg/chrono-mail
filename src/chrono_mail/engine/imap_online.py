@@ -5,13 +5,14 @@ from dataclasses import dataclass
 from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, AuthenticationError, ConfigurationError, FolderRole, MessageFlag, ProtocolError
 from chrono_mail.engine.session import OUTBOX, Engine, ImapLink
-from chrono_mail.protocols.imap import ImapClient, ImapRefused
+from chrono_mail.protocols.imap import ImapClient, ImapRefused, keyword_to_tag, tag_to_keyword
 from chrono_mail.sync import ImapState, plan_folders
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_online.py 0.5.123"
+__version__ = "imap_online.py 0.5.138"
 
 # --- Version history ----------------------------------------------------
+# v0.5.138: set_tags: tags as keywords on the server first; a change of flags keeps the keywords in the sync state
 # v0.5.123: folders too: make, rename (the old names unsubscribed), delete, empty and mark all read on the server first; a message gone from the server is refused (D-118)
 # v0.4.120: Initial: the actions of an IMAP account are done on the server first, and here only when the server confirmed (D-117)
 
@@ -48,6 +49,9 @@ def is_imap(settings: AccountSettings) -> bool:
 def flag_names(flags: frozenset[MessageFlag]) -> frozenset[str]:
     """The flags as the sync state keeps them (lower-case IMAP names)."""
     return frozenset(flag.imap_name.lower() for flag in flags)
+
+
+SYSTEM_NAMES: frozenset[str] = flag_names(frozenset(MessageFlag))
 
 
 Commit = Callable[[], None]  # records what the server did in the sync state; called once the same was done here
@@ -158,8 +162,10 @@ class ServerSession:
 
     def _select(self, client: ImapClient, local: tuple[str, ...], server: str) -> bool:
         """Open a server folder; False when the server numbers its messages differently than the sync state knows."""
-        if client.selected != server or server not in self.link.validity:
-            self.link.validity[server] = client.select(server).uid_validity
+        if client.selected != server or server not in self.link.validity or server not in self.link.keywords:
+            info = client.select(server)
+            self.link.validity[server] = info.uid_validity
+            self.link.keywords[server] = info.keeps_keywords
         return self.state.validity.get(local) == self.link.validity[server]
 
     def _known(self, client: ImapClient, local: tuple[str, ...], server: str) -> None:
@@ -205,7 +211,38 @@ class ServerSession:
         except ProtocolError as error:
             self._lost(error)
             return _nothing
+        wanted |= frozenset(name for name in known if name not in SYSTEM_NAMES)  # the keywords (tags) stay as they are
         return lambda: self.state.set_flags(local, uid, wanted)
+
+    def set_tags(self, store_id: str, tags: tuple[str, ...]) -> Commit:
+        """Give a message exactly these tags on the server, as keywords. A folder where the server keeps no keywords: the
+        tags stay here only. Offline: here first, the next sync sends them."""
+        client = self._client()
+        if client is None:
+            return _nothing
+        try:
+            place = self._place(client, store_id)
+            if place is None:
+                return _nothing
+            local, uid, server = place
+            if not self.link.keywords.get(server, False):
+                return _nothing
+            fetched = client.uid_fetch(str(uid), "(UID FLAGS)")
+            on_server = fetched[0].flags if fetched else frozenset[str]()
+            have = {keyword.lower(): keyword for keyword in on_server if keyword_to_tag(keyword) is not None}
+            wanted = {tag_to_keyword(tag).lower(): tag_to_keyword(tag) for tag in tags}
+            added = [keyword for name, keyword in wanted.items() if name not in have]
+            removed = [keyword for name, keyword in have.items() if name not in wanted]  # as the server writes them
+            if added:
+                client.uid_store(str(uid), added, "add")
+            if removed:
+                client.uid_store(str(uid), removed, "remove")
+        except ProtocolError as error:
+            self._lost(error)
+            return _nothing
+        known = self.state.folder_entries(local)[uid].flags
+        recorded = frozenset(name for name in known if name in SYSTEM_NAMES) | frozenset(wanted)
+        return lambda: self.state.set_flags(local, uid, recorded)
 
     def move(self, store_id: str, target: tuple[str, ...], flags: frozenset[MessageFlag]) -> Commit:
         """Move a message to another folder on the server. Without MOVE: copy, then remove the original by its UID only."""

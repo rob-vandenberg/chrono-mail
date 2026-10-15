@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.3.109"
+__version__ = "model.py 0.5.134"
 
 # --- Version history ----------------------------------------------------
+# v0.5.134: Tags in index entries, indexed messages and search filters
 # v0.3.109: Sorting by unread, flagged, attachment, replied, folder, messages in conversation and preview
 # v0.2.94: Sorting by recipients (to); group headers of the message list (GroupCount, DATE_GROUPS, SIZE_GROUPS)
 # v0.0.23: people in index entries, KnownAddress
@@ -116,6 +117,7 @@ class IndexEntry:
     body: str
     preview: str = ""  # the first characters of the body, for the message list
     people: tuple[tuple[str, str, bool], ...] = ()  # (name, address, is a recipient) for the address list
+    tags: tuple[str, ...] = ()  # as written; the store's tags file is the truth
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +145,7 @@ class IndexedMessage:
     thread_key: str
     has_attachments: bool
     preview: str = ""
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,3 +158,4 @@ class SearchFilter:
     minimum_size: int | None = None
     maximum_size: int | None = None
     newest_per_thread: bool = False  # only the newest message of each conversation in its folder (ignored with a text query)
+    tag: str | None = None  # only messages with this tag (compared without regard to case)

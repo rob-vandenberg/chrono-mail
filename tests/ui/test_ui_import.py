@@ -16,9 +16,11 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 0.5.132"
+__version__ = "test_ui_import.py 0.5.137"
 
 # --- Version history ----------------------------------------------------
+# v0.5.137: the tags in the summaries
+# v0.5.133: After an import the list on screen shows the imported mail
 # v0.5.132: Initial tests: the Import window and its place in the menu (made-up exports)
 
 
@@ -94,6 +96,8 @@ def test_the_summaries_in_plain_words() -> None:
     assert "Passwords that cannot be read (you type them later): a@example.com." in text
     assert "Mail: 1,200 messages in 4 folders, 200 of them done by an earlier import (it continues)." in text
     assert scan_summary(ScanResult(0, 0, 0, (), 0, (), 0, 0, 0, 0, 0)) == "Nothing to import was found."
+    assert scan_summary(ScanResult(0, 0, 0, (), 0, (), 0, 0, 0, 0, 0, 34, 9)) == "Tags: 34 categories; 9 tagged messages."
+    assert "Tags made: 3; messages that got their tags: 9." in import_summary(ImportResult(tags_added=3, messages_tagged=9), stopped=False)
     total = merge(ImportResult(accounts_added=2, messages_imported=5, messages_left=9), ImportResult(messages_imported=4, messages_failed=("x: bad",), messages_left=0))
     assert (total.accounts_added, total.messages_imported, total.messages_failed, total.messages_left) == (2, 9, ("x: bad",), 0)
     assert "Failed: x: bad" in import_summary(total, stopped=False)
@@ -115,3 +119,22 @@ def test_a_long_summary_can_be_scrolled_to_its_end(qtbot: QtBot, setup: Setup) -
     scroll = dialog.summary_area
     qtbot.waitUntil(lambda: scroll.verticalScrollBar().maximum() > 0)
     assert dialog.summary.height() >= dialog.summary.sizeHint().height()  # the whole text is laid out, none of it cut off
+
+
+def test_after_an_import_the_list_on_screen_shows_the_imported_mail(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    window = world.window
+    world.call("local.enable")
+    window.reload_accounts()
+    inbox = (LOCAL_ACCOUNT_ID, "folder", "Inbox")
+    wait(qtbot, lambda: window._find_tree_item(inbox) is not None)
+    found = window._find_tree_item(inbox)
+    assert found is not None
+    window.tree.setCurrentIndex(found)
+    wait(qtbot, lambda: window._account_id == LOCAL_ACCOUNT_ID and world.backend._pending == {})
+    assert window.list_model.rowCount() == 0
+    (tmp_path / "exports").mkdir()
+    exports = make_exports(tmp_path / "exports")
+    world.call("import.emclient", settings_file=None, mail_folder=str(exports.mail), backup_file=None, accounts=False, rules=False, contacts=False)
+    window._after_import()  # what the Import window calls when it is done
+    wait(qtbot, lambda: window.list_model.rowCount() > 0)
+

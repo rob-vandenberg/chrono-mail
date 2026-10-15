@@ -14,9 +14,10 @@ from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SEC
 from tests.ui.world import World, dialogs, menu_named, settle, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 0.0.88"
+__version__ = "test_ui_theme.py 0.5.136"
 
 # --- Version history ----------------------------------------------------
+# v0.5.136: the Menu has Tags…, File has Import… (0.5.132), the Tag button follows Mark
 # v0.0.88: Selection grey without the focus, black 1 px lines between the panes and the column headers, Sorted by in bold
 # v0.0.85: Mark and Move to have icons, Archive is in the toolbar, the menu arrows sit beside the text; section icons are Breeze files
 # v0.0.82: The Menu button shows the three-bar character U+2630
@@ -44,9 +45,9 @@ def test_one_menu_button_holds_the_menus_and_the_heading_follows_the_section(wor
     window = world.window
     bar_actions = window.menuBar().actions()
     assert len(bar_actions) == 1 and "Menu" in bar_actions[0].text()
-    assert [action.text().replace("&", "") for action in menu_named(window).actions()] == ["Settings…", "Accounts…", "Rules…", "", "File", "Message", "Folder", "View", "Help", "", "Exit"]
+    assert [action.text().replace("&", "") for action in menu_named(window).actions()] == ["Settings…", "Accounts…", "Rules…", "Tags…", "", "File", "Message", "Folder", "View", "Help", "", "Exit"]
     assert window.act_settings.shortcut().toString() == "Ctrl+," and window.act_quit.text() == "Exit" and window.act_quit.shortcut().toString() == ""
-    assert [action.text() for action in menu_named(window, "File").actions()] == ["New", "Refresh", "", "Back up the encryption key…", "Restore the encryption key…"]
+    assert [action.text() for action in menu_named(window, "File").actions()] == ["New", "Refresh", "", "Import…", "", "Back up the encryption key…", "Restore the encryption key…"]
     assert window.side_heading.text() == "Mail"
     window.section_bar.buttons[CALENDAR].click()
     assert window.side_heading.text() == "Calendar"
@@ -165,7 +166,8 @@ def test_mark_and_move_to_have_icons_and_archive_is_in_the_toolbar(world: World)
         assert not button.icon().isNull() and button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
     actions = window.toolbar.actions()
     mark = next(action for action in actions if window.toolbar.widgetForAction(action) is window.mark_button)
-    assert actions[actions.index(mark) + 1] is window.act_archive
+    assert window.toolbar.widgetForAction(actions[actions.index(mark) + 1]) is window.tag_button  # Tag comes after Mark (0.5.135)
+    assert actions[actions.index(mark) + 2] is window.act_archive
     assert "QToolBar#mainToolbar QToolButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center;".replace("{{", "{") in theme.stylesheet()
 
 

@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Literal
 
-from chrono_mail.config import load_tags, save_tags
+from chrono_mail.config import TAG_KINDS, load_tags, save_tags
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind, ConfigurationError, StorageError
+from chrono_mail.engine.commands_tags import mail_tag_counts, rename_in_mail
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_collection, open_pim, pim_account_ids
 from chrono_mail.pim.edit import retag_item
@@ -10,9 +11,11 @@ from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 0.0.60"
+__version__ = "commands_pim.py 0.5.135"
 
 # --- Version history ----------------------------------------------------
+# v0.5.135: tag.list in the person's order, with each tag's shortcut and what it is for
+# v0.5.134: tag.list counts mail too; tag.rename renames in mail too
 # v0.0.60: Initial commands for collections and tags
 
 KindName = Literal["events", "tasks", "contacts"]
@@ -135,10 +138,13 @@ class TagInfo:
     contacts: int
     events: int
     tasks: int
+    mails: int = 0
+    shortcut: str = ""  # a key that gives or takes the tag (Ctrl+Alt+1 ...)
+    kinds: tuple[str, ...] = TAG_KINDS  # what the tag is offered for: mail, events, contacts, tasks
 
 
 def tag_list(engine: Engine, parameters: NoParameters) -> tuple[TagInfo, ...]:
-    """Every tag in use in contacts, events and tasks, with its colour and how many items carry it."""
+    """Every tag in use in mail, contacts, events and tasks (and every tag with a colour), with its colour and how many carry it."""
     try:
         colours = load_tags(engine.directories.tags_file)
     except ConfigurationError as error:
@@ -152,12 +158,21 @@ def tag_list(engine: Engine, parameters: NoParameters) -> tuple[TagInfo, ...]:
                     written.setdefault(folded, shown)
                     counts.setdefault(folded, {}).setdefault(kind, 0)
                     counts[folded][kind] += count
-    names = set(counts) | {entry[0] for entry in colours.colours}
-    return tuple(
-        TagInfo(colours.display_name(name) if colours.colour_of(name) else written.get(name, name), colours.colour_of(name), counts.get(name, {}).get(CollectionKind.CONTACTS, 0),
-                counts.get(name, {}).get(CollectionKind.EVENTS, 0), counts.get(name, {}).get(CollectionKind.TASKS, 0))
-        for name in sorted(names)
-    )
+    mail = mail_tag_counts(engine)
+    for folded, (shown, _) in mail.items():
+        written.setdefault(folded, shown)
+    made = [entry.key for entry in colours.entries]  # the tags the person made, in the person's order; then the others by name
+    names = made + sorted((set(counts) | set(mail)) - set(made))
+
+    def info(name: str) -> TagInfo:
+        entry = colours.entry(name)
+        return TagInfo(
+            entry.shown if entry is not None else written.get(name, name), colours.colour_of(name), counts.get(name, {}).get(CollectionKind.CONTACTS, 0),
+            counts.get(name, {}).get(CollectionKind.EVENTS, 0), counts.get(name, {}).get(CollectionKind.TASKS, 0), mail.get(name, ("", 0))[1],
+            entry.shortcut if entry is not None else "", entry.kinds if entry is not None else TAG_KINDS,
+        )
+
+    return tuple(info(name) for name in names)
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +201,7 @@ class RenameResult:
 
 
 def tag_rename(engine: Engine, parameters: RenameParameters) -> RenameResult:
-    """Give a tag another name in every contact, event and task that has it, and keep its colour."""
+    """Give a tag another name in all mail and in every contact, event and task that has it, and keep its colour."""
     old, new = " ".join(parameters.name.split()), " ".join(parameters.new_name.split())
     if not old or not new:
         raise UsageError("A tag needs a name")
@@ -201,6 +216,10 @@ def tag_rename(engine: Engine, parameters: RenameParameters) -> RenameResult:
                 if updated != text:
                     store.put(item.collection, updated, item.item_id)
                     changed += 1
+    try:
+        changed += rename_in_mail(engine, old, new)
+    except StorageError as error:
+        raise UsageError(str(error)) from None
     try:
         save_tags(engine.directories.tags_file, load_tags(engine.directories.tags_file).renamed(old, new))
     except ConfigurationError as error:

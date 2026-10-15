@@ -28,9 +28,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.132"
+__version__ = "commands_mail.py 0.5.134"
 
 # --- Version history ----------------------------------------------------
+# v0.5.134: Tags: each listed message has its tags; message.list and message.search find messages by tag
 # v0.5.132: The first check of an imported account records mail that is already here instead of storing it twice
 # v0.4.120: The IMAP sync holds the account's link (no action changes its messages meanwhile); the Sent copy goes to the server at once
 # v0.4.119: mail.fetch reports IMAP folders held back by a safety rule (blocked); mail.settle runs the sync with the person's answer for one
@@ -85,6 +86,7 @@ class MessageRow:
     thread_size: int = 1  # messages in the conversation, in all folders
     account: str = ""  # only filled in the combined views (message.combined): the account the row belongs to
     snoozed_until: datetime | None = None  # in the Snoozed folder: when the message comes back
+    tags: tuple[str, ...] = ()
 
 
 def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage], snoozed: dict[str, int] | None = None) -> tuple[MessageRow, ...]:
@@ -97,6 +99,7 @@ def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage], snoozed: dict[st
             message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, _flag_names(message.flags),
             message.has_attachments, message.preview, message.recipients, sizes.get(message.thread_key, 1),
             snoozed_until=datetime.fromtimestamp(times[message.store_id]).astimezone() if message.folder == SNOOZED and message.store_id in times else None,
+            tags=message.tags,
         )
         for message in found
     )
@@ -449,6 +452,7 @@ class ListParameters:
     offset: int = field(default=0, metadata=option("How many messages to skip"))
     limit: int = field(default=50, metadata=option("How many messages to show"))
     unread_only: bool = field(default=False, metadata=option("Only unread messages"))
+    tag: str | None = field(default=None, metadata=option("Only messages with this tag"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,6 +474,9 @@ def message_list(engine: Engine, parameters: ListParameters) -> ListResult:
         elif parameters.sort == CONTACT_SORT:
             everything = mailbox.index.page(folder, SortField.DATE, True, 0, total, parameters.unread_only)
             rows = _by_contact(engine, mailbox, everything, not parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
+        elif parameters.tag:
+            only = SearchFilter(unread=True if parameters.unread_only else None, tag=parameters.tag)
+            rows = mailbox.index.search("", folder, only, parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first)
         else:
             rows = mailbox.index.page(folder, _sort_field(parameters.sort), not parameters.oldest_first, parameters.offset, parameters.limit, parameters.unread_only)
         return ListResult("/".join(folder), total, mailbox.index.count(folder, unread_only=True), _rows(mailbox, rows, times))
@@ -573,7 +580,7 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
 @dataclass(frozen=True, slots=True)
 class SearchParameters:
     account: str = field(metadata=option("The account"))
-    query: str = field(default="", metadata=option("Words to find; from:, to:, subject: and body: limit a word to one field"))
+    query: str = field(default="", metadata=option("Words to find; from:, to:, subject: and body: limit a word to one field; tag:name finds a tag"))
     folder: str | None = field(default=None, metadata=option("Only in this folder"))
     unread: bool | None = field(default=None, metadata=option("Only unread (true) or only read (false) messages"))
     flagged: bool | None = field(default=None, metadata=option("Only flagged (true) or only unflagged (false) messages"))
@@ -582,6 +589,7 @@ class SearchParameters:
     date_to: str | None = field(default=None, metadata=option("Only messages up to and including this day (YYYY-MM-DD)"))
     minimum_size: int | None = field(default=None, metadata=option("Only messages of at least this many bytes"))
     maximum_size: int | None = field(default=None, metadata=option("Only messages of at most this many bytes"))
+    tag: str | None = field(default=None, metadata=option("Only messages with this tag (or type tag:name in the words)"))
     conversations: bool = field(default=False, metadata=option("Show only the newest message of each conversation (not together with words to find)"))
     sort: Literal["date", "subject", "sender", "to", "size", "snoozed", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview"] = field(
         default="date", metadata=option("The sort order (snoozed: when it comes back, only in the Snoozed folder; unread ... contact: yes first unless oldest_first)")
@@ -619,7 +627,7 @@ def _search_filter(parameters: SearchParameters) -> SearchFilter:
     return SearchFilter(
         unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments,
         date_from=_day(parameters.date_from, "date_from", end=False), date_to=_day(parameters.date_to, "date_to", end=True),
-        minimum_size=parameters.minimum_size, maximum_size=parameters.maximum_size, newest_per_thread=parameters.conversations,
+        minimum_size=parameters.minimum_size, maximum_size=parameters.maximum_size, newest_per_thread=parameters.conversations, tag=parameters.tag,
     )
 
 

@@ -11,9 +11,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "rules.py 0.0.49"
+__version__ = "rules.py 0.5.136"
 
 # --- Version history ----------------------------------------------------
+# v0.5.136: Tags: the condition tag is / is not, the actions add_tag and remove_tag
 # v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial mail rules
 
@@ -36,8 +37,10 @@ FIELD_OPERATORS: dict[str, tuple[str, ...]] = {
     "header": TEXT_OPERATORS,  # the name of the header goes with the condition
     "size": ("greater_than", "less_than"),  # the value is a number of kilobytes
     "attachment": ("is",),  # the value is yes or no
+    "tag": ("is", "is_not"),  # the message has (or has not) this tag
 }
-ACTIONS: tuple[str, ...] = ("move_to", "mark_read", "mark_unread", "flag", "unflag", "delete", "mark_junk", "stop")
+ACTIONS: tuple[str, ...] = ("move_to", "mark_read", "mark_unread", "flag", "unflag", "delete", "mark_junk", "add_tag", "remove_tag", "stop")
+TAG_ACTIONS: tuple[str, ...] = ("add_tag", "remove_tag")  # their value is the tag
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +81,9 @@ class Action:
             parts = self.value.split("/")
             if not self.value or len(self.value) > MAXIMUM_TEXT or any(not part.strip() for part in parts) or "\x00" in self.value:
                 raise ConfigurationError("The action move_to needs a folder such as Archive/2026")
+        elif self.type in TAG_ACTIONS:
+            if not self.value.strip() or len(self.value) > 100 or "\x00" in self.value:
+                raise ConfigurationError(f"The action {self.type} needs a tag of up to 100 characters")
         elif self.value:
             raise ConfigurationError(f"The action '{self.type}' takes no value")
 

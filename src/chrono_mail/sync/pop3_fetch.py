@@ -10,9 +10,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync.pop3_state import DownloadRecord, Pop3State
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3_fetch.py 0.5.132"
+__version__ = "pop3_fetch.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: already_here first looks at the header alone (TOP n 0); only a message that is not here is downloaded whole
 # v0.5.132: already_here: a message that is already in the store (imported) is recorded as downloaded, not stored twice
 # v0.0.33: the new messages are listed in the report
 # v0.0.10: Initial POP3 fetch
@@ -22,7 +23,7 @@ MISSING_RATIO_LIMIT: float = 0.5
 MISSING_RATIO_MINIMUM_COUNT: int = 10
 Checkpoint = Callable[[str], None]
 Progress = Callable[[int, int], None]
-AlreadyHere = Callable[[bytes], str | None]  # the store id of the same message when it is already in the store
+AlreadyHere = Callable[[bytes], str | None]  # given the header (or the whole message when the server has no TOP): the store id of the same message when it is already in the store
 
 
 def _no_checkpoint(name: str) -> None:
@@ -125,6 +126,17 @@ def _download_one(
     size: int | None,
     already_here: AlreadyHere | None = None,
 ) -> None:
+    header: bytes | None = None
+    if already_here is not None:
+        try:
+            header = client.top(number, 0)  # the header is enough to recognise a message that is here already
+        except Pop3Refused:
+            header = None  # a server without TOP: the whole message is compared below
+        present = already_here(header) if header is not None else None
+        if present is not None:
+            state.record_download(unique_id, present, int(now()))  # the delete policy checks this copy before the server copy is touched
+            run.already_here += 1
+            return
     if size is not None and size > maximum_message_bytes:
         run.failed.append(FailedMessage(unique_id, "the message is larger than the limit"))
         return
@@ -134,7 +146,7 @@ def _download_one(
         run.failed.append(FailedMessage(unique_id, f"the server would not send it: {error}"))
         return
     checkpoint("fetch:after-retr")
-    present = already_here(raw) if already_here is not None else None
+    present = already_here(raw) if already_here is not None and header is None else None
     if present is not None:
         state.record_download(unique_id, present, int(now()))  # the delete policy checks this copy before the server copy is touched
         run.already_here += 1

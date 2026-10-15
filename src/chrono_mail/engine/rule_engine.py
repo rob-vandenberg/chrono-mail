@@ -3,14 +3,16 @@ from email.parser import BytesHeaderParser
 
 from chrono_mail.config import Action, Condition, Rule
 from chrono_mail.core import ChronoMailError, FolderRole, MessageFlag, MessageRef, StorageError
+from chrono_mail.engine.commands_tags import give_colours
 from chrono_mail.engine.mailbox import Mailbox, parse_folder
 from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "rule_engine.py 0.5.123"
+__version__ = "rule_engine.py 0.5.136"
 
 # --- Version history ----------------------------------------------------
+# v0.5.136: Tags: the condition tag is / is not, the actions add_tag and remove_tag; a later rule sees the tags an earlier one gave
 # v0.5.123: The folder of a rule is made on the server first in an IMAP account (D-118)
 # v0.2.101: The folder of a rule is made safely (one folder when rules run at the same time)
 # v0.0.49: Rules without conditions for one account
@@ -62,10 +64,11 @@ class Subject:
 
     raw: bytes
     parsed: ParsedMessage
+    tags: list[str] = field(default_factory=list)  # kept up to date while the rules run, so a later rule sees what an earlier one gave
 
     @staticmethod
-    def of(raw: bytes) -> "Subject":
-        return Subject(raw, parse_message(raw))
+    def of(raw: bytes, tags: tuple[str, ...] = ()) -> "Subject":
+        return Subject(raw, parse_message(raw), list(tags))
 
     def body(self) -> str:
         text = self.parsed.text_body or (html_to_text(self.parsed.html_body) if self.parsed.html_body else "")
@@ -91,6 +94,9 @@ def condition_holds(condition: Condition, subject: Subject) -> bool:
     if field_name == "attachment":
         has = any(not attachment.inline for attachment in parsed.attachments)
         return has == (value == "yes")
+    if field_name == "tag":
+        has = any(tag.casefold() == " ".join(value.split()).casefold() for tag in subject.tags)
+        return has if operator == "is" else not has
     return False
 
 
@@ -138,6 +144,14 @@ def execute_action(mailbox: Mailbox, reference: MessageRef, action: Action) -> M
     if action.type == "mark_junk":
         junk = mailbox.role_folder(FolderRole.JUNK)
         return reference if junk == reference.folder_path else mailbox.move(reference, junk)
+    if action.type in ("add_tag", "remove_tag"):
+        name = " ".join(action.value.split())
+        current = mailbox.tags_of(reference.store_id)
+        kept = tuple(tag for tag in current if tag.casefold() != name.casefold())
+        mailbox.set_tags(reference, (*kept, name) if action.type == "add_tag" else kept)
+        if action.type == "add_tag":
+            give_colours(mailbox.engine, (name,))  # a tag a rule makes is listed and shown like the others
+        return reference
     flags = set(mailbox.current_flags(reference))
     change = {"mark_read": (MessageFlag.SEEN, True), "mark_unread": (MessageFlag.SEEN, False), "flag": (MessageFlag.FLAGGED, True), "unflag": (MessageFlag.FLAGGED, False)}.get(action.type)
     if change is not None:
@@ -160,7 +174,7 @@ def apply_rules(mailbox: Mailbox, rules: tuple[Rule, ...], references: list[Mess
     for original in references:
         outcome.examined += 1
         try:
-            subject = Subject.of(mailbox.store.read(original, hint=mailbox.hint(original.store_id)))
+            subject = Subject.of(mailbox.store.read(original, hint=mailbox.hint(original.store_id)), mailbox.tags_of(original.store_id))
         except ChronoMailError as error:
             outcome.failed.append(f"A message could not be read for the rules: {error}")
             continue
@@ -177,6 +191,8 @@ def apply_rules(mailbox: Mailbox, rules: tuple[Rule, ...], references: list[Mess
                 try:
                     reference = execute_action(mailbox, reference, action)
                     outcome.actions += 1
+                    if action.type in ("add_tag", "remove_tag"):
+                        subject.tags[:] = mailbox.tags_of(reference.store_id)
                 except ChronoMailError as error:
                     outcome.failed.append(f"Rule '{rule.name}': {action.type} failed: {error}")
             if stop:

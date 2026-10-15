@@ -5,9 +5,10 @@ from collections.abc import Callable
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakepop3.py 0.0.10"
+__version__ = "fakepop3.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: refuse_top: a server without TOP
 # v0.0.10: Initial fake POP3 server
 
 # A small stateful POP3 server for tests that need to change what is on the server and to cut the
@@ -30,6 +31,7 @@ class FakePop3Server(ScriptedServer):
         self.messages: dict[str, bytes] = dict(messages)  # unique id -> raw message
         self.commands: list[str] = []
         self.refuse_retr: set[str] = set()  # unique ids the server refuses to send
+        self.refuse_top: bool = False  # a server without TOP
         self._user, self._password, self._stls, self._fault = user, password, stls_context, fault
         self._lock = threading.Lock()
 
@@ -89,6 +91,9 @@ class FakePop3Server(ScriptedServer):
                 chosen = next(((uid, message) for n, uid, message in visible if n == number), None)
                 if chosen is None:
                     conversation.send_line("-ERR no such message")
+                    continue
+                if verb == "TOP" and self.refuse_top:
+                    conversation.send_line("-ERR TOP is not supported")
                     continue
                 if verb == "RETR" and chosen[0] in self.refuse_retr:
                     conversation.send_line("-ERR [SYS/TEMP] cannot read that message")

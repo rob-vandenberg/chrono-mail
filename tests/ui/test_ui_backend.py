@@ -11,9 +11,10 @@ from tests.enginefactory import make_engine
 from tests.ui.world import World, dialogs, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_backend.py 0.5.126"
+__version__ = "test_ui_backend.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: an action does not wait behind running mail checks
 # v0.5.126: Changes of the same message run in the order they were given; different messages at the same time
 # v0.0.13: Initial UI backend tests
 
@@ -138,3 +139,30 @@ def test_changes_still_waiting_their_turn_are_done_before_the_program_ends(world
         backend.call("message.flag", {**values, "flagged": flagged}, lambda result: None, in_order=True)
     assert backend.wait_for_done(10_000) and backend._queued == {}  # noqa: SLF001
     assert "flagged" in world.call("message.list", account=world.account_id, folder="Inbox").messages[0].flags
+
+
+def test_an_action_does_not_wait_behind_running_mail_checks(backend: Backend, qtbot: QtBot) -> None:
+    import threading
+
+    from chrono_mail.engine.commands_accounts import NoParameters
+
+    release = threading.Event()
+    started: list[int] = []
+
+    def slow_check(engine: object, parameters: NoParameters) -> None:
+        started.append(1)
+        release.wait(10)
+
+    backend.registry.register("test.slow-check", "A mail check that takes long", NoParameters, slow_check)
+    finished: list[str] = []
+    try:
+        for _ in range(6):  # more checks than there are places
+            backend.call("test.slow-check", {}, lambda result: finished.append("check"), checking=True)
+        qtbot.waitUntil(lambda: len(started) >= 4, timeout=5000)
+        backend.call("account.list", {}, lambda result: finished.append("action"))
+        qtbot.waitUntil(lambda: "action" in finished, timeout=3000)  # while the checks still run
+        assert "check" not in finished
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: finished.count("check") == 6, timeout=10000)
+

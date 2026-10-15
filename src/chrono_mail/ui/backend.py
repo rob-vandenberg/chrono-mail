@@ -10,9 +10,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 0.5.126"
+__version__ = "backend.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: checking: mail checks have places of their own, so the person's actions never wait behind them
 # v0.5.126: in_order: the commands that change the same message run one after the other, in the order they were given
 # v0.4.120: notice: what the engine wants the person to know (an IMAP change waits for the server)
 # v0.0.32: commands that wait have a pool of their own
@@ -72,6 +73,8 @@ class Backend(QObject):
         self._pool.setMaxThreadCount(4)
         self._waiting_pool: QThreadPool = QThreadPool(self)  # for commands that wait for a long time (mail.wait): they never hold up the others
         self._waiting_pool.setMaxThreadCount(8)
+        self._checking_pool: QThreadPool = QThreadPool(self)  # mail checks (mail.fetch): many accounts at once never hold up the person's actions
+        self._checking_pool.setMaxThreadCount(4)
         self._background: dict[int, _Pending] = {}
         self._done: _Done = _Done(self)
         self._done.finished.connect(self._deliver)
@@ -84,12 +87,13 @@ class Backend(QObject):
 
     def call(
         self, command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False,
-        in_order: bool = False,
+        in_order: bool = False, checking: bool = False,
     ) -> int:
         """Start a command. The callbacks run on the GUI thread; owner (if given) ends the interest in the answer.
         A command that only waits (waiting=True) has a pool of its own and does not count as busy. Commands that change a
         message (in_order=True) wait for the ones given earlier for the same message, so the last one given is what stays;
-        commands for different messages still run at the same time."""
+        commands for different messages still run at the same time. A mail check (checking=True) runs in a lane of its own:
+        it counts as busy, but the person's actions do not wait behind it."""
         request = next(self._ids)
         task = _Task(request, self.engine, self.registry, command, dict(values), self._done)
         if waiting:
@@ -98,6 +102,9 @@ class Backend(QObject):
             return request
         self._pending[request] = _Pending(on_success, on_error, owner)
         self.busy_changed.emit(len(self._pending))
+        if checking:
+            self._checking_pool.start(task)
+            return request
         if in_order:
             key = f"{values.get('account', '')}\t{values.get('message', '')}"
             self._queue_of[request] = key
@@ -141,7 +148,7 @@ class Backend(QObject):
         deadline = time.monotonic() + milliseconds / 1000
         while True:
             left = max(0, int((deadline - time.monotonic()) * 1000))
-            finished = self._pool.waitForDone(left)
+            finished = self._pool.waitForDone(left) and self._checking_pool.waitForDone(max(0, int((deadline - time.monotonic()) * 1000)))
             QCoreApplication.processEvents()  # delivers the answers, which start what waits for them
             if not self._queued or not finished or time.monotonic() >= deadline:
                 break

@@ -9,13 +9,21 @@ from chrono_mail.core import CredentialBackend, CryptoError
 from chrono_mail.crypto.keys import DataKey
 
 # --- Version ------------------------------------------------------------
-__version__ = "keystore.py 0.0.9"
+__version__ = "keystore.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: Every failure of the credential store is a normal error with its reason (KDE Wallet's own errors were "unexpected")
 # v0.0.9: CredentialBackend lives in core
 # v0.0.6: Initial key stores
 
 SERVICE_NAME: str = "chrono-mail"
+
+
+
+def _reason(error: Exception) -> str:
+    """What went wrong in the credential store, short and without secrets (the error texts hold none). Try again."""
+    text = str(error).strip()
+    return f"{type(error).__name__}{': ' + text[:200] if text else ''}. Try again"
 
 
 class KeyStore(Protocol):
@@ -66,14 +74,14 @@ class KeyringKeyStore:
         encoded = base64.b64encode(key.reveal()).decode("ascii")
         try:
             self._backend.set_password(self._service, self._entry_name(key.key_id), encoded)
-        except keyring.errors.KeyringError as error:
-            raise CryptoError(f"The credential store refused the key: {type(error).__name__}") from None
+        except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
+            raise CryptoError(f"The credential store refused the key: {_reason(error)}") from None
 
     def load(self, key_id: bytes) -> DataKey:
         try:
             encoded = self._backend.get_password(self._service, self._entry_name(key_id))
-        except keyring.errors.KeyringError as error:
-            raise CryptoError(f"The credential store could not be read: {type(error).__name__}") from None
+        except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
+            raise CryptoError(f"The credential store could not be read: {_reason(error)}") from None
         if encoded is None:
             raise CryptoError(f"Key {key_id.hex()} was not found in the credential store")
         try:
@@ -89,5 +97,5 @@ class KeyringKeyStore:
             self._backend.delete_password(self._service, self._entry_name(key_id))
         except keyring.errors.PasswordDeleteError:
             return  # already gone
-        except keyring.errors.KeyringError as error:
-            raise CryptoError(f"The credential store could not delete the key: {type(error).__name__}") from None
+        except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
+            raise CryptoError(f"The credential store could not delete the key: {_reason(error)}") from None

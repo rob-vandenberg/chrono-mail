@@ -20,14 +20,15 @@ from chrono_mail.config.passwords import (
     ServerRole,
 )
 from chrono_mail.config.paths import AppDirectories, default_directories
-from chrono_mail.config.tags import TagColours, load_tags, parse_tags, save_tags, tags_to_text
+from chrono_mail.config.tags import KINDS as TAG_KINDS, SHORTCUTS as TAG_SHORTCUTS, TagColours, TagEntry, load_tags, parse_tags, save_tags, tags_to_text
 from chrono_mail.config.sidebar import Group, Pin, Sidebar, load_sidebar, parse_sidebar, save_sidebar, sidebar_to_text
 from chrono_mail.config.rules import Action, Condition, Rule, RuleSet, load_rules, new_rule_id, parse_rules, rules_to_text, save_rules
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 0.0.72"
+__version__ = "__init__.py 0.5.135"
 
 # --- Version history ----------------------------------------------------
+# v0.5.135: Export TagEntry, TAG_KINDS and TAG_SHORTCUTS
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.47: Pinned favorites, account groups and search in combined views
@@ -48,6 +49,9 @@ __all__ = [
     "TagColours",
     "load_tags",
     "parse_tags",
+    "TAG_KINDS",
+    "TAG_SHORTCUTS",
+    "TagEntry",
     "save_tags",
     "tags_to_text",
     "Group",

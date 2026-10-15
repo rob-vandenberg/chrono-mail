@@ -7,27 +7,29 @@ import string
 from chrono_mail.core import Folder, FolderRole
 from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, MessageRow, _rows, contact_address_set, date_bounds, from_contacts
 from chrono_mail.engine.mailbox import open_mailbox
-from chrono_mail.engine.registry import CommandRegistry, option
+from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 0.3.109"
+__version__ = "commands_combined.py 0.5.135"
 
 # --- Version history ----------------------------------------------------
+# v0.5.135: The view tagged: all mail with one tag (the Tags in the folder list)
 # v0.3.109: Sort orders unread, flagged, attachment, replied, contact, folder, conversation and preview (newest first within the same value)
 # v0.2.94: Combined views in any sort order; message.combined-groups: their groups for the group headers
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Initial combined views over the mailboxes of all accounts (Favorites)
 
-VIEWS: tuple[str, ...] = ("inboxes", "unread", "flagged", "outbox", "sent", "drafts", "junk", "trash")
+VIEWS: tuple[str, ...] = ("inboxes", "unread", "flagged", "outbox", "sent", "drafts", "junk", "trash", "tagged")
 _ROLE_OF_VIEW: dict[str, FolderRole] = {"inboxes": FolderRole.INBOX, "sent": FolderRole.SENT, "drafts": FolderRole.DRAFTS, "junk": FolderRole.JUNK, "trash": FolderRole.TRASH}
 
 
 @dataclass(frozen=True, slots=True)
 class CombinedParameters:
-    view: Literal["inboxes", "unread", "flagged", "outbox", "sent", "drafts", "junk", "trash"] = field(metadata=option("inboxes, unread, flagged, outbox, sent, drafts, junk or trash"))
+    view: Literal["inboxes", "unread", "flagged", "outbox", "sent", "drafts", "junk", "trash", "tagged"] = field(metadata=option("inboxes, unread, flagged, outbox, sent, drafts, junk, trash, or tagged (with tag)"))
+    tag: str = field(default="", metadata=option("For the view tagged: the tag"))
     accounts: tuple[str, ...] = field(default=(), metadata=option("Only the mailboxes of these accounts (default: all)"))
     query: str = field(default="", metadata=option("Words to find in these messages (as in message.search)"))
     sort: Literal["date", "subject", "sender", "to", "size", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview"] = field(
@@ -77,8 +79,8 @@ def _chosen(view: str, folder: Folder) -> bool:
     return folder.role not in (FolderRole.TRASH, FolderRole.JUNK) and folder.path != OUTBOX
 
 
-def _filters(view: str) -> SearchFilter:
-    return SearchFilter(unread=True if view == "unread" else None, flagged=True if view == "flagged" else None)
+def _filters(view: str, tag: str = "") -> SearchFilter:
+    return SearchFilter(unread=True if view == "unread" else None, flagged=True if view == "flagged" else None, tag=tag if view == "tagged" else None)
 
 
 def _places(engine: Engine, accounts: tuple[str, ...]) -> list[str]:
@@ -95,8 +97,10 @@ def _places(engine: Engine, accounts: tuple[str, ...]) -> list[str]:
 
 
 def message_combined(engine: Engine, parameters: CombinedParameters) -> tuple[MessageRow, ...]:
-    """The messages of one kind of folder in every mailbox (all inboxes, all unread, all flagged and so on), newest first unless another order is asked for."""
+    """The messages of one kind of folder in every mailbox (all inboxes, all unread, all flagged, all with a tag and so on), newest first unless another order is asked for."""
     view = parameters.view
+    if view == "tagged" and not parameters.tag.strip():
+        raise UsageError("The view tagged needs a tag")
     want = parameters.offset + parameters.limit
     contact = parameters.sort == CONTACT_SORT
     sort, descending = SortField.DATE if contact else SortField(parameters.sort), not parameters.oldest_first
@@ -107,7 +111,7 @@ def message_combined(engine: Engine, parameters: CombinedParameters) -> tuple[Me
         with open_mailbox(engine, account) as mailbox:
             for folder in mailbox.folders():
                 if _chosen(view, folder):
-                    rows = mailbox.index.search(parameters.query, folder.path, _filters(view), 0, EVERYTHING if contact else want, sort, descending)
+                    rows = mailbox.index.search(parameters.query, folder.path, _filters(view, parameters.tag), 0, EVERYTHING if contact else want, sort, descending)
                     if contact:  # the index does not know the contacts: every message is looked at
                         from_contact.update(((account, store_id), yes) for store_id, yes in from_contacts(mailbox, rows, known).items())
                     found.extend(replace(row, account=account) for row in _rows(mailbox, rows))
@@ -134,7 +138,7 @@ def message_combined_groups(engine: Engine, parameters: CombinedParameters) -> t
         with open_mailbox(engine, account) as mailbox:
             for folder in mailbox.folders():
                 if _chosen(view, folder):
-                    for group in mailbox.index.groups(bounds, parameters.query, folder.path, _filters(view), sort, descending):
+                    for group in mailbox.index.groups(bounds, parameters.query, folder.path, _filters(view, parameters.tag), sort, descending):
                         known = counts.get(group.key)
                         counts[group.key] = group if known is None else replace(known, count=known.count + group.count)
     if sort is SortField.DATE:

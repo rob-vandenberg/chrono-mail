@@ -8,9 +8,10 @@ from chrono_mail.crypto import generate_data_key
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_store_store.py 0.0.7"
+__version__ = "test_store_store.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: written_together: a batch made safe on disk at once
 # v0.0.7: Initial store tests
 
 INBOX = ("Inbox",)
@@ -330,3 +331,41 @@ def test_bulk_delivery_gives_unique_identities(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     ids = {store.deliver(INBOX, RAW + str(number).encode()).store_id for number in range(200)}
     assert len(ids) == 200 == len(store.list_messages(INBOX))
+
+
+def test_written_together_makes_the_whole_batch_safe_once_at_the_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = make_store(tmp_path, durable=True)
+    calls: list[str] = []
+    monkeypatch.setattr(os, "fsync", lambda _descriptor=0: calls.append("fsync"))
+    monkeypatch.setattr(os, "sync", lambda: calls.append("sync"))
+    with store.written_together():
+        first = store.deliver(INBOX, b"Subject: a\r\n\r\nA")
+        store.deliver(INBOX, b"Subject: b\r\n\r\nB")
+        assert calls == []  # nothing made safe one by one
+    assert calls == ["sync"]
+    calls.clear()
+    store.deliver(INBOX, b"Subject: c\r\n\r\nC")
+    assert calls == ["fsync", "fsync"]  # outside it every message is made safe again (the file and its folder)
+    assert store.read(first) == b"Subject: a\r\n\r\nA"
+
+
+def test_written_together_without_a_sync_of_everything_makes_each_file_safe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = make_store(tmp_path, durable=True)
+    calls: list[str] = []
+    monkeypatch.delattr(os, "sync")  # as on Windows
+    monkeypatch.setattr(os, "fsync", lambda _descriptor=0: calls.append("fsync"))
+    with store.written_together():
+        store.deliver(INBOX, b"Subject: a\r\n\r\nA")
+        store.deliver(INBOX, b"Subject: b\r\n\r\nB")
+    assert calls.count("fsync") == (3 if os.name != "nt" else 2)  # two files, and their one folder (Windows cannot open folders)
+
+
+def test_written_together_also_makes_safe_what_was_written_before_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = make_store(tmp_path, durable=True)
+    calls: list[str] = []
+    monkeypatch.setattr(os, "sync", lambda: calls.append("sync"))
+    with pytest.raises(RuntimeError), store.written_together():
+        store.deliver(INBOX, b"Subject: a\r\n\r\nA")
+        raise RuntimeError("stopped")
+    assert calls == ["sync"]
+

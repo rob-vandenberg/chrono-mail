@@ -22,12 +22,13 @@ from chrono_mail.index.model import (
     flags_from_bits,
     flags_to_bits,
 )
-from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS
+from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS, UPGRADE_6_TO_7
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.5.130"
+__version__ = "index.py 0.5.134"
 
 # --- Version history ----------------------------------------------------
+# v0.5.134: Tags: kept per message, found with a filter or tag: in a search; an index of format 6 is upgraded in place
 # v0.5.130: A failed open closes its connection (Windows could not delete the -wal file for the rebuild); an unreadable format number counts as an unknown format
 # v0.3.110: A change takes the write lock at its start (BEGIN IMMEDIATE), so changes made at the same time wait for each other instead of failing
 # v0.3.109: Sorting by unread, flagged, attachment, replied, folder, messages in conversation and preview (newest first within the same value); groups by folder, conversation size and preview
@@ -38,7 +39,7 @@ __version__ = "index.py 0.5.130"
 # v0.0.13: preview, unread index, busy timeout
 # v0.0.8: Initial message index
 
-_COLUMNS: str = "m.store_id, m.folder, m.path, m.flags, m.date, m.size, m.subject, m.sender, m.recipients, m.message_id, m.thread_key, m.has_attachments, m.preview"
+_COLUMNS: str = "m.store_id, m.folder, m.path, m.flags, m.date, m.size, m.subject, m.sender, m.recipients, m.message_id, m.thread_key, m.has_attachments, m.preview, m.tags"
 _SORT_COLUMN: dict[SortField, str] = {
     SortField.DATE: "m.date",
     SortField.SUBJECT: "m.subject COLLATE NOCASE",
@@ -59,6 +60,23 @@ _TEXT_GROUP_COLUMN: dict[SortField, str] = {
 }
 _FIELD_COLUMN: dict[str, str] = {"from": "sender", "to": "recipients", "subject": "subject", "body": "body"}
 _TERM: re.Pattern[str] = re.compile(r'(-?)(?:(\w+):)?("[^"]*"?|\S+)')
+_TAG_TERM: re.Pattern[str] = re.compile(r'(?i)(?<!\S)(-?)tag:("[^"]*"?|\S+)')
+TAG_SEPARATOR: str = "\x1f"
+
+
+def _tags_text(tags: tuple[str, ...]) -> str:
+    return TAG_SEPARATOR.join(tags)
+
+
+def split_tag_terms(query: str) -> tuple[str, tuple[str, ...], tuple[str, ...]]:
+    """tag:name, tag:"two words" and -tag:name taken out of what a person typed: (the rest, wanted tags, excluded tags)."""
+    wanted: list[str] = []
+    excluded: list[str] = []
+    for minus, name in _TAG_TERM.findall(query):
+        cleaned = " ".join(name.strip('"').split())
+        if cleaned:
+            (excluded if minus else wanted).append(cleaned)
+    return _TAG_TERM.sub(" ", query), tuple(wanted), tuple(excluded)
 
 
 def _order(sort: SortField, descending: bool) -> str:
@@ -86,7 +104,7 @@ def _moment(epoch: int | None) -> datetime | None:
 
 
 def _row(values: tuple[object, ...]) -> IndexedMessage:
-    store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, attachments, preview = values
+    store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, attachments, preview, tags = values
     return IndexedMessage(
         str(store_id),
         _folder_path(str(folder)),
@@ -101,6 +119,7 @@ def _row(values: tuple[object, ...]) -> IndexedMessage:
         str(thread_key),
         bool(attachments),
         str(preview),
+        tuple(tag for tag in str(tags).split(TAG_SEPARATOR) if tag),
     )
 
 
@@ -185,6 +204,9 @@ class Index:
             self._create_schema()
         else:
             version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
+            if version is not None and str(version[0]) == "6":
+                self._upgrade_to_7()
+                version = (str(SCHEMA_VERSION),)
             if version is None or str(version[0]) != str(SCHEMA_VERSION):
                 raise StorageError("The index has an unknown format; rebuild it")
 
@@ -193,6 +215,13 @@ class Index:
             for statement in STATEMENTS:
                 self._connection.execute(statement)
             self._connection.execute("INSERT INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
+
+    def _upgrade_to_7(self) -> None:
+        """Format 6 to 7 without a rebuild: tags are new, so no message has any yet."""
+        with self._transaction():
+            for statement in UPGRADE_6_TO_7:
+                self._connection.execute(statement)
+            self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
 
     def close(self) -> None:
         self._connection.close()
@@ -213,8 +242,8 @@ class Index:
         self._connection.execute("DELETE FROM text WHERE rowid IN (SELECT id FROM messages WHERE store_id = ?)", (entry.store_id,))
         replaced = self._connection.execute("DELETE FROM messages WHERE store_id = ?", (entry.store_id,)).rowcount
         cursor = self._connection.execute(
-            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview, tags)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 entry.store_id,
                 _folder_key(entry.folder),
@@ -229,8 +258,10 @@ class Index:
                 entry.thread_key,
                 int(entry.has_attachments),
                 entry.preview,
+                _tags_text(entry.tags),
             ),
         )
+        self._write_tags(entry.store_id, entry.tags)
         self._connection.execute(
             "INSERT INTO text (rowid, subject, sender, recipients, body) VALUES (?, ?, ?, ?, ?)",
             (cursor.lastrowid, entry.subject, entry.sender, entry.recipients, entry.body),
@@ -245,6 +276,10 @@ class Index:
                     " last = MAX(COALESCE(addresses.last, 0), COALESCE(excluded.last, 0))",
                     (address, name, 0 if recipient else 1, 1 if recipient else 0, _epoch(entry.date)),
                 )
+
+    def _write_tags(self, store_id: str, tags: tuple[str, ...]) -> None:
+        self._connection.execute("DELETE FROM message_tags WHERE store_id = ?", (store_id,))
+        self._connection.executemany("INSERT INTO message_tags (store_id, tag) VALUES (?, ?)", [(store_id, tag.casefold()) for tag in tags])
 
     def add_many(self, entries: Iterable[IndexEntry]) -> int:
         """Add (or replace) messages in one transaction. Returns how many."""
@@ -266,6 +301,7 @@ class Index:
             with self._transaction():
                 self._connection.execute("DELETE FROM text WHERE rowid IN (SELECT id FROM messages WHERE store_id = ?)", (store_id,))
                 self._connection.execute("DELETE FROM messages WHERE store_id = ?", (store_id,))
+                self._connection.execute("DELETE FROM message_tags WHERE store_id = ?", (store_id,))
         except sqlite3.Error as error:
             raise StorageError(f"The index could not be updated: {type(error).__name__}") from None
 
@@ -274,6 +310,7 @@ class Index:
         try:
             with self._transaction():
                 self._connection.execute("DELETE FROM text WHERE rowid IN (SELECT id FROM messages WHERE folder = ?)", (_folder_key(folder),))
+                self._connection.execute("DELETE FROM message_tags WHERE store_id IN (SELECT store_id FROM messages WHERE folder = ?)", (_folder_key(folder),))
                 cursor = self._connection.execute("DELETE FROM messages WHERE folder = ?", (_folder_key(folder),))
                 return cursor.rowcount
         except sqlite3.Error as error:
@@ -281,6 +318,18 @@ class Index:
 
     def update_flags(self, store_id: str, flags: frozenset[MessageFlag], path: str) -> None:
         self._update("UPDATE messages SET flags = ?, path = ? WHERE store_id = ?", (flags_to_bits(flags), path, store_id))
+
+    def update_tags(self, store_id: str, tags: tuple[str, ...]) -> None:
+        try:
+            with self._transaction():
+                self._connection.execute("UPDATE messages SET tags = ? WHERE store_id = ?", (_tags_text(tags), store_id))
+                self._write_tags(store_id, tags)
+        except sqlite3.Error as error:
+            raise StorageError(f"The index could not be updated: {type(error).__name__}") from None
+
+    def tagged(self) -> set[str]:
+        """The store ids of the messages that have tags here."""
+        return {str(row[0]) for row in self._connection.execute("SELECT DISTINCT store_id FROM message_tags")}
 
     def move(self, store_id: str, folder: tuple[str, ...], path: str) -> None:
         self._update("UPDATE messages SET folder = ?, path = ? WHERE store_id = ?", (_folder_key(folder), path, store_id))
@@ -453,6 +502,7 @@ class Index:
         conditions: list[str] = []
         parameters: list[object] = []
         source = "messages m"
+        query, wanted_tags, excluded_tags = split_tag_terms(query)
         parsed = parse_query(query)
         expression = parsed.positive
         if expression:
@@ -488,6 +538,12 @@ class Index:
                 " AND (COALESCE(n.date, -4611686018427387904) > COALESCE(m.date, -4611686018427387904)"
                 " OR (COALESCE(n.date, -4611686018427387904) = COALESCE(m.date, -4611686018427387904) AND n.id > m.id)))"
             )
+        for tag in (*wanted_tags, *((filters.tag,) if filters.tag else ())):
+            conditions.append("m.store_id IN (SELECT store_id FROM message_tags WHERE tag = ?)")
+            parameters.append(" ".join(tag.split()).casefold())
+        for tag in excluded_tags:
+            conditions.append("m.store_id NOT IN (SELECT store_id FROM message_tags WHERE tag = ?)")
+            parameters.append(tag.casefold())
         if filters.minimum_size is not None:
             conditions.append("m.size >= ?")
             parameters.append(filters.minimum_size)

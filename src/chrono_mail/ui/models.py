@@ -6,18 +6,22 @@ from enum import Enum
 from typing import override
 
 from PySide6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, QObject, QPersistentModelIndex, Qt, Signal
-from PySide6.QtGui import QBrush, QFont, QGuiApplication, QPalette, QStandardItem, QStandardItemModel
+from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication, QPalette, QStandardItem, QStandardItemModel
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import BY_ID, CARD, SYMBOLS, cell_text, display_name, person_address
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import folder_icon, grey_icon
+from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.125"
+__version__ = "models.py 0.5.139"
 
 # --- Version history ----------------------------------------------------
+# v0.5.139: A reload keeps the rows on screen until the new headers and first rows are there, then swaps them in at once (the list no longer goes blank after a delete)
+# v0.5.135: Tags: the Tag column (drawn by the delegate), the tag colour as the text colour, replace_tags; a combined view of one tag; a list filtered by a tag; the Tags in the folder list
 # v0.5.125: A list with messages that is reloaded does not say for a moment that it is empty
 # v0.5.123: The Favorites heading cannot be selected; settled: the view has finished loading (D-119)
 # v0.3.109: No group headers for the yes/no sorts (unread, flagged, attachment, replied, contact); names of the folder, conversation and preview groups
@@ -113,12 +117,13 @@ class ViewSpec:
     conversations: bool = False  # only the newest message of each conversation (a plain folder view only)
     combined: str | None = None  # a favorite: the same kind of folder in every mailbox (message.combined)
     combined_accounts: tuple[str, ...] = ()  # ... of these accounts only (a group)
+    tag: str | None = None  # Filter > Tagged with, or the tag of the combined view "tagged" (Tags in the folder list)
 
     @property
     def kind(self) -> ViewKind:
         if self.combined is not None:
             return ViewKind.QUERY
-        searching = self.conversations or self.date_from is not None or self.date_to is not None or self.minimum_size is not None or self.maximum_size is not None or bool(self.query) or self.unread is not None or self.flagged is not None or self.has_attachments is not None or self.folder is None
+        searching = self.tag is not None or self.conversations or self.date_from is not None or self.date_to is not None or self.minimum_size is not None or self.maximum_size is not None or bool(self.query) or self.unread is not None or self.flagged is not None or self.has_attachments is not None or self.folder is None
         return ViewKind.QUERY if searching else ViewKind.FOLDER
 
 
@@ -151,6 +156,8 @@ class MessageListModel(QAbstractTableModel):
         self._columns: tuple[str, ...] = (CARD,)
         self.recipients_first: bool = False  # in Sent, Drafts and Outbox the From / To column shows the recipients
         self.date_style: str = "short"
+        self.tag_book: TagColourBook = TagColourBook()  # the colours of the tags (from tag.list)
+        self.tag_text: bool = False  # Settings > Message list: the text of a tagged message in the colour of its first tag
         self.contacts: dict[str, tuple[str, str]] = {}  # address (lower case) -> (contact id, address book)
         self.show_groups: bool = True
         self._group_counts: list[tuple[str, str, int]] | None = None  # key, name, count of each group; None: no headers
@@ -215,7 +222,7 @@ class MessageListModel(QAbstractTableModel):
         spec = self._spec
         if spec is None:
             return ("", None, "")
-        return (spec.combined or spec.account, spec.folder if spec.combined is None else ",".join(spec.combined_accounts), spec.sort)
+        return ((spec.combined or spec.account) + (f":{spec.tag}" if spec.tag and spec.combined else ""), spec.folder if spec.combined is None else ",".join(spec.combined_accounts), spec.sort)
 
     def _available(self) -> int:
         """How many messages of the view are known: all of a folder (fetched as they are scrolled to), the loaded ones of a search."""
@@ -321,8 +328,72 @@ class MessageListModel(QAbstractTableModel):
         self._backend.call(command, values, arrived, failed, owner=self)
 
     def reload(self) -> None:
-        """Fetch the same view again (after mail arrived or messages were changed)."""
-        self.show(self._spec)
+        """Fetch the same view again (after mail arrived or messages were changed). The rows on screen stay until the new
+        group headers and the first rows have arrived; then they are swapped in at once, so the list never goes blank."""
+        current = self._spec
+        if current is None or self._display_rows == 0:
+            self.show(current)  # nothing on screen to keep
+            return
+        spec: ViewSpec = current
+        self._generation += 1  # answers for the rows on screen (pages, more rows) are no longer wanted
+        generation = self._generation
+
+        def first(groups: list[tuple[str, str, int]] | None) -> None:
+            def arrived(result: object) -> None:
+                if generation == self._generation:
+                    self._swap_in(spec, groups, result)
+
+            def failed(error: ChronoMailError) -> None:
+                if generation == self._generation:
+                    self._failed(error)  # the rows on screen stay
+
+            if spec.kind is ViewKind.FOLDER:
+                self._backend.call("message.list", self._values(spec, 0), arrived, failed, owner=self)
+            else:
+                self._backend.call("message.combined" if spec.combined is not None else "message.search", self._values(spec, 0), arrived, failed, owner=self)
+
+        if not (self.show_groups and spec.sort not in YES_NO_SORTS):
+            first(None)
+            return
+
+        def groups_arrived(result: object) -> None:
+            if generation != self._generation:
+                return
+            found: list[object] = list(result) if isinstance(result, (tuple, list)) else []
+            first([(str(getattr(group, "key")), group_name(spec.sort, str(getattr(group, "value"))), int(getattr(group, "count"))) for group in found])
+
+        def groups_failed(error: ChronoMailError) -> None:
+            if generation == self._generation:
+                first(None)  # without headers rather than without messages
+
+        command = "message.combined-groups" if spec.combined is not None else "message.groups"
+        values = {name: value for name, value in self._values(spec, 0).items() if name not in ("offset", "limit")}
+        self._backend.call(command, values, groups_arrived, groups_failed, owner=self)
+
+    def _swap_in(self, spec: ViewSpec, groups: list[tuple[str, str, int]] | None, result: object) -> None:
+        """The reloaded headers and first rows replace the rows on screen in one reset."""
+        self.beginResetModel()
+        self._spec = spec
+        self._rows = _Rows()
+        self._group_counts = groups
+        if spec.kind is ViewKind.FOLDER:
+            self._total, self._unread = int(getattr(result, "total")), int(getattr(result, "unread"))
+            self._rows.pages[0] = list(getattr(result, "messages"))
+            self._rows.requested.add(0)
+        else:
+            rows: list[object] = list(result) if isinstance(result, (tuple, list)) else []
+            self._rows.loaded = rows
+            self._rows.exhausted = len(rows) < PAGE_SIZE
+            self._total, self._unread = 0, 0
+        self._layout_groups()
+        self.endResetModel()
+        self.groups_changed.emit()
+        if spec.kind is ViewKind.FOLDER:
+            self.counts_changed.emit(self._total, self._unread)
+        else:
+            self.counts_changed.emit(len(self._rows.loaded), sum(1 for row in self._rows.loaded if "seen" not in getattr(row, "flags")))
+        self.settled = True
+        self.loaded.emit()
 
     # --- Qt model interface -------------------------------------------------------------------
 
@@ -379,8 +450,13 @@ class MessageListModel(QAbstractTableModel):
             return "…" if role == Qt.ItemDataRole.DisplayRole and index.column() == 0 else None
         if role == CONTACT_ROLE:
             return self.contacts.get(person_address(row, self.recipients_first))
+        if role == Qt.ItemDataRole.DisplayRole and column_id == "tag":
+            return ""  # the delegate draws the tags; the tooltip names them
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
             return cell_text(column_id, row, self.recipients_first, self.date_style)
+        tags: tuple[str, ...] = getattr(row, "tags", ())
+        if role == Qt.ItemDataRole.ForegroundRole and self.tag_text and tags and not column.symbol:
+            return QBrush(self.tag_book.colour(tags[0]))
         if role == Qt.ItemDataRole.ForegroundRole and column_id == "status":
             palette = QGuiApplication.palette()
             return QBrush(palette.color(QPalette.ColorRole.Highlight if "seen" not in getattr(row, "flags") else QPalette.ColorRole.PlaceholderText))  # blue dot: unread; faint circle: read
@@ -470,6 +546,23 @@ class MessageListModel(QAbstractTableModel):
         if shown >= 0:
             self.dataChanged.emit(self.index(shown, 0), self.index(shown, last))  # every column of the row: each cell is drawn on its own
 
+    def replace_tags(self, message_id: str, tags: tuple[str, ...]) -> None:
+        """Show new tags on a loaded row without fetching anything (after message.tag)."""
+        position = self._find_position(message_id)
+        if position < 0:
+            return
+        row = self._message_at(position)
+        if row is None or not dataclasses.is_dataclass(row) or isinstance(row, type):
+            return
+        replaced = dataclasses.replace(row, tags=tags)
+        if self._spec is not None and self._spec.kind is ViewKind.QUERY:
+            self._rows.loaded[position] = replaced
+        else:
+            self._rows.pages[position // PAGE_SIZE][position % PAGE_SIZE] = replaced
+        shown = self.display_row(position)
+        if shown >= 0:
+            self.dataChanged.emit(self.index(shown, 0), self.index(shown, max(0, self.columnCount() - 1)))
+
     def message_ids(self) -> list[str]:
         """The ids of the rows that are loaded now (for finding a message again after a reload)."""
         pages = sorted(self._rows.pages.items())
@@ -501,6 +594,8 @@ class MessageListModel(QAbstractTableModel):
     def _values(self, spec: ViewSpec, offset: int) -> dict[str, object]:
         if spec.combined is not None:
             combined: dict[str, object] = {"view": spec.combined, "query": spec.query, "sort": spec.sort, "oldest_first": spec.oldest_first, "offset": offset, "limit": PAGE_SIZE}
+            if spec.tag:
+                combined["tag"] = spec.tag
             if spec.combined_accounts:
                 combined["accounts"] = list(spec.combined_accounts)
             return combined
@@ -511,7 +606,7 @@ class MessageListModel(QAbstractTableModel):
             values["folder"] = spec.folder
         if spec.conversations:
             values["conversations"] = True
-        for name in ("unread", "flagged", "has_attachments", "date_from", "date_to", "minimum_size", "maximum_size"):
+        for name in ("unread", "flagged", "has_attachments", "date_from", "date_to", "minimum_size", "maximum_size", "tag"):
             value = getattr(spec, name)
             if value is not None:
                 values[name] = value
@@ -607,9 +702,11 @@ class FolderTreeModel(QStandardItemModel):
 
     show_favorites: bool = True
     show_local_folders: bool = True
+    show_tags: bool = True
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
+        self.tags: list[tuple[str, str]] = []  # (name, #rrggbb) of the tags for mail, in the person's order: the Tags at the bottom
         self.pins: list[tuple[str, str, str, str]] = []  # pin id, account, folder, name
         self.groups: list[tuple[str, str, tuple[str, ...]]] = []  # group id, name, account ids
         self.hidden: set[str] = set()  # standard favorites that are switched off
@@ -637,6 +734,22 @@ class FolderTreeModel(QStandardItemModel):
         for account in places:
             if str(getattr(account, "account_id")) not in members:
                 self._account_node(root, account, folders)
+        if mailboxes and self.show_tags and self.tags:
+            self._tags(root)
+
+    def _tags(self, root: QStandardItem) -> None:
+        """Tags: one entry per tag, showing the mail of every mailbox that carries it (the combined view "tagged")."""
+        section = self._section(root, "Tags", "section")
+        section.setSelectable(False)
+        for name, colour in self.tags:
+            item = QStandardItem(name)
+            item.setEditable(False)
+            item.setIcon(tag_icon(QColor(colour)))
+            item.setData("tagview", KIND_ROLE)
+            item.setData("", ACCOUNT_ROLE)
+            item.setData(name, FOLDER_PATH_ROLE)
+            self._label(item, name, 0)
+            section.appendRow(item)
 
     def _group(self, root: QStandardItem, group_id: str, name: str, present: list[object], member_ids: tuple[str, ...], folders: dict[str, list[object]]) -> None:
         """A named set of accounts: one combined inbox, then the accounts."""

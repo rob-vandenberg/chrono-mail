@@ -49,9 +49,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.5.124"
+__version__ = "settingsdialog.py 0.5.135"
 
 # --- Version history ----------------------------------------------------
+# v0.5.135: Message list: Show Tags in the folder list; the tag's colour for the text
 # v0.5.124: General: Show on startup (D-121)
 # v0.3.115: The rows of the page list are 2 points higher than their text needs, times the interface factor
 # v0.3.113: The page list has its own text size: the desktop's size plus 2 points, times the interface factor
@@ -426,6 +427,10 @@ class SettingsDialog(QDialog):
         self.show_favorites.setChecked(prefs.get_bool(s, "show_favorites"))
         self.show_local_folders = QCheckBox("Show Local Folders in the folder list", page)
         self.show_local_folders.setChecked(prefs.get_bool(s, "show_local_folders"))
+        self.show_tags = QCheckBox("Show Tags in the folder list", page)
+        self.show_tags.setChecked(prefs.get_bool(s, "show_tags"))
+        self.tag_text_colour = QCheckBox("Use the tag's colour for the text of tagged messages", page)
+        self.tag_text_colour.setChecked(prefs.get_bool(s, "tag_text_colour"))
         self.columns_picker = ColumnPicker(self._columns, page)
         form.addRow("Layout", self.layout_box)
         form.addRow("Reading pane", self.pane_box)
@@ -434,6 +439,8 @@ class SettingsDialog(QDialog):
         form.addRow(self.conversations)
         form.addRow(self.show_favorites)
         form.addRow(self.show_local_folders)
+        form.addRow(self.show_tags)
+        form.addRow(self.tag_text_colour)
         columns_text = QLabel(COLUMNS_TEXT, page)
         columns_text.setWordWrap(True)
         form.addRow(columns_text)
@@ -757,6 +764,7 @@ class SettingsDialog(QDialog):
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_scale": scale.factor_at(self.list_slider.value()), "conversations": self.conversations.isChecked(),
             "show_favorites": self.show_favorites.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),
+            "show_tags": self.show_tags.isChecked(), "tag_text_colour": self.tag_text_colour.isChecked(),
             "columns": ",".join(keep_snoozed_column(self.columns_picker.columns() or DEFAULT_COLUMNS, self._columns)),
             "mark_read": str(self.mark_read_box.currentData()), "mark_read_delay_ms": self.mark_read_delay.value(), "reading_scale": scale.factor_at(self.reading_slider.value()),
             "prefer_plain": self.prefer_plain.isChecked(), "remote_always": self.remote_always.isChecked(), "remote_senders": "\n".join(senders),

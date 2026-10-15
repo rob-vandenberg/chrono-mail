@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.3.108"
+__version__ = "prefs.py 0.5.135"
 
 # --- Version history ----------------------------------------------------
+# v0.5.135: show_tags, tag_text_colour
 # v0.3.108: list_scale replaces list_font_size; reading_scale (a factor, for reading and writing) replaces reader_zoom (percent) and compose_font_size (points)
 # v0.3.106: interface_scale (a factor) replaces ui_font_size (points)
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
@@ -36,6 +37,8 @@ DEFAULTS: dict[str, object] = {
     "conversations": False,
     "show_favorites": True,
     "show_local_folders": True,
+    "show_tags": True,  # the Tags at the bottom of the folder list
+    "tag_text_colour": False,  # the text of a tagged message in the colour of its first tag
     # reading
     "mark_read": "delay",  # delay: after a moment, never: only when I mark it, window: only when opened in a window of its own
     "mark_read_delay_ms": 700,

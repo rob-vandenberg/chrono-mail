@@ -24,9 +24,10 @@ from chrono_mail.core import Account, AccountKind, ConfigurationError, Connectio
 from tests.doubles import BrokenBackend, MemoryBackend
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_config.py 0.0.20"
+__version__ = "test_config.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: an error of the desktop's password service is a normal error with its reason
 # v0.0.20: signature tests
 # v0.0.9: Initial configuration tests
 
@@ -261,3 +262,14 @@ def test_a_huge_signature_is_refused() -> None:
         parse_config(json.dumps(data))
     with pytest.raises(ConfigurationError):
         dataclasses.replace(make_config().accounts[0], signature="x" * 4001)
+
+
+def test_an_error_of_the_desktop_password_service_is_a_normal_error_with_its_reason() -> None:
+    from tests.doubles import SessionLostBackend
+
+    store = KeyringPasswordStore("chrono-mail-test", SessionLostBackend())
+    for action in (lambda: store.get("a" * 32, ServerRole.INCOMING), lambda: store.set("a" * 32, ServerRole.INCOMING, "hunter2"), lambda: store.delete("a" * 32, ServerRole.INCOMING)):
+        with pytest.raises(ConfigurationError) as raised:
+            action()
+        assert "Can't find session" in str(raised.value) and "Try again" in str(raised.value) and "hunter2" not in str(raised.value)
+

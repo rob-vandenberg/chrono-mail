@@ -7,17 +7,22 @@ check of an imported account records mail that is already here instead of downlo
 import json
 import os
 import re
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from chrono_mail.config import Rule, load_rules, new_rule_id, save_rules
-from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, FolderRole, MessageFlag, StorageError
+from chrono_mail.config import Rule, load_rules, load_tags, new_rule_id, save_rules, save_tags
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.engine.commands_accounts import AccountAddParameters, Policy, account_add
+from chrono_mail.engine.commands_tags import give_colours
 from chrono_mail.engine.commands_addressbook import AddParameters, AddressesParameters, contact_add, contact_addresses
 from chrono_mail.engine.emclient_source import (
+    MAXIMUM_HEADER_BYTES,
     MAXIMUM_MESSAGE_BYTES,
     BackupData,
+    MessageFile,
+    SourceCategory,
     SettingsExport,
     SourceAccount,
     message_files,
@@ -31,11 +36,14 @@ from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
+from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 0.5.132"
+__version__ = "commands_emclient.py 0.5.137"
 
 # --- Version history ----------------------------------------------------
+# v0.5.137: Tags: the categories become tags (colour, what they are for), imported mail gets its categories as tags, and mail imported before gets them too (once)
+# v0.5.133: An account the password store refused is reported and made by the next run, the rest goes on; twice as fast: the duplicate check reads the header only, a batch is made safe on disk at once, the export's lists stay in memory between batches; a duplicate counts only when its copy here can be read
 # v0.5.132: Initial version: import.emclient-scan and import.emclient
 
 
@@ -75,7 +83,9 @@ def fingerprint(message_id: str | None, date: datetime | None, sender: str, subj
 
 
 def fingerprint_of_raw(raw: bytes) -> str | None:
-    parsed = parse_message(raw)
+    """The fingerprint of a raw message, from its header only (the same parser as the index, without the body)."""
+    end = re.search(rb"\r?\n\r?\n", raw[:MAXIMUM_HEADER_BYTES])
+    parsed = parse_message(raw[: end.end()] if end is not None else raw)
     sender = parsed.from_addresses[0].address if parsed.from_addresses else ""
     return fingerprint(parsed.message_id, parsed.date, sender, parsed.subject)
 
@@ -134,9 +144,14 @@ class _Journal:
         self.phases.add(name)
         self._append(["phase", name])
 
-    def message(self, relative: str, outcome: str) -> None:
-        self.done[relative] = outcome
-        self._append(["mail", relative, outcome])
+    def messages(self, outcomes: list[tuple[str, str]]) -> None:
+        """Several messages done, in one write."""
+        if not outcomes:
+            return
+        with open(self.path, "a", encoding="utf-8") as stream:
+            for relative, outcome in outcomes:
+                self.done[relative] = outcome
+                stream.write(json.dumps(["mail", relative, outcome]) + "\n")
 
     def finish(self) -> None:
         try:
@@ -168,6 +183,7 @@ class ImportParameters:
     rules: bool = field(default=True, metadata=option("Import the rules (needs the settings export)"))
     mail: bool = field(default=True, metadata=option("Import the mail into Local Folders (needs the mail export)"))
     contacts: bool = field(default=True, metadata=option("Import the contacts (needs the backup)"))
+    tags: bool = field(default=True, metadata=option("Import the categories as tags, and the tags of the mail (the settings export and the backup)"))
     batch: int = field(default=0, metadata=option("Messages per run (0: all); run again to continue"))
 
 
@@ -184,6 +200,8 @@ class ScanResult:
     messages_done: int  # by an earlier run of this import
     marks: int  # messages with read, flagged and replied marks in the backup
     contacts: int
+    tags: int = 0  # categories in the settings export
+    tagged: int = 0  # messages with categories in the backup
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,6 +218,8 @@ class ImportResult:
     messages_duplicate: int = 0
     messages_failed: tuple[str, ...] = ()
     messages_left: int = 0
+    tags_added: int = 0
+    messages_tagged: int = 0
     notes: tuple[str, ...] = ()
 
 
@@ -245,7 +265,7 @@ def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
     backup = read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else BackupData()
     return ScanResult(
         len(pop3), existing, len(export.accounts) - len(pop3), missing, len(export.rules) - len(not_imported), not_imported,
-        len(folders), messages, done, sum(len(found) for found in backup.marks.values()), len(backup.contacts),
+        len(folders), messages, done, sum(len(found) for found in backup.marks.values()), len(backup.contacts), len(export.categories), len(backup.tagged),
     )
 
 
@@ -304,7 +324,7 @@ def _import_accounts(engine: Engine, export: SettingsExport, add: bool, notes: l
                 ),
             )
         except ChronoMailError as error:
-            notes.append(f"{email or source.name}: the account was not made: {error}")
+            notes.append(f"{email or source.name}: the account was not made (Import again makes it): {error}")
             continue
         config = engine.config()
         engine.save_config(config.with_account(replace(config.find(result.account_id), skip_known_mail=True)))
@@ -348,6 +368,49 @@ def _import_rules(engine: Engine, export: SettingsExport, accounts: dict[str, st
             notes.append(f"Rule {source.name}: not imported: {', '.join(source.left_out)}")
     save_rules(engine.directories.rules_file, rules)
     return added, existing, not_imported
+
+
+def _import_categories(engine: Engine, categories: tuple[SourceCategory, ...], names_in_mail: tuple[str, ...]) -> int:
+    """The categories become tags with their colour and what they are for; a tag of the same name keeps what it has.
+    Names the mail carries that are no category get the default colour. Returns how many tags were made."""
+    try:
+        tags = load_tags(engine.directories.tags_file)
+        made = 0
+        for category in categories:
+            if tags.entry(category.name) is not None:
+                continue
+            tags = tags.with_colour(category.name, category.colour).with_details(category.name, "", category.kinds)
+            made += 1
+        save_tags(engine.directories.tags_file, tags)
+    except ChronoMailError as error:
+        raise UsageError(f"The categories could not be made into tags: {error}") from None
+    before = len(load_tags(engine.directories.tags_file).entries)
+    give_colours(engine, names_in_mail)
+    return made + len(load_tags(engine.directories.tags_file).entries) - before
+
+
+def _tag_present_mail(engine: Engine, backup: BackupData) -> tuple[int, int]:
+    """Mail imported before tags existed (or by an earlier run) gets the categories it had: found in Local Folders by its
+    Message-ID. Returns (tagged, not found)."""
+    tagged = missing = 0
+    ensure_local_folders(engine)
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        known = known_messages(mailbox)
+        for message_id, _, tags in backup.tagged:
+            store_id = known.get(f"id:{message_id}") if message_id else None
+            if store_id is None:
+                missing += 1
+                continue
+            current = mailbox.tags_of(store_id)
+            wanted = clean_tags([*current, *tags])
+            if wanted != current:
+                row = mailbox.index.get(store_id)
+                if row is None:
+                    missing += 1
+                    continue
+                mailbox.set_tags(MessageRef(mailbox.store.account_id, row.folder, store_id), wanted)
+            tagged += 1
+    return tagged, missing
 
 
 def _import_contacts(engine: Engine, backup: BackupData, notes: list[str]) -> tuple[int, int]:
@@ -407,41 +470,106 @@ class _Folders:
         return path
 
 
-def _import_mail(engine: Engine, mail_path: Path, backup: BackupData | None, journal: _Journal, batch: int) -> tuple[int, int, list[str], int]:
-    """Up to batch messages (0: all) that are not done yet. Returns imported, duplicates, failures and how many are left."""
+@dataclass
+class _Run:
+    """What one import keeps between its batches, so that each batch does not read the export, the backup and the
+    mail that is already here again: the files of the export, the marks of the backup (each used once) and the
+    fingerprints of the mail that was here before the import."""
+
+    key: tuple[str, ...]
+    files: list[MessageFile]
+    backup: BackupData | None
+    known: dict[str, str] | None = None
+    with_tags: bool = True  # Tags is chosen: imported mail gets its categories as tags
+
+
+_RUN: list[_Run] = []  # the one import that runs (at most one entry)
+_RUN_LOCK = threading.Lock()
+
+
+def _file_key(path: Path | None) -> str:
+    if path is None:
+        return ""
+    status = path.stat()
+    return f"{path.resolve()}|{status.st_size}|{status.st_mtime_ns}"
+
+
+def _run_for(engine: Engine, mail_path: Path, backup_path: Path | None, journal_source: str) -> _Run:
+    key = (str(engine.directories.data_directory), journal_source, str(mail_path.resolve()), _file_key(backup_path))
+    with _RUN_LOCK:
+        if _RUN and _RUN[0].key == key:
+            return _RUN[0]
+        run = _Run(key, list(message_files(mail_path)), read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None)
+        _RUN[:] = [run]
+        return run
+
+
+def _finished_run() -> None:
+    with _RUN_LOCK:
+        _RUN.clear()
+
+
+def _still_here(mailbox: Mailbox, store_id: str) -> bool:
+    """Is the copy that makes a message a duplicate really here and readable? (After a crash the index may name a copy
+    that was never made safe on disk; then the message is imported again.)"""
+    row = mailbox.index.get(store_id)
+    if row is None:
+        return False
+    try:
+        mailbox.store.verify(MessageRef(mailbox.store.account_id, row.folder, store_id), hint=row.path)
+    except ChronoMailError:
+        return False
+    return True
+
+
+def _import_mail(engine: Engine, mail_path: Path, run: _Run, journal: _Journal, batch: int) -> tuple[int, int, list[str], int]:
+    """Up to batch messages (0: all) that are not done yet. Returns imported, duplicates, failures and how many are left.
+    The batch is made safe on disk at once at its end, and only then written in the journal as done."""
     ensure_local_folders(engine)
-    files = [item for item in message_files(mail_path) if item.relative not in journal.done]
-    total = len(files)
+    files = [item for item in run.files if item.relative not in journal.done]
     imported = duplicates = 0
     failed: list[str] = []
-    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
-        known = known_messages(mailbox, journal.imported_ids())
-        folders = _Folders(mailbox)
-        work = files if batch <= 0 else files[:batch]
-        for number, item in enumerate(work, 1):
-            engine.progress("Importing mail", number, len(work))
-            try:
-                path = mail_path / item.relative
-                if path.stat().st_size > MAXIMUM_MESSAGE_BYTES:
-                    raise UsageError("the message is larger than the limit")
-                raw = path.read_bytes()
-                message_id, moment = message_keys(raw)
-                marks = backup.take_marks(item.folder, message_id, moment) if backup is not None else None
-                key = fingerprint_of_raw(raw)
-                if key is not None and key in known:
-                    journal.message(item.relative, "duplicate")
-                    duplicates += 1
+    outcomes: list[tuple[str, str]] = []
+    work = files if batch <= 0 else files[:batch]
+    try:
+        with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox, mailbox.store.written_together():
+            if run.known is None:
+                run.known = known_messages(mailbox, journal.imported_ids())
+            known = run.known
+            folders = _Folders(mailbox)
+            for number, item in enumerate(work, 1):
+                engine.progress("Importing mail", number, len(work))
+                try:
+                    path = mail_path / item.relative
+                    if path.stat().st_size > MAXIMUM_MESSAGE_BYTES:
+                        raise UsageError("the message is larger than the limit")
+                    raw = path.read_bytes()
+                    message_id, moment = message_keys(raw)
+                    found = run.backup.take(item.folder, message_id, moment) if run.backup is not None else None
+                    marks, tags = found if found is not None else (None, ())
+                    key = fingerprint_of_raw(raw)
+                    present = known.get(key) if key is not None else None
+                    if present is not None and _still_here(mailbox, present):
+                        outcomes.append((item.relative, "duplicate"))
+                        duplicates += 1
+                        continue
+                    reference = mailbox.deliver(folders.target(item.folder), raw, marks if marks is not None else frozenset({MessageFlag.SEEN}))
+                    if tags and run.with_tags:
+                        mailbox.set_tags(reference, tags)
+                except (ChronoMailError, OSError) as error:
+                    outcomes.append((item.relative, "failed"))
+                    if len(failed) < MAXIMUM_REPORTED:
+                        failed.append(f"{item.relative}: {error}")
                     continue
-                reference = mailbox.deliver(folders.target(item.folder), raw, marks if marks is not None else frozenset({MessageFlag.SEEN}))
-            except (ChronoMailError, OSError) as error:
-                journal.message(item.relative, "failed")
-                if len(failed) < MAXIMUM_REPORTED:
-                    failed.append(f"{item.relative}: {error}")
-                continue
-            journal.message(item.relative, reference.store_id)
-            imported += 1
-    journal.finish()
-    return imported, duplicates, failed, total - len(work)
+                outcomes.append((item.relative, reference.store_id))
+                imported += 1
+    finally:
+        journal.messages(outcomes)  # after written_together made the batch safe on disk
+        journal.finish()
+    left = len(files) - len(work)
+    if left == 0:
+        _finished_run()
+    return imported, duplicates, failed, left
 
 
 def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
@@ -455,7 +583,7 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         raise UsageError("The mail comes from the mail export folder: choose it, or leave the mail out")
     if parameters.contacts and backup_path is None:
         raise UsageError("The contacts come from the backup: choose it, or leave them out")
-    if not (parameters.accounts or parameters.rules or parameters.mail or parameters.contacts):
+    if not (parameters.accounts or parameters.rules or parameters.mail or parameters.contacts or parameters.tags):  # tags without their exports: nothing to do
         raise UsageError("Choose what to import")
     source = mail_path or settings_path or backup_path
     assert source is not None  # one of them is needed for anything chosen above
@@ -464,19 +592,35 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
     result = ImportResult()
     export = read_settings(settings_path) if settings_path is not None else SettingsExport((), (), False)
     if (parameters.accounts or parameters.rules) and "settings" not in journal.phases:
+        before = len(notes)
         accounts, added, existing, without = _import_accounts(engine, export, parameters.accounts, notes)
+        not_made = any("the account was not made" in note for note in notes[before:])
         result = replace(result, accounts_added=added, accounts_existing=existing, accounts_without_password=tuple(without))
         if parameters.rules:
             rules_added, rules_existing, not_imported = _import_rules(engine, export, accounts, notes)
             result = replace(result, rules_added=rules_added, rules_existing=rules_existing, rules_not_imported=tuple(not_imported))
-        journal.phase("settings")
-    backup = read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None
+        if not not_made:  # an account that could not be made (the password store did not answer) is tried again by the next run
+            journal.phase("settings")
+    run = _run_for(engine, mail_path, backup_path, str(source.resolve())) if mail_path is not None else None
+    backup = run.backup if run is not None else (read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None)
     if parameters.contacts and backup is not None and "contacts" not in journal.phases:
         contacts_added, contacts_existing = _import_contacts(engine, backup, notes)
         result = replace(result, contacts_added=contacts_added, contacts_existing=contacts_existing)
         journal.phase("contacts")
-    if parameters.mail and mail_path is not None:
-        imported, duplicates, failed, left = _import_mail(engine, mail_path, backup, journal, parameters.batch)
+    if parameters.tags and "tags" not in journal.phases and (export.categories or (backup is not None and backup.tagged)):
+        names_in_mail = tuple(dict.fromkeys(tag for _, _, tags in (backup.tagged if backup is not None else ()) for tag in tags))
+        added = _import_categories(engine, export.categories, names_in_mail)
+        tagged = missing = 0
+        if backup is not None and backup.tagged:
+            tagged, missing = _tag_present_mail(engine, backup)
+        if missing and parameters.mail:
+            notes.append(f"Tags: {missing} tagged messages are not here yet; they get their tags when they are imported")
+        result = replace(result, tags_added=added, messages_tagged=tagged)
+        journal.phase("tags")
+    if run is not None:
+        run.with_tags = parameters.tags
+    if parameters.mail and mail_path is not None and run is not None:
+        imported, duplicates, failed, left = _import_mail(engine, mail_path, run, journal, parameters.batch)
         result = replace(result, messages_imported=imported, messages_duplicate=duplicates, messages_failed=tuple(failed), messages_left=left)
     return replace(result, notes=tuple(notes))
 

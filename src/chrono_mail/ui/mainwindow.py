@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QCursor, QDesktopServices, QFont, QKeyEvent, QKeySequence
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QCursor, QDesktopServices, QFont, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -85,13 +85,19 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTIONS, TASKS, SectionBar
 from chrono_mail.ui.settingsdialog import SettingsDialog
 from chrono_mail.ui.sourcedialog import SourceDialog
+from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail, tag_icon
+from chrono_mail.ui.tagsdialog import TagsDialog
 from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.132"
+__version__ = "mainwindow.py 0.5.140"
 
 # --- Version history ----------------------------------------------------
+# v0.5.140: The first column of the message list can be dragged to another place too
+# v0.5.135: Tags for mail: Menu > Tags, the Tag button and menu, Tag in the right-click menu, Filter > Tagged with, Tags in the folder list, the tags in the reading pane, tag shortcuts, the tag colour for the text
+# v0.5.133: After an import the message list on screen is loaded again too (it kept the old messages); mail checks run in their own lane
 # v0.5.132: Menu > File > Import (accounts, passwords, rules, contacts and mail from another program's exports)
 # v0.5.126: The changes of a message (marks, delete, move, copy, archive, junk, snooze) run in the order they were given
 # v0.5.125: A message deleted or moved right after it was clicked no longer reports that messages are missing
@@ -241,6 +247,10 @@ class MainWindow(QMainWindow):
         self._combined_accounts: tuple[str, ...] = ()  # the accounts of the group whose inbox is shown
         self._sidebar: object | None = None  # the answer of sidebar.show: pinned folders and groups
         self._combined: str | None = None  # the favorite that is shown (all inboxes, unread, ...), or None
+        self._combined_tag: str = ""  # the tag of the combined view "tagged" (Tags in the folder list)
+        self._filter_tag: str | None = None  # Filter > Tagged with
+        self._tags: tuple[object, ...] = ()  # the answer of tag.list, in the person's order
+        self._tag_shortcuts: list[QAction] = []
         self._tree_state: dict[str, bool] = self._load_tree_state()  # node -> opened (True) or closed (False) by the person
         self._shown: tuple[str, str, str] | None = None  # account, folder, message id of what the reader shows
         self._show_request: int = 0
@@ -312,6 +322,10 @@ class MainWindow(QMainWindow):
         self.delegate = MessageDelegate()
         self.column_delegate = ColumnDelegate()
         self.column_delegate.column_of = self._column_id
+        self._tag_book = TagColourBook()  # one set of tag colours for the list, the cards and the reading pane
+        self.list_model.tag_book = self._tag_book
+        self.delegate.tag_book = self._tag_book
+        self.column_delegate.tag_book = self._tag_book
         self._layout: str = str(self.settings.value("list_layout", "columns"))
         if self._layout not in ("columns", "cards"):
             self._layout = "columns"
@@ -340,6 +354,7 @@ class MainWindow(QMainWindow):
         self.list_view.setDefaultDropAction(Qt.DropAction.MoveAction)
         self.list_view.setFrameShape(QTreeView.Shape.NoFrame)
         self.list_view.header().setSectionsMovable(True)
+        self.list_view.header().setFirstSectionMovable(True)  # a tree view keeps its first column in place for a real tree; this list is flat
         self.list_view.header().setStretchLastSection(False)  # the columns fill the list themselves (column fit)
         self.list_view.header().setMinimumSectionSize(MINIMUM_ICON)
         self.list_view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -375,6 +390,8 @@ class MainWindow(QMainWindow):
         self.filter_flagged = self._filter_entry("Flagged", "flag")
         self.filter_unread = self._filter_entry("Unread", "mail-unread")
         self.filter_attachments = self._filter_entry("With attachments", "mail-attachment")
+        self.filter_tag_menu = self.filter_menu.addMenu("Tagged with")
+        self.filter_tag_menu.aboutToShow.connect(self._fill_filter_tags)
         self.filter_menu.addSeparator()
         self.filter_clear = self.filter_menu.addAction("Clear filter")
         self.filter_clear.setEnabled(False)
@@ -456,11 +473,15 @@ class MainWindow(QMainWindow):
             font = entry.font()
             font.setBold(entry.isChecked())
             entry.setFont(font)
-        on = any(entry.isChecked() for entry in entries)
+        on = any(entry.isChecked() for entry in entries) or self._filter_tag is not None
+        font = self.filter_tag_menu.menuAction().font()
+        font.setBold(self._filter_tag is not None)
+        self.filter_tag_menu.menuAction().setFont(font)
         self.filter_button.setChecked(on)
         self.filter_clear.setEnabled(on)
 
     def _clear_filters(self) -> None:
+        self._filter_tag = None
         for entry in (self.filter_flagged, self.filter_unread, self.filter_attachments):
             entry.blockSignals(True)
             entry.setChecked(False)
@@ -532,6 +553,7 @@ class MainWindow(QMainWindow):
         self.act_snooze = self._action("Snooze…", self.snooze_selected, "S", "clock")
         self.act_snooze.setIconText("Snooze")  # on the toolbar button
         self.act_rules = self._action("Rules…", self.open_rules, None, "view-filter")
+        self.act_tags = self._action("Tags…", self.open_tags)
         self.act_accounts = self._action("Accounts…", lambda: self.open_settings("Accounts"), None, "user-identity")
         self.act_quit = self._action("Exit", self.quit_program, None, "application-exit")
         self.act_open_menu = self._action("Open the menu", self.open_menu, "Alt+M")
@@ -612,6 +634,15 @@ class MainWindow(QMainWindow):
             mark_menu.addAction(action)
         self.mark_button.setMenu(mark_menu)
         self.toolbar.addWidget(self.mark_button)
+        self.tag_button = QToolButton(self)
+        self.tag_button.setText("Tag")
+        self.tag_button.setIcon(tag_icon(QColor("#808080")))
+        self.tag_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.tag_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.tag_menu = QMenu(self.tag_button)
+        self.tag_menu.aboutToShow.connect(lambda: self._fill_tag_menu(self.tag_menu))
+        self.tag_button.setMenu(self.tag_menu)
+        self.toolbar.addWidget(self.tag_button)
         self.toolbar.addAction(self.act_archive)
         self.toolbar.addAction(self.act_snooze)
         self.snooze_menu = QMenu(self)
@@ -668,7 +699,7 @@ class MainWindow(QMainWindow):
     def _build_menus(self) -> None:
         bar = self.menuBar()
         root = bar.addMenu("\u2261  &Menu")  # one Menu button holds the menus that make up the menu bar
-        for action in (self.act_settings, self.act_accounts, self.act_rules):
+        for action in (self.act_settings, self.act_accounts, self.act_rules, self.act_tags):
             root.addAction(action)
         root.addSeparator()
         file_menu = root.addMenu("&File")
@@ -893,6 +924,7 @@ class MainWindow(QMainWindow):
                 return
             self._shown = (account, folder, message_id)
             self.reader.show_message(result)
+            self.reader.set_tags(self._tag_book.html(self._tags_of_message(message_id)))
             if not seen and self._mark_read_mode() == "delay":
                 self._mark_read_timer.start(prefs.get_int(self.settings, "mark_read_delay_ms", 0, 10_000))
 
@@ -1390,6 +1422,7 @@ class MainWindow(QMainWindow):
             self._start_watchers()
             self._apply_account_timers()
 
+        self._load_tags()
         self.backend.call("account.list", {}, listed, lambda error: self._report("Accounts", error), owner=self)
 
     def _load_folders(self, select_saved: bool, then: Callable[[], None] | None = None) -> None:
@@ -1473,6 +1506,8 @@ class MainWindow(QMainWindow):
         self.tree_model.hidden = {str(view) for view in getattr(self._sidebar, "hidden", ())}
         self.tree_model.show_favorites = bool_setting(self.settings, "show_favorites", True)
         self.tree_model.show_local_folders = bool_setting(self.settings, "show_local_folders", True)
+        self.tree_model.show_tags = bool_setting(self.settings, "show_tags", True)
+        self.tree_model.tags = [(str(getattr(tag, "name")), self._tag_book.colour(str(getattr(tag, "name"))).name()) for tag in self._tags if offered_for_mail(tag)]
         self.tree_model.populate(self._accounts, self._folders)
         target = next((found for found in (self._find_tree_item(key) for key in wanted) if found is not None), None)
         if target is None:
@@ -1641,6 +1676,9 @@ class MainWindow(QMainWindow):
         self._tree_path = str(current.data(FOLDER_PATH_ROLE) or "")
         self._combined = "inboxes" if kind == "groupinbox" else (str(current.data(FOLDER_PATH_ROLE)) if kind == "favorite" else None)
         self._combined_accounts = self._group_accounts(str(current.data(GROUP_ROLE))) if kind == "groupinbox" else ()
+        self._combined_tag = str(current.data(FOLDER_PATH_ROLE)) if kind == "tagview" else ""
+        if kind == "tagview":
+            self._combined = "tagged"
         if kind == "pinlink":
             kind = "folder"
         self._account_id = str(current.data(ACCOUNT_ROLE))  # "" in a favorite: the rows say which account they belong to
@@ -1775,7 +1813,7 @@ class MainWindow(QMainWindow):
         if self._account_id is None:
             return None
         if self._combined is not None:
-            return ViewSpec("", None, self.search_box.text().strip(), combined=self._combined, combined_accounts=self._combined_accounts)
+            return ViewSpec("", None, self.search_box.text().strip(), combined=self._combined, combined_accounts=self._combined_accounts, tag=self._combined_tag or None)
         query = self.search_box.text().strip()
         unread = True if self.filter_unread.isChecked() else None
         flagged = True if self.filter_flagged.isChecked() else None
@@ -1791,7 +1829,7 @@ class MainWindow(QMainWindow):
             self._account_id, folder, query, self._effective_sort(), self._oldest_first, unread, flagged, attachments,
             date_from=advanced.date_from if advanced else None, date_to=advanced.date_to if advanced else None,
             minimum_size=advanced.minimum_size if advanced else None, maximum_size=advanced.maximum_size if advanced else None,
-            conversations=grouped,
+            conversations=grouped and self._filter_tag is None, tag=self._filter_tag,
         )
 
     def _apply_view(self) -> None:
@@ -1873,6 +1911,7 @@ class MainWindow(QMainWindow):
                 return
             self._shown = (account, folder, message_id)
             self.reader.show_message(result)
+            self.reader.set_tags(self._tag_book.html(self._tags_of_message(message_id)))
             if int(getattr(row, "thread_size", 1)) > 1:
                 self._load_conversation(account, folder, message_id, request)
             else:
@@ -2110,6 +2149,7 @@ class MainWindow(QMainWindow):
             getattr(self, f"act_{name}").setEnabled(selected)
         self.act_delete.setEnabled(selected)
         self.mark_button.setEnabled(selected)
+        self.tag_button.setEnabled(selected)
         self.move_button.setEnabled(selected)
 
     MAIL_ONLY: tuple[str, ...] = (
@@ -2453,6 +2493,7 @@ class MainWindow(QMainWindow):
         for value, action in self.layout_actions.items():
             action.setChecked(value == self._layout)
         self.list_model.date_style = self._date_style
+        self.list_model.tag_text = bool_setting(self.settings, "tag_text_colour", False)
         header = self.list_view.header()
         if cards:
             self.list_model.set_columns((CARD,))
@@ -2822,7 +2863,7 @@ class MainWindow(QMainWindow):
 
         self.show_status("Checking for mail…")
         for account_id in list(remaining):
-            self.backend.call("mail.fetch", {"account": account_id}, make_done(account_id), make_failed(account_id), owner=self)
+            self.backend.call("mail.fetch", {"account": account_id}, make_done(account_id), make_failed(account_id), owner=self, checking=True)
 
     def _ask_about_blocked(self, account_id: str, item: object) -> None:
         """A safety rule held an IMAP folder back: the person decides, and the account is synchronised with that answer."""
@@ -2881,12 +2922,116 @@ class MainWindow(QMainWindow):
 
         self.reload_accounts(select_saved=False, then=loaded)
 
+    # --- tags ----------------------------------------------------------------------------------------------------
+
+    def _load_tags(self) -> None:
+        """The tags with their colours, order and shortcuts: for the menus, the list, the reading pane and the folder list."""
+
+        def loaded(result: object) -> None:
+            self._tags = tuple(result) if isinstance(result, (tuple, list)) else ()
+            self._tag_book.update(self._tags)
+            self._make_tag_shortcuts()
+            if self._accounts:
+                self._populate_tree()
+            self.list_view.viewport().update()
+
+        self.backend.call("tag.list", {}, loaded, lambda error: self._report("Tags", error), owner=self)
+
+    def _tags_of_message(self, message_id: str) -> tuple[str, ...]:
+        """The tags of a message of the list (a message of the conversation bar that is not in the list: none shown)."""
+        position = self.list_model.find(message_id)
+        row = self.list_model.row_at(position) if position >= 0 else None
+        return tuple(getattr(row, "tags", ())) if row is not None else ()
+
+    def _make_tag_shortcuts(self) -> None:
+        for action in self._tag_shortcuts:
+            self.removeAction(action)
+            action.deleteLater()
+        self._tag_shortcuts = []
+        for tag in self._tags:
+            shortcut = str(getattr(tag, "shortcut", ""))
+            if not shortcut or not offered_for_mail(tag):
+                continue
+            action = QAction(self)
+            action.setShortcut(QKeySequence(shortcut))
+            name = str(getattr(tag, "name"))
+            action.triggered.connect(lambda checked=False, chosen=name: self._toggle_tag_by_key(chosen))
+            self.addAction(action)
+            self._tag_shortcuts.append(action)
+
+    def _toggle_tag_by_key(self, name: str) -> None:
+        """A tag's shortcut: give the tag to the selected messages, or take it away when all of them have it."""
+        rows = self._selected_rows()
+        everyone = bool(rows) and all(any(have.casefold() == name.casefold() for have in tuple(getattr(row, "tags", ()))) for row in rows)
+        self._toggle_tag(name, not everyone)
+
+    def _fill_tag_menu(self, menu: QMenu) -> None:
+        rows = self._selected_rows()
+        fill_tag_menu(menu, self._tags, self._tag_book, [tuple(getattr(row, "tags", ())) for row in rows], self._toggle_tag, self._new_tag, self.open_tags)
+
+    def _toggle_tag(self, name: str, add: bool) -> None:
+        """Give a tag to the selected messages (add) or take it away; the rows show the new tags at once."""
+        rows = self._selected_rows()
+        groups: dict[tuple[str, str], list[str]] = {}
+        for row in rows:
+            groups.setdefault((self._account_of(row), str(getattr(row, "folder"))), []).append(str(getattr(row, "message_id")))
+        new = not any(str(getattr(tag, "name")).casefold() == name.casefold() for tag in self._tags)
+
+        def done(result: object) -> None:
+            for item in result if isinstance(result, (tuple, list)) else ():
+                message_id, tags = str(getattr(item, "message")), tuple(getattr(item, "tags"))
+                self.list_model.replace_tags(message_id, tags)
+                if self._shown is not None and self._shown[2] == message_id:
+                    self.reader.set_tags(self._tag_book.html(tags))
+            if new and add:
+                self._load_tags()
+            elif self._combined == "tagged" or self._filter_tag is not None:
+                self.list_model.reload()  # a message that loses the tag leaves this list
+
+        for (account, folder), ids in groups.items():
+            values: dict[str, object] = {"account": account, "folder": folder, "messages": ids, ("add" if add else "remove"): [name]}
+            self.backend.call("message.tag", values, done, lambda error: self._report("Could not change the tags", error), owner=self)
+
+    def _new_tag(self) -> None:
+        name, ok = QInputDialog.getText(self, "New tag", "Name of the new tag (the selected messages get it):")
+        if ok and " ".join(name.split()):
+            self._toggle_tag(" ".join(name.split()), True)
+
+    def _fill_filter_tags(self) -> None:
+        self.filter_tag_menu.clear()
+        for tag in self._tags:
+            if not offered_for_mail(tag):
+                continue
+            name = str(getattr(tag, "name"))
+            chosen = self._filter_tag is not None and self._filter_tag.casefold() == name.casefold()
+            action = self.filter_tag_menu.addAction(tag_icon(self._tag_book.colour(name), chosen), name)
+            action.triggered.connect(lambda checked=False, picked=name, off=chosen: self._set_filter_tag(None if off else picked))
+        if not self.filter_tag_menu.actions():
+            self.filter_tag_menu.addAction("No tags yet").setEnabled(False)
+
+    def _set_filter_tag(self, name: str | None) -> None:
+        self._filter_tag = name
+        self._show_filter_state()
+        self._apply_view()
+
+    def open_tags(self) -> None:
+        """Menu > Tags: make, change, order and delete tags."""
+        TagsDialog(self.backend, self._tags, self._after_tags_changed, self).exec()
+
+    def _after_tags_changed(self) -> None:
+        self._load_tags()
+        self.list_model.reload()  # renamed or deleted tags change the rows
+
     def show_recovery(self) -> None:
         RecoveryDialog(self.backend, self).exec()
 
     def show_import(self) -> None:
         """File > Import: accounts, rules, contacts and mail; the folder list is loaded again after each import."""
-        ImportDialog(self.backend, lambda: self.reload_accounts(select_saved=True), self).exec()
+        ImportDialog(self.backend, self._after_import, self).exec()
+
+    def _after_import(self) -> None:
+        """New accounts, folders and mail: the folder list with its counts, then the list on screen (its selection did not change, so it would keep the old messages)."""
+        self.reload_accounts(select_saved=True, then=self.list_model.reload)
 
     # --- folders ----------------------------------------------------------------------------------------------------
 
@@ -3005,6 +3150,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         for action in (self.act_read, self.act_unread, self.act_flag, self.act_unflag):
             menu.addAction(action)
+        self._fill_tag_menu(menu.addMenu(tag_icon(QColor("#808080")), "Tag"))
         menu.addSeparator()
         self._fill_move_menu()
         menu.addMenu(self.move_menu).setText("Move to")

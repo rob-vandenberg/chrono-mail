@@ -90,7 +90,7 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 | 3.6 | Contacts section (address books, list, detail, tags, History). | done (0.0.62) |
 | 3.7 | Tasks section (lists, quick add, detail pane, status marks). | done (0.0.63) |
 | 3.8 | Calendar section (Day, Work Week, Week, Upcoming, Month, Agenda; event editor; mini calendar). | done (0.0.64) |
-| 3.9 | Tags for mail; reminders and notifications. | open |
+| 3.9 | Tags for mail (D-128, five steps: engine, window, rules, importer, IMAP keywords); reminders and notifications. | tags done (0.5.134 to 0.5.138: engine, window, rules, importer, IMAP keywords); reminders and notifications open |
 
 ## Milestone 4: CalDAV and CardDAV (Kerio Connect test server, D-078)
 

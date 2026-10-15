@@ -1,17 +1,19 @@
 from collections.abc import Callable, Sequence
+from dataclasses import replace as replace_entry
 from dataclasses import dataclass, field
 
 from chrono_mail.core import ChronoMailError, Folder, FolderRole, MessageFlag, MessageRef, ProtocolError
 from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.mime import parse_message
-from chrono_mail.protocols.imap import FetchedItem, FolderEntry, ImapClient, ImapRefused
+from chrono_mail.protocols.imap import FetchedItem, FolderEntry, ImapClient, ImapRefused, keyword_to_tag, tag_to_keyword
 from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.4.120"
+__version__ = "imap_sync.py 0.5.138"
 
 # --- Version history ----------------------------------------------------
+# v0.5.138: Tags as keywords: compared, sent, taken over, downloaded and uploaded with the flags; a folder that keeps no keywords keeps its tags here
 # v0.4.120: Messages the person deleted here while offline are always deleted on the server; only unexplained losses can hold a folder back
 # v0.4.119: A folder blocked by a safety rule is reported (FolderReport.blocked); the person's answer for it (ImapSyncOptions.confirmed) deletes on the server, brings the messages back, removes them here or uploads them again
 # v0.3.114: Messages gone from the server and from the store are forgotten and do not count for the removal safety rule
@@ -107,8 +109,30 @@ class ImapReport:
 
 
 def kept_flags(server_flags: frozenset[str]) -> frozenset[str]:
-    """The server flags we keep (the five that have a counterpart in the store), as lower case names."""
-    return frozenset(flag.lower() for flag in server_flags if flag.lower() in KEPT_FLAGS)
+    """The server flags we keep (the five that have a counterpart in the store, and the keywords that are tags), as lower case names."""
+    return frozenset(flag.lower() for flag in server_flags if flag.lower() in KEPT_FLAGS or keyword_to_tag(flag) is not None)
+
+
+def system_flags(names: frozenset[str]) -> frozenset[str]:
+    return frozenset(name for name in names if name in KEPT_FLAGS)
+
+
+def server_tags(server_flags: frozenset[str]) -> tuple[str, ...]:
+    """The tags a message has on the server (its keywords that are tags), in a fixed order."""
+    found = (keyword_to_tag(flag) for flag in sorted(server_flags, key=str.casefold))
+    return tuple(dict.fromkeys(tag for tag in found if tag is not None))
+
+
+def local_names(flags: frozenset[MessageFlag], tags: tuple[str, ...], keywords: bool) -> frozenset[str]:
+    """What a message here is in the server's terms: its flags, and its tags as keywords when the folder keeps keywords."""
+    names = {flag.imap_name.lower() for flag in flags}
+    if keywords:
+        names |= {tag_to_keyword(tag).lower() for tag in tags}
+    return frozenset(names)
+
+
+def _same_tags(first: tuple[str, ...], second: tuple[str, ...]) -> bool:
+    return {tag.casefold() for tag in first} == {tag.casefold() for tag in second}
 
 
 def message_flags(names: frozenset[str]) -> frozenset[MessageFlag]:
@@ -216,6 +240,8 @@ class _Folder:
     on_server: dict[int, FetchedItem]
     locations: dict[str, tuple[tuple[str, ...], str]]  # where every stored message is, in all folders
     pushed: set[int] = field(default_factory=set)  # UIDs whose flags we just sent: the summary we hold is out of date for them
+    tags: dict[str, tuple[str, ...]] = field(default_factory=dict)  # store id -> its tags here
+    keywords: bool = True  # the folder keeps keywords on the server (PERMANENTFLAGS with \\*): tags go there too
 
 
 def sync_imap(
@@ -352,7 +378,13 @@ def _sync_folder(
     on_server: dict[int, FetchedItem] = {}
     if info.exists > 0:
         on_server = {item.uid: item for item in client.uid_fetch("1:*", "(UID FLAGS RFC822.SIZE)")}
-    view = _Folder(plan, {message.ref.store_id: message for message in store.list_messages(local)}, on_server, store.locate_all())
+    try:
+        tags = store.tags.all()
+    except ChronoMailError:
+        tags: dict[str, tuple[str, ...]] = {}  # a damaged tags file (kept as .bad): the flags still go on; the tags wait for its repair
+    view = _Folder(plan, {message.ref.store_id: message for message in store.list_messages(local)}, on_server, store.locate_all(), tags=tags, keywords=info.keeps_keywords)
+    if not view.keywords and any(store_id in tags for store_id in view.stored) and counts.note is None:
+        counts.note = "the server keeps no tags for this folder; its tags stay on this computer"
     choice = dict(options.confirmed).get(local)
     _remove_gone(store, index, state, view, counts, choice)
     _push_expunges(client, store, state, view, counts, choice)
@@ -444,11 +476,15 @@ def _push_flags(client: ImapClient, state: ImapState, view: _Folder, counts: _Co
         message = view.stored.get(entry.store_id)
         if message is None or uid not in view.on_server:
             continue
-        known = message_flags(entry.flags)
-        if message.flags == known:
+        tags = view.tags.get(entry.store_id, ())
+        mine = local_names(message.flags, tags, view.keywords)
+        known = entry.flags if view.keywords else system_flags(entry.flags)
+        if mine == known:
             continue
-        added = [flag.imap_name for flag in message.flags - known]
-        removed = [flag.imap_name for flag in known - message.flags]
+        spelling = {flag.lower(): flag for flag in view.on_server[uid].flags}  # a keyword is removed as the server writes it
+        added = [flag.imap_name for flag in message.flags if flag.imap_name.lower() not in known]
+        added += [tag_to_keyword(tag) for tag in tags if view.keywords and tag_to_keyword(tag).lower() not in known]
+        removed = [spelling.get(name, KEPT_FLAGS[name].imap_name if name in KEPT_FLAGS else name) for name in sorted(known - mine)]
         try:
             if added:
                 client.uid_store(str(uid), added, "add")
@@ -457,7 +493,7 @@ def _push_flags(client: ImapClient, state: ImapState, view: _Folder, counts: _Co
         except ImapRefused as error:
             counts.failed.append(f"UID {uid}: the flags could not be changed on the server: {error}")
             continue
-        state.set_flags(local, uid, frozenset(flag.imap_name.lower() for flag in message.flags))
+        state.set_flags(local, uid, mine)
         view.pushed.add(uid)
         counts.flags_sent += 1
 
@@ -469,16 +505,24 @@ def _update_flags(store: Store, index: Index | None, state: ImapState, view: _Fo
         message = view.stored.get(entry.store_id)
         if item is None or message is None or uid in view.pushed:
             continue
-        server_now = kept_flags(item.flags)
+        server_now = kept_flags(item.flags) if view.keywords else system_flags(kept_flags(item.flags))
         if server_now == entry.flags:
             continue
-        if message.flags != message_flags(entry.flags):
+        current_tags = view.tags.get(entry.store_id, ())
+        if local_names(message.flags, current_tags, view.keywords) != (entry.flags if view.keywords else system_flags(entry.flags)):
             continue  # changed here too: the local change is kept and was or will be sent (it wins until then)
         wanted = message_flags(server_now)
         try:
-            path = store.set_flags(message.ref, wanted, hint=message.relative_path)
-            if index is not None:
-                index.update_flags(entry.store_id, wanted, path)
+            if wanted != message.flags:
+                path = store.set_flags(message.ref, wanted, hint=message.relative_path)
+                if index is not None:
+                    index.update_flags(entry.store_id, wanted, path)
+            new_tags = server_tags(item.flags)
+            if view.keywords and not _same_tags(new_tags, current_tags):
+                kept = store.tags.set(entry.store_id, new_tags)
+                view.tags[entry.store_id] = kept
+                if index is not None:
+                    index.update_tags(entry.store_id, kept)
         except ChronoMailError as error:
             counts.failed.append(f"UID {uid}: the flags could not be changed here: {error}")
             continue
@@ -567,12 +611,20 @@ def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folde
     except ChronoMailError as error:
         counts.failed.append(f"UID {uid}: it could not be stored safely: {error}")
         return
-    state.map(local, uid, reference.store_id, server_now)
+    tags = server_tags(item.flags) if view.keywords else ()
+    if tags:
+        try:
+            tags = store.tags.set(reference.store_id, tags)
+        except ChronoMailError:
+            tags = ()  # the message is safe; its tags come again with the next comparison
+    if not view.keywords:
+        server_now = system_flags(server_now)
+    state.map(local, uid, reference.store_id, server_now if tags or not view.keywords else system_flags(server_now))
     counts.downloaded += 1
     counts.new.append(reference)
     if index is not None:
         try:
-            index.add(entry_from_raw(reference, store.locate(reference), message_flags(server_now), len(raw), raw))
+            index.add(replace_entry(entry_from_raw(reference, store.locate(reference), message_flags(server_now), len(raw), raw), tags=tags))
         except ChronoMailError:
             counts.failed.append(f"UID {uid}: it is stored but not yet in the index (the next repair of the index adds it)")
 
@@ -611,7 +663,8 @@ def _upload(client: ImapClient, store: Store, state: ImapState, options: ImapSyn
             continue
         try:
             raw = store.read(message.ref, hint=message.relative_path)
-            result = client.append(view.plan.server_name, raw, [flag.imap_name for flag in message.flags])
+            tags = view.tags.get(store_id, ()) if view.keywords else ()
+            result = client.append(view.plan.server_name, raw, [flag.imap_name for flag in message.flags] + [tag_to_keyword(tag) for tag in tags])
         except ImapRefused as error:
             counts.failed.append(f"A local message could not be sent to the server: {error}")
             continue
@@ -623,4 +676,4 @@ def _upload(client: ImapClient, store: Store, state: ImapState, options: ImapSyn
         state.mark_uploaded(store_id)
         counts.uploaded += 1
         if result.uid is not None and result.uid_validity == state.validity.get(local):
-            state.map(local, result.uid, store_id, frozenset(flag.imap_name.lower() for flag in message.flags))
+            state.map(local, result.uid, store_id, local_names(message.flags, tags, view.keywords))

@@ -10,9 +10,10 @@ from typing import Self
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 0.5.123"
+__version__ = "imap.py 0.5.138"
 
 # --- Version history ----------------------------------------------------
+# v0.5.138: Tags as keywords (tag_to_keyword, keyword_to_tag); PERMANENTFLAGS of a selected folder; keywords in STORE and APPEND
 # v0.5.123: UNSUBSCRIBE
 # v0.0.32: IDLE
 # v0.0.30: uid_move tells the new UID
@@ -62,6 +63,11 @@ class SelectInfo:
     highest_modseq: int | None
     flags: frozenset[str]
     read_only: bool
+    permanent_flags: frozenset[str] | None = None  # PERMANENTFLAGS; \\* in it: keywords (tags) are kept
+
+    @property
+    def keeps_keywords(self) -> bool:
+        return self.permanent_flags is not None and "\\*" in self.permanent_flags
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +127,48 @@ def encode_folder_name(name: str) -> str:
             pending.append(character)
     flush()
     return "".join(out)
+
+
+_KEYWORD_SAFE: re.Pattern[str] = re.compile(r"[A-Za-z0-9_.-]")
+MAXIMUM_KEYWORD: int = 200
+NOT_TAGS: frozenset[str] = frozenset({"junk", "nonjunk", "notjunk", "forwarded", "mdnsent", "phishing"})  # marks of other programs, never tags
+
+
+def tag_to_keyword(tag: str) -> str:
+    """A tag as an IMAP keyword (an atom): letters, digits, _ . - as they are; every other character (a space, an accent,
+    $ or &) in the modified UTF-7 form IMAP uses for folder names, so it can be read back exactly. Never starts with $."""
+    out: list[str] = []
+    pending: list[str] = []
+
+    def flush() -> None:
+        if pending:
+            raw = "".join(pending).encode("utf-16-be")
+            out.append("&" + base64.b64encode(raw).decode("ascii").rstrip("=").replace("/", ",") + "-")
+            pending.clear()
+
+    for character in " ".join(tag.split()):
+        if _KEYWORD_SAFE.fullmatch(character):
+            flush()
+            out.append(character)
+        else:
+            pending.append(character)
+    flush()
+    keyword = "".join(out)
+    if not keyword or len(keyword) > MAXIMUM_KEYWORD:
+        raise ProtocolError("A tag cannot be written as a keyword of the server (too long or empty)")
+    return keyword
+
+
+def keyword_to_tag(keyword: str) -> str | None:
+    """The tag a keyword stands for; None for a system flag, a keyword of the server or another program ($Forwarded,
+    Junk ...), or something that is not one of ours."""
+    if not keyword or keyword.startswith(("\\", "$")) or keyword.casefold() in NOT_TAGS:
+        return None
+    if any(character != "&" and character not in "+," and not _KEYWORD_SAFE.fullmatch(character) for character in keyword if character != "-"):
+        return None
+    name = decode_folder_name(keyword)
+    cleaned = " ".join(name.split())
+    return cleaned if cleaned and cleaned.isprintable() and len(cleaned) <= 100 else None
 
 
 def decode_folder_name(wire: str) -> str:
@@ -515,6 +563,7 @@ class ImapClient:
         responses = self._command(f"{verb} {quote(encode_folder_name(folder))}")
         exists, validity, next_uid, modseq = 0, 0, 1, None
         flags: frozenset[str] = frozenset()
+        permanent: frozenset[str] | None = None
         mode_read_only = read_only
         for response in responses:
             if response.name == "EXISTS" and response.number is not None:
@@ -532,10 +581,12 @@ class ImapClient:
                     modseq = self._number(value)
                 elif key == "READ-ONLY":
                     mode_read_only = True
+                elif key == "PERMANENTFLAGS" and isinstance(value, tuple):
+                    permanent = frozenset(str(item) for item in value)
         if validity <= 0:
             raise ProtocolError("The server did not tell the folder's UIDVALIDITY")
         self.selected = folder
-        return SelectInfo(exists, validity, next_uid, modseq, flags, mode_read_only)
+        return SelectInfo(exists, validity, next_uid, modseq, flags, mode_read_only, permanent)
 
     @staticmethod
     def _number(value: object) -> int:
@@ -586,7 +637,7 @@ class ImapClient:
 
     @staticmethod
     def _flag(flag: str) -> str:
-        if not re.fullmatch(r"\\?[A-Za-z0-9$_.-]{1,64}", flag):
+        if not re.fullmatch(r"\\?[A-Za-z0-9$_.&+,-]{1,200}", flag):
             raise ProtocolError("A flag may only contain letters, digits and a few signs")
         return flag
 

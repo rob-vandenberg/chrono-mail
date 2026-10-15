@@ -17,9 +17,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "ruleedit.py 0.0.69"
+__version__ = "ruleedit.py 0.5.136"
 
 # --- Version history ----------------------------------------------------
+# v0.5.136: Tags: the condition Tag is / is not, the actions Add tag and Remove tag, each with the tags to choose from
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.49: Rules without conditions for one account
@@ -27,7 +28,7 @@ __version__ = "ruleedit.py 0.0.69"
 
 FIELDS: tuple[tuple[str, str], ...] = (
     ("from", "From"), ("to", "To"), ("cc", "Cc"), ("subject", "Subject"), ("body", "Message text"),
-    ("header", "Header"), ("size", "Size (KB)"), ("attachment", "Attachment"),
+    ("header", "Header"), ("size", "Size (KB)"), ("attachment", "Attachment"), ("tag", "Tag"),
 )
 TEXT_OPERATORS: tuple[tuple[str, str], ...] = (
     ("contains", "contains"), ("not_contains", "does not contain"), ("equals", "is"), ("not_equals", "is not"),
@@ -35,10 +36,30 @@ TEXT_OPERATORS: tuple[tuple[str, str], ...] = (
 )
 SIZE_OPERATORS: tuple[tuple[str, str], ...] = (("greater_than", "is larger than"), ("less_than", "is smaller than"))
 ATTACHMENT_OPERATORS: tuple[tuple[str, str], ...] = (("is", "is"),)
+TAG_OPERATORS: tuple[tuple[str, str], ...] = (("is", "is"), ("is_not", "is not"))
 ACTIONS: tuple[tuple[str, str], ...] = (
     ("move_to", "Move to folder"), ("mark_read", "Mark as read"), ("mark_unread", "Mark as unread"), ("flag", "Flag"),
-    ("unflag", "Remove the flag"), ("delete", "Move to Trash"), ("mark_junk", "Mark as junk"), ("stop", "Stop processing rules"),
+    ("unflag", "Remove the flag"), ("delete", "Move to Trash"), ("mark_junk", "Mark as junk"), ("add_tag", "Add tag"), ("remove_tag", "Remove tag"),
+    ("stop", "Stop processing rules"),
 )
+TAG_ACTIONS: tuple[str, ...] = ("add_tag", "remove_tag")
+
+
+def _tag_box(parent: QWidget) -> QComboBox:
+    """The tags to choose from; a new name can be typed."""
+    box = QComboBox(parent)
+    box.setEditable(True)
+    entry = box.lineEdit()
+    if entry is not None:
+        entry.setPlaceholderText("Tag")
+    return box
+
+
+def _fill_tags(box: QComboBox, names: list[str]) -> None:
+    current = box.currentText()
+    box.clear()
+    box.addItems(names)
+    box.setCurrentText(current)
 
 
 class ConditionRow(QWidget):
@@ -58,22 +79,24 @@ class ConditionRow(QWidget):
         self.choice = QComboBox(self)  # yes or no, for attachments
         self.choice.addItem("yes", "yes")
         self.choice.addItem("no", "no")
+        self.tag = _tag_box(self)
         self.remove_button = QPushButton("✕", self)
         self.remove_button.setFixedWidth(30)
-        for widget in (self.field, self.header_name, self.operator, self.value, self.choice, self.remove_button):
+        for widget in (self.field, self.header_name, self.operator, self.value, self.choice, self.tag, self.remove_button):
             layout.addWidget(widget)
         self.field.currentIndexChanged.connect(self._field_changed)
         self._field_changed()
 
     def _field_changed(self) -> None:
         kind = str(self.field.currentData())
-        operators = SIZE_OPERATORS if kind == "size" else ATTACHMENT_OPERATORS if kind == "attachment" else TEXT_OPERATORS
+        operators = SIZE_OPERATORS if kind == "size" else ATTACHMENT_OPERATORS if kind == "attachment" else TAG_OPERATORS if kind == "tag" else TEXT_OPERATORS
         self.operator.clear()
         for value, label in operators:
             self.operator.addItem(label, value)
         self.header_name.setVisible(kind == "header")
-        self.value.setVisible(kind != "attachment")
+        self.value.setVisible(kind not in ("attachment", "tag"))
         self.choice.setVisible(kind == "attachment")
+        self.tag.setVisible(kind == "tag")
         self.value.setPlaceholderText("kilobytes" if kind == "size" else "text")
 
     def set_condition(self, text: str) -> None:
@@ -87,18 +110,25 @@ class ConditionRow(QWidget):
         self.operator.setCurrentIndex(max(0, self.operator.findData(operator)))
         if str(self.field.currentData()) == "attachment":
             self.choice.setCurrentIndex(max(0, self.choice.findData(value)))
+        elif str(self.field.currentData()) == "tag":
+            self.tag.setCurrentText(value)
         else:
             self.value.setText(value)
+
+    def set_tags(self, names: list[str]) -> None:
+        _fill_tags(self.tag, names)
 
     def is_blank(self) -> bool:
         """A row in which nothing was typed is left out (a text, header or size condition needs a value)."""
         kind = str(self.field.currentData())
+        if kind == "tag":
+            return not self.tag.currentText().strip()
         return kind not in ("attachment",) and not self.value.text().strip() and (kind != "header" or not self.header_name.text().strip())
 
     def condition(self) -> str:
         kind = str(self.field.currentData())
         name = f"header.{self.header_name.text().strip()}" if kind == "header" else kind
-        value = str(self.choice.currentData()) if kind == "attachment" else self.value.text().strip()
+        value = str(self.choice.currentData()) if kind == "attachment" else self.tag.currentText().strip() if kind == "tag" else self.value.text().strip()
         return f"{name}:{self.operator.currentData()}:{value}"
 
 
@@ -119,23 +149,33 @@ class ActionRow(QWidget):
         entry = self.folder.lineEdit()
         if entry is not None:
             entry.setPlaceholderText("Folder, e.g. Archive/2026")
+        self.tag = _tag_box(self)
         self.remove_button = QPushButton("✕", self)
         self.remove_button.setFixedWidth(30)
-        for widget in (self.kind, self.folder, self.remove_button):
+        for widget in (self.kind, self.folder, self.tag, self.remove_button):
             layout.addWidget(widget)
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self._kind_changed()
 
     def _kind_changed(self) -> None:
         self.folder.setVisible(str(self.kind.currentData()) == "move_to")
+        self.tag.setVisible(str(self.kind.currentData()) in TAG_ACTIONS)
 
     def set_action(self, text: str) -> None:
         kind, _, value = text.partition(":")
         self.kind.setCurrentIndex(max(0, self.kind.findData(kind)))
-        self.folder.setCurrentText(value)
+        if kind in TAG_ACTIONS:
+            self.tag.setCurrentText(value)
+        else:
+            self.folder.setCurrentText(value)
+
+    def set_tags(self, names: list[str]) -> None:
+        _fill_tags(self.tag, names)
 
     def action(self) -> str:
         kind = str(self.kind.currentData())
+        if kind in TAG_ACTIONS:
+            return f"{kind}:{self.tag.currentText().strip()}"
         return f"move_to:{self.folder.currentText().strip()}" if kind == "move_to" else kind
 
 
@@ -184,6 +224,8 @@ class RuleEditDialog(QDialog):
         self.add_action_button.clicked.connect(lambda: self.add_action())
         self.condition_rows: list[ConditionRow] = []
         self.action_rows: list[ActionRow] = []
+        self._tag_names: list[str] = []
+        backend.call("tag.list", {}, self._tags_loaded, lambda error: None, owner=self)  # without them a tag is simply typed
         if rule is None:
             self.add_condition()
             self.add_action()
@@ -198,8 +240,15 @@ class RuleEditDialog(QDialog):
             for text in getattr(rule, "actions"):
                 self.add_action(str(text))
 
+    def _tags_loaded(self, result: object) -> None:
+        tags = tuple(result) if isinstance(result, (tuple, list)) else ()
+        self._tag_names = [str(getattr(tag, "name")) for tag in tags if "mail" in tuple(getattr(tag, "kinds", ("mail",)))]
+        for row in (*self.condition_rows, *self.action_rows):
+            row.set_tags(self._tag_names)
+
     def add_condition(self, text: str | None = None) -> ConditionRow:
         row = ConditionRow(self)
+        row.set_tags(self._tag_names)
         if text is not None:
             row.set_condition(text)
         self.condition_rows.append(row)
@@ -209,6 +258,7 @@ class RuleEditDialog(QDialog):
 
     def add_action(self, text: str | None = None) -> ActionRow:
         row = ActionRow(self._folders, self)
+        row.set_tags(self._tag_names)
         if text is not None:
             row.set_action(text)
         self.action_rows.append(row)

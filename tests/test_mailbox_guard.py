@@ -2,9 +2,10 @@ import re
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mailbox_guard.py 0.5.123"
+__version__ = "test_mailbox_guard.py 0.5.134"
 
 # --- Version history ----------------------------------------------------
+# v0.5.134: changes of tags count as changes too
 # v0.5.123: Initial guard: no command changes mail or folders past the mailbox, which does IMAP on the server first (D-118)
 
 # In an IMAP account every change is made on the server first (D-117, D-118). engine/mailbox.py is the one place that does
@@ -13,7 +14,8 @@ __version__ = "test_mailbox_guard.py 0.5.123"
 
 SOURCE = Path(__file__).resolve().parent.parent / "src" / "chrono_mail"
 CHANGES = (
-    "create_folder|ensure_folder|rename_folder|delete_folder|remove_folder|deliver|move|copy|delete|set_flags|add|remove|update_flags"
+    "create_folder|ensure_folder|rename_folder|delete_folder|remove_folder|deliver|move|copy|delete|set_flags|add|remove|update_flags|update_tags"
+    r"|tags\.set|tags\.copy|tags\.forget|tags\.rename"
 )
 DIRECT_CHANGE = re.compile(rf"\bmailbox\.(store|index)\.({CHANGES})\(")
 HANDED_OVER = re.compile(r"\bmailbox\.(store|index)\s*[,)]")  # the store or index given whole to other code
@@ -56,5 +58,6 @@ def test_the_store_or_index_is_handed_over_only_where_allowed() -> None:
 def test_the_guard_finds_a_direct_change() -> None:
     assert DIRECT_CHANGE.search("        mailbox.store.rename_folder(old, new)")
     assert DIRECT_CHANGE.search("x = mailbox.index.remove(store_id)")
+    assert DIRECT_CHANGE.search("mailbox.store.tags.set(store_id, tags)") and DIRECT_CHANGE.search("mailbox.index.update_tags(store_id, tags)")
     assert not DIRECT_CHANGE.search("raw = mailbox.store.read(reference)")
     assert HANDED_OVER.search("send_and_file(mailbox.store, mailbox.index, x)")

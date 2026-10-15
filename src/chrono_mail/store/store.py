@@ -3,7 +3,8 @@ import os
 import shutil
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,11 +13,14 @@ from chrono_mail.crypto import DataKey, decrypt_message, encrypt_message
 from chrono_mail.crypto.cipher import OVERHEAD
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_name, split_info
+from chrono_mail.store.tags import MessageTags
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 0.3.110"
+__version__ = "store.py 0.5.134"
 
 # --- Version history ----------------------------------------------------
+# v0.5.134: tags: a copy gets the tags of the original, a message deleted for good loses them
+# v0.5.133: written_together: a bulk import makes a whole batch safe on disk at once instead of every message
 # v0.3.110: MessageNotFoundError: the file of a message is not in the store
 # v0.2.101: Creating a folder re-reads the folders under a lock (no second folder with the same path when commands run at the same time); ensure_folder; merge_duplicate_folders repairs stores where that happened
 # v0.0.45: deliver can keep a message's identity
@@ -39,6 +43,25 @@ def _folder_lock(root: Path) -> threading.RLock:
 
 def _no_checkpoint(name: str) -> None:
     """Crash points: tests replace this to simulate a crash at a named step."""
+
+
+def _make_safe(files: list[Path]) -> None:
+    """Make written files and their renames safe on disk: one sync of everything where the system has it, else each file and folder."""
+    sync = getattr(os, "sync", None)
+    if sync is not None:
+        sync()
+        return
+    for path in files:  # Windows: no sync of everything; FlushFileBuffers per file (os.fsync needs write access there)
+        try:
+            descriptor = os.open(path, os.O_RDWR | getattr(os, "O_BINARY", 0))
+        except OSError:
+            continue  # moved or deleted meanwhile: nothing to make safe
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    for directory in {path.parent for path in files}:
+        fsync_directory(directory)
 
 
 class MessageNotFoundError(StorageError):
@@ -82,6 +105,8 @@ class Store:
         self.account_id: str = account_id
         self._key: DataKey | None = key
         self._durable: bool = durable
+        self._unsynced: list[Path] | None = None  # inside written_together: the files still to be made safe
+        self.tags: MessageTags = MessageTags(root, durable)  # which messages carry which tags
         self._checkpoint: Checkpoint = checkpoint
         self._folders: dict[tuple[str, ...], _FolderEntry] = {}
         self.damaged_folders: list[str] = []
@@ -329,6 +354,8 @@ class Store:
             self._checkpoint("write:after-rename")
             if self._durable:
                 fsync_directory(destination.parent)
+            elif self._unsynced is not None:
+                self._unsynced.append(destination)
         except OSError as error:
             temporary.unlink(missing_ok=True)
             raise StorageError(f"The message could not be written: {error.strerror}") from None
@@ -356,6 +383,23 @@ class Store:
                 raise StorageError("The stored message differs from the original")
         self._checkpoint("deliver:done")
         return MessageRef(self.account_id, folder_path, store_id)
+
+    @contextmanager
+    def written_together(self) -> Generator[None]:
+        """For a bulk import: the messages delivered inside are written without making each one safe on disk, and all of
+        them are made safe at once when this ends (also after an error). Until then a crash can lose or damage them, so
+        the caller records them as done only afterwards. A store that is not durable stays as it is."""
+        if not self._durable or self._unsynced is not None:
+            yield
+            return
+        self._durable = False
+        self._unsynced = []
+        try:
+            yield
+        finally:
+            written, self._unsynced = self._unsynced, None
+            self._durable = True
+            _make_safe(written)
 
     def _locate(self, directory: Path, store_id: str, hint: str | None = None) -> Path:
         if hint is not None and hint.split("/", 1)[0] in ("new", "cur"):
@@ -500,6 +544,10 @@ class Store:
         except OSError as error:
             destination.unlink(missing_ok=True)
             raise StorageError(f"The copy could not be verified: {error.strerror}") from None
+        try:
+            self.tags.copy(ref.store_id, store_id)
+        except StorageError:
+            pass  # damaged tags never stop a copy; the tags file keeps its .bad copy for repair
         return MessageRef(self.account_id, target_folder, store_id)
 
     def delete(self, ref: MessageRef, hint: str | None = None) -> None:
@@ -512,6 +560,10 @@ class Store:
                 fsync_directory(path.parent)
         except OSError as error:
             raise StorageError(f"The message could not be deleted: {error.strerror}") from None
+        try:
+            self.tags.forget(ref.store_id)
+        except StorageError:
+            pass  # a line left for a message that is gone does no harm
 
     # --- recovery -----------------------------------------------------------------------------
 

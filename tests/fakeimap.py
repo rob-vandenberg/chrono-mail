@@ -9,9 +9,10 @@ from chrono_mail.protocols.imap import decode_folder_name, encode_folder_name
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeimap.py 0.5.123"
+__version__ = "fakeimap.py 0.5.138"
 
 # --- Version history ----------------------------------------------------
+# v0.5.138: PERMANENTFLAGS; keywords kept (\\*) or dropped (keywords=False), as a server without keyword support
 # v0.5.123: RENAME takes the folders below along and leaves the subscriptions on the old names, as real servers do; UNSUBSCRIBE
 # v0.0.32: IDLE
 # v0.0.30: IMAP sync, store to server
@@ -96,8 +97,10 @@ class FakeImapServer(ScriptedServer):
         sasl_ir: bool = True,
         plain: bool = True,
         idle: bool = True,
+        keywords: bool = True,
     ) -> None:
         super().__init__(self._session, implicit_tls)
+        self.keywords: bool = keywords  # False: a server that keeps no keywords (PERMANENTFLAGS without \\*)
         self.folders: dict[str, FakeFolder] = {
             "INBOX": FakeFolder(),
             "Sent": FakeFolder(attributes=["\\Sent"]),
@@ -273,6 +276,7 @@ class FakeImapServer(ScriptedServer):
                 conversation.send_line(f"* {len(folder.messages)} EXISTS")
                 conversation.send_line("* 0 RECENT")
                 conversation.send_line("* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)")
+                conversation.send_line(f"* OK [PERMANENTFLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft{' \\*' if self.keywords else ''})] kept")
                 conversation.send_line(f"* OK [UIDVALIDITY {folder.uid_validity}] UIDs valid")
                 conversation.send_line(f"* OK [UIDNEXT {folder.uid_next}] Predicted next UID")
                 conversation.send_line(f"{tag} OK [{'READ-ONLY' if verb == 'EXAMINE' else 'READ-WRITE'}] done")
@@ -402,6 +406,8 @@ class FakeImapServer(ScriptedServer):
             wanted = self._uid_set(parts[0], folder)
             mode = parts[1].upper()
             names = set(parts[2].strip("()").split())
+            if not self.keywords:
+                names = {name for name in names if name.startswith("\\")}
             for message in folder.messages:
                 if message.uid in wanted:
                     if mode.startswith("+"):

@@ -1,6 +1,6 @@
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import (
@@ -15,12 +15,14 @@ from chrono_mail.engine.imap_online import LOCAL_ONLY, GoneFromServer, is_imap, 
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 from chrono_mail.index import Index, entry_from_raw
-from chrono_mail.store import MessageNotFoundError, Store
+from chrono_mail.store import MessageNotFoundError, Store, clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 0.5.123"
+__version__ = "mailbox.py 0.5.138"
 
 # --- Version history ----------------------------------------------------
+# v0.5.138: set_tags in an IMAP account: on the server first, as keywords
+# v0.5.134: Tags: set_tags (here only for now; an IMAP account's server learns them in a later step), a copy keeps the tags in the index too
 # v0.5.123: folders (make, rename, delete, empty, mark all read) on the server first; a message gone from the server (D-118); the copy of a folder left out of the synchronisation (D-120)
 # v0.4.120: IMAP accounts: every change is done on the server first and here only when the server confirmed (imap_online, D-117)
 # v0.3.112: Such a delete reports "gone"; forget
@@ -142,12 +144,61 @@ class Mailbox:
         return copied
 
     def _copy_here(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
-        copied = self.store.copy(ref, target, hint=self.hint(ref.store_id))
+        copied = self.store.copy(ref, target, hint=self.hint(ref.store_id))  # the store gives the copy the tags of the original
         path = self.store.locate(copied)
         raw = self.store.read(copied, hint=path)
         flags = self.current_flags(copied)
-        self._index(lambda: self.index.add(entry_from_raw(copied, path, flags, len(raw), raw)))
+        tags = self.tags_of(copied.store_id)
+        self._index(lambda: self.index.add(replace(entry_from_raw(copied, path, flags, len(raw), raw), tags=tags)))
         return copied
+
+    def tags_of(self, store_id: str) -> tuple[str, ...]:
+        try:
+            return self.store.tags.of(store_id)
+        except StorageError:
+            return ()
+
+    def rename_tag(self, old: str, new: str | None) -> int:
+        """Rename a tag in every message of this mailbox (None removes it). Returns how many messages changed.
+        In an IMAP account message by message, on the server first."""
+        if is_imap(self.settings):
+            changed_here = 0
+            wanted = old.casefold()
+            for store_id, tags in self.store.tags.all().items():
+                if not any(tag.casefold() == wanted for tag in tags):
+                    continue
+                row = self.index.get(store_id)
+                if row is None:
+                    continue
+                renamed = tuple(new if tag.casefold() == wanted else tag for tag in tags if tag.casefold() != wanted or new is not None)
+                self.set_tags(MessageRef(self.store.account_id, row.folder, store_id), tuple(tag for tag in renamed if tag is not None))
+                changed_here += 1
+            return changed_here
+        changed = self.store.tags.rename(old, new)
+        for store_id in changed:
+            self._index(self._tags_updater(store_id, self.tags_of(store_id)))
+        return len(changed)
+
+    def _tags_updater(self, store_id: str, tags: tuple[str, ...]) -> Callable[[], None]:
+        return lambda: self.index.update_tags(store_id, tags)
+
+    def set_tags(self, ref: MessageRef, tags: tuple[str, ...]) -> tuple[str, ...]:
+        """Give a message exactly these tags (the store's tags file is the truth, the index copies it). Returns them as kept.
+        The message must be here."""
+        self.store.locate(ref, self.hint(ref.store_id))
+        if not is_imap(self.settings):
+            return self._set_tags_here(ref, tags)
+        cleaned = clean_tags(tags)
+        with server_session(self.engine, self.settings) as server:
+            commit = server.set_tags(ref.store_id, cleaned)
+            kept = self._set_tags_here(ref, cleaned)
+            commit()
+        return kept
+
+    def _set_tags_here(self, ref: MessageRef, tags: tuple[str, ...]) -> tuple[str, ...]:
+        kept = self.store.tags.set(ref.store_id, tags)
+        self._index(lambda: self.index.update_tags(ref.store_id, kept))
+        return kept
 
     def delete(self, ref: MessageRef, permanent: bool) -> str:
         """Move to Trash, or remove for good when permanent or when it is already in Trash. Returns what happened.

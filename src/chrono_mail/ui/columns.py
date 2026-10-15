@@ -6,9 +6,10 @@ from email.utils import getaddresses
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 0.3.109"
+__version__ = "columns.py 0.5.135"
 
 # --- Version history ----------------------------------------------------
+# v0.5.135: The Tag column (narrow; switched on in Settings > Message list or the menu of the column headers)
 # v0.3.109: Every column but Delete sorts: Unread, Flagged, Attachment, Replied, Contact, Folder, Messages in conversation, Preview
 # v0.2.100: Snoozed until: a column of the Snoozed folder only (sorts by the time a message comes back), added once after Received
 # v0.2.94: A click on the To column sorts by To
@@ -40,6 +41,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("from", "From", 200, "sender"),
     Column("to", "To", 200, "to"),
     Column("subject", "Subject", 300, "subject"),
+    Column("tag", "Tag", 60, symbol=True),  # a narrow column of its own width, as the icon columns: Subject keeps its room
     Column("date", "Received", 110, "date"),
     Column("size", "Size", 64, "size", right=True),
     Column("snoozed", "Snoozed until", 110, "snoozed"),
@@ -52,7 +54,7 @@ NEW_COLUMNS: tuple[str, ...] = ("contact", "trash")  # added once to a set of co
 SNOOZED_COLUMN: str = "snoozed"  # shown in the Snoozed folder only; not in the column lists of Settings and the Message list window
 SNOOZED_FOLDER_PATH: str = "Snoozed"
 BY_ID: dict[str, Column] = {column.column_id: column for column in COLUMNS}
-SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎", "replied": "↩", "contact": "", "trash": ""}  # Contact and Delete draw icons, their headers stay empty
+SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎", "replied": "↩", "contact": "", "trash": "", "tag": ""}  # Contact and Delete draw icons, their headers stay empty
 READ_MARK: str = "○"  # the dot of an unread message turns into an empty circle when it is read
 
 
@@ -168,4 +170,6 @@ def cell_text(column_id: str, row: object, recipients_first: bool, date_style: s
         return str(size) if size > 1 else ""
     if column_id == "preview":
         return str(getattr(row, "preview"))
+    if column_id == "tag":
+        return ", ".join(getattr(row, "tags", ()))
     return ""

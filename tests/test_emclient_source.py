@@ -14,9 +14,10 @@ from chrono_mail.engine.emclient_source import ImportSourceError, SourceRule, de
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_emclient_source.py 0.5.132"
+__version__ = "test_emclient_source.py 0.5.137"
 
 # --- Version history ----------------------------------------------------
+# v0.5.137: categories, the categories of messages in the backup, category parts of rules
 # v0.5.132: Initial tests: reading eM Client's settings export, mail export and backup (all made-up data); every rule as it is
 
 NAMESPACE = "http://licensing.emclient.com/XSD/accounts"
@@ -64,7 +65,8 @@ class FakeAccount:
 def ui_rule(switched_on: dict[str, str]) -> str:
     """The rule editor's XML: every element is there; the ones switched on are true, with their data."""
     elements = ["wordsInSubject", "fromPeople", "sentToPeople", "wordsInBody", "hasAttachment", "usingAccount", "moveToFolder", "markAsRead",
-                "markAsFlagged", "deleteMail", "permanentlyDeleteMail", "moveToJunk", "terminateProcessing", "forwardToPeople", "skipNotification", "wordsInHeader"]
+                "markAsFlagged", "deleteMail", "permanentlyDeleteMail", "moveToJunk", "terminateProcessing", "forwardToPeople", "skipNotification", "wordsInHeader",
+                "hasCategory", "addCategories", "removeCategories"]
     parts = ["<active>true</active>", "<dataEntered>true</dataEntered>"]
     for name in elements:
         parts.append(f"<{name}>{'true' if name in switched_on else 'false'}</{name}>")
@@ -93,8 +95,14 @@ def words(*values: str) -> str:
     return "".join(f"<string>{value}</string>" for value in values)
 
 
-def settings_xml(accounts: list[FakeAccount], rules: list[str], crypted: str = "yes") -> str:
+def category_xml(name: str, colour: str, types: str) -> str:
+    return (f"<category><name>{name}</name><color>{colour}</color><priority>0</priority><shortcut>None</shortcut><isSystemCategory>false</isSystemCategory>"
+            f"<isLocalizable>false</isLocalizable><isUsedFirstTime>false</isUsedFirstTime><parentTypes>{types}</parentTypes></category>")
+
+
+def settings_xml(accounts: list[FakeAccount], rules: list[str], crypted: str = "yes", categories: list[str] | None = None) -> str:
     return (f'<?xml version="1.0" encoding="utf-8"?><settings><format-version>1</format-version><general-settings />'
+            f"<categories>{''.join(categories or [])}</categories>"
             f"<rules>{''.join(rules)}</rules><accounts><crypted>{crypted}</crypted>{''.join(a.xml() for a in accounts)}</accounts></settings>")
 
 
@@ -113,9 +121,9 @@ def standard_rules() -> list[str]:
     ]
 
 
-def write_settings(folder: Path, accounts: list[FakeAccount] | None = None, rules: list[str] | None = None) -> Path:
+def write_settings(folder: Path, accounts: list[FakeAccount] | None = None, rules: list[str] | None = None, categories: list[str] | None = None) -> Path:
     path = folder / "settings.xml"
-    path.write_text(settings_xml(accounts if accounts is not None else [FakeAccount("a1", "a1@example.com", "a1login")], rules if rules is not None else standard_rules()), "utf-8")
+    path.write_text(settings_xml(accounts if accounts is not None else [FakeAccount("a1", "a1@example.com", "a1login")], rules if rules is not None else standard_rules(), categories=categories), "utf-8")
     return path
 
 
@@ -140,6 +148,7 @@ class FakeItem:
     date: datetime | None
     flags: int = 2  # read
     replied: bool = False
+    tags: tuple[str, ...] = ()  # its categories
 
 
 @dataclass
@@ -169,8 +178,12 @@ def write_backup(folder: Path, items: list[FakeItem], contacts: list[FakeContact
     connection = sqlite3.connect(work / "mail_index.dat")
     connection.execute("CREATE TABLE MailItems (id INTEGER PRIMARY KEY, folder INTEGER, date TIMESTAMP, messageId TEXT, flags INTEGER, replyDate TIMESTAMP)")
     connection.executemany(
-        "INSERT INTO MailItems (folder, date, messageId, flags, replyDate) VALUES (?, ?, ?, ?, ?)",
-        [(numbers[item.folder], _ticks(item.date), item.message_id, item.flags, _ticks(datetime(2020, 1, 1, tzinfo=UTC)) if item.replied else 0) for item in items],
+        "INSERT INTO MailItems (id, folder, date, messageId, flags, replyDate) VALUES (?, ?, ?, ?, ?, ?)",
+        [(number, numbers[item.folder], _ticks(item.date), item.message_id, item.flags, _ticks(datetime(2020, 1, 1, tzinfo=UTC)) if item.replied else 0) for number, item in enumerate(items, 1)],
+    )
+    connection.execute("CREATE TABLE MailCategoryNames (categoryId INTEGER, id INTEGER, categoryName TEXT)")
+    connection.executemany(
+        "INSERT INTO MailCategoryNames VALUES (?, ?, ?)", [(position, number, tag) for number, item in enumerate(items, 1) for position, tag in enumerate(item.tags)],
     )
     connection.commit()
     connection.close()
@@ -377,3 +390,41 @@ def test_scripts_are_read_as_rules(tmp_path: Path) -> None:
 )
 def test_a_script_that_cannot_be_held_is_reported(tmp_path: Path, script: str, problem: str) -> None:
     assert scripted(tmp_path, script).problem == problem
+
+
+# --- categories and tags ----------------------------------------------------------------------------------
+
+
+def test_categories_become_tags_with_colour_and_kinds(tmp_path: Path) -> None:
+    categories = [
+        category_xml("Home", "#FF0000", "Mail"), category_xml("All of it", "#00ff00", "All"), category_xml("Unused", "#0000ff", "None"),
+        category_xml("Notes only", "#123456", "Note"), category_xml("People", "#abcdef", "Contact, Event, Task, Note"), category_xml("Odd", "red", "Mail"),
+        category_xml("", "#000000", "Mail"),
+    ]
+    export = read_settings(write_settings(tmp_path, [], [], categories))
+    found = [(item.name, item.colour, item.kinds) for item in export.categories]
+    every = ("mail", "events", "contacts", "tasks")
+    assert found == [
+        ("Home", "#ff0000", ("mail",)), ("All of it", "#00ff00", every), ("Unused", "#0000ff", every), ("Notes only", "#123456", every),
+        ("People", "#abcdef", ("events", "contacts", "tasks")), ("Odd", "#808080", ("mail",)),
+    ]
+
+
+def test_category_parts_of_rules_become_tag_conditions_and_actions(tmp_path: Path) -> None:
+    rules = [
+        rule_xml("Tagger", ui_rule({"fromPeople": words("a@x"), "addCategories": words("Work", "Money")})),
+        rule_xml("Untagger", ui_rule({"hasCategory": words("Work"), "removeCategories": words("Old")})),
+    ]
+    found = {rule.name: rule for rule in read_settings(write_settings(tmp_path, [], rules)).rules}
+    assert found["Tagger"].actions == (Action("add_tag", "Work"), Action("add_tag", "Money")) and found["Tagger"].problem is None
+    assert found["Untagger"].conditions == (Condition("tag", "is", "Work"),) and found["Untagger"].actions == (Action("remove_tag", "Old"),)
+
+
+def test_the_backup_gives_the_tags_of_each_message(tmp_path: Path) -> None:
+    moment = datetime(2024, 1, 2, 3, 4, 5, tzinfo=UTC)
+    items = [FakeItem("/Inbox", "a@x", moment, tags=("Work", "Home")), FakeItem("/Inbox", "b@x", moment)]
+    data = read_backup(write_backup(tmp_path, items), tmp_path / "work")
+    assert data.tagged == (("a@x", int(moment.timestamp()), ("Work", "Home")),)
+    assert data.take(("Inbox",), "a@x", None) == (frozenset({MessageFlag.SEEN}), ("Work", "Home"))
+    assert data.take(("Inbox",), "b@x", None) == (frozenset({MessageFlag.SEEN}), ())
+

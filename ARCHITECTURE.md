@@ -174,7 +174,7 @@ Calendars (events), tasks and contacts next to mail, for every kind of account: 
 
 ### 9.5 Tags
 
-A tag is a name with a colour. The names live in the items themselves (the CATEGORIES property of a task, event or contact, so they travel to servers), the colours in a small file of their own (`tags.json`). Mail messages get tags through a sidecar file per account (the mail store is not changed), mapped to IMAP keywords when an IMAP server supports them.
+A tag is a name with a colour. The names live in the items themselves (the CATEGORIES property of a task, event or contact, so they travel to servers), the colours in a small file of their own (`tags.json`). Mail messages get tags through a small file per mailbox (`tags.json` next to its folders; the message files are not changed, D-128), copied into the index to find them; mapped to IMAP keywords when an IMAP server supports them (a later step).
 
 ### 9.6 Time
 

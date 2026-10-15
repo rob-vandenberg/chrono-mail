@@ -8,17 +8,20 @@ import pytest
 from chrono_mail.config import ServerRole, load_rules
 from chrono_mail.core import LOCAL_ACCOUNT_ID, MessageFlag
 from chrono_mail.engine import Engine, UsageError
-from chrono_mail.engine.commands_emclient import JOURNAL_FILE
+from chrono_mail.engine import commands_emclient
+from chrono_mail.engine.commands_emclient import JOURNAL_FILE, fingerprint, fingerprint_of_raw
 from chrono_mail.engine.mailbox import open_mailbox
 from tests.enginefactory import make_engine
 from tests.mailfactory import raw_message
-from tests.test_emclient_source import FakeAccount, FakeContact, FakeItem, rule_xml, ui_rule, words, write_backup, write_mail_export, write_settings
+from tests.test_emclient_source import FakeAccount, FakeContact, FakeItem, category_xml, rule_xml, ui_rule, words, write_backup, write_mail_export, write_settings
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 0.5.132"
+__version__ = "test_import_emclient.py 0.5.137"
 
 # --- Version history ----------------------------------------------------
+# v0.5.137: tags: categories, tagged mail, mail imported before
+# v0.5.133: an account the password store refused is reported and made by the next run; speed: header-only fingerprint, one read of the export per import, verified duplicates, one sync per batch
 # v0.5.132: Initial tests: importing accounts, rules, contacts and mail from eM Client's exports (all made-up data)
 
 MOMENT = datetime(2024, 3, 4, 5, 6, 7, tzinfo=UTC)
@@ -153,6 +156,7 @@ def test_a_message_stored_but_not_yet_written_in_the_journal_is_not_imported_twi
     journal = engine.directories.data_directory / JOURNAL_FILE
     lines = journal.read_text("utf-8").splitlines()
     journal.write_text("\n".join(lines[:-1]) + "\n" + lines[-1][:5], "utf-8")  # the crash: the last line cut off
+    commands_emclient._finished_run()  # and the program starts again: nothing of the import is in memory any more
     result: Any = call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False))
     assert (result.messages_imported, result.messages_duplicate) == (5, 1)
     assert len(local_messages(engine)) == 7
@@ -187,3 +191,132 @@ def test_a_choice_without_its_export_is_refused(tmp_path: Path) -> None:
         call(engine, "import.emclient", settings_file=str(exports.settings), mail_folder=str(exports.mail), backup_file=None)
     with pytest.raises(UsageError, match="does not exist"):
         call(engine, "import.emclient", **exports.values(mail_folder=str(tmp_path / "nowhere")))
+
+
+def test_the_fingerprint_from_the_header_is_the_one_of_the_whole_message() -> None:
+    from chrono_mail.mime import parse_message
+
+    samples = [
+        mail(1),
+        mail(2, message_id=""),
+        raw_message(subject="=?utf-8?q?Caf=C3=A9_=E2=82=AC?=", sender='"Ann, Example" <ANN@Example.com>', date=MOMENT, attachment=b"x" * 5000),
+        b"From: a@x\r\nSubject: no date and no id\r\n\r\nbody",
+        b"garbage without a header",
+    ]
+    for raw in samples:
+        parsed = parse_message(raw)
+        whole = fingerprint(parsed.message_id, parsed.date, parsed.from_addresses[0].address if parsed.from_addresses else "", parsed.subject)
+        assert fingerprint_of_raw(raw) == whole
+
+
+def test_the_export_and_the_backup_are_read_once_per_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+    reads: list[Path] = []
+    original = commands_emclient.read_backup
+
+    def counted(path: Path, work: Path) -> object:
+        reads.append(path)
+        return original(path, work)
+
+    monkeypatch.setattr(commands_emclient, "read_backup", counted)
+    values = exports.values(accounts=False, rules=False, contacts=False, batch=2)
+    while call(engine, "import.emclient", **values).messages_left:
+        pass
+    assert len(reads) == 1
+    assert local_messages(engine)["Message 3"][1] == frozenset({MessageFlag.SEEN, MessageFlag.REPLIED})  # the marks were found across batches
+
+
+def test_a_duplicate_whose_copy_is_gone_is_imported_again(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+    call(engine, "local.enable")
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        reference = mailbox.deliver(("Inbox",), mail(1), frozenset())
+    for found in (tmp_path / "profile").rglob(reference.store_id + "*"):
+        found.unlink()  # the index still names the copy, but its file was lost (a crash before it was safe on disk)
+    result: Any = call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False))
+    assert (result.messages_imported, result.messages_duplicate) == (7, 0)
+
+
+def test_the_batch_is_made_safe_on_disk_before_it_is_written_as_done(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(tmp_path / "profile")
+    engine.durable = True
+    exports = make_exports(tmp_path)
+    events: list[str] = []
+    journal = engine.directories.data_directory / JOURNAL_FILE
+    monkeypatch.setattr("os.sync", lambda: events.append(f"sync, journal lines {len(journal.read_text('utf-8').splitlines())}"))
+    call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False, batch=3))
+    assert events == ["sync, journal lines 1"]  # one sync for the batch, while only the journal's first line was written
+    assert len(journal.read_text("utf-8").splitlines()) == 4
+
+
+def test_an_account_the_password_store_refuses_is_reported_and_made_by_the_next_run(tmp_path: Path) -> None:
+    from chrono_mail.config import KeyringPasswordStore
+    from tests.doubles import MemoryBackend, SessionLostBackend
+
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+    broken = SessionLostBackend()
+    broken.failures_left = 1  # the first password the import stores is refused, the rest work
+    working = MemoryBackend()
+
+    class Flaky:
+        def get_password(self, service: str, username: str) -> str | None:
+            return working.get_password(service, username)
+
+        def set_password(self, service: str, username: str, password: str) -> None:
+            broken.set_password(service, username, password)
+            working.set_password(service, username, password)
+
+        def delete_password(self, service: str, username: str) -> None:
+            working.delete_password(service, username)
+
+    engine.passwords = KeyringPasswordStore("chrono-mail-test", Flaky())
+    first: Any = call(engine, "import.emclient", **exports.values(rules=False, contacts=False))
+    assert first.accounts_added == 1 and first.messages_imported == 7  # the other account and all mail still came
+    assert any("the account was not made (Import again makes it)" in note and "Can't find session" in note for note in first.notes)
+    again: Any = call(engine, "import.emclient", **exports.values(rules=False, contacts=False))
+    assert (again.accounts_added, again.accounts_existing, again.messages_imported) == (1, 1, 0)
+
+
+def tagged_exports(folder: Path) -> Exports:
+    categories = [category_xml("Work", "#ff0000", "Mail"), category_xml("People", "#00ff00", "Contact")]
+    messages = {"Inbox/001.eml": mail(1), "Inbox/002.eml": mail(2)}
+    items = [FakeItem("/Inbox", "m1@x", MOMENT, tags=("Work", "Old name")), FakeItem("/Inbox", "m2@x", MOMENT)]
+    return Exports(write_settings(folder, [], [], categories), write_mail_export(folder, messages), write_backup(folder, items))
+
+
+def test_categories_become_tags_and_imported_mail_gets_its_tags(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = tagged_exports(tmp_path)
+    scan: Any = call(engine, "import.emclient-scan", settings_file=str(exports.settings), mail_folder=str(exports.mail), backup_file=str(exports.backup))
+    assert (scan.tags, scan.tagged) == (2, 1)
+    result: Any = call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False))
+    assert result.tags_added == 3  # Work, People, and the name a message carries that is no category
+    listed = {item.name: item for item in call(engine, "tag.list")}
+    assert (listed["Work"].colour, listed["Work"].kinds, listed["Work"].mails) == ("#ff0000", ("mail",), 1)
+    assert listed["People"].kinds == ("contacts",) and listed["Old name"].colour == "#808080"
+    rows = {row.subject: row.tags for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages}
+    assert rows == {"Message 1": ("Work", "Old name"), "Message 2": ()}
+
+
+def test_mail_imported_before_gets_its_tags_in_a_later_run(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = tagged_exports(tmp_path)
+    call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False, tags=False))
+    assert {row.subject: row.tags for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages}["Message 1"] == ()
+    again: Any = call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False))
+    assert (again.messages_imported, again.messages_tagged) == (0, 1)
+    assert {row.subject: row.tags for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages}["Message 1"] == ("Work", "Old name")
+    third: Any = call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False))
+    assert third.messages_tagged == 0  # done once
+
+
+def test_existing_tags_keep_what_they_have(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    call(engine, "tag.create", name="work", colour="#0000ff")
+    exports = tagged_exports(tmp_path)
+    call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False, mail=False))
+    assert {item.name: item.colour for item in call(engine, "tag.list")}["work"] == "#0000ff"
+

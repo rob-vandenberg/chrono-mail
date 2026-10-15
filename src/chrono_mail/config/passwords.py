@@ -7,13 +7,21 @@ import keyring.errors
 from chrono_mail.core import ConfigurationError, CredentialBackend
 
 # --- Version ------------------------------------------------------------
-__version__ = "passwords.py 0.0.66"
+__version__ = "passwords.py 0.5.133"
 
 # --- Version history ----------------------------------------------------
+# v0.5.133: Every failure of the credential store is a normal error with its reason (KDE Wallet's own errors were "unexpected")
 # v0.0.66: password role for the calendar and contacts server
 # v0.0.9: Initial password stores
 
 SERVICE_NAME: str = "chrono-mail"
+
+
+
+def _reason(error: Exception) -> str:
+    """What went wrong in the credential store, short and without secrets (the error texts hold none). Try again."""
+    text = str(error).strip()
+    return f"{type(error).__name__}{': ' + text[:200] if text else ''}. Try again"
 
 
 class ServerRole(Enum):
@@ -62,19 +70,19 @@ class KeyringPasswordStore:
     def get(self, account_id: str, role: ServerRole) -> str | None:
         try:
             return self._backend.get_password(self._service, self._name(account_id, role))
-        except keyring.errors.KeyringError as error:
-            raise ConfigurationError(f"The credential store could not be read: {type(error).__name__}") from None
+        except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
+            raise ConfigurationError(f"The credential store could not be read: {_reason(error)}") from None
 
     def set(self, account_id: str, role: ServerRole, password: str) -> None:
         try:
             self._backend.set_password(self._service, self._name(account_id, role), password)
-        except keyring.errors.KeyringError as error:
-            raise ConfigurationError(f"The credential store refused the password: {type(error).__name__}") from None
+        except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
+            raise ConfigurationError(f"The credential store refused the password: {_reason(error)}") from None
 
     def delete(self, account_id: str, role: ServerRole) -> None:
         try:
             self._backend.delete_password(self._service, self._name(account_id, role))
         except keyring.errors.PasswordDeleteError:
             return
-        except keyring.errors.KeyringError as error:
-            raise ConfigurationError(f"The credential store could not delete the password: {type(error).__name__}") from None
+        except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
+            raise ConfigurationError(f"The credential store could not delete the password: {_reason(error)}") from None

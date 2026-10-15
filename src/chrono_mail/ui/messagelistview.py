@@ -2,9 +2,9 @@ import os
 from collections.abc import Callable
 from typing import override
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, Signal
+from PySide6.QtCore import QEvent, QModelIndex, QObject, QPersistentModelIndex, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QFocusEvent, QFontMetrics, QIcon, QMouseEvent, QPainter, QPaintEvent, QPalette, QPixmap, QResizeEvent
-from PySide6.QtWidgets import QApplication, QHeaderView, QTreeView, QWidget
+from PySide6.QtWidgets import QApplication, QHeaderView, QStyleOptionViewItem, QTreeView, QWidget
 
 from chrono_mail.ui.models import HEADER_ICON_ROLE
 from chrono_mail.ui.scale import lpx
@@ -12,9 +12,10 @@ from chrono_mail.ui.scale import lpx
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 0.5.123"
+__version__ = "messagelistview.py 0.5.140"
 
 # --- Version history ----------------------------------------------------
+# v0.5.140: A group row is drawn from the left edge to the right edge, whatever the order of the columns (the first column can be moved)
 # v0.5.123: An empty list says "There are no messages to show in this view." once it has finished loading (D-119)
 # v0.3.108: The grey icons of the column header follow the size factor of the message list
 # v0.2.105: The badge hangs just past the bottom-right corner of the cursor, by the desktop's cursor size (it covered the first digit)
@@ -158,6 +159,22 @@ class MessageListView(QTreeView):
             self.icon_clicked.emit(index.row(), column_id)
             return
         super().mousePressEvent(event)
+
+    @override
+    def drawRow(self, painter: QPainter, options: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        """A group row is one bar from the left edge to the right edge. Qt spans it from the place of the model's first
+        column, which is not the left edge once that column was dragged elsewhere."""
+        model = self.model()
+        if model is None or index.parent().isValid() or not self.is_header(index.row()):
+            super().drawRow(painter, options, index)
+            return
+        area: object = getattr(options, "rect")  # the stubs do not describe the rect of a style option
+        if not isinstance(area, QRect):
+            super().drawRow(painter, options, index)
+            return
+        full = QStyleOptionViewItem(options)
+        setattr(full, "rect", QRect(0, area.top(), max(self.viewport().width(), self.header().length()), area.height()))
+        self.itemDelegate().paint(painter, full, model.index(index.row(), 0))
 
     @override
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
