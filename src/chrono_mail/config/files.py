@@ -15,9 +15,10 @@ from chrono_mail.core import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 0.0.66"
+__version__ = "files.py 0.5.132"
 
 # --- Version history ----------------------------------------------------
+# v0.5.132: skip_known_mail
 # v0.0.66: address and user name of the calendar and contacts server
 # v0.0.45: storage of an account
 # v0.0.44: Folder choices, roles and check interval per account
@@ -95,7 +96,13 @@ def _account(data: object, position: int) -> AccountSettings:
         dav_url, dav_username = data.get("dav_url", ""), data.get("dav_username", "")
         if not isinstance(dav_url, str) or not isinstance(dav_username, str):
             raise ConfigurationError(f"Setting '{where}.dav_url' is not text")
-        return AccountSettings(account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check, storage=storage, dav_url=dav_url, dav_username=dav_username)
+        skip_known = data.get("skip_known_mail", False)
+        if not isinstance(skip_known, bool):
+            raise ConfigurationError(f"Setting '{where}.skip_known_mail' is not true or false")
+        return AccountSettings(
+            account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check, storage=storage, dav_url=dav_url, dav_username=dav_username,
+            skip_known_mail=skip_known,
+        )
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
 
@@ -144,6 +151,7 @@ def config_to_text(config: AppConfig) -> str:
                     "storage": settings.storage,
                     "dav_url": settings.dav_url,
                     "dav_username": settings.dav_username,
+                    "skip_known_mail": settings.skip_known_mail,
                 }
                 for settings in config.accounts
             ],

@@ -10,9 +10,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync.pop3_state import DownloadRecord, Pop3State
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3_fetch.py 0.0.33"
+__version__ = "pop3_fetch.py 0.5.132"
 
 # --- Version history ----------------------------------------------------
+# v0.5.132: already_here: a message that is already in the store (imported) is recorded as downloaded, not stored twice
 # v0.0.33: the new messages are listed in the report
 # v0.0.10: Initial POP3 fetch
 
@@ -21,6 +22,7 @@ MISSING_RATIO_LIMIT: float = 0.5
 MISSING_RATIO_MINIMUM_COUNT: int = 10
 Checkpoint = Callable[[str], None]
 Progress = Callable[[int, int], None]
+AlreadyHere = Callable[[bytes], str | None]  # the store id of the same message when it is already in the store
 
 
 def _no_checkpoint(name: str) -> None:
@@ -43,6 +45,7 @@ class FetchReport:
     index_problems: int = 0
     aborted: str | None = None  # the connection failed part-way; what was done up to then is kept
     new_references: tuple[MessageRef, ...] = ()  # the messages stored by this run
+    already_here: int = 0  # downloaded, but already in the store (imported mail): recorded, not stored twice
 
 
 @dataclass
@@ -56,6 +59,7 @@ class _Run:
     index_problems: int = 0
     aborted: str | None = None
     new_references: list[MessageRef] = field(default_factory=list)
+    already_here: int = 0
 
 
 def fetch_pop3(
@@ -69,6 +73,7 @@ def fetch_pop3(
     now: Callable[[], float] = time.time,
     checkpoint: Checkpoint = _no_checkpoint,
     progress: Progress | None = None,
+    already_here: AlreadyHere | None = None,
 ) -> FetchReport:
     """Download new messages through a connected client.
 
@@ -76,6 +81,8 @@ def fetch_pop3(
     and verified locally (the store reads it back and compares it), and after the download is
     recorded in the state log. A failure with one message is reported and the message stays on
     the server; a failure of the connection ends the run and keeps everything done so far.
+    With already_here, a message that is already in the store is recorded with the store id of that copy instead of
+    being stored again; the account's delete policy then treats it like any downloaded message.
     """
     run = _Run()
     try:
@@ -91,13 +98,15 @@ def fetch_pop3(
             seen.add(unique_id)
             if progress is not None:
                 progress(position, len(new))
-            _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number))
+            _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number), already_here)
         _apply_policy(store, state, options, now, run, on_server)
         if run.to_delete:
             _delete_on_server(client, state, now, checkpoint, run)
     except ProtocolError as error:
         run.aborted = str(error)
-    return FetchReport(run.downloaded, run.already_known, tuple(run.failed), run.deleted, run.blocked, run.index_problems, run.aborted, tuple(run.new_references))
+    return FetchReport(
+        run.downloaded, run.already_known, tuple(run.failed), run.deleted, run.blocked, run.index_problems, run.aborted, tuple(run.new_references), run.already_here
+    )
 
 
 def _download_one(
@@ -114,6 +123,7 @@ def _download_one(
     number: int,
     unique_id: str,
     size: int | None,
+    already_here: AlreadyHere | None = None,
 ) -> None:
     if size is not None and size > maximum_message_bytes:
         run.failed.append(FailedMessage(unique_id, "the message is larger than the limit"))
@@ -124,6 +134,11 @@ def _download_one(
         run.failed.append(FailedMessage(unique_id, f"the server would not send it: {error}"))
         return
     checkpoint("fetch:after-retr")
+    present = already_here(raw) if already_here is not None else None
+    if present is not None:
+        state.record_download(unique_id, present, int(now()))  # the delete policy checks this copy before the server copy is touched
+        run.already_here += 1
+        return
     try:
         reference = store.deliver(inbox, raw, verify=True)
     except ChronoMailError as error:

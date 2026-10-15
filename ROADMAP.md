@@ -64,6 +64,13 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - Templates, snooze, send later (rules are done: 0.0.33)
 - Encrypted index (optional)
 
+## Import from the reference client (from 0.5.132, D-124)
+
+| # | Task | Status |
+|---|---|---|
+| I.1 | Import from the reference client's three exports (settings .xml, mail .eml folder, backup .zip): POP3 accounts with passwords, rules, contacts, all mail into Local Folders with its read, flagged and replied marks; resumable, no duplicates. | done (0.5.132); the owner's own import and check to do |
+| I.2 | The rest of the password key (passwords longer than 12 characters), from a test export with a known long password. | open |
+
 ## Local Folders and Favorites (from 0.0.45)
 - DONE (0.0.45) Local Folders as shared storage for POP3 accounts, choice at setup and in the account settings, safe move both ways, identical reply behaviour.
 - Next: sidebar (Local Folders node, collapsible accounts, account groups), unified views with Favorites and Inboxes sections, pinned folders, switches in the settings.

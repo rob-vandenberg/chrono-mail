@@ -71,6 +71,8 @@ from chrono_mail.ui.calendarview import CalendarPage
 from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.tasksview import TasksPage
 from chrono_mail.ui.reader import ReaderWidget
+from chrono_mail.ui.importdialog import MENU_TEXT as IMPORT_MENU_TEXT
+from chrono_mail.ui.importdialog import ImportDialog
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from chrono_mail.ui.rulespanel import RulesPanel
@@ -87,9 +89,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.126"
+__version__ = "mainwindow.py 0.5.132"
 
 # --- Version history ----------------------------------------------------
+# v0.5.132: Menu > File > Import (accounts, passwords, rules, contacts and mail from another program's exports)
 # v0.5.126: The changes of a message (marks, delete, move, copy, archive, junk, snooze) run in the order they were given
 # v0.5.125: A message deleted or moved right after it was clicked no longer reports that messages are missing
 # v0.5.124: Show on startup: a chosen folder, Calendar, Contacts or Tasks, or the last selected folder (D-121)
@@ -522,6 +525,7 @@ class MainWindow(QMainWindow):
         self.act_unflag = self._action("Remove flag", lambda: self.mark_selected(flagged=False))
         self.act_add_account = self._action("Add an account…", lambda: self.add_account(), icon="list-add")
         self.act_recovery = self._action("Back up the encryption key…", self.show_recovery)
+        self.act_import = self._action(IMPORT_MENU_TEXT, self.show_import)
         self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
         self.act_settings = self._action("Settings…", lambda: self.open_settings(), "Ctrl+,", "configure")
         self.act_scheduled = self._action("Scheduled and snoozed messages…", self.open_scheduled)
@@ -670,6 +674,8 @@ class MainWindow(QMainWindow):
         file_menu = root.addMenu("&File")
         file_menu.addAction(self.act_new)
         file_menu.addAction(self.act_refresh)
+        file_menu.addSeparator()
+        file_menu.addAction(self.act_import)
         file_menu.addSeparator()
         file_menu.addAction(self.act_recovery)
         file_menu.addAction(self.act_restore_key)
@@ -2877,6 +2883,10 @@ class MainWindow(QMainWindow):
 
     def show_recovery(self) -> None:
         RecoveryDialog(self.backend, self).exec()
+
+    def show_import(self) -> None:
+        """File > Import: accounts, rules, contacts and mail; the folder list is loaded again after each import."""
+        ImportDialog(self.backend, lambda: self.reload_accounts(select_saved=True), self).exec()
 
     # --- folders ----------------------------------------------------------------------------------------------------
 

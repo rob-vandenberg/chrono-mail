@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import LOCAL_ACCOUNT_ID, Account, AccountKind, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.0.72"
+__version__ = "model.py 0.5.132"
 
 # --- Version history ----------------------------------------------------
+# v0.5.132: skip_known_mail: an imported account records mail that is already here on its first check
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.66: address and user name of the calendar and contacts server
 # v0.0.45: storage of an account (own folders or Local Folders)
@@ -74,6 +75,7 @@ class AccountSettings:
     dav_url: str = ""  # the address of the CalDAV and CardDAV server of this account; empty: no calendars, tasks and contacts from a server
     dav_username: str = ""  # the user name for it; empty: the same as for incoming mail
     storage: str = "own"  # where a POP3 account's mail is kept: its own folders (own) or the shared Local Folders (local)
+    skip_known_mail: bool = False  # an imported account: on its first check, mail that is already here is recorded as downloaded, not stored twice
 
     def __post_init__(self) -> None:
         if len(self.signature) > MAXIMUM_SIGNATURE_CHARACTERS:

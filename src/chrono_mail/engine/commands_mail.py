@@ -12,6 +12,7 @@ from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_addressbook import AddressesParameters, contact_addresses
+from chrono_mail.engine.commands_emclient import fingerprint_of_raw, known_messages
 from chrono_mail.engine.commands_rules import apply_to_new
 from chrono_mail.engine.recurring import RECURRING_FILE, Repeat, load_repeats, save_repeats
 from chrono_mail.engine.schedule import SNOOZE_GROUPS, SNOOZED_FILE, SNOOZED_FOLDER, describe_when, load_snoozed, parse_when, snooze_group
@@ -27,9 +28,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.4.120"
+__version__ = "commands_mail.py 0.5.132"
 
 # --- Version history ----------------------------------------------------
+# v0.5.132: The first check of an imported account records mail that is already here instead of storing it twice
 # v0.4.120: The IMAP sync holds the account's link (no action changes its messages meanwhile); the Sent copy goes to the server at once
 # v0.4.119: mail.fetch reports IMAP folders held back by a safety rule (blocked); mail.settle runs the sync with the person's answer for one
 # v0.3.109: Sort orders unread, flagged, attachment, replied, contact (sorted here: the index does not know the contacts), folder, conversation and preview
@@ -184,11 +186,20 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
             return _imap_fetch(engine, mailbox, password)
         state = Pop3State(engine.directories.pop3_state_file(mailbox.account_id), durable=engine.durable)
         inbox = mailbox.role_folder(FolderRole.INBOX)
+        known = known_messages(mailbox) if settings.skip_known_mail else None  # an imported account: its mail may be here already
+
+        def already_here(raw: bytes) -> str | None:
+            key = fingerprint_of_raw(raw) if known is not None else None
+            return None if key is None or known is None else known.get(key)
+
         with Pop3Client(settings.account.incoming, password, Pop3Limits(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES), engine.tls_context(settings)) as client:
             report = fetch_pop3(
                 client, mailbox.store, mailbox.index, state, inbox, settings.pop3, MAXIMUM_MESSAGE_BYTES, engine.clock,
-                progress=lambda done, total: engine.progress("Downloading", done, total),
+                progress=lambda done, total: engine.progress("Downloading", done, total), already_here=already_here if known is not None else None,
             )
+        if settings.skip_known_mail and report.aborted is None:  # one complete check: from now on every new message is new
+            config = engine.config()
+            engine.save_config(config.with_account(replace(config.find(settings.account.account_id), skip_known_mail=False)))
         ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
     return FetchResult(
         report.downloaded,
