@@ -94,9 +94,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.153"
+__version__ = "mainwindow.py 0.5.157"
 
 # --- Version history ----------------------------------------------------
+# v0.5.157: the facts of the engine drive the list (no reload after an action); an action takes the messages selected at the key press, the selection and the reading pane move at once, messages with an action under way are greyed (D-146 step 3)
 # v0.5.153: A new sort order keeps the selected message selected and in view, also when it lands on a part of the list that was not loaded
 # v0.5.152: A Favorites view is sorted by the chosen column too (its request passed no sort order)
 # v0.5.151: While an import runs no mail is checked (timers and push skip their turn) and Refresh is off; one check runs when the import is done
@@ -273,8 +274,8 @@ class MainWindow(QMainWindow):
         self._sort: str = str(settings.value("sort", "date"))
         self._oldest_first: bool = bool_setting(settings, "oldest_first", False)
         self._reselect: str | None = None  # a message to select again once the list has it (after a mail check or a new sort order)
-        self._reselect_asked: str | None = None  # the message whose place in the folder was asked for (its page is loaded next)
-        self._after_delete: tuple[str | None, int, int | None] | None = None  # after a delete: the message to select (id, position) and the scroll position
+        self._reselect_asked: str | None = None
+        self._reselect_account: str = ""  # the message whose place in the folder was asked for (its page is loaded next)
         self._composers: list[ComposeWindow] = []
         self._checking: bool = False
         self._sending: bool = False  # Send All is running
@@ -868,6 +869,7 @@ class MainWindow(QMainWindow):
         self.backend.progress.connect(self._progress)
         self.backend.notice.connect(self._notice)
         self.backend.activity.connect(self._activity)
+        self.backend.changed.connect(self.list_model.apply)  # every change of mail, applied to the rows on screen (D-146)
 
     # --- state ------------------------------------------------------------------------------------------
 
@@ -1146,7 +1148,7 @@ class MainWindow(QMainWindow):
             return
         account = self._account_id
         remaining = len(rows)
-        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+        self._take_away([str(getattr(row, "message_id")) for row in rows])
 
         def done(result: object) -> None:
             nonlocal remaining
@@ -1160,7 +1162,7 @@ class MainWindow(QMainWindow):
             self._report("Could not cancel the snooze", error)
 
         for row in rows:
-            self.backend.call("message.wake", {"account": self._account_of(row) or account, "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
+            self.backend.call("message.wake", {"account": self._account_of(row) or account, "message": str(getattr(row, "message_id"))}, *self._each(str(getattr(row, "message_id")), done, failed), owner=self, in_order=True)
 
     def snooze_until(self, until: str) -> None:
         """Put the selected messages away until this local time (2026-10-13T09:00)."""
@@ -1169,7 +1171,7 @@ class MainWindow(QMainWindow):
             return
         account = self._account_id
         remaining = len(rows)
-        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+        self._take_away([str(getattr(row, "message_id")) for row in rows])
 
         def done(result: object) -> None:
             nonlocal remaining
@@ -1183,7 +1185,7 @@ class MainWindow(QMainWindow):
             self._report("Could not snooze", error)
 
         for row in rows:
-            self.backend.call("message.snooze", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "until": until}, done, failed, owner=self, in_order=True)
+            self.backend.call("message.snooze", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "until": until}, *self._each(str(getattr(row, "message_id")), done, failed), owner=self, in_order=True)
 
     def open_rules(self) -> None:
         """Settings > Rules: what is done with mail as it arrives (also reachable by a key chosen for it)."""
@@ -1231,9 +1233,9 @@ class MainWindow(QMainWindow):
             self.try_list_scale(dialog.list_scale_saved)
         self._tried_interface = self._tried_windows = None  # from now on the saved sizes
         if dialog.rules_panel.ran:  # rules and scheduled messages act at once, also when the settings are cancelled
-            self._after_change("Rules applied")
+            self._after_change("Rules applied", reload=True)
         elif dialog.scheduled_panel.changed:
-            self._after_change("Scheduled messages changed")
+            self._after_change("Scheduled messages changed", reload=True)
         if not accepted:
             return
         dialog.save()
@@ -1931,6 +1933,7 @@ class MainWindow(QMainWindow):
     def _set_sort(self, sort: str, oldest_first: bool) -> None:
         current = self._current_row()
         self._reselect = str(getattr(current, "message_id")) if current is not None else None  # the selected message stays selected
+        self._reselect_account = str(getattr(current, "account", "") or "") if current is not None else ""  # its mailbox, in a Favorites view
         self._reselect_asked = None
         self._sort, self._oldest_first = sort, oldest_first
         self._update_sort_menu()
@@ -1945,10 +1948,11 @@ class MainWindow(QMainWindow):
         return self.list_model.row_at(index.row()) if index.isValid() else None
 
     def _selected_rows(self) -> list[object]:
+        """The messages selected now, without those that have an action under way (they get no second one)."""
         rows: list[object] = []
         for index in self.list_view.selectionModel().selectedRows():
             row = self.list_model.row_at(index.row())
-            if row is not None:
+            if row is not None and str(getattr(row, "message_id")) not in self.list_model.pending:
                 rows.append(row)
         return rows
 
@@ -2011,7 +2015,6 @@ class MainWindow(QMainWindow):
 
     def _restore_row_selection(self) -> None:
         self._select_unread_after_load()
-        self._select_after_delete()
         pending = getattr(self, "_reselect", None)
         if not pending:
             return
@@ -2031,79 +2034,67 @@ class MainWindow(QMainWindow):
         if spec is None:
             self._reselect = None
             return
-        if spec.kind is not ViewKind.FOLDER:
-            if self.list_model.canFetchMore():
-                self.list_model.fetchMore()
-            else:
-                self._reselect = None  # not in this view (any more)
-            return
         if self._reselect_asked == message_id:
-            return  # its page is on its way
+            return  # its part of the list is on its way
         self._reselect_asked = message_id
 
         def found(result: object) -> None:
             position = getattr(result, "position", None)
             if self._reselect != message_id or self.list_model.spec != spec:
                 return  # the person chose another message or view meanwhile
-            if not isinstance(position, int) or self.list_model.display_row(position) < 0:
-                self._reselect = None  # not in the folder any more, or in a folded group
+            if not isinstance(position, int) or (spec.kind is ViewKind.FOLDER and self.list_model.display_row(position) < 0):
+                self._reselect = None  # not in the view any more, or in a folded group
                 return
-            self.list_model.load_position(position)
+            if spec.kind is ViewKind.FOLDER:
+                self.list_model.load_position(position)
+            else:
+                self.list_model.load_through(position)  # a search or Favorites view loads in order up to it
+                self._reselect_asked = None  # each batch that arrives comes back here until the message is there
 
-        values = {"account": spec.account, "folder": spec.folder or "", "message": message_id, "sort": spec.sort, "oldest_first": spec.oldest_first}
-        self.backend.call("message.position", values, found, lambda error: setattr(self, "_reselect", None), owner=self)
+        if spec.kind is ViewKind.FOLDER:
+            values: dict[str, object] = {"account": spec.account, "folder": spec.folder or "", "message": message_id, "sort": spec.sort, "oldest_first": spec.oldest_first}
+            self.backend.call("message.position", values, found, lambda error: setattr(self, "_reselect", None), owner=self)
+            return
+        values = self.list_model.request_values(spec)
+        values["message"] = message_id
+        if spec.combined is not None:
+            values["account"] = self._reselect_account
+        self.backend.call("message.combined-locate" if spec.combined is not None else "message.locate", values, found, lambda error: setattr(self, "_reselect", None), owner=self)
 
-    def _keep_place_after_delete(self, message_ids: list[str]) -> None:
-        """Before a delete, move, archive or junk: remember the scroll position and which message to select once the list is back.
-
-        The selected message stays selected when it is not deleted; else the message right after the deleted ones, or the one
-        just before them when they were at the end."""
+    def _take_away(self, message_ids: list[str]) -> None:
+        """At the key press of an action that takes messages out of the view: they are greyed until the engine reports the
+        change (or the action fails), and the selection and the reading pane move at once to the next message without an
+        action under way (the one after them, else the one before), so a next key press acts on what the person sees."""
         model = self.list_model
-        deleted_ids = set(message_ids)
-        deleted: list[int] = []
-        for message_id in deleted_ids:
-            position = model.message_position(model.find(message_id))
-            if position is not None:
-                deleted.append(position)
+        model.mark_pending(message_ids)
+        taken = set(message_ids)
+        rows = [model.find(message_id) for message_id in message_ids]
+        rows = [row for row in rows if row >= 0]
         current = self.list_view.currentIndex()
         current_row = model.row_at(current.row()) if current.isValid() else None
-        current_position = model.message_position(current.row()) if current.isValid() else None
-        if current_row is not None and str(getattr(current_row, "message_id", "")) in deleted_ids:
+        if current_row is not None and str(getattr(current_row, "message_id")) in taken:
             self._show_request += 1  # the message that is being opened is moved away: its opening no longer counts
             self._mark_read_timer.stop()
-        target: tuple[str | None, int] | None = None
-        if current_row is not None and current_position is not None and str(getattr(current_row, "message_id")) not in deleted_ids:
-            target = (str(getattr(current_row, "message_id")), current_position - sum(1 for position in deleted if position < current_position))
-        elif deleted:
-            last, total = max(deleted), model.message_count()
-            after = next((position for position in range(last + 1, total) if position not in deleted), None)
-            before = next((position for position in range(last - 1, -1, -1) if position not in deleted), None)
-            chosen = after if after is not None else before
-            if chosen is not None:
-                message = model.row_at(model.display_row(chosen))
-                target = (str(getattr(message, "message_id")) if message is not None else None, chosen - sum(1 for position in deleted if position < chosen))
-        self._after_delete = None if target is None else (target[0], target[1], self.list_view.verticalScrollBar().value())
+        elif current_row is not None:
+            return  # the selected message stays: nothing moves under the person's eyes
 
-    def _select_after_delete(self) -> None:
-        """After the list came back from a delete: the same scroll position, and the message chosen before the delete selected."""
-        pending = self._after_delete
-        if pending is None:
+        def free(row: int) -> bool:
+            found = model.row_at(row)
+            return not model.is_header(row) and found is not None and str(getattr(found, "message_id")) not in model.pending
+
+        last, first = (max(rows), min(rows)) if rows else (current.row(), current.row())
+        target = next((row for row in range(last + 1, model.rowCount()) if free(row)), None)
+        if target is None:
+            target = next((row for row in range(first - 1, -1, -1) if free(row)), None)
+        if target is None:
+            self.list_view.selectionModel().clearSelection()
+            self.list_view.setCurrentIndex(QModelIndex())
+            self._clear_reader()
+            self._shown = None
             return
-        message_id, position, scroll = pending
-        if scroll is not None:
-            self.list_view.verticalScrollBar().setValue(scroll)
-            self._after_delete = (message_id, position, None)  # the list scrolls once; the selection may wait for its page
-        model = self.list_model
-        row = model.find(message_id) if message_id is not None else -1
-        if row < 0:
-            row = model.display_row(position)
-        if row < 0 or row >= model.rowCount():
-            self._after_delete = None  # in a folded group, or gone
-            return
-        if model.row_at(row, fetch=True) is None:
-            return  # its page is on the way: tried again when it has loaded
-        self._after_delete = None
-        self.list_view.selectionModel().setCurrentIndex(model.index(row), QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
+        index = model.index(target)
+        self.list_view.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
+        self.list_view.scrollTo(index)
 
     # --- actions on messages --------------------------------------------------------------------------------
 
@@ -2146,10 +2137,10 @@ class MainWindow(QMainWindow):
         if in_trash and QMessageBox.question(self, "Delete", f"Delete {len(rows)} message(s) for good? This cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
         account = self._account_id
-        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+        self._take_away([str(getattr(row, "message_id")) for row in rows])
         done, failed = self._answers(len(rows), f"Deleted {len(rows)} message(s)" if in_trash else f"Moved {len(rows)} message(s) to Trash", "Could not delete", self._note_gone)
         for row in rows:
-            self.backend.call("message.delete", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
+            self.backend.call("message.delete", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, *self._each(str(getattr(row, "message_id")), done, failed), owner=self, in_order=True)
 
     def _show_archive_action(self) -> None:
         """In the Archive folder the Archive button, key and menu item are Unarchive."""
@@ -2165,7 +2156,7 @@ class MainWindow(QMainWindow):
             return
         account = self._account_id
         remaining = len(rows)
-        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+        self._take_away([str(getattr(row, "message_id")) for row in rows])
 
         def done(result: object) -> None:
             nonlocal remaining
@@ -2179,7 +2170,7 @@ class MainWindow(QMainWindow):
             self._report("Could not unarchive", error)
 
         for row in rows:
-            self.backend.call("message.unarchive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
+            self.backend.call("message.unarchive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, *self._each(str(getattr(row, "message_id")), done, failed), owner=self, in_order=True)
 
     def archive_selected(self) -> None:
         if self._tree_kind == "folder" and self._folder_role == "archive":
@@ -2191,7 +2182,7 @@ class MainWindow(QMainWindow):
         account = self._account_id
         remaining = len(rows)
         created = False
-        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+        self._take_away([str(getattr(row, "message_id")) for row in rows])
 
         failures = 0
 
@@ -2214,7 +2205,7 @@ class MainWindow(QMainWindow):
             if str(getattr(row, "folder")) == "Archive":
                 remaining -= 1  # already there
                 continue
-            self.backend.call("message.archive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
+            self.backend.call("message.archive", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, *self._each(str(getattr(row, "message_id")), done, failed), owner=self, in_order=True)
         if remaining == 0:
             self.show_status("The selected message(s) are in the archive already")
 
@@ -2224,12 +2215,12 @@ class MainWindow(QMainWindow):
         if not rows or self._account_id is None:
             return
         account, command = self._account_id, "message.junk" if junk else "message.not-junk"
-        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+        self._take_away([str(getattr(row, "message_id")) for row in rows])
         finished = f"Moved {len(rows)} message(s) to Junk" if junk else f"Moved {len(rows)} message(s) back to the Inbox"
         done, failed = self._answers(len(rows), finished, "Could not move", self._note_gone)
 
         for row in rows:
-            self.backend.call(command, {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, done, failed, owner=self, in_order=True)
+            self.backend.call(command, {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id"))}, *self._each(str(getattr(row, "message_id")), done, failed), owner=self, in_order=True)
 
     # --- the sections: mail, calendar, tasks, contacts ---------------------------------------------------------
 
@@ -2339,12 +2330,12 @@ class MainWindow(QMainWindow):
             return
         if QMessageBox.question(self, "Delete permanently", f"Delete {len(rows)} message(s) for good, without moving them to Trash? This cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
-        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+        self._take_away([str(getattr(row, "message_id")) for row in rows])
         done, failed = self._answers(len(rows), f"Deleted {len(rows)} message(s) for good", "Could not delete", self._note_gone)
         for row in rows:
             self.backend.call(
                 "message.delete", {"account": self._account_of(row) or self._account_id, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "permanent": True},
-                done, failed, owner=self, in_order=True,
+                *self._each(str(getattr(row, "message_id")), done, failed), owner=self, in_order=True,
             )
 
     def _popup_folders(self, how: str) -> None:
@@ -2458,10 +2449,10 @@ class MainWindow(QMainWindow):
 
     def _messages_dropped(self, account: str, target: str, messages: list[tuple[str, str]]) -> None:
         """Messages were dragged to a folder of the tree."""
-        self._keep_place_after_delete([message_id for _, message_id in messages])
+        self._take_away([message_id for _, message_id in messages])
         done, failed = self._answers(len(messages), f"Moved {len(messages)} message(s) to {target}", "Could not move")
         for folder, message_id in messages:
-            self.backend.call("message.move", {"account": account, "folder": folder, "message": message_id, "target": target}, done, failed, owner=self, in_order=True)
+            self.backend.call("message.move", {"account": account, "folder": folder, "message": message_id, "target": target}, *self._each(message_id, done, failed), owner=self, in_order=True)
 
     def _fill_move_menu(self) -> None:
         self.move_menu.clear()
@@ -2478,10 +2469,10 @@ class MainWindow(QMainWindow):
         if not rows or self._account_id is None:
             return
         account = self._account_id
-        self._keep_place_after_delete([str(getattr(row, "message_id")) for row in rows])
+        self._take_away([str(getattr(row, "message_id")) for row in rows])
         done, failed = self._answers(len(rows), f"Moved {len(rows)} message(s) to {target}", "Could not move")
         for row in rows:
-            self.backend.call("message.move", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target}, done, failed, owner=self, in_order=True)
+            self.backend.call("message.move", {"account": self._account_of(row) or account, "folder": str(getattr(row, "folder")), "message": str(getattr(row, "message_id")), "target": target}, *self._each(str(getattr(row, "message_id")), done, failed), owner=self, in_order=True)
 
     def _answers(self, count: int, finished: str, title: str, each: Callable[[object], None] | None = None) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
         """The answers of an action on several messages, one per message: when all are in, failed ones too, the list is
@@ -2508,15 +2499,32 @@ class MainWindow(QMainWindow):
 
         return done, failed
 
-    def _after_change(self, text: str, keep_status: bool = False) -> None:
-        """Something changed in the store: show the same folder again and update the counts (keep_status: an error is shown)."""
+    def _after_change(self, text: str, keep_status: bool = False, reload: bool = False) -> None:
+        """An action is done: say so (keep_status: an error is shown) and update the counts. The rows on screen already
+        follow the facts of the engine (D-146); only a big job (rules run on a folder, a held-back folder settled) has the
+        list fetched again (reload)."""
         if not keep_status:
             self.show_status(text)
-        self._show_request += 1  # whatever was being opened may no longer exist
-        self._clear_reader()
-        self._shown = None
-        self.list_model.reload()
+        if reload:
+            self._show_request += 1  # whatever was being opened may no longer exist
+            self._clear_reader()
+            self._shown = None
+            self.list_model.reload()
         self._refresh_counts()
+
+    def _each(self, message_id: str, done: Callable[[object], None], failed: Callable[[ChronoMailError], None]) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
+        """The answers of one message's action: its action ended, so it is no longer greyed (when it went out of the view
+        its fact took the row out before this answer came)."""
+
+        def ended(result: object) -> None:
+            self.list_model.clear_pending(message_id)
+            done(result)
+
+        def refused(error: ChronoMailError) -> None:
+            self.list_model.clear_pending(message_id)
+            failed(error)
+
+        return ended, refused
 
     def _refresh_counts(self) -> None:
         self._load_folders(select_saved=False)
@@ -3063,7 +3071,7 @@ class MainWindow(QMainWindow):
         _, choice, done_text = answers[chosen]
 
         def done(result: object) -> None:
-            self._after_change(f"{folder} of {name}: {count} message(s) {done_text}")
+            self._after_change(f"{folder} of {name}: {count} message(s) {done_text}", reload=True)
 
         self.show_status(f"{folder} of {name}: synchronising…")
         self.backend.call("mail.settle", {"account": account_id, "folder": folder, "choice": choice}, done, lambda error: self._report(f"Could not settle {folder}", error), owner=self)
@@ -3168,9 +3176,7 @@ class MainWindow(QMainWindow):
                 if self._shown is not None and self._shown[2] == message_id:
                     self.reader.set_tags(self._tag_book.html(tags))
             if new and add:
-                self._load_tags()
-            elif self._combined == "tagged" or self._filter_tag is not None:
-                self.list_model.reload()  # a message that loses the tag leaves this list
+                self._load_tags()  # a message that loses the tag stays in a tag's list until it is left, as a read message in Unread (D-146)
 
         for (account, folder), ids in groups.items():
             values: dict[str, object] = {"account": account, "folder": folder, "messages": ids, ("add" if add else "remove"): [name]}

@@ -1,0 +1,93 @@
+from collections.abc import Generator, Mapping
+from pathlib import Path
+
+import pytest
+from PySide6.QtCore import QObject, Qt
+from PySide6.QtTest import QTest
+from pytestqt.qtbot import QtBot
+
+from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.ui.backend import Failure, Success
+from tests.ui.world import Dialogs, World, build_world, mail, wait
+
+# --- Version ------------------------------------------------------------
+__version__ = "test_ui_rapid_actions.py 0.5.157"
+
+# --- Version history ----------------------------------------------------
+# v0.5.157: Initial test (DEVELOPMENT's test made a project test): four quick Delete presses in Favorites > Unread act on the
+#           message the person sees selected at each press, at every pace and list size (D-146 step 3)
+
+SPAM: tuple[str, ...] = tuple(f"***SPAM*** Offer {letter}" for letter in "ABCD")
+
+
+@pytest.fixture
+def empty(tmp_path: Path, qtbot: QtBot, dialogs: Dialogs) -> Generator[World]:
+    yield from build_world(tmp_path, qtbot, dialogs, messages={}, fetch=False)
+
+
+def fill(world: World, size: int) -> None:
+    """size unread messages in the Inbox: the four spam messages and others after them in subject order."""
+    with world.engine.quietly(), open_mailbox(world.engine, world.account_id) as mailbox:
+        for number in range(size):
+            subject = SPAM[number] if number < len(SPAM) else f"Note {number:05d}"
+            mailbox.deliver(("Inbox",), mail(number, subject=subject, message_id=f"<rapid{number}@x>"), frozenset())
+
+
+def subject_of(world: World, row: object) -> str:
+    return str(getattr(row, "subject"))
+
+
+@pytest.mark.parametrize("size", [16, 600, 3000])
+@pytest.mark.parametrize("pause", [0, 200, 1500])
+def test_four_quick_deletes_act_on_what_is_selected_at_each_press(empty: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, size: int, pause: int) -> None:
+    world, window = empty, empty.window
+    fill(world, size)
+    window.start()
+    wait(qtbot, lambda: bool(window._accounts) and world.backend._pending == {})  # noqa: SLF001
+    unread = window._find_tree_item(("", "favorite", "unread"))  # noqa: SLF001
+    assert unread is not None
+    window.tree.setCurrentIndex(unread)
+    window.act_show_groups.setChecked(True)
+    window._set_sort("subject", True)  # noqa: SLF001 - A to Z: the four spam messages one below the other
+    model = window.list_model
+    wait(qtbot, lambda: model.spec is not None and model.spec.combined == "unread" and model.spec.sort == "subject" and model.settled and world.backend._pending == {})  # noqa: SLF001
+    first = next(row for row in range(model.rowCount()) if not model.is_header(row) and model.row_at(row) is not None)
+    assert subject_of(world, model.row_at(first)) == SPAM[0]
+    window.list_view.setFocus()
+    window.list_view.setCurrentIndex(model.index(first))
+
+    deleted: list[str] = []
+    real_call = world.backend.call
+
+    def call(
+        command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False,
+        in_order: bool = False, checking: bool = False,
+    ) -> int:
+        if command == "message.delete":
+            deleted.append(str(values["message"]))
+        return real_call(command, values, on_success, on_error, owner, waiting, in_order, checking)
+
+    monkeypatch.setattr(world.backend, "call", call)
+    resets: list[int] = []
+    model.modelReset.connect(lambda: resets.append(1))
+
+    seen_at_press: list[str] = []
+    for _ in range(4):
+        current = window.list_view.currentIndex()
+        assert current.isValid(), "nothing is selected: the next Delete would do nothing"
+        chosen = model.row_at(current.row())
+        assert chosen is not None
+        seen_at_press.append(str(getattr(chosen, "message_id")))
+        QTest.keyClick(window.list_view, Qt.Key.Key_Delete)
+        assert deleted[-1] == seen_at_press[-1], "the Delete acted on another message than the one selected"
+        qtbot.wait(pause)
+
+    wait(qtbot, lambda: world.backend._pending == {} and not model.pending, timeout=30000)  # noqa: SLF001
+    names = {str(row.message_id): row.subject for row in world.call("message.list", account=world.account_id, folder="Trash", limit=10).messages}
+    assert [names.get(message_id) for message_id in deleted] == list(SPAM)  # exactly the four, each once, in the order pressed
+    inbox = world.call("message.list", account=world.account_id, folder="Inbox", limit=1)
+    assert inbox.total == size - 4  # nothing else moved, nothing made invisible
+    assert resets == []  # the list was never reset: no blank, no jump
+    assert not any("Missing" in title or "missing" in text for _, title, text in world.dialogs.shown)
+    current = window.list_view.currentIndex()
+    assert current.isValid() and subject_of(world, model.row_at(current.row())).startswith("Note")  # the selection went on to the next message

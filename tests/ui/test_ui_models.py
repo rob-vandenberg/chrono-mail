@@ -15,9 +15,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_ROLE_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.5.139"
+__version__ = "test_ui_models.py 0.5.157"
 
 # --- Version history ----------------------------------------------------
+# v0.5.157: a delete no longer resets the list at all (D-146 step 3)
 # v0.5.139: a reload (after a delete, in a folder and in Unread) never leaves the list empty for a moment
 # v0.2.96: A group header in the card layout is 36 px high
 # v0.2.94: The group layer: headers, folding, positions; the older tests run without headers
@@ -493,7 +494,7 @@ def test_a_delete_in_a_folder_never_leaves_the_list_empty(world: World, qtbot: Q
     wait(qtbot, lambda: window.list_model.rowCount() >= 3 and world.backend._pending == {})  # noqa: SLF001
     before = window.list_model.rowCount()
     seen = _delete_first(world, qtbot, before)
-    assert seen and 0 not in seen  # the new rows replaced the old ones at once
+    assert seen == []  # no reset at all: the one row goes and the others stay (D-146)
     assert window.list_model.rowCount() == before - 1
 
 
@@ -507,5 +508,5 @@ def test_a_delete_in_unread_never_leaves_the_list_empty(world: World, qtbot: QtB
     wait(qtbot, lambda: window._combined == "unread" and window.list_model.rowCount() >= 3 and world.backend._pending == {})  # noqa: SLF001
     before = window.list_model.rowCount()
     seen = _delete_first(world, qtbot, before)
-    assert seen and 0 not in seen
+    assert seen == []  # no reset at all (D-146)
 

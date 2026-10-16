@@ -9,15 +9,16 @@ from chrono_mail.ui.colours import group_header_colour, selection_grey
 
 from chrono_mail.ui.formatting import avatar_colour, coming_date, display_name, initials, short_date
 from chrono_mail.ui.icons import theme_icon
-from chrono_mail.ui.models import CONTACT_ROLE, GROUP_HEADER_ROLE, ROW_ROLE
+from chrono_mail.ui.models import CONTACT_ROLE, GROUP_HEADER_ROLE, PENDING_ROLE, ROW_ROLE
 from chrono_mail.ui.scale import lpx
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import paint_tag_marks
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.5.135"
+__version__ = "delegate.py 0.5.157"
 
 # --- Version history ----------------------------------------------------
+# v0.5.157: a card with an action under way is drawn greyed
 # v0.5.135: Tags: the Tag column (small coloured tags, the names as pills on the selected row) and the tags of a card at the right of its last line
 # v0.3.108: Rows, cards, group headers, the circle, the dot and the icons follow the size factor of the message list (lpx)
 # v0.2.100: A card of a snoozed message shows when it comes back ("Until Mon 09:00") in place of the date
@@ -113,6 +114,8 @@ class MessageDelegate(QStyledItemDelegate):
         background = (palette.color(QPalette.ColorRole.Highlight) if focused else QColor(selection_grey(palette))) if selected else palette.color(QPalette.ColorRole.Base)
         painter.fillRect(full, background)
         text = palette.color(QPalette.ColorRole.HighlightedText if selected and focused else QPalette.ColorRole.Text)
+        if index.data(PENDING_ROLE):
+            text = palette.color(QPalette.ColorRole.PlaceholderText)  # an action is under way: greyed until it ends
         quiet = QColor(text)
         quiet.setAlpha(QUIET_ALPHA_SELECTED if selected else QUIET_ALPHA)  # secondary text must stay readable on the highlight
         if row is None:  # the page with this row is still on its way

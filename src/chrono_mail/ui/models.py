@@ -17,9 +17,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.156"
+__version__ = "models.py 0.5.157"
 
 # --- Version history ----------------------------------------------------
+# v0.5.157: messages with an action under way (pending): greyed (PENDING_ROLE), let go when the fact arrives or the action ends; load_through for a search or Favorites view
 # v0.5.156: the list applies the facts of the engine to its own rows (D-146 step 2): a folder keeps its rows as one ordered list with empty places for what is not loaded; an answer asked before a change that moved places is asked again
 # v0.5.153: load_position: fetch the page of a message whose place is known (the selection kept after a sort)
 # v0.5.139: A reload keeps the rows on screen until the new headers and first rows are there, then swaps them in at once (the list no longer goes blank after a delete)
@@ -61,6 +62,7 @@ COUNT_ROLE: int = Qt.ItemDataRole.UserRole + 10  # the number of unread messages
 ROW_PLACEHOLDER: None = None
 HEADER_ICON_ROLE: int = Qt.ItemDataRole.UserRole + 12  # a header icon that the list header draws in the middle of the column
 HEADER_ICONS: dict[str, str] = {"contact": "user", "trash": "edit-delete"}  # columns whose header is a grey icon
+PENDING_ROLE: int = Qt.ItemDataRole.UserRole + 14  # true on a message with an action under way (drawn greyed)
 GROUP_HEADER_ROLE: int = Qt.ItemDataRole.UserRole + 13  # (name, folded) on a group header row, None on a message row
 
 
@@ -167,6 +169,7 @@ class MessageListModel(QAbstractTableModel):
         self._groups: list[_Group] = []
         self._group_starts: list[int] = []  # the row of each header, for finding the group of a row quickly
         self._display_rows: int = 0
+        self.pending: set[str] = set()  # message ids with an action under way: greyed, and no second action (D-146)
         self._folded: dict[tuple[str, str | None, str], set[str]] = {}  # per folder (or combined view) and sort order: the folded groups, until the program closes
 
     # --- the columns --------------------------------------------------------------------------
@@ -196,6 +199,7 @@ class MessageListModel(QAbstractTableModel):
 
     def show(self, spec: ViewSpec | None) -> None:
         """Start showing something else (or nothing). With groups, their headers are asked for first, then the messages."""
+        self.pending.clear()
         self.settled = spec is None or (self.settled and spec == self._spec and self._available() == 0)  # an empty view reloaded stays settled; one with messages waits for them
         self.beginResetModel()
         self._generation += 1
@@ -456,6 +460,10 @@ class MessageListModel(QAbstractTableModel):
             return "…" if role == Qt.ItemDataRole.DisplayRole and index.column() == 0 else None
         if role == CONTACT_ROLE:
             return self.contacts.get(person_address(row, self.recipients_first))
+        if role == PENDING_ROLE:
+            return str(getattr(row, "message_id")) in self.pending
+        if role == Qt.ItemDataRole.ForegroundRole and str(getattr(row, "message_id")) in self.pending:
+            return QBrush(QGuiApplication.palette().color(QPalette.ColorRole.PlaceholderText))  # an action is under way: greyed
         if role == Qt.ItemDataRole.DisplayRole and column_id == "tag":
             return ""  # the delegate draws the tags; the tooltip names them
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
@@ -696,8 +704,37 @@ class MessageListModel(QAbstractTableModel):
             return None
         return (group.display_start + 1 + position - group.message_start, group.display_start + 1 + position - group.message_start)
 
+    def mark_pending(self, message_ids: list[str]) -> None:
+        """An action is under way for these messages: they are drawn greyed until it ends."""
+        self.pending.update(message_ids)
+        self._redraw(message_ids)
+
+    def clear_pending(self, message_id: str) -> None:
+        """The action of this message ended (its fact took the row out already, or it failed): drawn as normal again."""
+        if message_id in self.pending:
+            self.pending.discard(message_id)
+            self._redraw([message_id])
+
+    def _redraw(self, message_ids: list[str]) -> None:
+        last = max(0, self.columnCount() - 1)
+        for message_id in message_ids:
+            row = self.find(message_id)
+            if row >= 0:
+                self.dataChanged.emit(self.index(row, 0), self.index(row, last))
+
+    def request_values(self, spec: ViewSpec) -> dict[str, object]:
+        """What the engine is asked for this view, without paging (for message.locate and message.combined-locate)."""
+        return {name: value for name, value in self._values(spec, 0).items() if name not in ("offset", "limit")}
+
+    def load_through(self, position: int) -> None:
+        """A search or Favorites view loads its next batches until the message at this position is there (loaded is
+        emitted with each batch)."""
+        if self._spec is not None and self._spec.kind is ViewKind.QUERY and position >= len(self._rows.loaded) and self.canFetchMore():
+            self._request_more()
+
     def _drop(self, position: int, was_unread: bool) -> None:
         """The data of a row that goes (call between begin and end of the removal)."""
+        gone = str(getattr(self._message_at(position), "message_id", ""))
         if self._group_counts is not None:
             number = self._group_index(position)
             key, name, count = self._group_counts[number]
@@ -712,6 +749,7 @@ class MessageListModel(QAbstractTableModel):
                 self._unread = max(0, self._unread - 1)
         else:
             del self._rows.loaded[position]
+        self.pending.discard(gone)
         self._rows.shifts += 1
         self._rows.requested.clear()  # the pages asked for counted places that have moved
 
