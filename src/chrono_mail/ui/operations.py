@@ -2,8 +2,8 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import override
 
-from PySide6.QtCore import QSettings, QSize, Qt, Signal
-from PySide6.QtGui import QCloseEvent, QColor, QGuiApplication, QHideEvent, QMouseEvent, QPainter, QPalette, QPixmap
+from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QColor, QGuiApplication, QHideEvent, QMouseEvent, QPainter, QPaintEvent, QPalette, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QTabBar,
     QVBoxLayout,
@@ -26,9 +27,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "operations.py 0.5.145"
+__version__ = "operations.py 0.5.148"
 
 # --- Version history ----------------------------------------------------
+# v0.5.148: The bar of a row is drawn by the program (OperationBar): blue on every platform; Windows' own style drew it grey
 # v0.5.145: Initial version: the Operations window (Operations, Errors and Log) of send and receive
 
 TABS: tuple[str, ...] = ("Operations", "Errors", "Log")
@@ -38,6 +40,9 @@ NO_ERRORS: str = "There are no errors."
 WAITING: str = "Waiting"
 DONE: str = "Done"
 FAILED: str = "Failed"
+BUSY_PIECE: float = 0.3  # the share of the bar the moving piece takes while the end is not known
+BUSY_STEP_MS: int = 30
+BUSY_STEPS: int = 50  # steps from one end to the other
 Names = Callable[[str, str], str]  # account id, "receive" or "send" -> "address (POP3)"
 
 
@@ -82,6 +87,75 @@ class ClickableBar(QProgressBar):
         super().mousePressEvent(event)
 
 
+class OperationBar(QWidget):
+    """The bar of a row, drawn by the program itself so that every platform shows it alike (a style of the platform may
+    draw a progress bar in its own colours): a grey track with the blue part of what is done, or a blue piece moving
+    from end to end while the end is not known."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.done: int = 0
+        self.total: int = 1
+        self.busy: bool = False
+        self.position: int = 0  # the step of the moving piece, 0 to 2 * BUSY_STEPS (there and back)
+        self.setFixedHeight(wpx(5))
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._timer = QTimer(self)
+        self._timer.setInterval(BUSY_STEP_MS)
+        self._timer.timeout.connect(self._advance)
+
+    def show_count(self, done: int, total: int) -> None:
+        self.busy, self.total, self.done = False, max(1, total), max(0, min(done, total))
+        self._timer.stop()
+        self.update()
+
+    def show_empty(self) -> None:
+        self.show_count(0, 1)
+
+    def show_full(self) -> None:
+        self.show_count(1, 1)
+
+    def show_busy(self) -> None:
+        if not self.busy:
+            self.busy, self.position = True, 0
+            if self.isVisible():
+                self._timer.start()
+        self.update()
+
+    def filled(self) -> tuple[int, int]:
+        """Where the blue part starts and how wide it is, in pixels."""
+        width = self.width()
+        if not self.busy:
+            return 0, round(width * self.done / self.total)
+        piece = max(1, round(width * BUSY_PIECE))
+        step = self.position if self.position <= BUSY_STEPS else 2 * BUSY_STEPS - self.position
+        return round((width - piece) * step / BUSY_STEPS), piece
+
+    def _advance(self) -> None:
+        self.position = (self.position + 1) % (2 * BUSY_STEPS)
+        self.update()
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        if self.busy:
+            self._timer.start()
+        super().showEvent(event)
+
+    @override
+    def hideEvent(self, event: QHideEvent) -> None:
+        self._timer.stop()
+        super().hideEvent(event)
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self.palette().color(QPalette.ColorRole.Mid))
+        start, width = self.filled()
+        if width > 0:
+            painter.fillRect(start, 0, width, self.height(), self.palette().color(QPalette.ColorRole.Highlight))
+        painter.end()
+
+
 class OperationRow(QFrame):
     """One account at work: its picture, its name in bold, the step it is at and a bar."""
 
@@ -109,13 +183,7 @@ class OperationRow(QFrame):
         self.name_label.setFont(font)
         self.step_label = QLabel(WAITING, self)
         self.step_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.bar = QProgressBar(self)
-        self.bar.setTextVisible(False)
-        self.bar.setFixedHeight(wpx(5))
-        self.bar.setRange(0, 1)
-        self.bar.setValue(0)
-        highlight = self.palette().color(QPalette.ColorRole.Highlight).name()
-        self.bar.setStyleSheet(f"QProgressBar {{ border: none; background: palette(mid); }} QProgressBar::chunk {{ background: {highlight}; }}")
+        self.bar = OperationBar(self)
         texts.addWidget(self.name_label)
         texts.addWidget(self.step_label)
         texts.addWidget(self.bar)
@@ -125,18 +193,16 @@ class OperationRow(QFrame):
         self.step = step
         if total:
             self.step_label.setText(f"{step} {done or 0:,} of {total:,}")
-            self.bar.setRange(0, total)
-            self.bar.setValue(min(done or 0, total))
+            self.bar.show_count(done or 0, total)
         else:
             self.step_label.setText(step)
-            self.bar.setRange(0, 0)  # moving: the end is not known
+            self.bar.show_busy()  # the end is not known
 
     def finish(self, error: str | None) -> None:
         self.finished, self.failed = True, error is not None
         self.step = FAILED if error is not None else DONE
         self.step_label.setText(f"{FAILED}: {error}" if error is not None else DONE)
-        self.bar.setRange(0, 1)
-        self.bar.setValue(1)
+        self.bar.show_full()
 
 
 class ErrorRow(QFrame):

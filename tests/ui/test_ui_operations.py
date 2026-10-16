@@ -1,17 +1,20 @@
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QGuiApplication, QShowEvent
+from PySide6.QtGui import QGuiApplication, QPalette, QShowEvent
+from PySide6.QtWidgets import QApplication, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.config import ServerRole
 from chrono_mail.ui.mainwindow import MainWindow
-from chrono_mail.ui.operations import DONE, FAILED, NO_ERRORS, OperationsWindow
+from chrono_mail.ui import scale
+from chrono_mail.ui.operations import BUSY_STEPS, DONE, FAILED, NO_ERRORS, OperationBar, OperationsWindow
 from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_operations.py 0.5.146"
+__version__ = "test_ui_operations.py 0.5.148"
 
 # --- Version history ----------------------------------------------------
+# v0.5.148: The bar is drawn by the program: its parts and its blue under both styles of this platform
 # v0.5.146: Every send and receive opens the window (startup, timers, push); only Refresh gives it the focus
 # v0.5.145: Initial tests of the Operations window: rows, errors, log, and when it opens and closes
 
@@ -55,7 +58,7 @@ def test_refresh_opens_the_window_shows_the_steps_and_hides_it_when_done(qtbot: 
     rows = window.operations.rows()
     assert list(rows) == [(world.account_id, "receive")]  # the Outbox is empty: no row for sending
     row = rows[(world.account_id, "receive")]
-    assert row.name_label.text() == "me@example.com (POP3)" and row.step_label.text() == DONE and row.bar.value() == row.bar.maximum() == 1
+    assert row.name_label.text() == "me@example.com (POP3)" and row.step_label.text() == DONE and (row.bar.done, row.bar.total, row.bar.busy) == (1, 1, False)
     assert row.name_label.font().bold()
     assert shown == [True] and not window.operations.isVisible()  # opened by Refresh with the focus, closed when everything was done
     log = window.operations.log.toPlainText()
@@ -162,7 +165,7 @@ def test_ignore_all_copy_log_and_clear_log(qtbot: QtBot) -> None:
     operations.add("a", "receive")
     operations.step("a", "receive", "Downloading", 2, 5)
     row = operations.rows()[("a", "receive")]
-    assert row.step_label.text() == "Downloading 2 of 5" and (row.bar.value(), row.bar.maximum()) == (2, 5)
+    assert row.step_label.text() == "Downloading 2 of 5" and (row.bar.done, row.bar.total) == (2, 5)
     operations.step("b", "receive", "Connecting", None, None)  # an account the window was not told about
     assert list(operations.rows()) == [("a", "receive")]
     operations.finish("a", "receive", "the server went away")
@@ -211,3 +214,36 @@ def test_view_has_operations(qtbot: QtBot, world: World) -> None:
     assert not world.window.operations.isVisible()
     world.window.progress_bar.clicked.emit()
     assert world.window.operations.isVisible()
+
+
+def test_the_bar_is_drawn_by_the_program_in_the_blue_of_the_palette_under_every_style(qtbot: QtBot) -> None:
+    app = QApplication.instance()
+    assert isinstance(app, QApplication)
+    before = app.style().name()
+    try:
+        for name in ("Fusion", "Windows"):  # the styles this platform has; a style of the platform must not change the colours
+            app.setStyle(scale.ScaledStyle(name, 1.0, 1.0))
+            holder = QWidget()
+            qtbot.addWidget(holder)
+            bar = OperationBar(holder)
+            bar.resize(200, bar.height())
+            holder.show()
+            blue, grey = bar.palette().color(QPalette.ColorRole.Highlight).name(), bar.palette().color(QPalette.ColorRole.Mid).name()
+            bar.show_count(1, 4)
+            picture = bar.grab().toImage()
+            assert picture.pixelColor(10, 2).name() == blue and picture.pixelColor(150, 2).name() == grey, name  # a quarter blue, the rest the grey track
+            bar.show_full()
+            assert bar.grab().toImage().pixelColor(195, 2).name() == blue, name
+            bar.show_empty()
+            assert bar.grab().toImage().pixelColor(5, 2).name() == grey, name
+            bar.show_busy()
+            assert bar.busy and bar.filled() == (0, 60)
+            bar.position = BUSY_STEPS  # the far end
+            assert bar.filled() == (140, 60)
+            bar.position = 2 * BUSY_STEPS - 1  # on the way back
+            start, width = bar.filled()
+            assert 0 < start < 140 and width == 60
+            bar.position = BUSY_STEPS
+            assert bar.grab().toImage().pixelColor(150, 2).name() == blue and bar.grab().toImage().pixelColor(50, 2).name() == grey, name
+    finally:
+        app.setStyle(before)  # the style the other tests run with
