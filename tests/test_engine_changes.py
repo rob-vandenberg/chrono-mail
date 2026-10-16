@@ -13,9 +13,10 @@ from tests.test_import_emclient import make_exports
 __all__ = ["setup", "world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_changes.py 0.5.155"
+__version__ = "test_engine_changes.py 0.5.156"
 
 # --- Version history ----------------------------------------------------
+# v0.5.156: the three bulk commands tell one fact; an action with an outdated folder is refused and never hides the message
 # v0.5.155: Initial tests: every change of mail reports exactly its fact, right after it happened (D-146)
 
 
@@ -144,3 +145,34 @@ def test_imap_tells_only_after_the_server_confirmed_and_nothing_on_a_refusal(wor
     with pytest.raises(ProtocolError):
         call(world.engine, "draft.save", account=world.account, subject="refused", body="text")
     assert told == []
+
+
+def test_the_three_bulk_commands_tell_one_fact_at_their_end(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    rows = inbox(setup)
+    call(setup.engine, "message.tag", account=setup.account_id, folder="Inbox", messages=tuple(row.message_id for row in rows), add=("Work",))
+    told = listen(setup)
+    call(setup.engine, "tag.rename", name="Work", new_name="Office")
+    assert told == [Change("mailbox_changed", setup.account_id)]
+    told.clear()
+    call(setup.engine, "tag.delete", name="Office")
+    assert told == [Change("mailbox_changed", setup.account_id)]
+    told.clear()
+    call(setup.engine, "rule.add", name="Read them", condition=("subject:contains:Message",), action=("mark_read",))
+    call(setup.engine, "rule.run", account=setup.account_id, folder="Inbox")
+    assert told == [Change("mailbox_changed", setup.account_id)]
+
+
+def test_an_action_with_an_outdated_folder_is_refused_and_never_hides_the_message(setup: Setup) -> None:
+    from chrono_mail.engine import UsageError
+
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    first = inbox(setup)[0]
+    call(setup.engine, "message.delete", account=setup.account_id, folder="Inbox", message=first.message_id)
+    for again in ({"permanent": False}, {"permanent": True}):
+        with pytest.raises(UsageError, match="no longer in Inbox"):
+            call(setup.engine, "message.delete", account=setup.account_id, folder="Inbox", message=first.message_id, **again)
+    with pytest.raises(UsageError, match="no longer in Inbox"):
+        call(setup.engine, "message.flag", account=setup.account_id, folder="Inbox", message=first.message_id, seen=True)
+    trash = call(setup.engine, "message.list", account=setup.account_id, folder="Trash").messages
+    assert [row.message_id for row in trash] == [first.message_id]  # still there, still in the index

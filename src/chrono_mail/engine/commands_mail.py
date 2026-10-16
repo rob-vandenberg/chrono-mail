@@ -29,9 +29,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.155"
+__version__ = "commands_mail.py 0.5.156"
 
 # --- Version history ----------------------------------------------------
+# v0.5.156: message.locate: where a message stands in a folder or a search, and under which group heading (a list puts a message that came in at its place)
 # v0.5.155: MessageRow lives in changes.py (the engine reports changes with it); a mail check reports its mailbox as changed, quietly (D-146)
 # v0.5.153: message.position: where a message stands in a folder in a sort order (the list finds it again after a sort)
 # v0.5.145: mail.fetch reports its steps per account (engine.activity): connecting, listing, downloading, rules, disconnected
@@ -697,6 +698,43 @@ def message_groups(engine: Engine, parameters: SearchParameters) -> tuple[GroupC
         return tuple(found)
 
 
+@dataclass(frozen=True, slots=True)
+class LocateResult:
+    position: int | None  # where the message stands in the view's order (0 is the first); None when it is not in the view
+    group_key: str = ""  # the group heading it falls under ("" when the view has no headings in this order)
+    group_name: str = ""
+
+
+def group_of(groups: tuple[GroupCount, ...], position: int) -> tuple[str, str]:
+    """The group heading of the message at this position, from the groups in list order with their counts."""
+    start = 0
+    for group in groups:
+        if position < start + group.count:
+            return group.key, group.value
+        start += group.count
+    return ("", "")
+
+
+@dataclass(frozen=True, slots=True)
+class LocateParameters(SearchParameters):
+    message: str = field(default="", metadata=option("The message id"))
+
+
+def message_locate(engine: Engine, parameters: LocateParameters) -> LocateResult:
+    """Where a message stands in a folder or a search (as message.list and message.search order it), and its group
+    heading. Asked when a message comes into the view a person looks at, so the list can put it at its place."""
+    plain = not parameters.query and parameters.folder and _search_filter(parameters) == SearchFilter() and parameters.sort not in ("snoozed", CONTACT_SORT)
+    if plain and parameters.folder is not None:
+        position = message_position(engine, PositionParameters(parameters.account, parameters.folder, parameters.message, parameters.sort, parameters.oldest_first)).position
+    else:
+        everything = message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))
+        position = next((number for number, row in enumerate(everything) if row.message_id == parameters.message), None)
+    if position is None:
+        return LocateResult(None)
+    key, name = group_of(message_groups(engine, parameters), position)
+    return LocateResult(position, key, name)
+
+
 def message_thread(engine: Engine, parameters: MessageParameters) -> tuple[MessageRow, ...]:
     """The conversation a message belongs to, oldest first, with the messages of all folders."""
     with open_mailbox(engine, parameters.account) as mailbox:
@@ -881,6 +919,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register("mail.send", "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send)
     registry.register("message.list", "List the messages of a folder", ListParameters, message_list)
     registry.register("message.position", "Where a message stands in a folder in a sort order (0 is the first)", PositionParameters, message_position)
+    registry.register("message.locate", "Where a message stands in a folder or a search, and its group heading", LocateParameters, message_locate)
     registry.register("message.thread", "List the messages of the conversation a message belongs to", MessageParameters, message_thread)
     registry.register("message.show", "Show one message", MessageParameters, message_show)
     registry.register("message.search", "Search messages", SearchParameters, message_search)

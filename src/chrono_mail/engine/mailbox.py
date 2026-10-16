@@ -21,9 +21,10 @@ from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.store import MessageNotFoundError, Store, clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 0.5.155"
+__version__ = "mailbox.py 0.5.156"
 
 # --- Version history ----------------------------------------------------
+# v0.5.156: an action that names a message in a folder where it no longer is gets refused (it never hides the message)
 # v0.5.155: every change reports its fact right after it succeeded (for IMAP after the server confirmed); Empty folder and Mark all as read report one fact each (D-146)
 # v0.5.138: set_tags in an IMAP account: on the server first, as keywords
 # v0.5.134: Tags: set_tags (here only for now; an IMAP account's server learns them in a later step), a copy keeps the tags in the index too
@@ -111,9 +112,22 @@ class Mailbox:
         """The mailbox the facts are about: the account whose store holds the mail."""
         return self.store.account_id
 
+    def _still_there(self, ref: MessageRef) -> None:
+        """An action names a message in a folder: refuse it when the message is no longer there but somewhere else (an
+        action given before an earlier one moved it). Without this, a missing file there would count as deleted and its
+        line would leave the index, which hides the message where it really is."""
+        message = self.index.get(ref.store_id)
+        if message is None or message.folder == ref.folder_path:
+            return
+        try:
+            self.store.locate(ref)
+        except MessageNotFoundError:
+            raise UsageError(f"This message is no longer in {'/'.join(ref.folder_path)}; it is in {'/'.join(message.folder)}") from None
+
     # --- changes that keep store and index in step ---------------------------------------------
 
     def set_flags(self, ref: MessageRef, flags: frozenset[MessageFlag]) -> frozenset[MessageFlag]:
+        self._still_there(ref)
         if not is_imap(self.settings):
             return self._set_flags_here(ref, flags)
         self.store.locate(ref, self.hint(ref.store_id))  # the message must be here before the server is asked
@@ -133,6 +147,7 @@ class Mailbox:
         return flags
 
     def current_flags(self, ref: MessageRef) -> frozenset[MessageFlag]:
+        self._still_there(ref)
         path = self.store.locate(ref, self.hint(ref.store_id))
         for message in self.store.list_messages(ref.folder_path):
             if message.ref.store_id == ref.store_id:
@@ -140,6 +155,7 @@ class Mailbox:
         raise StorageError(f"Message not found ({path})")
 
     def move(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
+        self._still_there(ref)
         if not is_imap(self.settings):
             return self._move_here(ref, target)
         flags = self.current_flags(ref)  # the message must be here before the server is asked
@@ -157,7 +173,7 @@ class Mailbox:
         row = self.row_of(moved.store_id)
         self._tell(Change(
             "moved", self._place, "/".join(ref.folder_path), ref.store_id, to_folder="/".join(target), new_message_id=moved.store_id, row=row,
-            was_unread=was_unread, unread=row is not None and "seen" not in row.flags,
+            was_unread=was_unread, unread=row is not None and "seen" not in row.flags, role=self._role_of(target),
         ))
         return moved
 
@@ -180,9 +196,16 @@ class Mailbox:
 
     def _tell_added(self, reference: MessageRef) -> None:
         row = self.row_of(reference.store_id)
-        self._tell(Change("added", self._place, "/".join(reference.folder_path), reference.store_id, row=row, unread=row is not None and "seen" not in row.flags))
+        self._tell(Change(
+            "added", self._place, "/".join(reference.folder_path), reference.store_id, row=row, unread=row is not None and "seen" not in row.flags,
+            role=self._role_of(reference.folder_path),
+        ))
+
+    def _role_of(self, path: tuple[str, ...]) -> str:
+        return next((folder.role.value for folder in self.store.list_folders() if folder.path == path), FolderRole.OTHER.value)
 
     def copy(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
+        self._still_there(ref)
         if not is_imap(self.settings):
             return self._copy_here(ref, target)
         flags = self.current_flags(ref)
@@ -238,6 +261,7 @@ class Mailbox:
     def set_tags(self, ref: MessageRef, tags: tuple[str, ...]) -> tuple[str, ...]:
         """Give a message exactly these tags (the store's tags file is the truth, the index copies it). Returns them as kept.
         The message must be here."""
+        self._still_there(ref)
         self.store.locate(ref, self.hint(ref.store_id))
         if not is_imap(self.settings):
             return self._set_tags_here(ref, tags)
@@ -257,6 +281,7 @@ class Mailbox:
     def delete(self, ref: MessageRef, permanent: bool) -> str:
         """Move to Trash, or remove for good when permanent or when it is already in Trash. Returns what happened.
         A message whose file is gone is deleted already: only its line in the index is removed, and the answer is "gone"."""
+        self._still_there(ref)
         try:
             trash = self.role_folder(FolderRole.TRASH)
         except StorageError:

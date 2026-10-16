@@ -11,14 +11,15 @@ from chrono_mail.core import ChronoMailError, ConfigurationError, StorageError
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import retag_item
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tags.py 0.5.136"
+__version__ = "commands_tags.py 0.5.156"
 
 # --- Version history ----------------------------------------------------
+# v0.5.156: Delete a tag everywhere is a big job: one "mailbox changed" per mailbox at its end (D-146)
 # v0.5.136: give_colours is used by the rules too
 # v0.5.135: tag.edit: a tag's shortcut key, what it is for, and its place in the list
 # v0.5.134: Initial version: message.tag, tag.create, tag.delete; mail counts and renaming for tag.list and tag.rename
@@ -233,4 +234,4 @@ def register(registry: CommandRegistry) -> None:
     registry.register("message.tag", "Add tags to messages, take tags away, or give them exactly these tags", MailTagParameters, message_tag)
     registry.register("tag.create", "Make a tag with a colour", CreateParameters, tag_create)
     registry.register("tag.edit", "Give a tag a shortcut key, say what it is for, or move it up or down in the list", EditParameters, tag_edit)
-    registry.register("tag.delete", "Take a tag away from all mail, contacts, events and tasks", DeleteParameters, tag_delete, destructive=True)
+    registry.register("tag.delete", "Take a tag away from all mail, contacts, events and tasks", DeleteParameters, quiet_command(tag_delete), destructive=True)

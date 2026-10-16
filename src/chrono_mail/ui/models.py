@@ -17,9 +17,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.153"
+__version__ = "models.py 0.5.156"
 
 # --- Version history ----------------------------------------------------
+# v0.5.156: the list applies the facts of the engine to its own rows (D-146 step 2): a folder keeps its rows as one ordered list with empty places for what is not loaded; an answer asked before a change that moved places is asked again
 # v0.5.153: load_position: fetch the page of a message whose place is known (the selection kept after a sort)
 # v0.5.139: A reload keeps the rows on screen until the new headers and first rows are there, then swaps them in at once (the list no longer goes blank after a delete)
 # v0.5.135: Tags: the Tag column (drawn by the delegate), the tag colour as the text colour, replace_tags; a combined view of one tag; a list filtered by a tag; the Tags in the folder list
@@ -130,11 +131,12 @@ class ViewSpec:
 
 @dataclass
 class _Rows:
-    pages: dict[int, list[object]] = field(default_factory=dict)  # folder views
-    requested: set[int] = field(default_factory=set)
+    slots: list[object | None] = field(default_factory=list)  # folder views: every message of the folder in order, None while not loaded
+    requested: set[int] = field(default_factory=set)  # pages asked for since the last change that moved places
     loaded: list[object] = field(default_factory=list)  # query views
     exhausted: bool = False
     loading_more: bool = False
+    shifts: int = 0  # changes that moved places (a row in or out): an answer asked for before one is asked for again
 
 
 class MessageListModel(QAbstractTableModel):
@@ -233,12 +235,15 @@ class MessageListModel(QAbstractTableModel):
 
     def _layout_groups(self) -> None:
         """Work out where the headers go and which rows they hide (call between begin and end of a model change)."""
+        self._groups, self._group_starts, self._display_rows = self._computed_layout()
+
+    def _computed_layout(self) -> tuple[list[_Group], list[int], int]:
+        """The headers, their rows and the number of rows, for the rows and groups as they are now (nothing is changed)."""
         available = self._available()
-        self._groups = []
-        self._group_starts = []
+        groups: list[_Group] = []
+        starts: list[int] = []
         if self._group_counts is None:
-            self._display_rows = available
-            return
+            return groups, starts, available
         folded = self._folded.get(self._fold_key(), set())
         display = message = 0
         last = len(self._group_counts) - 1
@@ -250,11 +255,11 @@ class MessageListModel(QAbstractTableModel):
                 continue
             closed = key in folded
             shown = 0 if closed else known
-            self._groups.append(_Group(key, name, display, message, known, shown, closed))
-            self._group_starts.append(display)
+            groups.append(_Group(key, name, display, message, known, shown, closed))
+            starts.append(display)
             display += 1 + shown
             message += known
-        self._display_rows = display
+        return groups, starts, display
 
     def _group_at(self, row: int) -> _Group | None:
         if not self._groups or row < 0 or row >= self._display_rows:
@@ -379,7 +384,7 @@ class MessageListModel(QAbstractTableModel):
         self._group_counts = groups
         if spec.kind is ViewKind.FOLDER:
             self._total, self._unread = int(getattr(result, "total")), int(getattr(result, "unread"))
-            self._rows.pages[0] = list(getattr(result, "messages"))
+            self._fill(0, list(getattr(result, "messages")))
             self._rows.requested.add(0)
         else:
             rows: list[object] = list(result) if isinstance(result, (tuple, list)) else []
@@ -514,13 +519,19 @@ class MessageListModel(QAbstractTableModel):
             return None
         if self._spec.kind is ViewKind.QUERY:
             return self._rows.loaded[row] if row < len(self._rows.loaded) else None
-        page, offset = divmod(row, PAGE_SIZE)
-        rows = self._rows.pages.get(page)
-        if rows is None:
-            if fetch:
-                self._request_page(page)
-            return None
-        return rows[offset] if offset < len(rows) else None
+        found = self._rows.slots[row] if row < len(self._rows.slots) else None
+        if found is None and fetch and row < self._total:
+            self._request_page(row // PAGE_SIZE)
+        return found
+
+    def _fill(self, offset: int, rows: list[object]) -> None:
+        """Put the rows of a page in their places (a folder holds a place for each of its messages)."""
+        slots = self._rows.slots
+        if len(slots) != self._total:
+            del slots[self._total:]
+            slots.extend([None] * (self._total - len(slots)))
+        for number, row in enumerate(rows[: max(0, self._total - offset)]):
+            slots[offset + number] = row
 
     def load_position(self, position: int) -> None:
         """Make sure the page of the message at this position of a folder is loaded (loaded is emitted when it arrives)."""
@@ -542,7 +553,7 @@ class MessageListModel(QAbstractTableModel):
             self._unread = sum(1 for loaded in self._rows.loaded if "seen" not in getattr(loaded, "flags"))
             self.counts_changed.emit(len(self._rows.loaded), self._unread)
         else:
-            self._rows.pages[position // PAGE_SIZE][position % PAGE_SIZE] = replaced
+            self._rows.slots[position] = replaced
             now_unread = "seen" not in flags
             if was_unread != now_unread:
                 self._unread = max(0, self._unread + (1 if now_unread else -1))
@@ -564,15 +575,14 @@ class MessageListModel(QAbstractTableModel):
         if self._spec is not None and self._spec.kind is ViewKind.QUERY:
             self._rows.loaded[position] = replaced
         else:
-            self._rows.pages[position // PAGE_SIZE][position % PAGE_SIZE] = replaced
+            self._rows.slots[position] = replaced
         shown = self.display_row(position)
         if shown >= 0:
             self.dataChanged.emit(self.index(shown, 0), self.index(shown, max(0, self.columnCount() - 1)))
 
     def message_ids(self) -> list[str]:
         """The ids of the rows that are loaded now (for finding a message again after a reload)."""
-        pages = sorted(self._rows.pages.items())
-        rows = [row for _, page in pages for row in page] if self._spec is not None and self._spec.kind is ViewKind.FOLDER else self._rows.loaded
+        rows = [row for row in self._rows.slots if row is not None] if self._spec is not None and self._spec.kind is ViewKind.FOLDER else self._rows.loaded
         return [str(getattr(row, "message_id")) for row in rows]
 
     def find(self, message_id: str) -> int:
@@ -589,11 +599,341 @@ class MessageListModel(QAbstractTableModel):
                 if getattr(row, "message_id") == message_id:
                     return position
             return -1
-        for page, rows in self._rows.pages.items():
-            for offset, row in enumerate(rows):
-                if getattr(row, "message_id") == message_id:
-                    return page * PAGE_SIZE + offset
+        for position, row in enumerate(self._rows.slots):
+            if row is not None and getattr(row, "message_id") == message_id:
+                return position
         return -1
+
+    # --- the facts of the engine (D-146): each change applied to the rows on screen ------------------------------
+
+    def apply(self, change: object) -> None:
+        """One fact of a change of mail (a Change of the engine): apply exactly that change to the rows, without fetching the
+        view again. A message that comes into the view is put at its place (the engine is asked where that is)."""
+        spec = self._spec
+        if spec is None or not self._concerns(spec, str(getattr(change, "mailbox", ""))):
+            return
+        kind = str(getattr(change, "kind", ""))
+        message_id = str(getattr(change, "message_id", ""))
+        folder = str(getattr(change, "folder", ""))
+        if kind == "flags":
+            self._apply_flags(message_id, folder, tuple(getattr(change, "flags")), bool(getattr(change, "was_unread")), bool(getattr(change, "unread")))
+        elif kind == "tags":
+            self.replace_tags(message_id, tuple(getattr(change, "tags")))
+        elif kind == "removed":
+            self._take_out(message_id, folder, bool(getattr(change, "was_unread")))
+        elif kind == "moved":
+            self._take_out(message_id, folder, bool(getattr(change, "was_unread")))
+            self._bring_in(change)
+        elif kind == "added":
+            self._bring_in(change)
+        elif kind == "folder_read":
+            self._folder_read(folder)
+        elif kind == "folder_emptied":
+            self._folder_emptied(folder)
+        elif kind == "folder_renamed":
+            self._folder_renamed(folder, str(getattr(change, "to_folder")))
+
+    def _concerns(self, spec: ViewSpec, mailbox: str) -> bool:
+        """Whether the view may show mail of this mailbox (a Favorites view shows every mailbox, or those of a group)."""
+        return spec.combined is not None or spec.account == mailbox
+
+    def _shows_folder(self, folder: str) -> bool:
+        spec = self._spec
+        return spec is not None and spec.combined is None and spec.folder == folder
+
+    def _counts_changed(self) -> None:
+        if self._spec is not None and self._spec.kind is ViewKind.FOLDER:
+            self.counts_changed.emit(self._total, self._unread)
+        else:
+            self.counts_changed.emit(len(self._rows.loaded), sum(1 for row in self._rows.loaded if "seen" not in getattr(row, "flags")))
+
+    def _apply_flags(self, message_id: str, folder: str, flags: tuple[str, ...], was_unread: bool, unread: bool) -> None:
+        position = self._find_position(message_id)
+        if position >= 0:
+            self.replace_flags(message_id, flags)  # the row changes in place and its unread count with it
+        elif self._shows_folder(folder) and was_unread != unread:
+            self._unread = max(0, self._unread + (1 if unread else -1))  # a message of this folder that is not loaded
+            self._counts_changed()
+
+    def _group_index(self, position: int) -> int:
+        """The group (in the full group counts) of the message at this position."""
+        start = 0
+        counts = self._group_counts or []
+        for number, (_, _, count) in enumerate(counts):
+            if position < start + count:
+                return number
+            start += count
+        return len(counts) - 1
+
+    def _take_out(self, message_id: str, folder: str, was_unread: bool) -> None:
+        """A message left this view: its row goes, its group count follows, an emptied group heading goes too."""
+        position = self._find_position(message_id)
+        if position < 0:
+            if self._shows_folder(folder):
+                self._take_out_unseen(was_unread)
+            return
+        rows = self._remove_rows_of(position)
+        if rows is not None:
+            self.beginRemoveRows(QModelIndex(), rows[0], rows[1])
+        self._drop(position, was_unread)
+        self._layout_groups()
+        if rows is not None:
+            self.endRemoveRows()
+        self.groups_changed.emit()
+        self._counts_changed()
+
+    def _remove_rows_of(self, position: int) -> tuple[int, int] | None:
+        """The rows of the list that go when the message at this position goes (None: none, its group is folded)."""
+        if self._group_counts is None:
+            return (position, position)
+        group = next((group for group in self._groups if group.message_start <= position < group.message_start + group.count), None)
+        if group is None:
+            return None
+        number = self._group_index(position)
+        if self._group_counts[number][2] <= 1:  # its group empties: the heading goes too
+            return (group.display_start, group.display_start + group.shown)
+        if group.folded:
+            return None
+        return (group.display_start + 1 + position - group.message_start, group.display_start + 1 + position - group.message_start)
+
+    def _drop(self, position: int, was_unread: bool) -> None:
+        """The data of a row that goes (call between begin and end of the removal)."""
+        if self._group_counts is not None:
+            number = self._group_index(position)
+            key, name, count = self._group_counts[number]
+            if count <= 1:
+                del self._group_counts[number]
+            else:
+                self._group_counts[number] = (key, name, count - 1)
+        if self._spec is not None and self._spec.kind is ViewKind.FOLDER:
+            del self._rows.slots[position]
+            self._total = max(0, self._total - 1)
+            if was_unread:
+                self._unread = max(0, self._unread - 1)
+        else:
+            del self._rows.loaded[position]
+        self._rows.shifts += 1
+        self._rows.requested.clear()  # the pages asked for counted places that have moved
+
+    def _take_out_unseen(self, was_unread: bool) -> None:
+        """A message of this folder that is not loaded went: it was in a part not loaded yet. Its place is not known, so the
+        loaded parts after the first part not loaded are let go (fetched again when they are shown), and one place less."""
+        slots = self._rows.slots
+        gap = next((number for number, slot in enumerate(slots) if slot is None), len(slots))
+        reset = any(slot is not None for slot in slots[gap:])  # loaded parts after the gap: their places may have moved
+        if reset:
+            self.beginResetModel()
+        elif self._group_counts is None and self._display_rows > 0:
+            self.beginRemoveRows(QModelIndex(), self._display_rows - 1, self._display_rows - 1)  # one empty place less at the end
+        for number in range(gap, len(slots)):
+            slots[number] = None
+        if slots:
+            slots.pop()
+        self._total = max(0, self._total - 1)
+        if was_unread:
+            self._unread = max(0, self._unread - 1)
+        self._rows.shifts += 1
+        self._rows.requested.clear()
+        if self._group_counts is not None:
+            self._refresh_group_counts(reset)  # which heading lost a message is not known: the counts are asked again
+        elif reset:
+            self._layout_groups()
+            self.endResetModel()
+        elif self._display_rows > 0:
+            self._layout_groups()
+            self.endRemoveRows()
+        self._counts_changed()
+
+    def _refresh_group_counts(self, resetting: bool) -> None:
+        """The counts of the headings are fetched again (only the counts, not the rows), when a change happened where the
+        list cannot see which heading it belongs to."""
+        spec = self._spec
+        if spec is None:
+            return
+        generation, shifts, sort = self._generation, self._rows.shifts, spec.sort
+
+        def arrived(result: object) -> None:
+            if generation != self._generation or shifts != self._rows.shifts:
+                return
+            found: list[object] = list(result) if isinstance(result, (tuple, list)) else []
+            self._group_counts = [(str(getattr(group, "key")), group_name(sort, str(getattr(group, "value"))), int(getattr(group, "count"))) for group in found]
+            self._relayout()
+
+        if resetting:
+            self._layout_groups()
+            self.endResetModel()
+        else:
+            self._relayout()
+        command = "message.combined-groups" if spec.combined is not None else "message.groups"
+        values = {name: value for name, value in self._values(spec, 0).items() if name not in ("offset", "limit")}
+        self._backend.call(command, values, arrived, self._failed, owner=self)
+
+    def _relayout(self) -> None:
+        """The headings were counted anew: when the rows on screen keep their places nothing is redrawn; only when they
+        moved (rare: a change where the list cannot see it) is the list laid out again."""
+        groups, starts, display = self._computed_layout()
+        if starts == self._group_starts and display == self._display_rows and [group.count for group in groups] == [group.count for group in self._groups]:
+            self._groups = groups
+            return
+        self.beginResetModel()
+        self._groups, self._group_starts, self._display_rows = groups, starts, display
+        self.endResetModel()
+        self.groups_changed.emit()
+
+    def _may_hold(self, change: object) -> bool:
+        """Whether a message that came into a folder may belong in this view; when it may, the engine says where."""
+        spec = self._spec
+        if spec is None:
+            return False
+        folder, role, row = str(getattr(change, "to_folder", "") or getattr(change, "folder", "")), str(getattr(change, "role", "")), getattr(change, "row", None)
+        if row is None:
+            return False
+        flags, tags = tuple(getattr(row, "flags")), tuple(str(tag).casefold() for tag in getattr(row, "tags"))
+        if spec.combined is not None:
+            everywhere = role not in ("trash", "junk") and folder != "Outbox"
+            wanted = {
+                "inboxes": role == "inbox", "sent": role == "sent", "drafts": role == "drafts", "junk": role == "junk", "trash": role == "trash",
+                "outbox": folder == "Outbox", "unread": everywhere and "seen" not in flags, "flagged": everywhere and "flagged" in flags,
+                "tagged": everywhere and (spec.tag or "").casefold() in tags,
+            }
+            return wanted.get(spec.combined, False)
+        if spec.folder is not None and spec.folder != folder:
+            return False
+        if spec.unread is not None and spec.unread == ("seen" in flags):
+            return False
+        if spec.flagged is not None and spec.flagged != ("flagged" in flags):
+            return False
+        return spec.tag is None or spec.tag.casefold() in tags
+
+    def _bring_in(self, change: object) -> None:
+        """A message came into a folder: when it belongs in this view, the engine says where it stands and under which
+        heading, and its row is put there."""
+        if not self._may_hold(change):
+            return
+        spec = self._spec
+        row = getattr(change, "row", None)
+        if spec is None or row is None:
+            return
+        message_id = str(getattr(row, "message_id"))
+        generation, shifts = self._generation, self._rows.shifts
+
+        def located(result: object) -> None:
+            if generation != self._generation:
+                return
+            if shifts != self._rows.shifts:
+                self._bring_in(change)  # a row came in or went out meanwhile: its place is asked again
+                return
+            position = getattr(result, "position", None)
+            if isinstance(position, int) and self._find_position(message_id) < 0:
+                self._insert(position, row, str(getattr(result, "group_key", "")), str(getattr(result, "group_name", "")))
+
+        values = {name: value for name, value in self._values(spec, 0).items() if name not in ("offset", "limit")}
+        values["message"] = message_id
+        if spec.combined is not None:
+            values["account"] = str(getattr(change, "mailbox"))
+        self._backend.call("message.combined-locate" if spec.combined is not None else "message.locate", values, located, self._failed, owner=self)
+
+    def _insert(self, position: int, row: object, key: str, name: str) -> None:
+        """Put a row at its place, under its heading (a new heading when its group was not there)."""
+        spec = self._spec
+        if spec is None:
+            return
+        folder_view = spec.kind is ViewKind.FOLDER
+        if not folder_view and position > len(self._rows.loaded):
+            if self._group_counts is not None:
+                self._count_into_group(position, key, name)  # it comes with a later batch: only its heading counts it now
+            return
+        new_group = self._count_into_group(position, key, name) if self._group_counts is not None else False
+        if folder_view:
+            self._rows.slots.insert(position, row)
+            self._total += 1
+            if "seen" not in getattr(row, "flags"):
+                self._unread += 1
+        else:
+            self._rows.loaded.insert(position, row)
+        self._rows.shifts += 1
+        self._rows.requested.clear()
+        groups, starts, display = self._computed_layout()
+        rows: tuple[int, int] | None
+        if self._group_counts is None:
+            rows = (position, position)
+        else:
+            group = next((group for group in groups if group.message_start <= position < group.message_start + group.count), None)
+            if group is None:
+                rows = None
+            elif new_group:
+                rows = (group.display_start, group.display_start + group.shown)
+            elif group.folded:
+                rows = None
+            else:
+                rows = (group.display_start + 1 + position - group.message_start,) * 2
+        if rows is not None:
+            self.beginInsertRows(QModelIndex(), rows[0], rows[1])
+        self._groups, self._group_starts, self._display_rows = groups, starts, display
+        if rows is not None:
+            self.endInsertRows()
+        self.groups_changed.emit()
+        self._counts_changed()
+
+    def _count_into_group(self, position: int, key: str, name: str) -> bool:
+        """Count a message that came in into its group (by its key); a new group at its place. True when the group is new."""
+        counts = self._group_counts
+        if counts is None:
+            return False
+        for number, (known, shown, count) in enumerate(counts):
+            if known == key:
+                counts[number] = (known, shown, count + 1)
+                return False
+        start = 0
+        place = len(counts)
+        for number, (_, _, count) in enumerate(counts):
+            if start >= position:
+                place = number
+                break
+            start += count
+        spec = self._spec
+        counts.insert(place, (key, group_name(spec.sort, name) if spec is not None else name, 1))
+        return True
+
+    def _folder_read(self, folder: str) -> None:
+        """Every message of a folder was marked read: its rows turn read."""
+        rows = self._rows.slots if self._spec is not None and self._spec.kind is ViewKind.FOLDER else self._rows.loaded
+        for position, row in enumerate(rows):
+            if row is not None and str(getattr(row, "folder")) == folder and "seen" not in getattr(row, "flags"):
+                self.replace_flags(str(getattr(row, "message_id")), tuple(sorted((*getattr(row, "flags"), "seen"))))
+        if self._shows_folder(folder):
+            self._unread = 0
+        self._counts_changed()
+
+    def _folder_emptied(self, folder: str) -> None:
+        """Every message of a folder was deleted for good: its rows go."""
+        if self._shows_folder(folder):
+            self.beginResetModel()  # the whole view is empty now: nothing on it to keep
+            self._rows = _Rows()
+            self._total = self._unread = 0
+            self._group_counts = [] if self._group_counts is not None else None
+            self._layout_groups()
+            self.endResetModel()
+            self.groups_changed.emit()
+            self._counts_changed()
+            return
+        for row in [row for row in self._rows.loaded if str(getattr(row, "folder")) == folder]:
+            self._take_out(str(getattr(row, "message_id")), folder, "seen" not in getattr(row, "flags"))
+
+    def _folder_renamed(self, old: str, new: str) -> None:
+        """A folder got another name: the rows show it, and a view of that folder (or one below it) follows."""
+        def renamed(name: str) -> str:
+            return new + name[len(old):] if name == old or name.startswith(old + "/") else name
+
+        rows = self._rows.slots if self._spec is not None and self._spec.kind is ViewKind.FOLDER else self._rows.loaded
+        for position, row in enumerate(rows):
+            if row is None or not dataclasses.is_dataclass(row) or isinstance(row, type):
+                continue
+            if renamed(str(getattr(row, "folder"))) != str(getattr(row, "folder")):
+                rows[position] = dataclasses.replace(row, folder=renamed(str(getattr(row, "folder"))))
+        if self._spec is not None and self._spec.folder is not None:
+            self._spec = dataclasses.replace(self._spec, folder=renamed(self._spec.folder))
+        self.refresh_cells()
 
     # --- fetching -----------------------------------------------------------------------------
 
@@ -623,22 +963,27 @@ class MessageListModel(QAbstractTableModel):
         if spec is None or page in self._rows.requested:
             return
         self._rows.requested.add(page)
-        generation = self._generation
+        generation, shifts = self._generation, self._rows.shifts
 
         def arrived(result: object) -> None:
             if generation != self._generation:
                 return  # the view has changed since: this answer is for something that is no longer shown
             rows = list(getattr(result, "messages"))
-            if page == 0:
+            if shifts != self._rows.shifts:  # a row came in or went out since it was asked: its places are not those of now
+                self._rows.requested.discard(page)
+                if page == 0 or any(slot is None for slot in self._rows.slots[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]):
+                    self._request_page(page)
+                return
+            if page == 0 and not self._rows.slots:
                 self.beginResetModel()
                 self._total, self._unread = int(getattr(result, "total")), int(getattr(result, "unread"))
-                self._rows.pages[0] = rows
+                self._fill(0, rows)
                 self._layout_groups()
                 self.endResetModel()
                 self.groups_changed.emit()
                 self.counts_changed.emit(self._total, self._unread)
             else:
-                self._rows.pages[page] = rows
+                self._fill(page * PAGE_SIZE, rows)
                 first, last = self.display_row(page * PAGE_SIZE), self.display_row(min((page + 1) * PAGE_SIZE, self._total) - 1)
                 if self._group_counts is not None:  # folded groups may hide either end: redraw from the first row to the last
                     first, last = 0, self._display_rows - 1

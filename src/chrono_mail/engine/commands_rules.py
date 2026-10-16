@@ -5,12 +5,13 @@ from chrono_mail.core import ConfigurationError, MessageRef
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.rule_engine import RuleReport, Subject, apply_rules, applies_to, rule_matches
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_rules.py 0.0.49"
+__version__ = "commands_rules.py 0.5.156"
 
 # --- Version history ----------------------------------------------------
+# v0.5.156: Run rules on a folder is a big job: one "mailbox changed" at its end (D-146)
 # v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial rule commands
 
@@ -224,4 +225,4 @@ def register(registry: CommandRegistry) -> None:
     registry.register("rule.remove", "Remove a rule", RuleIdParameters, rule_remove, destructive=True)
     registry.register("rule.enable", "Switch a rule on or off", RuleEnableParameters, rule_enable)
     registry.register("rule.move", "Change the place of a rule in the order", RuleMoveParameters, rule_move)
-    registry.register("rule.run", "Apply the rules to the messages already in a folder", RuleRunParameters, rule_run)
+    registry.register("rule.run", "Apply the rules to the messages already in a folder", RuleRunParameters, quiet_command(rule_run))

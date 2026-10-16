@@ -5,7 +5,7 @@ from datetime import datetime
 import string
 
 from chrono_mail.core import Folder, FolderRole
-from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, MessageRow, _rows, contact_address_set, date_bounds, from_contacts
+from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, _rows, contact_address_set, date_bounds, from_contacts, group_of
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
@@ -13,9 +13,10 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 0.5.135"
+__version__ = "commands_combined.py 0.5.156"
 
 # --- Version history ----------------------------------------------------
+# v0.5.156: message.combined-locate: where a message stands in a Favorites view, and its group heading
 # v0.5.135: The view tagged: all mail with one tag (the Tags in the folder list)
 # v0.3.109: Sort orders unread, flagged, attachment, replied, contact, folder, conversation and preview (newest first within the same value)
 # v0.2.94: Combined views in any sort order; message.combined-groups: their groups for the group headers
@@ -154,6 +155,24 @@ def message_combined_groups(engine: Engine, parameters: CombinedParameters) -> t
     return tuple(order)
 
 
+@dataclass(frozen=True, slots=True)
+class CombinedLocateParameters(CombinedParameters):
+    account: str = field(default="", metadata=option("The account (mailbox) the message is in"))
+    message: str = field(default="", metadata=option("The message id"))
+
+
+def message_combined_locate(engine: Engine, parameters: CombinedLocateParameters) -> LocateResult:
+    """Where a message stands in a Favorites view, and its group heading (asked when a message comes into the view shown)."""
+    everything = message_combined(engine, replace(parameters, offset=0, limit=EVERYTHING))
+    wanted = engine.resolve_account(parameters.account).account.account_id if parameters.account else ""
+    position = next((number for number, row in enumerate(everything) if row.message_id == parameters.message and (not wanted or row.account == wanted)), None)
+    if position is None:
+        return LocateResult(None)
+    key, name = group_of(message_combined_groups(engine, parameters), position)
+    return LocateResult(position, key, name)
+
+
 def register(registry: CommandRegistry) -> None:
     registry.register("message.combined", "List the messages of the same kind of folder in all mailboxes", CombinedParameters, message_combined)
+    registry.register("message.combined-locate", "Where a message stands in a Favorites view, and its group heading", CombinedLocateParameters, message_combined_locate)
     registry.register("message.combined-groups", "The groups of a combined view (as sorted) with their number of messages", CombinedParameters, message_combined_groups)

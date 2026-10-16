@@ -8,12 +8,13 @@ from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_collection, open_pim, pim_account_ids
 from chrono_mail.pim.edit import retag_item
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 0.5.135"
+__version__ = "commands_pim.py 0.5.156"
 
 # --- Version history ----------------------------------------------------
+# v0.5.156: Rename a tag everywhere is a big job: one "mailbox changed" per mailbox at its end (D-146)
 # v0.5.135: tag.list in the person's order, with each tag's shortcut and what it is for
 # v0.5.134: tag.list counts mail too; tag.rename renames in mail too
 # v0.0.60: Initial commands for collections and tags
@@ -235,4 +236,4 @@ def register(registry: CommandRegistry) -> None:
     registry.register("collection.delete", "Take a calendar, task list or address book away with everything in it", DeleteParameters, collection_delete, destructive=True)
     registry.register("tag.list", "List the tags in use, with colours and counts", NoParameters, tag_list)
     registry.register("tag.colour", "Give a tag a colour", ColourParameters, tag_colour)
-    registry.register("tag.rename", "Give a tag another name everywhere", RenameParameters, tag_rename)
+    registry.register("tag.rename", "Give a tag another name everywhere", RenameParameters, quiet_command(tag_rename))

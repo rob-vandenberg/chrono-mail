@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 0.5.155"
+__version__ = "changes.py 0.5.156"
 
 # --- Version history ----------------------------------------------------
+# v0.5.156: role: the role of the folder the message is in after the change (a Favorites view decides by it whether the message belongs in it)
 # v0.5.155: Initial version: the facts the engine reports when mail changes (D-146), and the row a list shows of a message
 
 _FLAG_NAMES: dict[MessageFlag, str] = {
@@ -75,3 +76,4 @@ class Change:
     flags: tuple[str, ...] = ()  # flags: the marks after the change
     tags: tuple[str, ...] = ()  # tags: the tags after the change
     count: int = 0  # folder_read, folder_emptied: how many messages
+    role: str = ""  # added, moved: the role of the folder the message is in now ("inbox", "trash", "other" …)
