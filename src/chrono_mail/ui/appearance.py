@@ -8,12 +8,13 @@ from PySide6.QtGui import QFont, QPalette
 from PySide6.QtWidgets import QApplication
 
 from chrono_mail.ui import prefs, scale
-from chrono_mail.ui.colours import dark_palette, light_palette, menu_palette
+from chrono_mail.ui.colours import dark_palette, light_palette, menu_palette, with_program_blue
 
 # --- Version ------------------------------------------------------------
-__version__ = "appearance.py 0.5.144"
+__version__ = "appearance.py 0.5.149"
 
 # --- Version history ----------------------------------------------------
+# v0.5.149: The program's own blue in every colour scheme (also System) and every window state, never the system's accent colour
 # v0.5.144: The text of the program at the size of the other windows and dialogs; the main window and the menus and popups opened from it at the size of the main window (main_font; the style gives it to the menus)
 # v0.3.106: The size of the interface is a factor (scale.py): the text, and through ScaledStyle the icons and tick boxes, follow it; it can be tried out before it is saved
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
@@ -142,7 +143,8 @@ def apply(app: QApplication, settings: QSettings, interface_factor: float | None
         if isinstance(style, scale.ScaledStyle):
             style.main_font = main_font(app)  # for the menus and popups of the main window
         # A platform does not always do what it is asked (Linux desktops mostly do not), so a chosen scheme brings its own colours.
-        app.setPalette(QPalette() if scheme == "system" else (dark_palette() if dark else light_palette()))
+        # The blue is always the program's own (the system may give its accent colour as the highlight, Windows does).
+        app.setPalette(with_program_blue(QPalette() if scheme == "system" else (dark_palette() if dark else light_palette()), dark))
         _colour_the_menus(app)
         _apply_font_size(app)
     finally:

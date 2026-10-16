@@ -1,9 +1,10 @@
 from PySide6.QtGui import QColor, QGuiApplication, QPalette
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 0.2.95"
+__version__ = "colours.py 0.5.149"
 
 # --- Version history ----------------------------------------------------
+# v0.5.149: The program's own blue (BLUE_ON_LIGHT, BLUE_ON_DARK) in one place; with_program_blue puts it in a palette for every window state
 # v0.2.95: The background of a group header in the message list
 # v0.0.88: Grey of a selection in a list without the focus; black separator lines
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
@@ -18,6 +19,9 @@ SELECTION_GREY_ON_DARK: str = "#4a4a4a"
 GROUP_HEADER_ON_LIGHT: str = "#e6e6e6"  # the bar of a group header in the message list
 GROUP_HEADER_ON_DARK: str = "#2a2a2a"
 SEPARATOR: str = "#000000"  # the thin lines between the panes and between the column headers, in both schemes
+BLUE_ON_LIGHT: str = "#2f7fcf"  # the program's own blue (the palette's highlight): never the accent colour of the system
+BLUE_ON_DARK: str = "#2a6fc4"
+ON_BLUE: str = "#ffffff"  # text on the blue
 
 
 def _palette(window: str, base: str, text: str, button: str, highlight: str, highlighted_text: str, link: str, disabled: str, shades: tuple[str, str, str, str]) -> QPalette:
@@ -38,12 +42,22 @@ def _palette(window: str, base: str, text: str, button: str, highlight: str, hig
 
 def dark_palette() -> QPalette:
     """The dark colours, for when the platform cannot be asked for them."""
-    return _palette("#2d2d2d", "#1e1e1e", "#e8e8e8", "#3a3a3a", "#2a6fc4", "#ffffff", "#6cb0ff", "#8a8a8a", ("#505050", "#444444", "#6a6a6a", "#1a1a1a"))
+    return _palette("#2d2d2d", "#1e1e1e", "#e8e8e8", "#3a3a3a", BLUE_ON_DARK, ON_BLUE, "#6cb0ff", "#8a8a8a", ("#505050", "#444444", "#6a6a6a", "#1a1a1a"))
 
 
 def light_palette() -> QPalette:
     """The light colours, for when the platform cannot be asked for them."""
-    return _palette("#efefef", "#ffffff", "#1a1a1a", "#e4e4e4", "#2f7fcf", "#ffffff", "#1a5fb4", "#8a8a8a", ("#ffffff", "#f5f5f5", "#b8b8b8", "#9a9a9a"))
+    return _palette("#efefef", "#ffffff", "#1a1a1a", "#e4e4e4", BLUE_ON_LIGHT, ON_BLUE, "#1a5fb4", "#8a8a8a", ("#ffffff", "#f5f5f5", "#b8b8b8", "#9a9a9a"))
+
+
+def with_program_blue(palette: QPalette, dark: bool) -> QPalette:
+    """The palette with the program's own blue as its highlight, for active, inactive and greyed-out windows alike, so
+    that no accent colour of the system (Windows gives Qt the person's accent colour) and no window state changes it."""
+    blue = QPalette(palette)
+    for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Disabled):
+        blue.setColor(group, QPalette.ColorRole.Highlight, QColor(BLUE_ON_DARK if dark else BLUE_ON_LIGHT))
+        blue.setColor(group, QPalette.ColorRole.HighlightedText, QColor(ON_BLUE))
+    return blue
 
 
 FUSION_MENU_LIGHTENING: int = 108  # Fusion draws a menu 8% lighter than the 'base' colour it is given (measured; a test guards it)

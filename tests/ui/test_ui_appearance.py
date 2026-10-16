@@ -8,16 +8,17 @@ from PySide6.QtWidgets import QApplication, QListWidget, QMenu
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import appearance, icons, scale
-from chrono_mail.ui.colours import contrast, green, is_dark, red
+from chrono_mail.ui.colours import BLUE_ON_DARK, BLUE_ON_LIGHT, ON_BLUE, contrast, green, is_dark, red, with_program_blue
 from chrono_mail.ui.formatting import AVATAR_HUES, avatar_colour
 from chrono_mail.ui.icons import FOLDER_ICONS, RESOURCES, bundled_icon, folder_icon, theme_icon
 from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.5.144"
+__version__ = "test_ui_appearance.py 0.5.149"
 
 # --- Version history ----------------------------------------------------
+# v0.5.149: The blue is the program's own in every scheme and window state, never the system's accent colour
 # v0.5.144: Four sliders: Main window, Message list, Other windows and dialogs, Text of messages; the program's text and the Settings window follow Other windows and dialogs, the main window and its menus follow Main window
 # v0.3.115: The rows of the page list of Settings are 2 points higher than their text needs
 # v0.3.113: The page list of Settings is 2 points larger than the desktop's size, times the factor
@@ -74,6 +75,43 @@ def test_the_scheme_and_the_style_are_applied_at_once_and_given_back(app: QAppli
     assert app.style().objectName().lower() == "fusion"
     appearance.apply(app, settings(tmp_path, color_scheme="system", style="default"))
     assert app.style().objectName().lower() == "windows"
+
+
+GROUPS: tuple[QPalette.ColorGroup, ...] = (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Disabled)
+
+
+class GreyAccent(QPalette):
+    """The palette of a system whose accent colour is dark grey (as Windows gives it to Qt: the accent as the highlight,
+    near-black for windows that are not active)."""
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+        if not args:
+            self.setColor(QPalette.ColorGroup.Active, QPalette.ColorRole.Highlight, QColor("#4c4a48"))
+            self.setColor(QPalette.ColorGroup.Inactive, QPalette.ColorRole.Highlight, QColor("#1e1e1e"))
+            self.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, QColor("#4c4a48"))
+
+
+def test_the_system_scheme_draws_the_programs_own_blue_never_the_systems_accent(app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(appearance, "QPalette", GreyAccent)  # the system gives its grey accent (a light system: Qt without a screen cannot report a dark one)
+    appearance.apply(app, settings(tmp_path, color_scheme="system", style="fusion"))
+    palette = app.palette()
+    for group in GROUPS:
+        assert palette.color(group, QPalette.ColorRole.Highlight).name() == BLUE_ON_LIGHT, group
+        assert palette.color(group, QPalette.ColorRole.HighlightedText).name() == ON_BLUE, group
+
+
+@pytest.mark.parametrize(("dark", "blue"), [(True, BLUE_ON_DARK), (False, BLUE_ON_LIGHT)])
+def test_the_programs_blue_replaces_a_grey_accent_in_every_window_state(dark: bool, blue: str) -> None:
+    palette = with_program_blue(GreyAccent(), dark)
+    assert all(palette.color(group, QPalette.ColorRole.Highlight).name() == blue for group in GROUPS)
+    assert all(palette.color(group, QPalette.ColorRole.HighlightedText).name() == ON_BLUE for group in GROUPS)
+
+
+@pytest.mark.parametrize(("scheme", "blue"), [("dark", BLUE_ON_DARK), ("light", BLUE_ON_LIGHT)])
+def test_the_dark_and_light_schemes_keep_their_blue_in_every_window_state(app: QApplication, tmp_path: Path, scheme: str, blue: str) -> None:
+    appearance.apply(app, settings(tmp_path, color_scheme=scheme, style="fusion"))
+    assert all(app.palette().color(group, QPalette.ColorRole.Highlight).name() == blue for group in GROUPS)
 
 
 def test_a_style_given_on_the_command_line_is_not_changed(app: QApplication, tmp_path: Path) -> None:
