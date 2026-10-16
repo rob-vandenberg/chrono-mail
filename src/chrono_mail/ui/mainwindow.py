@@ -93,9 +93,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.145"
+__version__ = "mainwindow.py 0.5.146"
 
 # --- Version history ----------------------------------------------------
+# v0.5.146: Every send and receive opens the Operations window (also at startup, by the timers and the push); only Refresh gives it the keyboard focus
 # v0.5.145: The Operations window: rows, errors and log of send and receive; opened by Refresh, by an error, by View > Operations… and by a click on the busy bar
 # v0.5.144: bring_forward: a second start of the program shows this window (also from the tray)
 # v0.5.144: The main window and its menus at the size of the Main window slider, the message windows and composers at that of Other windows and dialogs (both tried out from Settings)
@@ -2956,13 +2957,26 @@ class MainWindow(QMainWindow):
         protocol = "SMTP" if direction == "send" else str(getattr(account, "kind", "pop3")).upper() if account is not None else ""
         return f"{self._operation_name_of(account_id)} ({protocol})" if protocol else self._operation_name_of(account_id)
 
+    def _show_operations_quietly(self) -> None:
+        """Open the Operations window without taking the keyboard from what the person is doing."""
+        if self.operations.isVisible():
+            return
+        self.operations.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.operations.show()
+        self.operations.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
+
     def _begin_operations(self, manual: bool) -> None:
-        """A send and receive starts: the rows of the last one go; the window opens when the person started it and wants it."""
+        """A send and receive starts: the rows of the last one go and the window opens when that is wanted; only one the
+        person started (manual: Refresh) brings it to the front with the keyboard focus."""
         if self._checking or self._sending:
             return
         self.operations.begin_round()
-        if manual and bool_setting(self.settings, "operations_show_on_send_receive", True):
+        if not bool_setting(self.settings, "operations_show_on_send_receive", True):
+            return
+        if manual:
             self.show_operations()
+        else:
+            self._show_operations_quietly()
 
     def _activity(self, account_id: str, direction: str, step: str, done: object, total: object) -> None:
         self.operations.step(account_id, direction, step, done if isinstance(done, int) else None, total if isinstance(total, int) else None)
@@ -2970,7 +2984,7 @@ class MainWindow(QMainWindow):
     def _finish_operation(self, account_id: str, direction: str, error: str | None) -> None:
         self.operations.finish(account_id, direction, error)
         if error is not None and bool_setting(self.settings, "operations_show_on_error", True):
-            self.show_operations()
+            self._show_operations_quietly()
 
     def _settle_operations(self) -> None:
         """Everything is done: the window closes itself when that is wanted, but stays after an error when errors show it."""

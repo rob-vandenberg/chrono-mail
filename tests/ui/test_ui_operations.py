@@ -1,4 +1,5 @@
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication, QShowEvent
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.config import ServerRole
@@ -8,22 +9,24 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_operations.py 0.5.145"
+__version__ = "test_ui_operations.py 0.5.146"
 
 # --- Version history ----------------------------------------------------
+# v0.5.146: Every send and receive opens the window (startup, timers, push); only Refresh gives it the focus
 # v0.5.145: Initial tests of the Operations window: rows, errors, log, and when it opens and closes
 
 
 def opened(window: MainWindow) -> list[bool]:
-    """Records every time the window shows the Operations window."""
+    """Records every time the Operations window opens: True when it takes the keyboard focus, False when it opens quietly."""
     shown: list[bool] = []
-    original = window.show_operations
+    operations = window.operations
+    original = operations.showEvent
 
-    def show() -> None:
-        shown.append(True)
-        original()
+    def show(event: QShowEvent) -> None:
+        shown.append(not operations.testAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating))
+        original(event)
 
-    window.show_operations = show  # type-checked as an attribute of the instance
+    operations.showEvent = show  # type-checked as an attribute of the instance
     return shown
 
 
@@ -54,7 +57,7 @@ def test_refresh_opens_the_window_shows_the_steps_and_hides_it_when_done(qtbot: 
     row = rows[(world.account_id, "receive")]
     assert row.name_label.text() == "me@example.com (POP3)" and row.step_label.text() == DONE and row.bar.value() == row.bar.maximum() == 1
     assert row.name_label.font().bold()
-    assert shown and not window.operations.isVisible()  # opened by Refresh, closed when everything was done
+    assert shown == [True] and not window.operations.isVisible()  # opened by Refresh with the focus, closed when everything was done
     log = window.operations.log.toPlainText()
     for step in ("Waiting", "Connecting", "Connected", "Listing messages", "Disconnected", DONE):
         assert f"me@example.com (POP3) {step}" in log
@@ -77,12 +80,21 @@ def test_it_does_not_open_on_refresh_when_that_is_off(qtbot: QtBot, world: World
     assert not shown and world.window.operations.rows()  # the rows are there for when it is opened
 
 
-def test_an_automatic_check_does_not_open_it(qtbot: QtBot, world: World) -> None:
+def test_an_automatic_check_opens_it_without_the_focus(qtbot: QtBot, world: World) -> None:
     ready(qtbot, world)
     shown = opened(world.window)
-    world.window.check_mail()
+    world.window.check_mail()  # the timer and the push check this way
     idle(qtbot, world)
-    assert not shown and not world.window.operations.isVisible()
+    assert shown == [False] and not world.window.operations.isVisible()  # opened quietly, closed when it was done
+
+
+def test_the_check_at_startup_opens_it_without_the_focus(qtbot: QtBot, world: World) -> None:
+    world.window.settings.setValue("check_on_start", True)
+    shown = opened(world.window)
+    world.window.start()
+    wait(qtbot, lambda: bool(shown))
+    idle(qtbot, world)
+    assert shown == [False] and list(world.window.operations.rows()) == [(world.account_id, "receive")]
 
 
 def test_an_error_opens_it_and_keeps_it_open(qtbot: QtBot, world: World) -> None:
@@ -104,10 +116,12 @@ def test_without_show_on_error_an_error_does_not_open_it_and_does_not_keep_it(qt
     ready(qtbot, world)
     world.engine.passwords.set(world.account_id, ServerRole.INCOMING, "wrong")
     world.window.settings.setValue("operations_show_on_error", False)
+    world.window.settings.setValue("operations_show_on_send_receive", False)
     shown = opened(world.window)
     world.window.check_mail()
     idle(qtbot, world)
     assert not shown and len(world.window.operations.error_texts()) == 1
+    world.window.settings.setValue("operations_show_on_send_receive", True)
     world.window.send_and_receive()  # opened by Refresh: it hides when done, the error does not keep it
     idle(qtbot, world)
     assert shown and not world.window.operations.isVisible()
