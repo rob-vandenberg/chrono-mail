@@ -13,9 +13,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.5.140"
+__version__ = "test_ui_columns.py 0.5.152"
 
 # --- Version history ----------------------------------------------------
+# v0.5.152: A click on a column header sorts a Favorites view too, with its group headers; the standard columns start with Flag, Unread, Attachment (0.5.150)
 # v0.5.140: the first column can be dragged, and the new order is saved; a group row still starts at the left edge
 # v0.3.109: The icon columns sort too (yes first); a click on Delete leaves the sort arrow where it was
 # v0.2.97: Row height in the Message list window
@@ -68,7 +69,7 @@ def test_the_list_is_a_table_by_default_with_the_standard_columns(world: World, 
     assert model.columns == DEFAULT_COLUMNS and model.columnCount() == len(DEFAULT_COLUMNS) and not world.window.list_view.header().isHidden()
     subject_column = model.columns.index("subject")
     assert model.index(0, subject_column).data().startswith("Message") and model.headerData(subject_column, Qt.Orientation.Horizontal) == "Subject"
-    assert model.index(0, model.columns.index("status")).data() == "●" and model.headerData(0, Qt.Orientation.Horizontal) == "●"
+    assert model.index(0, model.columns.index("status")).data() == "●" and model.headerData(model.columns.index("status"), Qt.Orientation.Horizontal) == "●" and model.columns[:3] == ("flag", "status", "attachment")
     assert model.index(0, subject_column).data(Qt.ItemDataRole.FontRole).bold()  # unread is bold
     assert model.index(0, 0).data(Qt.ItemDataRole.TextAlignmentRole) is not None and model.index(99, 0).data() is None
 
@@ -86,6 +87,39 @@ def test_clicking_a_column_header_sorts_and_clicking_again_reverses(world: World
     wait(qtbot, lambda: world.window.list_model.index(0, subject).data() == "Message 3")
     world.window.list_view.header().sectionClicked.emit(size)
     wait(qtbot, lambda: world.window._sort == "size")  # noqa: SLF001
+
+
+def test_a_click_on_a_column_header_sorts_a_favorites_view_with_its_groups(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    favorites = window.tree_model.index(0, 0)
+    unread = next(window.tree_model.index(row, 0, favorites) for row in range(window.tree_model.rowCount(favorites)) if window.tree_model.index(row, 0, favorites).data() == "Unread")
+    window.tree.setCurrentIndex(unread)
+    wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.combined == "unread" and window.list_model.rowCount() == 3)
+    window.act_show_groups.setChecked(True)
+    header = window.list_view.header()
+    subject = window.list_model.columns.index("subject")
+
+    def click_subject() -> None:
+        middle = QPoint(header.sectionViewportPosition(subject) + header.sectionSize(subject) // 2, header.height() // 2)
+        qtbot.mouseClick(header.viewport(), Qt.MouseButton.LeftButton, pos=middle)
+
+    def subjects() -> list[str]:
+        model = window.list_model
+        return [str(model.index(row, subject).data()) for row in range(model.rowCount()) if not model.is_header(row)]
+
+    def first_group() -> str:
+        model = window.list_model
+        return str(model.index(0, 0).data()) if model.rowCount() and model.is_header(0) else ""
+
+    click_subject()
+    wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.sort == "subject" and window.list_model.spec.oldest_first)
+    wait(qtbot, lambda: subjects() == ["Message 1", "Message 2", "Message 3"])  # A to Z
+    assert "Message 1" in first_group()  # the group headers follow the subject
+    click_subject()
+    wait(qtbot, lambda: subjects() == ["Message 3", "Message 2", "Message 1"])
+    assert "Message 3" in first_group()
 
 
 def test_an_icon_column_sorts_yes_first_and_delete_does_not_sort(world: World, qtbot: QtBot) -> None:

@@ -93,9 +93,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.151"
+__version__ = "mainwindow.py 0.5.152"
 
 # --- Version history ----------------------------------------------------
+# v0.5.152: A Favorites view is sorted by the chosen column too (its request passed no sort order)
 # v0.5.151: While an import runs no mail is checked (timers and push skip their turn) and Refresh is off; one check runs when the import is done
 # v0.5.146: Every send and receive opens the Operations window (also at startup, by the timers and the push); only Refresh gives it the keyboard focus
 # v0.5.145: The Operations window: rows, errors and log of send and receive; opened by Refresh, by an error, by View > Operations… and by a click on the busy bar
@@ -1866,7 +1867,10 @@ class MainWindow(QMainWindow):
         if self._account_id is None:
             return None
         if self._combined is not None:
-            return ViewSpec("", None, self.search_box.text().strip(), combined=self._combined, combined_accounts=self._combined_accounts, tag=self._combined_tag or None)
+            return ViewSpec(
+                "", None, self.search_box.text().strip(), self._effective_sort(), self._oldest_first,
+                combined=self._combined, combined_accounts=self._combined_accounts, tag=self._combined_tag or None,
+            )
         query = self.search_box.text().strip()
         unread = True if self.filter_unread.isChecked() else None
         flagged = True if self.filter_flagged.isChecked() else None
