@@ -13,9 +13,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.5.152"
+__version__ = "test_ui_columns.py 0.5.153"
 
 # --- Version history ----------------------------------------------------
+# v0.5.153: A new sort order keeps the selected message selected (folder, Favorites, a page not loaded yet)
 # v0.5.152: A click on a column header sorts a Favorites view too, with its group headers; the standard columns start with Flag, Unread, Attachment (0.5.150)
 # v0.5.140: the first column can be dragged, and the new order is saved; a group row still starts at the left edge
 # v0.3.109: The icon columns sort too (yes first); a click on Delete leaves the sort arrow where it was
@@ -389,3 +390,68 @@ def test_a_group_row_starts_at_the_left_edge_whatever_the_order_of_the_columns(w
     left = image.pixelColor(int(3 * ratio), int(row_rect.center().y() * ratio))
     assert left == QColor(group_header_colour(view.palette()))  # the bar, not an empty cell
 
+
+
+def selected_message(world: World) -> str | None:
+    window = world.window
+    current = window.list_view.currentIndex()
+    row = window.list_model.row_at(current.row()) if current.isValid() else None
+    return str(getattr(row, "message_id")) if row is not None else None
+
+
+def select_subject(world: World, qtbot: QtBot, subject: str) -> str:
+    """Select the message with this subject (it is shown in the reading pane); its id."""
+    model = world.window.list_model
+    column = model.columns.index("subject")
+    row = next(number for number in range(model.rowCount()) if model.index(number, column).data() == subject)
+    world.window.list_view.setCurrentIndex(model.index(row, 0))
+    message_id = str(getattr(model.row_at(row), "message_id"))
+    wait(qtbot, lambda: world.window._shown is not None and world.window._shown[2] == message_id)  # noqa: SLF001
+    return message_id
+
+
+def sort_by_subject(world: World) -> None:
+    world.window.list_view.header().sectionClicked.emit(world.window.list_model.columns.index("subject"))
+
+
+@pytest.mark.parametrize("favorites", [False, True])
+def test_a_new_sort_order_keeps_the_selected_message_selected(world: World, qtbot: QtBot, favorites: bool) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    if favorites:
+        top = window.tree_model.index(0, 0)
+        unread = next(window.tree_model.index(row, 0, top) for row in range(window.tree_model.rowCount(top)) if window.tree_model.index(row, 0, top).data() == "Unread")
+        window.tree.setCurrentIndex(unread)
+        wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.combined == "unread" and window.list_model.rowCount() == 3)
+    window.settings.setValue("mark_read", "never")
+    window.apply_preferences()
+    chosen = select_subject(world, qtbot, "Message 2")
+    sort_by_subject(world)
+    wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.sort == "subject" and selected_message(world) == chosen)
+    assert window._shown is not None and window._shown[2] == chosen  # noqa: SLF001 - the reading pane shows the same message
+
+
+def test_the_selected_message_is_found_on_a_page_that_was_not_loaded(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.ui import models
+
+    monkeypatch.setattr(models, "PAGE_SIZE", 1)  # one message per page: after the sort only the first page is loaded
+    window = world.window
+    window.start()
+    wait(qtbot, lambda: window.list_model.message_count() == 3 and world.backend._pending == {})  # noqa: SLF001
+    for row in range(3):
+        window.list_model.row_at(row, fetch=True)
+    wait(qtbot, lambda: all(window.list_model.row_at(row) is not None for row in range(3)))
+    chosen = select_subject(world, qtbot, "Message 3")  # newest first: on the first page; A to Z: the last
+    sort_by_subject(world)
+    wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.sort == "subject" and selected_message(world) == chosen)
+    assert window.list_model.find(chosen) == 2
+
+
+def test_choosing_another_message_meanwhile_wins(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    window._reselect = "a message that is still being looked for"  # noqa: SLF001
+    select_subject(world, qtbot, "Message 1")
+    assert getattr(window, "_reselect") is None  # read again: choosing a message cleared it

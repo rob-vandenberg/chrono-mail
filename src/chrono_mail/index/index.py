@@ -25,9 +25,10 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS, UPGRADE_6_TO_7
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.5.134"
+__version__ = "index.py 0.5.153"
 
 # --- Version history ----------------------------------------------------
+# v0.5.153: position: where a message stands in a folder in the chosen order
 # v0.5.134: Tags: kept per message, found with a filter or tag: in a search; an index of format 6 is upgraded in place
 # v0.5.130: A failed open closes its connection (Windows could not delete the -wal file for the rebuild); an unreadable format number counts as an unknown format
 # v0.3.110: A change takes the write lock at its start (BEGIN IMMEDIATE), so changes made at the same time wait for each other instead of failing
@@ -375,6 +376,16 @@ class Index:
     def count(self, folder: tuple[str, ...], unread_only: bool = False) -> int:
         sql = "SELECT count(*) FROM messages m WHERE m.folder = ?" + (" AND (m.flags & 1) = 0" if unread_only else "")
         return int(self._connection.execute(sql, (_folder_key(folder),)).fetchone()[0])
+
+    def position(self, folder: tuple[str, ...], store_id: str, sort: SortField = SortField.DATE, descending: bool = True, unread_only: bool = False) -> int | None:
+        """Where a message stands in a folder in the chosen order, as page() lists it (0 is the first), or None when it is not there."""
+        sql = (
+            f"SELECT place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {_order(sort, descending)}) - 1 AS place FROM messages m WHERE m.folder = ?"
+            + (" AND (m.flags & 1) = 0" if unread_only else "")
+            + ") WHERE id = ?"
+        )
+        found = self._connection.execute(sql, (_folder_key(folder), store_id)).fetchone()
+        return None if found is None else int(found[0])
 
     def page(
         self,

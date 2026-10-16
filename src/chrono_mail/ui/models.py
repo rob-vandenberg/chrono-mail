@@ -17,9 +17,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.139"
+__version__ = "models.py 0.5.153"
 
 # --- Version history ----------------------------------------------------
+# v0.5.153: load_position: fetch the page of a message whose place is known (the selection kept after a sort)
 # v0.5.139: A reload keeps the rows on screen until the new headers and first rows are there, then swaps them in at once (the list no longer goes blank after a delete)
 # v0.5.135: Tags: the Tag column (drawn by the delegate), the tag colour as the text colour, replace_tags; a combined view of one tag; a list filtered by a tag; the Tags in the folder list
 # v0.5.125: A list with messages that is reloaded does not say for a moment that it is empty
@@ -520,6 +521,11 @@ class MessageListModel(QAbstractTableModel):
                 self._request_page(page)
             return None
         return rows[offset] if offset < len(rows) else None
+
+    def load_position(self, position: int) -> None:
+        """Make sure the page of the message at this position of a folder is loaded (loaded is emitted when it arrives)."""
+        if self._spec is not None and self._spec.kind is ViewKind.FOLDER and 0 <= position < self._total:
+            self._message_at(position, fetch=True)
 
     def replace_flags(self, message_id: str, flags: tuple[str, ...]) -> None:
         """Show new flags on a loaded row without fetching anything (after a flag change)."""

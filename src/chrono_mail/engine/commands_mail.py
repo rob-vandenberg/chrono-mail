@@ -28,9 +28,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.145"
+__version__ = "commands_mail.py 0.5.153"
 
 # --- Version history ----------------------------------------------------
+# v0.5.153: message.position: where a message stands in a folder in a sort order (the list finds it again after a sort)
 # v0.5.145: mail.fetch reports its steps per account (engine.activity): connecting, listing, downloading, rules, disconnected
 # v0.5.144: The rules run before the imported-account flag is switched off; a failure to save it is reported, the check still counts
 # v0.5.134: Tags: each listed message has its tags; message.list and message.search find messages by tag
@@ -510,6 +511,34 @@ def message_list(engine: Engine, parameters: ListParameters) -> ListResult:
         return ListResult("/".join(folder), total, mailbox.index.count(folder, unread_only=True), _rows(mailbox, rows, times))
 
 
+@dataclass(frozen=True, slots=True)
+class PositionParameters:
+    account: str = field(metadata=option("The account"))
+    folder: str = field(metadata=option("The folder, for example Inbox or Archive/2026"))
+    message: str = field(metadata=option("The message id (as shown by message.list)"))
+    sort: Literal["date", "subject", "sender", "to", "size", "snoozed", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview"] = field(
+        default="date", metadata=option("The sort order, as for message.list")
+    )
+    oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
+
+
+@dataclass(frozen=True, slots=True)
+class PositionResult:
+    position: int | None  # 0 is the first message of the folder in that order; None when the message is not in the folder
+
+
+def message_position(engine: Engine, parameters: PositionParameters) -> PositionResult:
+    """Where a message stands in a folder in the order message.list gives it."""
+    with open_mailbox(engine, parameters.account) as mailbox:
+        folder = mailbox.folder(parameters.folder)
+        times = _snoozed_times(engine, mailbox) if folder == SNOOZED else None
+        if (times is not None and _snooze_sort(parameters.sort, folder)) or parameters.sort == CONTACT_SORT:
+            everything = mailbox.index.page(folder, SortField.DATE, True, 0, mailbox.index.count(folder))
+            ordered = _by_snooze(everything, times, parameters.oldest_first) if times is not None and parameters.sort != CONTACT_SORT else _by_contact(engine, mailbox, everything, not parameters.oldest_first)
+            return PositionResult(next((number for number, message in enumerate(ordered) if message.store_id == parameters.message), None))
+        return PositionResult(mailbox.index.position(folder, parameters.message, _sort_field(parameters.sort), not parameters.oldest_first))
+
+
 def _sort_field(sort: str) -> SortField:
     return SortField.DATE if sort in ("snoozed", CONTACT_SORT) else SortField(sort)
 
@@ -876,6 +905,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register("mail.settle", "Answer for an IMAP folder that a safety rule held back (may delete on the server or here)", SettleParameters, mail_settle, destructive=True)
     registry.register("mail.send", "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send)
     registry.register("message.list", "List the messages of a folder", ListParameters, message_list)
+    registry.register("message.position", "Where a message stands in a folder in a sort order (0 is the first)", PositionParameters, message_position)
     registry.register("message.thread", "List the messages of the conversation a message belongs to", MessageParameters, message_thread)
     registry.register("message.show", "Show one message", MessageParameters, message_show)
     registry.register("message.search", "Search messages", SearchParameters, message_search)

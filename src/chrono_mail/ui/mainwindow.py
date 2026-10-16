@@ -65,6 +65,7 @@ from chrono_mail.ui.models import (
     UNREAD_ROLE,
     FolderTreeModel,
     MessageListModel,
+    ViewKind,
     ViewSpec,
 )
 from chrono_mail.ui.contactsview import ContactsPage
@@ -93,9 +94,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.152"
+__version__ = "mainwindow.py 0.5.153"
 
 # --- Version history ----------------------------------------------------
+# v0.5.153: A new sort order keeps the selected message selected and in view, also when it lands on a part of the list that was not loaded
 # v0.5.152: A Favorites view is sorted by the chosen column too (its request passed no sort order)
 # v0.5.151: While an import runs no mail is checked (timers and push skip their turn) and Refresh is off; one check runs when the import is done
 # v0.5.146: Every send and receive opens the Operations window (also at startup, by the timers and the push); only Refresh gives it the keyboard focus
@@ -270,7 +272,8 @@ class MainWindow(QMainWindow):
         self._first_unread_on_load: int = 0  # after the next folder has loaded: select its first (or last) unread message
         self._sort: str = str(settings.value("sort", "date"))
         self._oldest_first: bool = bool_setting(settings, "oldest_first", False)
-        self._reselect: str | None = None
+        self._reselect: str | None = None  # a message to select again once the list has it (after a mail check or a new sort order)
+        self._reselect_asked: str | None = None  # the message whose place in the folder was asked for (its page is loaded next)
         self._after_delete: tuple[str | None, int, int | None] | None = None  # after a delete: the message to select (id, position) and the scroll position
         self._composers: list[ComposeWindow] = []
         self._checking: bool = False
@@ -1926,6 +1929,9 @@ class MainWindow(QMainWindow):
         return self._columns if self._in_snoozed() else without_snoozed_column(self._columns)
 
     def _set_sort(self, sort: str, oldest_first: bool) -> None:
+        current = self._current_row()
+        self._reselect = str(getattr(current, "message_id")) if current is not None else None  # the selected message stays selected
+        self._reselect_asked = None
         self._sort, self._oldest_first = sort, oldest_first
         self._update_sort_menu()
         self._apply_view()
@@ -1948,6 +1954,9 @@ class MainWindow(QMainWindow):
 
     def _row_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         self._mark_read_timer.stop()
+        chosen = self.list_model.row_at(current.row()) if current.isValid() else None
+        if chosen is not None and self._reselect is not None and str(getattr(chosen, "message_id")) != self._reselect:
+            self._reselect = None  # the person chose another message meanwhile
         if self._reading_pane == "off":
             return  # nothing is shown, so nothing is read: a message is opened in a window of its own
         row = self.list_model.row_at(current.row()) if current.isValid() else None
@@ -2011,6 +2020,38 @@ class MainWindow(QMainWindow):
             self._reselect = None
             index = self.list_model.index(position)
             self.list_view.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.ClearAndSelect)
+            self.list_view.scrollTo(index)
+            return
+        self._find_unloaded(pending)
+
+    def _find_unloaded(self, message_id: str) -> None:
+        """The message to select again is not among the loaded rows: a folder asks where it stands and loads that page; a
+        search or a Favorites view loads its next batch (each arrival comes back here) until it has it or has no more."""
+        spec = self.list_model.spec
+        if spec is None:
+            self._reselect = None
+            return
+        if spec.kind is not ViewKind.FOLDER:
+            if self.list_model.canFetchMore():
+                self.list_model.fetchMore()
+            else:
+                self._reselect = None  # not in this view (any more)
+            return
+        if self._reselect_asked == message_id:
+            return  # its page is on its way
+        self._reselect_asked = message_id
+
+        def found(result: object) -> None:
+            position = getattr(result, "position", None)
+            if self._reselect != message_id or self.list_model.spec != spec:
+                return  # the person chose another message or view meanwhile
+            if not isinstance(position, int) or self.list_model.display_row(position) < 0:
+                self._reselect = None  # not in the folder any more, or in a folded group
+                return
+            self.list_model.load_position(position)
+
+        values = {"account": spec.account, "folder": spec.folder or "", "message": message_id, "sort": spec.sort, "oldest_first": spec.oldest_first}
+        self.backend.call("message.position", values, found, lambda error: setattr(self, "_reselect", None), owner=self)
 
     def _keep_place_after_delete(self, message_ids: list[str]) -> None:
         """Before a delete, move, archive or junk: remember the scroll position and which message to select once the list is back.

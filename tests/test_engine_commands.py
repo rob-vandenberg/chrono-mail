@@ -19,9 +19,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.4.118"
+__version__ = "test_engine_commands.py 0.5.153"
 
 # --- Version history ----------------------------------------------------
+# v0.5.153: message.position gives the place message.list shows a message at
 # v0.4.118: Commands that open an index of an old format at the same moment rebuild it once, without errors
 # v0.3.112: A delete or a move to Junk of a message whose file is gone answers "gone"
 # v0.3.111: Two rebuilds of the shared Local Folders index at once both succeed
@@ -698,3 +699,14 @@ def test_the_same_login_on_the_same_server_through_another_protocol_is_another_a
         add_account(setup.engine, setup.pop, setup.smtp, email="x@example.com", incoming_host="127.0.0.1", kind="imap")  # not twice through the same protocol
     other = add_account(setup.engine, setup.pop, setup.smtp, email="other@example.com", incoming_host="127.0.0.1", username="someone")
     assert next(item for item in call(setup.engine, "account.list") if item.account_id == other).shown_name == "other@example.com"  # a unique address stays short
+
+
+def test_the_position_of_a_message_is_where_message_list_shows_it(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    for sort in ("date", "subject", "size", "contact", "unread"):
+        for oldest_first in (False, True):
+            listed = [row.message_id for row in call(setup.engine, "message.list", account=setup.account_id, sort=sort, oldest_first=oldest_first).messages]
+            for place, message_id in enumerate(listed):
+                found = call(setup.engine, "message.position", account=setup.account_id, folder="Inbox", message=message_id, sort=sort, oldest_first=oldest_first)
+                assert found.position == place, (sort, oldest_first)
+    assert call(setup.engine, "message.position", account=setup.account_id, folder="Sent", message=listed[0]).position is None  # not in that folder

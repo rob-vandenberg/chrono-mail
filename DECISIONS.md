@@ -981,3 +981,9 @@ Step 2 (0.3.108): "Message list" (`list_scale`; an older `list_font_size` in poi
 
 **Decision:** while an import runs (from Import until it is done, stopped or failed; the Import window tells the main window with `on_running`), no mail is checked or sent: the general timer, the accounts' own timers, the new-mail push and the tray's check skip their turn, and Refresh is off (also F5 and its menu). When the import is done or stopped, the main window loads the accounts again (with those the import made) and runs one check.
 **Reason:** the owner's question what a scheduled check does during an import. The import keeps the list of the mail that was in Local Folders when it started; a message a check stored meanwhile was not on it, so the import could store it a second time. The owner: "that should be the normal way anyway; while importing, Refresh is disabled".
+
+## D-144 A new sort order keeps the selected message selected
+*2026-10-16*
+
+**Decision:** clicking a column header or choosing in Sorted by keeps the selected message selected and scrolls it into view, in folders, searches and Favorites views. When the message is not among the loaded rows after the new order: a folder asks the engine where it now stands (`message.position`, an SQL `ROW_NUMBER()` over the same order as `message.list`; the orders the index cannot make, Contact and Snoozed until, are counted the way `message.list` sorts them) and loads that page; a search or a Favorites view loads its next batches until it has the message or has no more. Choosing another message meanwhile ends the search; a message in a folded group is not selected.
+**Reason:** reported from DEVELOPMENT (0.5.152): a new sort order lost the selection while the reading pane still showed the message.
