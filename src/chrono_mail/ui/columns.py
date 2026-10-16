@@ -6,9 +6,10 @@ from email.utils import getaddresses
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 0.5.135"
+__version__ = "columns.py 0.5.150"
 
 # --- Version history ----------------------------------------------------
+# v0.5.150: The standard order starts with Flag, Unread, Attachment
 # v0.5.135: The Tag column (narrow; switched on in Settings > Message list or the menu of the column headers)
 # v0.3.109: Every column but Delete sorts: Unread, Flagged, Attachment, Replied, Contact, Folder, Messages in conversation, Preview
 # v0.2.100: Snoozed until: a column of the Snoozed folder only (sorts by the time a message comes back), added once after Received
@@ -49,7 +50,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("conversation", "Messages in conversation", 60, "conversation", right=True),
     Column("preview", "Preview", 320, "preview"),
 )
-DEFAULT_COLUMNS: tuple[str, ...] = ("status", "flag", "attachment", "from_to", "subject", "date", "size", "contact", "trash")
+DEFAULT_COLUMNS: tuple[str, ...] = ("flag", "status", "attachment", "from_to", "subject", "date", "size", "contact", "trash")
 NEW_COLUMNS: tuple[str, ...] = ("contact", "trash")  # added once to a set of columns saved before they existed
 SNOOZED_COLUMN: str = "snoozed"  # shown in the Snoozed folder only; not in the column lists of Settings and the Message list window
 SNOOZED_FOLDER_PATH: str = "Snoozed"
