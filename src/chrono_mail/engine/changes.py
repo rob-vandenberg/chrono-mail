@@ -76,4 +76,4 @@ class Change:
     flags: tuple[str, ...] = ()  # flags: the marks after the change
     tags: tuple[str, ...] = ()  # tags: the tags after the change
     count: int = 0  # folder_read, folder_emptied: how many messages
-    role: str = ""  # added, moved: the role of the folder the message is in now ("inbox", "trash", "other" …)
+    role: str = ""  # added, moved: the role of the folder the message is in now ("inbox", "trash", "other" …); folder_made: the folder's role

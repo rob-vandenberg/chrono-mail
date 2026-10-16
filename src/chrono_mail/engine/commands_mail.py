@@ -29,9 +29,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.156"
+__version__ = "commands_mail.py 0.5.158"
 
 # --- Version history ----------------------------------------------------
+# v0.5.158: a sent message is reported where it is stored (Sent, or the Outbox when it failed); a mail check that made folders reports its mailbox as changed
 # v0.5.156: message.locate: where a message stands in a folder or a search, and under which group heading (a list puts a message that came in at its place)
 # v0.5.155: MessageRow lives in changes.py (the engine reports changes with it); a mail check reports its mailbox as changed, quietly (D-146)
 # v0.5.153: message.position: where a message stands in a folder in a sort order (the list finds it again after a sort)
@@ -216,6 +217,7 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
         link.validity.clear()
         state = ImapState(engine.directories.imap_state_file(mailbox.account_id), durable=engine.durable)
         account_id = mailbox.account_id
+        folders_before = {folder.path for folder in mailbox.folders()}
 
         def downloading(folder: str, done: int, total: int) -> None:
             engine.progress(f"Downloading {folder}", done, total)
@@ -229,7 +231,7 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
                 progress=downloading, step=lambda text: engine.activity(account_id, "receive", text, None, None),
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
-    if any(item.downloaded or item.flags_updated or item.removed or item.recovered for item in report.folders):
+    if any(item.downloaded or item.flags_updated or item.removed or item.recovered for item in report.folders) or {folder.path for folder in mailbox.folders()} != folders_before:
         engine.mailbox_changed(mailbox.store.account_id)  # what the server changed came in past the mailbox's operations
     inbox = mailbox.role_folder(FolderRole.INBOX)
     if report.new_references:
@@ -419,6 +421,7 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
         if parameters.send_at:
             return _schedule(engine, mailbox, outgoing, parameters)
         outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings, outgoing=True))
+        mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
         if outcome.sent:
             mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
         if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:

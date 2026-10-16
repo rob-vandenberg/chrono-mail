@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from chrono_mail.core import ChronoMailError, program_version
 from chrono_mail.store import MessageNotFoundError
 from chrono_mail.ui.accountdialog import AccountDialog
+from chrono_mail.engine.commands_folders import FolderInfo
 from chrono_mail.engine.schedule import snooze_presets
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
 from chrono_mail.ui.backend import Backend
@@ -94,9 +95,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.157"
+__version__ = "mainwindow.py 0.5.158"
 
 # --- Version history ----------------------------------------------------
+# v0.5.158: the folder list follows the facts (numbers per folder, a folder made, renamed or deleted); a change from outside fetches only the mailbox it concerns, once, one at a time; no reload after a check, an import, sending or tags (D-146 step 4)
 # v0.5.157: the facts of the engine drive the list (no reload after an action); an action takes the messages selected at the key press, the selection and the reading pane move at once, messages with an action under way are greyed (D-146 step 3)
 # v0.5.153: A new sort order keeps the selected message selected and in view, also when it lands on a part of the list that was not loaded
 # v0.5.152: A Favorites view is sorted by the chosen column too (its request passed no sort order)
@@ -279,6 +281,10 @@ class MainWindow(QMainWindow):
         self._composers: list[ComposeWindow] = []
         self._checking: bool = False
         self._sending: bool = False  # Send All is running
+        self._refetching: bool = False  # the list is being fetched again after a change from outside (one at a time)
+        self._refetch_again: bool = False  # another change from outside came meanwhile: once more afterwards
+        self._recounting: set[str] = set()  # mailboxes whose folders are being counted again after a change from outside
+        self._recount_again: set[str] = set()
         self._importing: bool = False  # an import runs: mail checks wait (a check meanwhile could store a message the import stores again)
         self._dav_syncing: bool = False
         self._mail_action_states: dict[str, bool] = {}
@@ -870,6 +876,9 @@ class MainWindow(QMainWindow):
         self.backend.notice.connect(self._notice)
         self.backend.activity.connect(self._activity)
         self.backend.changed.connect(self.list_model.apply)  # every change of mail, applied to the rows on screen (D-146)
+        self.backend.changed.connect(self._folder_fact)  # ... and to the numbers and folders of the folder list
+        self.list_model.loaded.connect(self._list_refetched)
+        self.list_model.load_failed.connect(self._list_refetch_failed)
 
     # --- state ------------------------------------------------------------------------------------------
 
@@ -1233,7 +1242,7 @@ class MainWindow(QMainWindow):
             self.try_list_scale(dialog.list_scale_saved)
         self._tried_interface = self._tried_windows = None  # from now on the saved sizes
         if dialog.rules_panel.ran:  # rules and scheduled messages act at once, also when the settings are cancelled
-            self._after_change("Rules applied", reload=True)
+            self._after_change("Rules applied")  # its "mailbox changed" fetches the list and the numbers again
         elif dialog.scheduled_panel.changed:
             self._after_change("Scheduled messages changed", reload=True)
         if not accepted:
@@ -1965,7 +1974,7 @@ class MainWindow(QMainWindow):
             return  # nothing is shown, so nothing is read: a message is opened in a window of its own
         row = self.list_model.row_at(current.row()) if current.isValid() else None
         if row is None or self._account_id is None:
-            if not self.list_view.selectionModel().hasSelection():
+            if not self.list_view.selectionModel().hasSelection() and not self._refetching:  # a refetch selects the same message again
                 self._clear_reader()
                 self._shown = None
             return
@@ -2108,9 +2117,7 @@ class MainWindow(QMainWindow):
             def done(result: object) -> None:
                 nonlocal remaining
                 self.list_model.replace_flags(message_id, tuple(getattr(result, "flags")))
-                remaining -= 1
-                if remaining == 0:
-                    self._refresh_counts()
+                remaining -= 1  # the folder list's numbers follow the facts (D-146)
 
             return done
 
@@ -2510,7 +2517,6 @@ class MainWindow(QMainWindow):
             self._clear_reader()
             self._shown = None
             self.list_model.reload()
-        self._refresh_counts()
 
     def _each(self, message_id: str, done: Callable[[object], None], failed: Callable[[ChronoMailError], None]) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
         """The answers of one message's action: its action ended, so it is no longer greyed (when it went out of the view
@@ -2861,9 +2867,8 @@ class MainWindow(QMainWindow):
         )
 
     def _after_sent(self, account_id: str = "") -> None:
-        self._load_folders(select_saved=False)
-        if self._folder in ("Sent", "Outbox") or self._folder_role in ("sent", "drafts"):
-            self.list_model.reload()
+        """A message was sent: the engine reported where its copy is (Sent, or the Outbox), so the lists and the numbers
+        followed already (D-146)."""
 
     # --- mail ---------------------------------------------------------------------------------------------------
 
@@ -2966,11 +2971,7 @@ class MainWindow(QMainWindow):
                         self._ask_about_blocked(account_id, item)
                 finally:
                     self._asking_blocked = False
-            if totals["new"]:
-                self._reselect = self._shown[2] if self._shown is not None else None  # keep the message that is being read
-                self.list_model.reload()
-            self._load_folders(select_saved=False)
-            self._settle_operations()
+            self._settle_operations()  # new mail came as "mailbox changed": the list and the numbers of that mailbox follow (D-146)
 
         def make_done(account_id: str) -> Callable[[object], None]:
             def done(result: object) -> None:
@@ -3057,6 +3058,145 @@ class MainWindow(QMainWindow):
         if bool_setting(self.settings, "operations_hide_when_done", True):
             self.operations.hide()
 
+    # --- the folder list follows the facts (D-146) ----------------------------------------------------------------
+
+    def _folder_fact(self, change: object) -> None:
+        """A fact of the engine: the numbers per folder, a folder made, renamed or deleted, or a change from outside."""
+        kind, mailbox, folder = str(getattr(change, "kind")), str(getattr(change, "mailbox")), str(getattr(change, "folder"))
+        if kind == "mailbox_changed":
+            self._outside_change(mailbox)
+            return
+        if kind in ("folder_made", "folder_renamed", "folder_deleted"):
+            self._folder_structure(kind, mailbox, folder, str(getattr(change, "to_folder")), str(getattr(change, "role", "") or "other"))
+            return
+        infos = self._folders.get(mailbox)
+        if infos is None:
+            return
+        was_unread, unread = bool(getattr(change, "was_unread")), bool(getattr(change, "unread"))
+
+        def adjust(path: str, messages: int, unread_by: int, to_zero: bool = False) -> None:
+            for number, info in enumerate(infos):
+                if str(getattr(info, "path")) == path and isinstance(info, FolderInfo):
+                    if to_zero:
+                        infos[number] = FolderInfo(info.path, info.role, 0, 0)
+                    else:
+                        infos[number] = FolderInfo(info.path, info.role, max(0, info.messages + messages), max(0, info.unread + unread_by))
+
+        if kind == "flags":
+            adjust(folder, 0, int(unread) - int(was_unread))
+        elif kind == "removed":
+            adjust(folder, -1, -int(was_unread))
+        elif kind == "moved":
+            adjust(folder, -1, -int(was_unread))
+            adjust(str(getattr(change, "to_folder")), 1, int(unread))
+        elif kind == "added":
+            adjust(folder, 1, int(unread))
+        elif kind == "folder_read":
+            for number, info in enumerate(infos):
+                if str(getattr(info, "path")) == folder and isinstance(info, FolderInfo):
+                    infos[number] = FolderInfo(info.path, info.role, info.messages, 0)
+        elif kind == "folder_emptied":
+            adjust(folder, 0, 0, to_zero=True)
+        else:
+            return
+        self.tree_model.recount(self._folders)
+        self._update_unread_summary()
+
+    def _folder_structure(self, kind: str, mailbox: str, folder: str, to_folder: str, role: str = "other") -> None:
+        """A folder was made, renamed or deleted: that one entry of the folder list follows (with what is below it)."""
+        infos = self._folders.setdefault(mailbox, [])
+
+        def below(path: str, top: str) -> bool:
+            return path == top or path.startswith(top + "/")
+
+        pinned = any(account == mailbox and below(pinned_folder, folder) for _, account, pinned_folder, _ in self.tree_model.pins)
+        if kind == "folder_made":
+            if not any(str(getattr(info, "path")) == folder for info in infos):
+                infos.append(FolderInfo(folder, role, 0, 0))
+            self.tree_model.add_folder(mailbox, folder, role)
+        elif kind == "folder_renamed":
+            infos[:] = [FolderInfo(to_folder + info.path[len(folder):], info.role, info.messages, info.unread) if isinstance(info, FolderInfo) and below(info.path, folder) else info for info in infos]
+            if pinned:
+                self._populate_tree(select_saved=False)  # a pin shows it under its old name: the list is laid out again from what is known here
+            else:
+                self.tree_model.rename_folder(mailbox, folder, to_folder)
+            if self._account_id == mailbox and self._folder is not None and below(self._folder, folder):
+                self._folder = to_folder + self._folder[len(folder):]  # the list on screen follows the new name (it renamed its rows itself)
+        else:
+            infos[:] = [info for info in infos if not below(str(getattr(info, "path")), folder)]
+            shown = self._account_id == mailbox and self._folder is not None and below(self._folder, folder)
+            if pinned:
+                self._populate_tree(select_saved=False)
+            else:
+                self.tree_model.remove_folder(mailbox, folder)
+            if shown:  # the folder on screen is gone: its account's Inbox is shown instead
+                inbox = self.tree_model.find_item(mailbox, "folder", "Inbox")
+                if inbox is not None:
+                    self.tree.setCurrentIndex(inbox.index())
+        self.tree_model.recount(self._folders)
+        self._update_unread_summary()
+
+    def _outside_change(self, mailbox: str) -> None:
+        """A big job changed a mailbox (a mail check, an import, rules run, a rebuilt index): only that mailbox's folders
+        are counted again, and the list only when it shows that mailbox; once, one at a time (D-146)."""
+        self._recount_mailbox(mailbox)
+        spec = self.list_model.spec
+        if spec is not None and (spec.combined is not None or spec.account == mailbox):
+            self._refetch_list()
+
+    def _recount_mailbox(self, mailbox: str) -> None:
+        if mailbox in self._recounting:
+            self._recount_again.add(mailbox)  # once more when this one is done
+            return
+        self._recounting.add(mailbox)
+
+        def ended() -> None:
+            self._recounting.discard(mailbox)
+            if mailbox in self._recount_again:
+                self._recount_again.discard(mailbox)
+                self._recount_mailbox(mailbox)
+
+        def counted(result: object) -> None:
+            found: list[object] = list(result) if isinstance(result, (tuple, list)) else []
+            before = {str(getattr(info, "path")) for info in self._folders.get(mailbox, [])}
+            self._folders[mailbox] = found
+            if {str(getattr(info, "path")) for info in found} != before:
+                self._populate_tree(select_saved=False)  # folders came or went from outside (a sync)
+            else:
+                self.tree_model.recount(self._folders)
+            self._update_unread_summary()
+            ended()
+
+        def failed(error: ChronoMailError) -> None:
+            self._report("Folders", error)
+            ended()
+
+        self.backend.call("folder.list", {"account": mailbox}, counted, failed, owner=self)
+
+    def _refetch_list(self) -> None:
+        """The list is fetched again (a change from outside), keeping the selected message selected; one at a time."""
+        if self._refetching:
+            self._refetch_again = True
+            return
+        current = self._current_row()
+        if current is not None:
+            self._reselect = str(getattr(current, "message_id"))
+            self._reselect_account = str(getattr(current, "account", "") or "")
+            self._reselect_asked = None
+        self._refetching = True
+        self.list_model.reload()
+
+    def _list_refetch_failed(self, text: str) -> None:
+        self._list_refetched()  # the error itself is shown by _load_failed
+
+    def _list_refetched(self) -> None:
+        if not self._refetching:
+            return
+        self._refetching = False
+        if self._refetch_again:
+            self._refetch_again = False
+            self._refetch_list()
+
     def _ask_about_blocked(self, account_id: str, item: object) -> None:
         """A safety rule held an IMAP folder back: the person decides, and the account is synchronised with that answer."""
         kind, folder, count = str(getattr(item, "kind")), str(getattr(item, "folder")), int(getattr(item, "count"))
@@ -3071,7 +3211,7 @@ class MainWindow(QMainWindow):
         _, choice, done_text = answers[chosen]
 
         def done(result: object) -> None:
-            self._after_change(f"{folder} of {name}: {count} message(s) {done_text}", reload=True)
+            self._after_change(f"{folder} of {name}: {count} message(s) {done_text}")  # its "mailbox changed" fetches again
 
         self.show_status(f"{folder} of {name}: synchronising…")
         self.backend.call("mail.settle", {"account": account_id, "folder": folder, "choice": choice}, done, lambda error: self._report(f"Could not settle {folder}", error), owner=self)
@@ -3209,8 +3349,7 @@ class MainWindow(QMainWindow):
         TagsDialog(self.backend, self._tags, self._after_tags_changed, self).exec()
 
     def _after_tags_changed(self) -> None:
-        self._load_tags()
-        self.list_model.reload()  # renamed or deleted tags change the rows
+        self._load_tags()  # the rows follow the "mailbox changed" of renaming or deleting a tag (D-146)
 
     def show_recovery(self) -> None:
         RecoveryDialog(self.backend, self).exec()
@@ -3227,8 +3366,7 @@ class MainWindow(QMainWindow):
     def _after_import(self) -> None:
         """New accounts, folders and mail: the folder list with its counts, then the list on screen (its selection did not change, so it would keep the old messages)."""
         def then() -> None:
-            self.list_model.reload()
-            self.check_mail()  # the checks that waited for the import: once, with the accounts it made
+            self.check_mail()  # the checks that waited for the import: once, with the accounts it made (its mail came as "mailbox changed")
 
         self.reload_accounts(select_saved=True, then=then)
 
@@ -3390,11 +3528,7 @@ class MainWindow(QMainWindow):
         self.backend.call("folder.delete", {"account": self._account_id, "folder": self._folder, "with_messages": True, "include_subfolders": True}, lambda result: self._after_folder_change("Folder deleted"), lambda error: self._report("Could not delete the folder", error), owner=self)
 
     def _after_folder_change(self, text: str) -> None:
-        self.show_status(text)
-        self._folder = None
-        self._tree_kind = "account"
-        self._tree_key_kind = "account"
-        self._load_folders(select_saved=False)
+        self.show_status(text)  # the folder list follows the fact of the change (D-146)
 
     # --- attachments and links ----------------------------------------------------------------------------------------
 

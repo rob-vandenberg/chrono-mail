@@ -8,12 +8,14 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.ui.backend import Failure, Success
+from chrono_mail.ui.models import COUNT_ROLE
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rapid_actions.py 0.5.157"
+__version__ = "test_ui_rapid_actions.py 0.5.158"
 
 # --- Version history ----------------------------------------------------
+# v0.5.158: the folder list's Unread number is right afterwards
 # v0.5.157: Initial test (DEVELOPMENT's test made a project test): four quick Delete presses in Favorites > Unread act on the
 #           message the person sees selected at each press, at every pace and list size (D-146 step 3)
 
@@ -87,6 +89,10 @@ def test_four_quick_deletes_act_on_what_is_selected_at_each_press(empty: World, 
     assert [names.get(message_id) for message_id in deleted] == list(SPAM)  # exactly the four, each once, in the order pressed
     inbox = world.call("message.list", account=world.account_id, folder="Inbox", limit=1)
     assert inbox.total == size - 4  # nothing else moved, nothing made invisible
+    unread_favorite = window.tree_model.find_item("", "favorite", "unread")
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001 - the message shown now may have been marked read
+    truth = world.call("message.list", account=world.account_id, folder="Inbox", limit=1).unread
+    assert unread_favorite is not None and int(unread_favorite.data(COUNT_ROLE) or 0) == truth  # the folder list's number followed the facts
     assert resets == []  # the list was never reset: no blank, no jump
     assert not any("Missing" in title or "missing" in text for _, title, text in world.dialogs.shown)
     current = window.list_view.currentIndex()

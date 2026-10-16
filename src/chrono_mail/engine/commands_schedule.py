@@ -17,9 +17,10 @@ from chrono_mail.mime import Address, OutgoingMessage, ParsedMessage, parse_mess
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 0.5.123"
+__version__ = "commands_schedule.py 0.5.158"
 
 # --- Version history ----------------------------------------------------
+# v0.5.158: a scheduled or repeating message that was sent is reported where it is stored (D-146 step 4)
 # v0.5.123: The Snoozed folder and the folder a message wakes up in are made on the server first in an IMAP account (D-118)
 # v0.4.120: The Sent copy of a scheduled or repeating message goes to the server at once (IMAP)
 # v0.2.101: Snooze and wake change the record one at a time and make folders safely (no second Snoozed folder); waking a message that has no record (Cancel snooze) brings it to the Inbox
@@ -188,6 +189,7 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                 except ChronoMailError as error:
                     failed.append(f"{parsed.subject}: {error}")
                     continue
+                mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
                 if outcome.sent:
                     sent += 1
                     mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
@@ -240,6 +242,7 @@ def _send_repeats(engine: Engine, members: list[AccountSettings], mailbox: Mailb
                     mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX, mailbox.role_folder(FolderRole.SENT),
                     ssl_context=engine.tls_context(sender, outgoing=True),
                 )
+                mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
                 if not outcome.sent:
                     error = outcome.error or "the server refused the message"
                 else:

@@ -21,9 +21,10 @@ from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.store import MessageNotFoundError, Store, clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 0.5.156"
+__version__ = "mailbox.py 0.5.158"
 
 # --- Version history ----------------------------------------------------
+# v0.5.158: report_added and report_moved: sending stores its copies past the mailbox's operations and reports them here (D-146 step 4)
 # v0.5.156: an action that names a message in a folder where it no longer is gets refused (it never hides the message)
 # v0.5.155: every change reports its fact right after it succeeded (for IMAP after the server confirmed); Empty folder and Mark all as read report one fact each (D-146)
 # v0.5.138: set_tags in an IMAP account: on the server first, as keywords
@@ -199,6 +200,19 @@ class Mailbox:
         self._tell(Change(
             "added", self._place, "/".join(reference.folder_path), reference.store_id, row=row, unread=row is not None and "seen" not in row.flags,
             role=self._role_of(reference.folder_path),
+        ))
+
+    def report_added(self, reference: MessageRef) -> None:
+        """Sending stored a message past the mailbox's operations (sync/send.py): it is told as added where it is now."""
+        self._tell_added(reference)
+
+    def report_moved(self, before: MessageRef, now: MessageRef) -> None:
+        """Sending moved a stored message past the mailbox's operations (from the Outbox to Sent): it is told as moved."""
+        row = self.row_of(now.store_id)
+        unread = row is not None and "seen" not in row.flags
+        self._tell(Change(
+            "moved", self._place, "/".join(before.folder_path), before.store_id, to_folder="/".join(now.folder_path), new_message_id=now.store_id, row=row,
+            was_unread=unread, unread=unread, role=self._role_of(now.folder_path),
         ))
 
     def _role_of(self, path: tuple[str, ...]) -> str:
@@ -386,7 +400,7 @@ class Mailbox:
     def _made(self, result: tuple[Folder, bool]) -> tuple[Folder, bool]:
         folder, made = result
         if made:
-            self._tell(Change("folder_made", self._place, "/".join(folder.path)))
+            self._tell(Change("folder_made", self._place, "/".join(folder.path), role=folder.role.value))
         return result
 
     def create_folder(self, path: tuple[str, ...]) -> Folder:

@@ -17,9 +17,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.157"
+__version__ = "models.py 0.5.158"
 
 # --- Version history ----------------------------------------------------
+# v0.5.158: the folder list counts again from its per-folder numbers without being rebuilt (recount), and adds, renames or removes one folder (D-146 step 4)
 # v0.5.157: messages with an action under way (pending): greyed (PENDING_ROLE), let go when the fact arrives or the action ends; load_through for a search or Favorites view
 # v0.5.156: the list applies the facts of the engine to its own rows (D-146 step 2): a folder keeps its rows as one ordered list with empty places for what is not loaded; an answer asked before a change that moved places is asked again
 # v0.5.153: load_position: fetch the page of a message whose place is known (the selection kept after a sort)
@@ -1099,6 +1100,7 @@ class FolderTreeModel(QStandardItemModel):
         self.pins: list[tuple[str, str, str, str]] = []  # pin id, account, folder, name
         self.groups: list[tuple[str, str, tuple[str, ...]]] = []  # group id, name, account ids
         self.hidden: set[str] = set()  # standard favorites that are switched off
+        self.mailbox_ids: list[str] = []  # the places where mail is kept that the list shows (for the Favorites numbers)
 
     def populate(self, accounts: list[object], folders: dict[str, list[object]]) -> None:
         """Rebuild the tree. accounts: AccountSummary results; folders: account id -> FolderInfo results."""
@@ -1110,6 +1112,7 @@ class FolderTreeModel(QStandardItemModel):
         if not self.show_local_folders:
             places = [account for account in places if str(getattr(account, "kind", "pop3")) != "local"]
         mailboxes = places
+        self.mailbox_ids = [str(getattr(account, "account_id")) for account in mailboxes]
         if mailboxes and self.show_favorites:
             self._favorites(root, mailboxes, folders)
         real = [account for account in places if str(getattr(account, "kind", "pop3")) != "local"]
@@ -1212,13 +1215,7 @@ class FolderTreeModel(QStandardItemModel):
         for view, label, icon in FAVORITES:
             if view in self.hidden:
                 continue
-            unread = 0
-            for account in mailboxes:
-                for info in folders.get(str(getattr(account, "account_id")), []):
-                    if (view in _FAVORITE_ROLE and str(getattr(info, "role")) == _FAVORITE_ROLE[view]) or (view == "outbox" and str(getattr(info, "path")) == "Outbox"):
-                        unread += int(getattr(info, "unread"))
-                    elif view == "unread" and str(getattr(info, "role")) not in ("trash", "junk") and str(getattr(info, "path")) != "Outbox":
-                        unread += int(getattr(info, "unread"))
+            unread = favorite_unread(view, [str(getattr(account, "account_id")) for account in mailboxes], folders)
             item = QStandardItem(label)
             item.setEditable(False)
             item.setIcon(folder_icon(icon))
@@ -1249,6 +1246,97 @@ class FolderTreeModel(QStandardItemModel):
             self._label(item, name or folder.rsplit("/", 1)[-1], unread)
             section.appendRow(item)
 
+    # --- following the facts (D-146): numbers and single folders, without rebuilding the list ------------------------------
+
+    def _all_items(self) -> list[QStandardItem]:
+        found: list[QStandardItem] = []
+        waiting = [self.invisibleRootItem()]
+        while waiting:
+            item = waiting.pop()
+            for row in range(item.rowCount()):
+                child = item.child(row)
+                if child is not None:
+                    found.append(child)
+                    waiting.append(child)
+        return found
+
+    def find_item(self, account_id: str, kind: str, path: str) -> QStandardItem | None:
+        return next((item for item in self._all_items() if item.data(KIND_ROLE) == kind and str(item.data(ACCOUNT_ROLE) or "") == account_id and str(item.data(FOLDER_PATH_ROLE) or "") == path), None)
+
+    def recount(self, folders: dict[str, list[object]]) -> None:
+        """Every number of the list again from the numbers per folder, as populate() works them out; nothing is rebuilt."""
+        unread_of = {(account_id, str(getattr(info, "path"))): int(getattr(info, "unread")) for account_id, infos in folders.items() for info in infos}
+        for item in self._all_items():
+            kind = str(item.data(KIND_ROLE) or "")
+            if kind in ("folder", "pinlink"):
+                count = unread_of.get((str(item.data(ACCOUNT_ROLE) or ""), str(item.data(FOLDER_PATH_ROLE) or "")), 0)
+            elif kind == "favorite":
+                count = favorite_unread(str(item.data(FOLDER_PATH_ROLE) or ""), self.mailbox_ids, folders)
+            elif kind == "groupinbox":
+                members = next((accounts for group_id, _, accounts in self.groups if group_id == item.data(GROUP_ROLE)), ())
+                count = sum(int(getattr(info, "unread")) for member in members for info in folders.get(member, []) if str(getattr(info, "role")) == "inbox")
+            else:
+                continue
+            if item.data(COUNT_ROLE) != count:
+                item.setData(count, COUNT_ROLE)
+                item.setData(count, UNREAD_ROLE)
+
+    def _place_in(self, parent: QStandardItem, item: QStandardItem) -> None:
+        """Put a folder among its brothers in the order of the list: by role (Inbox, Drafts, Sent …), then by name."""
+        def key(node: QStandardItem) -> tuple[int, str]:
+            return (_order(str(node.data(FOLDER_ROLE_ROLE) or "other")), str(node.data(FOLDER_PATH_ROLE) or "").lower())
+
+        wanted = key(item)
+        for row in range(parent.rowCount()):
+            child = parent.child(row)
+            if child is not None and child.data(KIND_ROLE) == "folder" and key(child) > wanted:
+                parent.insertRow(row, [item])  # a row of one column: Qt wants the row's items as a list
+                return
+        parent.appendRow(item)
+
+    def _parent_for(self, account_id: str, path: tuple[str, ...]) -> QStandardItem | None:
+        """The node a folder of this path goes under (its parents are made when they exist only as part of the path)."""
+        parent = self.find_item(account_id, "account", "")
+        for depth in range(1, len(path)):
+            if parent is None:
+                return None
+            node = self.find_item(account_id, "folder", "/".join(path[:depth]))
+            if node is None:
+                node = self._folder_item(account_id, path[:depth], "other", 0)
+                self._place_in(parent, node)
+            parent = node
+        return parent
+
+    def add_folder(self, account_id: str, path: str, role: str = "other") -> None:
+        parts = tuple(path.split("/"))
+        parent = self._parent_for(account_id, parts)
+        if parent is not None and self.find_item(account_id, "folder", path) is None:
+            self._place_in(parent, self._folder_item(account_id, parts, role, 0))
+
+    def rename_folder(self, account_id: str, old: str, new: str) -> None:
+        """A folder got another name (or another place): its entry and those below it follow."""
+        node = self.find_item(account_id, "folder", old)
+        if node is None:
+            return
+        holder = node.parent() or self.invisibleRootItem()
+        taken = holder.takeRow(node.row())[0]
+        waiting = [taken]
+        while waiting:
+            item = waiting.pop()
+            path = str(item.data(FOLDER_PATH_ROLE) or "")
+            renamed = new + path[len(old):]
+            item.setData(renamed, FOLDER_PATH_ROLE)
+            self._label(item, renamed.rsplit("/", 1)[-1], int(item.data(COUNT_ROLE) or 0))
+            waiting.extend(child for row in range(item.rowCount()) if (child := item.child(row)) is not None)
+        parent = self._parent_for(account_id, tuple(new.split("/")))
+        if parent is not None:
+            self._place_in(parent, taken)
+
+    def remove_folder(self, account_id: str, path: str) -> None:
+        node = self.find_item(account_id, "folder", path)
+        if node is not None:
+            (node.parent() or self.invisibleRootItem()).removeRow(node.row())
+
     @staticmethod
     def _label(item: QStandardItem, name: str, unread: int) -> None:
         """The folder's name; the number of unread messages is drawn by the folder list at the right edge, in bold."""
@@ -1268,6 +1356,19 @@ class FolderTreeModel(QStandardItemModel):
         item.setIcon(folder_icon("outbox" if path == ("Outbox",) else role))
         FolderTreeModel._label(item, path[-1], unread)
         return item
+
+
+def favorite_unread(view: str, mailbox_ids: list[str], folders: dict[str, list[object]]) -> int:
+    """The number a standard favorite shows: the unread messages of that kind of folder in every mailbox shown."""
+    unread = 0
+    for account_id in mailbox_ids:
+        for info in folders.get(account_id, []):
+            role, path = str(getattr(info, "role")), str(getattr(info, "path"))
+            if (view in _FAVORITE_ROLE and role == _FAVORITE_ROLE[view]) or (view == "outbox" and path == "Outbox"):
+                unread += int(getattr(info, "unread"))
+            elif view == "unread" and role not in ("trash", "junk") and path != "Outbox":
+                unread += int(getattr(info, "unread"))
+    return unread
 
 
 _ROLE_ORDER: dict[str, int] = {"inbox": 0, "drafts": 1, "sent": 2, "other": 3, "junk": 5, "trash": 6, "archive": 4}

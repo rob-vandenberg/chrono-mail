@@ -11,9 +11,10 @@ from chrono_mail.store import StoredMessage
 from chrono_mail.sync import send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 0.5.145"
+__version__ = "commands_outbox.py 0.5.158"
 
 # --- Version history ----------------------------------------------------
+# v0.5.158: a message Send All sent is reported as moved from the Outbox to Sent (D-146 step 4)
 # v0.5.145: Send All reports its steps per sending account (engine.activity), only for accounts with mail waiting; failures name their account
 # v0.4.120: The Sent copy goes to the server at once (IMAP)
 # v0.0.86: Initial Send All: send what waits in the Outbox
@@ -95,6 +96,7 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                     outcome = None
                 if outcome is not None and outcome.sent:
                     sent += 1
+                    mailbox.report_moved(message.ref, outcome.reference)
                     mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
                     _mark_replied(mailbox, parsed)
                     if outcome.warning:
