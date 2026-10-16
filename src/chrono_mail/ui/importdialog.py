@@ -25,9 +25,10 @@ from chrono_mail.engine.commands_emclient import ImportResult, ScanResult
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 0.5.143"
+__version__ = "importdialog.py 0.5.151"
 
 # --- Version history ----------------------------------------------------
+# v0.5.151: on_running: the main window learns when an import starts and ends (mail checks wait meanwhile)
 # v0.5.143: Import waits for the reading of the exports; a late or older reading answer is ignored; the progress bar follows the count, which the engine gives over the whole import
 # v0.5.137: Tags: a type of its own; the summaries count the categories and the tagged messages
 # v0.5.132: Initial version: Menu > File > Import…, the program (eM Client) chosen in the window; the summary scrolls
@@ -117,10 +118,11 @@ def import_summary(result: ImportResult, stopped: bool) -> str:
 class ImportDialog(QDialog):
     """Menu > File > Import…: the program to import from, what to import, from which exports, and the import itself, in one window."""
 
-    def __init__(self, backend: Backend, on_changed: Callable[[], None], parent: QWidget | None = None) -> None:
+    def __init__(self, backend: Backend, on_changed: Callable[[], None], parent: QWidget | None = None, on_running: Callable[[bool], None] | None = None) -> None:
         super().__init__(parent)
         self._backend = backend
         self._on_changed = on_changed
+        self._on_running = on_running  # told True when an import starts and False when it ends (the main window holds its mail checks)
         self._running = False
         self._stop = False
         self._total = 0
@@ -275,6 +277,8 @@ class ImportDialog(QDialog):
         if self._running or not self.import_button.isEnabled():
             return  # only after the reading of the exports has answered
         self._running = True
+        if self._on_running is not None:
+            self._on_running(True)
         self._stop = False
         self._result = ImportResult()
         for widget in (self.import_button, self.close_button, self.accounts, self.rules, self.mail, self.contacts, self.tags, self.settings_file, self.mail_folder, self.backup_file):
@@ -314,6 +318,8 @@ class ImportDialog(QDialog):
 
     def _finish(self) -> None:
         self._running = False
+        if self._on_running is not None:
+            self._on_running(False)
         for widget in (self.import_button, self.close_button, self.accounts, self.rules, self.mail, self.contacts, self.tags, self.settings_file, self.mail_folder, self.backup_file):
             widget.setEnabled(True)
         self.stop_button.setEnabled(False)

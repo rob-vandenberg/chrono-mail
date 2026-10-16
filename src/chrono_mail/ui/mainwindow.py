@@ -93,9 +93,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.146"
+__version__ = "mainwindow.py 0.5.151"
 
 # --- Version history ----------------------------------------------------
+# v0.5.151: While an import runs no mail is checked (timers and push skip their turn) and Refresh is off; one check runs when the import is done
 # v0.5.146: Every send and receive opens the Operations window (also at startup, by the timers and the push); only Refresh gives it the keyboard focus
 # v0.5.145: The Operations window: rows, errors and log of send and receive; opened by Refresh, by an error, by View > Operations… and by a click on the busy bar
 # v0.5.144: bring_forward: a second start of the program shows this window (also from the tray)
@@ -273,6 +274,7 @@ class MainWindow(QMainWindow):
         self._composers: list[ComposeWindow] = []
         self._checking: bool = False
         self._sending: bool = False  # Send All is running
+        self._importing: bool = False  # an import runs: mail checks wait (a check meanwhile could store a message the import stores again)
         self._dav_syncing: bool = False
         self._mail_action_states: dict[str, bool] = {}
         self._tried_interface: float | None = None  # sizes being tried out in Settings (not saved yet)
@@ -2819,9 +2821,12 @@ class MainWindow(QMainWindow):
         """Refresh: first send what waits in the Outbox, then check every account. Refresh stays greyed out meanwhile."""
         self.act_refresh.setEnabled(False)
 
+        if self._importing:
+            return
+
         def receive() -> None:
             if not self._checking:
-                self.act_refresh.setEnabled(True)
+                self.act_refresh.setEnabled(not self._importing)
             self.check_accounts(None, manual=True, new_round=False)
             self._settle_operations()  # nothing to check: the round ends with the send
 
@@ -2829,7 +2834,9 @@ class MainWindow(QMainWindow):
 
     def send_outbox(self, then: Callable[[], None] | None = None, manual: bool = False) -> None:
         """Send All: the messages that wait in the Outbox (scheduled ones wait for their time). Manual: the person asked
-        for it (the Operations window may open)."""
+        for it (the Operations window may open). Nothing is sent while an import runs."""
+        if self._importing:
+            return
         self._begin_operations(manual)
         self._sending = True
 
@@ -2869,7 +2876,9 @@ class MainWindow(QMainWindow):
 
     def check_accounts(self, only: set[str] | None, manual: bool = False, new_round: bool = True) -> None:
         """Check these accounts (all when None) for new mail. Manual: the person asked for it (the Operations window may
-        open); new_round False: it goes on from a send (Refresh), whose rows stay."""
+        open); new_round False: it goes on from a send (Refresh), whose rows stay. Nothing is checked while an import runs."""
+        if self._importing:
+            return  # the timers and the push skip their turn; one check runs when the import is done
         self._load_contact_addresses()  # Refresh also brings contacts that came from a server
         mail_ids = {str(getattr(account, "account_id")) for account in self._mail_accounts()}
         wanted = mail_ids if only is None else only & mail_ids
@@ -2891,7 +2900,7 @@ class MainWindow(QMainWindow):
 
         def finish() -> None:
             self._checking = False
-            self.act_refresh.setEnabled(True)
+            self.act_refresh.setEnabled(not self._importing)
             if problems:
                 self.show_status("Mail check: " + "; ".join(problems), error=True)
             else:
@@ -3157,11 +3166,20 @@ class MainWindow(QMainWindow):
 
     def show_import(self) -> None:
         """File > Import: accounts, rules, contacts and mail; the folder list is loaded again after each import."""
-        ImportDialog(self.backend, self._after_import, self).exec()
+        ImportDialog(self.backend, self._after_import, self, on_running=self._import_running).exec()
+
+    def _import_running(self, running: bool) -> None:
+        """An import starts or ends: no mail checks meanwhile, and Refresh is off."""
+        self._importing = running
+        self.act_refresh.setEnabled(not running and not self._checking)
 
     def _after_import(self) -> None:
         """New accounts, folders and mail: the folder list with its counts, then the list on screen (its selection did not change, so it would keep the old messages)."""
-        self.reload_accounts(select_saved=True, then=self.list_model.reload)
+        def then() -> None:
+            self.list_model.reload()
+            self.check_mail()  # the checks that waited for the import: once, with the accounts it made
+
+        self.reload_accounts(select_saved=True, then=then)
 
     # --- folders ----------------------------------------------------------------------------------------------------
 

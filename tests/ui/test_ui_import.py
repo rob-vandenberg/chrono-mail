@@ -18,9 +18,10 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 0.5.143"
+__version__ = "test_ui_import.py 0.5.151"
 
 # --- Version history ----------------------------------------------------
+# v0.5.151: While an import runs no mail is checked and Refresh is off; one check when it is done
 # v0.5.143: Import waits for the reading of the exports; a late or older reading answer changes nothing; the bar takes the count of the whole import; separators in the status line
 # v0.5.137: the tags in the summaries
 # v0.5.133: After an import the list on screen shows the imported mail
@@ -220,3 +221,55 @@ def test_the_status_line_shows_progress_with_thousands_separators(world: World) 
     assert world.window.status_label.text() == "Importing mail… 45,225 of 140,269"
     world.window._progress("Rebuilding the index", 12000, None)
     assert world.window.status_label.text() == "Rebuilding the index… 12,000"
+
+
+def test_the_window_tells_when_an_import_starts_and_ends(qtbot: QtBot, setup: Setup) -> None:
+    told: list[bool] = []
+    dialog = ImportDialog(setup.backend, lambda: None, on_running=told.append)
+    qtbot.addWidget(dialog)
+    dialog.settings_file.setText(str(setup.exports.settings))
+    dialog.mail_folder.setText(str(setup.exports.mail))
+    dialog.backup_file.setText(str(setup.exports.backup))
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    assert told == [True]
+    wait(qtbot, lambda: dialog.summary.text().startswith("The import is done."))
+    assert told == [True, False]
+
+
+def fetches(world: World, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The mail checks the window asks for (mail.fetch and mail.send-outbox)."""
+    asked: list[str] = []
+    real_call = world.backend.call
+
+    def call(
+        command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False,
+        in_order: bool = False, checking: bool = False,
+    ) -> int:
+        if command in ("mail.fetch", "mail.send-outbox"):
+            asked.append(command)
+        return real_call(command, values, on_success, on_error, owner, waiting, in_order, checking)
+
+    monkeypatch.setattr(world.backend, "call", call)
+    return asked
+
+
+def test_no_mail_is_checked_while_an_import_runs_and_once_when_it_is_done(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.start()
+    wait(qtbot, lambda: bool(window._accounts) and world.backend._pending == {})
+    asked = fetches(world, monkeypatch)
+    window._import_running(True)  # what the Import window tells when an import starts
+    assert not window.act_refresh.isEnabled()
+    window.check_mail()  # the timer and the push
+    window.check_accounts({world.account_id})  # an account's own timer
+    window.send_and_receive()  # F5 while the action is off does nothing either
+    window.send_outbox(manual=True)
+    assert asked == [] and not window._checking
+    window._import_running(False)
+    assert window.act_refresh.isEnabled()
+    window._after_import()  # what the Import window calls when it is done
+    wait(qtbot, lambda: asked == ["mail.fetch"])
+    wait(qtbot, lambda: not window._checking and world.backend._pending == {})
+    assert window.act_refresh.isEnabled()
