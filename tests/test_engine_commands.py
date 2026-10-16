@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import sys
 import threading
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -19,9 +20,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.5.153"
+__version__ = "test_engine_commands.py 0.5.154"
 
 # --- Version history ----------------------------------------------------
+# v0.5.154: The index is opened only inside its lock; the permission check of the key export only where the system has those bits
 # v0.5.153: message.position gives the place message.list shows a message at
 # v0.4.118: Commands that open an index of an old format at the same moment rebuild it once, without errors
 # v0.3.112: A delete or a move to Junk of a message whose file is gone answers "gone"
@@ -170,7 +172,8 @@ def test_key_status_export_and_restore_cycle(setup: Setup, tmp_path: Path) -> No
     assert getattr(status, "in_credential_store") is True
     target = tmp_path / "backup" / "recovery.key"
     call(setup.engine, "key.export-file", path=str(target), passphrase="a good passphrase")
-    assert oct(target.stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":  # Windows has no such permission bits; there the folder's access rules protect the file
+        assert oct(target.stat().st_mode & 0o777) == "0o600"
     with pytest.raises(UsageError):
         call(setup.engine, "key.export-file", path=str(target), passphrase="x")
     code = str(getattr(call(setup.engine, "key.recovery-code"), "code"))
@@ -395,6 +398,22 @@ def test_commands_that_open_an_old_index_at_once_all_succeed(setup: Setup) -> No
     for worker in workers:
         worker.join()
     assert [getattr(result, "total", result) for result in results] == [3] * 6
+
+
+def test_the_index_is_opened_only_inside_its_lock(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.engine import session
+
+    held: list[bool] = []
+    real_index = session.Index
+
+    def watched(path: Path) -> object:
+        held.append(session.index_lock(Path(path)).locked())  # no command may have the files open while another replaces them
+        return real_index(path)
+
+    monkeypatch.setattr(session, "Index", watched)
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    call(setup.engine, "message.list", account=setup.account_id, folder="Inbox")
+    assert held and all(held)
 
 
 def test_folder_commands(setup: Setup) -> None:

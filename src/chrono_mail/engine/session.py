@@ -23,9 +23,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.5.145"
+__version__ = "session.py 0.5.154"
 
 # --- Version history ----------------------------------------------------
+# v0.5.154: open_index opens the index only inside its lock: on Windows a command that opened it while another replaced its files made one of them fail
 # v0.5.145: activity: the steps of a mail check or a send, per account (for the Operations window)
 # v0.5.144: The settings file is read and written by one command at a time; change_config applies a change to a fresh read
 # v0.5.138: ImapLink.keywords: per server folder, whether the server keeps keywords (tags)
@@ -230,15 +231,12 @@ class Engine:
     def open_index(self, settings: AccountSettings, store: Store) -> Index:
         """The account's index. A missing or damaged index is rebuilt from the store: it is never the truth."""
         path = self.directories.index_file(settings.account.account_id)
-        try:
-            if path.exists():
-                return Index(path)
-        except StorageError:
-            pass
-        with index_lock(path):  # commands that open the same index at once (accounts in Local Folders) rebuild it once
+        # Opened only inside the lock: commands that open the same index at once (accounts in Local Folders) rebuild it once,
+        # and no command has the files open while another replaces them (Windows refuses that; Linux allows it).
+        with index_lock(path):
             try:
                 if path.exists():
-                    return Index(path)  # rebuilt by another command while this one waited
+                    return Index(path)  # also when another command rebuilt it while this one waited
             except StorageError:
                 pass
             self.progress("Rebuilding the index", 0, None)
