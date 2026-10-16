@@ -34,14 +34,15 @@ from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.mime import parse_message
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 0.5.144"
+__version__ = "commands_emclient.py 0.5.155"
 
 # --- Version history ----------------------------------------------------
+# v0.5.155: the import is a big job: one "mailbox changed" at the end of each batch instead of a fact per message (D-146)
 # v0.5.144: The imported-account flag is set on a fresh read of the settings, one command at a time (change_config)
 # v0.5.143: The progress of the mail counts over the whole import (earlier batches and imports included), not per batch
 # v0.5.141: import.emclient-passwords: the passwords of accounts that are here already, from the settings export
@@ -669,4 +670,4 @@ def update_passwords(engine: Engine, parameters: PasswordsParameters) -> Passwor
 def register(registry: CommandRegistry) -> None:
     registry.register("import.emclient-scan", "What an import from eM Client's exports would bring in (changes nothing)", ScanParameters, scan)
     registry.register("import.emclient-passwords", "Store again the passwords of accounts that are here already, from eM Client's settings export", PasswordsParameters, update_passwords)
-    registry.register("import.emclient", "Import accounts, passwords, rules, contacts and mail from eM Client's exports", ImportParameters, run_import)
+    registry.register("import.emclient", "Import accounts, passwords, rules, contacts and mail from eM Client's exports", ImportParameters, quiet_command(run_import))

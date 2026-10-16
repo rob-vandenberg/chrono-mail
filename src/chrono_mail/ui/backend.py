@@ -10,9 +10,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 0.5.145"
+__version__ = "backend.py 0.5.155"
 
 # --- Version history ----------------------------------------------------
+# v0.5.155: changed: the facts of every change of mail, on the GUI thread in the order each worker reported them (D-146)
 # v0.5.145: activity: the steps of a mail check or a send per account, from any thread (for the Operations window)
 # v0.5.133: checking: mail checks have places of their own, so the person's actions never wait behind them
 # v0.5.126: in_order: the commands that change the same message run one after the other, in the order they were given
@@ -66,6 +67,7 @@ class Backend(QObject):
     busy_changed = Signal(int)  # number of commands running
     notice = Signal(str)  # something the person should know, from any thread
     activity = Signal(str, str, str, object, object)  # account id, "receive" or "send", step, done, total (None when unknown)
+    changed = Signal(object)  # a Change of the engine: one fact of a change of mail (D-146)
 
     def __init__(self, engine: Engine, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -87,6 +89,7 @@ class Backend(QObject):
         engine.progress = lambda what, done, total: self.progress.emit(what, done, total)
         engine.notice = self.notice.emit
         engine.activity = lambda account_id, direction, step, done, total: self.activity.emit(account_id, direction, step, done, total)
+        engine.changed = self.changed.emit
 
     def call(
         self, command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False,

@@ -1,6 +1,7 @@
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
+from datetime import datetime
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import (
@@ -11,16 +12,19 @@ from chrono_mail.core import (
     MessageRef,
     StorageError,
 )
+from chrono_mail.engine.changes import Change, MessageRow, flag_names
 from chrono_mail.engine.imap_online import LOCAL_ONLY, GoneFromServer, is_imap, server_session
 from chrono_mail.engine.registry import UsageError
+from chrono_mail.engine.schedule import SNOOZED_FILE, SNOOZED_FOLDER, load_snoozed
 from chrono_mail.engine.session import Engine
 from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.store import MessageNotFoundError, Store, clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 0.5.138"
+__version__ = "mailbox.py 0.5.155"
 
 # --- Version history ----------------------------------------------------
+# v0.5.155: every change reports its fact right after it succeeded (for IMAP after the server confirmed); Empty folder and Mark all as read report one fact each (D-146)
 # v0.5.138: set_tags in an IMAP account: on the server first, as keywords
 # v0.5.134: Tags: set_tags (here only for now; an IMAP account's server learns them in a later step), a copy keeps the tags in the index too
 # v0.5.123: folders (make, rename, delete, empty, mark all read) on the server first; a message gone from the server (D-118); the copy of a folder left out of the synchronisation (D-120)
@@ -77,6 +81,36 @@ class Mailbox:
         row = self.index.get(message_id)
         return None if row is None else row.path
 
+    # --- the facts of each change (D-146) -------------------------------------------------------
+
+    def row_of(self, store_id: str) -> MessageRow | None:
+        """What a list shows of a message, from the index (None when the index does not have it)."""
+        message = self.index.get(store_id)
+        if message is None:
+            return None
+        snoozed_until: datetime | None = None
+        if message.folder == (SNOOZED_FOLDER,):
+            entry = load_snoozed(self.engine.directories.account_directory(self.account_id) / SNOOZED_FILE).get(store_id)
+            if entry is not None:
+                snoozed_until = datetime.fromtimestamp(int(str(entry["until"]))).astimezone()
+        size = self.index.thread_sizes([message.thread_key]).get(message.thread_key, 1)
+        return MessageRow(
+            message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, flag_names(message.flags),
+            message.has_attachments, message.preview, message.recipients, size, account=self.store.account_id, snoozed_until=snoozed_until, tags=message.tags,
+        )
+
+    def _was_unread(self, store_id: str) -> bool:
+        message = self.index.get(store_id)
+        return message is not None and MessageFlag.SEEN not in message.flags
+
+    def _tell(self, change: Change) -> None:
+        self.engine.report(change)
+
+    @property
+    def _place(self) -> str:
+        """The mailbox the facts are about: the account whose store holds the mail."""
+        return self.store.account_id
+
     # --- changes that keep store and index in step ---------------------------------------------
 
     def set_flags(self, ref: MessageRef, flags: frozenset[MessageFlag]) -> frozenset[MessageFlag]:
@@ -90,8 +124,12 @@ class Mailbox:
         return flags
 
     def _set_flags_here(self, ref: MessageRef, flags: frozenset[MessageFlag]) -> frozenset[MessageFlag]:
+        was_unread = self._was_unread(ref.store_id)
         path = self.store.set_flags(ref, flags, hint=self.hint(ref.store_id))
         self._index(lambda: self.index.update_flags(ref.store_id, flags, path))
+        self._tell(Change(
+            "flags", self._place, "/".join(ref.folder_path), ref.store_id, was_unread=was_unread, unread=MessageFlag.SEEN not in flags, flags=flag_names(flags),
+        ))
         return flags
 
     def current_flags(self, ref: MessageRef) -> frozenset[MessageFlag]:
@@ -112,9 +150,15 @@ class Mailbox:
         return moved
 
     def _move_here(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
+        was_unread = self._was_unread(ref.store_id)
         moved = self.store.move(ref, target, hint=self.hint(ref.store_id))
         path = self.store.locate(moved)
         self._index(lambda: self.index.move(moved.store_id, target, path))
+        row = self.row_of(moved.store_id)
+        self._tell(Change(
+            "moved", self._place, "/".join(ref.folder_path), ref.store_id, to_folder="/".join(target), new_message_id=moved.store_id, row=row,
+            was_unread=was_unread, unread=row is not None and "seen" not in row.flags,
+        ))
         return moved
 
     def deliver(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag]) -> MessageRef:
@@ -131,7 +175,12 @@ class Mailbox:
         reference = self.store.deliver(folder, raw, flags=flags, verify=True)
         path = self.store.locate(reference)
         self._index(lambda: self.index.add(entry_from_raw(reference, path, flags, len(raw), raw)))
+        self._tell_added(reference)
         return reference
+
+    def _tell_added(self, reference: MessageRef) -> None:
+        row = self.row_of(reference.store_id)
+        self._tell(Change("added", self._place, "/".join(reference.folder_path), reference.store_id, row=row, unread=row is not None and "seen" not in row.flags))
 
     def copy(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
         if not is_imap(self.settings):
@@ -150,6 +199,7 @@ class Mailbox:
         flags = self.current_flags(copied)
         tags = self.tags_of(copied.store_id)
         self._index(lambda: self.index.add(replace(entry_from_raw(copied, path, flags, len(raw), raw), tags=tags)))
+        self._tell_added(copied)
         return copied
 
     def tags_of(self, store_id: str) -> tuple[str, ...]:
@@ -176,7 +226,10 @@ class Mailbox:
             return changed_here
         changed = self.store.tags.rename(old, new)
         for store_id in changed:
-            self._index(self._tags_updater(store_id, self.tags_of(store_id)))
+            tags = self.tags_of(store_id)
+            self._index(self._tags_updater(store_id, tags))
+            message = self.index.get(store_id)
+            self._tell(Change("tags", self._place, "/".join(message.folder) if message is not None else "", store_id, tags=tags))
         return len(changed)
 
     def _tags_updater(self, store_id: str, tags: tuple[str, ...]) -> Callable[[], None]:
@@ -198,6 +251,7 @@ class Mailbox:
     def _set_tags_here(self, ref: MessageRef, tags: tuple[str, ...]) -> tuple[str, ...]:
         kept = self.store.tags.set(ref.store_id, tags)
         self._index(lambda: self.index.update_tags(ref.store_id, kept))
+        self._tell(Change("tags", self._place, "/".join(ref.folder_path), ref.store_id, tags=kept))
         return kept
 
     def delete(self, ref: MessageRef, permanent: bool) -> str:
@@ -233,8 +287,14 @@ class Mailbox:
         except MessageNotFoundError:
             self.forget(ref)  # the index pointed at nothing
             return "gone"
-        self._index(lambda: self.index.remove(ref.store_id))
+        self._removed(ref)
         return "deleted"
+
+    def _removed(self, ref: MessageRef) -> None:
+        """The message left the mailbox for good: its line leaves the index, and that is told."""
+        was_unread = self._was_unread(ref.store_id)
+        self._index(lambda: self.index.remove(ref.store_id))
+        self._tell(Change("removed", self._place, "/".join(ref.folder_path), ref.store_id, was_unread=was_unread))
 
     def _delete_on_server_first(self, ref: MessageRef) -> str:
         with server_session(self.engine, self.settings) as server:
@@ -245,7 +305,7 @@ class Mailbox:
                 self.forget(ref)
                 commit()
                 return "gone"
-            self._index(lambda: self.index.remove(ref.store_id))
+            self._removed(ref)
             commit()
             return "deleted"
 
@@ -264,7 +324,7 @@ class Mailbox:
 
     def forget(self, ref: MessageRef) -> None:
         """Remove the line of a message whose file is gone from the index."""
-        self._index(lambda: self.index.remove(ref.store_id))
+        self._removed(ref)
 
     def _index(self, change: Callable[[], None]) -> None:
         """The store is the truth: if the index cannot be updated, the next reconcile repairs it."""
@@ -287,6 +347,7 @@ class Mailbox:
         of folders made here alone: the caller checked that the folder holds nothing the server has not got."""
         self.store.delete_folder(path, require_empty=False)
         self.index.remove_folder(path)
+        self._tell(Change("folder_deleted", self._place, "/".join(path)))
 
     def ensure_folder(self, path: tuple[str, ...], role: FolderRole = FolderRole.OTHER) -> tuple[Folder, bool]:
         """The folder with this path, made when there is none (and whether it was made): on the server first."""
@@ -294,8 +355,14 @@ class Mailbox:
             Folder(self.store.account_id, path, role)  # a name that cannot be used is refused before the server is asked
             with server_session(self.engine, self.settings) as server:
                 server.make_folder(path)  # when the server cannot be reached the next sync makes it there
-                return self.store.ensure_folder(path, role)
-        return self.store.ensure_folder(path, role)
+                return self._made(self.store.ensure_folder(path, role))
+        return self._made(self.store.ensure_folder(path, role))
+
+    def _made(self, result: tuple[Folder, bool]) -> tuple[Folder, bool]:
+        folder, made = result
+        if made:
+            self._tell(Change("folder_made", self._place, "/".join(folder.path)))
+        return result
 
     def create_folder(self, path: tuple[str, ...]) -> Folder:
         if path in {folder.path for folder in self.store.list_folders()}:
@@ -308,6 +375,7 @@ class Mailbox:
         if not self._on_server(old):
             self.store.rename_folder(old, new)
             self.index.rename_folder(old, new)
+            self._tell(Change("folder_renamed", self._place, "/".join(old), to_folder="/".join(new)))
             return
         known = self.store.list_folders()
         if any(folder.path[: len(old)] == old and folder.role is not FolderRole.OTHER for folder in known):
@@ -320,22 +388,32 @@ class Mailbox:
             self.store.rename_folder(old, new)
             self.index.rename_folder(old, new)
             commit()
+        self._tell(Change("folder_renamed", self._place, "/".join(old), to_folder="/".join(new)))
 
     def delete_folder(self, path: tuple[str, ...], require_empty: bool) -> int:
         """Take one folder out of the store (its files are kept in .deleted); in an IMAP account it is deleted on the
         server first, with its mail, and only while the server can be reached. Returns the messages removed from the index."""
         if not self._on_server(path):
             self.store.delete_folder(path, require_empty=require_empty)
-            return self.index.remove_folder(path)
-        with server_session(self.engine, self.settings) as server:
-            commit = server.delete_folder(path)
-            self.store.delete_folder(path, require_empty=require_empty)
             removed = self.index.remove_folder(path)
-            commit()
-            return removed
+        else:
+            with server_session(self.engine, self.settings) as server:
+                commit = server.delete_folder(path)
+                self.store.delete_folder(path, require_empty=require_empty)
+                removed = self.index.remove_folder(path)
+                commit()
+        self._tell(Change("folder_deleted", self._place, "/".join(path)))
+        return removed
 
     def empty_folder(self, path: tuple[str, ...]) -> int:
-        """Delete every message of the folder for good; in an IMAP account the server folder as a whole first."""
+        """Delete every message of the folder for good; in an IMAP account the server folder as a whole first. Told as one
+        fact (folder emptied), not one per message."""
+        with self.engine.quietly(summary=False):
+            removed = self._empty_folder(path)
+        self._tell(Change("folder_emptied", self._place, "/".join(path), count=removed))
+        return removed
+
+    def _empty_folder(self, path: tuple[str, ...]) -> int:
         if self._on_server(path):
             with server_session(self.engine, self.settings) as server:
                 commit = server.empty_folder(path)
@@ -357,7 +435,14 @@ class Mailbox:
         return removed
 
     def mark_folder_read(self, path: tuple[str, ...]) -> int:
-        """Mark every message of the folder as read; in an IMAP account the server folder as a whole first."""
+        """Mark every message of the folder as read; in an IMAP account the server folder as a whole first. Told as one
+        fact (folder read), not one per message."""
+        with self.engine.quietly(summary=False):
+            marked = self._mark_folder_read(path)
+        self._tell(Change("folder_read", self._place, "/".join(path), count=marked))
+        return marked
+
+    def _mark_folder_read(self, path: tuple[str, ...]) -> int:
         unread = [message for message in self.store.list_messages(path) if MessageFlag.SEEN not in message.flags]
         if self._on_server(path):
             with server_session(self.engine, self.settings) as server:

@@ -13,13 +13,14 @@ from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, F
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_addressbook import AddressesParameters, contact_addresses
 from chrono_mail.engine.commands_emclient import fingerprint_of_raw, known_messages
+from chrono_mail.engine.changes import MessageRow, flag_names
 from chrono_mail.engine.commands_rules import apply_to_new
 from chrono_mail.engine.recurring import RECURRING_FILE, Repeat, load_repeats, save_repeats
 from chrono_mail.engine.schedule import SNOOZE_GROUPS, SNOOZED_FILE, SNOOZED_FOLDER, describe_when, load_snoozed, parse_when, snooze_group
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import OUTBOX, Engine
+from chrono_mail.engine.session import OUTBOX, Engine, quiet_command
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.index.model import DateBounds, GroupCount
 from chrono_mail.mime import Address, Attachment, OutgoingMessage, ParsedMessage, build_message, parse_message
@@ -28,9 +29,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.153"
+__version__ = "commands_mail.py 0.5.155"
 
 # --- Version history ----------------------------------------------------
+# v0.5.155: MessageRow lives in changes.py (the engine reports changes with it); a mail check reports its mailbox as changed, quietly (D-146)
 # v0.5.153: message.position: where a message stands in a folder in a sort order (the list finds it again after a sort)
 # v0.5.145: mail.fetch reports its steps per account (engine.activity): connecting, listing, downloading, rules, disconnected
 # v0.5.144: The rules run before the imported-account flag is switched off; a failure to save it is reported, the check still counts
@@ -61,37 +63,6 @@ MAXIMUM_ATTACHMENT_BYTES: int = 100 * 1024 * 1024
 MAXIMUM_MESSAGE_BYTES: int = 256 * 1024 * 1024
 MAXIMUM_INLINE_IMAGE_BYTES: int = 5 * 1024 * 1024
 MAXIMUM_INLINE_IMAGES_TOTAL_BYTES: int = 20 * 1024 * 1024
-_FLAG_NAMES: dict[MessageFlag, str] = {
-    MessageFlag.SEEN: "seen",
-    MessageFlag.REPLIED: "replied",
-    MessageFlag.FLAGGED: "flagged",
-    MessageFlag.TRASHED: "trashed",
-    MessageFlag.DRAFT: "draft",
-}
-
-
-def _flag_names(flags: frozenset[MessageFlag]) -> tuple[str, ...]:
-    return tuple(sorted(_FLAG_NAMES[flag] for flag in flags))
-
-
-@dataclass(frozen=True, slots=True)
-class MessageRow:
-    message_id: str
-    folder: str
-    subject: str
-    sender: str
-    date: datetime | None
-    size: int
-    flags: tuple[str, ...]
-    attachments: bool
-    preview: str
-    recipients: str
-    thread_size: int = 1  # messages in the conversation, in all folders
-    account: str = ""  # only filled in the combined views (message.combined): the account the row belongs to
-    snoozed_until: datetime | None = None  # in the Snoozed folder: when the message comes back
-    tags: tuple[str, ...] = ()
-
-
 def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage], snoozed: dict[str, int] | None = None) -> tuple[MessageRow, ...]:
     """Message rows with the size of their conversations and, for the Snoozed folder, the time they come back."""
     found = list(messages)
@@ -99,7 +70,7 @@ def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage], snoozed: dict[st
     times = snoozed or {}
     return tuple(
         MessageRow(
-            message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, _flag_names(message.flags),
+            message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, flag_names(message.flags),
             message.has_attachments, message.preview, message.recipients, sizes.get(message.thread_key, 1),
             snoozed_until=datetime.fromtimestamp(times[message.store_id]).astimezone() if message.folder == SNOOZED and message.store_id in times else None,
             tags=message.tags,
@@ -213,6 +184,8 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
                 step=lambda text: engine.activity(account_id, "receive", text, None, None),
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
+        if report.downloaded:
+            engine.mailbox_changed(mailbox.store.account_id)  # the sync stored mail past the mailbox's operations: views of it fetch again
         if report.new_references:
             engine.activity(account_id, "receive", "Applying rules", None, None)
         ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
@@ -255,6 +228,8 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
                 progress=downloading, step=lambda text: engine.activity(account_id, "receive", text, None, None),
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
+    if any(item.downloaded or item.flags_updated or item.removed or item.recovered for item in report.folders):
+        engine.mailbox_changed(mailbox.store.account_id)  # what the server changed came in past the mailbox's operations
     inbox = mailbox.role_folder(FolderRole.INBOX)
     if report.new_references:
         engine.activity(account_id, "receive", "Applying rules", None, None)
@@ -618,7 +593,7 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
         return ShowResult(
             reference.store_id,
             "/".join(folder),
-            _flag_names(mailbox.current_flags(reference)),
+            flag_names(mailbox.current_flags(reference)),
             parsed.subject,
             _shown(parsed.from_addresses),
             _shown(parsed.to_addresses),
@@ -760,7 +735,7 @@ def message_flag(engine: Engine, parameters: FlagParameters) -> FlagResult:
                 flags.add(flag)
             elif wanted is False:
                 flags.discard(flag)
-        return FlagResult(reference.store_id, _flag_names(mailbox.set_flags(reference, frozenset(flags))))
+        return FlagResult(reference.store_id, flag_names(mailbox.set_flags(reference, frozenset(flags))))
 
 
 @dataclass(frozen=True, slots=True)
@@ -901,8 +876,8 @@ def message_compose(engine: Engine, parameters: ComposeParameters) -> ComposeRes
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register("mail.fetch", "Download new messages from the POP3 server", AccountParameters, mail_fetch)
-    registry.register("mail.settle", "Answer for an IMAP folder that a safety rule held back (may delete on the server or here)", SettleParameters, mail_settle, destructive=True)
+    registry.register("mail.fetch", "Download new messages from the POP3 server", AccountParameters, quiet_command(mail_fetch))
+    registry.register("mail.settle", "Answer for an IMAP folder that a safety rule held back (may delete on the server or here)", SettleParameters, quiet_command(mail_settle), destructive=True)
     registry.register("mail.send", "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send)
     registry.register("message.list", "List the messages of a folder", ListParameters, message_list)
     registry.register("message.position", "Where a message stands in a folder in a sort order (0 is the first)", PositionParameters, message_position)

@@ -2,7 +2,7 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from chrono_mail.config import AccountSettings
-from chrono_mail.core import AccountKind, ChronoMailError, FolderRole, MessageRef, StorageError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, FolderRole, MessageRef, StorageError
 from chrono_mail.engine.commands_accounts import AccountSummary, NoParameters, _summary
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
@@ -12,9 +12,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import Pop3State, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_local.py 0.5.144"
+__version__ = "commands_local.py 0.5.155"
 
 # --- Version history ----------------------------------------------------
+# v0.5.155: moving an account's mail to or from Local Folders reports both mailboxes as changed (D-146)
 # v0.5.144: The storage choice is saved on a fresh read of the settings, one command at a time (change_config)
 # v0.2.101: Folders are made safely (ensure_folder)
 # v0.0.45: Initial Local Folders commands and the move of an account between its own folders and Local Folders
@@ -115,7 +116,10 @@ def account_set_storage(engine: Engine, parameters: StorageParameters) -> Storag
     settings = engine.resolve_account(parameters.account)
     if settings.account.kind is not AccountKind.POP3:
         raise UsageError("Only a POP3 account can keep its mail in Local Folders")
-    return _to_local(engine, settings) if parameters.storage == "local" else _to_own(engine, settings)
+    result = _to_local(engine, settings) if parameters.storage == "local" else _to_own(engine, settings)
+    engine.mailbox_changed(settings.account.account_id)  # the mail was copied and removed past the mailbox's operations
+    engine.mailbox_changed(LOCAL_ACCOUNT_ID)
+    return result
 
 
 def _to_local(engine: Engine, settings: AccountSettings) -> StorageResult:

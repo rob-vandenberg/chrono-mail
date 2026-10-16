@@ -1,7 +1,8 @@
 import ssl
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from chrono_mail.config import (
 )
 from chrono_mail.core import ConfigurationError, CryptoError, FolderRole, StorageError
 from chrono_mail.crypto import DataKey, KeyStore
+from chrono_mail.engine.changes import Change
 from chrono_mail.index import Index
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.tls import context_for
@@ -23,9 +25,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.5.154"
+__version__ = "session.py 0.5.155"
 
 # --- Version history ----------------------------------------------------
+# v0.5.155: changed and report: the facts of every change of mail (D-146); quietly: a big job reports one "mailbox changed" per mailbox at its end
 # v0.5.154: open_index opens the index only inside its lock: on Windows a command that opened it while another replaced its files made one of them fail
 # v0.5.145: activity: the steps of a mail check or a send, per account (for the Operations window)
 # v0.5.144: The settings file is read and written by one command at a time; change_config applies a change to a fresh read
@@ -61,8 +64,31 @@ def _no_progress(what: str, done: int, total: int | None) -> None:
     """Progress reports are optional."""
 
 
+def _no_change(change: Change) -> None:
+    """Reports of changes are optional (the command line tool has no views to update)."""
+
+
+@dataclass
+class _Quiet:
+    """Per thread: how deep inside quietly() it is, the mailboxes a big job touched, and whether it ends with a summary."""
+
+    depth: int = 0
+    touched: list[str] = field(default_factory=list)
+    summary: bool = True
+
+
 def _no_notice(text: str) -> None:
     """Notices (an action that waits for the server) are optional."""
+
+
+def quiet_command[P, R](handler: Callable[["Engine", P], R]) -> Callable[["Engine", P], R]:
+    """A command that is a big job: its changes are told as one "mailbox changed" per mailbox at its end (Engine.quietly)."""
+
+    def run(engine: "Engine", parameters: P) -> R:
+        with engine.quietly():
+            return handler(engine, parameters)
+
+    return run
 
 
 @dataclass
@@ -114,11 +140,52 @@ class Engine:
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)  # set when the program is ending: long waits stop
     notice: Callable[[str], None] = field(default=_no_notice)  # tells the person something they should know (an action waits for the server)
     activity: Activity = field(default=_no_activity)  # the steps of a mail check or a send of one account (connecting, listing, downloading …)
+    changed: Callable[[Change], None] = field(default=_no_change)  # every fact of a change of mail, as it happens (D-146)
+    _quiet: threading.local = field(default_factory=threading.local, init=False, repr=False)
     _imap_links: dict[str, ImapLink] = field(default_factory=dict, init=False, repr=False)
     _imap_links_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)
     _cache_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _config_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # held while config.json is read or written
+
+    def report(self, change: Change) -> None:
+        """A change of mail happened: tell it, unless a big job of this thread runs quietly (then its mailbox is noted)."""
+        quiet = self._quiet_state()
+        if quiet.depth == 0:
+            self.changed(change)
+        elif change.mailbox not in quiet.touched:
+            quiet.touched.append(change.mailbox)
+
+    def mailbox_changed(self, mailbox: str) -> None:
+        """A big job changed this mailbox without going through the mailbox's operations (a sync, a rebuilt index)."""
+        self.report(Change("mailbox_changed", mailbox))
+
+    @contextmanager
+    def quietly(self, summary: bool = True) -> Generator[None]:
+        """A big job: its single changes are not told one by one; at its end one "mailbox changed" per mailbox it touched
+        (summary False: nothing, because the caller reports one fact of its own, as Empty folder does)."""
+        quiet = self._quiet_state()
+        if quiet.depth == 0:  # inside a big job, a part of it (Empty folder during an import) adds to the job's summary
+            quiet.touched.clear()
+            quiet.summary = summary
+        quiet.depth += 1
+        try:
+            yield
+        finally:
+            quiet.depth -= 1
+            if quiet.depth == 0:
+                touched = list(quiet.touched)
+                quiet.touched.clear()
+                if quiet.summary:
+                    for mailbox in touched:
+                        self.changed(Change("mailbox_changed", mailbox))
+
+    def _quiet_state(self) -> _Quiet:
+        state = getattr(self._quiet, "state", None)
+        if not isinstance(state, _Quiet):
+            state = _Quiet()
+            self._quiet.state = state
+        return state
 
     def imap_link(self, account_id: str) -> ImapLink:
         """The open connection of an IMAP account (made when it is first needed)."""

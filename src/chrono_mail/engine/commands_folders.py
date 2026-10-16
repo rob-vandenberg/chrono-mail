@@ -8,9 +8,10 @@ from chrono_mail.engine.session import Engine, index_lock
 from chrono_mail.sync import rebuild_index, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 0.5.123"
+__version__ = "commands_folders.py 0.5.155"
 
 # --- Version history ----------------------------------------------------
+# v0.5.155: a rebuilt or repaired index reports its mailbox as changed (D-146)
 # v0.5.123: Create, rename and delete go through the mailbox: in an IMAP account on the server first (D-118)
 # v0.4.118: The lock of an index file is shared with the rebuild when an account is opened (session.index_lock)
 # v0.3.111: Two rebuilds of the same index wait for each other
@@ -119,6 +120,7 @@ def index_rebuild(engine: Engine, parameters: AccountParameters) -> IndexResult:
     with index_lock(path):  # accounts in Local Folders share one index: a second rebuild would build the same file at the same time
         index, report = rebuild_index(store, path, lambda done: engine.progress("Rebuilding the index", done, None))
         index.close()
+    engine.mailbox_changed(settings.account.account_id)
     return IndexResult(report.indexed, report.unreadable, report.seconds)
 
 
@@ -132,6 +134,8 @@ class ReconcileResult:
 def index_reconcile(engine: Engine, parameters: AccountParameters) -> ReconcileResult:
     with open_mailbox(engine, parameters.account) as mailbox:
         report = reconcile_index(mailbox.store, mailbox.index)
+        if report.added or report.removed or report.corrected:
+            engine.mailbox_changed(mailbox.store.account_id)
         return ReconcileResult(report.added, report.removed, report.corrected)
 
 
