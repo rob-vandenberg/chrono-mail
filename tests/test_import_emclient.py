@@ -17,9 +17,10 @@ from tests.test_emclient_source import FakeAccount, FakeContact, FakeItem, categ
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 0.5.141"
+__version__ = "test_import_emclient.py 0.5.143"
 
 # --- Version history ----------------------------------------------------
+# v0.5.143: The progress of the mail counts over the whole import, not per batch
 # v0.5.141: import.emclient-passwords
 # v0.5.137: tags: categories, tagged mail, mail imported before
 # v0.5.133: an account the password store refused is reported and made by the next run; speed: header-only fingerprint, one read of the export per import, verified duplicates, one sync per batch
@@ -351,3 +352,13 @@ def test_the_passwords_of_accounts_that_are_here_are_stored_again_from_the_expor
     assert engine.passwords.get(here["a2@example.com"], ServerRole.INCOMING) == "wrong one"  # left as it was
     assert engine.passwords.get(str(other.account_id), ServerRole.INCOMING) == "keep me"
 
+
+def test_the_progress_counts_over_the_whole_import_not_per_batch(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+    values = exports.values(accounts=False, rules=False, contacts=False, batch=3)
+    seen: list[tuple[int, object]] = []
+    engine.progress = lambda what, done, total: seen.append((done, total)) if what == "Importing mail" else None
+    for _ in range(3):
+        call(engine, "import.emclient", **values)
+    assert seen == [(number, 7) for number in range(1, 8)]

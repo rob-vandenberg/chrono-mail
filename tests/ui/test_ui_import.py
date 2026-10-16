@@ -1,7 +1,9 @@
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Mapping
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QMenu
 from pytestqt.qtbot import QtBot
 
@@ -9,16 +11,17 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID
 from chrono_mail.engine.commands_emclient import ImportResult, ScanResult
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.ui import importdialog
-from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.backend import Backend, Failure, Success
 from chrono_mail.ui.importdialog import MENU_TEXT, ImportDialog, import_summary, merge, scan_summary
 from tests.enginefactory import make_engine
 from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 0.5.137"
+__version__ = "test_ui_import.py 0.5.143"
 
 # --- Version history ----------------------------------------------------
+# v0.5.143: Import waits for the reading of the exports; a late or older reading answer changes nothing; the bar takes the count of the whole import; separators in the status line
 # v0.5.137: the tags in the summaries
 # v0.5.133: After an import the list on screen shows the imported mail
 # v0.5.132: Initial tests: the Import window and its place in the menu (made-up exports)
@@ -80,6 +83,8 @@ def test_stop_ends_after_the_batch_and_import_continues(qtbot: QtBot, setup: Set
     monkeypatch.setattr(importdialog, "BATCH", 3)
     dialog = setup.dialog()
     qtbot.addWidget(dialog)
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
     dialog.import_button.click()
     dialog.stop_button.click()
     wait(qtbot, lambda: dialog.summary.text().startswith("The import was stopped"))
@@ -138,3 +143,80 @@ def test_after_an_import_the_list_on_screen_shows_the_imported_mail(world: World
     window._after_import()  # what the Import window calls when it is done
     wait(qtbot, lambda: window.list_model.rowCount() > 0)
 
+
+def hold_scans(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> list[Callable[[object], None]]:
+    """The answers of the readings of the exports are kept back; the test delivers them when it wants."""
+    held: list[Callable[[object], None]] = []
+    real_call = setup.backend.call
+
+    def call(
+        command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False,
+        in_order: bool = False, checking: bool = False,
+    ) -> int:
+        if command == "import.emclient-scan":
+            held.append(on_success)
+            return 0
+        return real_call(command, values, on_success, on_error, owner, waiting, in_order, checking)
+
+    monkeypatch.setattr(setup.backend, "call", call)
+    return held
+
+
+def scanned(setup: Setup, dialog: ImportDialog) -> ScanResult:
+    result = setup.backend.run_now("import.emclient-scan", dialog._sources())
+    assert isinstance(result, ScanResult)
+    return result
+
+
+def test_import_waits_until_the_exports_are_read(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    held = hold_scans(setup, monkeypatch)
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    assert not dialog.import_button.isEnabled()
+    dialog.scan()
+    assert not dialog.import_button.isEnabled() and dialog.summary.text() == "Reading the exports…"
+    held[0](scanned(setup, dialog))
+    assert dialog.import_button.isEnabled() and dialog.progress.maximum() == 7
+
+
+def test_a_reading_answer_during_the_import_changes_nothing(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(importdialog, "BATCH", 3)
+    held = hold_scans(setup, monkeypatch)
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    dialog.scan()
+    result = scanned(setup, dialog)
+    held[0](result)
+    dialog.import_button.click()
+    held[0](replace(result, messages=999, messages_done=500))  # a reading that answers while the import runs
+    assert dialog.summary.text() == "Importing…" and dialog.progress.maximum() == 7
+    wait(qtbot, lambda: dialog.summary.text().startswith("The import is done."))
+    assert setup.messages() == 7 and dialog.progress.value() == 7
+
+
+def test_an_older_reading_answer_does_not_replace_a_newer_one(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    held = hold_scans(setup, monkeypatch)
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    dialog.scan()
+    dialog.scan()
+    result = scanned(setup, dialog)
+    held[1](result)
+    held[0](replace(result, messages=999))
+    assert dialog.summary.text() == scan_summary(result) and dialog.progress.maximum() == 7
+
+
+def test_the_bar_takes_the_count_of_the_whole_import(qtbot: QtBot, setup: Setup) -> None:
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    dialog._running, dialog._done_before = True, 3  # 3 done by an earlier batch; the engine counts them in already
+    dialog.progress.setRange(0, 7)
+    setup.backend.progress.emit("Importing mail", 5, 7)
+    assert dialog.progress.value() == 5
+
+
+def test_the_status_line_shows_progress_with_thousands_separators(world: World) -> None:
+    world.window._progress("Importing mail", 45225, 140269)
+    assert world.window.status_label.text() == "Importing mail… 45,225 of 140,269"
+    world.window._progress("Rebuilding the index", 12000, None)
+    assert world.window.status_label.text() == "Rebuilding the index… 12,000"

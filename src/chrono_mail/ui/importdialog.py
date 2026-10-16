@@ -25,9 +25,10 @@ from chrono_mail.engine.commands_emclient import ImportResult, ScanResult
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 0.5.137"
+__version__ = "importdialog.py 0.5.143"
 
 # --- Version history ----------------------------------------------------
+# v0.5.143: Import waits for the reading of the exports; a late or older reading answer is ignored; the progress bar follows the count, which the engine gives over the whole import
 # v0.5.137: Tags: a type of its own; the summaries count the categories and the tagged messages
 # v0.5.132: Initial version: Menu > File > Import…, the program (eM Client) chosen in the window; the summary scrolls
 
@@ -124,6 +125,7 @@ class ImportDialog(QDialog):
         self._stop = False
         self._total = 0
         self._done_before = 0
+        self._scan_number = 0  # the latest reading of the exports; the answer of an older one is ignored
         self._result = ImportResult()
         self.setWindowTitle("Import")
         self.setMinimumWidth(820)
@@ -200,6 +202,7 @@ class ImportDialog(QDialog):
         self.stop_button = QPushButton("Stop", self)
         self.close_button = QPushButton("Close", self)
         self.stop_button.setEnabled(False)
+        self.import_button.setEnabled(False)  # until the reading of the exports has answered: the import needs its count
         self.import_button.clicked.connect(self.start)
         self.stop_button.clicked.connect(self.request_stop)
         self.close_button.clicked.connect(self.reject)
@@ -238,17 +241,29 @@ class ImportDialog(QDialog):
     def scan(self) -> None:
         if self._running:
             return
+        self._scan_number += 1
+        number = self._scan_number
+        self.import_button.setEnabled(False)
         sources = self._sources()
         if not any(sources.values()):
             return
         self.summary.setText("Reading the exports…")
-        self._backend.call("import.emclient-scan", sources, self._scanned, self._failed, owner=self)
+        self._backend.call("import.emclient-scan", sources, lambda result: self._scanned(number, result), lambda error: self._scan_failed(number, error), owner=self)
 
-    def _scanned(self, result: object) -> None:
+    def _scanned(self, number: int, result: object) -> None:
+        if self._running or number != self._scan_number:
+            return  # an import runs with the count it started with, or a newer reading was started
         if isinstance(result, ScanResult):
             self._total = result.messages
             self._done_before = result.messages_done
+            self.progress.setRange(0, max(1, self._total))
             self.summary.setText(scan_summary(result))
+            self.import_button.setEnabled(True)
+
+    def _scan_failed(self, number: int, error: ChronoMailError) -> None:
+        if self._running or number != self._scan_number:
+            return
+        self.summary.setText(str(error))  # Import stays off: there is nothing it could import
 
     def _failed(self, error: ChronoMailError) -> None:
         self._finish()
@@ -257,6 +272,8 @@ class ImportDialog(QDialog):
     # --- the import ---------------------------------------------------------------------------
 
     def start(self) -> None:
+        if self._running or not self.import_button.isEnabled():
+            return  # only after the reading of the exports has answered
         self._running = True
         self._stop = False
         self._result = ImportResult()
@@ -303,7 +320,7 @@ class ImportDialog(QDialog):
 
     def _progress(self, what: str, done: int, total: object) -> None:
         if self._running and what == "Importing mail":
-            self.progress.setValue(min(self._done_before + done, self.progress.maximum()))
+            self.progress.setValue(min(done, self.progress.maximum()))  # the engine counts over the whole import
 
     @override
     def reject(self) -> None:

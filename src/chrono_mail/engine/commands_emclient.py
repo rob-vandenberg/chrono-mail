@@ -39,9 +39,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 0.5.141"
+__version__ = "commands_emclient.py 0.5.143"
 
 # --- Version history ----------------------------------------------------
+# v0.5.143: The progress of the mail counts over the whole import (earlier batches and imports included), not per batch
 # v0.5.141: import.emclient-passwords: the passwords of accounts that are here already, from the settings export
 # v0.5.137: Tags: the categories become tags (colour, what they are for), imported mail gets its categories as tags, and mail imported before gets them too (once)
 # v0.5.133: An account the password store refused is reported and made by the next run, the rest goes on; twice as fast: the duplicate check reads the header only, a batch is made safe on disk at once, the export's lists stay in memory between batches; a duplicate counts only when its copy here can be read
@@ -532,6 +533,7 @@ def _import_mail(engine: Engine, mail_path: Path, run: _Run, journal: _Journal, 
     failed: list[str] = []
     outcomes: list[tuple[str, str]] = []
     work = files if batch <= 0 else files[:batch]
+    done_before = len(run.files) - len(files)  # by earlier batches and earlier imports: the count runs on over the whole import
     try:
         with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox, mailbox.store.written_together():
             if run.known is None:
@@ -539,7 +541,7 @@ def _import_mail(engine: Engine, mail_path: Path, run: _Run, journal: _Journal, 
             known = run.known
             folders = _Folders(mailbox)
             for number, item in enumerate(work, 1):
-                engine.progress("Importing mail", number, len(work))
+                engine.progress("Importing mail", done_before + number, len(run.files))
                 try:
                     path = mail_path / item.relative
                     if path.stat().st_size > MAXIMUM_MESSAGE_BYTES:

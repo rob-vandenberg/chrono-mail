@@ -1330,3 +1330,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 ## 2026-10-16 The release page text names only the Linux installers (version 0.5.142)
 
 - `packaging/upload_release.sh` wrote "and setup.exe (Windows)" on every new release page; the owner removed it by hand from all releases. The text now names only the .deb and .rpm. No tests (a shell script's text); `bash -n` checks the script. Pushed with 0.5.141 earlier today: full release with the .deb and .rpm.
+
+## 2026-10-16 The Import window waits for the reading of the exports (version 0.5.143)
+
+- Reported from DEVELOPMENT: Import clicked while the exports were still being read showed 100% at once (the bar's size was set once, from a count of 0) and the late reading answer replaced "Importing…" and changed the counts; the import itself ran fine. `ui/importdialog.py`: Import off until the reading answered; late and older answers ignored; the bar follows the count (D-134).
+- Tests: `tests/ui/test_ui_import.py`, 3 new (each failed on the old code, checked); the stop test now waits for the reading before Import (a consequence of the change). Run: `tests/ui/test_ui_import.py` 10 passed. Pyrefly 0, layer check kept; not the full suite.
+- Also in 0.5.143 (the owner's screenshot): the status line counted each batch of 1,000 from 1 again ("Importing mail… 225 of 1000"). `engine/commands_emclient.py` now reports the progress over the whole import (earlier batches and imports counted in); `ui/importdialog.py` takes that number as it is (it added its own count before); `ui/mainwindow.py` writes progress numbers with thousands separators ("45,225 of 140,269"). Tests: 1 in `tests/test_import_emclient.py`, 2 in `tests/ui/test_ui_import.py` (each failed on the old code, checked). Run: `tests/test_import_emclient.py` and `tests/ui/test_ui_import.py` 30 passed, `tests/ui/test_ui_window.py` alone 62 passed. Pyrefly 0, layer check kept; not the full suite.

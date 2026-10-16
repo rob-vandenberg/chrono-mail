@@ -92,9 +92,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.140"
+__version__ = "mainwindow.py 0.5.143"
 
 # --- Version history ----------------------------------------------------
+# v0.5.143: Progress numbers in the status line have thousands separators
 # v0.5.140: The first column of the message list can be dragged to another place too
 # v0.5.135: Tags for mail: Menu > Tags, the Tag button and menu, Tag in the right-click menu, Filter > Tagged with, Tags in the folder list, the tags in the reading pane, tag shortcuts, the tag colour for the text
 # v0.5.133: After an import the message list on screen is loaded again too (it kept the old messages); mail checks run in their own lane
@@ -1354,7 +1355,7 @@ class MainWindow(QMainWindow):
         self.show_status(text, error=True)
 
     def _progress(self, what: str, done: int, total: object) -> None:
-        self.show_status(f"{what}… {done}" + (f" of {total}" if total else ""))
+        self.show_status(f"{what}… {done:,}" + (f" of {total:,}" if isinstance(total, int) and total else f" of {total}" if total else ""))
 
     def _counts_changed(self, total: int, unread: int) -> None:
         self.count_label.setText(f"{total:,} messages" + (f", {unread:,} unread" if unread else ""))
