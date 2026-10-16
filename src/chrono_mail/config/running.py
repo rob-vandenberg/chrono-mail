@@ -3,13 +3,16 @@ import os
 import sys
 
 # --- Version ------------------------------------------------------------
-__version__ = "running.py 0.5.144"
+__version__ = "running.py 0.5.147"
 
 # --- Version history ----------------------------------------------------
+# v0.5.147: Windows: every process above this one (parent, grandparent …) is skipped, not only the parent: a run from source is launcher, redirector, program
 # v0.5.144: Initial: whether Chrono Mail is already running for this user, by looking at the processes themselves (Linux and Windows)
 
 PROCESS_NAME: str = "chrono-mail"  # the name of the program's process on Linux (the launcher, the packaged program, and what the program sets itself)
 WINDOWS_PROCESS_NAME: str = "chrono-mail.exe"  # the installed program, and the launcher pip makes when it runs from source
+MAXIMUM_ANCESTORS: int = 64  # steps up the chain of parents; a broken chain never loops for ever
+_TH32CS_SNAPPROCESS: int = 0x2
 _PR_SET_NAME: int = 15  # prctl option of Linux: the name of the calling thread, which for the first thread is the process name
 
 
@@ -32,8 +35,9 @@ def program_is_running() -> bool:
 
 def running_programs() -> list[int]:
     """The process numbers of the other Chrono Mail programs of this user on this computer."""
-    ignored = {os.getpid(), os.getppid()}  # on Windows the launcher of a source run is the parent of the Python process
+    ignored = {os.getpid(), os.getppid()}
     if sys.platform == "win32":
+        ignored |= ancestors(os.getpid(), windows_parents())  # a run from source: launcher -> the venv's redirector -> the program
         return _running_on_windows(ignored)
     if sys.platform.startswith("linux"):
         return _running_on_linux(ignored)
@@ -96,10 +100,67 @@ def windows_processes() -> list[tuple[int, int, str, bytes]]:
         wtsapi32.WTSFreeMemory(listing)
 
 
+def ancestors(process: int, parents: dict[int, int]) -> set[int]:
+    """The processes above this one: its parent, the parent's parent and so on, as far as the list knows them (at most
+    MAXIMUM_ANCESTORS steps; a loop or a process that is not in the list ends the walk)."""
+    found: set[int] = set()
+    current = process
+    for _ in range(MAXIMUM_ANCESTORS):
+        parent = parents.get(current)
+        if parent is None or parent == 0 or parent == process or parent in found:
+            break
+        found.add(parent)
+        current = parent
+    return found
+
+
+class _ProcessEntry(ctypes.Structure):
+    """PROCESSENTRY32W of the Windows Tool Help API."""
+
+    _fields_ = [
+        ("size", ctypes.c_uint32), ("usage", ctypes.c_uint32), ("process_id", ctypes.c_uint32), ("default_heap_id", ctypes.c_size_t),
+        ("module_id", ctypes.c_uint32), ("threads", ctypes.c_uint32), ("parent_process_id", ctypes.c_uint32), ("priority", ctypes.c_long),
+        ("flags", ctypes.c_uint32), ("exe_file", ctypes.c_wchar * 260),
+    ]
+
+
+def windows_parents() -> dict[int, int]:
+    """Every process of this computer with the number of its parent, from a Tool Help snapshot. Empty on other systems or
+    when the snapshot fails."""
+    try:
+        windll = getattr(ctypes, "windll")  # noqa: B009 - exists on Windows only, so the type checker cannot know it; the calls below are typed by hand
+        kernel32 = windll.kernel32
+    except (AttributeError, OSError):
+        return {}
+    kernel32.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
+    kernel32.CreateToolhelp32Snapshot.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+    kernel32.Process32FirstW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_ProcessEntry)]
+    kernel32.Process32NextW.argtypes = [ctypes.c_void_p, ctypes.POINTER(_ProcessEntry)]
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    snapshot = kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
+    if snapshot is None or snapshot == ctypes.c_void_p(-1).value:  # INVALID_HANDLE_VALUE
+        return {}
+    try:
+        entry = _ProcessEntry()
+        entry.size = ctypes.sizeof(_ProcessEntry)
+        parents: dict[int, int] = {}
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            parents[int(entry.process_id)] = int(entry.parent_process_id)
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        return parents
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
 def _running_on_windows(ignored: set[int]) -> list[int]:
     """The processes named chrono-mail.exe of the same user (the same session when the user is not known)."""
-    processes = windows_processes()
-    own = next((item for item in processes if item[0] == os.getpid()), None)
+    return windows_matches(windows_processes(), os.getpid(), ignored)
+
+
+def windows_matches(processes: list[tuple[int, int, str, bytes]], own_number: int, ignored: set[int]) -> list[int]:
+    """From the process list of windows_processes: the other Chrono Mail programs of the user of process own_number."""
+    own = next((item for item in processes if item[0] == own_number), None)
     found: list[int] = []
     for number, session, name, sid in processes:
         if number in ignored or name.lower() != WINDOWS_PROCESS_NAME:

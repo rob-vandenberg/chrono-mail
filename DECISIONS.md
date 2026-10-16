@@ -956,3 +956,10 @@ Step 2 (0.3.108): "Message list" (`list_scale`; an older `list_font_size` in poi
 
 **Decision:** this changes D-138. With "Show window on send and receive" on, the Operations window opens for every send and receive: the check at startup, the general timer, an account's own timer, the new-mail push, the tray's check, Send All and Refresh. Only what the person starts (Refresh, its menu, Send All, the tray's check, Menu > View > Operations…, a click on the busy bar) brings it to the front with the keyboard focus; an automatic check, and an error, open it without taking the keyboard from what the person is doing (Qt's `WA_ShowWithoutActivating`). The other rules of D-138 stay.
 **Reason:** the owner's correction: a send and receive is a send and receive, whoever started it; D-138 wrongly opened the window only for Refresh (the agent's proposal), so it never appeared for the check at startup.
+
+## D-140 On Windows every process above Chrono Mail is skipped
+*2026-10-16*
+
+**Decision:** this changes D-137. On Windows the check skips its own process and every process above it (parent, grandparent and so on), found in a Tool Help snapshot (`CreateToolhelp32Snapshot`, `Process32FirstW`/`NextW`, the parent of each process); the walk stops at a process the snapshot does not know, at a loop, or after 64 steps. When the snapshot cannot be made, the own process and its parent are skipped as before. Linux is unchanged (there the launcher runs Python in the same process).
+**Reason:** reported from DEVELOPMENT (0.5.145): a run from source on Windows is a chain of three processes, pip's launcher `chrono-mail.exe`, the venv's redirector `pythonw.exe` and the base interpreter `pythonw.exe` (the program); the launcher is the grandparent, so it was counted as another copy and the program always said "Chrono Mail is already running."
+**Known limit:** Windows reuses process numbers; in a very rare case the number of an ancestor that has ended may belong to a real running copy, which is then missed.
