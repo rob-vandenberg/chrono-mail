@@ -23,9 +23,10 @@ from chrono_mail.config.rules import HEADER_NAME
 from chrono_mail.core import ChronoMailError, MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "emclient_source.py 0.5.137"
+__version__ = "emclient_source.py 0.5.141"
 
 # --- Version history ----------------------------------------------------
+# v0.5.141: The 9th character of the password key corrected (it came from a misremembered password)
 # v0.5.137: Categories (as tags, with colour and what they are for), the categories of the messages in the backup, and the category parts of rules
 # v0.5.132: Initial version: settings file, mail export and backup of eM Client; every rule as it is (also the blocked-senders rule and rules written as a script)
 
@@ -49,7 +50,7 @@ _BACKUP_FILES: tuple[str, ...] = ("Local Folders/folders.dat", "Local Folders/ma
 # The passwords in the settings file are XOR-ed with a fixed key of the program. The key is kept here as two rows that
 # only mean something together, so that it is not a readable string in the source or in the built program.
 _KEY_ROWS: tuple[tuple[int, ...], tuple[int, ...]] = (
-    (30, 118, 161, 79, 228, 36, 127, 167, 105, 82, 194, 222),
+    (30, 118, 161, 79, 228, 36, 127, 167, 27, 82, 194, 222),
     (90, 19, 199, 46, 145, 72, 11, 230, 115, 61, 168, 157),
 )
 

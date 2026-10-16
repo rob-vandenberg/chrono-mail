@@ -17,9 +17,10 @@ from tests.test_emclient_source import FakeAccount, FakeContact, FakeItem, categ
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 0.5.137"
+__version__ = "test_import_emclient.py 0.5.141"
 
 # --- Version history ----------------------------------------------------
+# v0.5.141: import.emclient-passwords
 # v0.5.137: tags: categories, tagged mail, mail imported before
 # v0.5.133: an account the password store refused is reported and made by the next run; speed: header-only fingerprint, one read of the export per import, verified duplicates, one sync per batch
 # v0.5.132: Initial tests: importing accounts, rules, contacts and mail from eM Client's exports (all made-up data)
@@ -319,4 +320,34 @@ def test_existing_tags_keep_what_they_have(tmp_path: Path) -> None:
     exports = tagged_exports(tmp_path)
     call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False, mail=False))
     assert {item.name: item.colour for item in call(engine, "tag.list")}["work"] == "#0000ff"
+
+
+def test_the_passwords_of_accounts_that_are_here_are_stored_again_from_the_export(tmp_path: Path) -> None:
+    from chrono_mail.engine.emclient_source import decode_password
+
+    engine = make_engine(tmp_path / "profile")
+    accounts = [
+        FakeAccount("a1", "a1@example.com", "a1login", password="Right_pw12!"),
+        FakeAccount("a2", "a2@example.com", "a2login", password="bad\x01"),  # comes out as no text: not decodable
+        FakeAccount("a3", "a3@example.com", "a3login"),  # not here
+    ]
+    settings = write_settings(tmp_path, accounts, [])
+    assert decode_password("") is None
+    here: dict[str, str] = {}
+    for login, email in (("a1login", "a1@example.com"), ("a2login", "a2@example.com")):
+        made: Any = call(
+            engine, "account.add", display_name="Me", email_address=email, username=login, password="wrong one", incoming_host="pop.example.com",
+            outgoing_host="smtp.example.com", storage="local",
+        )
+        here[email] = str(made.account_id)
+    other: Any = call(
+        engine, "account.add", display_name="Other", email_address="b@example.com", username="b", password="keep me", incoming_host="pop.other.example",
+        outgoing_host="smtp.other.example", storage="local",
+    )
+    result: Any = call(engine, "import.emclient-passwords", settings_file=str(settings))
+    assert (result.updated, result.not_decodable, result.not_here) == (("a1@example.com",), ("a2@example.com",), 1)
+    assert engine.passwords.get(here["a1@example.com"], ServerRole.INCOMING) == "Right_pw12!"
+    assert engine.passwords.get(here["a1@example.com"], ServerRole.OUTGOING) == "Right_pw12!"
+    assert engine.passwords.get(here["a2@example.com"], ServerRole.INCOMING) == "wrong one"  # left as it was
+    assert engine.passwords.get(str(other.account_id), ServerRole.INCOMING) == "keep me"
 

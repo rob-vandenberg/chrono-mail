@@ -12,7 +12,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
-from chrono_mail.config import Rule, load_rules, load_tags, new_rule_id, save_rules, save_tags
+from chrono_mail.config import Rule, ServerRole, load_rules, load_tags, new_rule_id, save_rules, save_tags
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.engine.commands_accounts import AccountAddParameters, Policy, account_add
 from chrono_mail.engine.commands_tags import give_colours
@@ -39,9 +39,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 0.5.137"
+__version__ = "commands_emclient.py 0.5.141"
 
 # --- Version history ----------------------------------------------------
+# v0.5.141: import.emclient-passwords: the passwords of accounts that are here already, from the settings export
 # v0.5.137: Tags: the categories become tags (colour, what they are for), imported mail gets its categories as tags, and mail imported before gets them too (once)
 # v0.5.133: An account the password store refused is reported and made by the next run, the rest goes on; twice as fast: the duplicate check reads the header only, a batch is made safe on disk at once, the export's lists stay in memory between batches; a duplicate counts only when its copy here can be read
 # v0.5.132: Initial version: import.emclient-scan and import.emclient
@@ -625,6 +626,44 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
     return replace(result, notes=tuple(notes))
 
 
+@dataclass(frozen=True, slots=True)
+class PasswordsParameters:
+    settings_file: str = field(metadata=option("The settings export (.xml, exported with passwords)"))
+
+
+@dataclass(frozen=True, slots=True)
+class PasswordsResult:
+    updated: tuple[str, ...]  # the accounts whose passwords were stored again
+    not_decodable: tuple[str, ...]  # accounts here whose password in the export cannot be read: left as they are
+    not_here: int  # accounts of the export that are not here: nothing done
+
+
+def update_passwords(engine: Engine, parameters: PasswordsParameters) -> PasswordsResult:
+    """Store again, from the settings export, the passwords of the accounts that are here already (the same login and
+    server). A repair after the key of the export was corrected; never shows a password."""
+    path = _path(parameters.settings_file, "settings export")
+    if path is None:
+        raise UsageError("Choose the settings export")
+    export = read_settings(path)
+    updated: list[str] = []
+    not_decodable: list[str] = []
+    not_here = 0
+    for source in export.accounts:
+        account_id = _same_account(engine, source)
+        if account_id is None:
+            not_here += 1
+            continue
+        name = source.email_address or source.name
+        if source.incoming.password is None:
+            not_decodable.append(name)
+            continue
+        engine.passwords.set(account_id, ServerRole.INCOMING, source.incoming.password)
+        engine.passwords.set(account_id, ServerRole.OUTGOING, source.outgoing.password or source.incoming.password)
+        updated.append(name)
+    return PasswordsResult(tuple(updated), tuple(not_decodable), not_here)
+
+
 def register(registry: CommandRegistry) -> None:
     registry.register("import.emclient-scan", "What an import from eM Client's exports would bring in (changes nothing)", ScanParameters, scan)
+    registry.register("import.emclient-passwords", "Store again the passwords of accounts that are here already, from eM Client's settings export", PasswordsParameters, update_passwords)
     registry.register("import.emclient", "Import accounts, passwords, rules, contacts and mail from eM Client's exports", ImportParameters, run_import)

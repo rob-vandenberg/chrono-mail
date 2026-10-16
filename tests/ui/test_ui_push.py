@@ -14,10 +14,17 @@ from tests.mailfactory import raw_message
 from tests.ui.world import REGISTRY, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_push.py 0.0.32"
+__version__ = "test_ui_push.py 0.5.141"
 
 # --- Version history ----------------------------------------------------
+# v0.5.141: count messages, not rows (a group heading is a row too since 0.2.94)
 # v0.0.32: Initial tests of push (IDLE) in the window
+
+
+def messages(window: MainWindow) -> int:
+    """The messages the list shows (group headings are rows too, but no messages)."""
+    model = window.list_model
+    return sum(1 for row in range(model.rowCount()) if not model.is_header(row))
 
 
 def mail(number: int) -> bytes:
@@ -60,19 +67,19 @@ def imap(tmp_path: Path, qtbot: QtBot) -> Generator[Imap]:
 
 def test_new_mail_on_the_server_shows_up_without_asking(imap: Imap, qtbot: QtBot) -> None:
     imap.window.start()
-    wait(qtbot, lambda: imap.window.list_model.rowCount() == 1 and imap.account in imap.window._watching)  # noqa: SLF001
+    wait(qtbot, lambda: messages(imap.window) == 1 and imap.account in imap.window._watching)  # noqa: SLF001
     imap.server.add("INBOX", mail(2))
     imap.server.push()
-    wait(qtbot, lambda: imap.window.list_model.rowCount() == 2, timeout=15000)
+    wait(qtbot, lambda: messages(imap.window) == 2, timeout=15000)
     assert imap.account in imap.window._watching or imap.window._watching == set()  # noqa: SLF001 - it goes on waiting afterwards
     imap.server.add("INBOX", mail(3))
     imap.server.push()
-    wait(qtbot, lambda: imap.window.list_model.rowCount() == 3, timeout=15000)
+    wait(qtbot, lambda: messages(imap.window) == 3, timeout=15000)
 
 
 def test_waiting_for_mail_is_not_busy_and_ends_when_the_window_closes(imap: Imap, qtbot: QtBot) -> None:
     imap.window.start()
-    wait(qtbot, lambda: imap.account in imap.window._watching and imap.window.list_model.rowCount() == 1 and imap.window.backend._pending == {})  # noqa: SLF001
+    wait(qtbot, lambda: imap.account in imap.window._watching and messages(imap.window) == 1 and imap.window.backend._pending == {})  # noqa: SLF001
     qtbot.wait(300)
     assert imap.window.backend._pending == {} and imap.account in imap.window._watching  # noqa: SLF001 - a wait does not count as work
     imap.window.close()
@@ -90,7 +97,7 @@ def test_a_server_without_idle_is_left_to_the_timer(tmp_path: Path, qtbot: QtBot
 def test_no_watching_when_automatic_checking_is_off(tmp_path: Path, qtbot: QtBot) -> None:
     for world in build(tmp_path, qtbot, auto=False):
         world.window.start()
-        wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
+        wait(qtbot, lambda: messages(world.window) == 1)
         qtbot.wait(300)
         assert world.window._watching == set()  # noqa: SLF001
         world.window.act_auto.setChecked(True)
