@@ -92,9 +92,11 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.143"
+__version__ = "mainwindow.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: bring_forward: a second start of the program shows this window (also from the tray)
+# v0.5.144: The main window and its menus at the size of the Main window slider, the message windows and composers at that of Other windows and dialogs (both tried out from Settings)
 # v0.5.143: Progress numbers in the status line have thousands separators
 # v0.5.140: The first column of the message list can be dragged to another place too
 # v0.5.135: Tags for mail: Menu > Tags, the Tag button and menu, Tag in the right-click menu, Filter > Tagged with, Tags in the folder list, the tags in the reading pane, tag shortcuts, the tag colour for the text
@@ -269,6 +271,10 @@ class MainWindow(QMainWindow):
         self._checking: bool = False
         self._dav_syncing: bool = False
         self._mail_action_states: dict[str, bool] = {}
+        self._tried_interface: float | None = None  # sizes being tried out in Settings (not saved yet)
+        self._tried_windows: float | None = None
+        self.setProperty(scale.MAIN_WINDOW_PROPERTY, True)  # this window and its menus follow the Main window slider
+        self._apply_main_font()
         self.setStyleSheet(theme.stylesheet())  # only this window: a stylesheet on the application would hide the style from appearance.py
         self._build_widgets()
         self._build_actions()
@@ -958,6 +964,12 @@ class MainWindow(QMainWindow):
             self.raise_()
             self.activateWindow()
 
+    def bring_forward(self) -> None:
+        """A second start of the program asked for the window: show it (also when it was hidden in the tray), raise it and give it the focus."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
     def _settings_from_tray(self) -> None:
         if not self.isVisible():
             self.toggle_visibility()
@@ -1190,14 +1202,18 @@ class MainWindow(QMainWindow):
         dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False, then=self._sync_calendars))
         dialog.restore_key_requested.connect(self.restore_key)
         dialog.interface_scale_tried.connect(self.try_interface_scale)
+        dialog.windows_scale_tried.connect(self.try_windows_scale)
         dialog.reading_scale_tried.connect(self.try_reading_scale)
         dialog.list_scale_tried.connect(self.try_list_scale)
         accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted
         if not accepted:  # Cancel: the sizes they had
             if dialog.interface_slider.value() != scale.slider_position(dialog.interface_scale_saved):
                 self.try_interface_scale(dialog.interface_scale_saved)
+            if dialog.windows_slider.value() != scale.slider_position(dialog.windows_scale_saved):
+                self.try_windows_scale(dialog.windows_scale_saved)
             self.try_reading_scale(dialog.reading_scale_saved)
             self.try_list_scale(dialog.list_scale_saved)
+        self._tried_interface = self._tried_windows = None  # from now on the saved sizes
         if dialog.rules_panel.ran:  # rules and scheduled messages act at once, also when the settings are cancelled
             self._after_change("Rules applied")
         elif dialog.scheduled_panel.changed:
@@ -1213,6 +1229,7 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if isinstance(app, QApplication):
             appearance.apply(app, settings)  # the colours and the style take effect at once
+            self._apply_main_font()
             self.setStyleSheet(theme.stylesheet())  # the colours in it come from the palette: ask for them again
             self._restyle_status()  # the red of an error follows the colours
             self._apply_scaled_parts()
@@ -1235,14 +1252,35 @@ class MainWindow(QMainWindow):
             self._populate_tree()  # the sections of the folder list follow the settings
 
     def try_interface_scale(self, factor: float) -> None:
-        """Show the interface at this size factor now, without saving it (the slider in Settings moves, or Cancel)."""
+        """Show the main window at this size factor now, without saving it (the slider in Settings moves, or Cancel)."""
+        self._tried_interface = factor
+        self._apply_tried_sizes()
+
+    def try_windows_scale(self, factor: float) -> None:
+        """Show the other windows and dialogs at this size factor now, without saving it."""
+        self._tried_windows = factor
+        self._apply_tried_sizes()
+
+    def _apply_tried_sizes(self) -> None:
         app = QApplication.instance()
         if not isinstance(app, QApplication):
             return
-        appearance.apply(app, self.settings, factor)
+        appearance.apply(app, self.settings, self._tried_interface, self._tried_windows)  # a size not being tried out is the saved one
+        self._apply_main_font()
         self.setStyleSheet(theme.stylesheet())
         self._apply_scaled_parts()
         self._apply_list_look(scale.message_list())  # the list keeps the size it shows (also one being tried out, not saved yet)
+
+    def _apply_main_font(self) -> None:
+        """The text of this window and of the menus and popups opened from it, at the size of the Main window slider."""
+        app = QApplication.instance()
+        if not isinstance(app, QApplication):
+            return
+        font = appearance.main_font(app)
+        self.setFont(font)
+        for child in self.findChildren(QWidget):
+            if child.isWindow() and child.windowType() == Qt.WindowType.Popup:
+                child.setFont(font)  # menus made already; new ones get it when they are first shown (appearance.MainWindowPopups)
 
     def _writing_points(self, factor: float | None = None) -> float:
         """The text size of the composer: the system's size times the size of the text of messages (reading and writing are one size)."""
@@ -1262,14 +1300,15 @@ class MainWindow(QMainWindow):
             composer.set_text_size(self._writing_points(factor))
 
     def _apply_scaled_parts(self) -> None:
-        """The sizes the style list does not hold, at the size factor of the interface."""
+        """The sizes the style list does not hold: this window's at its own size factor, the message windows' and the
+        composers' at that of the other windows."""
         self.section_bar.apply_scale()
         self.search_pill.apply_scale()
         self.tree.setMinimumWidth(px(180))
         for reader in (self.reader, *(window.reader for window in self._message_windows)):
             reader.apply_scale()
-        for window in self._message_windows:
-            window.setStyleSheet(theme.stylesheet())
+        for window in (*self._message_windows, *self._composers):
+            window.setStyleSheet(theme.stylesheet(scale.windows()))
 
     def _apply_list_look(self, factor: float | None = None) -> None:
         """The message list at its own size factor (a factor given here is tried out, not saved): its text is the
@@ -1291,7 +1330,7 @@ class MainWindow(QMainWindow):
         for reader in (self.reader, *(window.reader for window in self._message_windows)):
             self._set_reader_preferences(reader)
         for window in self._message_windows:
-            window.setStyleSheet(theme.stylesheet())
+            window.setStyleSheet(theme.stylesheet(scale.windows()))
 
     def _set_reader_preferences(self, reader: ReaderWidget) -> None:
         reader.always_remote = prefs.get_bool(self.settings, "remote_always")

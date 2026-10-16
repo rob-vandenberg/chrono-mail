@@ -15,9 +15,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.3.115"
+__version__ = "test_ui_appearance.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: Four sliders: Main window, Message list, Other windows and dialogs, Text of messages; the program's text and the Settings window follow Other windows and dialogs, the main window and its menus follow Main window
 # v0.3.115: The rows of the page list of Settings are 2 points higher than their text needs
 # v0.3.113: The page list of Settings is 2 points larger than the desktop's size, times the factor
 # v0.3.108: The size of messages is a slider for reading and writing: conversion, at once, Cancel
@@ -186,14 +187,16 @@ def test_text_icons_and_spacing_follow_the_factor(app: QApplication, tmp_path: P
     appearance._state.system_font = QFont(original)  # noqa: SLF001 - what start() remembers
     system = appearance.system_font_size(app)
     try:
-        appearance.apply(app, settings(tmp_path, interface_scale=1.5))
+        appearance.apply(app, settings(tmp_path, interface_scale=1.5))  # no size of its own for the other windows yet: they keep the one they shared
         style = app.style()
-        assert isinstance(style, scale.ScaledStyle) and app.font().pointSizeF() == system * 1.5
+        assert isinstance(style, scale.ScaledStyle) and app.font().pointSizeF() == system * 1.5 and appearance.main_font(app).pointSizeF() == system * 1.5
         normal = style.baseStyle().pixelMetric(QStyle.PixelMetric.PM_ToolBarIconSize)
         assert style.pixelMetric(QStyle.PixelMetric.PM_ToolBarIconSize) == round(normal * 1.5)
         assert scale.scale_css("padding: 6px 10px; border: 1px solid; font-size: 20px;") == "padding: 9px 15px; border: 1px solid; font-size: 30px;"
-        appearance.apply(app, settings(tmp_path, interface_scale=1.5), 0.75)  # tried out, not saved
-        assert app.font().pointSizeF() == system * 0.75 and scale.px(40) == 30
+        appearance.apply(app, settings(tmp_path, interface_scale=1.5, windows_scale=1.25))  # the other windows have a size of their own
+        assert app.font().pointSizeF() == system * 1.25 and appearance.main_font(app).pointSizeF() == system * 1.5 and scale.wpx(40) == 50 and scale.px(40) == 60
+        appearance.apply(app, settings(tmp_path, interface_scale=1.5), 0.75, 1.0)  # tried out, not saved
+        assert app.font().pointSizeF() == system * 1.0 and appearance.main_font(app).pointSizeF() == system * 0.75 and scale.px(40) == 30
     finally:
         appearance.apply(app, settings(tmp_path, interface_scale=1.0))
         app.setFont(original)  # the other tests start with the size they had
@@ -210,9 +213,10 @@ def test_the_sizes_are_together_on_the_appearance_page_and_the_slider_works_at_o
     page = dialog.interface_slider.parentWidget()
     assert page is not None
     labels = [label.text() for label in page.findChildren(QLabel)]
-    for text in ("Sizes", "Interface (text and icons)", "Message list", "Text of messages", "Small", "Large"):
+    for text in ("Sizes", "Main window", "Message list", "Other windows and dialogs", "Text of messages", "Small", "Large"):
         assert text in labels
-    for moved in (dialog.list_slider, dialog.reading_slider):
+    assert "Interface (text and icons)" not in labels
+    for moved in (dialog.list_slider, dialog.windows_slider, dialog.reading_slider):
         assert moved.parentWidget() is page
     dialog.interface_scale_tried.connect(window.try_interface_scale)
     try:
@@ -243,14 +247,14 @@ def test_the_page_list_of_settings_is_two_points_larger_and_follows_the_slider(w
         assert dialog.sidebar.sizeHintForRow(0) == plain.sizeHintForRow(0) + round(2 * factor * dialog.logicalDpiY() / 72) > plain.sizeHintForRow(0)
 
     rows_are_two_points_higher(1.0)
-    dialog.interface_scale_tried.connect(window.try_interface_scale)
+    dialog.windows_scale_tried.connect(window.try_windows_scale)
     try:
-        dialog.interface_slider.setValue(scale.slider_position(1.5))
+        dialog.windows_slider.setValue(scale.slider_position(1.5))
         assert dialog.sidebar.font().pointSizeF() == (system + 2) * 1.5
         rows_are_two_points_higher(1.5)
         assert QApplication.font().pointSizeF() == system * 1.5  # the rest of the window: the desktop's size times the factor
     finally:
-        window.try_interface_scale(1.0)
+        window.try_windows_scale(1.0)
 
 
 def test_cancel_puts_the_size_of_the_interface_back(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -294,7 +298,7 @@ def test_the_keys_change_the_size_a_step_at_a_time_and_a_drag_applies_when_it_en
         window.try_interface_scale(1.0)
 
 
-def test_the_settings_window_grows_with_the_interface_within_the_screen(world: World, qtbot: QtBot) -> None:
+def test_the_settings_window_grows_with_the_other_windows_slider_within_the_screen(world: World, qtbot: QtBot) -> None:
     from PySide6.QtCore import Qt as Keys
 
     from chrono_mail.ui.settingsdialog import SLIDER_WIDTH, SettingsDialog
@@ -302,25 +306,25 @@ def test_the_settings_window_grows_with_the_interface_within_the_screen(world: W
     window = world.window
     dialog = SettingsDialog(world.backend, window.settings, False, window._shortcut_registry(), window)  # noqa: SLF001
     qtbot.addWidget(dialog)
-    dialog.interface_scale_tried.connect(window.try_interface_scale)
+    dialog.windows_scale_tried.connect(window.try_windows_scale)
     dialog.show()
     qtbot.wait(50)
     width, height = dialog.width(), dialog.height()  # the test screen is 800 pixels: shrink first, then grow back
     try:
         for _ in range(4):  # four steps: 1.00 to 0.80
-            qtbot.keyClick(dialog.interface_slider, Keys.Key.Key_Down)
-        assert scale.interface() == 0.8 and width * 0.8 - 3 <= dialog.width() < width and height * 0.8 - 3 <= dialog.height() < height  # smaller, never below what the page needs
-        assert dialog.interface_slider.minimumWidth() == round(SLIDER_WIDTH * 0.8)
+            qtbot.keyClick(dialog.windows_slider, Keys.Key.Key_Down)
+        assert scale.windows() == 0.8 and width * 0.8 - 3 <= dialog.width() < width and height * 0.8 - 3 <= dialog.height() < height  # smaller, never below what the page needs
+        assert dialog.windows_slider.minimumWidth() == round(SLIDER_WIDTH * 0.8)
         for _ in range(4):  # and back to 1.00: the size it had
-            qtbot.keyClick(dialog.interface_slider, Keys.Key.Key_Up)
+            qtbot.keyClick(dialog.windows_slider, Keys.Key.Key_Up)
         assert width - 3 <= dialog.width() <= max(width, dialog._needed_size().width()) + 3 and height - 3 <= dialog.height() <= max(height, dialog._needed_size().height()) + 3  # noqa: SLF001 - the size it had, or what its page needs
-        dialog.interface_slider.setValue(scale.SLIDER_STEPS)  # Large: never beyond the screen
+        dialog.windows_slider.setValue(scale.SLIDER_STEPS)  # Large: never beyond the screen
         screen = dialog.screen()
         assert screen is not None and dialog.width() <= screen.availableGeometry().width() and dialog.height() <= screen.availableGeometry().height()
         dialog.reject()  # Cancel: the size it had
         assert width - 3 <= dialog.width() <= max(width, dialog._needed_size().width()) + 3 and height - 3 <= dialog.height() <= max(height, dialog._needed_size().height()) + 3  # noqa: SLF001 - the size it had, or what its page needs
     finally:
-        window.try_interface_scale(1.0)
+        window.try_windows_scale(1.0)
 
 
 def test_the_size_slider_has_ticks_and_a_taller_one_at_the_standard_size(world: World, qtbot: QtBot) -> None:
@@ -492,3 +496,55 @@ def test_the_interface_slider_leaves_the_list_and_message_sizes_alone(world: Wor
         window.try_list_scale(1.0)
         window.try_reading_scale(1.0)
 
+
+
+def test_an_older_settings_file_gives_the_other_windows_the_size_of_the_interface(tmp_path: Path) -> None:
+    assert scale.saved_windows(settings(tmp_path), 10) == 1.0
+    assert scale.saved_windows(settings(tmp_path, interface_scale="1.5"), 10) == 1.5  # they shared the interface size before
+    assert scale.saved_windows(settings(tmp_path, interface_scale="1.5", windows_scale="1.25"), 10) == 1.25
+
+
+def test_the_main_window_and_a_dialog_each_follow_their_own_slider(world: World, qtbot: QtBot, app: QApplication) -> None:
+    from PySide6.QtWidgets import QDialog, QStyle
+
+    window = world.window
+    system = appearance.system_font_size(app)
+    dialog = QDialog(window)
+    qtbot.addWidget(dialog)
+    try:
+        window.try_interface_scale(1.5)
+        assert window.font().pointSizeF() == system * 1.5 and window.section_bar.buttons["mail"].height() == 60
+        assert dialog.font().pointSizeF() == system * 1.0
+        window.try_windows_scale(1.25)
+        assert dialog.font().pointSizeF() == system * 1.25 and window.font().pointSizeF() == system * 1.5
+        style = app.style()
+        assert isinstance(style, scale.ScaledStyle)
+        normal = style.baseStyle().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize)
+        assert style.pixelMetric(QStyle.PixelMetric.PM_SmallIconSize, None, window.tree) == round(normal * 1.5)
+        assert style.pixelMetric(QStyle.PixelMetric.PM_SmallIconSize, None, dialog) == round(normal * 1.25)
+    finally:
+        window.try_interface_scale(1.0)
+        window.try_windows_scale(1.0)
+
+
+def test_a_menu_follows_the_window_it_opens_from(world: World, qtbot: QtBot, app: QApplication) -> None:
+    from PySide6.QtWidgets import QDialog
+
+    window = world.window
+    system = appearance.system_font_size(app)
+    dialog = QDialog(window)
+    qtbot.addWidget(dialog)
+    try:
+        window.try_interface_scale(1.5)
+        window.try_windows_scale(1.25)
+        made_before = window.tag_menu  # a menu of the main window made at the start
+        context = QMenu(window)  # a right-click menu, made when it is needed
+        submenu = context.addMenu("Tag")
+        in_dialog = QMenu(dialog)
+        for menu in (context, submenu, in_dialog):
+            menu.ensurePolished()
+        assert made_before.font().pointSizeF() == context.font().pointSizeF() == submenu.font().pointSizeF() == system * 1.5
+        assert in_dialog.font().pointSizeF() == system * 1.25
+    finally:
+        window.try_interface_scale(1.0)
+        window.try_windows_scale(1.0)

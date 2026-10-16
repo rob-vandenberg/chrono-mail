@@ -28,9 +28,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.134"
+__version__ = "commands_mail.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The rules run before the imported-account flag is switched off; a failure to save it is reported, the check still counts
 # v0.5.134: Tags: each listed message has its tags; message.list and message.search find messages by tag
 # v0.5.132: The first check of an imported account records mail that is already here instead of storing it twice
 # v0.4.120: The IMAP sync holds the account's link (no action changes its messages meanwhile); the Sent copy goes to the server at once
@@ -200,14 +201,18 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
                 client, mailbox.store, mailbox.index, state, inbox, settings.pop3, MAXIMUM_MESSAGE_BYTES, engine.clock,
                 progress=lambda done, total: engine.progress("Downloading", done, total), already_here=already_here if known is not None else None,
             )
-        if settings.skip_known_mail and report.aborted is None:  # one complete check: from now on every new message is new
-            config = engine.config()
-            engine.save_config(config.with_account(replace(config.find(settings.account.account_id), skip_known_mail=False)))
         ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
+        flag_failed: tuple[str, ...] = ()
+        if settings.skip_known_mail and report.aborted is None:  # one complete check: from now on every new message is new
+            account_id = settings.account.account_id
+            try:
+                engine.change_config(lambda config: config.with_account(replace(config.find(account_id), skip_known_mail=False)))
+            except ConfigurationError as error:  # the flag stays on: the next check recognises the mail that is here once more, which does no harm
+                flag_failed = (str(error),)
     return FetchResult(
         report.downloaded,
         report.already_known,
-        (*(f"{item.unique_id}: {item.reason}" for item in report.failed), *ruled.failed),
+        (*(f"{item.unique_id}: {item.reason}" for item in report.failed), *ruled.failed, *flag_failed),
         report.deleted_on_server,
         report.deletion_blocked,
         report.index_problems,

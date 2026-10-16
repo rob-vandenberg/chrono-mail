@@ -19,9 +19,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 0.3.109"
+__version__ = "test_engine_local.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The crash at the commit point is made in the file write of the settings (the save goes through change_config)
 # v0.3.109: Combined views in the new sort orders (no groups for the yes/no sorts)
 # v0.2.94: Combined views in any sort order and their groups
 # v0.0.49: Rules without conditions for one account
@@ -192,14 +193,16 @@ def test_an_interrupted_move_loses_nothing_and_finishes_when_repeated(two: Two, 
 
         monkeypatch.setattr(Store, "deliver", crashing)
     elif moment == "commit":
-        original_save = Engine.save_config
+        from chrono_mail.engine import session
 
-        def crash_on_commit(self: Engine, config: Any) -> None:  # noqa: ANN401
+        original_save = session.save_config
+
+        def crash_on_commit(path: Any, config: Any) -> None:  # noqa: ANN401 - the file write under every save of the settings
             if any(item.storage == "local" for item in config.accounts):
                 raise Crash
-            original_save(self, config)
+            original_save(path, config)
 
-        monkeypatch.setattr(Engine, "save_config", crash_on_commit)
+        monkeypatch.setattr(session, "save_config", crash_on_commit)
     else:
         original_delete = Store.delete
         deleted = {"n": 0}

@@ -12,9 +12,10 @@ from chrono_mail.protocols.dav import DavClient
 from chrono_mail.sync.davsync import sync_dav
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 0.0.72"
+__version__ = "commands_dav.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The server address is saved on a fresh read of the settings, one command at a time (change_config)
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.66: Initial commands for the calendars, task lists and address books on a CalDAV and CardDAV server
 
@@ -54,9 +55,10 @@ def dav_set(engine: Engine, parameters: SetDavParameters) -> AccountSummary:
     settings = engine.resolve_account(parameters.account, config)
     if settings.account.kind is AccountKind.LOCAL:
         raise UsageError("The Local Folders have no server")
-    updated = replace(settings, dav_url=parameters.url.strip(), dav_username=parameters.username.strip())
-    engine.save_config(config.with_account(updated))
     account_id = settings.account.account_id
+    url, username = parameters.url.strip(), parameters.username.strip()
+    config = engine.change_config(lambda fresh: fresh.with_account(replace(fresh.find(account_id), dav_url=url, dav_username=username)))
+    updated = config.find(account_id)
     if parameters.password is not None:
         engine.passwords.set(account_id, ServerRole.DAV, parameters.password)
     elif not parameters.url.strip():

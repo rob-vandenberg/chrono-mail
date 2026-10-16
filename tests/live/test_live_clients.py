@@ -22,9 +22,10 @@ from chrono_mail.sync import Pop3State, fetch_pop3, send_and_file
 from tests.live.account import LiveAccount
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_clients.py 0.0.12"
+__version__ = "test_live_clients.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The command line test runs also while the Chrono Mail program is open (its own program_running)
 # v0.0.12: Initial live client tests
 
 pytestmark = pytest.mark.live
@@ -179,7 +180,7 @@ def test_command_line_session_against_the_real_server(live_account: LiveAccount,
         code = main(
             ["--json", "--config-dir", str(tmp_path / "c"), "--data-dir", str(tmp_path / "d"), *arguments],
             lambda directories: Engine(directories, passwords, keys, durable=False),
-            io.StringIO(stdin), out, err,
+            io.StringIO(stdin), out, err, lambda: False,
         )
         assert code == 0, (arguments, out.getvalue(), err.getvalue())
         return json.loads(out.getvalue())

@@ -39,9 +39,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 0.5.143"
+__version__ = "commands_emclient.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The imported-account flag is set on a fresh read of the settings, one command at a time (change_config)
 # v0.5.143: The progress of the mail counts over the whole import (earlier batches and imports included), not per batch
 # v0.5.141: import.emclient-passwords: the passwords of accounts that are here already, from the settings export
 # v0.5.137: Tags: the categories become tags (colour, what they are for), imported mail gets its categories as tags, and mail imported before gets them too (once)
@@ -328,8 +329,8 @@ def _import_accounts(engine: Engine, export: SettingsExport, add: bool, notes: l
         except ChronoMailError as error:
             notes.append(f"{email or source.name}: the account was not made (Import again makes it): {error}")
             continue
-        config = engine.config()
-        engine.save_config(config.with_account(replace(config.find(result.account_id), skip_known_mail=True)))
+        account_id = result.account_id
+        engine.change_config(lambda config: config.with_account(replace(config.find(account_id), skip_known_mail=True)))
         found[source.uid] = result.account_id
         added += 1
         if incoming.password is None or outgoing.password is None:

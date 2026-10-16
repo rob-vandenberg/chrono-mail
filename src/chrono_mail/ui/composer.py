@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.addresscompleter import AddressCompleter
-from chrono_mail.ui import theme
+from chrono_mail.ui import scale, theme
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.richeditor import RichEditor
@@ -36,9 +36,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 0.3.108"
+__version__ = "composer.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: Its look at the size of the Other windows and dialogs slider
 # v0.3.108: The way of writing is a button at the bottom left that shows Rich text or Plain text and chooses in its menu (was an on and off button at the right)
 # v0.3.108: The text size is in points with a fraction (the Writing size slider) and can change while the window is open (set_text_size)
 # v0.0.86: Forward as attachment: a checked box attaches the original message as an .eml file
@@ -171,7 +172,7 @@ class ComposeWindow(QMainWindow):
         self.setWindowTitle("New message")
         self.setWindowIcon(application_icon())
         self.setObjectName("composeWindow")
-        self.setStyleSheet(theme.stylesheet())  # a window of its own does not inherit the look of the main window
+        self.setStyleSheet(theme.stylesheet(scale.windows()))  # a window of its own does not inherit the look of the main window; its sizes follow Other windows and dialogs
         central = QWidget(self)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(12, 10, 12, 10)

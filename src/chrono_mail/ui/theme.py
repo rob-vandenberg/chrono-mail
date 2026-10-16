@@ -4,9 +4,10 @@ from chrono_mail.ui.colours import SEPARATOR, selection_grey
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.3.106"
+__version__ = "theme.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The stylesheet at a given size factor: the main window at its own, the message windows and composers at that of the other windows
 # v0.3.106: Every size in pixels follows the factor of the interface (lines of 1 pixel stay)
 # v0.2.97: The rounding of the search field is set by the field itself (half its height)
 # v0.2.94: The search field has round ends (rounding 15 px, half its height; 16 px was more than half and Qt drew square corners)
@@ -35,9 +36,10 @@ def show_focus(view: QAbstractItemView, focused: bool) -> None:
     view.viewport().update()
 
 
-def stylesheet() -> str:
+def stylesheet(factor: float | None = None) -> str:
     """The look of the main window, for the light and the dark scheme alike: it takes all its colours from the palette (the blue is the highlight colour, the same as in the menus).
-    The rules name their widgets (object names), so nothing else in the program changes."""
+    The rules name their widgets (object names), so nothing else in the program changes. Its sizes are at the factor
+    given (the main window's when none is)."""
     grey = selection_grey()
     return scale_css(f"""
 QMenuBar {{ background: palette(window); border: 0; padding: 2px 6px; }}
@@ -102,4 +104,4 @@ QWidget#sectionBar {{ background: palette(window); border-top: 1px solid palette
 QToolButton#sectionButton {{ border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; }}
 QToolButton#sectionButton:hover {{ background: {HOVER}; }}
 QToolButton#sectionButton:checked {{ border-bottom: 3px solid palette(highlight); background: transparent; }}
-""")
+""", factor)

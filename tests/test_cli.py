@@ -31,9 +31,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_cli.py 0.0.12"
+__version__ = "test_cli.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The tests run also while the Chrono Mail program is open (their own program_running)
 # v0.0.12: Initial command line tests
 
 
@@ -50,7 +51,7 @@ class Session:
             return Engine(directories, self.passwords, self.keys, durable=False)
 
         out, err = io.StringIO(), io.StringIO()
-        code = main(["--config-dir", str(self.tmp_path / "c"), "--data-dir", str(self.tmp_path / "d"), *arguments], factory, io.StringIO(stdin), out, err)
+        code = main(["--config-dir", str(self.tmp_path / "c"), "--data-dir", str(self.tmp_path / "d"), *arguments], factory, io.StringIO(stdin), out, err, lambda: False)
         return code, out.getvalue(), err.getvalue()
 
     def json(self, *arguments: str, stdin: str = "") -> Any:

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TextIO
 
 from chrono_mail.config import AppDirectories, KeyringPasswordStore, default_directories
+from chrono_mail.config.running import program_is_running
 from chrono_mail.core import (
     AuthenticationError,
     ChronoMailError,
@@ -22,9 +23,10 @@ from chrono_mail.engine import Command, CommandRegistry, Engine, ParameterSpec, 
 from chrono_mail.cli.render import render_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "main.py 0.0.12"
+__version__ = "main.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: A command is refused while the Chrono Mail program runs (program_running; the tests give their own)
 # v0.0.12: Initial command line interface
 
 # Exit codes (stable; automation may rely on them).
@@ -107,8 +109,9 @@ def main(
     stdin: TextIO | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
+    program_running: Callable[[], bool] = program_is_running,
 ) -> int:
-    """Run one command. Returns the exit code."""
+    """Run one command. Returns the exit code. Nothing runs while the Chrono Mail program runs (it would change the same mail at once)."""
     out, err, source = stdout or sys.stdout, stderr or sys.stderr, stdin or sys.stdin
     registry = build_registry()
     parser = build_parser(registry)
@@ -118,6 +121,8 @@ def main(
         return EXIT_OK if stop.code in (0, None) else EXIT_USAGE
     wants_json = bool(arguments.json)
     try:
+        if program_running():
+            raise UsageError("Chrono Mail is running. Close it first, then use the command line tool.")
         command = registry.get(arguments.command)
         if command.destructive and not arguments.yes:
             raise UsageError(f"{command.id} deletes something: repeat it with --yes to confirm")

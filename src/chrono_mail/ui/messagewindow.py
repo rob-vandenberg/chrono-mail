@@ -8,16 +8,17 @@ from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QToolBar, QWidget
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.ui import theme
+from chrono_mail.ui import scale, theme
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 0.0.83"
+__version__ = "messagewindow.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: Its look at the size of the Other windows and dialogs slider
 # v0.0.83: The size and position of the main window, the message windows, the composers and the Settings window are remembered and only used when the window would be reachable on a connected screen
 # v0.0.77: Message list and reading pane: Received instead of Date, blue unread dot (empty circle when read), flat list header, reading pane header and banner
 # v0.0.74: A message window gets the privacy settings before it shows the message and saves Always for this sender
@@ -41,7 +42,7 @@ class MessageWindow(QMainWindow):
         self.resize(820, 640)
         self._settings: QSettings | None = settings
         restore_geometry(self, settings, "message_window_geometry")
-        self.setStyleSheet(theme.stylesheet())  # a window of its own does not inherit the look of the main window
+        self.setStyleSheet(theme.stylesheet(scale.windows()))  # a window of its own does not inherit the look of the main window; its sizes follow Other windows and dialogs
         self.reader = ReaderWidget(self)
         self.setCentralWidget(self.reader)
         prepare(self.reader)  # the privacy settings come before the message: what is allowed decides what is loaded

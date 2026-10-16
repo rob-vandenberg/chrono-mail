@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui import appearance, prefs, scale
-from chrono_mail.ui.scale import px
+from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
@@ -49,9 +49,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.5.135"
+__version__ = "settingsdialog.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: Four size sliders: Main window, Message list, Other windows and dialogs (new), Text of messages; this window follows Other windows and dialogs
 # v0.5.135: Message list: Show Tags in the folder list; the tag's colour for the text
 # v0.5.124: General: Show on startup (D-121)
 # v0.3.115: The rows of the page list are 2 points higher than their text needs, times the interface factor
@@ -138,7 +139,7 @@ class SizeSlider(QSlider):
 
     def _room(self) -> int:
         """Height enough for the tall tick above the track (the track is in the middle)."""
-        return 2 * (px(2 * TICK_LENGTH) + 1) + self._groove().height()
+        return 2 * (wpx(2 * TICK_LENGTH) + 1) + self._groove().height()
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:
@@ -146,7 +147,7 @@ class SizeSlider(QSlider):
         painter.setPen(QPen(self.palette().color(QPalette.ColorRole.Text), 1))
         bottom = self.tick_bottom()
         for factor in TICKS:
-            length = px(2 * TICK_LENGTH if factor == scale.STANDARD else TICK_LENGTH)
+            length = wpx(2 * TICK_LENGTH if factor == scale.STANDARD else TICK_LENGTH)
             x = self.tick_x(factor)
             painter.drawLine(x, bottom - length + 1, x, bottom)
         painter.end()
@@ -178,7 +179,8 @@ class SettingsDialog(QDialog):
     accounts_changed = Signal()
     add_account_requested = Signal()
     restore_key_requested = Signal()
-    interface_scale_tried = Signal(float)  # the slider of the interface moved: the window shows that size at once (not saved yet)
+    interface_scale_tried = Signal(float)  # the Main window slider moved: the main window shows that size at once (not saved yet)
+    windows_scale_tried = Signal(float)  # the same for the other windows and dialogs (this one too)
     list_scale_tried = Signal(float)  # the same for the message list
     reading_scale_tried = Signal(float)  # the same for the text of messages, read and written
 
@@ -194,14 +196,14 @@ class SettingsDialog(QDialog):
         self._columns: tuple[str, ...] = valid_columns([part for part in str(settings.value("columns", "")).split(",") if part])
         self._shortcut_actions: dict[str, tuple[str, str]] = shortcut_actions or {}
         self.setWindowTitle("Settings")
-        self.setMinimumSize(px(MINIMUM_WIDTH), px(MINIMUM_HEIGHT))
+        self.setMinimumSize(wpx(MINIMUM_WIDTH), wpx(MINIMUM_HEIGHT))
         outer = QVBoxLayout(self)
         body = QHBoxLayout()
         self.sidebar = QListWidget(self)
-        self.sidebar.setFixedWidth(px(190))
+        self.sidebar.setFixedWidth(wpx(190))
         self.sidebar_rows = TallerRows(self.sidebar)
         self.sidebar.setItemDelegate(self.sidebar_rows)
-        self._size_sidebar_text(scale.interface())
+        self._size_sidebar_text(scale.windows())
         self.pages = QStackedWidget(self)
         body.addWidget(self.sidebar)
         body.addWidget(self.pages, 1)
@@ -308,7 +310,7 @@ class SettingsDialog(QDialog):
         slider.setRange(0, scale.SLIDER_STEPS)
         slider.setPageStep(4)
         slider.setTracking(False)
-        slider.setMinimumWidth(px(SLIDER_WIDTH))  # never squeezed down to its handle
+        slider.setMinimumWidth(wpx(SLIDER_WIDTH))  # never squeezed down to its handle
         slider.setValue(scale.slider_position(factor))
         reset = QPushButton("Reset", page)
         reset.clicked.connect(lambda: slider.setValue(scale.slider_position(scale.STANDARD)))
@@ -326,12 +328,15 @@ class SettingsDialog(QDialog):
         self.reading_scale_tried.emit(scale.factor_at(position))
 
     def _interface_slider_moved(self, position: int) -> None:
+        self.interface_scale_tried.emit(scale.factor_at(position))
+
+    def _windows_slider_moved(self, position: int) -> None:
         factor = scale.factor_at(position)
-        self.interface_scale_tried.emit(factor)
-        self.sidebar.setFixedWidth(px(190))  # this window follows too
+        self.windows_scale_tried.emit(factor)
+        self.sidebar.setFixedWidth(wpx(190))  # this window follows too
         self._size_sidebar_text(factor)
-        for slider in (self.interface_slider, self.list_slider, self.reading_slider):
-            slider.setMinimumWidth(px(SLIDER_WIDTH))
+        for slider in (self.interface_slider, self.list_slider, self.windows_slider, self.reading_slider):
+            slider.setMinimumWidth(wpx(SLIDER_WIDTH))
         self._grow_with(factor)
 
     def _needed_size(self) -> QSize:
@@ -354,7 +359,7 @@ class SettingsDialog(QDialog):
         return QSize(width, margins.top() + margins.bottom() + wanted.height() + below)
 
     def _grow_with(self, factor: float) -> None:
-        """This window grows and shrinks with the size of the interface, in proportion, never beyond the screen, around the same centre."""
+        """This window grows and shrinks with the size of the other windows and dialogs, in proportion, never beyond the screen, around the same centre."""
         if factor == self._window_factor:
             return
         if self._size_at_standard is None:  # the size it had when the slider first moved, at the standard size
@@ -391,22 +396,26 @@ class SettingsDialog(QDialog):
         )
         note.setWordWrap(True)
         form.addRow(note)
-        form.addItem(QSpacerItem(0, px(18), QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))  # a blank line above the sizes
+        form.addItem(QSpacerItem(0, wpx(18), QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))  # a blank line above the sizes
         sizes = QLabel("Sizes", page)
         sizes.setStyleSheet("font-weight: bold;")  # the size keeps following the interface
         form.addRow(sizes)
         app = QApplication.instance()
         self.system_points: int = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
         self.interface_scale_saved: float = scale.interface()  # what Cancel puts back
-        self._window_factor: float = self.interface_scale_saved
+        self.windows_scale_saved: float = scale.windows()
+        self._window_factor: float = self.windows_scale_saved
         self._size_at_standard: tuple[float, float] | None = None
         self.interface_slider, self.interface_standard, row = self._size_row(page, self.interface_scale_saved)
         self.interface_slider.valueChanged.connect(self._interface_slider_moved)
-        form.addRow("Interface (text and icons)", row)
+        form.addRow("Main window", row)
         self.list_scale_saved: float = scale.saved_list(s, self.system_points)
         self.list_slider, self.list_reset, row = self._size_row(page, self.list_scale_saved)
         self.list_slider.valueChanged.connect(self._list_slider_moved)
         form.addRow("Message list", row)
+        self.windows_slider, self.windows_reset, row = self._size_row(page, self.windows_scale_saved)
+        self.windows_slider.valueChanged.connect(self._windows_slider_moved)
+        form.addRow("Other windows and dialogs", row)
         self.reading_scale_saved: float = scale.saved_reading(s)
         self.reading_slider, self.reading_reset, row = self._size_row(page, self.reading_scale_saved)
         self.reading_slider.valueChanged.connect(self._reading_slider_moved)
@@ -760,7 +769,7 @@ class SettingsDialog(QDialog):
         return {
             "startup_view": str(self.startup_box.currentData() or ""), "check_on_start": self.check_on_start.isChecked(), "auto_check": self.auto_check.isChecked(), "auto_check_minutes": self.interval.value(),
             "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
-            "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()), "interface_scale": scale.factor_at(self.interface_slider.value()),
+            "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()), "interface_scale": scale.factor_at(self.interface_slider.value()), "windows_scale": scale.factor_at(self.windows_slider.value()),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_scale": scale.factor_at(self.list_slider.value()), "conversations": self.conversations.isChecked(),
             "show_favorites": self.show_favorites.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),

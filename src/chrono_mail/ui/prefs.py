@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.5.135"
+__version__ = "prefs.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: windows_scale, the size of the other windows and dialogs
 # v0.5.135: show_tags, tag_text_colour
 # v0.3.108: list_scale replaces list_font_size; reading_scale (a factor, for reading and writing) replaces reader_zoom (percent) and compose_font_size (points)
 # v0.3.106: interface_scale (a factor) replaces ui_font_size (points)
@@ -27,7 +28,8 @@ DEFAULTS: dict[str, object] = {
     # appearance
     "color_scheme": "system",  # system, light or dark
     "style": "default",  # default: the platform's own style, or fusion
-    "interface_scale": 1.0,  # the size of the interface: a factor of the system's size (scale.py); an older ui_font_size in points is converted
+    "interface_scale": 1.0,  # the size of the main window: a factor of the system's size (scale.py); an older ui_font_size in points is converted
+    "windows_scale": 1.0,  # the size of the other windows and dialogs: a factor (scale.py); when missing, the size of the main window (they shared it before)
     # message list
     "list_layout": "columns",
     "reading_pane": "right",

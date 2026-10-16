@@ -11,9 +11,10 @@ from chrono_mail.ui import prefs, scale
 from chrono_mail.ui.colours import dark_palette, light_palette, menu_palette
 
 # --- Version ------------------------------------------------------------
-__version__ = "appearance.py 0.3.106"
+__version__ = "appearance.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The text of the program at the size of the other windows and dialogs; the main window and the menus and popups opened from it at the size of the main window (main_font; the style gives it to the menus)
 # v0.3.106: The size of the interface is a factor (scale.py): the text, and through ScaledStyle the icons and tick boxes, follow it; it can be tried out before it is saved
 # v0.0.82: Text size of the interface (8 to 48 pt, the system size at the first start) under Appearance; the Menu button uses the three-bar character U+2630
 # v0.0.56: Menu colour, Refresh, no Add account in the File menu
@@ -97,17 +98,28 @@ def start(app: QApplication, arguments: Sequence[str], settings: QSettings) -> N
     apply(app, settings)
 
 
-def _apply_font_size(app: QApplication) -> None:
-    """The text of the interface: the system's size times the factor of the interface."""
+def _font_at(app: QApplication, factor: float) -> QFont:
     font = QFont(_state.system_font if _state.system_font is not None else app.font())
-    font.setPointSizeF(round(system_font_size(app) * scale.interface(), 2))
+    font.setPointSizeF(round(system_font_size(app) * factor, 2))
+    return font
+
+
+def _apply_font_size(app: QApplication) -> None:
+    """The text of the program: the system's size times the factor of the other windows and dialogs (the main window
+    sets its own, main_font)."""
+    font = _font_at(app, scale.windows())
     if app.font() != font:
         app.setFont(font)
 
 
-def apply(app: QApplication, settings: QSettings, interface_factor: float | None = None) -> None:
-    """Put the colour scheme, the style and the size of the interface of the settings in use, at once. A factor given
-    here is tried out (the Settings window while its slider moves) and not saved."""
+def main_font(app: QApplication) -> QFont:
+    """The text of the main window and of the menus and popups opened from it: the system's size times its factor."""
+    return _font_at(app, scale.interface())
+
+
+def apply(app: QApplication, settings: QSettings, interface_factor: float | None = None, windows_factor: float | None = None) -> None:
+    """Put the colour scheme, the style and the sizes of the main window and of the other windows of the settings in
+    use, at once. A factor given here is tried out (the Settings window while its slider moves) and not saved."""
     if _state.busy:
         return
     _state.busy = True
@@ -119,9 +131,16 @@ def apply(app: QApplication, settings: QSettings, interface_factor: float | None
         dark = (app.styleHints().colorScheme() == Qt.ColorScheme.Dark) if scheme == "system" else scheme == "dark"
         wanted = _state.platform_style if _state.style_given else style_to_use(prefs.get_text(settings, "style", STYLES), dark, _state.platform_style)
         scale.set_interface(interface_factor if interface_factor is not None else scale.saved_factor(settings, system_font_size(app)))
+        scale.set_windows(windows_factor if windows_factor is not None else scale.saved_windows(settings, system_font_size(app)))
         current = app.style()
-        if not (isinstance(current, scale.ScaledStyle) and current.base_name.lower() == wanted.lower() and current.factor == scale.interface()):
-            app.setStyle(scale.ScaledStyle(wanted, scale.interface()))  # the icons and tick boxes at the factor of the interface
+        if not (
+            isinstance(current, scale.ScaledStyle) and current.base_name.lower() == wanted.lower()
+            and current.factor == scale.interface() and current.windows_factor == scale.windows()
+        ):
+            app.setStyle(scale.ScaledStyle(wanted, scale.interface(), scale.windows()))  # the icons and tick boxes at the factor of their window
+        style = app.style()
+        if isinstance(style, scale.ScaledStyle):
+            style.main_font = main_font(app)  # for the menus and popups of the main window
         # A platform does not always do what it is asked (Linux desktops mostly do not), so a chosen scheme brings its own colours.
         app.setPalette(QPalette() if scheme == "system" else (dark_palette() if dark else light_palette()))
         _colour_the_menus(app)

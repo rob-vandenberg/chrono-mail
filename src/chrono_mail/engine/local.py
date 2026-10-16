@@ -16,9 +16,10 @@ from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "local.py 0.0.65"
+__version__ = "local.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: Local Folders is entered in a fresh read of the settings, one command at a time (change_config)
 # v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.45: Initial Local Folders mailbox
 
@@ -56,7 +57,8 @@ def _ensure_local_folders(engine: Engine, encrypted: bool) -> tuple[AppConfig, b
         for path, role in STANDARD_FOLDERS:
             store.create_folder(path, role)
         settings = AccountSettings(Account(LOCAL_ACCOUNT_ID, LOCAL_NAME, "", AccountKind.LOCAL, _NOWHERE, _NOWHERE), encrypted=encrypted)
-        engine.save_config(config.with_account(settings))  # the commit point
+        key_id = config.key_id
+        engine.change_config(lambda fresh: (fresh.with_key_id(key_id) if fresh.key_id is None else fresh).with_account(settings))  # the commit point
     except ChronoMailError:
         shutil.rmtree(engine.directories.account_directory(LOCAL_ACCOUNT_ID), ignore_errors=True)
         raise

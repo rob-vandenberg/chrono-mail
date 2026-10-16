@@ -23,9 +23,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.5.138"
+__version__ = "session.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The settings file is read and written by one command at a time; change_config applies a change to a fresh read
 # v0.5.138: ImapLink.keywords: per server folder, whether the server keeps keywords (tags)
 # v0.4.120: One open IMAP connection per account for the actions done on the server first (ImapLink), closed when the program ends; notice
 # v0.4.118: An index is rebuilt by one command at a time (index_lock); the others wait and open the new one
@@ -109,6 +110,7 @@ class Engine:
     _imap_links_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)
     _cache_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _config_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # held while config.json is read or written
 
     def imap_link(self, account_id: str) -> ImapLink:
         """The open connection of an IMAP account (made when it is first needed)."""
@@ -132,10 +134,20 @@ class Engine:
     # --- configuration -------------------------------------------------------------------------
 
     def config(self) -> AppConfig:
-        return load_config(self.directories.config_file)
+        with self._config_lock:  # never while another command replaces the file (Windows refuses to replace a file that is open)
+            return load_config(self.directories.config_file)
 
     def save_config(self, config: AppConfig) -> None:
-        save_config(self.directories.config_file, config)
+        with self._config_lock:
+            save_config(self.directories.config_file, config)
+
+    def change_config(self, change: Callable[[AppConfig], AppConfig]) -> AppConfig:
+        """Read the settings, apply the change and save them, one command at a time, so that changes made at the same
+        moment are all kept. The change gets the settings as they are now; long work belongs before this call. Returns the new settings."""
+        with self._config_lock:
+            changed = change(load_config(self.directories.config_file))
+            save_config(self.directories.config_file, changed)
+            return changed
 
     def resolve_account(self, identifier: str, config: AppConfig | None = None) -> AccountSettings:
         """An account by its id, by the start of its id (at least 6 characters), or by its e-mail address."""

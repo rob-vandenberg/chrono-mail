@@ -12,9 +12,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import Pop3State, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_local.py 0.2.101"
+__version__ = "commands_local.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: The storage choice is saved on a fresh read of the settings, one command at a time (change_config)
 # v0.2.101: Folders are made safely (ensure_folder)
 # v0.0.45: Initial Local Folders commands and the move of an account between its own folders and Local Folders
 
@@ -135,7 +136,7 @@ def _to_local(engine: Engine, settings: AccountSettings) -> StorageResult:
         finally:
             local_index.close()
     if settings.storage != "local":
-        engine.save_config(config.with_account(replace(settings, storage="local")))  # the commit point
+        engine.change_config(lambda fresh: fresh.with_account(replace(fresh.find(account_id), storage="local")))  # the commit point
     if own_directory.exists():
         removed = _remove_verified(engine.open_store(own_settings, config), None, local_store, None)
         engine.directories.index_file(account_id).unlink(missing_ok=True)  # the index of the old folders is of no use any more
@@ -165,7 +166,7 @@ def _to_own(engine: Engine, settings: AccountSettings) -> StorageResult:
     finally:
         own_index.close()
     if settings.storage != "own":
-        engine.save_config(config.with_account(own_settings))  # the commit point
+        engine.change_config(lambda fresh: fresh.with_account(replace(fresh.find(account_id), storage="own")))  # the commit point
     local_index = engine.open_index(local, local_store)
     try:
         removed = _remove_verified(local_store, local_index, own_store, wanted)

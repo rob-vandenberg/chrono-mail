@@ -8,6 +8,7 @@ from chrono_mail.config import (
     load_sidebar,
     save_sidebar,
     AccountSettings,
+    AppConfig,
     Pop3DeletePolicy,
     Pop3Options,
     ServerRole,
@@ -42,9 +43,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 0.0.72"
+__version__ = "commands_accounts.py 0.5.144"
 
 # --- Version history ----------------------------------------------------
+# v0.5.144: Every change of the settings is made on a fresh read, one command at a time (change_config): changes at the same moment are all kept
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.69: An account is the same account only with the same user name, incoming server and protocol (not the same e-mail address); labels that tell accounts apart
 # v0.0.66: Address and user name of the calendar and contacts server in the summary
@@ -170,7 +172,13 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
             store = Store.create(store_directory, account_id, key, durable=engine.durable)
             for path, role in STANDARD_FOLDERS:
                 store.create_folder(path, role)
-        engine.save_config(new_config.with_account(settings))  # the commit point: until here nothing refers to the account
+        key_id = new_config.key_id
+
+        def add(fresh: AppConfig) -> AppConfig:
+            _refuse_same_account(fresh.accounts, settings.account.kind, settings.account.incoming.username, settings.account.incoming.host, None)  # added meanwhile?
+            return (fresh.with_key_id(key_id) if fresh.key_id is None else fresh).with_account(settings)
+
+        engine.change_config(add)  # the commit point: until here nothing refers to the account
     except ChronoMailError:
         engine.passwords.delete(account_id, ServerRole.INCOMING)
         engine.passwords.delete(account_id, ServerRole.OUTGOING)
@@ -350,9 +358,13 @@ def account_remove(engine: Engine, parameters: AccountParameters) -> AccountRemo
     config = engine.config()
     settings = engine.resolve_account(parameters.account, config)
     account_id = settings.account.account_id
-    if settings.account.kind is AccountKind.LOCAL and any(item.storage == "local" for item in config.accounts):
-        raise UsageError("Accounts still keep their mail in Local Folders: give them folders of their own first")
-    engine.save_config(config.without_account(account_id))
+
+    def remove(fresh: AppConfig) -> AppConfig:
+        if settings.account.kind is AccountKind.LOCAL and any(item.storage == "local" for item in fresh.accounts):
+            raise UsageError("Accounts still keep their mail in Local Folders: give them folders of their own first")
+        return fresh.without_account(account_id)
+
+    engine.change_config(remove)
     try:  # pinned folders and group memberships of the account are forgotten; a damaged sidebar file is reported when it is used
         sidebar = load_sidebar(engine.directories.sidebar_file)
         if any(item.account == account_id for item in sidebar.pins) or any(account_id in item.accounts for item in sidebar.groups):
@@ -374,9 +386,10 @@ class AccountPolicyParameters:
 def account_policy(engine: Engine, parameters: AccountPolicyParameters) -> AccountSummary:
     config = engine.config()
     settings = engine.resolve_account(parameters.account, config)
-    changed = replace(settings, pop3=Pop3Options(Pop3DeletePolicy(parameters.policy), parameters.days))
-    engine.save_config(config.with_account(changed))
-    return _summary(changed)
+    account_id = settings.account.account_id
+    pop3 = Pop3Options(Pop3DeletePolicy(parameters.policy), parameters.days)
+    config = engine.change_config(lambda fresh: fresh.with_account(replace(fresh.find(account_id), pop3=pop3)))
+    return _summary(config.find(account_id))
 
 
 @dataclass(frozen=True, slots=True)
@@ -428,20 +441,26 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
         settings.pop3.policy if parameters.delete_policy is None else Pop3DeletePolicy(parameters.delete_policy),
         settings.pop3.days if parameters.delete_days is None else parameters.delete_days,
     )
-    changed = replace(
-        settings,
-        account=replace(account, display_name=name, email_address=email, incoming=incoming, outgoing=outgoing),
-        pop3=pop3,
-        signature=settings.signature if parameters.signature is None else parameters.signature.replace("\r\n", "\n").rstrip(),
-        check_minutes=settings.check_minutes if parameters.check_minutes is None else parameters.check_minutes,
-    )
+    signature = settings.signature if parameters.signature is None else parameters.signature.replace("\r\n", "\n").rstrip()
+    check_minutes = settings.check_minutes if parameters.check_minutes is None else parameters.check_minutes
+
+    def edit(fresh: AppConfig) -> AppConfig:  # the edited parts on the account as it is now: what other commands changed meanwhile stays
+        _refuse_same_account(fresh.accounts, account.kind, incoming.username, incoming.host, account.account_id)
+        current = fresh.find(account.account_id)
+        return fresh.with_account(replace(
+            current,
+            account=replace(current.account, display_name=name, email_address=email, incoming=incoming, outgoing=outgoing),
+            pop3=pop3,
+            signature=signature,
+            check_minutes=check_minutes,
+        ))
     # Passwords first: a new password that cannot be stored must not leave settings behind that expect it
     if parameters.password:
         engine.passwords.set(account.account_id, ServerRole.INCOMING, parameters.password)
     if parameters.outgoing_password:
         engine.passwords.set(account.account_id, ServerRole.OUTGOING, parameters.outgoing_password)
-    engine.save_config(config.with_account(changed))
-    return _summary(changed)
+    config = engine.change_config(edit)
+    return _summary(config.find(account.account_id))
 
 
 # --- keys -------------------------------------------------------------------------------------------
@@ -587,18 +606,25 @@ def account_trust_certificate(engine: Engine, parameters: TrustParameters) -> Ac
     (new,) = _pins((f"{parameters.host}:{parameters.port}={parameters.fingerprint}",))
     if new in settings.trusted_certificates:
         return _summary(settings)
-    changed = replace(settings, trusted_certificates=(*settings.trusted_certificates, new))
-    engine.save_config(config.with_account(changed))
-    return _summary(changed)
+    account_id = settings.account.account_id
+
+    def trust(fresh: AppConfig) -> AppConfig:
+        current = fresh.find(account_id)
+        if new in current.trusted_certificates:
+            return fresh
+        return fresh.with_account(replace(current, trusted_certificates=(*current.trusted_certificates, new)))
+
+    config = engine.change_config(trust)
+    return _summary(config.find(account_id))
 
 
 def account_forget_certificates(engine: Engine, parameters: AccountParameters) -> AccountSummary:
     """Take back every accepted certificate of an account: the usual checks apply again."""
     config = engine.config()
     settings = engine.resolve_account(parameters.account, config)
-    changed = replace(settings, trusted_certificates=())
-    engine.save_config(config.with_account(changed))
-    return _summary(changed)
+    account_id = settings.account.account_id
+    config = engine.change_config(lambda fresh: fresh.with_account(replace(fresh.find(account_id), trusted_certificates=())))
+    return _summary(config.find(account_id))
 
 
 def register(registry: CommandRegistry) -> None:
