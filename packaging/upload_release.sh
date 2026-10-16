@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # --- Version ------------------------------------------------------------
-# upload_release.sh 0.5.127
+# upload_release.sh 0.5.142
 # --- Version history ----------------------------------------------------
+# v0.5.142: The release page text names only the Linux installers
 # v0.5.127: Initial: attaches the installers in dist/ to the GitHub release of the version
 #
 # Attaches the installers of the version in pyproject.toml (dist/chrono-mail_<version>_*) to the GitHub release of that
@@ -27,7 +28,7 @@ if ! git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null; th
 fi
 if ! gh release view "$VERSION" --repo "$REPOSITORY" >/dev/null 2>&1; then
     gh release create "$VERSION" --repo "$REPOSITORY" --verify-tag --title "Chrono Mail $VERSION" \
-        --notes "Installers: .deb (Debian, Ubuntu, Mint), .rpm (Fedora, openSUSE) and setup.exe (Windows). Linux needs a system from 2022 or later (glibc 2.35)."
+        --notes "Installers: .deb (Debian, Ubuntu, Mint), .rpm (Fedora, openSUSE). Linux needs a system from 2022 or later (glibc 2.35)."
 fi
 gh release upload "$VERSION" "${FILES[@]}" --repo "$REPOSITORY" --clobber
 echo "Attached to https://github.com/$REPOSITORY/releases/tag/$VERSION:"
