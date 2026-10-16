@@ -10,9 +10,10 @@ from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.5.138"
+__version__ = "imap_sync.py 0.5.145"
 
 # --- Version history ----------------------------------------------------
+# v0.5.145: step: the steps of a sync (listing the folders, each folder), for the Operations window
 # v0.5.138: Tags as keywords: compared, sent, taken over, downloaded and uploaded with the flags; a folder that keeps no keywords keeps its tags here
 # v0.4.120: Messages the person deleted here while offline are always deleted on the server; only unexplained losses can hold a folder back
 # v0.4.119: A folder blocked by a safety rule is reported (FolderReport.blocked); the person's answer for it (ImapSyncOptions.confirmed) deletes on the server, brings the messages back, removes them here or uploads them again
@@ -27,6 +28,7 @@ __version__ = "imap_sync.py 0.5.138"
 # v0.0.29: Initial IMAP sync, server to store (D-049)
 
 Progress = Callable[[str, int, int], None]
+Step = Callable[[str], None]  # a step of the sync, named for the person ("Synchronising Inbox")
 
 KEPT_FLAGS: dict[str, MessageFlag] = {flag.imap_name.lower(): flag for flag in MessageFlag}
 SPECIAL_USE: dict[str, FolderRole] = {
@@ -245,7 +247,8 @@ class _Folder:
 
 
 def sync_imap(
-    client: ImapClient, store: Store, index: Index | None, state: ImapState, options: ImapSyncOptions = ImapSyncOptions(), progress: Progress | None = None
+    client: ImapClient, store: Store, index: Index | None, state: ImapState, options: ImapSyncOptions = ImapSyncOptions(), progress: Progress | None = None,
+    step: Step | None = None,
 ) -> ImapReport:
     """Make server and store agree, in both directions, folder by folder.
 
@@ -259,6 +262,8 @@ def sync_imap(
     notes: list[str] = []
     moved = 0
     try:
+        if step is not None:
+            step("Listing folders")
         listed = client.list_folders()
         subscribed = frozenset(entry.name for entry in client.list_folders(subscribed_only=True))
         plans, planning_notes = plan_folders(listed, subscribed, frozenset(state.forced), dict(state.roles))
@@ -278,6 +283,8 @@ def sync_imap(
         moved = _move_pass(client, store, index, state, plans, notes)
         for plan in plans:
             counts = _Counts()
+            if step is not None:
+                step(f"Synchronising {'/'.join(plan.local_path)}")
             try:
                 _sync_folder(client, store, index, state, options, plan, counts, progress)
             except ImapRefused as error:

@@ -28,9 +28,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.144"
+__version__ = "commands_mail.py 0.5.145"
 
 # --- Version history ----------------------------------------------------
+# v0.5.145: mail.fetch reports its steps per account (engine.activity): connecting, listing, downloading, rules, disconnected
 # v0.5.144: The rules run before the imported-account flag is switched off; a failure to save it is reported, the check still counts
 # v0.5.134: Tags: each listed message has its tags; message.list and message.search find messages by tag
 # v0.5.132: The first check of an imported account records mail that is already here instead of storing it twice
@@ -196,15 +197,26 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
             key = fingerprint_of_raw(raw) if known is not None else None
             return None if key is None or known is None else known.get(key)
 
+        account_id = settings.account.account_id
+
+        def downloading(done: int, total: int) -> None:
+            engine.progress("Downloading", done, total)
+            engine.activity(account_id, "receive", "Downloading", done, total)
+
+        engine.activity(account_id, "receive", "Connecting", None, None)
         with Pop3Client(settings.account.incoming, password, Pop3Limits(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES), engine.tls_context(settings)) as client:
+            engine.activity(account_id, "receive", "Connected", None, None)
             report = fetch_pop3(
                 client, mailbox.store, mailbox.index, state, inbox, settings.pop3, MAXIMUM_MESSAGE_BYTES, engine.clock,
-                progress=lambda done, total: engine.progress("Downloading", done, total), already_here=already_here if known is not None else None,
+                progress=downloading, already_here=already_here if known is not None else None,
+                step=lambda text: engine.activity(account_id, "receive", text, None, None),
             )
+        engine.activity(account_id, "receive", "Disconnected", None, None)
+        if report.new_references:
+            engine.activity(account_id, "receive", "Applying rules", None, None)
         ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
         flag_failed: tuple[str, ...] = ()
         if settings.skip_known_mail and report.aborted is None:  # one complete check: from now on every new message is new
-            account_id = settings.account.account_id
             try:
                 engine.change_config(lambda config: config.with_account(replace(config.find(account_id), skip_known_mail=False)))
             except ConfigurationError as error:  # the flag stays on: the next check recognises the mail that is here once more, which does no harm
@@ -228,12 +240,23 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
         link.folders = None  # the sync may make, renumber or forget folders
         link.validity.clear()
         state = ImapState(engine.directories.imap_state_file(mailbox.account_id), durable=engine.durable)
+        account_id = mailbox.account_id
+
+        def downloading(folder: str, done: int, total: int) -> None:
+            engine.progress(f"Downloading {folder}", done, total)
+            engine.activity(account_id, "receive", f"Downloading {folder}", done, total)
+
+        engine.activity(account_id, "receive", "Connecting", None, None)
         with ImapClient(mailbox.settings.account.incoming, password, ssl_context=engine.tls_context(mailbox.settings)) as client:
+            engine.activity(account_id, "receive", "Connected", None, None)
             report = sync_imap(
                 client, mailbox.store, mailbox.index, state, ImapSyncOptions(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES, confirmed=confirmed),
-                progress=lambda folder, done, total: engine.progress(f"Downloading {folder}", done, total),
+                progress=downloading, step=lambda text: engine.activity(account_id, "receive", text, None, None),
             )
+        engine.activity(account_id, "receive", "Disconnected", None, None)
     inbox = mailbox.role_folder(FolderRole.INBOX)
+    if report.new_references:
+        engine.activity(account_id, "receive", "Applying rules", None, None)
     ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
     notes = (f"{item.folder}: {item.note}" for item in report.folders if item.note and item.blocked is None)  # a blocked folder is a question, not an error
     remarks = (*report.failed, *report.notes, *notes, *ruled.failed)

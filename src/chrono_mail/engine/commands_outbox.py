@@ -1,18 +1,20 @@
 from dataclasses import dataclass, field
 
-from chrono_mail.config import ServerRole
+from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import ChronoMailError, FolderRole
 from chrono_mail.engine.commands_schedule import KIND, _due_time, _mark_replied, _notes, _places, _sender
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, option
 from chrono_mail.engine.session import Engine
-from chrono_mail.mime import parse_message
+from chrono_mail.mime import ParsedMessage, parse_message
+from chrono_mail.store import StoredMessage
 from chrono_mail.sync import send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 0.4.120"
+__version__ = "commands_outbox.py 0.5.145"
 
 # --- Version history ----------------------------------------------------
+# v0.5.145: Send All reports its steps per sending account (engine.activity), only for accounts with mail waiting; failures name their account
 # v0.4.120: The Sent copy goes to the server at once (IMAP)
 # v0.0.86: Initial Send All: send what waits in the Outbox
 
@@ -26,6 +28,7 @@ class SendOutboxParameters:
 class SendOutboxResult:
     sent: int
     failed: tuple[str, ...]
+    failed_accounts: tuple[str, ...] = ()  # per failure, the id of the account it was sent from ("" when not known)
 
 
 def _recipients(parsed_to: tuple[str, ...]) -> tuple[str, ...]:
@@ -45,44 +48,62 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
     moved to Sent after the server accepted it; one that fails again stays in the Outbox."""
     sent = 0
     failed: list[str] = []
+    failed_accounts: list[str] = []
+
+    def fail(account_id: str, text: str) -> None:
+        failed.append(text)
+        failed_accounts.append(account_id)
+
     for members in _places(engine, parameters.account):
         with open_mailbox(engine, members[0].account.account_id) as mailbox:
+            waiting: list[tuple[StoredMessage, str | None, bytes, ParsedMessage, tuple[str, ...], AccountSettings, str]] = []
             for message in mailbox.store.list_messages(mailbox.folder("Outbox")):
                 hint = mailbox.hint(message.ref.store_id)
                 try:
                     raw = mailbox.store.read(message.ref, hint=hint)
                     parsed = parse_message(raw)
                 except ChronoMailError as error:
-                    failed.append(f"a message in the Outbox cannot be read: {error}")
+                    fail("", f"a message in the Outbox cannot be read: {error}")
                     continue
                 if _due_time(parsed) is not None or _notes(parsed).get(KIND) == "recurring":
                     continue
                 recipients = _recipients(tuple(address.address for address in (*parsed.to_addresses, *parsed.cc_addresses, *parsed.bcc_addresses)))
                 if not recipients:
-                    failed.append(f"{parsed.subject}: there is no recipient")
+                    fail("", f"{parsed.subject}: there is no recipient")
                     continue
                 sender = _sender(members, parsed)
                 password = engine.passwords.get(sender.account.account_id, ServerRole.OUTGOING) if sender is not None else None
                 if sender is None or password is None:
-                    failed.append(f"{parsed.subject}: no password is stored for the account it is sent from")
+                    fail(sender.account.account_id if sender is not None else "", f"{parsed.subject}: no password is stored for the account it is sent from")
                     continue
+                waiting.append((message, hint, raw, parsed, recipients, sender, password))
+            totals: dict[str, int] = {}
+            for *_, sender, _ in waiting:
+                totals[sender.account.account_id] = totals.get(sender.account.account_id, 0) + 1
+            counted: dict[str, int] = {}
+            for message, hint, raw, parsed, recipients, sender, password in waiting:
+                account_id = sender.account.account_id
+                counted[account_id] = counted.get(account_id, 0) + 1
+                engine.activity(account_id, "send", "Sending", counted[account_id], totals[account_id])
                 try:
                     outcome = send_stored(
                         mailbox.store, mailbox.index, sender.account.outgoing, password, message.ref, hint, raw, sender.account.email_address,
                         recipients, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(sender, outgoing=True),
                     )
                 except ChronoMailError as error:
-                    failed.append(f"{parsed.subject}: {error}")
-                    continue
-                if outcome.sent:
+                    fail(account_id, f"{parsed.subject}: {error}")
+                    outcome = None
+                if outcome is not None and outcome.sent:
                     sent += 1
                     mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
                     _mark_replied(mailbox, parsed)
                     if outcome.warning:
-                        failed.append(f"{parsed.subject}: {outcome.warning}")
-                else:
-                    failed.append(f"{parsed.subject}: {outcome.error} (it stays in the Outbox)")
-    return SendOutboxResult(sent, tuple(failed))
+                        fail(account_id, f"{parsed.subject}: {outcome.warning}")
+                elif outcome is not None:
+                    fail(account_id, f"{parsed.subject}: {outcome.error} (it stays in the Outbox)")
+                if counted[account_id] == totals[account_id]:
+                    engine.activity(account_id, "send", "Disconnected", None, None)
+    return SendOutboxResult(sent, tuple(failed), tuple(failed_accounts))
 
 
 def register(registry: CommandRegistry) -> None:

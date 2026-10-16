@@ -51,6 +51,7 @@ from chrono_mail.ui.foldertree import FolderTree
 from chrono_mail.ui.messagelistview import MessageListView
 from chrono_mail.ui.icons import application_icon, section_icon, theme_icon
 from chrono_mail.ui.messagewindow import MessageWindow
+from chrono_mail.ui.operations import ClickableBar, OperationsWindow
 from chrono_mail.ui.models import (
     ACCOUNT_ROLE,
     CONTACT_ROLE,
@@ -92,9 +93,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.144"
+__version__ = "mainwindow.py 0.5.145"
 
 # --- Version history ----------------------------------------------------
+# v0.5.145: The Operations window: rows, errors and log of send and receive; opened by Refresh, by an error, by View > Operations… and by a click on the busy bar
 # v0.5.144: bring_forward: a second start of the program shows this window (also from the tray)
 # v0.5.144: The main window and its menus at the size of the Main window slider, the message windows and composers at that of Other windows and dialogs (both tried out from Settings)
 # v0.5.143: Progress numbers in the status line have thousands separators
@@ -269,6 +271,7 @@ class MainWindow(QMainWindow):
         self._after_delete: tuple[str | None, int, int | None] | None = None  # after a delete: the message to select (id, position) and the scroll position
         self._composers: list[ComposeWindow] = []
         self._checking: bool = False
+        self._sending: bool = False  # Send All is running
         self._dav_syncing: bool = False
         self._mail_action_states: dict[str, bool] = {}
         self._tried_interface: float | None = None  # sizes being tried out in Settings (not saved yet)
@@ -277,6 +280,7 @@ class MainWindow(QMainWindow):
         self._apply_main_font()
         self.setStyleSheet(theme.stylesheet())  # only this window: a stylesheet on the application would hide the style from appearance.py
         self._build_widgets()
+        self.operations = OperationsWindow(self._operation_name, settings, self)
         self._build_actions()
         self._default_shortcuts: dict[str, str] = {name: action.shortcut().toString() for name, action in vars(self).items() if name.startswith("act_") and isinstance(action, QAction)}
         self._build_toolbar()
@@ -292,7 +296,7 @@ class MainWindow(QMainWindow):
         self._quitting: bool = False
         self.tray = TrayController(self)
         self.tray.toggle_requested.connect(self.toggle_visibility)
-        self.tray.check_requested.connect(self.check_mail)
+        self.tray.check_requested.connect(lambda: self.check_accounts(None, manual=True))
         self.tray.settings_requested.connect(self._settings_from_tray)
         self.tray.quit_requested.connect(self.quit_program)
         self.tray.set_visible(bool_setting(settings, "tray", True))
@@ -593,14 +597,14 @@ class MainWindow(QMainWindow):
         """Send and receive all, receive all, send all, or receive the mail of one account only."""
         self.refresh_menu.clear()
         self.refresh_menu.addAction("Send and Receive All", self.send_and_receive)
-        self.refresh_menu.addAction("Receive All", self.check_mail)
-        self.refresh_menu.addAction("Send All", self.send_outbox)
+        self.refresh_menu.addAction("Receive All", lambda: self.check_accounts(None, manual=True))
+        self.refresh_menu.addAction("Send All", lambda: self.send_outbox(manual=True))
         accounts = self._mail_accounts()
         if accounts:
             self.refresh_menu.addSeparator()
         for account in accounts:
             account_id = str(getattr(account, "account_id"))
-            self.refresh_menu.addAction(f"\"{getattr(account, 'shown_name')}\" only", lambda chosen=account_id: self.check_accounts({chosen}))
+            self.refresh_menu.addAction(f"\"{getattr(account, 'shown_name')}\" only", lambda chosen=account_id: self.check_accounts({chosen}, manual=True))
 
     def _fill_snooze_menu(self) -> None:
         """The ready-made times, counted from now, and a choice of one's own."""
@@ -775,6 +779,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.act_conversations)
         view_menu.addAction(self.act_show_groups)
         view_menu.addAction(self.act_auto)
+        view_menu.addSeparator()
+        view_menu.addAction("Operations…", self.show_operations)
         help_menu = root.addMenu("&Help")
         help_menu.addAction(self.act_about)
         root.addSeparator()
@@ -797,7 +803,9 @@ class MainWindow(QMainWindow):
 
     def _build_status(self) -> None:
         self.status_label = QLabel("", self)
-        self.progress_bar = QProgressBar(self)
+        self.progress_bar = ClickableBar(self)
+        self.progress_bar.clicked.connect(self.show_operations)
+        self.progress_bar.setToolTip("Show the Operations window")
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setMaximumWidth(120)
         self.progress_bar.setTextVisible(False)
@@ -852,6 +860,7 @@ class MainWindow(QMainWindow):
         self.backend.busy_changed.connect(self._busy_changed)
         self.backend.progress.connect(self._progress)
         self.backend.notice.connect(self._notice)
+        self.backend.activity.connect(self._activity)
 
     # --- state ------------------------------------------------------------------------------------------
 
@@ -1226,6 +1235,7 @@ class MainWindow(QMainWindow):
     def apply_preferences(self) -> None:
         """Take the settings (as they are in the settings file now) into use."""
         settings = self.settings
+        self.operations.sync_hide_setting()
         app = QApplication.instance()
         if isinstance(app, QApplication):
             appearance.apply(app, settings)  # the colours and the style take effect at once
@@ -2811,15 +2821,24 @@ class MainWindow(QMainWindow):
         def receive() -> None:
             if not self._checking:
                 self.act_refresh.setEnabled(True)
-            self.check_mail()
+            self.check_accounts(None, manual=True, new_round=False)
+            self._settle_operations()  # nothing to check: the round ends with the send
 
-        self.send_outbox(then=receive)
+        self.send_outbox(then=receive, manual=True)
 
-    def send_outbox(self, then: Callable[[], None] | None = None) -> None:
-        """Send All: the messages that wait in the Outbox (scheduled ones wait for their time)."""
+    def send_outbox(self, then: Callable[[], None] | None = None, manual: bool = False) -> None:
+        """Send All: the messages that wait in the Outbox (scheduled ones wait for their time). Manual: the person asked
+        for it (the Operations window may open)."""
+        self._begin_operations(manual)
+        self._sending = True
 
         def done(result: object) -> None:
+            self._sending = False
             sent, failed = int(getattr(result, "sent")), tuple(str(text) for text in getattr(result, "failed"))
+            accounts = tuple(str(account_id) for account_id in getattr(result, "failed_accounts", ()))
+            for position, text in enumerate(failed):
+                self._finish_operation(accounts[position] if position < len(accounts) else "", "send", text)
+            self.operations.finish_all("send")
             if failed:
                 self.show_status("Sending: " + "; ".join(failed), error=True)
             elif sent:
@@ -2828,11 +2847,18 @@ class MainWindow(QMainWindow):
                 self._after_sent()
             if then is not None:
                 then()
+            else:
+                self._settle_operations()
 
         def failed(error: ChronoMailError) -> None:
+            self._sending = False
             self._report("Could not send the Outbox", error)
+            self._finish_operation("", "send", str(error))
+            self.operations.finish_all("send")
             if then is not None:
                 then()
+            else:
+                self._settle_operations()
 
         self.backend.call("mail.send-outbox", {}, done, failed, owner=self)
 
@@ -2840,8 +2866,9 @@ class MainWindow(QMainWindow):
         """The general timer: the accounts that have no interval of their own."""
         self.check_accounts({str(getattr(account, "account_id")) for account in self._mail_accounts() if int(getattr(account, "check_minutes", 0)) == 0})
 
-    def check_accounts(self, only: set[str] | None) -> None:
-        """Check these accounts (all when None) for new mail."""
+    def check_accounts(self, only: set[str] | None, manual: bool = False, new_round: bool = True) -> None:
+        """Check these accounts (all when None) for new mail. Manual: the person asked for it (the Operations window may
+        open); new_round False: it goes on from a send (Refresh), whose rows stay."""
         self._load_contact_addresses()  # Refresh also brings contacts that came from a server
         mail_ids = {str(getattr(account, "account_id")) for account in self._mail_accounts()}
         wanted = mail_ids if only is None else only & mail_ids
@@ -2849,6 +2876,10 @@ class MainWindow(QMainWindow):
             self._sync_calendars()
         if self._checking or not wanted:
             return
+        if new_round:
+            self._begin_operations(manual)
+        for account_id in sorted(wanted, key=self._operation_name_of):
+            self.operations.add(account_id, "receive")
         self._checking = True
         self.act_refresh.setEnabled(False)
         remaining = set(wanted)
@@ -2876,16 +2907,18 @@ class MainWindow(QMainWindow):
                 self._reselect = self._shown[2] if self._shown is not None else None  # keep the message that is being read
                 self.list_model.reload()
             self._load_folders(select_saved=False)
+            self._settle_operations()
 
         def make_done(account_id: str) -> Callable[[object], None]:
             def done(result: object) -> None:
                 totals["new"] += int(getattr(result, "downloaded"))
                 new_by_account[account_id] = int(getattr(result, "downloaded"))
-                for text in getattr(result, "failed"):
-                    problems.append(str(text))
+                own = [str(text) for text in getattr(result, "failed")]
                 blocked.extend((account_id, item) for item in getattr(result, "blocked", ()))
                 if getattr(result, "aborted"):
-                    problems.append(str(getattr(result, "aborted")))
+                    own.append(str(getattr(result, "aborted")))
+                problems.extend(own)
+                self._finish_operation(account_id, "receive", "; ".join(own) if own else None)
                 remaining.discard(account_id)
                 if not remaining:
                     finish()
@@ -2895,6 +2928,7 @@ class MainWindow(QMainWindow):
         def make_failed(account_id: str) -> Callable[[ChronoMailError], None]:
             def failed(error: ChronoMailError) -> None:
                 problems.append(str(error))
+                self._finish_operation(account_id, "receive", str(error))
                 remaining.discard(account_id)
                 if not remaining:
                     finish()
@@ -2904,6 +2938,48 @@ class MainWindow(QMainWindow):
         self.show_status("Checking for mail…")
         for account_id in list(remaining):
             self.backend.call("mail.fetch", {"account": account_id}, make_done(account_id), make_failed(account_id), owner=self, checking=True)
+
+    # --- the Operations window --------------------------------------------------------------------------------------
+
+    def show_operations(self) -> None:
+        self.operations.show()
+        self.operations.raise_()
+        self.operations.activateWindow()
+
+    def _operation_name_of(self, account_id: str) -> str:
+        account = next((account for account in self._accounts if str(getattr(account, "account_id")) == account_id), None)
+        return str(getattr(account, "shown_name", "") or getattr(account, "email_address", "")) if account is not None else account_id
+
+    def _operation_name(self, account_id: str, direction: str) -> str:
+        """The name of a row: the address and the protocol, as "rob@example.com (POP3)"."""
+        account = next((account for account in self._accounts if str(getattr(account, "account_id")) == account_id), None)
+        protocol = "SMTP" if direction == "send" else str(getattr(account, "kind", "pop3")).upper() if account is not None else ""
+        return f"{self._operation_name_of(account_id)} ({protocol})" if protocol else self._operation_name_of(account_id)
+
+    def _begin_operations(self, manual: bool) -> None:
+        """A send and receive starts: the rows of the last one go; the window opens when the person started it and wants it."""
+        if self._checking or self._sending:
+            return
+        self.operations.begin_round()
+        if manual and bool_setting(self.settings, "operations_show_on_send_receive", True):
+            self.show_operations()
+
+    def _activity(self, account_id: str, direction: str, step: str, done: object, total: object) -> None:
+        self.operations.step(account_id, direction, step, done if isinstance(done, int) else None, total if isinstance(total, int) else None)
+
+    def _finish_operation(self, account_id: str, direction: str, error: str | None) -> None:
+        self.operations.finish(account_id, direction, error)
+        if error is not None and bool_setting(self.settings, "operations_show_on_error", True):
+            self.show_operations()
+
+    def _settle_operations(self) -> None:
+        """Everything is done: the window closes itself when that is wanted, but stays after an error when errors show it."""
+        if self._checking or self._sending or self.operations.running() or not self.operations.isVisible():
+            return
+        if self.operations.round_errors and bool_setting(self.settings, "operations_show_on_error", True):
+            return
+        if bool_setting(self.settings, "operations_hide_when_done", True):
+            self.operations.hide()
 
     def _ask_about_blocked(self, account_id: str, item: object) -> None:
         """A safety rule held an IMAP folder back: the person decides, and the account is synchronised with that answer."""

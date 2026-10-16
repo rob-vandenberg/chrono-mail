@@ -49,9 +49,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.5.144"
+__version__ = "settingsdialog.py 0.5.145"
 
 # --- Version history ----------------------------------------------------
+# v0.5.145: General: the section Operations window (show on send and receive, hide when it completes, show on an error)
 # v0.5.144: Four size sliders: Main window, Message list, Other windows and dialogs (new), Text of messages; this window follows Other windows and dialogs
 # v0.5.135: Message list: Show Tags in the folder list; the tag's colour for the text
 # v0.5.124: General: Show on startup (D-121)
@@ -293,6 +294,18 @@ class SettingsDialog(QDialog):
                 widget.setEnabled(False)
             form.addRow(QLabel("This desktop has no notification area, so there are no icon and no notifications.", page))
         form.addRow(QLabel("Language: the program is in English; dates and times follow the language of the system.", page))
+        form.addItem(QSpacerItem(0, wpx(18), QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))  # a blank line above the section
+        operations = QLabel("Operations window", page)
+        operations.setStyleSheet("font-weight: bold;")
+        form.addRow(operations)
+        self.operations_show = QCheckBox("Show window on send and receive", page)
+        self.operations_show.setChecked(prefs.get_bool(s, "operations_show_on_send_receive"))
+        self.operations_hide = QCheckBox("Hide window when send and receive completes", page)
+        self.operations_hide.setChecked(prefs.get_bool(s, "operations_hide_when_done"))
+        self.operations_error = QCheckBox("Show window when an error occurs", page)
+        self.operations_error.setChecked(prefs.get_bool(s, "operations_show_on_error"))
+        for widget in (self.operations_show, self.operations_hide, self.operations_error):
+            form.addRow(widget)
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())
         self.auto_check.toggled.connect(self.interval.setEnabled)
@@ -769,6 +782,8 @@ class SettingsDialog(QDialog):
         return {
             "startup_view": str(self.startup_box.currentData() or ""), "check_on_start": self.check_on_start.isChecked(), "auto_check": self.auto_check.isChecked(), "auto_check_minutes": self.interval.value(),
             "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
+            "operations_show_on_send_receive": self.operations_show.isChecked(), "operations_hide_when_done": self.operations_hide.isChecked(),
+            "operations_show_on_error": self.operations_error.isChecked(),
             "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()), "interface_scale": scale.factor_at(self.interface_slider.value()), "windows_scale": scale.factor_at(self.windows_slider.value()),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_scale": scale.factor_at(self.list_slider.value()), "conversations": self.conversations.isChecked(),

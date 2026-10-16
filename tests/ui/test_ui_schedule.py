@@ -14,9 +14,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 0.2.101"
+__version__ = "test_ui_schedule.py 0.5.145"
 
 # --- Version history ----------------------------------------------------
+# v0.5.145: the Refresh menu checks as the person's own choice (manual)
 # v0.2.101: Cancel snooze
 # v0.2.100: The Snoozed until column of the Snoozed folder, its sorting, groups and the cards
 # v0.0.86: The Refresh menu (send and receive), the Snooze button with ready-made times, the Forward menu
@@ -189,8 +190,9 @@ def test_refresh_has_a_menu_to_receive_all_or_one_account(world: World, qtbot: Q
     assert isinstance(button, QToolButton) and button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup and button.menu() is world.window.refresh_menu
     checked: list[set[str] | None] = []
 
-    def record(only: set[str] | None) -> None:
+    def record(only: set[str] | None, manual: bool = False, new_round: bool = True) -> None:
         checked.append(only)
+        assert manual  # the person chose it from the menu: the Operations window may open
 
     monkeypatch.setattr(world.window, "check_accounts", record)
     world.window._fill_refresh_menu()  # noqa: SLF001

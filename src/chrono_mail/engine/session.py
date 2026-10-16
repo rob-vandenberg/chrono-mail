@@ -23,9 +23,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.5.144"
+__version__ = "session.py 0.5.145"
 
 # --- Version history ----------------------------------------------------
+# v0.5.145: activity: the steps of a mail check or a send, per account (for the Operations window)
 # v0.5.144: The settings file is read and written by one command at a time; change_config applies a change to a fresh read
 # v0.5.138: ImapLink.keywords: per server folder, whether the server keeps keywords (tags)
 # v0.4.120: One open IMAP connection per account for the actions done on the server first (ImapLink), closed when the program ends; notice
@@ -48,6 +49,11 @@ STANDARD_FOLDERS: tuple[tuple[tuple[str, ...], FolderRole], ...] = (
     (OUTBOX, FolderRole.OTHER),
 )
 Progress = Callable[[str, int, int | None], None]
+Activity = Callable[[str, str, str, int | None, int | None], None]  # account id, "receive" or "send", step, done, total
+
+
+def _no_activity(account_id: str, direction: str, step: str, done: int | None, total: int | None) -> None:
+    """Step reports of mail checks and sends are optional."""
 
 
 def _no_progress(what: str, done: int, total: int | None) -> None:
@@ -106,6 +112,7 @@ class Engine:
     progress: Progress = field(default=_no_progress)
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)  # set when the program is ending: long waits stop
     notice: Callable[[str], None] = field(default=_no_notice)  # tells the person something they should know (an action waits for the server)
+    activity: Activity = field(default=_no_activity)  # the steps of a mail check or a send of one account (connecting, listing, downloading …)
     _imap_links: dict[str, ImapLink] = field(default_factory=dict, init=False, repr=False)
     _imap_links_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)

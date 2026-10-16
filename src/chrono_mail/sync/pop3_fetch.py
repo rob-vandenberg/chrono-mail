@@ -10,9 +10,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync.pop3_state import DownloadRecord, Pop3State
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3_fetch.py 0.5.133"
+__version__ = "pop3_fetch.py 0.5.145"
 
 # --- Version history ----------------------------------------------------
+# v0.5.145: step: the steps of a check (listing the messages, deleting on the server), for the Operations window
 # v0.5.133: already_here first looks at the header alone (TOP n 0); only a message that is not here is downloaded whole
 # v0.5.132: already_here: a message that is already in the store (imported) is recorded as downloaded, not stored twice
 # v0.0.33: the new messages are listed in the report
@@ -23,6 +24,7 @@ MISSING_RATIO_LIMIT: float = 0.5
 MISSING_RATIO_MINIMUM_COUNT: int = 10
 Checkpoint = Callable[[str], None]
 Progress = Callable[[int, int], None]
+Step = Callable[[str], None]  # a step of the check, named for the person ("Listing messages")
 AlreadyHere = Callable[[bytes], str | None]  # given the header (or the whole message when the server has no TOP): the store id of the same message when it is already in the store
 
 
@@ -75,6 +77,7 @@ def fetch_pop3(
     checkpoint: Checkpoint = _no_checkpoint,
     progress: Progress | None = None,
     already_here: AlreadyHere | None = None,
+    step: Step | None = None,
 ) -> FetchReport:
     """Download new messages through a connected client.
 
@@ -87,6 +90,8 @@ def fetch_pop3(
     """
     run = _Run()
     try:
+        if step is not None:
+            step("Listing messages")
         numbers = client.uidl()
         sizes = client.list_sizes()
         on_server = {unique_id: number for number, unique_id in numbers}
@@ -102,6 +107,8 @@ def fetch_pop3(
             _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number), already_here)
         _apply_policy(store, state, options, now, run, on_server)
         if run.to_delete:
+            if step is not None:
+                step("Deleting messages on the server")
             _delete_on_server(client, state, now, checkpoint, run)
     except ProtocolError as error:
         run.aborted = str(error)

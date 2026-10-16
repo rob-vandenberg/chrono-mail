@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.5.144"
+__version__ = "prefs.py 0.5.145"
 
 # --- Version history ----------------------------------------------------
+# v0.5.145: The three settings of the Operations window (show on send and receive, hide when it completes, show on an error)
 # v0.5.144: windows_scale, the size of the other windows and dialogs
 # v0.5.135: show_tags, tag_text_colour
 # v0.3.108: list_scale replaces list_font_size; reading_scale (a factor, for reading and writing) replaces reader_zoom (percent) and compose_font_size (points)
@@ -25,6 +26,9 @@ DEFAULTS: dict[str, object] = {
     "notifications": True,
     "tray": True,
     "close_to_tray": False,
+    "operations_show_on_send_receive": True,  # the Operations window opens when a send and receive starts
+    "operations_hide_when_done": True,  # it closes itself when everything is done (not after an error while operations_show_on_error is on)
+    "operations_show_on_error": True,  # it opens for an error, and stays open after one
     # appearance
     "color_scheme": "system",  # system, light or dark
     "style": "default",  # default: the platform's own style, or fusion
