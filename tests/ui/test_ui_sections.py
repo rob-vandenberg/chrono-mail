@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sections.py 0.5.164"
+__version__ = "test_ui_sections.py 0.5.170"
 
 # --- Version history ----------------------------------------------------
+# v0.5.170: a section's row of buttons sits in the window's one toolbar
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.0.86: A message is selected before the mail actions are compared
 # v0.0.85: The mail title ends with the program name
@@ -32,7 +33,7 @@ def test_four_square_buttons_switch_the_sidebar_the_main_area_and_the_toolbar(wo
     window.section_bar.buttons[CALENDAR].click()
     page = window.pages[CALENDAR]
     assert window.section == CALENDAR and window.side_stack.currentWidget() is page.side and window.content_stack.currentWidget() is page.content
-    assert page.toolbar.parent() is window and page.toolbar.isVisible() and not window.toolbar.isVisible() and window.section_bar.buttons[CALENDAR].isChecked() and not window.section_bar.buttons[MAIL].isChecked()
+    assert page.toolbar.parent() is window.window_toolbar.rows and page.toolbar.isVisible() and not window.toolbar.isVisible() and window.section_bar.buttons[CALENDAR].isChecked() and not window.section_bar.buttons[MAIL].isChecked()
     assert "Calendar" in window.windowTitle()
     window.section_bar.buttons[CALENDAR].click()  # pressing the pressed one leaves it pressed
     assert window.section_bar.buttons[CALENDAR].isChecked()

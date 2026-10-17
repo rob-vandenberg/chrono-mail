@@ -15,9 +15,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.5.149"
+__version__ = "test_ui_appearance.py 0.5.167"
 
 # --- Version history ----------------------------------------------------
+# v0.5.167: Refresh is a button of the folding toolbar (D-154)
 # v0.5.149: The blue is the program's own in every scheme and window state, never the system's accent colour
 # v0.5.144: Four sliders: Main window, Message list, Other windows and dialogs, Text of messages; the program's text and the Settings window follow Other windows and dialogs, the main window and its menus follow Main window
 # v0.3.115: The rows of the page list of Settings are 2 points higher than their text needs
@@ -203,7 +204,7 @@ def test_refresh_is_a_circle_of_two_arrows_and_the_file_menu_has_no_add_account(
     assert isinstance(file_menu, QMenu)
     texts = [action.text() for action in file_menu.actions()]
     assert "Refresh" in texts and "Get mail" not in texts and not any("account" in text.lower() for text in texts)
-    assert window.act_refresh in window.toolbar.actions()
+    assert window.toolbar.button_for(window.act_refresh).defaultAction() is window.act_refresh
     assert (icons.RESOURCES / "icons" / "view-refresh.svg").exists()
 
 

@@ -20,10 +20,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QProgressBar,
-    QSizePolicy,
     QSplitter,
     QStackedWidget,
-    QToolBar,
     QToolButton,
     QTreeView,
     QVBoxLayout,
@@ -92,13 +90,16 @@ from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail, tag_icon
 from chrono_mail.ui.tagsdialog import TagsDialog
+from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.165"
+__version__ = "mainwindow.py 0.5.170"
 
 # --- Version history ----------------------------------------------------
+# v0.5.170: one toolbar for the window that shows the row of the section on screen (switching made the window wider, D-156)
+# v0.5.167: the toolbar of every section folds its buttons into More when the window is narrow (FoldingToolbar, D-154); Menu and the search field always stay
 # v0.5.165: going back to the message in the reading pane calls off the message still opening (its answer showed it under the selected one)
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.161: only new group headers are spanned (not every header after every change)
@@ -604,10 +605,9 @@ class MainWindow(QMainWindow):
 
     def _split_button(self, action: QAction, menu: QMenu) -> None:
         """The toolbar button of an action does the action when clicked and opens the menu from its arrow."""
-        button = self.toolbar.widgetForAction(action)
-        if isinstance(button, QToolButton):
-            button.setMenu(menu)
-            button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        button = self.toolbar.button_for(action)
+        button.setMenu(menu)
+        button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
 
     def _fill_refresh_menu(self) -> None:
         """Send and receive all, receive all, send all, or receive the mail of one account only."""
@@ -635,19 +635,18 @@ class MainWindow(QMainWindow):
         self.snooze_menu.addAction("Custom date and time…", self.snooze_selected)
 
     def _build_toolbar(self) -> None:
-        self.toolbar = QToolBar("Main", self)
-        self.toolbar.setMovable(False)
-        self.toolbar.setObjectName("mainToolbar")
-        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self.addToolBar(self.toolbar)
-        self.toolbar.addAction(self.act_new)
-        self.toolbar.addAction(self.act_refresh)
+        self.window_toolbar = WindowToolbar("Main", self)  # the one toolbar: it shows the row of the section on screen
+        self.window_toolbar.setObjectName("mainToolbar")
+        self.addToolBar(self.window_toolbar)
+        self.toolbar = ToolbarRow(self)  # Mail's row
+        self.window_toolbar.add_row(self.toolbar)
+        self.toolbar.add_left(self.act_new)
+        self.toolbar.add_left(self.act_refresh)
         self.refresh_menu = QMenu(self)
         self.refresh_menu.aboutToShow.connect(self._fill_refresh_menu)
         self._split_button(self.act_refresh, self.refresh_menu)
-        self.toolbar.addWidget(self._stretch())
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
-            self.toolbar.addAction(action)
+            self.toolbar.add_center(action)
         self.forward_menu = QMenu(self)
         self.forward_menu.addAction(self.act_forward_attachment)
         self._split_button(self.act_forward, self.forward_menu)
@@ -660,7 +659,7 @@ class MainWindow(QMainWindow):
         for action in (self.act_read, self.act_unread, self.act_flag, self.act_unflag):
             mark_menu.addAction(action)
         self.mark_button.setMenu(mark_menu)
-        self.toolbar.addWidget(self.mark_button)
+        self.toolbar.add_center(self.mark_button)
         self.tag_button = QToolButton(self)
         self.tag_button.setText("Tag")
         self.tag_button.setIcon(tag_icon(QColor("#808080")))
@@ -669,15 +668,13 @@ class MainWindow(QMainWindow):
         self.tag_menu = QMenu(self.tag_button)
         self.tag_menu.aboutToShow.connect(lambda: self._fill_tag_menu(self.tag_menu))
         self.tag_button.setMenu(self.tag_menu)
-        self.toolbar.addWidget(self.tag_button)
-        self.toolbar.addAction(self.act_archive)
-        self.toolbar.addAction(self.act_snooze)
+        self.toolbar.add_center(self.tag_button)
+        self.toolbar.add_center(self.act_archive)
+        snooze_button = self.toolbar.add_center(self.act_snooze)
         self.snooze_menu = QMenu(self)
         self.snooze_menu.aboutToShow.connect(self._fill_snooze_menu)
-        snooze_button = self.toolbar.widgetForAction(self.act_snooze)
-        if isinstance(snooze_button, QToolButton):  # a click anywhere on it opens the menu: the time dialog is its last entry
-            snooze_button.setMenu(self.snooze_menu)
-            snooze_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        snooze_button.setMenu(self.snooze_menu)  # a click anywhere on it opens the menu: the time dialog is its last entry
+        snooze_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.move_button = QToolButton(self)
         self.move_button.setText("Move to")
         self.move_button.setIcon(theme_icon("go-parent-folder"))
@@ -686,13 +683,12 @@ class MainWindow(QMainWindow):
         self.move_menu = QMenu(self.move_button)
         self.move_menu.aboutToShow.connect(self._fill_move_menu)
         self.move_button.setMenu(self.move_menu)
-        self.toolbar.addWidget(self.move_button)
-        self.toolbar.addAction(self.act_delete)
-        self.toolbar.addWidget(self._stretch())
+        self.toolbar.add_center(self.move_button)
+        self.toolbar.add_center(self.act_delete)
         self.search_pill = SearchField(self)
         self.search_box = self.search_pill.line_edit
         self.scope = self.search_pill.scope
-        self.toolbar.addWidget(self.search_pill)
+        self.toolbar.set_search(self.search_pill)
         self.search_pill.clicked.connect(self._show_search_history)
         self.search_pill.cleared.connect(self._clear_search)
         self._search_history: list[str] = read_history(str(self.settings.value("search_history", "")))
@@ -703,9 +699,12 @@ class MainWindow(QMainWindow):
         self.search_help = SearchHelp(self)
         self.search_help.picked.connect(self._search_help_picked)
         self.search_help.typed.connect(self._search_help_typed)
-        for page in self.pages.values():  # the toolbars of the other sections: one is shown at a time, in the same place
-            self.addToolBar(page.toolbar)
-            page.toolbar.hide()
+        for page in self.pages.values():  # the rows of the other sections, in the same toolbar
+            self.window_toolbar.add_row(page.toolbar)
+
+    def _toolbars(self) -> list[ToolbarRow]:
+        """The row of buttons of every section: Mail's first."""
+        return [self.toolbar, *(page.toolbar for page in self.pages.values())]
 
     def _menu_actions(self, menu: QMenu) -> list[QAction]:
         """Every action in a menu and in its submenus: they are also given to the window, so that their keys work while the menu bar is hidden."""
@@ -717,11 +716,6 @@ class MainWindow(QMainWindow):
             elif not action.isSeparator():
                 found.append(action)
         return found
-
-    def _stretch(self) -> QWidget:
-        spacer = QWidget(self)
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        return spacer
 
     def _build_menus(self) -> None:
         bar = self.menuBar()
@@ -804,14 +798,14 @@ class MainWindow(QMainWindow):
         # The Menu button is the first button of every toolbar, so that no row of the window is used for it. The menu bar
         # stays as the home of the menus (and of their keys) but is not shown.
         self.menu_buttons: list[QToolButton] = []
-        for toolbar in (self.toolbar, *(page.toolbar for page in self.pages.values())):
+        for toolbar in self._toolbars():
             button = QToolButton(self)
             button.setObjectName("menuButton")
             button.setText("\u2630  Menu")
             button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             button.setMenu(root)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            toolbar.insertWidget(toolbar.actions()[0], button)
+            toolbar.set_menu_button(button)
             self.menu_buttons.append(button)
         self.addActions(self._menu_actions(root))
         self.addAction(self.act_open_menu)  # not in a menu: the window itself listens for its key
@@ -869,7 +863,7 @@ class MainWindow(QMainWindow):
         self.list_model.selected_rows = self._selected_and_current_rows
         self.search_box.returnPressed.connect(self._run_search)
         self.search_box.textChanged.connect(self._search_text_changed)
-        self.scope.currentIndexChanged.connect(self._scope_changed)
+        self.scope.changed.connect(self._scope_changed)
         self.filter_chip.clicked.connect(self._clear_advanced)
         for button in (self.filter_unread, self.filter_flagged, self.filter_attachments):
             button.toggled.connect(self._show_filter_state)
@@ -1345,7 +1339,7 @@ class MainWindow(QMainWindow):
         """The sizes the style list does not hold: this window's at its own size factor, the message windows' and the
         composers' at that of the other windows."""
         self.section_bar.apply_scale()
-        self.search_pill.apply_scale()
+        self.window_toolbar.apply_scale()
         self.tree.setMinimumWidth(px(180))
         for reader in (self.reader, *(window.reader for window in self._message_windows)):
             reader.apply_scale()
@@ -1876,7 +1870,7 @@ class MainWindow(QMainWindow):
         self.search_box.blockSignals(False)
         self.search_pill.set_active(bool(wanted.query.strip()))
         self.scope.blockSignals(True)
-        self.scope.setCurrentIndex(1 if wanted.all_folders else 0)
+        self.scope.set_current_index(1 if wanted.all_folders else 0)
         self.scope.blockSignals(False)
         for button, on in ((self.filter_unread, wanted.unread), (self.filter_flagged, wanted.flagged), (self.filter_attachments, wanted.attachments)):
             button.blockSignals(True)
@@ -1905,7 +1899,7 @@ class MainWindow(QMainWindow):
         attachments = True if self.filter_attachments.isChecked() else None
         folder = self._folder
         advanced = self._advanced
-        if (query or advanced is not None) and self.scope.currentData() == "all":
+        if (query or advanced is not None) and self.scope.current_data() == "all":
             folder = None
         elif self._tree_kind in ("unread", "flagged"):
             folder = None
@@ -2263,9 +2257,7 @@ class MainWindow(QMainWindow):
         index = self._stack_index(section)
         self.side_stack.setCurrentIndex(index)
         self.content_stack.setCurrentIndex(index)
-        self.toolbar.setVisible(section == MAIL)
-        for name, page in self.pages.items():
-            page.toolbar.setVisible(name == section)
+        self.window_toolbar.show_row(self.toolbar if section == MAIL else self.pages[section].toolbar)  # one step: the window keeps its size
         self.section_bar.show_section(section)
         self.side_heading.setText(next(name for key, name, *_ in SECTIONS if key == section))
         page = self.pages.get(section)

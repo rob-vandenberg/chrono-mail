@@ -17,9 +17,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.5.164"
+__version__ = "test_ui_window.py 0.5.167"
 
 # --- Version history ----------------------------------------------------
+# v0.5.167: This folder / All folders is a button (set_current_index)
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.159: the delete test waits for the status text (the row goes with the fact, the text comes with the answer just after)
 # v0.5.139: a reload keeps the old rows until the new ones arrive: the unread test waits for the new ones
@@ -342,7 +343,7 @@ def test_search_in_the_folder_and_in_all_folders(world: World, qtbot: QtBot) -> 
     world.window.search_box.setText("Message")
     world.window.search_box.returnPressed.emit()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
-    world.window.scope.setCurrentIndex(1)
+    world.window.scope.set_current_index(1)
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
     world.window.search_box.setText("zzzzzz")
     world.window.search_box.returnPressed.emit()

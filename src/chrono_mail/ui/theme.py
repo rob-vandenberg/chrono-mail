@@ -4,9 +4,10 @@ from chrono_mail.ui.colours import SEPARATOR, selection_grey
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.5.144"
+__version__ = "theme.py 0.5.167"
 
 # --- Version history ----------------------------------------------------
+# v0.5.167: The toolbar rules apply to the folding toolbar of every section; the chosen calendar view has a blue line under it; "This folder" is a button with its ▾ at its end
 # v0.5.144: The stylesheet at a given size factor: the main window at its own, the message windows and composers at that of the other windows
 # v0.3.106: Every size in pixels follows the factor of the interface (lines of 1 pixel stay)
 # v0.2.97: The rounding of the search field is set by the field itself (half its height)
@@ -49,19 +50,23 @@ QMenu {{ background: palette(window); border: 1px solid palette(mid); padding: 4
 QMenu::item {{ padding: 6px 28px 6px 22px; border-radius: 3px; }}
 QMenu::item:selected {{ background: palette(highlight); color: palette(highlighted-text); }}
 QMenu::separator {{ height: 1px; background: palette(mid); margin: 4px 8px; }}
-QToolBar#mainToolbar {{ background: palette(window); border: 0; spacing: 2px; padding: 4px 10px; }}
-QToolBar#mainToolbar QToolButton {{ background: transparent; border: 0; border-radius: 4px; padding: 6px 9px; }}
-QToolBar#mainToolbar QToolButton:hover, QToolBar#mainToolbar QToolButton:pressed {{ background: {HOVER}; }}
-QToolBar#mainToolbar QToolButton[popupMode="2"] {{ padding-right: 22px; }}
-QToolBar#mainToolbar QToolButton[popupMode="1"] {{ padding-right: 24px; }}
-QToolBar#mainToolbar QToolButton::menu-button {{ border: 0; width: 18px; }}
-QToolBar#mainToolbar QToolButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 7px; }}
-QToolButton#menuButton, QToolBar#mainToolbar QToolButton#menuButton {{ background: palette(highlight); color: palette(highlighted-text); font-weight: 600; border: 0; border-radius: 4px; padding: 6px 14px; margin-right: 6px; }}
-QToolButton#menuButton:hover, QToolBar#mainToolbar QToolButton#menuButton:hover {{ background: palette(link); }}
+QToolBar[folding="true"] {{ background: palette(window); border: 0; spacing: 2px; padding: 4px 10px; }}
+QToolBar[folding="true"] QToolButton {{ background: transparent; border: 0; border-radius: 4px; padding: 6px 9px; }}
+QToolBar[folding="true"] QToolButton:hover, QToolBar[folding="true"] QToolButton:pressed {{ background: {HOVER}; }}
+QToolBar[folding="true"] QToolButton[popupMode="2"] {{ padding-right: 22px; }}
+QToolBar[folding="true"] QToolButton[popupMode="1"] {{ padding-right: 24px; }}
+QToolBar[folding="true"] QToolButton::menu-button {{ border: 0; width: 18px; }}
+QToolBar[folding="true"] QToolButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 7px; }}
+QToolButton#menuButton, QToolBar[folding="true"] QToolButton#menuButton {{ background: palette(highlight); color: palette(highlighted-text); font-weight: 600; border: 0; border-radius: 4px; padding: 6px 14px; margin-right: 6px; }}
+QToolButton#menuButton:hover, QToolBar[folding="true"] QToolButton#menuButton:hover {{ background: palette(link); }}
 QToolButton#menuButton::menu-indicator {{ image: none; width: 0; }}
+QToolBar[folding="true"] QToolButton#viewButton {{ border-radius: 0; border-bottom: 2px solid transparent; }}
+QToolBar[folding="true"] QToolButton#viewButton:checked {{ background: transparent; border-bottom: 2px solid palette(highlight); }}
+QToolBar[folding="true"] QToolButton#viewButton:checked:hover {{ background: {HOVER}; }}
 QFrame#searchPill {{ border: 1px solid palette(mid); background: palette(base); }}
 QFrame#searchPill QLineEdit {{ border: 0; background: transparent; padding: 5px 2px; }}
-QFrame#searchPill QComboBox {{ border: 0; background: transparent; padding: 2px 6px; }}
+QFrame#searchPill QToolButton#searchScope {{ border: 0; background: transparent; padding: 2px 20px 2px 6px; }}
+QFrame#searchPill QToolButton#searchScope::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 5px; }}
 QFrame#searchPill QLabel {{ border: 0; background: transparent; }}
 QFrame#searchPill[look="focused"] {{ border: 1px solid palette(highlight); }}
 QFrame#searchPill[look="active"] {{ border: 1px solid {SEARCH_ACTIVE}; }}

@@ -1,15 +1,18 @@
 from collections.abc import Callable
 
 from PySide6.QtCore import QObject, QSize, Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QToolBar, QToolButton, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QToolButton, QWidget
 
 from chrono_mail.ui.icons import section_icon
 from chrono_mail.ui.scale import px
+from chrono_mail.ui.toolbar import ToolbarRow
 
 # --- Version ------------------------------------------------------------
-__version__ = "sections.py 0.3.106"
+__version__ = "sections.py 0.5.170"
 
 # --- Version history ----------------------------------------------------
+# v0.5.170: A section has a row of buttons that the window's one toolbar shows (D-156)
+# v0.5.167: A section's toolbar is a folding toolbar, like Mail's (D-154)
 # v0.3.106: The buttons follow the size factor of the interface (apply_scale)
 # v0.0.85: Section icons from the program's copy of the Breeze icons
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
@@ -76,7 +79,7 @@ class SectionPage(QObject):
         super().__init__(parent)
         self.side: QWidget = QWidget()
         self.content: QWidget = QWidget()
-        self.toolbar: QToolBar = QToolBar()
+        self.toolbar: ToolbarRow = ToolbarRow(parent if isinstance(parent, QWidget) else None)  # its row of buttons: the window's toolbar shows it while the section is shown
         self.status: Callable[[str], None] = lambda text: None  # the window sets this: where to say how many items there are
 
     def on_show(self) -> None:

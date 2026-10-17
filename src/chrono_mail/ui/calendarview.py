@@ -1,18 +1,18 @@
 from datetime import date, datetime, timedelta
 from typing import override
 
-from PySide6.QtCore import QDate, QLocale, QPoint, QRect, QSettings, Qt, QTimer
-from PySide6.QtGui import QAction, QActionGroup, QColor, QPainter, QResizeEvent
+from PySide6.QtCore import QDate, QEvent, QLocale, QPoint, QRect, QSettings, Qt, QTimer
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFontMetrics, QPainter, QResizeEvent
 from PySide6.QtWidgets import (
     QCalendarWidget,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QTableView,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -27,18 +27,33 @@ from chrono_mail.ui.eventeditor import EventEditor
 from chrono_mail.ui.formatting import local_zone_now
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimpages import PimPage
+from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook
+from chrono_mail.ui.toolbar import view_button
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 0.5.159"
+__version__ = "calendarview.py 0.5.169"
 
 # --- Version history ----------------------------------------------------
+# v0.5.169: The day columns of the small month calendar shrink with it (at 240 px its last days were cut off)
+# v0.5.168: The small month calendar can be 240 px narrow (it made the sidebar at least 266 px)
+# v0.5.167: The views have icons and the chosen one a blue line under it; they merge into one button showing the chosen view when the toolbar is narrow; the search field looks like Mail's (D-154)
 # v0.5.159: follows the facts (D-146 step 5): only the blocks of the event that changed are replaced (its occurrences in the days shown are asked for); no reload after saving or deleting
 # v0.0.64: Initial calendar section: day, work week, week, upcoming, month and agenda views, event editor, mini calendar
 
+
+VIEW_ICONS: dict[str, str] = {
+    layout.DAY: "view-calendar-day",
+    layout.WORK_WEEK: "view-calendar-workweek",
+    layout.WEEK: "view-calendar-week",
+    layout.UPCOMING: "view-calendar-upcoming-days",
+    layout.MONTH: "view-calendar-month",
+    layout.AGENDA: "view-calendar-agenda",
+}
 LIST_LIMIT: int = 5000
 WORK_DAYS: tuple[int, ...] = (0, 1, 2, 3, 4)
 FIRST_HOUR: int = 7  # the hour the grid is scrolled to
+DAY_MARGIN: int = 6  # room around a day's number in the small month calendar
 
 
 class RangeCalendar(QCalendarWidget):
@@ -53,6 +68,21 @@ class RangeCalendar(QCalendarWidget):
         self.setHorizontalHeaderFormat(QCalendarWidget.HorizontalHeaderFormat.SingleLetterDayNames)
         self.setFirstDayOfWeek(QLocale().firstDayOfWeek())
         self.setFixedHeight(190)
+        self.setMinimumWidth(240)  # its own wish (266) kept the whole sidebar wide, in every section
+        self._fit_columns()
+
+    def _fit_columns(self) -> None:
+        """A day column needs only room for "00" (or a day's letter): Qt's own minimum for a column is that of a column
+        heading (38 px at 9 points), and seven of those did not fit in 240 px, so the last days were cut off."""
+        grid = self.findChild(QTableView)
+        if grid is not None:
+            grid.horizontalHeader().setMinimumSectionSize(QFontMetrics(grid.font()).horizontalAdvance("00") + DAY_MARGIN)
+
+    @override
+    def changeEvent(self, event: QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):  # another size of the interface
+            self._fit_columns()
 
     @override
     def paintCell(self, painter: QPainter, rect: QRect, date: QDate) -> None:
@@ -167,32 +197,30 @@ class CalendarPage(PimPage):
         self.view_actions: dict[str, QAction] = {}
         group = QActionGroup(self.toolbar)
         group.setExclusive(True)
-        self.toolbar.addSeparator()
+        self.views_button = view_button()  # the views merged into one, when the toolbar is narrow
+        views_menu = QMenu(self.views_button)
         for name, label in layout.VIEWS:
-            action = QAction(label, self.toolbar)
+            action = QAction(theme_icon(VIEW_ICONS[name]), label, self.toolbar)
             action.setCheckable(True)
             action.setChecked(name == self.view)
             action.triggered.connect(lambda checked=False, chosen=name: self.set_view(chosen))
             group.addAction(action)
-            self.toolbar.addAction(action)
+            views_menu.addAction(action)
             self.view_actions[name] = action
-        self.toolbar.addSeparator()
+        self.views_button.setMenu(views_menu)
+        self._show_chosen_view()
+        self.toolbar.add_views(list(self.view_actions.values()), self.views_button)
         self.act_edit = QAction("Edit", self.toolbar)
         self.act_edit.setIcon(theme_icon("document-edit"))
         self.act_edit.triggered.connect(self.edit_selected)
         self.act_delete = QAction("Delete", self.toolbar)
         self.act_delete.setIcon(theme_icon("edit-delete"))
         self.act_delete.triggered.connect(self.delete_selected)
-        self.toolbar.addAction(self.act_edit)
-        self.toolbar.addAction(self.act_delete)
-        spacer = QWidget()
-        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding, spacer.sizePolicy().verticalPolicy().Preferred)
-        self.toolbar.addWidget(spacer)
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Search events")
-        self.search.setClearButtonEnabled(True)
-        self.search.setMinimumWidth(220)
-        self.toolbar.addWidget(self.search)
+        self.toolbar.add_center(self.act_edit)
+        self.toolbar.add_center(self.act_delete)
+        self.search_field = SearchField(hint="Search events", focused_hint="Search events", scope=False)
+        self.search = self.search_field.line_edit
+        self.toolbar.set_search(self.search_field)
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(300)
@@ -264,9 +292,15 @@ class CalendarPage(PimPage):
         self.view = name
         self._settings.setValue("calendar_view", name)
         self.view_actions[name].setChecked(True)
+        self._show_chosen_view()
         self._scrolled = False
         self._apply_view()
         self.reload()
+
+    def _show_chosen_view(self) -> None:
+        """The merged button shows the view that is chosen: its icon and its name."""
+        self.views_button.setText(dict(layout.VIEWS)[self.view])
+        self.views_button.setIcon(theme_icon(VIEW_ICONS[self.view]))
 
     def _apply_view(self) -> None:
         self.stack.setCurrentIndex({layout.MONTH: 1, layout.AGENDA: 2}.get(self.view, 0))

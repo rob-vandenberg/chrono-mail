@@ -2,7 +2,7 @@ from typing import override
 
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QLabel, QToolBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
@@ -11,9 +11,11 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.sections import SectionPage
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimpages.py 0.5.159"
+__version__ = "pimpages.py 0.5.170"
 
 # --- Version history ----------------------------------------------------
+# v0.5.170: Its buttons are a row of the window's one toolbar (D-156)
+# v0.5.167: The toolbar folds like Mail's: New and Refresh at the left (D-154)
 # v0.5.159: apply_fact: the facts of this kind of collection reach the panel and the section (apply_item); a change from outside fetches again, once, one at a time (D-146 step 5)
 # v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.64: The calendar section
@@ -44,17 +46,15 @@ class PimPage(SectionPage):
         self.message.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
-        self.toolbar = QToolBar("Section")
-        self.toolbar.setMovable(False)
-        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.toolbar.setObjectName(f"{self.kind}Toolbar")
         self.act_new = QAction(self.new_label, self.toolbar)
         self.act_new.setIcon(theme_icon(self.new_icon))
         self.act_new.triggered.connect(self.new_item)
         self.act_refresh = QAction("Refresh", self.toolbar)
         self.act_refresh.setIcon(theme_icon("view-refresh"))
         self.act_refresh.triggered.connect(self.refresh)
-        self.toolbar.addAction(self.act_new)
-        self.toolbar.addAction(self.act_refresh)
+        self.toolbar.add_left(self.act_new)
+        self.toolbar.add_left(self.act_refresh)
         self.panel.changed.connect(self.selection_changed)
         self.pending: set[str] = set()  # items with an action under way: greyed, no second action (D-146)
         self._refetching: bool = False

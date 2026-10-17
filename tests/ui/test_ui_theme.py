@@ -11,12 +11,14 @@ from chrono_mail.ui.colours import SEPARATOR, selection_grey
 from chrono_mail.ui.columns import BY_ID, READ_MARK, cell_text
 from chrono_mail.ui.icons import TintedSvgEngine, section_icon
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SECTIONS, TASKS
+from chrono_mail.ui.toolbar import ToolbarRow
 from tests.ui.world import World, dialogs, menu_named, settle, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 0.5.136"
+__version__ = "test_ui_theme.py 0.5.167"
 
 # --- Version history ----------------------------------------------------
+# v0.5.167: the toolbars are folding toolbars: their rules, the Menu button first in the row of each, Mark then Tag then Archive in Mail's row (D-154)
 # v0.5.136: the Menu has Tags…, File has Import… (0.5.132), the Tag button follows Mark
 # v0.0.88: Selection grey without the focus, black 1 px lines between the panes and the column headers, Sorted by in bold
 # v0.0.85: Mark and Move to have icons, Archive is in the toolbar, the menu arrows sit beside the text; section icons are Breeze files
@@ -32,12 +34,13 @@ __version__ = "test_ui_theme.py 0.5.136"
 def test_every_widget_the_stylesheet_names_exists(world: World) -> None:
     window = world.window
     sheet = theme.stylesheet()
-    names = {"mainToolbar": window.toolbar, "folderTree": window.tree, "sideHeading": window.side_heading, "sectionBar": window.section_bar}
+    names = {"folderTree": window.tree, "sideHeading": window.side_heading, "sectionBar": window.section_bar}
     for name, widget in names.items():
         assert f"#{name}" in sheet and widget.objectName() == name
-    assert window.findChild(QFrame, "searchPill") is not None and window.scope.parent() is window.findChild(QFrame, "searchPill") and window.search_box.parent() is window.scope.parent()
+    assert 'QToolBar[folding="true"]' in sheet and window.window_toolbar.property("folding") is True
+    assert window.search_pill.objectName() == "searchPill" and window.scope.parent() is window.search_pill and window.search_box.parent() is window.scope.parent()
     assert all(button.objectName() == "sectionButton" for button in window.section_bar.buttons.values()) and "#sectionButton" in sheet
-    assert window.act_new in window.toolbar.actions() and all(isinstance(button, QToolButton) and button.objectName() == "menuButton" for button in window.menu_buttons) and "#menuButton" in sheet
+    assert window.toolbar.button_for(window.act_new).isVisibleTo(window.toolbar) and all(isinstance(button, QToolButton) and button.objectName() == "menuButton" for button in window.menu_buttons) and "#menuButton" in sheet
     assert window.styleSheet() == sheet
 
 
@@ -147,12 +150,12 @@ def test_the_menu_button_is_the_first_button_of_every_toolbar_and_the_menu_bar_r
     window = world.window
     from PySide6.QtWidgets import QToolBar
 
-    toolbars: list[QToolBar] = [window.toolbar, *(page.toolbar for page in window.pages.values())]
-    assert len(toolbars) == 4 and len(window.menu_buttons) == 4
-    for toolbar, button in zip(toolbars, window.menu_buttons, strict=True):
-        assert toolbar.widgetForAction(toolbar.actions()[0]) is button and button.text() == "\u2630  Menu" and button.menu() is menu_named(window)
-    mail_actions = window.toolbar.actions()
-    assert mail_actions[1] is window.act_new and mail_actions[2] is window.act_refresh
+    rows: list[ToolbarRow] = [window.toolbar, *(page.toolbar for page in window.pages.values())]
+    assert len(rows) == 4 and len(window.menu_buttons) == 4 and window.findChildren(QToolBar) == [window.window_toolbar]  # one toolbar, a row per section
+    for row, button in zip(rows, window.menu_buttons, strict=True):
+        assert row.widgets_in_order()[0] is button and button.text() == "\u2630  Menu" and button.menu() is menu_named(window)
+    row = window.toolbar
+    assert row.widgets_in_order()[1:3] == [window.toolbar.button_for(window.act_new), window.toolbar.button_for(window.act_refresh)]
     assert window.menuBar().isHidden() and window.act_settings in window.actions() and window.act_quit in window.actions()
     rule = next(line for line in theme.stylesheet().splitlines() if line.startswith("QToolButton#menuButton, "))
     assert "palette(highlight)" in rule and "newButton" not in theme.stylesheet()
@@ -164,11 +167,11 @@ def test_mark_and_move_to_have_icons_and_archive_is_in_the_toolbar(world: World)
 
     for button in (window.mark_button, window.move_button):
         assert not button.icon().isNull() and button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-    actions = window.toolbar.actions()
-    mark = next(action for action in actions if window.toolbar.widgetForAction(action) is window.mark_button)
-    assert window.toolbar.widgetForAction(actions[actions.index(mark) + 1]) is window.tag_button  # Tag comes after Mark (0.5.135)
-    assert actions[actions.index(mark) + 2] is window.act_archive
-    assert "QToolBar#mainToolbar QToolButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center;".replace("{{", "{") in theme.stylesheet()
+    order = window.toolbar.widgets_in_order()
+    mark = order.index(window.mark_button)
+    assert order[mark + 1] is window.tag_button  # Tag comes after Mark (0.5.135)
+    assert order[mark + 2] is window.toolbar.button_for(window.act_archive)
+    assert "QToolBar[folding=\"true\"] QToolButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center;".replace("{{", "{") in theme.stylesheet()
 
 
 def focus(view: QAbstractItemView, focus_in: bool, reason: Qt.FocusReason = Qt.FocusReason.OtherFocusReason) -> None:

@@ -14,9 +14,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 0.5.164"
+__version__ = "test_ui_schedule.py 0.5.167"
 
 # --- Version history ----------------------------------------------------
+# v0.5.167: the toolbar's buttons are found with button_for (the folding toolbar, D-154)
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.145: the Refresh menu checks as the person's own choice (manual)
 # v0.2.101: Cancel snooze
@@ -187,7 +188,7 @@ def test_refresh_has_a_menu_to_receive_all_or_one_account(world: World, qtbot: Q
 
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
-    button = world.window.toolbar.widgetForAction(world.window.act_refresh)
+    button = world.window.toolbar.button_for(world.window.act_refresh)
     assert isinstance(button, QToolButton) and button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup and button.menu() is world.window.refresh_menu
     checked: list[set[str] | None] = []
 
@@ -209,7 +210,7 @@ def test_the_snooze_button_offers_ready_made_times(world: World, qtbot: QtBot) -
 
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
-    button = world.window.toolbar.widgetForAction(world.window.act_snooze)
+    button = world.window.toolbar.button_for(world.window.act_snooze)
     assert isinstance(button, QToolButton) and button.text() == "Snooze" and button.popupMode() == QToolButton.ToolButtonPopupMode.InstantPopup and button.menu() is world.window.snooze_menu
     world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
     real_clock(world)
@@ -238,7 +239,7 @@ def test_refresh_sends_what_waits_in_the_outbox_and_then_receives(world: World, 
 def test_forward_has_a_menu_with_forward_as_attachment(world: World, qtbot: QtBot) -> None:
     from PySide6.QtWidgets import QToolButton
 
-    button = world.window.toolbar.widgetForAction(world.window.act_forward)
+    button = world.window.toolbar.button_for(world.window.act_forward)
     assert isinstance(button, QToolButton) and button.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup
     assert [action.text() for action in world.window.forward_menu.actions()] == ["Forward as attachment"]
 

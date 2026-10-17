@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QInputDialog,
     QLabel,
-    QLineEdit,
     QListView,
     QListWidget,
     QListWidgetItem,
@@ -31,12 +30,15 @@ from chrono_mail.ui.contacteditor import ContactEditor
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimpages import PimPage
+from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
+from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 0.5.159"
+__version__ = "contactsview.py 0.5.167"
 
 # --- Version history ----------------------------------------------------
+# v0.5.167: the toolbar folds like Mail's; Tag and Move to have icons; Import and Export live in More, which folded buttons join; the search field looks like Mail's (D-154)
 # v0.5.159: the list follows the facts (D-146 step 5): one contact in, out or changed at its place; the selection moves at the key press of a delete or move; contacts with an action under way are greyed; no reload after an action
 # v0.1.89: show_contact: one contact is shown, from the Contact column of the message list
 # v0.0.62: Initial contacts section: list, detail pane, editor, tags, move, import and export
@@ -238,10 +240,8 @@ class ContactsPage(PimPage):
         content_layout.addWidget(splitter)
         self.content = content
 
-        self.search = QLineEdit()
-        self.search.setPlaceholderText("Search contacts")
-        self.search.setClearButtonEnabled(True)
-        self.search.setMinimumWidth(240)
+        self.search_field = SearchField(hint="Search contacts", focused_hint="Search contacts", scope=False)
+        self.search = self.search_field.line_edit
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(250)
@@ -254,33 +254,30 @@ class ContactsPage(PimPage):
         self.act_delete.triggered.connect(self.delete_selected)
         self.tag_button = QToolButton()
         self.tag_button.setText("Tag")
+        self.tag_button.setIcon(tag_icon(QColor("#808080")))
+        self.tag_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.tag_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.tag_menu = QMenu(self.tag_button)
         self.tag_menu.aboutToShow.connect(self._fill_tag_menu)
         self.tag_button.setMenu(self.tag_menu)
         self.move_button = QToolButton()
         self.move_button.setText("Move to address book")
+        self.move_button.setIcon(theme_icon("go-parent-folder"))
+        self.move_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.move_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.move_menu = QMenu(self.move_button)
         self.move_menu.aboutToShow.connect(self._fill_move_menu)
         self.move_button.setMenu(self.move_menu)
-        self.more_button = QToolButton()
-        self.more_button.setText("More")
-        self.more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        more = QMenu(self.more_button)
-        more.addAction("Import vCard file…", self.import_file)
-        more.addAction("Export this address book…", self.export_file)
-        self.more_button.setMenu(more)
-        self.toolbar.addSeparator()
-        self.toolbar.addAction(self.act_edit)
-        self.toolbar.addWidget(self.tag_button)
-        self.toolbar.addWidget(self.move_button)
-        self.toolbar.addAction(self.act_delete)
-        self.toolbar.addWidget(self.more_button)
-        spacer = QWidget()
-        spacer.setSizePolicy(spacer.sizePolicy().horizontalPolicy().Expanding, spacer.sizePolicy().verticalPolicy().Preferred)
-        self.toolbar.addWidget(spacer)
-        self.toolbar.addWidget(self.search)
+        self.act_import = QAction("Import vCard file…", self.toolbar)
+        self.act_import.triggered.connect(self.import_file)
+        self.act_export = QAction("Export this address book…", self.toolbar)
+        self.act_export.triggered.connect(self.export_file)
+        self.toolbar.add_center(self.act_edit)
+        self.toolbar.add_center(self.tag_button)
+        self.toolbar.add_center(self.move_button)
+        self.toolbar.add_center(self.act_delete)
+        self.toolbar.set_more_extras([self.act_import, self.act_export])  # always in More, below what is folded
+        self.toolbar.set_search(self.search_field)
 
         self.search.textChanged.connect(self._search_changed)
         self.tag_list.currentItemChanged.connect(self._tag_chosen)
