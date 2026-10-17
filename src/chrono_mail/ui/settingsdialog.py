@@ -49,9 +49,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 0.5.145"
+__version__ = "settingsdialog.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: Appearance: the Style choice is gone (Fusion always draws, with the program's own colours, D-158)
 # v0.5.145: General: the section Operations window (show on send and receive, hide when it completes, show on an error)
 # v0.5.144: Four size sliders: Main window, Message list, Other windows and dialogs (new), Text of messages; this window follows Other windows and dialogs
 # v0.5.135: Message list: Show Tags in the folder list; the tag's colour for the text
@@ -89,7 +90,6 @@ MARK_READ_LABELS: tuple[tuple[str, str], ...] = (
 )
 QUOTE_LABELS: tuple[tuple[str, str], ...] = (("above", "My answer above the quoted text"), ("below", "My answer below the quoted text"), ("none", "Do not quote the original"))
 SCHEME_LABELS: tuple[tuple[str, str], ...] = (("system", "Follow the system"), ("light", "Light"), ("dark", "Dark"))
-STYLE_LABELS: tuple[tuple[str, str], ...] = (("default", "The style of the platform"), ("fusion", "Fusion"))
 
 
 def _combo(parent: QWidget, choices: tuple[tuple[str, str], ...], current: str) -> QComboBox:
@@ -399,12 +399,9 @@ class SettingsDialog(QDialog):
         form = QFormLayout(page)
         s = self._settings
         self.scheme_box = _combo(page, SCHEME_LABELS, prefs.get_text(s, "color_scheme", appearance.SCHEMES))
-        self.style_box = _combo(page, STYLE_LABELS, prefs.get_text(s, "style", appearance.STYLES))
         form.addRow("Colours", self.scheme_box)
-        form.addRow("Style", self.style_box)
         note = QLabel(
-            "Dark needs a style that can draw it. When the style of the platform cannot (the classic Windows style), Fusion is used while the colours are dark. "
-            "Messages in HTML are always shown on a white page: they are written for one. A style given on the command line (-style) is not changed here.",
+            "Follow the system takes the light or the dark colours as the system is set. Messages in HTML are always shown on a white page: they are written for one.",
             page,
         )
         note.setWordWrap(True)
@@ -784,7 +781,7 @@ class SettingsDialog(QDialog):
             "notifications": self.notifications.isChecked(), "tray": self.tray.isChecked(), "close_to_tray": self.close_to_tray.isChecked(),
             "operations_show_on_send_receive": self.operations_show.isChecked(), "operations_hide_when_done": self.operations_hide.isChecked(),
             "operations_show_on_error": self.operations_error.isChecked(),
-            "color_scheme": str(self.scheme_box.currentData()), "style": str(self.style_box.currentData()), "interface_scale": scale.factor_at(self.interface_slider.value()), "windows_scale": scale.factor_at(self.windows_slider.value()),
+            "color_scheme": str(self.scheme_box.currentData()), "interface_scale": scale.factor_at(self.interface_slider.value()), "windows_scale": scale.factor_at(self.windows_slider.value()),
             "list_layout": str(self.layout_box.currentData()), "reading_pane": str(self.pane_box.currentData()), "date_style": str(self.date_box.currentData()),
             "list_density": str(self.density_box.currentData()), "list_scale": scale.factor_at(self.list_slider.value()), "conversations": self.conversations.isChecked(),
             "show_favorites": self.show_favorites.isChecked(), "show_local_folders": self.show_local_folders.isChecked(),

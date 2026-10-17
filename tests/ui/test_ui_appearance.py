@@ -1,3 +1,4 @@
+import re
 from collections.abc import Generator
 from pathlib import Path
 
@@ -8,16 +9,18 @@ from PySide6.QtWidgets import QApplication, QListWidget, QMenu
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import appearance, icons, scale
-from chrono_mail.ui.colours import BLUE_ON_DARK, BLUE_ON_LIGHT, ON_BLUE, contrast, green, is_dark, red, with_program_blue
+from chrono_mail.core.colours import DARK, LIGHT, ROLES, THEMES, Theme
+from chrono_mail.ui.colours import contrast, green, is_dark, red
 from chrono_mail.ui.formatting import AVATAR_HUES, avatar_colour
 from chrono_mail.ui.icons import FOLDER_ICONS, RESOURCES, bundled_icon, folder_icon, theme_icon
 from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 0.5.167"
+__version__ = "test_ui_appearance.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: Two complete themes of our own: Fusion whatever the choice, the palette is the whole theme, System follows a switch, the heading stands out, no colour outside the colour file (D-158)
 # v0.5.167: Refresh is a button of the folding toolbar (D-154)
 # v0.5.149: The blue is the program's own in every scheme and window state, never the system's accent colour
 # v0.5.144: Four sliders: Main window, Message list, Other windows and dialogs, Text of messages; the program's text and the Settings window follow Other windows and dialogs, the main window and its menus follow Main window
@@ -35,13 +38,13 @@ __version__ = "test_ui_appearance.py 0.5.167"
 
 @pytest.fixture
 def app(qapp: QApplication, tmp_path: Path) -> Generator[QApplication]:
-    """The application with a scheme and style of our own; what the test changes is put back."""
-    saved_style, saved_state = qapp.style().objectName(), (appearance._state.platform_style, appearance._state.style_given, appearance._state.settings)  # noqa: SLF001
+    """The application with a theme of our own; what the test changes is put back."""
+    saved_style, saved_settings = qapp.style().objectName(), appearance._state.settings  # noqa: SLF001
     yield qapp
     qapp.styleHints().setColorScheme(Qt.ColorScheme.Unknown)
     qapp.setStyle(saved_style)
     qapp.setPalette(QPalette())
-    appearance._state.platform_style, appearance._state.style_given, appearance._state.settings = saved_state  # noqa: SLF001
+    appearance._state.settings = saved_settings  # noqa: SLF001
 
 
 def settings(tmp_path: Path, **values: object) -> QSettings:
@@ -51,75 +54,67 @@ def settings(tmp_path: Path, **values: object) -> QSettings:
     return store
 
 
-def test_the_style_follows_the_choice_and_dark_needs_a_style_that_can_draw_it() -> None:
-    assert appearance.style_to_use("default", False, "windowsvista") == "windowsvista"  # light: the platform's own style
-    assert appearance.style_to_use("default", True, "windowsvista") == "Fusion"  # dark: the classic Windows style cannot
-    assert appearance.style_to_use("default", True, "Windows") == "Fusion"
-    assert appearance.style_to_use("default", True, "breeze") == "breeze"  # a style that follows the system is left alone
-    assert appearance.style_to_use("default", True, "windows11") == "windows11"
-    assert appearance.style_to_use("fusion", False, "breeze") == "Fusion"
-
-
-def test_a_style_on_the_command_line_wins() -> None:
-    assert appearance.style_given(["chrono-mail", "-style", "windows"]) and appearance.style_given(["x", "-style=fusion"]) and appearance.style_given(["x", "--style", "fusion"])
-    assert not appearance.style_given(["chrono-mail", "--other"])
-
-
-def test_the_scheme_and_the_style_are_applied_at_once_and_given_back(app: QApplication, tmp_path: Path) -> None:
-    appearance._state.platform_style, appearance._state.style_given = "windows", False  # noqa: SLF001 - pretend the platform has a style that cannot do dark
-    app.setStyle("windows")
-    appearance.apply(app, settings(tmp_path, color_scheme="dark"))
-    assert app.style().objectName().lower() == "fusion" and is_dark()  # dark with a style that cannot do dark: Fusion
-    appearance.apply(app, settings(tmp_path, color_scheme="light"))
-    assert app.style().objectName().lower() == "windows" and not is_dark()  # the platform's style is back
-    appearance.apply(app, settings(tmp_path, color_scheme="light", style="fusion"))
-    assert app.style().objectName().lower() == "fusion"
-    appearance.apply(app, settings(tmp_path, color_scheme="system", style="default"))
-    assert app.style().objectName().lower() == "windows"
-
-
 GROUPS: tuple[QPalette.ColorGroup, ...] = (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive, QPalette.ColorGroup.Disabled)
 
 
-class GreyAccent(QPalette):
-    """The palette of a system whose accent colour is dark grey (as Windows gives it to Qt: the accent as the highlight,
-    near-black for windows that are not active)."""
-
-    def __init__(self, *args: object) -> None:
-        super().__init__(*args)
-        if not args:
-            self.setColor(QPalette.ColorGroup.Active, QPalette.ColorRole.Highlight, QColor("#4c4a48"))
-            self.setColor(QPalette.ColorGroup.Inactive, QPalette.ColorRole.Highlight, QColor("#1e1e1e"))
-            self.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, QColor("#4c4a48"))
+def palette_is(palette: QPalette, theme: Theme) -> bool:
+    return all(palette.color(group, getattr(QPalette.ColorRole, role)).name(QColor.NameFormat.HexArgb) == QColor(value).name(QColor.NameFormat.HexArgb)
+               for role in ROLES for group, value in zip(GROUPS, theme.roles[role], strict=True))
 
 
-def test_the_system_scheme_draws_the_programs_own_blue_never_the_systems_accent(app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(appearance, "QPalette", GreyAccent)  # the system gives its grey accent (a light system: Qt without a screen cannot report a dark one)
-    appearance.apply(app, settings(tmp_path, color_scheme="system", style="fusion"))
-    palette = app.palette()
-    for group in GROUPS:
-        assert palette.color(group, QPalette.ColorRole.Highlight).name() == BLUE_ON_LIGHT, group
-        assert palette.color(group, QPalette.ColorRole.HighlightedText).name() == ON_BLUE, group
+def test_both_themes_are_complete() -> None:
+    for theme in (DARK, LIGHT):
+        assert set(theme.roles) == set(ROLES) and all(len(values) == 3 and all(QColor(value).isValid() for value in values) for values in theme.roles.values()), theme.name
+        own = [getattr(theme, field) for field in Theme.__dataclass_fields__ if field not in ("name", "dark", "roles")]
+        assert own and all(isinstance(value, str) and QColor(value).isValid() for value in own), theme.name
+    assert DARK.dark and not LIGHT.dark and THEMES == {"dark": DARK, "light": LIGHT}
 
 
-@pytest.mark.parametrize(("dark", "blue"), [(True, BLUE_ON_DARK), (False, BLUE_ON_LIGHT)])
-def test_the_programs_blue_replaces_a_grey_accent_in_every_window_state(dark: bool, blue: str) -> None:
-    palette = with_program_blue(GreyAccent(), dark)
-    assert all(palette.color(group, QPalette.ColorRole.Highlight).name() == blue for group in GROUPS)
-    assert all(palette.color(group, QPalette.ColorRole.HighlightedText).name() == ON_BLUE for group in GROUPS)
+@pytest.mark.parametrize("theme", [DARK, LIGHT])
+def test_a_group_heading_stands_out_from_the_list_and_has_its_line(theme: Theme) -> None:
+    base = QColor(theme.roles["Base"][0])
+    assert contrast(QColor(theme.group_header), base) >= 1.2, theme.name  # on Windows 0.5.170 it was 1.04: the headings could not be seen
+    assert theme.group_header_line != theme.group_header and contrast(QColor(theme.group_header_line), QColor(theme.group_header)) >= 1.1
 
 
-@pytest.mark.parametrize(("scheme", "blue"), [("dark", BLUE_ON_DARK), ("light", BLUE_ON_LIGHT)])
-def test_the_dark_and_light_schemes_keep_their_blue_in_every_window_state(app: QApplication, tmp_path: Path, scheme: str, blue: str) -> None:
-    appearance.apply(app, settings(tmp_path, color_scheme=scheme, style="fusion"))
-    assert all(app.palette().color(group, QPalette.ColorRole.Highlight).name() == blue for group in GROUPS)
+def test_the_dark_theme_is_what_linux_showed_up_to_1_0_171() -> None:
+    measured = {"Window": "#202326", "Base": "#141618", "AlternateBase": "#1d1f22", "Text": "#fcfcfc", "Button": "#292c30", "Mid": "#373b40", "PlaceholderText": "#a1a9b1", "Accent": "#308cc6"}
+    assert {role: DARK.roles[role][0] for role in measured} == measured and DARK.group_header == "#2a2a2a" and DARK.blue == DARK.roles["Highlight"][0] == "#2a6fc4"
 
 
-def test_a_style_given_on_the_command_line_is_not_changed(app: QApplication, tmp_path: Path) -> None:
-    appearance._state.platform_style, appearance._state.style_given = "windows", True  # noqa: SLF001
-    app.setStyle("windows")
-    appearance.apply(app, settings(tmp_path, color_scheme="dark", style="fusion"))
-    assert app.style().objectName().lower() == "windows" and is_dark()  # the scheme still follows the setting
+@pytest.mark.parametrize("scheme", ["system", "light", "dark"])
+def test_fusion_draws_and_the_palette_is_the_whole_theme_whatever_the_choice(app: QApplication, tmp_path: Path, scheme: str) -> None:
+    app.setStyle("windows")  # a platform style: it is replaced
+    appearance.apply(app, settings(tmp_path, color_scheme=scheme, style="default"))  # an old saved style is ignored
+    assert app.style().objectName().lower() == "fusion"
+    assert palette_is(app.palette(), DARK if scheme == "dark" else LIGHT)  # Qt without a screen reports a light system
+
+
+def test_follow_the_system_changes_theme_when_the_system_switches(app: QApplication, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    dark = [False]
+
+    def system_is_dark(application: QApplication) -> bool:
+        return dark[0]
+
+    monkeypatch.setattr(appearance, "system_is_dark", system_is_dark)
+    appearance.start(app, settings(tmp_path, color_scheme="system"))
+    assert palette_is(app.palette(), LIGHT)
+    dark[0] = True
+    app.styleHints().colorSchemeChanged.emit(Qt.ColorScheme.Dark)  # what Qt sends when the system switches
+    assert palette_is(app.palette(), DARK)
+    appearance.apply(app, settings(tmp_path, color_scheme="light"))  # a chosen theme does not follow the system
+    assert palette_is(app.palette(), LIGHT)
+
+
+COLOUR_WRITTEN: re.Pattern[str] = re.compile(r"""["']#[0-9a-fA-F]{3,8}["']|QColor\(\s*(?:["'][a-zA-Z]|\d)|rgba?\(\s*\d|Qt\.GlobalColor\.(?!transparent\b)\w+""")
+
+
+def test_no_colour_is_written_outside_the_colour_file() -> None:
+    source = Path(__file__).resolve().parents[2] / "src" / "chrono_mail"
+    colour_file = source / "core" / "colours.py"
+    found = [f"{path.relative_to(source)}:{number}: {line.strip()}" for path in sorted(source.rglob("*.py")) if path != colour_file
+             for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1) if COLOUR_WRITTEN.search(line) and not line.lstrip().startswith("#")]
+    assert found == []  # every colour is in core/colours.py (D-158)
 
 
 def test_the_settings_window_has_the_choices_and_the_window_applies_them(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, app: QApplication) -> None:
@@ -127,13 +122,12 @@ def test_the_settings_window_has_the_choices_and_the_window_applies_them(world: 
         from chrono_mail.ui.settingsdialog import SettingsDialog
 
         assert isinstance(dialog, SettingsDialog)
-        assert dialog.scheme_box.currentData() == "system" and dialog.style_box.currentData() == "default"  # the standard
+        assert dialog.scheme_box.currentData() == "system" and not hasattr(dialog, "style_box")  # the standard; the style is no choice
         assert [dialog.scheme_box.itemData(i) for i in range(3)] == ["system", "light", "dark"]
         dialog.scheme_box.setCurrentIndex(dialog.scheme_box.findData("dark"))
-        dialog.style_box.setCurrentIndex(dialog.style_box.findData("fusion"))
 
     edit_settings(world, qtbot, monkeypatch, choose)
-    assert settings_of(world).value("color_scheme") == "dark" and settings_of(world).value("style") == "fusion"
+    assert settings_of(world).value("color_scheme") == "dark" and settings_of(world).value("style") is None
     assert is_dark() and app.style().objectName().lower() == "fusion"
 
 
@@ -177,7 +171,6 @@ def test_dropdown_menus_have_the_colour_of_the_menu_bar_and_not_that_of_the_list
     from PySide6.QtCore import QPoint
 
     world.window.settings.setValue("color_scheme", scheme)
-    world.window.settings.setValue("style", "fusion")
     world.window.apply_preferences()
     world.window.resize(900, 500)
     world.window.show()
@@ -191,10 +184,8 @@ def test_dropdown_menus_have_the_colour_of_the_menu_bar_and_not_that_of_the_list
     bar = world.window.grab().toImage().pixelColor(400, 5)
     window = palette.color(QPalette.ColorRole.Window)
     assert all(abs(a - b) <= 2 for a, b in ((shown.red(), window.red()), (shown.green(), window.green()), (shown.blue(), window.blue())))  # the colour of the menu bar
-    assert shown != palette.color(QPalette.ColorRole.Base) and bar == window
+    assert bar == window and (shown != palette.color(QPalette.ColorRole.Base) or window == palette.color(QPalette.ColorRole.Base))  # the light theme's lists are as white as its window
     menu.hide()
-    world.window.settings.setValue("style", "default")  # a style that draws its menus well itself is left alone
-    world.window.apply_preferences()
 
 
 def test_refresh_is_a_circle_of_two_arrows_and_the_file_menu_has_no_add_account(world: World) -> None:
@@ -462,7 +453,7 @@ def test_a_blank_line_stands_above_the_sizes(world: World, qtbot: QtBot) -> None
     page = dialog.interface_slider.parentWidget()
     assert page is not None
     labels = page.findChildren(QLabel)
-    note = next(label for label in labels if label.text().startswith("Dark needs a style"))
+    note = next(label for label in labels if label.text().startswith("Follow the system takes"))
     sizes = next(label for label in labels if label.text() == "Sizes")
     assert sizes.geometry().top() - note.geometry().bottom() >= scale.px(18)
 

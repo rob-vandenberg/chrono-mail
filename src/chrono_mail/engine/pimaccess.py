@@ -5,6 +5,7 @@ from typing import cast
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, CollectionInfo, CollectionKind, ConfigurationError, StorageError
+from chrono_mail.core.colours import FIRST_ADDRESS_BOOK, FIRST_CALENDAR, FIRST_TASK_LIST
 from chrono_mail.engine.changes import Change, ChangeKind
 from chrono_mail.engine.commands_accounts import server_label
 from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders
@@ -13,9 +14,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import IndexedItem, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimaccess.py 0.5.159"
+__version__ = "pimaccess.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The colours of the first calendar, task list and address book from the colour file (D-158)
 # v0.5.159: an opened store tells its changes as facts of the engine (D-146 step 5)
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.66: A store can be made when an account is first synchronised
@@ -23,9 +25,9 @@ __version__ = "pimaccess.py 0.5.159"
 # v0.0.60: Initial access to the calendars, task lists and address books of the accounts
 
 DEFAULT_COLLECTIONS: tuple[tuple[CollectionKind, str, str], ...] = (
-    (CollectionKind.EVENTS, "Calendar", "#3b82f6"),
-    (CollectionKind.TASKS, "Tasks", "#f59e0b"),
-    (CollectionKind.CONTACTS, "Contacts", "#10b981"),
+    (CollectionKind.EVENTS, "Calendar", FIRST_CALENDAR),
+    (CollectionKind.TASKS, "Tasks", FIRST_TASK_LIST),
+    (CollectionKind.CONTACTS, "Contacts", FIRST_ADDRESS_BOOK),
 )
 
 

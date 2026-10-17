@@ -4,20 +4,19 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from PySide6.QtGui import QColor
 
 from chrono_mail.core import shown_name
+from chrono_mail.core.colours import AVATAR_HUES, AVATAR_LIGHTNESS, AVATAR_SATURATION
 
 # --- Version ------------------------------------------------------------
-__version__ = "formatting.py 0.5.166"
+__version__ = "formatting.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The avatar colours' hues, saturation and lightness are in the colour file (D-158)
 # v0.5.166: display_name uses the one rule of core (shown_name), the same as the index
 # v0.2.100: coming_date: a time still to come (time today, weekday and time this week, else the date and time)
 # v0.0.64: The calendar section
 # v0.0.14: avatar colours from 72 hues with guaranteed contrast
 # v0.0.13: Initial display helpers
 
-AVATAR_HUES: int = 72  # one colour per 5 degrees of the colour wheel
-AVATAR_SATURATION: float = 0.55
-AVATAR_LIGHTNESS: float = 0.30  # dark enough for white initials: contrast 4.7 or better on every hue
 
 
 def display_name(sender: str) -> str:

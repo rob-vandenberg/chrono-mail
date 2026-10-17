@@ -3,9 +3,10 @@ import json
 from PySide6.QtCore import QSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 0.5.145"
+__version__ = "prefs.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The setting "style" is gone (Fusion always, D-158); a saved value is ignored
 # v0.5.145: The three settings of the Operations window (show on send and receive, hide when it completes, show on an error)
 # v0.5.144: windows_scale, the size of the other windows and dialogs
 # v0.5.135: show_tags, tag_text_colour
@@ -31,7 +32,6 @@ DEFAULTS: dict[str, object] = {
     "operations_show_on_error": True,  # it opens for an error, and stays open after one
     # appearance
     "color_scheme": "system",  # system, light or dark
-    "style": "default",  # default: the platform's own style, or fusion
     "interface_scale": 1.0,  # the size of the main window: a factor of the system's size (scale.py); an older ui_font_size in points is converted
     "windows_scale": 1.0,  # the size of the other windows and dialogs: a factor (scale.py); when missing, the size of the main window (they shared it before)
     # message list

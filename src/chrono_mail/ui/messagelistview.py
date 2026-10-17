@@ -6,15 +6,17 @@ from PySide6.QtCore import QEvent, QModelIndex, QObject, QPersistentModelIndex, 
 from PySide6.QtGui import QColor, QDrag, QFocusEvent, QFontMetrics, QIcon, QMouseEvent, QPainter, QPaintEvent, QPalette, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QApplication, QHeaderView, QStyleOptionViewItem, QTreeView, QWidget
 
+from chrono_mail.ui.colours import theme
 from chrono_mail.ui.models import HEADER_ICON_ROLE
 from chrono_mail.ui.scale import lpx
 
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 0.5.140"
+__version__ = "messagelistview.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The drag badge's colours from the theme (D-158)
 # v0.5.140: A group row is drawn from the left edge to the right edge, whatever the order of the columns (the first column can be moved)
 # v0.5.123: An empty list says "There are no messages to show in this view." once it has finished loading (D-119)
 # v0.3.108: The grey icons of the column header follow the size factor of the message list
@@ -50,11 +52,11 @@ def drag_badge(count: int) -> QPixmap:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     area = QRect(offset, offset, width, height)
-    painter.setBrush(QColor(40, 90, 160, 230))
+    painter.setBrush(QColor(theme().drag_badge))
     painter.setPen(Qt.PenStyle.NoPen)
     painter.drawRoundedRect(area, 8, 8)
     painter.setFont(font)
-    painter.setPen(QColor("white"))
+    painter.setPen(QColor(theme().on_blue))
     painter.drawText(area, Qt.AlignmentFlag.AlignCenter, text)
     painter.end()
     return pixmap

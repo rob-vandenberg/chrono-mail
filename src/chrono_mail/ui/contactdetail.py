@@ -9,13 +9,15 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.colours import theme
 from chrono_mail.ui.formatting import avatar_colour, initials
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactdetail.py 0.0.62"
+__version__ = "contactdetail.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The initials' colour from the theme (D-158)
 # v0.0.62: Initial detail pane of a contact with its mail history
 
 AVATAR: int = 64
@@ -42,7 +44,7 @@ def avatar_pixmap(name: str, size: int, photo_base64: str = "") -> QPixmap:
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(avatar_colour(name))
         painter.drawEllipse(0, 0, size, size)
-        painter.setPen(QColor("white"))
+        painter.setPen(QColor(theme().on_colour))
         font = painter.font()
         font.setBold(True)
         font.setPixelSize(int(size * 0.38))

@@ -21,11 +21,13 @@ from typing import Literal
 from chrono_mail.config import Action, Condition
 from chrono_mail.config.rules import HEADER_NAME
 from chrono_mail.core import ChronoMailError, MessageFlag
+from chrono_mail.core.colours import NEW_TAG
 
 # --- Version ------------------------------------------------------------
-__version__ = "emclient_source.py 0.5.141"
+__version__ = "emclient_source.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: A category without a valid colour gets the colour file's colour for a new tag (D-158)
 # v0.5.141: The 9th character of the password key corrected (it came from a misremembered password)
 # v0.5.137: Categories (as tags, with colour and what they are for), the categories of the messages in the backup, and the category parts of rules
 # v0.5.132: Initial version: settings file, mail export and backup of eM Client; every rule as it is (also the blocked-senders rule and rules written as a script)
@@ -482,7 +484,7 @@ def _categories(root: ElementTree.Element) -> tuple[SourceCategory, ...]:
         if not name:
             continue
         if re.fullmatch(r"#[0-9a-f]{6}", colour) is None:
-            colour = "#808080"
+            colour = NEW_TAG
         found.append(SourceCategory(name, colour, _kinds(_text(item, "parentTypes"))))
     return tuple(found)
 

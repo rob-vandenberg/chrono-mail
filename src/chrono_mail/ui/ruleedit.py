@@ -15,11 +15,13 @@ from PySide6.QtWidgets import (
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "ruleedit.py 0.5.136"
+__version__ = "ruleedit.py 1.0.171"
 
 # --- Version history ----------------------------------------------------
+# v1.0.171: Every action has Move up and Move down buttons (chevrons before its ✕); the order is the order the rule runs in
 # v0.5.136: Tags: the condition Tag is / is not, the actions Add tag and Remove tag, each with the tags to choose from
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
@@ -150,9 +152,14 @@ class ActionRow(QWidget):
         if entry is not None:
             entry.setPlaceholderText("Folder, e.g. Archive/2026")
         self.tag = _tag_box(self)
+        self.up_button = QPushButton(theme_icon("arrow-up"), "", self)
+        self.up_button.setToolTip("Move up")
+        self.down_button = QPushButton(theme_icon("arrow-down"), "", self)
+        self.down_button.setToolTip("Move down")
         self.remove_button = QPushButton("✕", self)
-        self.remove_button.setFixedWidth(30)
-        for widget in (self.kind, self.folder, self.tag, self.remove_button):
+        for button in (self.up_button, self.down_button, self.remove_button):
+            button.setFixedWidth(30)
+        for widget in (self.kind, self.folder, self.tag, self.up_button, self.down_button, self.remove_button):
             layout.addWidget(widget)
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self._kind_changed()
@@ -264,7 +271,27 @@ class RuleEditDialog(QDialog):
         self.action_rows.append(row)
         self.actions_layout.addWidget(row)
         row.remove_button.clicked.connect(lambda: self._remove_action(row))
+        row.up_button.clicked.connect(lambda: self.move_action(row, -1))
+        row.down_button.clicked.connect(lambda: self.move_action(row, 1))
+        self._update_moves()
         return row
+
+    def move_action(self, row: ActionRow, step: int) -> None:
+        """One place up (-1) or down (1): the order is the order the rule saves and runs its actions in."""
+        place = self.action_rows.index(row) + step
+        if not 0 <= place < len(self.action_rows):
+            return
+        self.action_rows.remove(row)
+        self.action_rows.insert(place, row)
+        self.actions_layout.removeWidget(row)
+        self.actions_layout.insertWidget(place, row)
+        self._update_moves()
+
+    def _update_moves(self) -> None:
+        """The first action cannot go up, the last cannot go down."""
+        for place, row in enumerate(self.action_rows):
+            row.up_button.setEnabled(place > 0)
+            row.down_button.setEnabled(place < len(self.action_rows) - 1)
 
     def _remove_condition(self, row: ConditionRow) -> None:
         self.condition_rows.remove(row)  # a rule may have none: it then acts on all the mail of its account
@@ -276,6 +303,7 @@ class RuleEditDialog(QDialog):
             self.action_rows.remove(row)
             row.setParent(None)
             row.deleteLater()
+            self._update_moves()
 
     def values(self) -> dict[str, object]:
         values: dict[str, object] = {

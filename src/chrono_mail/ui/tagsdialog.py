@@ -29,18 +29,20 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.config import TAG_KINDS, TAG_SHORTCUTS
 from chrono_mail.core import ChronoMailError
+from chrono_mail.core.colours import NEW_TAG, NEW_TAG_IN_TAGS_WINDOW
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.colours import red_style
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 0.5.135"
+__version__ = "tagsdialog.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: Colours from the colour file: a new tag's, a tag without one, the red of a problem (D-158)
 # v0.5.135: Initial version: the Tags window and the tag editor
 
 TABS: tuple[tuple[str, str], ...] = (("mail", "Mails"), ("events", "Events"), ("contacts", "Contacts"), ("tasks", "Tasks"))
 KIND_NAMES: dict[str, str] = {"mail": "Mails", "events": "Events", "tasks": "Tasks", "contacts": "Contacts"}
-DEFAULT_COLOUR: str = "#3b82f6"
 
 
 @dataclass
@@ -57,7 +59,7 @@ class TagRow:
 def rows_from(tags: tuple[object, ...]) -> list[TagRow]:
     rows: list[TagRow] = []
     for tag in tags:
-        name, colour = str(getattr(tag, "name")), str(getattr(tag, "colour")) or "#808080"
+        name, colour = str(getattr(tag, "name")), str(getattr(tag, "colour")) or NEW_TAG
         shortcut, kinds = str(getattr(tag, "shortcut", "")), tuple(getattr(tag, "kinds", TAG_KINDS))
         carried = sum(int(getattr(tag, kind, 0)) for kind in ("mails", "contacts", "events", "tasks"))
         rows.append(TagRow(name, colour, shortcut, kinds, name, carried, (colour, shortcut, kinds)))
@@ -103,7 +105,7 @@ class TagEditor(QDialog):
             self.kinds[kind] = box
         layout.addWidget(group)
         self.problem = QLabel("", self)
-        self.problem.setStyleSheet("color: #c0392b")
+        self.problem.setStyleSheet(red_style())
         layout.addWidget(self.problem)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
         buttons.accepted.connect(self._check)
@@ -227,9 +229,9 @@ class TagsDialog(QDialog):
         return {row.name.casefold() for row in self.rows if row is not but}
 
     def add(self) -> None:
-        editor = TagEditor(TagRow("", DEFAULT_COLOUR, kinds=(self.kind(),) if self.kind() != "mail" else TAG_KINDS), self._taken(None), self)
+        editor = TagEditor(TagRow("", NEW_TAG_IN_TAGS_WINDOW, kinds=(self.kind(),) if self.kind() != "mail" else TAG_KINDS), self._taken(None), self)
         if editor.exec() == QDialog.DialogCode.Accepted:
-            row = editor.result_row(TagRow("", DEFAULT_COLOUR))
+            row = editor.result_row(TagRow("", NEW_TAG_IN_TAGS_WINDOW))
             self._take_shortcut(row)
             self.rows.append(row)
             self.refresh(row.name)

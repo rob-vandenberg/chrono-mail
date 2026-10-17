@@ -7,7 +7,8 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QFrame, QToolButt
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import theme
-from chrono_mail.ui.colours import SEPARATOR, selection_grey
+from chrono_mail.ui.colours import selection_grey
+from chrono_mail.ui.colours import theme as theme_in_use
 from chrono_mail.ui.columns import BY_ID, READ_MARK, cell_text
 from chrono_mail.ui.icons import TintedSvgEngine, section_icon
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTION_ICONS, SECTIONS, TASKS
@@ -143,7 +144,8 @@ def test_the_composer_has_send_first_and_the_look_of_the_main_window(world: Worl
 
 def test_the_column_headers_of_the_list_have_a_line_between_them() -> None:
     rule = next(line for line in theme.stylesheet().splitlines() if line.startswith("QTreeView#messageList QHeaderView::section"))
-    assert f"border-right: 1px solid {SEPARATOR}" in rule and f"border-bottom: 1px solid {SEPARATOR}" in rule and SEPARATOR == "#000000"  # the place to grab a column edge
+    separator = theme_in_use().separator
+    assert f"border-right: 1px solid {separator}" in rule and f"border-bottom: 1px solid {separator}" in rule and separator == "#000000"  # the place to grab a column edge
 
 
 def test_the_menu_button_is_the_first_button_of_every_toolbar_and_the_menu_bar_row_is_gone(world: World) -> None:
@@ -211,5 +213,5 @@ def test_thin_black_lines_between_the_panes_and_sorted_by_in_bold(world: World) 
     sheet = theme.stylesheet()
     for splitter, name in ((window.splitter, "mainSplitter"), (window.content_splitter, "contentSplitter")):
         assert splitter.objectName() == name and splitter.handleWidth() == 1 and f"QSplitter#{name}::handle" in sheet
-    assert f"::handle {{ background: {SEPARATOR}; }}" in sheet
+    assert f"::handle {{ background: {theme_in_use().separator}; }}" in sheet
     assert window.sort_button.objectName() == "sortButton" and "QToolButton#sortButton { font-weight: bold; color: palette(text); }" in sheet

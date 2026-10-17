@@ -7,6 +7,7 @@ tests/live/account.local.toml
 *.egg-info/
 tests/live/dav.local.toml
 tests/live/kerio.local.toml
+themes/
 
 # hand-over notes between sessions (private)
 TRANSFER.md

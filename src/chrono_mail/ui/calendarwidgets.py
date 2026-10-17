@@ -5,14 +5,17 @@ from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QFontMetrics, QMouseEvent, QPainter, QPalette, QPen, QWheelEvent
 from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget
 
+from chrono_mail.core.colours import NEW_CALENDAR
 from chrono_mail.ui import calendarlayout as layout
 from chrono_mail.ui.calendarlayout import Bar, Cell, Entry, Segment
+from chrono_mail.ui.colours import theme
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 0.0.64"
+__version__ = "calendarwidgets.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: Colours from the colour file: the line of the present moment, the outline of a selected event, an event without a calendar colour (D-158)
 # v0.0.64: Initial views: the time grid (day, week), the all-day header, the month and the agenda
 
 GUTTER: int = 54
@@ -22,12 +25,11 @@ BAR_GAP: int = 2
 DEFAULT_HOUR_HEIGHT: int = 48
 MINIMUM_HOUR_HEIGHT: int = 24
 MAXIMUM_HOUR_HEIGHT: int = 140
-DEFAULT_COLOUR: str = "#3b82f6"
 SNAP_MINUTES: int = 30
 
 
 def fill_colour(entry: Entry) -> QColor:
-    return QColor(entry.colour) if entry.colour and QColor(entry.colour).isValid() else QColor(DEFAULT_COLOUR)
+    return QColor(entry.colour) if entry.colour and QColor(entry.colour).isValid() else QColor(NEW_CALENDAR)
 
 
 def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, font: QFont, lines: list[str], faded: bool = False) -> None:
@@ -38,7 +40,7 @@ def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, f
         colour.setAlpha(150)
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor("white" if not selected else "black"), 1.6) if selected else Qt.PenStyle.NoPen)
+    painter.setPen(QPen(QColor(theme().swatch_selected), 1.6) if selected else Qt.PenStyle.NoPen)
     painter.setBrush(colour)
     painter.drawRoundedRect(rect, 4, 4)
     painter.setPen(TagColourBook.text_colour(colour))
@@ -232,9 +234,9 @@ class GridCanvas(EntryHits):
         if self.now is not None and self.today in self.days:
             index = self.days.index(self.today)
             y = (self.now.hour * 60 + self.now.minute) / 60 * self.hour_height
-            painter.setPen(QPen(QColor("#d93025"), 2))
+            painter.setPen(QPen(QColor(theme(palette).now_line), 2))
             painter.drawLine(int(GUTTER + index * width), int(y), int(GUTTER + (index + 1) * width), int(y))
-            painter.setBrush(QColor("#d93025"))
+            painter.setBrush(QColor(theme(palette).now_line))
             painter.drawEllipse(QPointF(GUTTER + index * width, y), 4, 4)
         painter.end()
 

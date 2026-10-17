@@ -37,7 +37,8 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.colours import green, red
+from chrono_mail.core.colours import NEW_TAG
+from chrono_mail.ui.colours import green, red, theme
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimpages import PimPage
@@ -47,9 +48,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 0.5.167"
+__version__ = "tasksview.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: Colours from the colour file: amber, grey and the tick of a task, the Tag button (D-158)
 # v0.5.167: the toolbar folds like Mail's; Tag and Move to list have icons; the search field looks like Mail's (D-154)
 # v0.5.159: the list follows the facts (D-146 step 5): one task in, out or changed (grouped again here, the selection kept by identity); the selection moves at the key press of a delete or move; tasks with an action under way are greyed; no reload after an action
 # v0.0.63: Initial tasks section: lists, quick add, groups by date, status marks, detail pane, editor, tags, move, delete
@@ -59,8 +61,6 @@ HEADER_HEIGHT: int = 30
 ROW_HEIGHT: int = 52
 MARK: int = 22
 LIST_LIMIT: int = 5000
-AMBER: str = "#e0a000"
-GREY: str = "#8a8a8a"
 TABS: tuple[tuple[str, str], ...] = (("all", "All"), ("upcoming", "Upcoming"), ("completed", "Completed"))
 
 
@@ -165,11 +165,11 @@ def draw_mark(painter: QPainter, centre: QPoint, row: object, size: int = MARK) 
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(green()))
         painter.drawEllipse(box)
-        painter.setPen(QPen(QColor("white"), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.setPen(QPen(QColor(theme().on_colour), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
         painter.drawLine(box.left() + size * 28 // 100, box.top() + size * 54 // 100, box.left() + size * 44 // 100, box.top() + size * 70 // 100)
         painter.drawLine(box.left() + size * 44 // 100, box.top() + size * 70 // 100, box.left() + size * 74 // 100, box.top() + size * 32 // 100)
     else:
-        colour = QColor(red()) if bool(getattr(row, "overdue")) else QColor(GREY if status == "CANCELLED" else AMBER)
+        colour = QColor(red()) if bool(getattr(row, "overdue")) else QColor(theme().task_grey if status == "CANCELLED" else theme().amber)
         painter.setPen(QPen(colour, 2.2))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawEllipse(box.adjusted(1, 1, -1, -1))
@@ -332,7 +332,7 @@ class TasksPage(PimPage):
         self.act_delete.triggered.connect(self.delete_selected)
         self.tag_button = QToolButton()
         self.tag_button.setText("Tag")
-        self.tag_button.setIcon(tag_icon(QColor("#808080")))
+        self.tag_button.setIcon(tag_icon(QColor(NEW_TAG)))
         self.tag_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.tag_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.tag_menu = QMenu(self.tag_button)
@@ -453,7 +453,7 @@ class TasksPage(PimPage):
         c = result
         done = bool(getattr(c, "done"))
         status = "Completed" if done else {"NEEDS-ACTION": "Not started", "IN-PROCESS": "In progress", "CANCELLED": "Cancelled"}.get(str(getattr(c, "status")), str(getattr(c, "status")))
-        colour = green() if done else (red() if bool(getattr(c, "overdue")) else AMBER)
+        colour = green() if done else (red() if bool(getattr(c, "overdue")) else theme().amber)
 
         def row(label: str, value: str) -> str:
             return f"<tr><td style='color:gray' align=right>{html.escape(label)}</td><td>{value}</td></tr>" if value else ""

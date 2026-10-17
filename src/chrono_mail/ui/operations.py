@@ -22,14 +22,16 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.ui import prefs
+from chrono_mail.ui.colours import theme
 from chrono_mail.ui.icons import bundled_icon
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "operations.py 0.5.148"
+__version__ = "operations.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The symbol on the blue badge takes the theme's colour for marks on the blue (D-158)
 # v0.5.148: The bar of a row is drawn by the program (OperationBar): blue on every platform; Windows' own style drew it grey
 # v0.5.145: Initial version: the Operations window (Operations, Errors and Log) of send and receive
 
@@ -68,7 +70,7 @@ def account_picture(size: int, palette: QPalette) -> QPixmap:
     symbol_painter = QPainter(symbol)
     bundled_icon("view-refresh").paint(symbol_painter, 0, 0, inner, inner)
     symbol_painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-    symbol_painter.fillRect(0, 0, inner, inner, QColor("#ffffff"))
+    symbol_painter.fillRect(0, 0, inner, inner, QColor(theme(palette).on_blue))
     symbol_painter.end()
     painter.drawPixmap(left + (badge - inner) // 2, top + (badge - inner) // 2, symbol)
     painter.end()

@@ -83,6 +83,7 @@ Only `ui` may import PySide6.
 - The message list is virtualized (Qt model/view) so 500,000 messages do not slow it down.
 - HTML messages render in Qt WebEngine with JavaScript off and remote content blocked by default; plain-text messages render without a web engine.
 - All actions call engine commands. UI state that matters (selection, open folder) is inspectable, so tests and agents can drive the UI.
+- Colours: every colour of the program is in `core/colours.py` (a dark and a light theme, and the colours outside a theme); nothing else writes a colour, and nothing is taken from the platform (D-158). Fusion draws on every platform.
 - The window has one toolbar; every section (Mail, Calendar, Contacts, Tasks) has a row of buttons in it, and the toolbar shows the row of the section on screen (`ui/toolbar.py`, D-154, D-156). Menu and the search field are always shown; the other buttons fold into More when the window is narrow.
 
 ## 7. Testing

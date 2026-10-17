@@ -1,12 +1,13 @@
 from PySide6.QtWidgets import QAbstractItemView
 
-from chrono_mail.ui.colours import SEPARATOR, selection_grey
+from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 0.5.167"
+__version__ = "theme.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: Every colour comes from the theme in use (core/colours.py): the hover, the separators, the search field's orange (D-158)
 # v0.5.167: The toolbar rules apply to the folding toolbar of every section; the chosen calendar view has a blue line under it; "This folder" is a button with its ▾ at its end
 # v0.5.144: The stylesheet at a given size factor: the main window at its own, the message windows and composers at that of the other windows
 # v0.3.106: Every size in pixels follows the factor of the interface (lines of 1 pixel stay)
@@ -25,8 +26,6 @@ __version__ = "theme.py 0.5.167"
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.73: Initial look of the main window: the Menu button, the toolbar, the search field, the folder list and the section buttons
 
-HOVER: str = "rgba(128, 128, 128, 0.22)"  # a veil that suits a light and a dark window alike
-SEARCH_ACTIVE: str = "#f0a030"  # the border of the search field while a search is active
 
 
 def show_focus(view: QAbstractItemView, focused: bool) -> None:
@@ -41,7 +40,9 @@ def stylesheet(factor: float | None = None) -> str:
     """The look of the main window, for the light and the dark scheme alike: it takes all its colours from the palette (the blue is the highlight colour, the same as in the menus).
     The rules name their widgets (object names), so nothing else in the program changes. Its sizes are at the factor
     given (the main window's when none is)."""
-    grey = selection_grey()
+    colours = theme()  # the theme in use: every colour below is its, or a palette role it filled
+    grey, HOVER, SEPARATOR = css(colours.selection_grey), css(colours.hover), css(colours.separator)
+    SEARCH_ACTIVE, HOVER_STRONG = css(colours.search_active), css(colours.hover_strong)
     return scale_css(f"""
 QMenuBar {{ background: palette(window); border: 0; padding: 2px 6px; }}
 QMenuBar::item {{ padding: 5px 12px; background: transparent; border-radius: 4px; }}
@@ -92,7 +93,7 @@ QToolButton#filterButton:checked {{ color: palette(highlight); font-weight: bold
 QFrame#readerHeader {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner {{ background: palette(window); border: 0; border-bottom: 1px solid palette(mid); }}
 QFrame#remoteBanner QPushButton {{ background: {HOVER}; border: 0; border-radius: 4px; padding: 5px 12px; }}
-QFrame#remoteBanner QPushButton:hover {{ background: rgba(128, 128, 128, 0.4); }}
+QFrame#remoteBanner QPushButton:hover {{ background: {HOVER_STRONG}; }}
 QMainWindow#composeWindow QLineEdit, QMainWindow#composeWindow QComboBox {{ border: 1px solid palette(mid); border-radius: 4px; padding: 5px 8px; background: palette(base); }}
 QMainWindow#composeWindow QLineEdit:focus {{ border: 1px solid palette(highlight); }}
 QMainWindow#composeWindow QFormLayout QLabel {{ color: palette(placeholder-text); }}

@@ -16,12 +16,14 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 0.5.159"
+__version__ = "collectionpanel.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The colour of a collection without one from the colour file (D-158)
 # v0.5.159: follows the facts (D-146 step 5): a collection made, renamed, recoloured or deleted is that one entry; the numbers of items follow; no reload after its own actions
 # v0.1.89: A collection can be asked for before the list is loaded (to open a contact from the message list)
 # v0.0.61: Initial panel with the calendars, task lists or address books of all accounts
@@ -30,13 +32,12 @@ ROLE_COLLECTION: int = Qt.ItemDataRole.UserRole + 1
 ROLE_INFO: int = Qt.ItemDataRole.UserRole + 2
 ROLE_ACCOUNT: int = Qt.ItemDataRole.UserRole + 3  # on an account's heading: its id
 KIND_WORDS: dict[str, tuple[str, str]] = {"events": ("Calendar", "calendar"), "tasks": ("Tasks", "task list"), "contacts": ("Contacts", "address book")}
-DEFAULT_COLOUR: str = "#7f8c8d"
 
 
 def colour_icon(colour: str, size: int = 12) -> QIcon:
     """A small square in the colour of a collection."""
     pixmap = QPixmap(size, size)
-    pixmap.fill(QColor(colour or DEFAULT_COLOUR))
+    pixmap.fill(QColor(colour or COLLECTION_WITHOUT_COLOUR))
     return QIcon(pixmap)
 
 
@@ -184,7 +185,7 @@ class CollectionPanel(QWidget):
 
     def choose_colour(self, collection_id: str) -> None:
         info = self.info(collection_id)
-        colour = QColorDialog.getColor(QColor(str(getattr(info, "colour", "")) or DEFAULT_COLOUR), self, "Colour")
+        colour = QColorDialog.getColor(QColor(str(getattr(info, "colour", "")) or COLLECTION_WITHOUT_COLOUR), self, "Colour")
         if colour.isValid():
             self._backend.call("collection.edit", {"collection": collection_id, "colour": colour.name()}, lambda result: None, self._failed, owner=self)  # the fact recolours the entry
 

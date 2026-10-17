@@ -18,9 +18,10 @@ from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.singleinstance import ShowRequests, ask_to_show
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 0.5.144"
+__version__ = "app.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The colour theme is started without the command line (the style is always Fusion, D-158)
 # v0.5.144: The program runs once per user: a second start shows the running program's window, or says that it is running
 # v0.0.55: Application id and icon file for Windows
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
@@ -73,7 +74,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     engine = Engine(default_directories(), KeyringPasswordStore(), KeyringKeyStore())
     backend = Backend(engine)
     settings = QSettings("chrono-mail", "chrono-mail")
-    appearance.start(app, arguments, settings)  # the colour scheme and the style, before any window is made
+    appearance.start(app, settings)  # the colour theme and the style, before any window is made
     window = MainWindow(backend, settings)
     window.closed_for_good.connect(app.quit)
     requests = ShowRequests()

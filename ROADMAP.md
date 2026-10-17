@@ -123,3 +123,6 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (0.5.168) The search field of Calendar, Contacts and Tasks is as wide as Mail's without This folder; the small month calendar can be 240 px narrow, so the sidebar of every section can be dragged to 240 px and the window can be 768 px narrow (D-155).
 - DONE (0.5.169) The day columns of the small month calendar shrink with it: at 240 px all seven days are shown (in 0.5.168 the last days were cut off) (D-155).
 - DONE (0.5.170) The window has one toolbar that shows the row of the section on screen; showing another section no longer makes the window wider (D-156).
+- DONE (1.0.170) The first public release: the owner moved the major version to 1; the .deb and .rpm are on the GitHub release page (the Windows setup.exe follows from DEVELOPMENT).
+- DONE (1.0.171) The actions of a rule can be moved up and down in the rule editor (D-157).
+- DONE (1.1.172) Every colour is the program's own, in one file (`core/colours.py`): a dark theme (the colours Linux showed) and a light theme (white, from the owner's reference screenshot); Fusion on every platform; the Style setting is gone; a thin line under group headings (D-158).

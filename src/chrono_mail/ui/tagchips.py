@@ -3,13 +3,14 @@ from collections.abc import Iterable
 from PySide6.QtCore import QRect, Qt
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 
-from chrono_mail.ui.colours import contrast
+from chrono_mail.ui.colours import contrast, theme
 from chrono_mail.ui.formatting import avatar_colour
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagchips.py 0.0.62"
+__version__ = "tagchips.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The text colours of tag labels from the theme (D-158)
 # v0.0.62: Initial tag colours and the small coloured labels that show tags
 
 CHIP_PADDING: int = 8
@@ -33,7 +34,7 @@ class TagColourBook:
     @staticmethod
     def text_colour(background: QColor) -> QColor:
         """White or black, whichever reads better on this background."""
-        white, black = QColor("white"), QColor("black")
+        white, black = QColor(theme().chip_text_light), QColor(theme().chip_text_dark)
         return white if contrast(white, background) >= contrast(black, background) else black
 
     def html(self, tags: Iterable[str]) -> str:

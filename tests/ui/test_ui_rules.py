@@ -7,9 +7,10 @@ from chrono_mail.ui.rulespanel import RulesPanel
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rules.py 0.5.136"
+__version__ = "test_ui_rules.py 1.0.171"
 
 # --- Version history ----------------------------------------------------
+# v1.0.171: actions move up and down, in the order they are saved
 # v0.5.136: the tag condition and the tag actions in the editor; the Menu has Tags…
 # v0.0.76: The Menu has Settings, Accounts, Rules and Exit in its root
 # v0.0.73: The menus are inside one Menu button
@@ -112,6 +113,28 @@ def test_rows_can_be_removed_but_one_action_is_kept(world: World, qtbot: QtBot) 
     dialog.condition_rows[0].remove_button.click()
     dialog.action_rows[0].remove_button.click()
     assert len(dialog.condition_rows) == 0 and len(dialog.action_rows) == 1  # a rule may have no conditions, never no action
+
+
+def test_actions_move_up_and_down_and_are_saved_in_that_order(world: World, qtbot: QtBot) -> None:
+    dialog = editor(world, qtbot)
+    dialog.action_rows[0].set_action("move_to:Archive")
+    dialog.add_action("stop")
+    dialog.add_action("mark_read")
+    first, stop, last = dialog.action_rows
+    assert not first.up_button.isEnabled() and first.down_button.isEnabled()  # the first cannot go up
+    assert stop.up_button.isEnabled() and stop.down_button.isEnabled()
+    assert last.up_button.isEnabled() and not last.down_button.isEnabled()  # the last cannot go down
+    assert not first.up_button.icon().isNull() and first.up_button.toolTip() == "Move up" and first.down_button.toolTip() == "Move down"
+    last.up_button.click()  # Mark as read before Stop: it is done again
+    assert dialog.values()["action"] == ["move_to:Archive", "mark_read", "stop"]
+    assert dialog.actions_layout.indexOf(last) == 1 and not stop.down_button.isEnabled() and last.down_button.isEnabled()
+    first.down_button.click()
+    first.down_button.click()
+    assert dialog.values()["action"] == ["mark_read", "stop", "move_to:Archive"] and not first.down_button.isEnabled()
+    first.down_button.click()  # the last one stays last
+    assert dialog.values()["action"] == ["mark_read", "stop", "move_to:Archive"]
+    stop.remove_button.click()
+    assert not last.up_button.isEnabled() and last.down_button.isEnabled() and first.up_button.isEnabled() and not first.down_button.isEnabled()  # set again after a remove
 
 
 def test_a_rule_for_one_account_needs_no_conditions(world: World, qtbot: QtBot) -> None:

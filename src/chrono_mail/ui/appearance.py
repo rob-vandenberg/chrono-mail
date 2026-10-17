@@ -1,19 +1,20 @@
 import os
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import cast
 
 from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QFont, QPalette
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 from chrono_mail.ui import prefs, scale
-from chrono_mail.ui.colours import dark_palette, light_palette, menu_palette, with_program_blue
+from chrono_mail.core.colours import DARK, LIGHT
+from chrono_mail.ui.colours import menu_palette_of, palette_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "appearance.py 0.5.149"
+__version__ = "appearance.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: Every colour is the theme's (core/colours.py): "System" only picks the dark or the light theme; Fusion on every platform; the style is no longer a setting (D-158)
 # v0.5.149: The program's own blue in every colour scheme (also System) and every window state, never the system's accent colour
 # v0.5.144: The text of the program at the size of the other windows and dialogs; the main window and the menus and popups opened from it at the size of the main window (main_font; the style gives it to the menus)
 # v0.3.106: The size of the interface is a factor (scale.py): the text, and through ScaledStyle the icons and tick boxes, follow it; it can be tried out before it is saved
@@ -25,17 +26,13 @@ MINIMUM_FONT_POINTS: int = 8
 MAXIMUM_FONT_POINTS: int = 48
 FALLBACK_FONT_POINTS: int = 10  # for a platform font that is sized in pixels
 SCHEMES: tuple[str, ...] = ("system", "light", "dark")
-STYLES: tuple[str, ...] = ("default", "fusion")
-CANNOT_DRAW_DARK: frozenset[str] = frozenset({"windowsvista", "windows"})  # the classic Windows styles ignore the dark scheme
-FUSION: str = "Fusion"
+FUSION: str = "Fusion"  # the one style, on every platform: it draws with the palette it is given, so every colour is the theme's
 
 _SCHEME_OF: dict[str, Qt.ColorScheme] = {"system": Qt.ColorScheme.Unknown, "light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
 
 
 @dataclass
 class _State:
-    platform_style: str | None = None  # the style the platform chose, before we changed anything
-    style_given: bool = False  # -style on the command line (or QT_STYLE_OVERRIDE): then the style is not ours to choose
     settings: QSettings | None = None
     busy: bool = False
     system_font: QFont | None = None  # the font the platform gave, before we changed its size
@@ -63,32 +60,20 @@ def system_font_size(app: QApplication) -> int:
     return max(MINIMUM_FONT_POINTS, min(MAXIMUM_FONT_POINTS, round(points) if points > 0 else FALLBACK_FONT_POINTS))
 
 
-def style_given(arguments: Sequence[str]) -> bool:
-    """True when the user chose the style on the command line or in the environment."""
-    return any(argument in ("-style", "--style") or argument.startswith(("-style=", "--style=")) for argument in arguments) or bool(os.environ.get("QT_STYLE_OVERRIDE"))
-
-
-def style_to_use(choice: str, dark: bool, platform_style: str) -> str:
-    """The style that gives what was asked for: Fusion when it is chosen or when the platform's own style cannot draw dark."""
-    if choice == "fusion" or (dark and platform_style.lower() in CANNOT_DRAW_DARK):
-        return FUSION
-    return platform_style
-
-
-def _colour_the_menus(app: QApplication) -> None:
-    """Dropdown menus are drawn in the 'base' colour, the colour of the lists, so they run into the folder list. Give them the colour of the menu bar."""
+def _colour_the_menus(app: QApplication, dark: bool) -> None:
+    """Dropdown menus are drawn in the 'base' colour, the colour of the lists, so they run into the folder list. Give them
+    the colour of the menu bar."""
     # The stub of setPalette says bytes for the class name, but the call wants a str.
-    class_name = cast("bytes", "QMenu")
-    if app.style().objectName().lower() == FUSION.lower():
-        app.setPalette(menu_palette(app.palette()), class_name)
-    else:
-        app.setPalette(QPalette(), class_name)  # the other styles draw their menus well themselves
+    app.setPalette(menu_palette_of(DARK if dark else LIGHT), cast("bytes", "QMenu"))
 
 
-def start(app: QApplication, arguments: Sequence[str], settings: QSettings) -> None:
+def system_is_dark(app: QApplication) -> bool:
+    """Whether the system is set to dark: the one thing "Follow the system" takes from it."""
+    return app.styleHints().colorScheme() == Qt.ColorScheme.Dark
+
+
+def start(app: QApplication, settings: QSettings) -> None:
     """Remember what the platform chose, apply the settings, and follow the system when it switches between light and dark."""
-    _state.platform_style = app.style().objectName()
-    _state.style_given = style_given(arguments)
     _state.settings = settings
     _state.system_font = QFont(app.font())
 
@@ -125,27 +110,23 @@ def apply(app: QApplication, settings: QSettings, interface_factor: float | None
         return
     _state.busy = True
     try:
-        if _state.platform_style is None:  # started without start(), as in tests
-            _state.platform_style = app.style().objectName()
         scheme = prefs.get_text(settings, "color_scheme", SCHEMES)
         app.styleHints().setColorScheme(_SCHEME_OF[scheme])  # for the parts the platform draws itself (title bars) and for web pages
-        dark = (app.styleHints().colorScheme() == Qt.ColorScheme.Dark) if scheme == "system" else scheme == "dark"
-        wanted = _state.platform_style if _state.style_given else style_to_use(prefs.get_text(settings, "style", STYLES), dark, _state.platform_style)
+        dark = system_is_dark(app) if scheme == "system" else scheme == "dark"
         scale.set_interface(interface_factor if interface_factor is not None else scale.saved_factor(settings, system_font_size(app)))
         scale.set_windows(windows_factor if windows_factor is not None else scale.saved_windows(settings, system_font_size(app)))
         current = app.style()
         if not (
-            isinstance(current, scale.ScaledStyle) and current.base_name.lower() == wanted.lower()
+            isinstance(current, scale.ScaledStyle) and current.base_name.lower() == FUSION.lower()
             and current.factor == scale.interface() and current.windows_factor == scale.windows()
         ):
-            app.setStyle(scale.ScaledStyle(wanted, scale.interface(), scale.windows()))  # the icons and tick boxes at the factor of their window
+            app.setStyle(scale.ScaledStyle(FUSION, scale.interface(), scale.windows()))  # the icons and tick boxes at the factor of their window
         style = app.style()
         if isinstance(style, scale.ScaledStyle):
             style.main_font = main_font(app)  # for the menus and popups of the main window
-        # A platform does not always do what it is asked (Linux desktops mostly do not), so a chosen scheme brings its own colours.
-        # The blue is always the program's own (the system may give its accent colour as the highlight, Windows does).
-        app.setPalette(with_program_blue(QPalette() if scheme == "system" else (dark_palette() if dark else light_palette()), dark))
-        _colour_the_menus(app)
+        # Every colour is the theme's (core/colours.py), never the platform's: "System" only decides which of the two.
+        app.setPalette(palette_of(DARK if dark else LIGHT))
+        _colour_the_menus(app, dark)
         _apply_font_size(app)
     finally:
         _state.busy = False

@@ -15,9 +15,10 @@ from tests.test_engine_imap import World, world  # noqa: F401 - world is a fixtu
 __all__ = ["setup", "world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_rules.py 0.5.136"
+__version__ = "test_engine_rules.py 1.0.171"
 
 # --- Version history ----------------------------------------------------
+# v1.0.171: actions after Stop are skipped (the editor can move Stop up a rule's actions)
 # v0.5.136: tags in rules: the condition tag is / is not, the actions add_tag and remove_tag
 # v0.0.33: Initial rules tests
 
@@ -159,6 +160,13 @@ def test_the_first_stop_ends_the_rules_for_a_message_and_order_matters(setup: Se
     call(setup.engine, "rule.move", rule=call(setup.engine, "rule.list")[1].rule_id, position=0)
     call(setup.engine, "rule.run", account=setup.account_id, folder="Inbox")
     assert set(rows(setup, "Offers")) == {"Offer from boss"}
+
+
+def test_actions_after_stop_are_skipped(setup: Setup) -> None:
+    put(setup, "Short", "Someone <s@example.org>")
+    add_rule(setup, "Cut short", ["subject:equals:short"], ["flag", "stop", "mark_read"])  # Stop moved up: what follows is not done
+    call(setup.engine, "rule.run", account=setup.account_id, folder="Inbox")
+    assert rows(setup, "Inbox")["Short"].flags == ("flagged",)
 
 
 def test_actions_after_a_move_follow_the_message(setup: Setup) -> None:

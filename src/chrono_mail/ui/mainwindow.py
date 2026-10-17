@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError, program_version
+from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.store import MessageNotFoundError
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.engine.commands_folders import FolderInfo
@@ -95,9 +96,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.170"
+__version__ = "mainwindow.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The Tag button's colour from the colour file (D-158)
 # v0.5.170: one toolbar for the window that shows the row of the section on screen (switching made the window wider, D-156)
 # v0.5.167: the toolbar of every section folds its buttons into More when the window is narrow (FoldingToolbar, D-154); Menu and the search field always stay
 # v0.5.165: going back to the message in the reading pane calls off the message still opening (its answer showed it under the selected one)
@@ -662,7 +664,7 @@ class MainWindow(QMainWindow):
         self.toolbar.add_center(self.mark_button)
         self.tag_button = QToolButton(self)
         self.tag_button.setText("Tag")
-        self.tag_button.setIcon(tag_icon(QColor("#808080")))
+        self.tag_button.setIcon(tag_icon(QColor(NEW_TAG)))
         self.tag_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.tag_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.tag_menu = QMenu(self.tag_button)
@@ -3448,7 +3450,7 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         for action in (self.act_read, self.act_unread, self.act_flag, self.act_unflag):
             menu.addAction(action)
-        self._fill_tag_menu(menu.addMenu(tag_icon(QColor("#808080")), "Tag"))
+        self._fill_tag_menu(menu.addMenu(tag_icon(QColor(NEW_TAG)), "Tag"))
         menu.addSeparator()
         self._fill_move_menu()
         menu.addMenu(self.move_menu).setText("Move to")

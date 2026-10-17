@@ -23,8 +23,9 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR, NEW_TAG
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.collectionpanel import DEFAULT_COLOUR, colour_icon
+from chrono_mail.ui.collectionpanel import colour_icon
 from chrono_mail.ui.contactdetail import ContactDetail, avatar_pixmap
 from chrono_mail.ui.contacteditor import ContactEditor
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
@@ -35,9 +36,10 @@ from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 0.5.167"
+__version__ = "contactsview.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The Tag button's colour from the colour file (D-158)
 # v0.5.167: the toolbar folds like Mail's; Tag and Move to have icons; Import and Export live in More, which folded buttons join; the search field looks like Mail's (D-154)
 # v0.5.159: the list follows the facts (D-146 step 5): one contact in, out or changed at its place; the selection moves at the key press of a delete or move; contacts with an action under way are greyed; no reload after an action
 # v0.1.89: show_contact: one contact is shown, from the Contact column of the message list
@@ -254,7 +256,7 @@ class ContactsPage(PimPage):
         self.act_delete.triggered.connect(self.delete_selected)
         self.tag_button = QToolButton()
         self.tag_button.setText("Tag")
-        self.tag_button.setIcon(tag_icon(QColor("#808080")))
+        self.tag_button.setIcon(tag_icon(QColor(NEW_TAG)))
         self.tag_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.tag_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.tag_menu = QMenu(self.tag_button)
@@ -335,7 +337,7 @@ class ContactsPage(PimPage):
                 name = str(getattr(tag, "name"))
                 item = QListWidgetItem(f"{name}  ({getattr(tag, 'contacts')})")
                 item.setData(ROW_ROLE, name)
-                item.setIcon(colour_icon(self.colours.colour(name).name() or DEFAULT_COLOUR))
+                item.setIcon(colour_icon(self.colours.colour(name).name() or COLLECTION_WITHOUT_COLOUR))
                 self.tag_list.addItem(item)
                 if name.casefold() == keep.casefold() and keep:
                     chosen = item

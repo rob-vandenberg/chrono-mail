@@ -24,13 +24,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.core.colours import MAIL_PAGE
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 0.5.144"
+__version__ = "reader.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: The page colour from the colour file (D-158)
 # v0.5.144: The sender's circle follows the size factor of the window the reader is in (the main window, or a message window: the other windows)
 # v0.5.135: The tags of the message below the people (set_tags)
 # v0.3.106: The sender's circle follows the size factor of the interface
@@ -123,7 +125,7 @@ def make_safe_view(parent: QWidget | None = None) -> tuple[QWebEngineView, SafeP
         (QWebEngineSettings.WebAttribute.ReadingFromCanvasEnabled, False),
     ):
         settings.setAttribute(attribute, value)
-    page.setBackgroundColor(QColor("white"))  # mail is written for a white page, whatever the theme
+    page.setBackgroundColor(QColor(MAIL_PAGE))  # mail is written for a white page, whatever the theme
     view = QWebEngineView(parent)
     view.setPage(page)
     view.setContextMenuPolicy(view.contextMenuPolicy().NoContextMenu)

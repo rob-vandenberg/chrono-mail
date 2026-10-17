@@ -5,7 +5,7 @@ from PySide6.QtCore import QModelIndex, QPersistentModelIndex, QPoint, QRect, QS
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPalette, QPen
 from PySide6.QtWidgets import QStyle, QStyledItemDelegate, QStyleOptionViewItem, QWidget
 
-from chrono_mail.ui.colours import group_header_colour, selection_grey
+from chrono_mail.ui.colours import group_header_colour, selection_grey, theme
 
 from chrono_mail.ui.formatting import avatar_colour, coming_date, display_name, initials, short_date
 from chrono_mail.ui.icons import theme_icon
@@ -15,9 +15,10 @@ from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import paint_tag_marks
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 0.5.157"
+__version__ = "delegate.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: A thin line under a group heading; the initials' colour from the theme (D-158)
 # v0.5.157: a card with an action under way is drawn greyed
 # v0.5.135: Tags: the Tag column (small coloured tags, the names as pills on the selected row) and the tags of a card at the right of its last line
 # v0.3.108: Rows, cards, group headers, the circle, the dot and the icons follow the size factor of the message list (lpx)
@@ -70,6 +71,7 @@ def paint_group_header(painter: QPainter, option: QStyleOptionViewItem, header: 
     painter.save()
     active = QPalette.ColorGroup.Active  # a header is not "enabled" (the arrow keys pass it), but it is drawn in the colours of text
     painter.fillRect(full, QColor(group_header_colour(palette)))
+    painter.fillRect(full.left(), full.bottom(), full.width(), 1, QColor(theme(palette).group_header_line))  # the thin line under the heading
     text = palette.color(active, QPalette.ColorRole.Text)
     painter.setPen(QPen(text, 1.4))
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -135,7 +137,7 @@ class MessageDelegate(QStyledItemDelegate):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(avatar_colour(who_text))
         painter.drawEllipse(avatar)
-        painter.setPen(QColor("white"))
+        painter.setPen(QColor(theme(palette).on_colour))
         font = QFont(_typed(option, "font", QFont))
         font.setBold(True)
         font.setPointSizeF(font.pointSizeF() * 0.95)

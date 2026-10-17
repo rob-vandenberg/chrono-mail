@@ -8,6 +8,7 @@ from typing import Literal
 
 from chrono_mail.config import TAG_KINDS, load_tags, save_tags
 from chrono_mail.core import ChronoMailError, ConfigurationError, StorageError
+from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
@@ -16,15 +17,16 @@ from chrono_mail.pim.edit import retag_item
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tags.py 0.5.156"
+__version__ = "commands_tags.py 1.1.172"
 
 # --- Version history ----------------------------------------------------
+# v1.1.172: A new tag's colour from the colour file (D-158)
 # v0.5.156: Delete a tag everywhere is a big job: one "mailbox changed" per mailbox at its end (D-146)
 # v0.5.136: give_colours is used by the rules too
 # v0.5.135: tag.edit: a tag's shortcut key, what it is for, and its place in the list
 # v0.5.134: Initial version: message.tag, tag.create, tag.delete; mail counts and renaming for tag.list and tag.rename
 
-DEFAULT_COLOUR: str = "#808080"
+DEFAULT_COLOUR: str = NEW_TAG
 MAXIMUM_MESSAGES: int = 10_000  # per message.tag
 
 
