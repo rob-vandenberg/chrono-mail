@@ -14,9 +14,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.5.164"
+__version__ = "test_ui_columns.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: going back to the message on screen calls off the one still opening
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.162: a message read in Favorites > Unread stays there after a sort and a fetch, until the view is left
 # v0.5.161: a delete spans no group header again, and the headers keep their bar
@@ -588,3 +589,20 @@ def test_a_message_read_in_favorites_unread_stays_there_after_a_sort_and_a_fetch
     window.tree.setCurrentIndex(show_favorites_unread_again)  # ... and opened again: now the read message is gone
     wait(qtbot, lambda: model.spec is not None and model.spec.combined == "unread" and model.message_count() == 2 and world.backend._pending == {})  # noqa: SLF001
     assert model.find(chosen) < 0
+
+
+def test_going_back_to_the_message_on_screen_calls_off_the_one_still_opening(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    window.settings.setValue("mark_read", "never")
+    window.apply_preferences()
+    first = select_subject(world, qtbot, "Message 1")
+    model = window.list_model
+    column = model.columns.index("subject")
+    other = next(number for number in range(model.rowCount()) if model.index(number, column).data() == "Message 2")
+    window.list_view.setCurrentIndex(model.index(other, 0))  # Message 2 starts opening ...
+    window.list_view.setCurrentIndex(model.index(model.find(first), 0))  # ... and the person goes back before it is there
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001
+    qtbot.wait(50)
+    assert window._shown is not None and window._shown[2] == first  # noqa: SLF001 - the pane shows the message selected

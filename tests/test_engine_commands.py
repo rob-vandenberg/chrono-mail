@@ -24,9 +24,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.5.164"
+__version__ = "test_engine_commands.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: places count only the messages the asker has heard of; facts are numbered one after the other
 # v0.5.164: a question waits while a change is written to the index but not yet told
 # v0.5.163: a POP3 check tells each new message as a fact
 # v0.5.162: a message read while shown stays in a search of unread mail when it is named in stay
@@ -738,6 +739,23 @@ def test_the_position_of_a_message_is_where_message_list_shows_it(setup: Setup) 
                 found = call(setup.engine, "message.position", account=setup.account_id, folder="Inbox", message=message_id, sort=sort, oldest_first=oldest_first)
                 assert found.position == place, (sort, oldest_first)
     assert call(setup.engine, "message.position", account=setup.account_id, folder="Sent", message=listed[0]).position is None  # not in that folder
+
+
+def test_places_count_only_the_messages_the_asker_has_heard_of(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    told: list[Change] = []
+    setup.engine.changed = told.append
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        place = mailbox.store.account_id
+        asked = mailbox.deliver(mailbox.folder("Inbox"), mail(7), frozenset()).store_id
+        heard = told[-1].sequence  # the asker heard up to the fact of this message
+        later = [mailbox.deliver(mailbox.folder("Inbox"), mail(number), frozenset()).store_id for number in (8, 9)]  # newer: above it
+    everything = [row.message_id for row in call(setup.engine, "message.list", account=setup.account_id, folder="Inbox").messages]
+    assert everything.index(asked) == 2 and set(everything[:2]) == set(later)
+    values = {"account": setup.account_id, "folder": "Inbox", "messages": (asked,), "headings": True}
+    assert call(setup.engine, "message.places", **values).positions == (2,)  # nothing heard given: everything counts
+    assert call(setup.engine, "message.places", heard=(f"{place}={heard}",), **values).positions == (0,)  # the two newer ones are not here yet
+    assert all(change.sequence == number for number, change in enumerate(told, start=told[0].sequence))  # numbered one after the other
 
 
 def test_a_question_waits_while_a_change_is_written_but_not_yet_told(setup: Setup) -> None:

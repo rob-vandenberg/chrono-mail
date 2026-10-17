@@ -3,7 +3,8 @@ import threading
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from collections import OrderedDict
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from chrono_mail.config import (
@@ -25,9 +26,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.5.164"
+__version__ = "session.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: every fact is numbered per mailbox and the messages that came in are remembered with their number (arrived_after, D-152)
 # v0.5.164: place_lock: one lock per mailbox, held by a change from its index write until its fact is told and by a question while it reads (D-151); is_quiet
 # v0.5.159: a quiet big job tells "collection_changed" for calendars, task lists and address books, "mailbox_changed" for mail
 # v0.5.155: changed and report: the facts of every change of mail (D-146); quietly: a big job reports one "mailbox changed" per mailbox at its end
@@ -123,6 +125,9 @@ def index_lock(path: Path) -> threading.Lock:
     with _INDEX_LOCKS_GUARD:
         return _INDEX_LOCKS.setdefault(str(path.resolve()), threading.Lock())
 
+REMEMBERED_ARRIVALS: int = 100_000  # per mailbox: the messages that came in, with the number of their fact
+
+
 @dataclass
 class Engine:
     """One session of the application: where its files are, how secrets are kept, and the clock.
@@ -145,6 +150,10 @@ class Engine:
     changed: Callable[[Change], None] = field(default=_no_change)  # every fact of a change of mail, as it happens (D-146)
     _quiet: threading.local = field(default_factory=threading.local, init=False, repr=False)
     _place_locks: dict[str, threading.RLock] = field(default_factory=dict, init=False, repr=False)
+    _told: dict[str, int] = field(default_factory=dict, init=False, repr=False)  # per mailbox: how many facts were told
+    _arrived: dict[str, OrderedDict[str, int]] = field(default_factory=dict, init=False, repr=False)  # per mailbox: store id -> the number of the fact it came with
+    _horizon: dict[str, int] = field(default_factory=dict, init=False, repr=False)  # per mailbox: below this number, what came in is not known
+    _report_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # re-entrant: a listener in the same thread may cause a fact of its own
     _place_locks_guard: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _imap_links: dict[str, ImapLink] = field(default_factory=dict, init=False, repr=False)
     _imap_links_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -156,11 +165,39 @@ class Engine:
         """A change of mail happened: tell it, unless a big job of this thread runs quietly (then its mailbox is noted)."""
         quiet = self._quiet_state()
         if quiet.depth == 0:
-            self.changed(change)
+            self._tell(change)
             return
         summary = "collection_changed" if change.kind.startswith(("item_", "collection_")) else "mailbox_changed"
         if (change.mailbox, summary) not in quiet.touched:
             quiet.touched.append((change.mailbox, summary))
+
+    def _tell(self, change: Change) -> None:
+        """Number the fact among the facts of its mailbox and tell it, in that order (one at a time, so the numbers are told
+        in the order they were given). A message that came into a folder is remembered with its number; after a big job
+        (one "mailbox changed") what came in before it is no longer known one by one."""
+        with self._report_lock:
+            number = self._told.get(change.mailbox, 0) + 1
+            self._told[change.mailbox] = number
+            arrived = self._arrived.setdefault(change.mailbox, OrderedDict())
+            came = change.new_message_id if change.kind == "moved" else change.message_id if change.kind == "added" else ""
+            if came:
+                arrived[came] = number
+                arrived.move_to_end(came)
+                while len(arrived) > REMEMBERED_ARRIVALS:
+                    _, forgotten = arrived.popitem(last=False)
+                    self._horizon[change.mailbox] = max(self._horizon.get(change.mailbox, 0), forgotten + 1)
+            if change.kind == "mailbox_changed":
+                self._horizon[change.mailbox] = number + 1
+            self.changed(replace(change, sequence=number))
+
+    def arrived_after(self, place: str, heard: int) -> set[str] | None:
+        """The messages that came into this mailbox with a fact numbered after heard (they are not in a list that heard up
+        to there), or None when that is not known any more (too long ago, or a big job came after it)."""
+        with self._report_lock:
+            if heard + 1 < self._horizon.get(place, 0):
+                return None
+            arrived = self._arrived.get(place)
+            return set() if arrived is None else {store_id for store_id, number in arrived.items() if number > heard}
 
     def place_lock(self, place: str) -> threading.RLock:
         """The lock of one mailbox (a place where mail is kept): a change holds it from writing the index until its fact is
@@ -195,7 +232,7 @@ class Engine:
                 quiet.touched.clear()
                 if quiet.summary:
                     for mailbox, what in touched:
-                        self.changed(Change("mailbox_changed" if what == "mailbox_changed" else "collection_changed", mailbox))
+                        self._tell(Change("mailbox_changed" if what == "mailbox_changed" else "collection_changed", mailbox))
 
     def _quiet_state(self) -> _Quiet:
         state = getattr(self._quiet, "state", None)

@@ -96,9 +96,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.164"
+__version__ = "mainwindow.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: going back to the message in the reading pane calls off the message still opening (its answer showed it under the selected one)
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.161: only new group headers are spanned (not every header after every change)
 # v0.5.160: a new sort, and fetching the list again after a change from outside, rearrange the list in place: Qt's selection moves with each message (whole rows, never one cell); the hand-made reselect is gone
@@ -2001,6 +2002,7 @@ class MainWindow(QMainWindow):
         folder, message_id = str(getattr(row, "folder")), str(getattr(row, "message_id"))
         account = self._account_of(row)
         if self._shown == (account, folder, message_id):
+            self._show_request += 1  # back to the message on screen: the one still opening is called off
             return
         self._show_request += 1
         request = self._show_request

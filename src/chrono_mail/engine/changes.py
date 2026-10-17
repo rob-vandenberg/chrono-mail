@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 0.5.159"
+__version__ = "changes.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: sequence: every fact told is numbered per mailbox (an answer can then count only what the list has heard, D-152)
 # v0.5.159: facts of calendars, task lists and address books: items added, changed, removed, moved; collections made, edited, removed; collection_changed after a big job (D-146 step 5)
 # v0.5.156: role: the role of the folder the message is in after the change (a Favorites view decides by it whether the message belongs in it)
 # v0.5.155: Initial version: the facts the engine reports when mail changes (D-146), and the row a list shows of a message
@@ -88,3 +89,4 @@ class Change:
     role: str = ""  # added, moved: the role of the folder the message is in now ("inbox", "trash", "other" …); folder_made: the folder's role; items and collections: "events", "tasks" or "contacts"
     name: str = ""  # collections: the name
     colour: str = ""  # collections: the colour
+    sequence: int = 0  # the number of this fact among the facts of its mailbox, counted from 1 since the program started (D-152)

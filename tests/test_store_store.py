@@ -10,9 +10,10 @@ from chrono_mail.store import Store
 from chrono_mail.store.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_store_store.py 0.5.164"
+__version__ = "test_store_store.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: the count of fsync calls outside a batch follows Windows too
 # v0.5.164: a read never finds a name that a change of flags took away; the tests that replace os.sync also run where it does not exist (Windows)
 # v0.5.161: flags: the flags of one message from the name of its file
 # v0.5.133: written_together: a batch made safe on disk at once
@@ -382,7 +383,7 @@ def test_written_together_makes_the_whole_batch_safe_once_at_the_end(tmp_path: P
     assert calls == ["sync"]
     calls.clear()
     store.deliver(INBOX, b"Subject: c\r\n\r\nC")
-    assert calls == ["fsync", "fsync"]  # outside it every message is made safe again (the file and its folder)
+    assert calls == (["fsync", "fsync"] if os.name != "nt" else ["fsync"])  # outside it every message is made safe again (the file and its folder; Windows cannot open folders)
     assert store.read(first) == b"Subject: a\r\n\r\nA"
 
 

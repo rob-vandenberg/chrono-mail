@@ -18,9 +18,10 @@ from tests.live.account import LiveAccount
 from tests.ui.world import Dialogs, dialogs, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_ui.py 0.5.164"
+__version__ = "test_live_ui.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: the account trusts the server's certificate fingerprint when the live settings give one (a self-signed server such as Kerio)
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.4.122: The Trash list has group header rows: they are skipped when the message is looked for
 # v0.0.13: Initial live user interface test
@@ -43,7 +44,7 @@ def live_window(live_account: LiveAccount, tmp_path: Path, qtbot: QtBot, dialogs
         display_name="Live test", email_address=live_account.user, username=live_account.user, password=live_account.password,
         incoming_host=live_account.host, incoming_port=live_account.pop3_ssl_port, incoming_security="tls",
         outgoing_host=live_account.host, outgoing_port=live_account.smtp_starttls_port, outgoing_security="starttls",
-        delete_policy="delete_after_download",
+        delete_policy="delete_after_download", trusted_certificate=(live_account.fingerprint,) if live_account.fingerprint else (),
     ))
     backend = Backend(engine)
     settings = QSettings(str(tmp_path / "ui.ini"), QSettings.Format.IniFormat)

@@ -1,3 +1,4 @@
+import bisect
 import base64
 import mimetypes
 import os
@@ -30,9 +31,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.164"
+__version__ = "commands_mail.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: message.places counts only the messages the asker has heard of (heard; known), D-152
 # v0.5.164: a mail check tells each change the moment it makes it (MailboxAnnouncer); list, search, groups and places read the index under the mailbox's place lock (D-151)
 # v0.5.163: a mail check tells each change as a fact (new, removed, marks, tags, kept in Recovered, folders made or gone) instead of one "mailbox changed"; message.places can give the group heading of each message (headings)
 # v0.5.162: stay: messages a view keeps although they no longer match its unread, flagged or tag filter (read, unflagged or untagged while it showed them)
@@ -797,6 +799,7 @@ def message_locate(engine: Engine, parameters: LocateParameters) -> LocateResult
 class PlacesParameters(SearchParameters):
     messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
     headings: bool = field(default=False, metadata=option("Also the group heading each message falls under"))
+    heard: tuple[str, ...] = field(default=(), metadata=option("mailbox=number: the last fact the asker heard of a mailbox; messages that came in later are not counted (repeat for more)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -804,12 +807,41 @@ class PlacesResult:
     positions: tuple[int | None, ...]  # for each message asked, in the same order: where it stands (0 is the first), None when it is not in the view
     group_keys: tuple[str, ...] = ()  # with headings: for each message, the key of its group heading ("" when it has none)
     group_names: tuple[str, ...] = ()
+    known: bool = True  # False: what came in after the facts heard is no longer known one by one (the asker fetches the view again)
 
 
-def with_headings(positions: tuple[int | None, ...], groups: tuple[GroupCount, ...]) -> PlacesResult:
-    """The places with the group heading of each (worked out from the groups in list order with their counts)."""
-    found = [group_of(groups, position) if position is not None else ("", "") for position in positions]
+def with_headings(positions: tuple[int | None, ...], groups: tuple[GroupCount, ...], counted: tuple[int | None, ...] | None = None) -> PlacesResult:
+    """The places with the group heading of each, worked out from the groups in list order with their counts (counted: the
+    places among everything, when the places given leave out messages the asker has not heard of)."""
+    found = [group_of(groups, position) if position is not None else ("", "") for position in (positions if counted is None else counted)]
     return PlacesResult(positions, tuple(key for key, _ in found), tuple(name for _, name in found))
+
+
+def not_heard(engine: Engine, given: tuple[str, ...], places: set[str]) -> dict[str, set[str]] | None:
+    """For each of these mailboxes, the messages that came in after the last fact the asker heard of it (it cannot have
+    them yet), or None when that is not known any more. Without heard everything counts; with it, a mailbox it names
+    nothing of was heard up to 0."""
+    if not given:
+        return {place: set() for place in places}
+    heard: dict[str, int] = {}
+    for item in given:
+        mailbox, _, number = item.rpartition("=")
+        if not mailbox or not number.isdigit():
+            raise UsageError(f"'{item}' is not mailbox=number")
+        heard[mailbox] = int(number)
+    found: dict[str, set[str]] = {}
+    for place in places:
+        came = engine.arrived_after(place, heard.get(place, 0))
+        if came is None:
+            return None
+        found[place] = came
+    return found
+
+
+def leave_out(ordered: list[int | None], left_out: list[int]) -> tuple[int | None, ...]:
+    """Places among everything, made places among what the asker has: each place less the left-out messages before it."""
+    before = sorted(left_out)
+    return tuple(None if place is None else place - bisect.bisect_left(before, place) for place in ordered)
 
 
 def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult:
@@ -817,23 +849,35 @@ def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult
     worked out once, however many messages are asked. Asked when the list changes its order, so each selected message
     keeps its selection at its new place."""
     plain = not parameters.query and parameters.folder and _search_filter(parameters) == SearchFilter() and parameters.sort not in ("snoozed", CONTACT_SORT)
+    with open_mailbox(engine, parameters.account) as mailbox:
+        place = mailbox.store.account_id
     if plain and parameters.folder is not None:
         with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
-            found = mailbox.index.positions(mailbox.folder(parameters.folder), parameters.messages, _sort_field(parameters.sort), not parameters.oldest_first)
-        return _headed(engine, parameters, tuple(found.get(message_id) for message_id in parameters.messages))
+            missing = not_heard(engine, parameters.heard, {place})
+            if missing is None:
+                return PlacesResult(tuple(None for _ in parameters.messages), known=False)
+            left = sorted(missing[place] - set(parameters.messages))
+            found = mailbox.index.positions(mailbox.folder(parameters.folder), (*parameters.messages, *left), _sort_field(parameters.sort), not parameters.oldest_first)
+        everywhere = [found.get(message_id) for message_id in parameters.messages]
+        return _headed(engine, parameters, leave_out(everywhere, [found[message_id] for message_id in left if message_id in found]), tuple(everywhere))
     if parameters.folder is not None and not parameters.query and _search_filter(parameters) == SearchFilter():
         with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
             ordered = _ordered_ids(engine, mailbox, mailbox.folder(parameters.folder), parameters.sort, parameters.oldest_first)
     else:
         ordered = [row.message_id for row in message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))]
+    missing = not_heard(engine, parameters.heard, {place})  # after the reading: a superset of what it counted
+    if missing is None:
+        return PlacesResult(tuple(None for _ in parameters.messages), known=False)
     places = {message_id: number for number, message_id in enumerate(ordered)}
-    return _headed(engine, parameters, tuple(places.get(message_id) for message_id in parameters.messages))
+    left = [places[message_id] for message_id in missing[place] - set(parameters.messages) if message_id in places]
+    everywhere = [places.get(message_id) for message_id in parameters.messages]
+    return _headed(engine, parameters, leave_out(everywhere, left), tuple(everywhere))
 
 
-def _headed(engine: Engine, parameters: PlacesParameters, positions: tuple[int | None, ...]) -> PlacesResult:
+def _headed(engine: Engine, parameters: PlacesParameters, positions: tuple[int | None, ...], counted: tuple[int | None, ...]) -> PlacesResult:
     if not parameters.headings or all(position is None for position in positions):
         return PlacesResult(positions)
-    return with_headings(positions, message_groups(engine, parameters))
+    return with_headings(positions, message_groups(engine, parameters), counted)
 
 
 def message_thread(engine: Engine, parameters: MessageParameters) -> tuple[MessageRow, ...]:

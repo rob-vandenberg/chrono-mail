@@ -1,4 +1,6 @@
+import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Any  # command results are command-specific dataclasses
 
 import pytest
@@ -7,16 +9,17 @@ from chrono_mail.config import ServerRole
 
 from chrono_mail.engine import UsageError
 from chrono_mail.engine.mailbox import open_mailbox
-from chrono_mail.engine.schedule import describe_when, load_snoozed, parse_when, snooze_group, snooze_presets
+from chrono_mail.engine.schedule import SNOOZED_FILE_LOCK, describe_when, load_snoozed, parse_when, snooze_group, snooze_presets
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_schedule.py 0.2.101"
+__version__ = "test_engine_schedule.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: reading the snooze file waits while it is replaced (SNOOZED_FILE_LOCK)
 # v0.2.101: Waking a snoozed message without a record brings it to the Inbox
 # v0.2.100: The Snoozed folder: rows carry the time they come back, sorting and grouping by it
 # v0.0.86: Ready-made snooze times
@@ -231,3 +234,16 @@ def test_the_ready_made_snooze_times(now: datetime, expected: list[tuple[str, in
     presets = snooze_presets(now)
     assert [(name, moment.day) for name, moment in presets] == expected
     assert all(moment.month == 10 and (moment.hour, moment.minute, moment.second) == (9, 0, 0) for _, moment in presets)
+
+
+def test_reading_the_snooze_file_waits_while_it_is_replaced(tmp_path: Path) -> None:
+    path = tmp_path / "snoozed.json"
+    path.write_text('{"abc": {"until": 5, "folder": "Inbox"}}', "utf-8")
+    read: list[object] = []
+    with SNOOZED_FILE_LOCK:  # as a save does around its replace
+        reader = threading.Thread(target=lambda: read.append(load_snoozed(path)))
+        reader.start()
+        reader.join(0.3)
+        assert read == []  # it waits: on Windows a file that is being read cannot be replaced
+    reader.join(5)
+    assert read == [{"abc": {"until": 5, "folder": "Inbox"}}]

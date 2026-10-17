@@ -8,9 +8,10 @@ from chrono_mail.core import StorageError
 from chrono_mail.engine.registry import UsageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "schedule.py 0.2.101"
+__version__ = "schedule.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: SNOOZED_FILE_LOCK around reading and replacing snoozed.json: every read, also the ones outside a snooze or wake (a fact, a list), never meets a replace (Windows said "Access is denied")
 # v0.2.101: SNOOZED_LOCK: the record of snoozed messages is read, changed and written by one command at a time
 # v0.2.100: SNOOZED_FOLDER and SNOOZED_FILE moved here; snooze_group for the group headers of the Snoozed folder
 # v0.0.86: Ready-made snooze times (tomorrow, later this week, this weekend, next week)
@@ -19,6 +20,7 @@ __version__ = "schedule.py 0.2.101"
 SNOOZED_FOLDER: str = "Snoozed"
 SNOOZED_FILE: str = "snoozed.json"
 SNOOZED_LOCK = threading.RLock()  # snooze and wake read, change and write snoozed.json: one command at a time
+SNOOZED_FILE_LOCK = threading.Lock()  # held only while snoozed.json is opened and read, or replaced (Windows refuses to replace a file another thread is reading); nothing else is waited for while it is held
 SNOOZE_GROUPS: tuple[tuple[str, str], ...] = (("today", "Today"), ("tomorrow", "Tomorrow"), ("this_week", "This week"), ("next_week", "Next week"), ("later", "Later"))
 TOLERANCE_SECONDS: int = 60
 MAXIMUM_SECONDS_AHEAD: int = 5 * 366 * 86_400
@@ -80,7 +82,9 @@ def describe_when(epoch: int) -> str:
 def load_snoozed(path: Path) -> dict[str, dict[str, object]]:
     """store id -> {"until": seconds, "folder": the folder it came from}. A missing or damaged file is an empty list."""
     try:
-        data = json.loads(path.read_text("utf-8"))
+        with SNOOZED_FILE_LOCK:
+            text = path.read_text("utf-8")
+        data = json.loads(text)
     except (OSError, ValueError):
         return {}
     if not isinstance(data, dict):
@@ -98,7 +102,8 @@ def save_snoozed(path: Path, entries: dict[str, dict[str, object]]) -> None:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
-        os.replace(temporary, path)
+        with SNOOZED_FILE_LOCK:
+            os.replace(temporary, path)
     except OSError as error:
         try:
             temporary.unlink(missing_ok=True)

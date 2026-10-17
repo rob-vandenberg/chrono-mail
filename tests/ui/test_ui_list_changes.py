@@ -11,9 +11,10 @@ from chrono_mail.ui.models import MessageListModel, ViewSpec
 from tests.ui.world import World, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_list_changes.py 0.5.164"
+__version__ = "test_ui_list_changes.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: mail that streams in from checks at the same moment is placed while it comes (DEVELOPMENT's case)
 # v0.5.164: a message that arrives during another check is placed where the engine has it (the owner's case); an answer and a page asked before a fact about the view are asked again; message rows never have children
 # v0.5.163: messages that come in at once are placed with one question; messages gone from a part not loaded give one rearrange, never a reset
 # v0.5.156: Initial tests: the list applies each fact of the engine to its own rows, without fetching the view again (D-146 step 2)
@@ -304,3 +305,36 @@ def test_a_message_that_arrives_during_another_check_is_placed_where_the_engine_
     checking.join(5)
     wait(qtbot, lambda: world.backend._pending == {} and watched.model.message_count() == 6)  # noqa: SLF001
     assert watched.subjects() == listed(world, sort="subject")  # every row where the engine has it
+
+
+def test_mail_that_streams_in_from_checks_at_the_same_moment_is_placed_while_it_comes(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """DEVELOPMENT's case: two checks bring 150 messages each at the same moment into the view on screen (All Inboxes).
+    Every message is told as it is stored; the list places them while they come, with few questions, and holds them all,
+    in the engine's order, at once after the checks."""
+    import threading
+
+    from chrono_mail.engine.mailbox import open_mailbox
+
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, None, combined="inboxes", sort="subject"))
+    for number in range(100, 400, 2):
+        world.pop.messages[f"uid{number}"] = mail(number)
+
+    def other_check() -> None:  # the second account: its messages are stored and told one by one, as a check does
+        with open_mailbox(world.engine, world.account_id) as mailbox:
+            for number in range(101, 400, 2):
+                mailbox.deliver(mailbox.folder("Inbox"), mail(number), frozenset())
+
+    checks = [threading.Thread(target=lambda: world.call("mail.fetch", account=world.account_id)), threading.Thread(target=other_check)]
+    for check in checks:
+        check.start()
+    wait(qtbot, lambda: watched.model.message_count() > 3, timeout=10_000)  # mail shows while the checks run
+    for check in checks:
+        check.join(30)
+    wait(qtbot, lambda: world.backend._pending == {} and not watched.model._unplaced(), timeout=10_000)  # noqa: SLF001 - everything heard is placed
+    while watched.model.canFetchMore():  # a Favorites view loads 100 rows at a time as it is scrolled: scrolled to the end
+        watched.model.fetchMore()
+        wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001
+    assert watched.model.message_count() == 303
+    engine = [row.subject for row in world.call("message.combined", view="inboxes", sort="subject", limit=1000)]
+    assert watched.subjects() == engine and watched.resets == 0
+    assert watched.asked.count("message.combined-places") < 100  # one question per burst, not one per message

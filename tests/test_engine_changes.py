@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 from typing import Any  # command results are command-specific dataclasses
 
@@ -13,17 +14,19 @@ from tests.test_import_emclient import make_exports
 __all__ = ["setup", "world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_changes.py 0.5.164"
+__version__ = "test_engine_changes.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: facts are compared without their numbers
 # v0.5.164: a mail check tells each new message as a fact (D-150; this test still expected one "mailbox changed")
 # v0.5.156: the three bulk commands tell one fact; an action with an outdated folder is refused and never hides the message
 # v0.5.155: Initial tests: every change of mail reports exactly its fact, right after it happened (D-146)
 
 
 def listen(holder: Setup | World) -> list[Change]:
+    """The facts told, without their numbers (tests that compare whole facts; the numbers have a test of their own)."""
     told: list[Change] = []
-    holder.engine.changed = told.append
+    holder.engine.changed = lambda change: told.append(replace(change, sequence=0))
     return told
 
 

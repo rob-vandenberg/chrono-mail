@@ -17,9 +17,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.164"
+__version__ = "models.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: one question for places at a time, telling how far the list has heard (the engine counts only that); an arrival never makes an answer useless, so mail that streams in is placed while it comes (D-152)
 # v0.5.164: an answer is used only when no fact about the view came after it was asked (_mark, D-151); every row says it never has children; the index override is gone
 # v0.5.163: messages that come in at once are taken in with one question (message.places with headings); messages that went from a part not loaded give one rearrange, never a reset
 # v0.5.162: a message read, unflagged or untagged in a view that shows only such messages stays there until the view is left, also after a sort or a fetch (the engine is told which, D-149)
@@ -146,7 +147,7 @@ class _Rows:
     exhausted: bool = False
     loading_more: bool = False
     shifts: int = 0  # changes that moved places (a row in or out): an answer asked for before one is asked for again
-    heard: int = 0  # facts of the engine about this view's mail: an answer asked for before one may or may not count it (D-151)
+    heard: int = 0  # facts of the engine about this view's mail other than arrivals: an answer asked for before one may or may not count it (D-151)
 
 
 def _filters_marks(spec: ViewSpec) -> bool:
@@ -195,6 +196,8 @@ class MessageListModel(QAbstractTableModel):
         self._arriving: list[object] = []  # facts of messages that came in, taken in together (a mail check brings several at once)
         self._arrival_planned: bool = False
         self._in_flight: int = 0  # messages that came in whose places are being asked: heard, but not in the rows yet
+        self._placing: bool = False  # one question for places at a time: what comes in meanwhile goes into the next one
+        self._seen: dict[str, int] = {}  # per mailbox: the number of the last fact heard (the engine counts only what came before it, D-152)
         self._waiting_pages: set[int] = set()  # pages asked while messages heard were not placed yet: asked again once they are
         self._rearrange_planned: bool = False  # a message went from a part not loaded: one rearrange for all of them
         self.selected_rows: Callable[[], list[int]] = lambda: []  # the rows selected in the window and its current row (a new order keeps them)
@@ -722,11 +725,15 @@ class MessageListModel(QAbstractTableModel):
     def apply(self, change: object) -> None:
         """One fact of a change of mail (a Change of the engine): apply exactly that change to the rows, without fetching the
         view again. A message that comes into the view is put at its place (the engine is asked where that is)."""
+        mailbox, number = str(getattr(change, "mailbox", "")), int(getattr(change, "sequence", 0))
+        if number > self._seen.get(mailbox, 0):
+            self._seen[mailbox] = number  # every fact, also of mail this view does not show: the engine counts by these numbers
         spec = self._spec
         if spec is None or not self._concerns(spec, str(getattr(change, "mailbox", ""))):
             return
-        self._rows.heard += 1  # answers asked for before this fact are asked again (D-151)
         kind = str(getattr(change, "kind", ""))
+        if kind != "added":  # an arrival changes nothing an answer counted (it is placed with a question of its own, D-152)
+            self._rows.heard += 1  # answers asked for before this fact are asked again (D-151)
         message_id = str(getattr(change, "message_id", ""))
         folder = str(getattr(change, "folder", ""))
         if kind == "flags":
@@ -934,25 +941,35 @@ class MessageListModel(QAbstractTableModel):
         then each row is put at its place, the first place first. A burst larger than BURST is one rearrange (it keeps the
         selection)."""
         self._arrival_planned = False
+        spec = self._spec
+        if spec is None or not self._arriving or self._placing:
+            return  # nothing to place, or a question is on its way: what came meanwhile goes into the next one
         arriving: list[object] = self._arriving
         self._arriving = []
-        spec = self._spec
-        if spec is None or not arriving:
-            return
         if len(arriving) > BURST:
             self.rearrange(spec)
             return
         rows: list[object] = [getattr(change, "row") for change in arriving]
         generation, mark = self._generation, self._mark()
         self._in_flight += len(arriving)
+        self._placing = True
+
+        def again(changes: list[object]) -> None:
+            for change in changes:
+                self._bring_in(change)
 
         def located(result: object) -> None:
             self._in_flight -= len(arriving)
+            self._placing = False
             if generation != self._generation:
+                if self._spec is not None and self._same_messages(spec, self._spec):
+                    again(arriving)  # the same view in another order: they are placed in it (or found there already)
                 return
-            if mark != self._mark() or self._unplaced():  # a fact came meanwhile, or other messages heard are not placed yet: asked again
-                for change in arriving:
-                    self._bring_in(change)
+            if not bool(getattr(result, "known", True)):
+                self.rearrange(self._spec)  # what came in is no longer known one by one: the view is rearranged once
+                return
+            if mark != self._mark():  # a row went or moved meanwhile (the answer may count it or not): asked again
+                again(arriving)
                 return
             positions: tuple[object, ...] = tuple(getattr(result, "positions"))
             keys: tuple[str, ...] = tuple(getattr(result, "group_keys", ()))
@@ -962,6 +979,9 @@ class MessageListModel(QAbstractTableModel):
                 row = rows[number]
                 if self._find_position(str(getattr(row, "message_id"))) < 0:
                     self._insert(position, row, keys[number] if keys else "", names[number] if names else "")
+            if self._arriving:
+                self._take_in()  # what came in meanwhile, with one question
+                return
             waiting, self._waiting_pages = self._waiting_pages, set()
             for page in sorted(waiting):  # the rows now hold every message heard: what was asked meanwhile is asked again
                 if any(slot is None for slot in self._rows.slots[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]):
@@ -969,11 +989,13 @@ class MessageListModel(QAbstractTableModel):
 
         def failed(error: ChronoMailError) -> None:
             self._in_flight -= len(arriving)
+            self._placing = False
             self._failed(error)
 
         values = self.request_values(spec)
         values["messages"] = [str(getattr(row, "message_id")) for row in rows]
         values["headings"] = True
+        values["heard"] = [f"{mailbox}={number}" for mailbox, number in self._seen.items()]  # only what came before these facts is counted: what came later is not here yet (D-152)
         if spec.combined is not None:
             values["mailboxes"] = [str(getattr(change, "mailbox")) for change in arriving]
         self._backend.call("message.combined-places" if spec.combined is not None else "message.places", values, located, failed, owner=self)

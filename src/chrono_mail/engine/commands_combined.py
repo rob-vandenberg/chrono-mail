@@ -5,7 +5,7 @@ from datetime import datetime
 import string
 
 from chrono_mail.core import Folder, FolderRole
-from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, PlacesResult, with_headings, _rows, contact_address_set, date_bounds, from_contacts, group_of
+from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, not_heard, with_headings, _rows, contact_address_set, date_bounds, from_contacts, group_of
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
@@ -13,9 +13,10 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 0.5.164"
+__version__ = "commands_combined.py 0.5.165"
 
 # --- Version history ----------------------------------------------------
+# v0.5.165: message.combined-places counts only the messages the asker has heard of (D-152)
 # v0.5.164: a Favorites view and its groups read each mailbox's index under its place lock (D-151)
 # v0.5.163: message.combined-places can give the group heading of each message (headings)
 # v0.5.162: stay_messages and stay_mailboxes: messages a Favorites view keeps after they were read, unflagged or untagged in it
@@ -188,6 +189,7 @@ class CombinedPlacesParameters(CombinedParameters):
     messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
     mailboxes: tuple[str, ...] = field(default=(), metadata=option("The account (mailbox) of each message, in the same order (repeat for more)"))
     headings: bool = field(default=False, metadata=option("Also the group heading each message falls under"))
+    heard: tuple[str, ...] = field(default=(), metadata=option("mailbox=number: the last fact the asker heard of a mailbox; messages that came in later are not counted (repeat for more)"))
 
 
 def message_combined_places(engine: Engine, parameters: CombinedPlacesParameters) -> PlacesResult:
@@ -195,12 +197,18 @@ def message_combined_places(engine: Engine, parameters: CombinedPlacesParameters
     if len(parameters.mailboxes) != len(parameters.messages):
         raise UsageError("Give the mailbox of each message")
     everything = message_combined(engine, replace(parameters, offset=0, limit=EVERYTHING))
+    missing = not_heard(engine, parameters.heard, {row.account for row in everything})  # after the reading: a superset of what it counted
+    if missing is None:
+        return PlacesResult(tuple(None for _ in parameters.messages), known=False)
     places = {(row.account, row.message_id): number for number, row in reversed(list(enumerate(everything)))}  # the first place when one message is shown twice
     owners = {mailbox: engine.resolve_account(mailbox).account.account_id for mailbox in set(parameters.mailboxes)}
-    positions = tuple(places.get((owners[mailbox], message_id)) for mailbox, message_id in zip(parameters.mailboxes, parameters.messages, strict=True))
+    asked = {(owners[mailbox], message_id) for mailbox, message_id in zip(parameters.mailboxes, parameters.messages, strict=True)}
+    left = [number for (place, message_id), number in places.items() if message_id in missing.get(place, set()) and (place, message_id) not in asked]
+    everywhere = [places.get((owners[mailbox], message_id)) for mailbox, message_id in zip(parameters.mailboxes, parameters.messages, strict=True)]
+    positions = leave_out(everywhere, left)
     if not parameters.headings or all(position is None for position in positions):
         return PlacesResult(positions)
-    return with_headings(positions, message_combined_groups(engine, parameters))
+    return with_headings(positions, message_combined_groups(engine, parameters), tuple(everywhere))
 
 
 def register(registry: CommandRegistry) -> None:
