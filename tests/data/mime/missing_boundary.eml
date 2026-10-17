@@ -1,5 +1,0 @@
-From: a@example.com
-Subject: boundary
-Content-Type: multipart/mixed
-
-just text, no boundary parameter

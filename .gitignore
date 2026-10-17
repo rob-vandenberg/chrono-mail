@@ -8,6 +8,8 @@ tests/live/account.local.toml
 tests/live/dav.local.toml
 tests/live/kerio.local.toml
 themes/
+*.bat
+tests/
 
 # hand-over notes between sessions (private)
 TRANSFER.md

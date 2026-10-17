@@ -94,6 +94,8 @@ cd chrono-mail
 Later, to get what the Kubuntu machine pushed: `git pull` (or `git fetch --tags` and `git checkout <version>` for one
 exact version). Never build an installer from code that is not a pushed version.
 
+**The tests are not in git since 1.1.176** (D-161): `tests/` is git-ignored and is not on GitHub from that version on. The first pull of 1.1.176 or later deletes the `tests` folder here, because git stops tracking it; later pulls leave it alone. For that one pull: copy `C:\Python\chrono-mail\tests` aside (for example to `C:\Python\tests-backup`), pull, and copy it back to `C:\Python\chrono-mail\tests`. Tests added or changed on the Kubuntu machine after 1.1.175 reach DEVELOPMENT only when the owner copies them over; changes to tests made here do not go into git either.
+
 ### 3.3 A development environment (to run Chrono Mail from the code and to run the tests)
 
 ```powershell
@@ -138,7 +140,7 @@ second start, also of the other copy, shows the window that runs already.
 - **UI:** Qt 6 Widgets (`src/chrono_mail/ui/`), HTML mail in Qt WebEngine with JavaScript off and remote content
   blocked; the program's own copy of the Breeze icons (`src/chrono_mail/ui/resources/`, also the app icon
   `chrono-mail.ico` and `chrono-mail.svg`).
-- **Tests:** `tests/` (about 1,670 offline tests; `tests/ui/` for the window, Qt runs offscreen), `tests/live/` against
+- **Tests:** `tests/` (not in git since 1.1.176, see section 3.2; about 1,670 offline tests; `tests/ui/` for the window, Qt runs offscreen), `tests/live/` against
   real servers (opt-in), fake servers in `tests/fake*.py`.
 - **Packaging:** `packaging/` (section 7).
 - **The owner's accounts:** three POP3 accounts that share the Local Folders, and an IMAP account on a Kerio server.

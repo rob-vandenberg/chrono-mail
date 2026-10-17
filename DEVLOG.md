@@ -1535,3 +1535,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 - `ui/ruleedit.py`: `ActionRow.set_skipped` (the palette's Disabled text colours on the action's choice, folder and tag), `RuleEditDialog._update_skipped` after every add, move, remove and change of an action. `ui/rulespanel.py` and `ui/settingsdialog.py`: the button text Edit….
 - Tests: 1 new in `test_ui_rules.py` (greyed below Stop, still editable, follows add, move, a change to Stop and a remove), two checks of the button text in `test_ui_rules.py` and `test_ui_settings.py`; all three fail on 1.1.173 and pass now. Run: `test_ui_rules.py`, `test_ui_settings.py` 26 passed, the colour-file test passed; Pyrefly 0 for Linux and for Windows, layer check kept; not the full suite.
+
+## 2026-10-17 The tests leave git; .bat files ignored (versions 1.1.175 and 1.1.176, D-161)
+
+- 1.1.175: `.gitignore` has `*.bat` (no such file existed).
+- 1.1.176: `.gitignore` has `tests/`; `git rm -r --cached tests` (179 files no longer tracked, still on disk). `TRANSFER-WINDOWS.md`: the tests are not in git, and how DEVELOPMENT keeps its copy through the first pull.
+- Checked in throwaway repositories: a pull deletes files the new version stops tracking, also when they are ignored there; neither a local untrack nor skip-worktree prevents it. No program code changed, so no tests were run.

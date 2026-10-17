@@ -1,7 +1,0 @@
-# Copy this file to dav.local.toml (ignored by git) and fill in the values.
-# A disposable account on a CalDAV and CardDAV server: the live tests make and delete items in its calendar, task list and address book.
-url = "https://dav.example.com/caldav/"
-user = "test@example.com"
-password = "change-me"
-# The SHA-256 fingerprint of the server's certificate when it is self-signed (see certificate.inspect); empty for a normal certificate.
-fingerprint = ""
