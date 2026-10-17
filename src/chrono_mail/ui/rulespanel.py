@@ -21,9 +21,10 @@ from chrono_mail.ui.ruleedit import RuleEditDialog
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "rulespanel.py 0.0.51"
+__version__ = "rulespanel.py 1.1.174"
 
 # --- Version history ----------------------------------------------------
+# v1.1.174: The button Change… is called Edit…
 # v0.0.51: Colour scheme and style settings, dark mode, icons that suit both schemes
 # v0.0.50: Rules and scheduled messages are pages of the Settings window
 # v0.0.33: Initial rules window
@@ -48,7 +49,7 @@ class RulesPanel(QWidget):
         body.addWidget(self.list, 1)
         side = QVBoxLayout()
         self.new_button = QPushButton("New…", self)
-        self.edit_button = QPushButton("Change…", self)
+        self.edit_button = QPushButton("Edit…", self)
         self.delete_button = QPushButton("Delete…", self)
         self.up_button = QPushButton("Move up", self)
         self.down_button = QPushButton("Move down", self)

@@ -1530,3 +1530,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - `ui/mainwindow.py`: `MINIMUM_WIDTH` (768), `_fix_minimum_width` (768 or what the freshly measured contents need), run once the size factors are applied. Measured: 768 px at 0.75 and 1.00, 817 at 1.50, 926 at 2.00, back to 768 at 1.00; the same in all four sections.
 - Tests: 2 new in `test_ui_toolbar.py` (768 px in Calendar and Mail; one minimum for every section at 2.00 and back at 1.00). Run after the Settings tests, the first one and the 0.5.170 test fail on 1.1.172 (twice, checked) and pass now (twice); the second passes on 1.1.172 too (it guards the new rule). Run: toolbar, settings, appearance, sections 69 passed; `tests/ui/test_ui_window.py` with the toolbar tests 79 passed. Pyrefly 0 for Linux and for Windows, layer check kept; not the full suite.
 
+
+## 2026-10-17 Actions below Stop greyed out; Change… is Edit… (version 1.1.174, D-160)
+
+- `ui/ruleedit.py`: `ActionRow.set_skipped` (the palette's Disabled text colours on the action's choice, folder and tag), `RuleEditDialog._update_skipped` after every add, move, remove and change of an action. `ui/rulespanel.py` and `ui/settingsdialog.py`: the button text Edit….
+- Tests: 1 new in `test_ui_rules.py` (greyed below Stop, still editable, follows add, move, a change to Stop and a remove), two checks of the button text in `test_ui_rules.py` and `test_ui_settings.py`; all three fail on 1.1.173 and pass now. Run: `test_ui_rules.py`, `test_ui_settings.py` 26 passed, the colour-file test passed; Pyrefly 0 for Linux and for Windows, layer check kept; not the full suite.

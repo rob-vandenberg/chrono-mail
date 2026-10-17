@@ -9,9 +9,10 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 0.0.45"
+__version__ = "test_ui_settings.py 1.1.174"
 
 # --- Version history ----------------------------------------------------
+# v1.1.174: the accounts button is called Edit…
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
 # v0.0.44: Folder choices, roles and check interval per account
 # v0.0.42: Settings window with pages for everything
@@ -34,6 +35,7 @@ def test_the_settings_list_the_accounts_and_return_the_general_choices(world: Wo
     dialog = open_settings(world, qtbot, auto_check=False, auto_check_minutes=12, conversations=True)
     assert "me@example.com" in dialog.accounts.item(0).text()
     assert dialog.accounts.currentRow() == 0 and dialog.edit_button.isEnabled() and dialog.remove_button.isEnabled()
+    assert dialog.edit_button.text() == "Edit…"
     assert not dialog.auto_check.isChecked() and not dialog.interval.isEnabled() and dialog.interval.value() == 12 and dialog.conversations.isChecked()
     dialog.auto_check.setChecked(True)
     dialog.interval.setValue(30)

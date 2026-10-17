@@ -1,4 +1,5 @@
 import pytest
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
@@ -7,9 +8,10 @@ from chrono_mail.ui.rulespanel import RulesPanel
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rules.py 1.0.171"
+__version__ = "test_ui_rules.py 1.1.174"
 
 # --- Version history ----------------------------------------------------
+# v1.1.174: actions below Stop are greyed out and stay editable; the rules button is called Edit…
 # v1.0.171: actions move up and down, in the order they are saved
 # v0.5.136: the tag condition and the tag actions in the editor; the Menu has Tags…
 # v0.0.76: The Menu has Settings, Accounts, Rules and Exit in its root
@@ -137,6 +139,35 @@ def test_actions_move_up_and_down_and_are_saved_in_that_order(world: World, qtbo
     assert not last.up_button.isEnabled() and last.down_button.isEnabled() and first.up_button.isEnabled() and not first.down_button.isEnabled()  # set again after a remove
 
 
+def greyed(row: ActionRow) -> bool:
+    """The action's text has the colour of greyed-out text, in both the choice of action and its folder."""
+    kind, folder = row.kind.palette(), row.folder.palette()
+    return (
+        kind.color(QPalette.ColorGroup.Active, QPalette.ColorRole.ButtonText) == kind.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.ButtonText)
+        and folder.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Text) == folder.color(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Text)
+    )
+
+
+def test_actions_below_stop_are_greyed_out_and_follow_every_change(world: World, qtbot: QtBot) -> None:
+    dialog = editor(world, qtbot)
+    dialog.action_rows[0].set_action("mark_read")
+    dialog.add_action("stop")
+    dialog.add_action("move_to:Archive")
+    first, stop, last = dialog.action_rows
+    assert not greyed(first) and not greyed(stop) and greyed(last)  # Stop itself is done, what follows it is not
+    assert last.isEnabled() and last.kind.isEnabled() and last.folder.isEnabled()  # still editable
+    dialog.add_action("flag")
+    assert greyed(dialog.action_rows[3])  # a new action lands below Stop
+    stop.down_button.click()
+    assert not greyed(last) and greyed(dialog.action_rows[3])  # follows a move at once
+    first.kind.setCurrentIndex(first.kind.findData("stop"))
+    assert greyed(last) and greyed(stop) and not greyed(first)  # the first Stop counts
+    first.kind.setCurrentIndex(first.kind.findData("mark_read"))
+    stop.remove_button.click()
+    assert not any(greyed(row) for row in dialog.action_rows)  # no Stop: everything is done
+    assert dialog.values()["action"] == ["mark_read", "move_to:Archive", "flag"]
+
+
 def test_a_rule_for_one_account_needs_no_conditions(world: World, qtbot: QtBot) -> None:
     dialog = editor(world, qtbot)
     dialog.name.setText("Everything of this account")
@@ -212,6 +243,7 @@ def test_a_rule_can_be_applied_to_the_current_folder(world: World, qtbot: QtBot)
 def test_with_no_rules_the_buttons_that_need_one_are_off(world: World, qtbot: QtBot) -> None:
     dialog = open_rules(world, qtbot, 0)
     assert not any(button.isEnabled() for button in (dialog.edit_button, dialog.delete_button, dialog.up_button, dialog.down_button, dialog.run_button)) and dialog.new_button.isEnabled()
+    assert dialog.edit_button.text() == "Edit…"
 
 
 def test_the_rules_are_a_page_of_the_settings(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

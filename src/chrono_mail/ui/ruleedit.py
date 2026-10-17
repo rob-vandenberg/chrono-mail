@@ -1,3 +1,4 @@
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -18,9 +19,10 @@ from chrono_mail.ui.colours import red
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "ruleedit.py 1.0.171"
+__version__ = "ruleedit.py 1.1.174"
 
 # --- Version history ----------------------------------------------------
+# v1.1.174: Actions below Stop processing rules are shown greyed out (they are not done); they can still be changed and moved
 # v1.0.171: Every action has Move up and Move down buttons (chevrons before its ✕); the order is the order the rule runs in
 # v0.5.136: Tags: the condition Tag is / is not, the actions Add tag and Remove tag, each with the tags to choose from
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
@@ -179,6 +181,18 @@ class ActionRow(QWidget):
     def set_tags(self, names: list[str]) -> None:
         _fill_tags(self.tag, names)
 
+    def set_skipped(self, skipped: bool) -> None:
+        """Grey out the action when a Stop above it means it is never done; it can still be changed and moved."""
+        for widget in (self.kind, self.folder, self.tag):
+            if not skipped:
+                widget.setPalette(QPalette())  # back to the window's own colours
+                continue
+            palette = QPalette(self.palette())
+            for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text, QPalette.ColorRole.ButtonText):
+                for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+                    palette.setColor(group, role, palette.color(QPalette.ColorGroup.Disabled, role))
+            widget.setPalette(palette)
+
     def action(self) -> str:
         kind = str(self.kind.currentData())
         if kind in TAG_ACTIONS:
@@ -273,6 +287,7 @@ class RuleEditDialog(QDialog):
         row.remove_button.clicked.connect(lambda: self._remove_action(row))
         row.up_button.clicked.connect(lambda: self.move_action(row, -1))
         row.down_button.clicked.connect(lambda: self.move_action(row, 1))
+        row.kind.currentIndexChanged.connect(self._update_skipped)
         self._update_moves()
         return row
 
@@ -292,6 +307,14 @@ class RuleEditDialog(QDialog):
         for place, row in enumerate(self.action_rows):
             row.up_button.setEnabled(place > 0)
             row.down_button.setEnabled(place < len(self.action_rows) - 1)
+        self._update_skipped()
+
+    def _update_skipped(self) -> None:
+        """The actions below the first Stop are not done, so they are shown greyed out."""
+        stopped = False
+        for row in self.action_rows:
+            row.set_skipped(stopped)
+            stopped = stopped or str(row.kind.currentData()) == "stop"
 
     def _remove_condition(self, row: ConditionRow) -> None:
         self.condition_rows.remove(row)  # a rule may have none: it then acts on all the mail of its account

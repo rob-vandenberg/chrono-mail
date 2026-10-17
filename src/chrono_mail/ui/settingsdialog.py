@@ -49,9 +49,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 1.1.172"
+__version__ = "settingsdialog.py 1.1.174"
 
 # --- Version history ----------------------------------------------------
+# v1.1.174: Accounts: the button Change… is called Edit…
 # v1.1.172: Appearance: the Style choice is gone (Fusion always draws, with the program's own colours, D-158)
 # v0.5.145: General: the section Operations window (show on send and receive, hide when it completes, show on an error)
 # v0.5.144: Four size sliders: Main window, Message list, Other windows and dialogs (new), Text of messages; this window follows Other windows and dialogs
@@ -544,7 +545,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.accounts, 1)
         side = QVBoxLayout()
         self.add_button = QPushButton("Add…", page)
-        self.edit_button = QPushButton("Change…", page)
+        self.edit_button = QPushButton("Edit…", page)
         self.remove_button = QPushButton("Remove…", page)
         for button in (self.add_button, self.edit_button, self.remove_button):
             side.addWidget(button)
