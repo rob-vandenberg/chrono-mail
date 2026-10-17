@@ -30,9 +30,10 @@ from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 0.0.64"
+__version__ = "calendarview.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: follows the facts (D-146 step 5): only the blocks of the event that changed are replaced (its occurrences in the days shown are asked for); no reload after saving or deleting
 # v0.0.64: Initial calendar section: day, work week, week, upcoming, month and agenda views, event editor, mini calendar
 
 LIST_LIMIT: int = 5000
@@ -447,7 +448,34 @@ class CalendarPage(PimPage):
         self._backend.call("event.delete", values, lambda result: self._saved(""), self._failed, owner=self)
 
     def _saved(self, item: str) -> None:
-        self.panel.reload()
+        """An event was saved or deleted: its blocks followed the fact (D-146)."""
+
+    @override
+    def apply_item(self, change: object) -> None:
+        """An event was added, changed, deleted or moved: its blocks go, and when it is in a calendar shown its
+        occurrences in the days shown are asked for and put in (only that event, D-146)."""
+        kind, item = str(getattr(change, "kind")), str(getattr(change, "message_id"))
+        wanted = str(getattr(change, "new_message_id")) if kind == "item_moved" else item
+        target = str(getattr(change, "to_folder")) if kind == "item_moved" else str(getattr(change, "folder"))
+        before = len(self.entries)
+        self.entries = [entry for entry in self.entries if str(getattr(entry.row, "item")) not in (item, wanted)]
+        if len(self.entries) != before:
+            self._show_data()
+        if kind == "item_removed" or target not in set(self.panel.visible_ids()):
+            return
+        first, last = layout.range_of(self.view, self.anchor, self.first_weekday, WORK_DAYS, date.today())
+        generation = self._generation
+
+        def arrived(result: object) -> None:
+            if generation != self._generation:
+                return  # another week or view is shown now: it was fetched for that one
+            rows = list(result) if isinstance(result, (tuple, list)) else []
+            kept = [entry for entry in self.entries if str(getattr(entry.row, "item")) != wanted]
+            self.entries = sorted(kept + layout.entries_from(rows, self.zone), key=lambda entry: (entry.start, entry.summary.casefold()))
+            self._show_data()
+
+        values: dict[str, object] = {"from_date": first.isoformat(), "to_date": last.isoformat(), "limit": LIST_LIMIT, "text": self.search.text().strip(), "item": wanted}
+        self._backend.call("event.list", values, arrived, self._failed, owner=self)
 
     def _context(self, entry: object, slot: object, position: QPoint) -> None:
         menu = QMenu(self.content)

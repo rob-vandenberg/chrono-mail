@@ -25,9 +25,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.5.155"
+__version__ = "session.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: a quiet big job tells "collection_changed" for calendars, task lists and address books, "mailbox_changed" for mail
 # v0.5.155: changed and report: the facts of every change of mail (D-146); quietly: a big job reports one "mailbox changed" per mailbox at its end
 # v0.5.154: open_index opens the index only inside its lock: on Windows a command that opened it while another replaced its files made one of them fail
 # v0.5.145: activity: the steps of a mail check or a send, per account (for the Operations window)
@@ -73,7 +74,7 @@ class _Quiet:
     """Per thread: how deep inside quietly() it is, the mailboxes a big job touched, and whether it ends with a summary."""
 
     depth: int = 0
-    touched: list[str] = field(default_factory=list)
+    touched: list[tuple[str, str]] = field(default_factory=list)  # (account or mailbox, "mailbox_changed" or "collection_changed")
     summary: bool = True
 
 
@@ -153,8 +154,10 @@ class Engine:
         quiet = self._quiet_state()
         if quiet.depth == 0:
             self.changed(change)
-        elif change.mailbox not in quiet.touched:
-            quiet.touched.append(change.mailbox)
+            return
+        summary = "collection_changed" if change.kind.startswith(("item_", "collection_")) else "mailbox_changed"
+        if (change.mailbox, summary) not in quiet.touched:
+            quiet.touched.append((change.mailbox, summary))
 
     def mailbox_changed(self, mailbox: str) -> None:
         """A big job changed this mailbox without going through the mailbox's operations (a sync, a rebuilt index)."""
@@ -177,8 +180,8 @@ class Engine:
                 touched = list(quiet.touched)
                 quiet.touched.clear()
                 if quiet.summary:
-                    for mailbox in touched:
-                        self.changed(Change("mailbox_changed", mailbox))
+                    for mailbox, what in touched:
+                        self.changed(Change("mailbox_changed" if what == "mailbox_changed" else "collection_changed", mailbox))
 
     def _quiet_state(self) -> _Quiet:
         state = getattr(self._quiet, "state", None)

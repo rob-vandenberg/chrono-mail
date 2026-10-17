@@ -45,9 +45,10 @@ from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 0.0.63"
+__version__ = "tasksview.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: the list follows the facts (D-146 step 5): one task in, out or changed (grouped again here, the selection kept by identity); the selection moves at the key press of a delete or move; tasks with an action under way are greyed; no reload after an action
 # v0.0.63: Initial tasks section: lists, quick add, groups by date, status marks, detail pane, editor, tags, move, delete
 
 ROW_ROLE: int = Qt.ItemDataRole.UserRole + 1
@@ -105,6 +106,7 @@ class TaskListModel(QAbstractListModel):
         super().__init__(parent)
         self.entries: list[tuple[str, object]] = []  # ("header", text) or ("task", row)
         self.total: int = 0
+        self.pending: set[str] = set()  # tasks with an action under way: greyed
 
     def load(self, rows: list[object], total: int, today: date | None = None) -> None:
         day = today or date.today()
@@ -214,6 +216,9 @@ class TaskDelegate(QStyledItemDelegate):
         selected = _is_selected(option)
         painter.fillRect(rect, palette.color(QPalette.ColorRole.Highlight) if selected else base)
         text = palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
+        model = index.model()
+        if isinstance(model, TaskListModel) and str(getattr(payload, "item")) in model.pending:
+            text = palette.color(QPalette.ColorRole.PlaceholderText)  # an action is under way: greyed until it ends
         quiet = QColor(text)
         quiet.setAlpha(255 if selected else 170)
         draw_mark(painter, QPoint(rect.left() + 24, rect.center().y()), payload)
@@ -253,6 +258,7 @@ class TasksPage(PimPage):
         self.colours = TagColourBook()
         self._tab: str = "all"
         self._generation: int = 0
+        self._select_when_there: str = ""  # a task just saved: selected when its row has come in
         self._tags_known: list[str] = []
         self.model = TaskListModel()
         self.delegate = TaskDelegate(self.colours)
@@ -418,10 +424,11 @@ class TasksPage(PimPage):
         self.status(f"Tasks: {error}")
 
     def _selected_items(self) -> list[str]:
+        """The tasks selected now, without those that have an action under way (they get no second one)."""
         found: list[str] = []
         for index in self.list.selectionModel().selectedIndexes():
             entry = index.data(ROW_ROLE)
-            if entry is not None and entry[0] == "task":
+            if entry is not None and entry[0] == "task" and str(getattr(entry[1], "item")) not in self.model.pending:
                 found.append(str(getattr(entry[1], "item")))
         return found
 
@@ -502,23 +509,98 @@ class TasksPage(PimPage):
         self._backend.call("task.show", {"item": items[0]}, opened, self._failed, owner=self)
 
     def _after_save(self, item: str) -> None:
-        self.reload_list([item] if item else None)
-        self.panel.reload()
+        """A task was saved: its row followed the fact; it is selected."""
+        if item:
+            self._select_when_there = item
+            self._show_rows(self.model.rows(), [item])
+
+    def _show_rows(self, rows: list[object], selected: list[str] | None = None) -> None:
+        """The rows as they are now, grouped again here; the selection, the current task and the place in the list stay."""
+        keep = selected if selected is not None else self._selected_items() + [item for item in self.model.pending if self.model.position_of(item) >= 0]
+        current = self.list.currentIndex()
+        current_entry = current.data(ROW_ROLE) if current.isValid() else None
+        current_item = str(getattr(current_entry[1], "item")) if current_entry is not None and current_entry[0] == "task" else ""
+        scroll = self.list.verticalScrollBar().value()
+        self.model.load(rows, len(rows))
+        self.list.verticalScrollBar().setValue(scroll)
+        positions = [position for position in (self.model.position_of(item) for item in keep) if position >= 0]
+        self.list.selectionModel().blockSignals(True)
+        self.list.selectionModel().clear()
+        for position in positions:
+            self.list.selectionModel().select(self.model.index(position), QItemSelectionModel.SelectionFlag.Select)
+        at = self.model.position_of(current_item) if current_item else -1
+        if at >= 0 or positions:
+            self.list.selectionModel().setCurrentIndex(self.model.index(at if at >= 0 else positions[0]), QItemSelectionModel.SelectionFlag.NoUpdate)
+        self.list.selectionModel().blockSignals(False)
+        if not positions:
+            self._selection_changed()  # nothing selected any more: the right side says so ("There are no tasks here", "Select a task")
+        rows_now = self.model.rows()
+        self.count_label.setText(f"{sum(1 for r in rows_now if not getattr(r, 'done'))} active, {sum(1 for r in rows_now if getattr(r, 'done'))} completed")
+
+    @override
+    def apply_item(self, change: object) -> None:
+        """A task was added, changed, deleted or moved: only that task changes (D-146)."""
+        kind, collection, item = str(getattr(change, "kind")), str(getattr(change, "folder")), str(getattr(change, "message_id"))
+        visible = set(self.panel.visible_ids())
+        rows = self.model.rows()
+        if kind in ("item_removed", "item_moved") and any(str(getattr(row, "item")) == item for row in rows):
+            self.model.pending.discard(item)
+            self._show_rows([row for row in rows if str(getattr(row, "item")) != item])
+        wanted = str(getattr(change, "new_message_id")) if kind == "item_moved" else item
+        target = str(getattr(change, "to_folder")) if kind == "item_moved" else collection
+        if kind in ("item_added", "item_changed", "item_moved") and target in visible:
+            values: dict[str, object] = {"state": {"all": "all", "upcoming": "open", "completed": "done"}[self._tab], "text": self.search.text().strip(), "item": wanted}
+
+            def arrived(result: object) -> None:
+                found = [row for row in getattr(result, "tasks") if str(getattr(row, "collection")) in set(self.panel.visible_ids())]
+                others = [row for row in self.model.rows() if str(getattr(row, "item")) != wanted]
+                selected = self._selected_items()
+                if self._select_when_there == wanted:
+                    self._select_when_there = ""
+                    selected = [wanted]
+                self._show_rows(others + found, selected)  # a task that no longer matches the tab or the search goes
+                if self._selected_items() == [wanted]:
+                    self._selection_changed()  # the task on the right changed: shown again
+
+            self._backend.call("task.list", values, arrived, self._failed, owner=self)
+
+    def _take_away(self, items: list[str]) -> None:
+        """At the key press of a delete or a move: greyed, and the selection moves at once to the next task."""
+        self.model.pending.update(items)
+        self.list.viewport().update()
+        taken = set(items) | self.model.pending
+        rows = [position for position in (self.model.position_of(item) for item in items) if position >= 0]
+        if not rows:
+            return
+
+        def free(position: int) -> bool:
+            kind, payload = self.model.entries[position]
+            return kind == "task" and str(getattr(payload, "item")) not in taken
+
+        after = next((position for position in range(max(rows) + 1, self.model.rowCount()) if free(position)), None)
+        before = next((position for position in range(min(rows) - 1, -1, -1) if free(position)), None)
+        target = after if after is not None else before
+        if target is None:
+            self.list.selectionModel().clear()
+            return
+        self.list.setCurrentIndex(self.model.index(target))
+        self.list.scrollTo(self.model.index(target))
+
+    def _ended(self, item: str) -> None:
+        self.model.pending.discard(item)
+        self.list.viewport().update()
+
+    def _failed_for(self, item: str, error: ChronoMailError) -> None:
+        self._ended(item)
+        self._failed(error)
 
     def complete_selected(self) -> None:
         rows = self._selected_rows()
         if not rows:
             return
         reopen = all(bool(getattr(row, "done")) for row in rows)
-        remaining = {"count": len(rows)}
-
-        def done(result: object) -> None:
-            remaining["count"] -= 1
-            if remaining["count"] == 0:
-                self.reload_list([str(getattr(row, "item")) for row in rows])
-
-        for row in rows:
-            self._backend.call("task.reopen" if reopen else "task.complete", {"item": str(getattr(row, "item"))}, done, self._failed, owner=self)
+        for row in rows:  # each task's fact changes its row (D-146)
+            self._backend.call("task.reopen" if reopen else "task.complete", {"item": str(getattr(row, "item"))}, lambda result: None, self._failed, owner=self)
 
     @override
     def delete_selected(self) -> None:
@@ -528,15 +610,9 @@ class TasksPage(PimPage):
         word = "this task" if len(items) == 1 else f"these {len(items)} tasks"
         if QMessageBox.question(self.content, "Delete", f"Delete {word}?\n\nThe files are kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
             return
-        remaining = {"count": len(items)}
-
-        def done(result: object) -> None:
-            remaining["count"] -= 1
-            if remaining["count"] == 0:
-                self._after_save("")
-
+        self._take_away(items)
         for item in items:
-            self._backend.call("task.delete", {"item": item}, done, self._failed, owner=self)
+            self._backend.call("task.delete", {"item": item}, lambda result, chosen=item: self._ended(chosen), lambda error, chosen=item: self._failed_for(chosen, error), owner=self)
 
     def _fill_tag_menu(self) -> None:
         self.tag_menu.clear()
@@ -563,16 +639,8 @@ class TasksPage(PimPage):
             self._edit_selected({"add_tag": [name.strip()]})
 
     def _edit_selected(self, values: dict[str, object]) -> None:
-        items = self._selected_items()
-        remaining = {"count": len(items)}
-
-        def done(result: object) -> None:
-            remaining["count"] -= 1
-            if remaining["count"] == 0:
-                self.reload_list(items)
-
-        for item in items:
-            self._backend.call("task.edit", {"item": item, **values}, done, self._failed, owner=self)
+        for item in self._selected_items():  # each task's fact changes its row (D-146)
+            self._backend.call("task.edit", {"item": item, **values}, lambda result: None, self._failed, owner=self)
 
     def _fill_move_menu(self) -> None:
         self.move_menu.clear()
@@ -592,15 +660,9 @@ class TasksPage(PimPage):
 
     def _move_selected(self, target: str) -> None:
         items = self._selected_items()
-        remaining = {"count": len(items)}
-
-        def done(result: object) -> None:
-            remaining["count"] -= 1
-            if remaining["count"] == 0:
-                self._after_save("")
-
+        self._take_away(items)
         for item in items:
-            self._backend.call("task.move", {"item": item, "list": target}, done, self._failed, owner=self)
+            self._backend.call("task.move", {"item": item, "list": target}, lambda result, chosen=item: self._ended(chosen), lambda error, chosen=item: self._failed_for(chosen, error), owner=self)
 
     def _list_menu(self, position: QPoint) -> None:
         menu = QMenu(self.content)

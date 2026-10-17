@@ -6,16 +6,17 @@ from typing import Literal
 from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Reminder, events_to_text, new_uid, occurrences, parse_events
 from chrono_mail.pim.times import day_bounds, format_moment, local_zone, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 0.0.63"
+__version__ = "commands_calendar.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: event.list for one event (item): only its occurrences (the calendar replaces only the blocks of an event that changed); importing events is a big job
 # v0.0.63: The tasks section
 # v0.0.60: Initial event commands
 
@@ -137,6 +138,7 @@ class ListParameters:
     calendar: str | None = field(default=None, metadata=option("Only this calendar (default: all)"))
     text: str = field(default="", metadata=option("Only events with these words"))
     limit: int = field(default=1000, metadata=option("How many at most"))
+    item: str = field(default="", metadata=option("Only this event (the calendar replaces only the blocks of an event that changed)"))
 
 
 def event_list(engine: Engine, parameters: ListParameters) -> tuple[OccurrenceInfo, ...]:
@@ -158,6 +160,8 @@ def event_list(engine: Engine, parameters: ListParameters) -> tuple[OccurrenceIn
                 continue
             query = ItemQuery(CollectionKind.EVENTS, (parameters.calendar,) if parameters.calendar else tuple(names), parameters.text, start=int(start.timestamp()), end=int(end.timestamp()), limit=10**5)
             for item in store.index.query(query):
+                if parameters.item and item.item_id != parameters.item:
+                    continue
                 info = names[item.collection]
                 for occurrence in occurrences([store.get(item.collection, item.item_id)], start, end, zone):
                     e = occurrence.event
@@ -523,5 +527,5 @@ def register(registry: CommandRegistry) -> None:
     registry.register("event.edit", "Change an event, or one occurrence of a repeating event", EditParameters, event_edit)
     registry.register("event.delete", "Delete an event, or one occurrence of a repeating event", DeleteParameters, event_delete, destructive=True)
     registry.register("event.move", "Move an event to another calendar of the same account", MoveParameters, event_move)
-    registry.register("event.import", "Import events from iCalendar text", ImportParameters, event_import)
+    registry.register("event.import", "Import events from iCalendar text", ImportParameters, quiet_command(event_import))
     registry.register("event.export", "Export an event or a calendar as iCalendar text", ExportParameters, event_export)

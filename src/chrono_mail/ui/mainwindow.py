@@ -877,6 +877,8 @@ class MainWindow(QMainWindow):
         self.backend.activity.connect(self._activity)
         self.backend.changed.connect(self.list_model.apply)  # every change of mail, applied to the rows on screen (D-146)
         self.backend.changed.connect(self._folder_fact)  # ... and to the numbers and folders of the folder list
+        for page in self.pages.values():
+            self.backend.changed.connect(page.apply_fact)  # ... and to the calendars, task lists and address books
         self.list_model.loaded.connect(self._list_refetched)
         self.list_model.load_failed.connect(self._list_refetch_failed)
 

@@ -6,16 +6,17 @@ from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.engine.commands_calendar import _reminder
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.ical import Moment, Task, advance_task, complete_task, new_uid, parse_tasks, reopen_task, tasks_to_text
 from chrono_mail.pim.times import format_moment, local_zone, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 0.0.63"
+__version__ = "commands_tasklist.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: task.list for one task (item): its row and its place in what was asked for; importing tasks is a big job (one fact at its end)
 # v0.0.63: The tasks section
 # v0.0.60: Initial task commands
 
@@ -102,6 +103,7 @@ class ListParameters:
     tag: str = field(default="", metadata=option("Only tasks with this tag"))
     limit: int = field(default=500, metadata=option("How many at most"))
     offset: int = field(default=0, metadata=option("How many to skip"))
+    item: str = field(default="", metadata=option("Only this task: its row and its place when it is among what was asked for (a list puts a changed task at its place)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +112,7 @@ class TaskList:
     tasks: tuple[TaskRow, ...]
     active: int  # open tasks in what was asked for
     completed: int
+    position: int | None = None  # with item: its place in what was asked for (None when it is not there)
 
 
 def task_list(engine: Engine, parameters: ListParameters) -> TaskList:
@@ -135,7 +138,8 @@ def task_list(engine: Engine, parameters: ListParameters) -> TaskList:
             completed += store.index.count(replace(base, only_done=True))
             query = replace(base, only_open=parameters.state == "open", only_done=parameters.state == "done", sort="due")
             total += store.index.count(query)
-            for item in store.index.query(replace(query, limit=parameters.offset + max(1, min(parameters.limit, MAXIMUM_ROWS)))):
+            wanted = 10**6 if parameters.item else parameters.offset + max(1, min(parameters.limit, MAXIMUM_ROWS))  # one task: wherever it stands
+            for item in store.index.query(replace(query, limit=wanted)):
                 task = _single(store.get(item.collection, item.item_id))
                 info = lists[item.collection]
                 key = (item.due if item.due is not None else 10**12, item.priority if item.priority else 10, task.summary.casefold())
@@ -144,6 +148,9 @@ def task_list(engine: Engine, parameters: ListParameters) -> TaskList:
                     task.status, task.done, _overdue(task), bool(task.rrule), task.categories, task.parent,
                 )))
     rows.sort(key=lambda pair: pair[0])
+    if parameters.item:
+        place = next((number for number, (_, row) in enumerate(rows) if row.item == parameters.item), None)
+        return TaskList(total, (rows[place][1],) if place is not None else (), active, completed, place)
     limit = max(1, min(parameters.limit, MAXIMUM_ROWS))
     return TaskList(total, tuple(row for _, row in rows[parameters.offset : parameters.offset + limit]), active, completed)
 
@@ -428,5 +435,5 @@ def register(registry: CommandRegistry) -> None:
     registry.register("task.reopen", "Make a done task open again", ItemParameters, task_reopen)
     registry.register("task.delete", "Delete a task", ItemParameters, task_delete, destructive=True)
     registry.register("task.move", "Move a task to another task list of the same account", MoveParameters, task_move)
-    registry.register("task.import", "Import tasks from iCalendar text", ImportParameters, task_import)
+    registry.register("task.import", "Import tasks from iCalendar text", ImportParameters, quiet_command(task_import))
     registry.register("task.export", "Export a task or a task list as iCalendar text", ExportParameters, task_export)

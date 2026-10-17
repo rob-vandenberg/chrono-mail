@@ -12,15 +12,17 @@ from chrono_mail.pimstore.index import PimIndex
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 0.0.59"
+__version__ = "store.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: reporter: every change of an item or a collection is told right after it succeeded (D-146 step 5); a move is told once, as a move
 # v0.0.59: Initial encrypted item store for calendars, tasks and contacts
 
 FORMAT_VERSION: int = 1
 HEX = frozenset("0123456789abcdef")
 MAXIMUM_ITEM_BYTES: int = 32 * 1024 * 1024
 Checkpoint = Callable[[str], None]
+Reporter = Callable[[str, str, str, str, str, CollectionInfo | None], None]  # kind, collection, item, target collection, new item, the collection
 
 
 def _no_checkpoint(point: str) -> None:
@@ -41,6 +43,13 @@ class PimStore:
     """The collections (calendars, task lists, address books) of one account and their items: encrypted files, written atomically, with a rebuildable index.
 
     Every item is one file holding the text of a calendar object or a vCard. A deleted item is moved to `.deleted`, not erased."""
+
+    reporter: "Reporter | None" = None  # told every change right after it succeeded (the engine turns it into a fact, D-146)
+    _hushed: int = 0  # inside a move: its copy and its removal are told as one move
+
+    def _tell(self, kind: str, collection_id: str, item_id: str = "", to_collection: str = "", new_item: str = "", info: CollectionInfo | None = None) -> None:
+        if self.reporter is not None and not self._hushed:
+            self.reporter(kind, collection_id, item_id, to_collection, new_item, info)
 
     def __init__(self, root: Path, key: DataKey | None, durable: bool = True, checkpoint: Checkpoint = _no_checkpoint) -> None:
         self.root: Path = root
@@ -170,6 +179,7 @@ class PimStore:
         except OSError as error:
             shutil.rmtree(directory, ignore_errors=True)
             raise StorageError(f"The collection could not be made: {error.strerror}") from None
+        self._tell("collection_made", info.collection_id, info=info)
         return info
 
     def update_collection(
@@ -190,6 +200,7 @@ class PimStore:
             self._write_collection(changed)
         except OSError as error:
             raise StorageError(f"The collection could not be changed: {error.strerror}") from None
+        self._tell("collection_edited", changed.collection_id, info=changed)
         return changed
 
     def delete_collection(self, collection_id: str) -> None:
@@ -197,6 +208,7 @@ class PimStore:
         directory = self._collection_directory(collection_id)
         if not directory.is_dir():
             raise StorageError("There is no such calendar, task list or address book")
+        info = next((known for known in self.collections() if known.collection_id == collection_id), None)
         target = self.root / ".deleted" / f"{collection_id}.{int(time.time())}"
         try:
             os.rename(directory, target)
@@ -205,6 +217,7 @@ class PimStore:
         except OSError as error:
             raise StorageError(f"The collection could not be deleted: {error.strerror}") from None
         self.index.remove_collection(collection_id)
+        self._tell("collection_removed", collection_id, info=info)
 
     # --- items --------------------------------------------------------------------------------
 
@@ -219,6 +232,7 @@ class PimStore:
             raise StorageError("The item is far too large")
         identifier = _check_id(item_id, "item id") if item_id is not None else new_id()
         destination = self._item_path(collection_id, identifier)
+        replacing = destination.exists()
         directory = destination.parent.parent
         temporary = directory / "tmp" / identifier
         blob = self._encode(text)
@@ -243,6 +257,7 @@ class PimStore:
                 raise StorageError("The stored item differs from the original")
         self.index.upsert(identifier, collection_id, info.kind, extract(info.kind, text), len(blob))
         self._checkpoint("put:done")
+        self._tell("item_changed" if replacing else "item_added", collection_id, identifier, info=info)
         return identifier
 
     def get(self, collection_id: str, item_id: str) -> str:
@@ -269,6 +284,7 @@ class PimStore:
             raise StorageError(f"The item could not be deleted: {error.strerror}") from None
         self._checkpoint("delete:after-rename")
         self.index.remove(item_id)
+        self._tell("item_removed", collection_id, item_id, info=next((known for known in self.collections() if known.collection_id == collection_id), None))
 
     def move(self, collection_id: str, item_id: str, target_collection: str) -> str:
         """Put an item in another collection of the same kind and return its id there (a new one). The copy is stored and checked before the original
@@ -277,7 +293,17 @@ class PimStore:
         if source.kind is not destination.kind:
             raise StorageError("An item can only go to a collection of the same kind")
         text = self.get(collection_id, item_id)
-        earlier = self.index.find_uid(target_collection, extract(source.kind, text).uid) if extract(source.kind, text).uid else None
+        self._hushed += 1
+        try:
+            new_id_here = self._move_quietly(collection_id, item_id, target_collection, source.kind, text)
+        finally:
+            self._hushed -= 1
+        self._tell("item_moved", collection_id, item_id, target_collection, new_id_here, info=destination)
+        return new_id_here
+
+    def _move_quietly(self, collection_id: str, item_id: str, target_collection: str, kind: CollectionKind, text: str) -> str:
+        source_kind = kind
+        earlier = self.index.find_uid(target_collection, extract(source_kind, text).uid) if extract(source_kind, text).uid else None
         if earlier is not None and self.get(target_collection, earlier.item_id) == text:
             new_id_here = earlier.item_id
         else:

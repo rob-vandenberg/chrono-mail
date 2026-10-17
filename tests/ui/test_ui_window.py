@@ -17,9 +17,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.5.139"
+__version__ = "test_ui_window.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: the delete test waits for the status text (the row goes with the fact, the text comes with the answer just after)
 # v0.5.139: a reload keeps the old rows until the new ones arrive: the unread test waits for the new ones
 # v0.5.135: the Filter menu has Tagged with
 # v0.5.125: Mark all as read: the test waits until the list is shown again
@@ -369,7 +370,7 @@ def test_delete_moves_to_trash_and_deleting_in_trash_asks_first(world: World, qt
     select(world.window, 0)
     world.window.act_delete.trigger()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
-    assert world.window.status_label.text() == "Moved 1 message(s) to Trash"
+    wait(qtbot, lambda: world.window.status_label.text() == "Moved 1 message(s) to Trash")  # the row goes with the fact, the text comes with the answer just after
     assert world.call("message.list", account=world.account_id, folder="Trash").total == 1
     trash = next(world.window._find_tree_item((world.account_id, "folder", "Trash")) for _ in [0])  # noqa: SLF001
     assert trash is not None

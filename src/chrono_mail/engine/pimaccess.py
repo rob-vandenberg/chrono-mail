@@ -1,9 +1,11 @@
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import cast
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, CollectionInfo, CollectionKind, ConfigurationError, StorageError
+from chrono_mail.engine.changes import Change, ChangeKind
 from chrono_mail.engine.commands_accounts import server_label
 from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders
 from chrono_mail.engine.registry import UsageError
@@ -11,9 +13,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import IndexedItem, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimaccess.py 0.0.69"
+__version__ = "pimaccess.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: an opened store tells its changes as facts of the engine (D-146 step 5)
 # v0.0.69: Accounts are told apart by user name, incoming server and protocol
 # v0.0.66: A store can be made when an account is first synchronised
 # v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
@@ -46,9 +49,16 @@ def _open(engine: Engine, account_id: str, create: bool) -> PimStore:
     settings = _settings(engine, account_id)
     key = engine.data_key(config) if settings.encrypted else None
     directory = engine.directories.pim_directory(account_id)
-    if create:
-        return PimStore.open_or_create(directory, key, durable=engine.durable)
-    return PimStore.open(directory, key, durable=engine.durable)
+    store = PimStore.open_or_create(directory, key, durable=engine.durable) if create else PimStore.open(directory, key, durable=engine.durable)
+
+    def report(kind: str, collection: str, item: str, to_collection: str, new_item: str, info: CollectionInfo | None) -> None:
+        engine.report(Change(
+            cast(ChangeKind, kind), account_id, collection, item, to_folder=to_collection, new_message_id=new_item,  # the store names its changes as the facts do
+            role=info.kind.value if info is not None else "", name=info.name if info is not None else "", colour=info.colour if info is not None else "",
+        ))
+
+    store.reporter = report
+    return store
 
 
 def pim_account_ids(engine: Engine) -> list[str]:

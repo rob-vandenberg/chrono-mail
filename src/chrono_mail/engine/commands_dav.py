@@ -7,14 +7,15 @@ from chrono_mail.core import AccountKind, ConfigurationError, LOCAL_ACCOUNT_ID
 from chrono_mail.engine.commands_accounts import AccountSummary, _summary
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.protocols.dav import DavClient
 from chrono_mail.sync.davsync import sync_dav
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 0.5.144"
+__version__ = "commands_dav.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: the sync with the server is a big job: one fact per account at its end (D-146 step 5)
 # v0.5.144: The server address is saved on a fresh read of the settings, one command at a time (change_config)
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.66: Initial commands for the calendars, task lists and address books on a CalDAV and CardDAV server
@@ -130,4 +131,4 @@ def dav_sync(engine: Engine, parameters: SyncParameters) -> tuple[DavSyncSummary
 def register(registry: CommandRegistry) -> None:
     registry.register("account.set-dav", "Set the calendar and contacts server (CalDAV and CardDAV) of an account", SetDavParameters, dav_set)
     registry.register("dav.discover", "List what the calendar and contacts server of an account offers", DiscoverParameters, dav_discover)
-    registry.register("dav.sync", "Synchronise calendars, task lists and address books with the server, both ways", SyncParameters, dav_sync)
+    registry.register("dav.sync", "Synchronise calendars, task lists and address books with the server, both ways", SyncParameters, quiet_command(dav_sync))

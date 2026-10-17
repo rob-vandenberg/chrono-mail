@@ -1,3 +1,5 @@
+import dataclasses
+
 from PySide6.QtCore import QPoint, QSettings, Qt, Signal
 from PySide6.QtGui import QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -17,14 +19,16 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 0.1.89"
+__version__ = "collectionpanel.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: follows the facts (D-146 step 5): a collection made, renamed, recoloured or deleted is that one entry; the numbers of items follow; no reload after its own actions
 # v0.1.89: A collection can be asked for before the list is loaded (to open a contact from the message list)
 # v0.0.61: Initial panel with the calendars, task lists or address books of all accounts
 
 ROLE_COLLECTION: int = Qt.ItemDataRole.UserRole + 1
 ROLE_INFO: int = Qt.ItemDataRole.UserRole + 2
+ROLE_ACCOUNT: int = Qt.ItemDataRole.UserRole + 3  # on an account's heading: its id
 KIND_WORDS: dict[str, tuple[str, str]] = {"events": ("Calendar", "calendar"), "tasks": ("Tasks", "task list"), "contacts": ("Contacts", "address book")}
 DEFAULT_COLOUR: str = "#7f8c8d"
 
@@ -122,6 +126,7 @@ class CollectionPanel(QWidget):
                 account = str(getattr(info, "account"))
                 if account not in accounts:
                     node = QTreeWidgetItem([str(getattr(info, "account_name"))])
+                    node.setData(0, ROLE_ACCOUNT, account)
                     node.setFlags(Qt.ItemFlag.ItemIsEnabled)
                     font = node.font(0)
                     font.setBold(True)
@@ -169,19 +174,19 @@ class CollectionPanel(QWidget):
     def new_collection(self) -> None:
         name, ok = QInputDialog.getText(self, f"New {KIND_WORDS[self.kind][1]}", "Name:")
         if ok and name.strip():
-            self._backend.call("collection.create", {"kind": self.kind, "name": name.strip()}, lambda result: self.reload(str(getattr(result, "collection"))), self._failed, owner=self)
+            self._backend.call("collection.create", {"kind": self.kind, "name": name.strip()}, self._made, self._failed, owner=self)
 
     def rename_collection(self, collection_id: str) -> None:
         info = self.info(collection_id)
         name, ok = QInputDialog.getText(self, "Rename", "New name:", text=str(getattr(info, "name", "")))
         if ok and name.strip():
-            self._backend.call("collection.edit", {"collection": collection_id, "name": name.strip()}, lambda result: self.reload(), self._failed, owner=self)
+            self._backend.call("collection.edit", {"collection": collection_id, "name": name.strip()}, lambda result: None, self._failed, owner=self)  # the fact renames the entry
 
     def choose_colour(self, collection_id: str) -> None:
         info = self.info(collection_id)
         colour = QColorDialog.getColor(QColor(str(getattr(info, "colour", "")) or DEFAULT_COLOUR), self, "Colour")
         if colour.isValid():
-            self._backend.call("collection.edit", {"collection": collection_id, "colour": colour.name()}, lambda result: self.reload(), self._failed, owner=self)
+            self._backend.call("collection.edit", {"collection": collection_id, "colour": colour.name()}, lambda result: None, self._failed, owner=self)  # the fact recolours the entry
 
     def delete_collection(self, collection_id: str) -> None:
         info = self.info(collection_id)
@@ -189,7 +194,99 @@ class CollectionPanel(QWidget):
         word = KIND_WORDS[self.kind][1]
         text = f"Delete the {word} “{getattr(info, 'name', '')}”" + (f" and its {count} item(s)?" if count else "?") + "\n\nThe files are kept in the store's .deleted directory for 30 days."
         if QMessageBox.question(self, "Delete", text) == QMessageBox.StandardButton.Yes:
-            self._backend.call("collection.delete", {"collection": collection_id}, lambda result: self.reload(), self._failed, owner=self)
+            self._backend.call("collection.delete", {"collection": collection_id}, lambda result: None, self._failed, owner=self)  # the fact takes the entry away
+
+    # --- following the facts (D-146) -----------------------------------------------------------
+
+    def _entry(self, collection_id: str) -> QTreeWidgetItem | None:
+        return next((item for item in collection_items(self.tree) if str(item.data(0, ROLE_COLLECTION)) == collection_id), None)
+
+    def _made(self, result: object) -> None:
+        """The person made a collection: its entry is there already (the fact added it); it is chosen."""
+        entry = self._entry(str(getattr(result, "collection")))
+        if entry is None:
+            self.add(result)
+            entry = self._entry(str(getattr(result, "collection")))
+        if entry is not None:
+            self.tree.setCurrentItem(entry)
+
+    def add(self, info: object) -> None:
+        """One collection more: its entry under its account (a new account's heading too)."""
+        if self._entry(str(getattr(info, "collection"))) is not None:
+            return
+        account = str(getattr(info, "account"))
+        node = next((self.tree.topLevelItem(top) for top in range(self.tree.topLevelItemCount()) if (found := self.tree.topLevelItem(top)) is not None and str(found.data(0, ROLE_ACCOUNT)) == account), None)
+        if node is None:
+            node = QTreeWidgetItem([str(getattr(info, "account_name"))])
+            node.setData(0, ROLE_ACCOUNT, account)
+            node.setFlags(Qt.ItemFlag.ItemIsEnabled)
+            font = node.font(0)
+            font.setBold(True)
+            node.setFont(0, font)
+            self.tree.addTopLevelItem(node)
+            node.setExpanded(True)
+        self.collections.append(info)
+        item = QTreeWidgetItem([str(getattr(info, "name"))])
+        item.setData(0, ROLE_COLLECTION, str(getattr(info, "collection")))
+        item.setData(0, ROLE_INFO, info)
+        item.setIcon(0, colour_icon(str(getattr(info, "colour"))))
+        flags = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+        self._loading = True
+        if self._multiple:
+            flags |= Qt.ItemFlag.ItemIsUserCheckable
+            item.setCheckState(0, Qt.CheckState.Checked)
+        item.setFlags(flags)
+        node.addChild(item)
+        self._loading = False
+
+    def apply(self, change: object) -> None:
+        """A fact about a collection of this kind, or about its items (their number)."""
+        kind, collection = str(getattr(change, "kind")), str(getattr(change, "folder"))
+        if kind == "collection_made":
+            template = next((info for info in self.collections if str(getattr(info, "account")) == str(getattr(change, "mailbox"))), None)
+            if template is None or not dataclasses.is_dataclass(template) or isinstance(template, type):
+                self.reload(self.current_id())  # an account with no collection shown yet: its heading's name comes from the engine
+                return
+            self.add(dataclasses.replace(template, collection=collection, name=str(getattr(change, "name")), colour=str(getattr(change, "colour")), items=0, read_only=False))
+        elif kind == "collection_edited":
+            self._replace(collection, name=str(getattr(change, "name")), colour=str(getattr(change, "colour")))
+        elif kind == "collection_removed":
+            entry = self._entry(collection)
+            self.collections = [info for info in self.collections if str(getattr(info, "collection")) != collection]
+            if entry is not None and (parent := entry.parent()) is not None:
+                was_current = self.tree.currentItem() is entry
+                parent.removeChild(entry)
+                if parent.childCount() == 0:
+                    self.tree.takeTopLevelItem(self.tree.indexOfTopLevelItem(parent))
+                if was_current or self._multiple:
+                    left = collection_items(self.tree)
+                    if was_current and left:
+                        self.tree.setCurrentItem(left[0])
+                    self.changed.emit()
+        elif kind in ("item_added", "item_removed", "item_moved"):
+            if kind != "item_removed":
+                target = str(getattr(change, "to_folder")) if kind == "item_moved" else collection
+                self._count(target, 1)
+            if kind != "item_added":
+                self._count(collection, -1)
+
+    def _count(self, collection: str, delta: int) -> None:
+        info = next((info for info in self.collections if str(getattr(info, "collection")) == collection), None)
+        if info is not None:
+            self._replace(collection, items=max(0, int(getattr(info, "items", 0)) + delta))
+
+    def _replace(self, collection: str, **values: object) -> None:
+        for number, info in enumerate(self.collections):
+            if str(getattr(info, "collection")) == collection and dataclasses.is_dataclass(info) and not isinstance(info, type):
+                changed = dataclasses.replace(info, **values)
+                self.collections[number] = changed
+                entry = self._entry(collection)
+                if entry is not None:
+                    self._loading = True  # the entry's own update is not a tick: nothing is shown again
+                    entry.setData(0, ROLE_INFO, changed)
+                    entry.setText(0, str(getattr(changed, "name")))
+                    entry.setIcon(0, colour_icon(str(getattr(changed, "colour"))))
+                    self._loading = False
 
     def _menu(self, position: QPoint) -> None:
         menu = QMenu(self)

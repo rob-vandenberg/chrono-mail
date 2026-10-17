@@ -34,13 +34,15 @@ from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 0.1.89"
+__version__ = "contactsview.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: the list follows the facts (D-146 step 5): one contact in, out or changed at its place; the selection moves at the key press of a delete or move; contacts with an action under way are greyed; no reload after an action
 # v0.1.89: show_contact: one contact is shown, from the Contact column of the message list
 # v0.0.62: Initial contacts section: list, detail pane, editor, tags, move, import and export
 
 ROW_ROLE: int = Qt.ItemDataRole.UserRole + 1
+PENDING_ROLE: int = Qt.ItemDataRole.UserRole + 2  # true on a contact with an action under way (drawn greyed)
 ROW_HEIGHT: int = 56
 AVATAR_SIZE: int = 36
 LIST_LIMIT: int = 5000
@@ -54,6 +56,45 @@ class ContactListModel(QAbstractListModel):
         super().__init__(parent)
         self.rows: list[object] = []
         self.total: int = 0
+        self.pending: set[str] = set()
+
+    def remove_item(self, item: str) -> bool:
+        """One contact goes from the list (the others and the selection stay)."""
+        position = self.position_of(item)
+        if position < 0:
+            return False
+        self.beginRemoveRows(QModelIndex(), position, position)
+        del self.rows[position]
+        self.total = max(0, self.total - 1)
+        self.endRemoveRows()
+        return True
+
+    def put(self, row: object) -> None:
+        """One contact comes into the list or changes: at its place in the order of family names. A contact that was there
+        keeps its row (changed in place, or moved to its new place), so its selection stays."""
+        item = str(getattr(row, "item"))
+        key = (str(getattr(row, "sort_key")), str(getattr(row, "name")).casefold())
+        old = self.position_of(item)
+        others = [known for known in self.rows if str(getattr(known, "item")) != item]
+        position = next((number for number, known in enumerate(others) if (str(getattr(known, "sort_key")), str(getattr(known, "name")).casefold()) > key), len(others))
+        if old < 0:
+            self.beginInsertRows(QModelIndex(), position, position)
+            self.rows.insert(position, row)
+            self.total += 1
+            self.endInsertRows()
+            return
+        if position != old:
+            self.beginMoveRows(QModelIndex(), old, old, QModelIndex(), position + 1 if position > old else position)  # Qt counts the place before the move
+            self.rows = others[:position] + [row] + others[position:]
+            self.endMoveRows()
+        else:
+            self.rows[old] = row
+        self.dataChanged.emit(self.index(position), self.index(position))
+
+    def redraw(self, item: str) -> None:
+        position = self.position_of(item)
+        if position >= 0:
+            self.dataChanged.emit(self.index(position), self.index(position))
 
     def load(self, rows: list[object], total: int) -> None:
         self.beginResetModel()
@@ -74,6 +115,8 @@ class ContactListModel(QAbstractListModel):
             return str(getattr(row, "name"))
         if role == ROW_ROLE:
             return row
+        if role == PENDING_ROLE:
+            return str(getattr(row, "item")) in self.pending
         return None
 
     def position_of(self, item: str) -> int:
@@ -102,6 +145,8 @@ class ContactDelegate(QStyledItemDelegate):
         painter.save()
         painter.fillRect(rect, palette.color(QPalette.ColorRole.Highlight) if selected else palette.color(QPalette.ColorRole.Base))
         text = palette.color(QPalette.ColorRole.HighlightedText if selected else QPalette.ColorRole.Text)
+        if index.data(PENDING_ROLE):
+            text = palette.color(QPalette.ColorRole.PlaceholderText)  # an action is under way: greyed until it ends
         quiet = QColor(text)
         quiet.setAlpha(255 if selected else 170)
         name = str(getattr(row, "name"))
@@ -143,6 +188,7 @@ class ContactsPage(PimPage):
         self._generation: int = 0
         self._tags_loaded: bool = False
         self._show_item: str = ""  # the contact to select when the list of its address book has loaded
+        self._select_when_there: str = ""  # a contact just saved: selected when its row has come in
         self._show_collection: str = ""
         side = QWidget()
         side_layout = QVBoxLayout(side)
@@ -360,7 +406,11 @@ class ContactsPage(PimPage):
         self.status(f"Contacts: {error}")
 
     def _selected_items(self) -> list[str]:
-        return [str(getattr(self.model.rows[index.row()], "item")) for index in self.list.selectionModel().selectedRows() if 0 <= index.row() < len(self.model.rows)]
+        """The contacts selected now, without those that have an action under way (they get no second one)."""
+        return [
+            str(getattr(self.model.rows[index.row()], "item")) for index in self.list.selectionModel().selectedRows()
+            if 0 <= index.row() < len(self.model.rows) and str(getattr(self.model.rows[index.row()], "item")) not in self.model.pending
+        ]
 
     def _selection_changed(self, selected: object = None, deselected: object = None) -> None:
         items = self._selected_items()
@@ -404,9 +454,76 @@ class ContactsPage(PimPage):
         self._backend.call("contact.show", {"item": items[0]}, opened, self._failed, owner=self)
 
     def _after_save(self, item: str) -> None:
+        """A contact was saved: its row followed the fact; it is selected; the tags list shows the new numbers."""
         self.reload_tags()
-        self.reload_list(item)
-        self.panel.reload()  # the number of contacts of the address books
+        if item:
+            self._select_when_there = item
+            self._select_now()
+
+    def _select_now(self) -> None:
+        position = self.model.position_of(self._select_when_there) if self._select_when_there else -1
+        if position >= 0:
+            self._select_when_there = ""
+            self.list.setCurrentIndex(self.model.index(position))
+            self.list.scrollTo(self.model.index(position))
+
+    @override
+    def apply_item(self, change: object) -> None:
+        """A contact was added, changed, deleted or moved: only that row changes (D-146)."""
+        kind, collection, item = str(getattr(change, "kind")), str(getattr(change, "folder")), str(getattr(change, "message_id"))
+        shown = self.panel.current_id()
+        if kind in ("item_removed", "item_moved") and collection == shown:
+            self.model.pending.discard(item)
+            self.model.remove_item(item)
+            self._counted()
+        wanted = str(getattr(change, "new_message_id")) if kind == "item_moved" else item
+        target = str(getattr(change, "to_folder")) if kind == "item_moved" else collection
+        if kind in ("item_added", "item_changed", "item_moved") and target == shown:
+            values: dict[str, object] = {"collection": shown, "text": self.search.text().strip(), "item": wanted}
+            if self._tag():
+                values["tag"] = self._tag()
+
+            def arrived(result: object) -> None:
+                if self.panel.current_id() != shown:
+                    return
+                rows = list(getattr(result, "contacts"))
+                if rows:
+                    self.model.put(rows[0])
+                else:
+                    self.model.remove_item(wanted)  # it no longer matches the search or the tag
+                self._counted()
+                self._select_now()
+                if self._selected_items() == [wanted]:
+                    self._selection_changed()  # the contact on the right changed: shown again
+
+            self._backend.call("contact.list", values, arrived, self._failed, owner=self)
+
+    def _counted(self) -> None:
+        self.count_label.setText(f"Contacts ({self.model.total})")
+
+    def _take_away(self, items: list[str]) -> None:
+        """At the key press of a delete or a move: greyed, and the selection moves at once to the next contact."""
+        self.model.pending.update(items)
+        for item in items:
+            self.model.redraw(item)
+        taken = set(items)
+        rows = [self.model.position_of(item) for item in items]
+        rows = [row for row in rows if row >= 0]
+        if not rows:
+            return
+        after = next((row for row in range(max(rows) + 1, self.model.rowCount()) if str(getattr(self.model.rows[row], "item")) not in taken | self.model.pending), None)
+        before = next((row for row in range(min(rows) - 1, -1, -1) if str(getattr(self.model.rows[row], "item")) not in taken | self.model.pending), None)
+        target = after if after is not None else before
+        if target is None:
+            self.list.selectionModel().clear()
+            self.detail.show_nothing("Select a contact")
+            return
+        self.list.setCurrentIndex(self.model.index(target))
+        self.list.scrollTo(self.model.index(target))
+
+    def _ended(self, item: str) -> None:
+        self.model.pending.discard(item)
+        self.model.redraw(item)
 
     @override
     def delete_selected(self) -> None:
@@ -416,15 +533,13 @@ class ContactsPage(PimPage):
         word = "this contact" if len(items) == 1 else f"these {len(items)} contacts"
         if QMessageBox.question(self.content, "Delete", f"Delete {word}?\n\nThe files are kept in the store's .deleted directory for 30 days.") != QMessageBox.StandardButton.Yes:
             return
-        remaining = {"count": len(items)}
-
-        def done(result: object) -> None:
-            remaining["count"] -= 1
-            if remaining["count"] == 0:
-                self._after_save("")
-
+        self._take_away(items)
         for item in items:
-            self._backend.call("contact.delete", {"item": item}, done, self._failed, owner=self)
+            self._backend.call("contact.delete", {"item": item}, lambda result, chosen=item: self._ended(chosen), lambda error, chosen=item: self._failed_for(chosen, error), owner=self)
+
+    def _failed_for(self, item: str, error: ChronoMailError) -> None:
+        self._ended(item)
+        self._failed(error)
 
     def _fill_tag_menu(self) -> None:
         self.tag_menu.clear()
@@ -460,7 +575,7 @@ class ContactsPage(PimPage):
         def done(result: object) -> None:
             remaining["count"] -= 1
             if remaining["count"] == 0:
-                self._after_save("")  # the same contacts stay selected
+                self.reload_tags()  # the rows followed their facts; the tags list shows the new numbers
 
         for item in items:
             self._backend.call("contact.edit", {"item": item, **values}, done, self._failed, owner=self)
@@ -479,15 +594,9 @@ class ContactsPage(PimPage):
 
     def _move_selected(self, target: str) -> None:
         items = self._selected_items()
-        remaining = {"count": len(items)}
-
-        def done(result: object) -> None:
-            remaining["count"] -= 1
-            if remaining["count"] == 0:
-                self._after_save("")
-
+        self._take_away(items)
         for item in items:
-            self._backend.call("contact.move", {"item": item, "collection": target}, done, self._failed, owner=self)
+            self._backend.call("contact.move", {"item": item, "collection": target}, lambda result, chosen=item: self._ended(chosen), lambda error, chosen=item: self._failed_for(chosen, error), owner=self)
 
     def import_file(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self.content, "Import contacts", "", "vCard files (*.vcf *.vcard);;All files (*)")
@@ -501,8 +610,7 @@ class ContactsPage(PimPage):
             return
 
         def done(result: object) -> None:
-            self.status(f"Imported {getattr(result, 'imported')} contact(s), updated {getattr(result, 'updated')}, skipped {getattr(result, 'skipped')}")
-            self._after_save("")
+            self.status(f"Imported {getattr(result, 'imported')} contact(s), updated {getattr(result, 'updated')}, skipped {getattr(result, 'skipped')}")  # its fact fetches the list again
 
         self._backend.call("contact.import", {"collection": collection, "text": text}, done, self._failed, owner=self)
 

@@ -4,15 +4,16 @@ from dataclasses import dataclass, field, replace
 from chrono_mail.core import CollectionKind, StorageError
 from chrono_mail.engine.pimaccess import located, open_collection, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, contact_to_text, parse_contacts
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 0.1.89"
+__version__ = "commands_addressbook.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: contact.list for one contact (item): its row when it is in what was asked for; importing contacts is a big job (one fact at its end)
 # v0.1.89: contact.addresses: every e-mail address of every contact, for the contact column of the message list
 # v0.0.63: The tasks section
 # v0.0.62: The contacts section
@@ -113,6 +114,7 @@ class ListParameters:
     tag: str = field(default="", metadata=option("Only contacts with this tag"))
     limit: int = field(default=200, metadata=option("How many contacts at most"))
     offset: int = field(default=0, metadata=option("How many to skip"))
+    item: str = field(default="", metadata=option("Only this contact: its row when it is among what was asked for (a list puts a changed contact at its place)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,8 +158,11 @@ def contact_list(engine: Engine, parameters: ListParameters) -> ContactList:
                 continue
             query = ItemQuery(CollectionKind.CONTACTS, (parameters.collection,) if parameters.collection else (), parameters.text, parameters.tag, limit=10**6)
             total += store.index.count(query)
-            rows.extend(ContactRow(i.item_id, account, i.collection, i.title, i.subtitle, i.tags, i.sort_key) for i in store.index.query(replace(query, limit=parameters.offset + limit)))
+            wanted = 10**6 if parameters.item else parameters.offset + limit  # one contact: wherever it stands
+            rows.extend(ContactRow(i.item_id, account, i.collection, i.title, i.subtitle, i.tags, i.sort_key) for i in store.index.query(replace(query, limit=wanted)))
     rows.sort(key=lambda row: (row.sort_key, row.name.casefold()))  # one account: already in order; several: merged here
+    if parameters.item:
+        return ContactList(total, tuple(row for row in rows if row.item == parameters.item))
     return ContactList(total, tuple(rows[parameters.offset : parameters.offset + limit]))
 
 
@@ -454,5 +459,5 @@ def register(registry: CommandRegistry) -> None:
     registry.register("contact.edit", "Change a contact", EditParameters, contact_edit)
     registry.register("contact.delete", "Delete a contact", ItemParameters, contact_delete, destructive=True)
     registry.register("contact.move", "Move a contact to another address book of the same account", MoveParameters, contact_move)
-    registry.register("contact.import", "Import contacts from vCard text", ImportParameters, contact_import)
+    registry.register("contact.import", "Import contacts from vCard text", ImportParameters, quiet_command(contact_import))
     registry.register("contact.export", "Export a contact or an address book as vCard text", ExportParameters, contact_export)

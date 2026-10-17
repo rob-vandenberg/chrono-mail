@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 0.5.156"
+__version__ = "changes.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: facts of calendars, task lists and address books: items added, changed, removed, moved; collections made, edited, removed; collection_changed after a big job (D-146 step 5)
 # v0.5.156: role: the role of the folder the message is in after the change (a Favorites view decides by it whether the message belongs in it)
 # v0.5.155: Initial version: the facts the engine reports when mail changes (D-146), and the row a list shows of a message
 
@@ -56,6 +57,14 @@ ChangeKind = Literal[
     "folder_renamed",
     "folder_deleted",
     "mailbox_changed",  # a big job changed this mailbox (a mail check, an import, a rebuilt index): views of it fetch again
+    "item_added",  # calendars, task lists, address books: mailbox is the account, folder the collection, message_id the item, role its kind
+    "item_changed",
+    "item_removed",
+    "item_moved",  # to_folder: the collection it went to, new_message_id: its id there
+    "collection_made",  # name and colour: of the collection
+    "collection_edited",
+    "collection_removed",
+    "collection_changed",  # a big job (a sync with the server, an import, a tag renamed) changed the collections of this account: views of them fetch again
 ]
 
 
@@ -76,4 +85,6 @@ class Change:
     flags: tuple[str, ...] = ()  # flags: the marks after the change
     tags: tuple[str, ...] = ()  # tags: the tags after the change
     count: int = 0  # folder_read, folder_emptied: how many messages
-    role: str = ""  # added, moved: the role of the folder the message is in now ("inbox", "trash", "other" …); folder_made: the folder's role
+    role: str = ""  # added, moved: the role of the folder the message is in now ("inbox", "trash", "other" …); folder_made: the folder's role; items and collections: "events", "tasks" or "contacts"
+    name: str = ""  # collections: the name
+    colour: str = ""  # collections: the colour

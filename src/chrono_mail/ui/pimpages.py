@@ -11,9 +11,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.sections import SectionPage
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimpages.py 0.0.65"
+__version__ = "pimpages.py 0.5.159"
 
 # --- Version history ----------------------------------------------------
+# v0.5.159: apply_fact: the facts of this kind of collection reach the panel and the section (apply_item); a change from outside fetches again, once, one at a time (D-146 step 5)
 # v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.64: The calendar section
 # v0.0.63: The tasks section
@@ -55,6 +56,9 @@ class PimPage(SectionPage):
         self.toolbar.addAction(self.act_new)
         self.toolbar.addAction(self.act_refresh)
         self.panel.changed.connect(self.selection_changed)
+        self.pending: set[str] = set()  # items with an action under way: greyed, no second action (D-146)
+        self._refetching: bool = False
+        self._refetch_again: bool = False
 
     @override
     def on_show(self) -> None:
@@ -82,6 +86,49 @@ class PimPage(SectionPage):
     @override
     def new_item(self) -> None:
         self.panel.new_collection()  # until the items have their own editors
+
+    # --- following the facts (D-146) ---------------------------------------------------------------------------
+
+    def apply_fact(self, change: object) -> None:
+        """A fact of the engine. Facts about this kind of collection change the panel and the section; a change from
+        outside (a sync, an import) fetches again what this section shows of that account, once, one at a time."""
+        if not self._enabled:
+            return
+        kind = str(getattr(change, "kind"))
+        if kind == "collection_changed":
+            if any(str(getattr(info, "account")) == str(getattr(change, "mailbox")) for info in self.panel.collections):
+                self.refetch()
+            return
+        if str(getattr(change, "role")) != self.kind:
+            return
+        self.panel.apply(change)
+        if kind.startswith("item_"):
+            self.apply_item(change)
+
+    def apply_item(self, change: object) -> None:
+        """An item of this kind was added, changed, removed or moved: the section changes that one item (subclasses)."""
+
+    def refetch(self) -> None:
+        """A change from outside: the collections and what the section shows are fetched again; one at a time."""
+        if self._refetching:
+            self._refetch_again = True
+            return
+        self._refetching = True
+        self.panel.reloaded.connect(self._refetched)
+        self.panel.reload(self.panel.current_id())
+
+    def _refetched(self) -> None:
+        self.panel.reloaded.disconnect(self._refetched)
+        self._refetching = False
+        if self._refetch_again:
+            self._refetch_again = False
+            self.refetch()
+
+    def mark_pending(self, items: list[str]) -> None:
+        self.pending.update(items)
+
+    def clear_pending(self, item: str) -> None:
+        self.pending.discard(item)
 
     def selection_changed(self) -> None:
         count = len(self.panel.visible_ids())
