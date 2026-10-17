@@ -95,9 +95,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.158"
+__version__ = "mainwindow.py 0.5.160"
 
 # --- Version history ----------------------------------------------------
+# v0.5.160: a new sort, and fetching the list again after a change from outside, rearrange the list in place: Qt's selection moves with each message (whole rows, never one cell); the hand-made reselect is gone
 # v0.5.158: the folder list follows the facts (numbers per folder, a folder made, renamed or deleted); a change from outside fetches only the mailbox it concerns, once, one at a time; no reload after a check, an import, sending or tags (D-146 step 4)
 # v0.5.157: the facts of the engine drive the list (no reload after an action); an action takes the messages selected at the key press, the selection and the reading pane move at once, messages with an action under way are greyed (D-146 step 3)
 # v0.5.153: A new sort order keeps the selected message selected and in view, also when it lands on a part of the list that was not loaded
@@ -275,9 +276,6 @@ class MainWindow(QMainWindow):
         self._first_unread_on_load: int = 0  # after the next folder has loaded: select its first (or last) unread message
         self._sort: str = str(settings.value("sort", "date"))
         self._oldest_first: bool = bool_setting(settings, "oldest_first", False)
-        self._reselect: str | None = None  # a message to select again once the list has it (after a mail check or a new sort order)
-        self._reselect_asked: str | None = None
-        self._reselect_account: str = ""  # the message whose place in the folder was asked for (its page is loaded next)
         self._composers: list[ComposeWindow] = []
         self._checking: bool = False
         self._sending: bool = False  # Send All is running
@@ -861,7 +859,9 @@ class MainWindow(QMainWindow):
         self.list_view.header().customContextMenuRequested.connect(self._header_menu)
         self.list_model.counts_changed.connect(self._counts_changed)
         self.list_model.load_failed.connect(self._load_failed)
-        self.list_model.loaded.connect(self._restore_row_selection)
+        self.list_model.loaded.connect(self._select_unread_after_load)
+        self.list_model.rearranged.connect(self._show_current_row)
+        self.list_model.selected_rows = self._selected_and_current_rows
         self.search_box.returnPressed.connect(self._run_search)
         self.search_box.textChanged.connect(self._search_text_changed)
         self.scope.currentIndexChanged.connect(self._scope_changed)
@@ -1942,17 +1942,27 @@ class MainWindow(QMainWindow):
         return self._columns if self._in_snoozed() else without_snoozed_column(self._columns)
 
     def _set_sort(self, sort: str, oldest_first: bool) -> None:
-        current = self._current_row()
-        self._reselect = str(getattr(current, "message_id")) if current is not None else None  # the selected message stays selected
-        self._reselect_account = str(getattr(current, "account", "") or "") if current is not None else ""  # its mailbox, in a Favorites view
-        self._reselect_asked = None
         self._sort, self._oldest_first = sort, oldest_first
         self._update_sort_menu()
-        self._apply_view()
+        self.list_model.rearrange(self.view_spec())  # the same messages in the new order: the selected ones stay selected
         if self._layout == "columns":
             self._show_sort_indicator()
 
     # --- reading ------------------------------------------------------------------------------------------
+
+    def _selected_and_current_rows(self) -> list[int]:
+        """The rows of the list that are selected, and the current row (a new order keeps them selected)."""
+        rows = {index.row() for index in self.list_view.selectionModel().selectedIndexes()}
+        current = self.list_view.currentIndex()
+        if current.isValid():
+            rows.add(current.row())
+        return sorted(rows)
+
+    def _show_current_row(self) -> None:
+        """After the list was rearranged: the current message is in view."""
+        current = self.list_view.currentIndex()
+        if current.isValid():
+            self.list_view.scrollTo(current)
 
     def _current_row(self) -> object:
         index = self.list_view.currentIndex()
@@ -1969,9 +1979,6 @@ class MainWindow(QMainWindow):
 
     def _row_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         self._mark_read_timer.stop()
-        chosen = self.list_model.row_at(current.row()) if current.isValid() else None
-        if chosen is not None and self._reselect is not None and str(getattr(chosen, "message_id")) != self._reselect:
-            self._reselect = None  # the person chose another message meanwhile
         if self._reading_pane == "off":
             return  # nothing is shown, so nothing is read: a message is opened in a window of its own
         row = self.list_model.row_at(current.row()) if current.isValid() else None
@@ -2023,54 +2030,6 @@ class MainWindow(QMainWindow):
             if row is not None and "seen" not in getattr(row, "flags"):
                 self.list_view.setCurrentIndex(self.list_model.index(position))
                 return
-
-    def _restore_row_selection(self) -> None:
-        self._select_unread_after_load()
-        pending = getattr(self, "_reselect", None)
-        if not pending:
-            return
-        position = self.list_model.find(pending)
-        if position >= 0:
-            self._reselect = None
-            index = self.list_model.index(position)
-            self.list_view.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.ClearAndSelect)
-            self.list_view.scrollTo(index)
-            return
-        self._find_unloaded(pending)
-
-    def _find_unloaded(self, message_id: str) -> None:
-        """The message to select again is not among the loaded rows: a folder asks where it stands and loads that page; a
-        search or a Favorites view loads its next batch (each arrival comes back here) until it has it or has no more."""
-        spec = self.list_model.spec
-        if spec is None:
-            self._reselect = None
-            return
-        if self._reselect_asked == message_id:
-            return  # its part of the list is on its way
-        self._reselect_asked = message_id
-
-        def found(result: object) -> None:
-            position = getattr(result, "position", None)
-            if self._reselect != message_id or self.list_model.spec != spec:
-                return  # the person chose another message or view meanwhile
-            if not isinstance(position, int) or (spec.kind is ViewKind.FOLDER and self.list_model.display_row(position) < 0):
-                self._reselect = None  # not in the view any more, or in a folded group
-                return
-            if spec.kind is ViewKind.FOLDER:
-                self.list_model.load_position(position)
-            else:
-                self.list_model.load_through(position)  # a search or Favorites view loads in order up to it
-                self._reselect_asked = None  # each batch that arrives comes back here until the message is there
-
-        if spec.kind is ViewKind.FOLDER:
-            values: dict[str, object] = {"account": spec.account, "folder": spec.folder or "", "message": message_id, "sort": spec.sort, "oldest_first": spec.oldest_first}
-            self.backend.call("message.position", values, found, lambda error: setattr(self, "_reselect", None), owner=self)
-            return
-        values = self.list_model.request_values(spec)
-        values["message"] = message_id
-        if spec.combined is not None:
-            values["account"] = self._reselect_account
-        self.backend.call("message.combined-locate" if spec.combined is not None else "message.locate", values, found, lambda error: setattr(self, "_reselect", None), owner=self)
 
     def _take_away(self, message_ids: list[str]) -> None:
         """At the key press of an action that takes messages out of the view: they are greyed until the engine reports the
@@ -3180,11 +3139,6 @@ class MainWindow(QMainWindow):
         if self._refetching:
             self._refetch_again = True
             return
-        current = self._current_row()
-        if current is not None:
-            self._reselect = str(getattr(current, "message_id"))
-            self._reselect_account = str(getattr(current, "account", "") or "")
-            self._reselect_asked = None
         self._refetching = True
         self.list_model.reload()
 

@@ -25,9 +25,10 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS, UPGRADE_6_TO_7
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.5.153"
+__version__ = "index.py 0.5.160"
 
 # --- Version history ----------------------------------------------------
+# v0.5.160: positions: where several messages stand in a folder in the chosen order, in one pass
 # v0.5.153: position: where a message stands in a folder in the chosen order
 # v0.5.134: Tags: kept per message, found with a filter or tag: in a search; an index of format 6 is upgraded in place
 # v0.5.130: A failed open closes its connection (Windows could not delete the -wal file for the rebuild); an unreadable format number counts as an unknown format
@@ -386,6 +387,21 @@ class Index:
         )
         found = self._connection.execute(sql, (_folder_key(folder), store_id)).fetchone()
         return None if found is None else int(found[0])
+
+    def positions(self, folder: tuple[str, ...], store_ids: Iterable[str], sort: SortField = SortField.DATE, descending: bool = True) -> dict[str, int]:
+        """Where each of these messages stands in a folder in the chosen order, as page() lists it (0 is the first), worked
+        out in one pass over the folder (one per 500 messages asked); a message that is not there is left out."""
+        wanted = list(dict.fromkeys(store_ids))
+        found: dict[str, int] = {}
+        for start in range(0, len(wanted), 500):
+            chunk = wanted[start:start + 500]
+            sql = (
+                f"SELECT id, place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {_order(sort, descending)}) - 1 AS place FROM messages m WHERE m.folder = ?)"
+                f" WHERE id IN ({', '.join('?' * len(chunk))})"
+            )
+            for store_id, place in self._connection.execute(sql, (_folder_key(folder), *chunk)):
+                found[str(store_id)] = int(place)
+        return found
 
     def page(
         self,

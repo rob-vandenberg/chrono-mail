@@ -1,7 +1,8 @@
 from datetime import UTC, datetime
 
 import pytest
-from PySide6.QtCore import QPoint, QSettings, Qt
+from PySide6.QtCore import QItemSelectionModel, QPoint, QSettings, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QHeaderView, QToolBar
 from pytestqt.qtbot import QtBot
 
@@ -13,9 +14,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.5.153"
+__version__ = "test_ui_columns.py 0.5.160"
 
 # --- Version history ----------------------------------------------------
+# v0.5.160: After a new sort the whole row stays selected and Delete deletes it (folder, Favorites); several selected messages stay selected; a message chosen meanwhile wins; fetching the list again keeps the whole row; the list is never reset
 # v0.5.153: A new sort order keeps the selected message selected (folder, Favorites, a page not loaded yet)
 # v0.5.152: A click on a column header sorts a Favorites view too, with its group headers; the standard columns start with Flag, Unread, Attachment (0.5.150)
 # v0.5.140: the first column can be dragged, and the new order is saved; a group row still starts at the left edge
@@ -414,22 +416,77 @@ def sort_by_subject(world: World) -> None:
     world.window.list_view.header().sectionClicked.emit(world.window.list_model.columns.index("subject"))
 
 
+def whole_rows_selected(world: World) -> list[str]:
+    """The messages whose whole row is selected: what Delete, Move and the other actions act on."""
+    model = world.window.list_model
+    return [str(getattr(model.row_at(index.row()), "message_id")) for index in world.window.list_view.selectionModel().selectedRows()]
+
+
+def show_favorites_unread(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    top = window.tree_model.index(0, 0)
+    unread = next(window.tree_model.index(row, 0, top) for row in range(window.tree_model.rowCount(top)) if window.tree_model.index(row, 0, top).data() == "Unread")
+    window.tree.setCurrentIndex(unread)
+    wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.combined == "unread" and window.list_model.rowCount() == 3)
+
+
+def sorted_by_subject(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.sort == "subject" and world.backend._pending == {})  # noqa: SLF001
+
+
 @pytest.mark.parametrize("favorites", [False, True])
 def test_a_new_sort_order_keeps_the_selected_message_selected(world: World, qtbot: QtBot, favorites: bool) -> None:
     window = world.window
     window.start()
     settle(qtbot, world, 3)
     if favorites:
-        top = window.tree_model.index(0, 0)
-        unread = next(window.tree_model.index(row, 0, top) for row in range(window.tree_model.rowCount(top)) if window.tree_model.index(row, 0, top).data() == "Unread")
-        window.tree.setCurrentIndex(unread)
-        wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.combined == "unread" and window.list_model.rowCount() == 3)
+        show_favorites_unread(world, qtbot)
     window.settings.setValue("mark_read", "never")
     window.apply_preferences()
     chosen = select_subject(world, qtbot, "Message 2")
     sort_by_subject(world)
     wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.sort == "subject" and selected_message(world) == chosen)
     assert window._shown is not None and window._shown[2] == chosen  # noqa: SLF001 - the reading pane shows the same message
+
+
+@pytest.mark.parametrize("favorites", [False, True])
+def test_after_a_new_sort_the_whole_row_stays_selected_and_delete_deletes_it(world: World, qtbot: QtBot, favorites: bool) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    if favorites:
+        show_favorites_unread(world, qtbot)
+    window.settings.setValue("mark_read", "never")
+    window.apply_preferences()
+    chosen = select_subject(world, qtbot, "Message 2")
+    resets: list[int] = []
+    window.list_model.modelReset.connect(lambda: resets.append(1))
+    sort_by_subject(world)
+    sorted_by_subject(world, qtbot)
+    assert selected_message(world) == chosen
+    assert whole_rows_selected(world) == [chosen]  # the whole row, never one cell
+    assert resets == []  # the list was rearranged, never thrown away
+    QTest.keyClick(window.list_view, Qt.Key.Key_Delete)
+    wait(qtbot, lambda: window.list_model.find(chosen) < 0 and world.backend._pending == {})  # noqa: SLF001
+    trash = world.call("message.list", account=world.account_id, folder="Trash", limit=10).messages
+    assert [row.message_id for row in trash] == [chosen]  # the Delete deleted the message that was selected
+
+
+def test_a_new_sort_keeps_every_selected_message_selected(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    model, selection = window.list_model, window.list_view.selectionModel()
+    column = model.columns.index("subject")
+    rows = [next(number for number in range(model.rowCount()) if model.index(number, column).data() == subject) for subject in ("Message 1", "Message 3")]
+    selection.select(model.index(rows[0], 0), QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
+    selection.select(model.index(rows[1], 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    selection.setCurrentIndex(model.index(rows[1], 0), QItemSelectionModel.SelectionFlag.NoUpdate)
+    chosen = {str(getattr(model.row_at(row), "message_id")) for row in rows}
+    sort_by_subject(world)
+    sorted_by_subject(world, qtbot)
+    assert set(whole_rows_selected(world)) == chosen and len(whole_rows_selected(world)) == 2
 
 
 def test_the_selected_message_is_found_on_a_page_that_was_not_loaded(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -446,12 +503,36 @@ def test_the_selected_message_is_found_on_a_page_that_was_not_loaded(world: Worl
     sort_by_subject(world)
     wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.sort == "subject" and selected_message(world) == chosen)
     assert window.list_model.find(chosen) == 2
+    assert whole_rows_selected(world) == [chosen]
 
 
-def test_choosing_another_message_meanwhile_wins(world: World, qtbot: QtBot) -> None:
+def test_choosing_another_message_while_the_new_order_is_on_its_way_wins(world: World, qtbot: QtBot) -> None:
     window = world.window
     window.start()
     settle(qtbot, world, 3)
-    window._reselect = "a message that is still being looked for"  # noqa: SLF001
+    window.settings.setValue("mark_read", "never")
+    window.apply_preferences()
     select_subject(world, qtbot, "Message 1")
-    assert getattr(window, "_reselect") is None  # read again: choosing a message cleared it
+    sort_by_subject(world)  # the new order is asked for; its answers arrive later
+    model = window.list_model
+    column = model.columns.index("subject")
+    row = next(number for number in range(model.rowCount()) if model.index(number, column).data() == "Message 3")
+    window.list_view.setCurrentIndex(model.index(row, 0))  # chosen before the answers are there
+    other = str(getattr(model.row_at(row), "message_id"))
+    sorted_by_subject(world, qtbot)
+    assert whole_rows_selected(world) == [other] and selected_message(world) == other
+
+
+def test_fetching_the_list_again_keeps_the_whole_row_selected(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    window.settings.setValue("mark_read", "never")
+    window.apply_preferences()
+    chosen = select_subject(world, qtbot, "Message 2")
+    resets: list[int] = []
+    window.list_model.modelReset.connect(lambda: resets.append(1))
+    window._refetch_list()  # noqa: SLF001 - as after a change from outside (new mail, another program)
+    wait(qtbot, lambda: not window._refetching and world.backend._pending == {})  # noqa: SLF001
+    assert whole_rows_selected(world) == [chosen] and selected_message(world) == chosen
+    assert resets == []

@@ -20,9 +20,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.5.154"
+__version__ = "test_engine_commands.py 0.5.160"
 
 # --- Version history ----------------------------------------------------
+# v0.5.160: message.places gives the places of several messages, as message.list and message.search show them
 # v0.5.154: The index is opened only inside its lock; the permission check of the key export only where the system has those bits
 # v0.5.153: message.position gives the place message.list shows a message at
 # v0.4.118: Commands that open an index of an old format at the same moment rebuild it once, without errors
@@ -729,3 +730,18 @@ def test_the_position_of_a_message_is_where_message_list_shows_it(setup: Setup) 
                 found = call(setup.engine, "message.position", account=setup.account_id, folder="Inbox", message=message_id, sort=sort, oldest_first=oldest_first)
                 assert found.position == place, (sort, oldest_first)
     assert call(setup.engine, "message.position", account=setup.account_id, folder="Sent", message=listed[0]).position is None  # not in that folder
+
+
+def test_the_places_of_several_messages_are_where_message_list_and_message_search_show_them(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    for sort in ("date", "subject", "size", "contact", "unread", "snoozed"):
+        for oldest_first in (False, True):
+            listed = [row.message_id for row in call(setup.engine, "message.list", account=setup.account_id, sort=sort, oldest_first=oldest_first).messages]
+            found = call(setup.engine, "message.places", account=setup.account_id, folder="Inbox", messages=tuple(reversed(listed)), sort=sort, oldest_first=oldest_first)
+            assert found.positions == tuple(reversed(range(len(listed)))), (sort, oldest_first)  # each in the order asked
+    searched = [row.message_id for row in call(setup.engine, "message.search", account=setup.account_id, folder="Inbox", unread=True, sort="subject")]
+    found = call(setup.engine, "message.places", account=setup.account_id, folder="Inbox", unread=True, sort="subject", messages=tuple(searched))
+    assert found.positions == tuple(range(len(searched))) and searched
+    missing = call(setup.engine, "message.places", account=setup.account_id, folder="Sent", messages=(listed[0], "none"))
+    assert missing.positions == (None, None)  # not in that folder, or not at all
+    assert call(setup.engine, "message.places", account=setup.account_id, folder="Inbox").positions == ()

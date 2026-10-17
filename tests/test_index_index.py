@@ -16,9 +16,10 @@ from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.5.130"
+__version__ = "test_index_index.py 0.5.160"
 
 # --- Version history ----------------------------------------------------
+# v0.5.160: positions: where several messages stand, in one pass, as page() lists them
 # v0.5.130: A failed open closes its connection (old format, unreadable format, damaged), so the rebuild can replace the files on Windows
 # v0.4.117: Unread counts use the index of the Unread sort (the partial index is gone)
 # v0.3.110: Changes made at the same time from several connections all succeed
@@ -103,6 +104,17 @@ def test_every_sort_order_works_both_ways(tmp_path: Path, sort: SortField) -> No
     descending = index.page(INBOX, sort=sort, descending=True, limit=100)
     assert len(ascending) == len(descending) == 30
     assert {m.store_id for m in ascending} == {m.store_id for m in descending}
+
+
+@pytest.mark.parametrize("sort", list(SortField))
+def test_the_positions_of_several_messages_are_where_page_lists_them(tmp_path: Path, sort: SortField) -> None:
+    index = filled(tmp_path)
+    for descending in (True, False):
+        listed = [message.store_id for message in index.page(INBOX, sort=sort, descending=descending, limit=100)]
+        asked = listed[::3] + ["not there"]
+        assert index.positions(INBOX, asked, sort, descending) == {store_id: listed.index(store_id) for store_id in listed[::3]}
+    assert index.positions(INBOX, []) == {}
+    assert index.positions(("Archive",), listed) == {}  # not in that folder
 
 
 def test_sort_by_subject_ignores_case(tmp_path: Path) -> None:

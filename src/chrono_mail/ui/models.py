@@ -1,7 +1,7 @@
 import bisect
 import dataclasses
 from dataclasses import dataclass, field
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from enum import Enum
 from typing import override
 
@@ -17,9 +17,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.158"
+__version__ = "models.py 0.5.160"
 
 # --- Version history ----------------------------------------------------
+# v0.5.160: rearrange: a new sort, and fetching the same view again, change the order in one layout change instead of a reset; Qt's selection moves with each message
 # v0.5.158: the folder list counts again from its per-folder numbers without being rebuilt (recount), and adds, renames or removes one folder (D-146 step 4)
 # v0.5.157: messages with an action under way (pending): greyed (PENDING_ROLE), let go when the fact arrives or the action ends; load_through for a search or Favorites view
 # v0.5.156: the list applies the facts of the engine to its own rows (D-146 step 2): a folder keeps its rows as one ordered list with empty places for what is not loaded; an answer asked before a change that moved places is asked again
@@ -142,6 +143,12 @@ class _Rows:
     shifts: int = 0  # changes that moved places (a row in or out): an answer asked for before one is asked for again
 
 
+def _reach(places: dict[tuple[str, str], int]) -> int:
+    """How many rows a search or Favorites view loads at once: a batch, or down to the deepest of these places."""
+    deepest = max(places.values(), default=-1) + 1
+    return max(PAGE_SIZE, -(-deepest // PAGE_SIZE) * PAGE_SIZE)
+
+
 class MessageListModel(QAbstractTableModel):
     """The rows of one folder or search, fetched a page at a time through engine commands."""
 
@@ -149,6 +156,7 @@ class MessageListModel(QAbstractTableModel):
     groups_changed = Signal()  # the group header rows moved (the window spans them over all columns)
     load_failed = Signal(str)
     loaded = Signal()
+    rearranged = Signal()  # the same messages were put in another order; Qt's selection moved with them
 
     def __init__(self, backend: Backend, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -171,6 +179,7 @@ class MessageListModel(QAbstractTableModel):
         self._group_starts: list[int] = []  # the row of each header, for finding the group of a row quickly
         self._display_rows: int = 0
         self.pending: set[str] = set()  # message ids with an action under way: greyed, and no second action (D-146)
+        self.selected_rows: Callable[[], list[int]] = lambda: []  # the rows selected in the window and its current row (a new order keeps them)
         self._folded: dict[tuple[str, str | None, str], set[str]] = {}  # per folder (or combined view) and sort order: the folded groups, until the program closes
 
     # --- the columns --------------------------------------------------------------------------
@@ -339,51 +348,117 @@ class MessageListModel(QAbstractTableModel):
         self._backend.call(command, values, arrived, failed, owner=self)
 
     def reload(self) -> None:
-        """Fetch the same view again (after mail arrived or messages were changed). The rows on screen stay until the new
-        group headers and the first rows have arrived; then they are swapped in at once, so the list never goes blank."""
+        """Fetch the same view again (after a change from outside: new mail, another program). The messages are
+        rearranged in place, as for a new sort: the rows on screen stay until the new order is there, and each selected
+        message keeps its selection."""
+        self.rearrange(self._spec)
+
+    def rearrange(self, spec: ViewSpec | None) -> None:
+        """Show the same view in another order (a new sort), or the same order fetched again. Nothing is thrown away: the
+        rows on screen stay until the new headings, the first rows and the new place of every message that is selected
+        (or current) have arrived; then the list changes in one step and tells Qt where each of those messages went, so
+        Qt's own selection moves with its message. It is never cleared, and never set again by hand."""
         current = self._spec
-        if current is None or self._display_rows == 0:
-            self.show(current)  # nothing on screen to keep
+        if spec is None or current is None or self._display_rows == 0 or not self._same_messages(current, spec):
+            self.show(spec)  # nothing on screen to keep, or other messages
             return
-        spec: ViewSpec = current
-        self._generation += 1  # answers for the rows on screen (pages, more rows) are no longer wanted
-        generation = self._generation
+        target: ViewSpec = spec
+        self._generation += 1  # answers asked for the old order (pages, more rows) are no longer wanted
+        generation, shifts = self._generation, self._rows.shifts
+        kept = self._kept_messages()
 
-        def first(groups: list[tuple[str, str, int]] | None) -> None:
+        def still_wanted() -> bool:
+            if generation != self._generation:
+                return False  # another view or another order was asked for meanwhile
+            if shifts != self._rows.shifts or self._kept_messages() != kept:
+                self.rearrange(target)  # a row came in or went, or another message was selected: asked again
+                return False
+            return True
+
+        def failed(error: ChronoMailError) -> None:
+            if generation == self._generation:
+                self._failed(error)
+                self.show(target)  # the new order without the places: the error is shown
+
+        def placed(groups: list[tuple[str, str, int]] | None, places: dict[tuple[str, str], int]) -> None:
+            reach = _reach(places)
+
             def arrived(result: object) -> None:
-                if generation == self._generation:
-                    self._swap_in(spec, groups, result)
+                if still_wanted():
+                    self._swap_in(target, groups, places, reach, result)
 
-            def failed(error: ChronoMailError) -> None:
-                if generation == self._generation:
-                    self._failed(error)  # the rows on screen stay
+            values = self._values(target, 0)
+            if target.kind is ViewKind.FOLDER:
+                self._backend.call("message.list", values, arrived, failed, owner=self)
+                return
+            values["limit"] = reach  # a search or Favorites view loads in order: down to the deepest selected message, in one go
+            self._backend.call("message.combined" if target.combined is not None else "message.search", values, arrived, failed, owner=self)
 
-            if spec.kind is ViewKind.FOLDER:
-                self._backend.call("message.list", self._values(spec, 0), arrived, failed, owner=self)
-            else:
-                self._backend.call("message.combined" if spec.combined is not None else "message.search", self._values(spec, 0), arrived, failed, owner=self)
+        def grouped(groups: list[tuple[str, str, int]] | None) -> None:
+            if not still_wanted():
+                return
+            if not kept:
+                placed(groups, {})
+                return
 
-        if not (self.show_groups and spec.sort not in YES_NO_SORTS):
-            first(None)
+            def located(result: object) -> None:
+                if still_wanted():
+                    found: tuple[object, ...] = tuple(getattr(result, "positions"))
+                    placed(groups, {key: position for key, position in zip(kept, found, strict=True) if isinstance(position, int)})
+
+            values = self.request_values(target)
+            values["messages"] = [message_id for _, message_id in kept]
+            if target.combined is not None:
+                values["mailboxes"] = [mailbox for mailbox, _ in kept]
+            self._backend.call("message.combined-places" if target.combined is not None else "message.places", values, located, failed, owner=self)
+
+        if not (self.show_groups and target.sort not in YES_NO_SORTS):
+            grouped(None)
             return
 
         def groups_arrived(result: object) -> None:
-            if generation != self._generation:
-                return
             found: list[object] = list(result) if isinstance(result, (tuple, list)) else []
-            first([(str(getattr(group, "key")), group_name(spec.sort, str(getattr(group, "value"))), int(getattr(group, "count"))) for group in found])
+            grouped([(str(getattr(group, "key")), group_name(target.sort, str(getattr(group, "value"))), int(getattr(group, "count"))) for group in found])
 
         def groups_failed(error: ChronoMailError) -> None:
-            if generation == self._generation:
-                first(None)  # without headers rather than without messages
+            grouped(None)  # without headers rather than without messages
 
-        command = "message.combined-groups" if spec.combined is not None else "message.groups"
-        values = {name: value for name, value in self._values(spec, 0).items() if name not in ("offset", "limit")}
-        self._backend.call(command, values, groups_arrived, groups_failed, owner=self)
+        command = "message.combined-groups" if target.combined is not None else "message.groups"
+        self._backend.call(command, self.request_values(target), groups_arrived, groups_failed, owner=self)
 
-    def _swap_in(self, spec: ViewSpec, groups: list[tuple[str, str, int]] | None, result: object) -> None:
-        """The reloaded headers and first rows replace the rows on screen in one reset."""
-        self.beginResetModel()
+    @staticmethod
+    def _same_messages(old: ViewSpec, new: ViewSpec) -> bool:
+        """Whether two views hold the same messages (only the order may differ)."""
+        return dataclasses.replace(old, sort=new.sort, oldest_first=new.oldest_first) == new
+
+    def _key(self, row: object) -> tuple[str, str]:
+        """Who a message is: its mailbox (in a Favorites view, where ids are unique only within one mailbox) and its id."""
+        combined = self._spec is not None and self._spec.combined is not None
+        return (str(getattr(row, "account", "") or "") if combined else "", str(getattr(row, "message_id")))
+
+    def _kept_messages(self) -> list[tuple[str, str]]:
+        """The messages that keep their place in Qt's selection (the selected ones and the current one, as the window
+        tells), each once, in a fixed order."""
+        keys: set[tuple[str, str]] = set()
+        for number in self.selected_rows():
+            row = self.row_at(number)
+            if row is not None:
+                keys.add(self._key(row))
+        return sorted(keys)
+
+    def _swap_in(self, spec: ViewSpec, groups: list[tuple[str, str, int]] | None, places: dict[tuple[str, str], int], reach: int, result: object) -> None:
+        """The new order replaces the old one in one layout change. Every index Qt holds (its selection, the current
+        message) is moved to the row its message has now; one whose message is not in the view any more goes."""
+        self.layoutAboutToBeChanged.emit()
+        held = self.persistentIndexList()
+        keys: list[tuple[str, str] | None] = []
+        known: dict[tuple[str, str], object] = {}
+        for index in held:
+            row = self.row_at(index.row()) if index.isValid() else None
+            keys.append(self._key(row) if row is not None else None)
+            if row is not None:
+                known[self._key(row)] = row
+        self._generation += 1  # pages asked for the old order while the new one was on its way are not wanted
         self._spec = spec
         self._rows = _Rows()
         self._group_counts = groups
@@ -391,19 +466,25 @@ class MessageListModel(QAbstractTableModel):
             self._total, self._unread = int(getattr(result, "total")), int(getattr(result, "unread"))
             self._fill(0, list(getattr(result, "messages")))
             self._rows.requested.add(0)
+            for key, position in places.items():
+                if position < self._total and self._rows.slots[position] is None and key in known:
+                    self._rows.slots[position] = known[key]  # a selected message is known already: no page to fetch for it
         else:
             rows: list[object] = list(result) if isinstance(result, (tuple, list)) else []
             self._rows.loaded = rows
-            self._rows.exhausted = len(rows) < PAGE_SIZE
+            self._rows.exhausted = len(rows) < reach
             self._total, self._unread = 0, 0
         self._layout_groups()
-        self.endResetModel()
+        moved: list[QModelIndex] = []
+        for index, key in zip(held, keys, strict=True):
+            shown = self.display_row(places[key]) if key is not None and key in places else -1
+            moved.append(self.index(shown, index.column()) if 0 <= shown < self._display_rows else QModelIndex())
+        self.changePersistentIndexList(held, moved)
+        self.layoutChanged.emit()
         self.groups_changed.emit()
-        if spec.kind is ViewKind.FOLDER:
-            self.counts_changed.emit(self._total, self._unread)
-        else:
-            self.counts_changed.emit(len(self._rows.loaded), sum(1 for row in self._rows.loaded if "seen" not in getattr(row, "flags")))
+        self._counts_changed()
         self.settled = True
+        self.rearranged.emit()
         self.loaded.emit()
 
     # --- Qt model interface -------------------------------------------------------------------

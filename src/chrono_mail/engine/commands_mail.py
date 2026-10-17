@@ -29,9 +29,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.158"
+__version__ = "commands_mail.py 0.5.160"
 
 # --- Version history ----------------------------------------------------
+# v0.5.160: message.places: where several messages stand in a folder or a search, the order worked out once (a new sort keeps the selected messages)
 # v0.5.158: a sent message is reported where it is stored (Sent, or the Outbox when it failed); a mail check that made folders reports its mailbox as changed
 # v0.5.156: message.locate: where a message stands in a folder or a search, and under which group heading (a list puts a message that came in at its place)
 # v0.5.155: MessageRow lives in changes.py (the engine reports changes with it); a mail check reports its mailbox as changed, quietly (D-146)
@@ -510,12 +511,25 @@ def message_position(engine: Engine, parameters: PositionParameters) -> Position
     """Where a message stands in a folder in the order message.list gives it."""
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder)
-        times = _snoozed_times(engine, mailbox) if folder == SNOOZED else None
-        if (times is not None and _snooze_sort(parameters.sort, folder)) or parameters.sort == CONTACT_SORT:
-            everything = mailbox.index.page(folder, SortField.DATE, True, 0, mailbox.index.count(folder))
-            ordered = _by_snooze(everything, times, parameters.oldest_first) if times is not None and parameters.sort != CONTACT_SORT else _by_contact(engine, mailbox, everything, not parameters.oldest_first)
-            return PositionResult(next((number for number, message in enumerate(ordered) if message.store_id == parameters.message), None))
+        if _special_order(parameters.sort, folder):
+            ordered = _ordered_ids(engine, mailbox, folder, parameters.sort, parameters.oldest_first)
+            return PositionResult(next((number for number, message_id in enumerate(ordered) if message_id == parameters.message), None))
         return PositionResult(mailbox.index.position(folder, parameters.message, _sort_field(parameters.sort), not parameters.oldest_first))
+
+
+def _special_order(sort: str, folder: tuple[str, ...]) -> bool:
+    """Whether a folder's order in this sort is worked out here (snoozed until, contact) rather than by the index."""
+    return (folder == SNOOZED and _snooze_sort(sort, folder)) or sort == CONTACT_SORT
+
+
+def _ordered_ids(engine: Engine, mailbox: Mailbox, folder: tuple[str, ...], sort: str, oldest_first: bool) -> list[str]:
+    """The ids of every message of a folder in the order message.list gives them."""
+    if not _special_order(sort, folder):
+        return [message.store_id for message in mailbox.index.page(folder, _sort_field(sort), not oldest_first, 0, mailbox.index.count(folder))]
+    times = _snoozed_times(engine, mailbox) if folder == SNOOZED else None
+    everything = mailbox.index.page(folder, SortField.DATE, True, 0, mailbox.index.count(folder))
+    ordered = _by_snooze(everything, times, oldest_first) if times is not None and sort != CONTACT_SORT else _by_contact(engine, mailbox, everything, not oldest_first)
+    return [message.store_id for message in ordered]
 
 
 def _sort_field(sort: str) -> SortField:
@@ -738,6 +752,34 @@ def message_locate(engine: Engine, parameters: LocateParameters) -> LocateResult
     return LocateResult(position, key, name)
 
 
+@dataclass(frozen=True, slots=True)
+class PlacesParameters(SearchParameters):
+    messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+
+
+@dataclass(frozen=True, slots=True)
+class PlacesResult:
+    positions: tuple[int | None, ...]  # for each message asked, in the same order: where it stands (0 is the first), None when it is not in the view
+
+
+def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult:
+    """Where several messages stand in a folder or a search (as message.list and message.search order them); the order is
+    worked out once, however many messages are asked. Asked when the list changes its order, so each selected message
+    keeps its selection at its new place."""
+    plain = not parameters.query and parameters.folder and _search_filter(parameters) == SearchFilter() and parameters.sort not in ("snoozed", CONTACT_SORT)
+    if plain and parameters.folder is not None:
+        with open_mailbox(engine, parameters.account) as mailbox:
+            found = mailbox.index.positions(mailbox.folder(parameters.folder), parameters.messages, _sort_field(parameters.sort), not parameters.oldest_first)
+        return PlacesResult(tuple(found.get(message_id) for message_id in parameters.messages))
+    if parameters.folder is not None and not parameters.query and _search_filter(parameters) == SearchFilter():
+        with open_mailbox(engine, parameters.account) as mailbox:
+            ordered = _ordered_ids(engine, mailbox, mailbox.folder(parameters.folder), parameters.sort, parameters.oldest_first)
+    else:
+        ordered = [row.message_id for row in message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))]
+    places = {message_id: number for number, message_id in enumerate(ordered)}
+    return PlacesResult(tuple(places.get(message_id) for message_id in parameters.messages))
+
+
 def message_thread(engine: Engine, parameters: MessageParameters) -> tuple[MessageRow, ...]:
     """The conversation a message belongs to, oldest first, with the messages of all folders."""
     with open_mailbox(engine, parameters.account) as mailbox:
@@ -923,6 +965,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register("message.list", "List the messages of a folder", ListParameters, message_list)
     registry.register("message.position", "Where a message stands in a folder in a sort order (0 is the first)", PositionParameters, message_position)
     registry.register("message.locate", "Where a message stands in a folder or a search, and its group heading", LocateParameters, message_locate)
+    registry.register("message.places", "Where several messages stand in a folder or a search (0 is the first)", PlacesParameters, message_places)
     registry.register("message.thread", "List the messages of the conversation a message belongs to", MessageParameters, message_thread)
     registry.register("message.show", "Show one message", MessageParameters, message_show)
     registry.register("message.search", "Search messages", SearchParameters, message_search)

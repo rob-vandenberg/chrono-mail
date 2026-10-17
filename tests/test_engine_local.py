@@ -19,9 +19,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 0.5.144"
+__version__ = "test_engine_local.py 0.5.160"
 
 # --- Version history ----------------------------------------------------
+# v0.5.160: message.combined-places: the places of several messages in a Favorites view
 # v0.5.144: The crash at the commit point is made in the file write of the settings (the save goes through change_config)
 # v0.3.109: Combined views in the new sort orders (no groups for the yes/no sorts)
 # v0.2.94: Combined views in any sort order and their groups
@@ -298,6 +299,20 @@ def test_local_folders_cannot_be_removed_while_accounts_use_it_and_the_settings_
     data["accounts"][0]["storage"] = 5
     with pytest.raises(ConfigurationError, match="storage"):
         parse_config(json.dumps(data))
+
+
+def test_the_places_of_several_messages_in_a_combined_view_are_where_it_shows_them(two: Two) -> None:
+    call(two.engine, "mail.fetch", account=two.a)
+    call(two.engine, "mail.fetch", account=two.b)
+    for sort in ("date", "subject", "size"):
+        everything = call(two.engine, "message.combined", view="inboxes", sort=sort, limit=100)
+        found = call(two.engine, "message.combined-places", view="inboxes", sort=sort, messages=tuple(row.message_id for row in everything), mailboxes=tuple(row.account for row in everything))
+        assert found.positions == tuple(range(len(everything))) and len(everything) == 4, sort
+    first = everything[0]
+    other = two.b if first.account == two.a else two.a
+    assert call(two.engine, "message.combined-places", view="inboxes", messages=(first.message_id,), mailboxes=(other,)).positions == (None,)  # the same id in another mailbox is another message
+    with pytest.raises(UsageError, match="mailbox"):
+        call(two.engine, "message.combined-places", view="inboxes", messages=(first.message_id,))
 
 
 def test_combined_views_merge_the_mailboxes_and_count_shared_mail_once(two: Two) -> None:

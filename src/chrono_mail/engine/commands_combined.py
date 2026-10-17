@@ -5,7 +5,7 @@ from datetime import datetime
 import string
 
 from chrono_mail.core import Folder, FolderRole
-from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, _rows, contact_address_set, date_bounds, from_contacts, group_of
+from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, PlacesResult, _rows, contact_address_set, date_bounds, from_contacts, group_of
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
@@ -13,9 +13,10 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 0.5.156"
+__version__ = "commands_combined.py 0.5.160"
 
 # --- Version history ----------------------------------------------------
+# v0.5.160: message.combined-places: where several messages stand in a Favorites view, the order worked out once
 # v0.5.156: message.combined-locate: where a message stands in a Favorites view, and its group heading
 # v0.5.135: The view tagged: all mail with one tag (the Tags in the folder list)
 # v0.3.109: Sort orders unread, flagged, attachment, replied, contact, folder, conversation and preview (newest first within the same value)
@@ -172,7 +173,24 @@ def message_combined_locate(engine: Engine, parameters: CombinedLocateParameters
     return LocateResult(position, key, name)
 
 
+@dataclass(frozen=True, slots=True)
+class CombinedPlacesParameters(CombinedParameters):
+    messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+    mailboxes: tuple[str, ...] = field(default=(), metadata=option("The account (mailbox) of each message, in the same order (repeat for more)"))
+
+
+def message_combined_places(engine: Engine, parameters: CombinedPlacesParameters) -> PlacesResult:
+    """Where several messages stand in a Favorites view; the order is worked out once, however many messages are asked."""
+    if len(parameters.mailboxes) != len(parameters.messages):
+        raise UsageError("Give the mailbox of each message")
+    everything = message_combined(engine, replace(parameters, offset=0, limit=EVERYTHING))
+    places = {(row.account, row.message_id): number for number, row in reversed(list(enumerate(everything)))}  # the first place when one message is shown twice
+    owners = {mailbox: engine.resolve_account(mailbox).account.account_id for mailbox in set(parameters.mailboxes)}
+    return PlacesResult(tuple(places.get((owners[mailbox], message_id)) for mailbox, message_id in zip(parameters.mailboxes, parameters.messages, strict=True)))
+
+
 def register(registry: CommandRegistry) -> None:
     registry.register("message.combined", "List the messages of the same kind of folder in all mailboxes", CombinedParameters, message_combined)
     registry.register("message.combined-locate", "Where a message stands in a Favorites view, and its group heading", CombinedLocateParameters, message_combined_locate)
+    registry.register("message.combined-places", "Where several messages stand in a Favorites view (0 is the first)", CombinedPlacesParameters, message_combined_places)
     registry.register("message.combined-groups", "The groups of a combined view (as sorted) with their number of messages", CombinedParameters, message_combined_groups)
