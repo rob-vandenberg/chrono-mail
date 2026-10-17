@@ -1541,3 +1541,15 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - 1.1.175: `.gitignore` has `*.bat` (no such file existed).
 - 1.1.176: `.gitignore` has `tests/`; `git rm -r --cached tests` (179 files no longer tracked, still on disk). `TRANSFER-WINDOWS.md`: the tests are not in git, and how DEVELOPMENT keeps its copy through the first pull.
 - Checked in throwaway repositories: a pull deletes files the new version stops tracking, also when they are ignored there; neither a local untrack nor skip-worktree prevents it. No program code changed, so no tests were run.
+
+## 2026-10-17 A private script for the Linux installers (version 1.1.177)
+
+- `build-release.sh` (project folder, git-ignored): refuses unless the folder is exactly on the pushed tag of the version, runs `packaging/package_linux.sh --build`, starts the .deb in Ubuntu 22.04 and the .rpm in Fedora 43 (must still run after 8 s), then asks before `packaging/upload_release.sh`. `.gitignore` lists it. No program code changed, so no tests were run.
+
+## 2026-10-17 A private push script (version 1.1.178)
+
+- `gitpush.sh` (project folder, git-ignored): refuses a message with `( ) & | < > ^ %`, a version that already has a tag, or a private path that is not git-ignored; shows the changes and asks; runs `release`; then checks on GitHub the branch, the tag, the author, no Claude in the message and no private path. `.gitignore` lists it. No program code changed, so no tests were run.
+
+## 2026-10-17 gitpush updates the last version without a new version (version 1.1.179)
+
+- `gitpush.sh`: without a message and with the version already tagged it runs `release` in its update mode (amend, tag moved, force-push), after saying so and asking; with a message and the version tagged it refuses; a new version without a message is refused; nothing changed is refused. The release tool was read to confirm it ignores the message in update mode. No program code changed, so no tests were run.

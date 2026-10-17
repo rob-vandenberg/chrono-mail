@@ -22,3 +22,5 @@ dist/
 # samples exported from other mail programs (private mail and passwords): NEVER in git
 chrono-mail-import-samples/
 chrono-mail-factory-reset.py
+build-release.sh
+gitpush.sh
