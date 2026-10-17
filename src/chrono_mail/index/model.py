@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 0.5.134"
+__version__ = "model.py 0.5.162"
 
 # --- Version history ----------------------------------------------------
+# v0.5.162: SearchFilter.stay: messages that stay in a view filtered by unread, flagged or a tag after they stopped matching there
 # v0.5.134: Tags in index entries, indexed messages and search filters
 # v0.3.109: Sorting by unread, flagged, attachment, replied, folder, messages in conversation and preview
 # v0.2.94: Sorting by recipients (to); group headers of the message list (GroupCount, DATE_GROUPS, SIZE_GROUPS)
@@ -159,3 +160,4 @@ class SearchFilter:
     maximum_size: int | None = None
     newest_per_thread: bool = False  # only the newest message of each conversation in its folder (ignored with a text query)
     tag: str | None = None  # only messages with this tag (compared without regard to case)
+    stay: frozenset[str] = frozenset()  # messages that are found although they no longer match unread, flagged or tag (changed while a view showed them)

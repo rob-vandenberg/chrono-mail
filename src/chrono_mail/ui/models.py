@@ -5,7 +5,7 @@ from collections.abc import Callable, Sequence
 from enum import Enum
 from typing import override
 
-from PySide6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, QObject, QPersistentModelIndex, Qt, Signal
+from PySide6.QtCore import QAbstractTableModel, QMimeData, QModelIndex, QObject, QPersistentModelIndex, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QGuiApplication, QPalette, QStandardItem, QStandardItemModel
 
 from chrono_mail.core import ChronoMailError
@@ -17,9 +17,12 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.160"
+__version__ = "models.py 0.5.163"
 
 # --- Version history ----------------------------------------------------
+# v0.5.163: messages that come in at once are taken in with one question (message.places with headings); messages that went from a part not loaded give one rearrange, never a reset
+# v0.5.162: a message read, unflagged or untagged in a view that shows only such messages stays there until the view is left, also after a sort or a fetch (the engine is told which, D-149)
+# v0.5.161: header_rows_added: only the rows where new group headers came are announced (the window spans those, not all headers after every change)
 # v0.5.160: rearrange: a new sort, and fetching the same view again, change the order in one layout change instead of a reset; Qt's selection moves with each message
 # v0.5.158: the folder list counts again from its per-folder numbers without being rebuilt (recount), and adds, renames or removes one folder (D-146 step 4)
 # v0.5.157: messages with an action under way (pending): greyed (PENDING_ROLE), let go when the fact arrives or the action ends; load_through for a search or Favorites view
@@ -50,6 +53,7 @@ __version__ = "models.py 0.5.160"
 # v0.0.13: Initial folder and message list models
 
 PAGE_SIZE: int = 100
+BURST: int = 200  # more messages than this coming in at once (a first sync): one rearrange instead of one row each
 ROW_ROLE: int = Qt.ItemDataRole.UserRole + 1
 FOLDER_PATH_ROLE: int = Qt.ItemDataRole.UserRole + 2
 ACCOUNT_ROLE: int = Qt.ItemDataRole.UserRole + 3
@@ -143,6 +147,11 @@ class _Rows:
     shifts: int = 0  # changes that moved places (a row in or out): an answer asked for before one is asked for again
 
 
+def _filters_marks(spec: ViewSpec) -> bool:
+    """Whether a view shows only messages with certain marks or a tag (unread, flagged, tagged): what a person changes there."""
+    return spec.combined in ("unread", "flagged", "tagged") or spec.unread is not None or spec.flagged is not None or spec.tag is not None
+
+
 def _reach(places: dict[tuple[str, str], int]) -> int:
     """How many rows a search or Favorites view loads at once: a batch, or down to the deepest of these places."""
     deepest = max(places.values(), default=-1) + 1
@@ -153,7 +162,8 @@ class MessageListModel(QAbstractTableModel):
     """The rows of one folder or search, fetched a page at a time through engine commands."""
 
     counts_changed = Signal(int, int)  # total, unread
-    groups_changed = Signal()  # the group header rows moved (the window spans them over all columns)
+    groups_changed = Signal()  # the group header rows were laid out anew without a reset (the window spans them all over all columns again)
+    header_rows_added = Signal(int, int)  # first and last row of a part of the list where new group headers may have come (only those are spanned)
     load_failed = Signal(str)
     loaded = Signal()
     rearranged = Signal()  # the same messages were put in another order; Qt's selection moved with them
@@ -179,6 +189,10 @@ class MessageListModel(QAbstractTableModel):
         self._group_starts: list[int] = []  # the row of each header, for finding the group of a row quickly
         self._display_rows: int = 0
         self.pending: set[str] = set()  # message ids with an action under way: greyed, and no second action (D-146)
+        self._stay: dict[tuple[str, str], None] = {}  # messages read, unflagged or untagged while this view showed them: they stay until it is left
+        self._arriving: list[object] = []  # facts of messages that came in, taken in together (a mail check brings several at once)
+        self._arrival_planned: bool = False
+        self._rearrange_planned: bool = False  # a message went from a part not loaded: one rearrange for all of them
         self.selected_rows: Callable[[], list[int]] = lambda: []  # the rows selected in the window and its current row (a new order keeps them)
         self._folded: dict[tuple[str, str | None, str], set[str]] = {}  # per folder (or combined view) and sort order: the folded groups, until the program closes
 
@@ -210,6 +224,9 @@ class MessageListModel(QAbstractTableModel):
     def show(self, spec: ViewSpec | None) -> None:
         """Start showing something else (or nothing). With groups, their headers are asked for first, then the messages."""
         self.pending.clear()
+        self._stay.clear()  # the view is left: what was changed in it no longer stays
+        self._arriving.clear()
+        self._rearrange_planned = False
         self.settled = spec is None or (self.settled and spec == self._spec and self._available() == 0)  # an empty view reloaded stays settled; one with messages waits for them
         self.beginResetModel()
         self._generation += 1
@@ -326,8 +343,7 @@ class MessageListModel(QAbstractTableModel):
             self.beginRemoveRows(QModelIndex(), row + 1, row + group.shown)
             self._layout_groups()
             self.endRemoveRows()
-        self.dataChanged.emit(self.index(row, 0), self.index(row, max(0, self.columnCount() - 1)))
-        self.groups_changed.emit()
+        self.dataChanged.emit(self.index(row, 0), self.index(row, max(0, self.columnCount() - 1)))  # the rows under it came or went; the header keeps its span
 
     def _request_groups(self, spec: ViewSpec) -> None:
         generation = self._generation
@@ -708,6 +724,9 @@ class MessageListModel(QAbstractTableModel):
         if kind == "flags":
             self._apply_flags(message_id, folder, tuple(getattr(change, "flags")), bool(getattr(change, "was_unread")), bool(getattr(change, "unread")))
         elif kind == "tags":
+            position = self._find_position(message_id)
+            if position >= 0:
+                self._keep_here(position)
             self.replace_tags(message_id, tuple(getattr(change, "tags")))
         elif kind == "removed":
             self._take_out(message_id, folder, bool(getattr(change, "was_unread")))
@@ -740,10 +759,18 @@ class MessageListModel(QAbstractTableModel):
     def _apply_flags(self, message_id: str, folder: str, flags: tuple[str, ...], was_unread: bool, unread: bool) -> None:
         position = self._find_position(message_id)
         if position >= 0:
+            self._keep_here(position)
             self.replace_flags(message_id, flags)  # the row changes in place and its unread count with it
         elif self._shows_folder(folder) and was_unread != unread:
             self._unread = max(0, self._unread + (1 if unread else -1))  # a message of this folder that is not loaded
             self._counts_changed()
+
+    def _keep_here(self, position: int) -> None:
+        """A message shown in a view filtered by unread, flagged or a tag got other marks or tags: it stays in the view
+        until the view is left, also when the view is fetched again or sorted (the engine is told, D-149)."""
+        spec, row = self._spec, self._message_at(position)
+        if spec is not None and row is not None and _filters_marks(spec):
+            self._stay[self._key(row)] = None
 
     def _group_index(self, position: int) -> int:
         """The group (in the full group counts) of the message at this position."""
@@ -768,8 +795,7 @@ class MessageListModel(QAbstractTableModel):
         self._drop(position, was_unread)
         self._layout_groups()
         if rows is not None:
-            self.endRemoveRows()
-        self.groups_changed.emit()
+            self.endRemoveRows()  # rows only went: every header left keeps its span
         self._counts_changed()
 
     def _remove_rows_of(self, position: int) -> tuple[int, int] | None:
@@ -836,17 +862,18 @@ class MessageListModel(QAbstractTableModel):
         self._rows.requested.clear()  # the pages asked for counted places that have moved
 
     def _take_out_unseen(self, was_unread: bool) -> None:
-        """A message of this folder that is not loaded went: it was in a part not loaded yet. Its place is not known, so the
-        loaded parts after the first part not loaded are let go (fetched again when they are shown), and one place less."""
+        """A message of this folder that is not loaded went: it was in a part not loaded yet, so its place is not known.
+        When nothing is loaded after the first part not loaded and there are no headings, the list is one empty place
+        shorter at the end; otherwise the list is rearranged once for the whole burst (never reset)."""
         slots = self._rows.slots
         gap = next((number for number, slot in enumerate(slots) if slot is None), len(slots))
-        reset = any(slot is not None for slot in slots[gap:])  # loaded parts after the gap: their places may have moved
-        if reset:
-            self.beginResetModel()
-        elif self._group_counts is None and self._display_rows > 0:
+        if gap == len(slots):
+            return  # every message of the folder is loaded, and it is not among them: it was not here
+        if self._group_counts is not None or any(slot is not None for slot in slots[gap:]):
+            self._plan_rearrange()  # which heading lost it, and which loaded rows moved, is not known here
+            return
+        if self._display_rows > 0:
             self.beginRemoveRows(QModelIndex(), self._display_rows - 1, self._display_rows - 1)  # one empty place less at the end
-        for number in range(gap, len(slots)):
-            slots[number] = None
         if slots:
             slots.pop()
         self._total = max(0, self._total - 1)
@@ -854,51 +881,10 @@ class MessageListModel(QAbstractTableModel):
             self._unread = max(0, self._unread - 1)
         self._rows.shifts += 1
         self._rows.requested.clear()
-        if self._group_counts is not None:
-            self._refresh_group_counts(reset)  # which heading lost a message is not known: the counts are asked again
-        elif reset:
-            self._layout_groups()
-            self.endResetModel()
-        elif self._display_rows > 0:
+        if self._display_rows > 0:
             self._layout_groups()
             self.endRemoveRows()
         self._counts_changed()
-
-    def _refresh_group_counts(self, resetting: bool) -> None:
-        """The counts of the headings are fetched again (only the counts, not the rows), when a change happened where the
-        list cannot see which heading it belongs to."""
-        spec = self._spec
-        if spec is None:
-            return
-        generation, shifts, sort = self._generation, self._rows.shifts, spec.sort
-
-        def arrived(result: object) -> None:
-            if generation != self._generation or shifts != self._rows.shifts:
-                return
-            found: list[object] = list(result) if isinstance(result, (tuple, list)) else []
-            self._group_counts = [(str(getattr(group, "key")), group_name(sort, str(getattr(group, "value"))), int(getattr(group, "count"))) for group in found]
-            self._relayout()
-
-        if resetting:
-            self._layout_groups()
-            self.endResetModel()
-        else:
-            self._relayout()
-        command = "message.combined-groups" if spec.combined is not None else "message.groups"
-        values = {name: value for name, value in self._values(spec, 0).items() if name not in ("offset", "limit")}
-        self._backend.call(command, values, arrived, self._failed, owner=self)
-
-    def _relayout(self) -> None:
-        """The headings were counted anew: when the rows on screen keep their places nothing is redrawn; only when they
-        moved (rare: a change where the list cannot see it) is the list laid out again."""
-        groups, starts, display = self._computed_layout()
-        if starts == self._group_starts and display == self._display_rows and [group.count for group in groups] == [group.count for group in self._groups]:
-            self._groups = groups
-            return
-        self.beginResetModel()
-        self._groups, self._group_starts, self._display_rows = groups, starts, display
-        self.endResetModel()
-        self.groups_changed.emit()
 
     def _may_hold(self, change: object) -> bool:
         """Whether a message that came into a folder may belong in this view; when it may, the engine says where."""
@@ -926,32 +912,67 @@ class MessageListModel(QAbstractTableModel):
         return spec.tag is None or spec.tag.casefold() in tags
 
     def _bring_in(self, change: object) -> None:
-        """A message came into a folder: when it belongs in this view, the engine says where it stands and under which
-        heading, and its row is put there."""
-        if not self._may_hold(change):
+        """A message came into a folder: when it may belong in this view it is taken in together with the others that came
+        at the same moment (a mail check brings several), with one question for all of them."""
+        if not self._may_hold(change) or self._spec is None or getattr(change, "row", None) is None:
             return
+        self._arriving.append(change)
+        if not self._arrival_planned:
+            self._arrival_planned = True
+            QTimer.singleShot(0, self, self._take_in)
+
+    def _take_in(self) -> None:
+        """The messages that came in at once: the engine says where each stands and under which heading, in one answer;
+        then each row is put at its place, the first place first. A burst larger than BURST is one rearrange (it keeps the
+        selection)."""
+        self._arrival_planned = False
+        arriving: list[object] = self._arriving
+        self._arriving = []
         spec = self._spec
-        row = getattr(change, "row", None)
-        if spec is None or row is None:
+        if spec is None or not arriving:
             return
-        message_id = str(getattr(row, "message_id"))
+        if len(arriving) > BURST:
+            self.rearrange(spec)
+            return
+        rows: list[object] = [getattr(change, "row") for change in arriving]
         generation, shifts = self._generation, self._rows.shifts
 
         def located(result: object) -> None:
             if generation != self._generation:
                 return
-            if shifts != self._rows.shifts:
-                self._bring_in(change)  # a row came in or went out meanwhile: its place is asked again
+            if shifts != self._rows.shifts:  # a row came in or went out meanwhile: their places are asked again
+                for change in arriving:
+                    self._bring_in(change)
                 return
-            position = getattr(result, "position", None)
-            if isinstance(position, int) and self._find_position(message_id) < 0:
-                self._insert(position, row, str(getattr(result, "group_key", "")), str(getattr(result, "group_name", "")))
+            positions: tuple[object, ...] = tuple(getattr(result, "positions"))
+            keys: tuple[str, ...] = tuple(getattr(result, "group_keys", ()))
+            names: tuple[str, ...] = tuple(getattr(result, "group_names", ()))
+            placed = sorted((position, number) for number, position in enumerate(positions) if isinstance(position, int))
+            for position, number in placed:  # each place counts the ones before it: the first place first
+                row = rows[number]
+                if self._find_position(str(getattr(row, "message_id"))) < 0:
+                    self._insert(position, row, keys[number] if keys else "", names[number] if names else "")
 
-        values = {name: value for name, value in self._values(spec, 0).items() if name not in ("offset", "limit")}
-        values["message"] = message_id
+        values = self.request_values(spec)
+        values["messages"] = [str(getattr(row, "message_id")) for row in rows]
+        values["headings"] = True
         if spec.combined is not None:
-            values["account"] = str(getattr(change, "mailbox"))
-        self._backend.call("message.combined-locate" if spec.combined is not None else "message.locate", values, located, self._failed, owner=self)
+            values["mailboxes"] = [str(getattr(change, "mailbox")) for change in arriving]
+        self._backend.call("message.combined-places" if spec.combined is not None else "message.places", values, located, self._failed, owner=self)
+
+    def _plan_rearrange(self) -> None:
+        """Messages went from a part of the list not loaded, where their place is not known: once the burst is over, the
+        list is rearranged once (it keeps the rows on screen and the selection; the counts and headings come with it)."""
+        if self._rearrange_planned:
+            return
+        self._rearrange_planned = True
+
+        def run() -> None:
+            if self._rearrange_planned:
+                self._rearrange_planned = False
+                self.rearrange(self._spec)
+
+        QTimer.singleShot(0, self, run)
 
     def _insert(self, position: int, row: object, key: str, name: str) -> None:
         """Put a row at its place, under its heading (a new heading when its group was not there)."""
@@ -992,7 +1013,8 @@ class MessageListModel(QAbstractTableModel):
         self._groups, self._group_starts, self._display_rows = groups, starts, display
         if rows is not None:
             self.endInsertRows()
-        self.groups_changed.emit()
+            if new_group:
+                self.header_rows_added.emit(rows[0], rows[0])  # the new heading is the first row inserted
         self._counts_changed()
 
     def _count_into_group(self, position: int, key: str, name: str) -> bool:
@@ -1034,7 +1056,6 @@ class MessageListModel(QAbstractTableModel):
             self._group_counts = [] if self._group_counts is not None else None
             self._layout_groups()
             self.endResetModel()
-            self.groups_changed.emit()
             self._counts_changed()
             return
         for row in [row for row in self._rows.loaded if str(getattr(row, "folder")) == folder]:
@@ -1064,6 +1085,9 @@ class MessageListModel(QAbstractTableModel):
                 combined["tag"] = spec.tag
             if spec.combined_accounts:
                 combined["accounts"] = list(spec.combined_accounts)
+            if self._stay and _filters_marks(spec):
+                combined["stay_mailboxes"] = [mailbox for mailbox, _ in self._stay]
+                combined["stay_messages"] = [message for _, message in self._stay]
             return combined
         if spec.kind is ViewKind.FOLDER:
             return {"account": spec.account, "folder": spec.folder, "sort": spec.sort, "oldest_first": spec.oldest_first, "offset": offset, "limit": PAGE_SIZE}
@@ -1076,6 +1100,8 @@ class MessageListModel(QAbstractTableModel):
             value = getattr(spec, name)
             if value is not None:
                 values[name] = value
+        if self._stay and _filters_marks(spec):
+            values["stay"] = [message for _, message in self._stay]
         return values
 
     def _request_page(self, page: int) -> None:
@@ -1100,7 +1126,6 @@ class MessageListModel(QAbstractTableModel):
                 self._fill(0, rows)
                 self._layout_groups()
                 self.endResetModel()
-                self.groups_changed.emit()
                 self.counts_changed.emit(self._total, self._unread)
             else:
                 self._fill(page * PAGE_SIZE, rows)
@@ -1138,7 +1163,7 @@ class MessageListModel(QAbstractTableModel):
                     self.beginInsertRows(QModelIndex(), before, after - 1)
                     self._display_rows = after
                     self.endInsertRows()
-                    self.groups_changed.emit()
+                    self.header_rows_added.emit(before, after - 1)
                 else:
                     self._display_rows = after
             self.counts_changed.emit(len(self._rows.loaded), sum(1 for row in self._rows.loaded if "seen" not in getattr(row, "flags")))

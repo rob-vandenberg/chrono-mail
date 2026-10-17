@@ -16,9 +16,10 @@ from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_
 from chrono_mail.store.tags import MessageTags
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 0.5.134"
+__version__ = "store.py 0.5.161"
 
 # --- Version history ----------------------------------------------------
+# v0.5.161: flags: the flags of one message from the name of its file
 # v0.5.134: tags: a copy gets the tags of the original, a message deleted for good loses them
 # v0.5.133: written_together: a bulk import makes a whole batch safe on disk at once instead of every message
 # v0.3.110: MessageNotFoundError: the file of a message is not in the store
@@ -430,6 +431,14 @@ class Store:
         """The current relative path ("new/..." or "cur/...") of a message inside its folder."""
         path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
         return f"{path.parent.name}/{path.name}"
+
+    def flags(self, ref: MessageRef, hint: str | None = None) -> frozenset[MessageFlag]:
+        """The flags of one message, from the name of its file (the folder is not listed)."""
+        path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
+        parsed = parse_name(path.name)
+        if parsed is None:
+            raise MessageNotFoundError("Message not found")
+        return split_info(parsed[1] or "")[0]
 
     def verify(self, ref: MessageRef, hint: str | None = None) -> None:
         """Decrypt and authenticate one message. Raises StorageError or CryptoError when it is damaged."""

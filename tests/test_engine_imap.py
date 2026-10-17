@@ -7,6 +7,7 @@ import pytest
 
 from chrono_mail.core import AuthenticationError, ProtocolError
 from chrono_mail.engine import Engine
+from chrono_mail.engine.changes import Change
 from chrono_mail.engine.mailbox import open_mailbox
 from tests.enginefactory import make_engine
 from tests.fakeimap import FakeImapServer
@@ -15,9 +16,10 @@ from tests.mailfactory import raw_message
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap.py 0.4.120"
+__version__ = "test_engine_imap.py 0.5.163"
 
 # --- Version history ----------------------------------------------------
+# v0.5.163: a check tells each change as a fact (new, marks, removed, a folder made), never one "mailbox changed"
 # v0.4.120: Actions reach the server at once (no longer at the next fetch); the held-back test loses files instead of deleting
 # v0.4.119: mail.fetch reports a folder held back by a safety rule; mail.settle answers
 # v0.0.31: Initial tests of IMAP accounts in the engine
@@ -89,6 +91,33 @@ def test_commands_on_an_imap_account_reach_the_server_at_once(world: World) -> N
     assert world.imap.uids("Trash") == [] and world.rows("Trash") == []
     result = world.fetch()  # nothing left to do
     assert result.downloaded == 0 and result.failed == () and world.imap.uids("INBOX") == [2] and len(world.rows("Inbox")) == 1
+
+
+def test_a_check_tells_each_change_as_a_fact(world: World) -> None:
+    told: list[Change] = []
+    world.engine.changed = told.append
+    first = world.imap.add("INBOX", mail(1))
+    second = world.imap.add("INBOX", mail(2))
+    world.fetch()
+    assert sorted(change.kind for change in told if change.folder == "Inbox") == ["added", "added"]
+    assert {change.row.subject for change in told if change.kind == "added" and change.row is not None} >= {"Message 1", "Message 2"}
+    assert not [change for change in told if change.kind == "mailbox_changed"]  # facts, not "everything may have changed"
+    told.clear()
+    with world.imap.lock:
+        next(message for message in world.imap.folders["INBOX"].messages if message.uid == first).flags.update({"\\Seen", "\\Flagged"})
+    world.imap.remove("INBOX", second)
+    world.imap.add("Projects", mail(3))
+    world.fetch()
+    kinds = {change.kind for change in told}
+    assert "mailbox_changed" not in kinds
+    marked = next(change for change in told if change.kind == "flags")
+    assert marked.was_unread and not marked.unread and set(marked.flags) == {"seen", "flagged"}
+    removed = next(change for change in told if change.kind == "removed")
+    assert removed.folder == "Inbox" and removed.was_unread
+    made = next(change for change in told if change.kind == "folder_made")
+    assert made.folder == "Projects"
+    order = [(change.kind, change.folder) for change in told]
+    assert order.index(("folder_made", "Projects")) < order.index(("added", "Projects"))  # the folder before its mail
 
 
 def test_messages_removed_on_the_server_disappear_here(world: World) -> None:

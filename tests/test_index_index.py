@@ -16,9 +16,10 @@ from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.5.160"
+__version__ = "test_index_index.py 0.5.162"
 
 # --- Version history ----------------------------------------------------
+# v0.5.162: messages named in stay are found although they no longer match unread, flagged or the tag
 # v0.5.160: positions: where several messages stand, in one pass, as page() lists them
 # v0.5.130: A failed open closes its connection (old format, unreadable format, damaged), so the rebuild can replace the files on Windows
 # v0.4.117: Unread counts use the index of the Unread sort (the partial index is gone)
@@ -115,6 +116,17 @@ def test_the_positions_of_several_messages_are_where_page_lists_them(tmp_path: P
         assert index.positions(INBOX, asked, sort, descending) == {store_id: listed.index(store_id) for store_id in listed[::3]}
     assert index.positions(INBOX, []) == {}
     assert index.positions(("Archive",), listed) == {}  # not in that folder
+
+
+def test_messages_named_to_stay_are_found_although_they_no_longer_match_the_marks(tmp_path: Path) -> None:
+    index = filled(tmp_path)
+    unread = index.search("", INBOX, SearchFilter(unread=True), 0, 100)
+    read = index.search("", INBOX, SearchFilter(unread=False), 0, 100)
+    stay = read[0].store_id
+    found = index.search("", INBOX, SearchFilter(unread=True, stay=frozenset({stay})), 0, 100)
+    assert {message.store_id for message in found} == {message.store_id for message in unread} | {stay}
+    assert len(index.search("", INBOX, SearchFilter(stay=frozenset({stay})), 0, 100)) == 30  # without a filter of marks nothing changes
+    assert len(index.search("", INBOX, SearchFilter(unread=True, has_attachments=True, stay=frozenset({stay})), 0, 100)) <= len(found)  # other filters still hold
 
 
 def test_sort_by_subject_ignores_case(tmp_path: Path) -> None:

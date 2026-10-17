@@ -21,9 +21,11 @@ from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.store import MessageNotFoundError, Store, clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 0.5.158"
+__version__ = "mailbox.py 0.5.163"
 
 # --- Version history ----------------------------------------------------
+# v0.5.163: report_removed, report_flags, report_tags, report_folder_made, report_folder_deleted: what a mail check changed is told as facts
+# v0.5.161: current_flags reads the flags from the name of the message's file instead of listing the whole folder
 # v0.5.158: report_added and report_moved: sending stores its copies past the mailbox's operations and reports them here (D-146 step 4)
 # v0.5.156: an action that names a message in a folder where it no longer is gets refused (it never hides the message)
 # v0.5.155: every change reports its fact right after it succeeded (for IMAP after the server confirmed); Empty folder and Mark all as read report one fact each (D-146)
@@ -149,11 +151,7 @@ class Mailbox:
 
     def current_flags(self, ref: MessageRef) -> frozenset[MessageFlag]:
         self._still_there(ref)
-        path = self.store.locate(ref, self.hint(ref.store_id))
-        for message in self.store.list_messages(ref.folder_path):
-            if message.ref.store_id == ref.store_id:
-                return message.flags
-        raise StorageError(f"Message not found ({path})")
+        return self.store.flags(ref, self.hint(ref.store_id))  # from the name of its file: the cost of one message, not of its folder
 
     def move(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
         self._still_there(ref)
@@ -214,6 +212,29 @@ class Mailbox:
             "moved", self._place, "/".join(before.folder_path), before.store_id, to_folder="/".join(now.folder_path), new_message_id=now.store_id, row=row,
             was_unread=unread, unread=unread, role=self._role_of(now.folder_path),
         ))
+
+    def report_removed(self, reference: MessageRef, was_unread: bool) -> None:
+        """A mail check removed a message past the mailbox's operations (gone from the server): it is told as removed."""
+        self._tell(Change("removed", self._place, "/".join(reference.folder_path), reference.store_id, was_unread=was_unread))
+
+    def report_flags(self, reference: MessageRef, flags: frozenset[MessageFlag], was_unread: bool) -> None:
+        """A mail check took over the flags of a message from the server: they are told as changed."""
+        self._tell(Change(
+            "flags", self._place, "/".join(reference.folder_path), reference.store_id, was_unread=was_unread, unread=MessageFlag.SEEN not in flags,
+            flags=flag_names(flags),
+        ))
+
+    def report_tags(self, reference: MessageRef, tags: tuple[str, ...]) -> None:
+        """A mail check took over the tags of a message from the server (its keywords)."""
+        self._tell(Change("tags", self._place, "/".join(reference.folder_path), reference.store_id, tags=tags))
+
+    def report_folder_made(self, folder: Folder) -> None:
+        """A mail check made a folder (the server has a new one)."""
+        self._tell(Change("folder_made", self._place, "/".join(folder.path), role=folder.role.value))
+
+    def report_folder_deleted(self, path: tuple[str, ...]) -> None:
+        """A mail check removed a folder here (the server no longer has it)."""
+        self._tell(Change("folder_deleted", self._place, "/".join(path)))
 
     def _role_of(self, path: tuple[str, ...]) -> str:
         return next((folder.role.value for folder in self.store.list_folders() if folder.path == path), FolderRole.OTHER.value)

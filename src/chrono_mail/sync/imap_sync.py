@@ -10,9 +10,10 @@ from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.5.145"
+__version__ = "imap_sync.py 0.5.163"
 
 # --- Version history ----------------------------------------------------
+# v0.5.163: the report names each message removed here, each change of flags or tags taken over from the server, and each message kept in Recovered (the engine reports them as facts)
 # v0.5.145: step: the steps of a sync (listing the folders, each folder), for the Operations window
 # v0.5.138: Tags as keywords: compared, sent, taken over, downloaded and uploaded with the flags; a folder that keeps no keywords keeps its tags here
 # v0.4.120: Messages the person deleted here while offline are always deleted on the server; only unexplained losses can hold a folder back
@@ -88,6 +89,10 @@ class FolderReport:
     new_references: tuple[MessageRef, ...] = ()  # the messages downloaded into this folder
     blocked: str | None = None  # a safety rule held the folder back (BLOCKED_...): the person is asked
     blocked_count: int = 0  # how many messages it is about
+    removed_messages: tuple[tuple[MessageRef, bool], ...] = ()  # each message removed here (gone from the server), and whether it was unread
+    flag_changes: tuple[tuple[MessageRef, frozenset[MessageFlag], bool], ...] = ()  # each message whose flags were taken over from the server: its flags now, and whether it was unread
+    tag_changes: tuple[tuple[MessageRef, tuple[str, ...]], ...] = ()  # each message whose tags were taken over from the server: its tags now
+    recovered_messages: tuple[tuple[MessageRef, MessageRef], ...] = ()  # each message kept in Recovered: where it was, where it is now
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,11 +230,16 @@ class _Counts:
     new: list[MessageRef] = field(default_factory=list)
     blocked: str | None = None
     blocked_count: int = 0
+    gone: list[tuple[MessageRef, bool]] = field(default_factory=list)
+    marked: list[tuple[MessageRef, frozenset[MessageFlag], bool]] = field(default_factory=list)
+    retagged: list[tuple[MessageRef, tuple[str, ...]]] = field(default_factory=list)
+    kept: list[tuple[MessageRef, MessageRef]] = field(default_factory=list)
 
     def report(self, folder: str) -> FolderReport:
         return FolderReport(
             folder, self.downloaded, self.adopted, self.flags_updated, self.removed, self.recovered, self.flags_sent, self.expunged, self.uploaded,
             tuple(self.failed), self.note, tuple(self.new), self.blocked, self.blocked_count,
+            removed_messages=tuple(self.gone), flag_changes=tuple(self.marked), tag_changes=tuple(self.retagged), recovered_messages=tuple(self.kept),
         )
 
 
@@ -430,11 +440,13 @@ def _remove_gone(store: Store, index: Index | None, state: ImapState, view: _Fol
     for uid in gone:
         entry = mapped[uid]
         where = view.locations.get(entry.store_id)
+        stored = view.stored.get(entry.store_id)
         try:
             if where is not None:
                 if index is not None:
                     index.remove(entry.store_id)
                 store.delete(MessageRef(store.account_id, where[0], entry.store_id), hint=where[1])
+                counts.gone.append((MessageRef(store.account_id, where[0], entry.store_id), stored is not None and MessageFlag.SEEN not in stored.flags))
         except ChronoMailError as error:
             counts.failed.append(f"UID {uid}: it could not be removed here: {error}")
             continue
@@ -524,12 +536,14 @@ def _update_flags(store: Store, index: Index | None, state: ImapState, view: _Fo
                 path = store.set_flags(message.ref, wanted, hint=message.relative_path)
                 if index is not None:
                     index.update_flags(entry.store_id, wanted, path)
+                counts.marked.append((message.ref, wanted, MessageFlag.SEEN not in message.flags))
             new_tags = server_tags(item.flags)
             if view.keywords and not _same_tags(new_tags, current_tags):
                 kept = store.tags.set(entry.store_id, new_tags)
                 view.tags[entry.store_id] = kept
                 if index is not None:
                     index.update_tags(entry.store_id, kept)
+                counts.retagged.append((message.ref, kept))
         except ChronoMailError as error:
             counts.failed.append(f"UID {uid}: the flags could not be changed here: {error}")
             continue
@@ -650,10 +664,12 @@ def _recover(store: Store, index: Index | None, local: tuple[str, ...], store_id
         if where is None:
             continue
         try:
-            moved = store.move(MessageRef(store.account_id, where[0], store_id), target, hint=where[1])
+            before = MessageRef(store.account_id, where[0], store_id)
+            moved = store.move(before, target, hint=where[1])
             if index is not None:
                 index.move(store_id, target, store.locate(moved))
             counts.recovered += 1
+            counts.kept.append((before, moved))
         except ChronoMailError as error:
             counts.failed.append(f"A message could not be kept in {RECOVERED}: {error}")
 

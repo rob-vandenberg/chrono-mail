@@ -5,7 +5,7 @@ from datetime import datetime
 import string
 
 from chrono_mail.core import Folder, FolderRole
-from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, PlacesResult, _rows, contact_address_set, date_bounds, from_contacts, group_of
+from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, PlacesResult, with_headings, _rows, contact_address_set, date_bounds, from_contacts, group_of
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
@@ -13,9 +13,11 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 0.5.160"
+__version__ = "commands_combined.py 0.5.163"
 
 # --- Version history ----------------------------------------------------
+# v0.5.163: message.combined-places can give the group heading of each message (headings)
+# v0.5.162: stay_messages and stay_mailboxes: messages a Favorites view keeps after they were read, unflagged or untagged in it
 # v0.5.160: message.combined-places: where several messages stand in a Favorites view, the order worked out once
 # v0.5.156: message.combined-locate: where a message stands in a Favorites view, and its group heading
 # v0.5.135: The view tagged: all mail with one tag (the Tags in the folder list)
@@ -40,6 +42,8 @@ class CombinedParameters:
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
     offset: int = field(default=0, metadata=option("How many results to skip (not for message.combined-groups)"))
     limit: int = field(default=50, metadata=option("How many results to show (not for message.combined-groups)"))
+    stay_messages: tuple[str, ...] = field(default=(), metadata=option("A message that stays although it is no longer unread, flagged or tagged: it was changed while shown (repeat for more)"))
+    stay_mailboxes: tuple[str, ...] = field(default=(), metadata=option("The mailbox of each message that stays, in the same order (repeat for more)"))
 
 
 _NO_CASE = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)  # as SQLite's NOCASE: only A to Z
@@ -81,8 +85,13 @@ def _chosen(view: str, folder: Folder) -> bool:
     return folder.role not in (FolderRole.TRASH, FolderRole.JUNK) and folder.path != OUTBOX
 
 
-def _filters(view: str, tag: str = "") -> SearchFilter:
-    return SearchFilter(unread=True if view == "unread" else None, flagged=True if view == "flagged" else None, tag=tag if view == "tagged" else None)
+def _filters(view: str, parameters: CombinedParameters, account: str) -> SearchFilter:
+    if len(parameters.stay_mailboxes) != len(parameters.stay_messages):
+        raise UsageError("Give the mailbox of each message that stays")
+    stay = frozenset(message for mailbox, message in zip(parameters.stay_mailboxes, parameters.stay_messages, strict=True) if mailbox == account)
+    return SearchFilter(
+        unread=True if view == "unread" else None, flagged=True if view == "flagged" else None, tag=parameters.tag if view == "tagged" else None, stay=stay,
+    )
 
 
 def _places(engine: Engine, accounts: tuple[str, ...]) -> list[str]:
@@ -113,7 +122,7 @@ def message_combined(engine: Engine, parameters: CombinedParameters) -> tuple[Me
         with open_mailbox(engine, account) as mailbox:
             for folder in mailbox.folders():
                 if _chosen(view, folder):
-                    rows = mailbox.index.search(parameters.query, folder.path, _filters(view, parameters.tag), 0, EVERYTHING if contact else want, sort, descending)
+                    rows = mailbox.index.search(parameters.query, folder.path, _filters(view, parameters, account), 0, EVERYTHING if contact else want, sort, descending)
                     if contact:  # the index does not know the contacts: every message is looked at
                         from_contact.update(((account, store_id), yes) for store_id, yes in from_contacts(mailbox, rows, known).items())
                     found.extend(replace(row, account=account) for row in _rows(mailbox, rows))
@@ -140,7 +149,7 @@ def message_combined_groups(engine: Engine, parameters: CombinedParameters) -> t
         with open_mailbox(engine, account) as mailbox:
             for folder in mailbox.folders():
                 if _chosen(view, folder):
-                    for group in mailbox.index.groups(bounds, parameters.query, folder.path, _filters(view, parameters.tag), sort, descending):
+                    for group in mailbox.index.groups(bounds, parameters.query, folder.path, _filters(view, parameters, account), sort, descending):
                         known = counts.get(group.key)
                         counts[group.key] = group if known is None else replace(known, count=known.count + group.count)
     if sort is SortField.DATE:
@@ -177,6 +186,7 @@ def message_combined_locate(engine: Engine, parameters: CombinedLocateParameters
 class CombinedPlacesParameters(CombinedParameters):
     messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
     mailboxes: tuple[str, ...] = field(default=(), metadata=option("The account (mailbox) of each message, in the same order (repeat for more)"))
+    headings: bool = field(default=False, metadata=option("Also the group heading each message falls under"))
 
 
 def message_combined_places(engine: Engine, parameters: CombinedPlacesParameters) -> PlacesResult:
@@ -186,7 +196,10 @@ def message_combined_places(engine: Engine, parameters: CombinedPlacesParameters
     everything = message_combined(engine, replace(parameters, offset=0, limit=EVERYTHING))
     places = {(row.account, row.message_id): number for number, row in reversed(list(enumerate(everything)))}  # the first place when one message is shown twice
     owners = {mailbox: engine.resolve_account(mailbox).account.account_id for mailbox in set(parameters.mailboxes)}
-    return PlacesResult(tuple(places.get((owners[mailbox], message_id)) for mailbox, message_id in zip(parameters.mailboxes, parameters.messages, strict=True)))
+    positions = tuple(places.get((owners[mailbox], message_id)) for mailbox, message_id in zip(parameters.mailboxes, parameters.messages, strict=True))
+    if not parameters.headings or all(position is None for position in positions):
+        return PlacesResult(positions)
+    return with_headings(positions, message_combined_groups(engine, parameters))
 
 
 def register(registry: CommandRegistry) -> None:

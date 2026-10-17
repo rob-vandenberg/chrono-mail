@@ -19,9 +19,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 0.5.160"
+__version__ = "test_engine_local.py 0.5.162"
 
 # --- Version history ----------------------------------------------------
+# v0.5.162: a message read in Favorites > Unread stays when it is named in stay_messages
 # v0.5.160: message.combined-places: the places of several messages in a Favorites view
 # v0.5.144: The crash at the commit point is made in the file write of the settings (the save goes through change_config)
 # v0.3.109: Combined views in the new sort orders (no groups for the yes/no sorts)
@@ -313,6 +314,22 @@ def test_the_places_of_several_messages_in_a_combined_view_are_where_it_shows_th
     assert call(two.engine, "message.combined-places", view="inboxes", messages=(first.message_id,), mailboxes=(other,)).positions == (None,)  # the same id in another mailbox is another message
     with pytest.raises(UsageError, match="mailbox"):
         call(two.engine, "message.combined-places", view="inboxes", messages=(first.message_id,))
+
+
+def test_a_message_read_in_favorites_unread_stays_when_it_is_named(two: Two) -> None:
+    call(two.engine, "mail.fetch", account=two.a)
+    call(two.engine, "mail.fetch", account=two.b)
+    unread = call(two.engine, "message.combined", view="unread", limit=100)
+    read = unread[1]
+    call(two.engine, "message.flag", account=read.account, folder="Inbox", message=read.message_id, seen=True)
+    assert len(call(two.engine, "message.combined", view="unread", limit=100)) == len(unread) - 1
+    stay = {"stay_messages": (read.message_id,), "stay_mailboxes": (read.account,)}
+    assert [row.message_id for row in call(two.engine, "message.combined", view="unread", limit=100, **stay)] == [row.message_id for row in unread]
+    assert sum(group.count for group in call(two.engine, "message.combined-groups", view="unread", **stay)) == len(unread)
+    other = two.b if read.account == two.a else two.a
+    assert len(call(two.engine, "message.combined", view="unread", limit=100, stay_messages=(read.message_id,), stay_mailboxes=(other,))) == len(unread) - 1
+    with pytest.raises(UsageError, match="mailbox"):
+        call(two.engine, "message.combined", view="unread", stay_messages=(read.message_id,))
 
 
 def test_combined_views_merge_the_mailboxes_and_count_shared_mail_once(two: Two) -> None:

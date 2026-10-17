@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel, QPoint, QSettings, Qt
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPoint, QSettings, Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QHeaderView, QToolBar
 from pytestqt.qtbot import QtBot
@@ -14,9 +14,11 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.5.160"
+__version__ = "test_ui_columns.py 0.5.162"
 
 # --- Version history ----------------------------------------------------
+# v0.5.162: a message read in Favorites > Unread stays there after a sort and a fetch, until the view is left
+# v0.5.161: a delete spans no group header again, and the headers keep their bar
 # v0.5.160: After a new sort the whole row stays selected and Delete deletes it (folder, Favorites); several selected messages stay selected; a message chosen meanwhile wins; fetching the list again keeps the whole row; the list is never reset
 # v0.5.153: A new sort order keeps the selected message selected (folder, Favorites, a page not loaded yet)
 # v0.5.152: A click on a column header sorts a Favorites view too, with its group headers; the standard columns start with Flag, Unread, Attachment (0.5.150)
@@ -536,3 +538,52 @@ def test_fetching_the_list_again_keeps_the_whole_row_selected(world: World, qtbo
     wait(qtbot, lambda: not window._refetching and world.backend._pending == {})  # noqa: SLF001
     assert whole_rows_selected(world) == [chosen] and selected_message(world) == chosen
     assert resets == []
+
+
+def test_a_delete_spans_no_group_header_again_and_the_headers_keep_their_bar(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    window.act_show_groups.setChecked(True)
+    sort_by_subject(world)
+    sorted_by_subject(world, qtbot)
+    view, model = window.list_view, window.list_model
+    wait(qtbot, lambda: len(model.header_rows()) == 3)  # one heading per subject
+    spanned: list[int] = []
+    real = view.setFirstColumnSpanned
+
+    def counting(row: int, parent: QModelIndex, span: bool) -> None:
+        spanned.append(row)
+        real(row, parent, span)
+
+    monkeypatch.setattr(view, "setFirstColumnSpanned", counting)
+    gone = str(getattr(model.row_at(model.header_rows()[1] + 1), "message_id"))
+    world.call("message.delete", account=world.account_id, folder="Inbox", message=gone)
+    wait(qtbot, lambda: model.find(gone) < 0 and len(model.header_rows()) == 2)
+    assert spanned == []  # its heading went with it; the others keep their bar without being touched
+    assert all(view.isFirstColumnSpanned(row, QModelIndex()) for row in model.header_rows())
+
+
+def test_a_message_read_in_favorites_unread_stays_there_after_a_sort_and_a_fetch(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    window.settings.setValue("mark_read_delay_ms", 0)
+    window.apply_preferences()
+    show_favorites_unread(world, qtbot)
+    model = window.list_model
+    chosen = select_subject(world, qtbot, "Message 2")
+    wait(qtbot, lambda: "seen" in getattr(model.row_at(model.find(chosen)), "flags") and world.backend._pending == {})  # noqa: SLF001 - read where it is shown
+    sort_by_subject(world)
+    sorted_by_subject(world, qtbot)
+    assert model.find(chosen) >= 0 and model.message_count() == 3  # read here: it stays until the view is left
+    assert whole_rows_selected(world) == [chosen]
+    window._refetch_list()  # noqa: SLF001 - as after a change from outside
+    wait(qtbot, lambda: not window._refetching and world.backend._pending == {})  # noqa: SLF001
+    assert model.find(chosen) >= 0 and model.message_count() == 3 and whole_rows_selected(world) == [chosen]
+    show_favorites_unread_again = window.tree.currentIndex()
+    window.tree.setCurrentIndex(account_node(window))  # the view is left ...
+    wait(qtbot, lambda: model.spec is not None and model.spec.combined is None and world.backend._pending == {})  # noqa: SLF001
+    window.tree.setCurrentIndex(show_favorites_unread_again)  # ... and opened again: now the read message is gone
+    wait(qtbot, lambda: model.spec is not None and model.spec.combined == "unread" and model.message_count() == 2 and world.backend._pending == {})  # noqa: SLF001
+    assert model.find(chosen) < 0

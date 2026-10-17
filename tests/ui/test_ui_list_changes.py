@@ -11,9 +11,10 @@ from chrono_mail.ui.models import MessageListModel, ViewSpec
 from tests.ui.world import World, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_list_changes.py 0.5.156"
+__version__ = "test_ui_list_changes.py 0.5.163"
 
 # --- Version history ----------------------------------------------------
+# v0.5.163: messages that come in at once are placed with one question; messages gone from a part not loaded give one rearrange, never a reset
 # v0.5.156: Initial tests: the list applies each fact of the engine to its own rows, without fetching the view again (D-146 step 2)
 
 
@@ -115,7 +116,7 @@ def test_favorites_unread_takes_out_a_deleted_message_and_does_not_take_it_back_
 def test_a_search_of_all_folders_keeps_a_message_that_moved_and_puts_it_at_its_new_place(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, None, query="Message"))
     world.call("message.delete", account=world.account_id, folder="Inbox", message=ids(world)["Message 2"])
-    wait(qtbot, lambda: len(watched.subjects()) == 3 and watched.asked == ["message.locate"])
+    wait(qtbot, lambda: len(watched.subjects()) == 3 and watched.asked == ["message.places"])  # one question for the messages that came in
     assert watched.subjects() == ["Message 3", "Message 2", "Message 1"]
     assert str(getattr(watched.model.row_at(1), "folder")) == "Trash"
 
@@ -187,3 +188,25 @@ def test_a_message_that_was_not_loaded_goes_without_a_reset(world: World, qtbot:
     assert watched.model.message_count() == 2 and watched.resets == 0 and watched.asked == []
     wait(qtbot, lambda: watched.model.row_at(1, fetch=True) is not None)
     assert watched.subjects() == ["Message 3", "Message 2"]
+
+
+def test_messages_that_come_in_at_once_are_placed_with_one_question(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, "Inbox"))
+    for number in (4, 5, 6):
+        world.pop.messages[f"uid{number}"] = mail(number)
+    world.call("mail.fetch", account=world.account_id)  # three new messages, each told as a fact
+    wait(qtbot, lambda: watched.model.message_count() == 6 and world.backend._pending == {})  # noqa: SLF001
+    assert watched.asked == ["message.places"] and watched.resets == 0  # one question for all three, no fetch of the view
+    assert watched.subjects() == listed(world)
+
+
+def test_a_message_gone_from_a_part_not_loaded_under_headings_rearranges_once_and_never_resets(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(models, "PAGE_SIZE", 1)  # only the first message is loaded
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, "Inbox", sort="subject"), groups=True)
+    assert watched.model.row_at(watched.model.display_row(2)) is None
+    message_ids = ids(world)
+    world.call("message.delete", account=world.account_id, folder="Inbox", message=message_ids["Message 3"])
+    world.call("message.delete", account=world.account_id, folder="Inbox", message=message_ids["Message 2"])
+    wait(qtbot, lambda: watched.model.message_count() == 1 and world.backend._pending == {})  # noqa: SLF001
+    assert watched.resets == 0 and watched.asked.count("message.groups") == 1  # the one not loaded: one rearrange, never a reset
+    assert watched.headers() == ["Message 1"]

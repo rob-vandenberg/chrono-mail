@@ -97,16 +97,17 @@ exact version). Never build an installer from code that is not a pushed version.
 ### 3.3 A development environment (to run Chrono Mail from the code and to run the tests)
 
 ```powershell
-py -3.14 -m venv .venv
-.venv\Scripts\pip install -e ".[dev]"
-.venv\Scripts\chrono-mail          # the program
-.venv\Scripts\chrono-mail-cli --help   # the command line, the same commands as the window
+py -3.14 -m venv .venv-win
+.venv-win\Scripts\pip install -e ".[dev]"
+.venv-win\Scripts\chrono-mail          # the program
+.venv-win\Scripts\chrono-mail-cli --help   # the command line, the same commands as the window
 ```
 
-The `.venv` folder is git-ignored. On Windows, Chrono Mail keeps its passwords and its encryption key in the Windows
-Credential Manager (through `keyring`), and its settings and mail where `platformdirs` puts them for the user (see
-`src/chrono_mail/config/`). A development copy and an installed copy of the same user share that data: never run two
-copies at the same time (the program has no protection against that yet).
+The `.venv-win` folder is git-ignored (DEVELOPMENT uses this name, so it never mixes with the Linux `.venv`). On
+Windows, Chrono Mail keeps its passwords and its encryption key in the Windows Credential Manager (through `keyring`),
+and its settings and mail where `platformdirs` puts them for the user (see `src/chrono_mail/config/`). A development
+copy and an installed copy of the same user share that data. Since 0.5.144 (D-137) Chrono Mail runs once per user: a
+second start, also of the other copy, shows the window that runs already.
 
 ## 4. Read these files, in this order
 
@@ -146,10 +147,10 @@ copies at the same time (the program has no protection against that yet).
 
 ```powershell
 $env:QT_QPA_PLATFORM = "offscreen"                 # for the UI tests
-.venv\Scripts\pytest tests\test_engine_imap.py     # only the files related to the change
-.venv\Scripts\pytest tests\ui\test_ui_window.py    # this one always on its own
-.venv\Scripts\pyrefly check --min-severity warn    # must report 0 diagnostics
-.venv\Scripts\lint-imports                         # both contracts must be kept
+.venv-win\Scripts\pytest tests\test_engine_imap.py     # only the files related to the change
+.venv-win\Scripts\pytest tests\ui\test_ui_window.py    # this one always on its own
+.venv-win\Scripts\pyrefly check --min-severity warn    # must report 0 diagnostics
+.venv-win\Scripts\lint-imports                         # both contracts must be kept
 ```
 
 - **Live tests** (`pytest -m live tests\live`) talk to real servers and need the git-ignored files
@@ -207,5 +208,5 @@ powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 2. **Task 1.14** (ROADMAP.md): a Windows test run of Chrono Mail from the code. Check especially: the window and its icon
    in the taskbar, the Windows Credential Manager, the notification area icon, HTML mail, printing, sending and
    receiving, and the size sliders on a Windows display.
-3. Known gaps from STATUS.md that also matter on Windows: no protection against running twice; certificate exceptions
-   cannot be seen or removed per server in Settings.
+3. Known gaps from STATUS.md that also matter on Windows: certificate exceptions cannot be seen or removed per server
+   in Settings. (Running twice is prevented since 0.5.144, D-137.)

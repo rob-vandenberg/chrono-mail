@@ -3,9 +3,10 @@ import os
 import sys
 
 # --- Version ------------------------------------------------------------
-__version__ = "running.py 0.5.147"
+__version__ = "running.py 0.5.161"
 
 # --- Version history ----------------------------------------------------
+# v0.5.161: the Linux part says it is not for Windows, so the type check on Windows reports nothing
 # v0.5.147: Windows: every process above this one (parent, grandparent …) is skipped, not only the parent: a run from source is launcher, redirector, program
 # v0.5.144: Initial: whether Chrono Mail is already running for this user, by looking at the processes themselves (Linux and Windows)
 
@@ -46,6 +47,8 @@ def running_programs() -> list[int]:
 
 def _running_on_linux(ignored: set[int]) -> list[int]:
     """Every process has its name in /proc/<number>/comm and belongs to the user who owns /proc/<number>."""
+    if sys.platform == "win32":
+        return []  # never called there; it tells the type check on Windows that os.getuid exists below
     user = os.getuid()
     try:
         entries = list(os.scandir("/proc"))

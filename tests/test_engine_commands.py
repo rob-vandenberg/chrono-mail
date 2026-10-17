@@ -3,6 +3,7 @@ import sqlite3
 import sys
 import threading
 from collections.abc import Generator
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, override  # command results are command-specific dataclasses; the tests check their fields
@@ -12,17 +13,22 @@ import pytest
 from chrono_mail.config import ServerRole
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AuthenticationError, ConfigurationError, CryptoError, MessageFormatError, ProtocolError, StorageError
 from chrono_mail.engine import Engine, UsageError, build_registry
+from chrono_mail.engine.changes import Change
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.crypto import DataKey, InMemoryKeyStore
+from chrono_mail.store import Store
 from tests.enginefactory import make_engine
 from tests.fakepop3 import FakePop3Server
 from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.5.160"
+__version__ = "test_engine_commands.py 0.5.163"
 
 # --- Version history ----------------------------------------------------
+# v0.5.163: a POP3 check tells each new message as a fact
+# v0.5.162: a message read while shown stays in a search of unread mail when it is named in stay
+# v0.5.161: an action on one message (open, mark, move) never lists its whole folder; the test that makes an index old closes its connection (on Windows the open file kept the rebuild from replacing it)
 # v0.5.160: message.places gives the places of several messages, as message.list and message.search show them
 # v0.5.154: The index is opened only inside its lock; the permission check of the key export only where the system has those bits
 # v0.5.153: message.position gives the place message.list shows a message at
@@ -383,7 +389,7 @@ def test_commands_that_open_an_old_index_at_once_all_succeed(setup: Setup) -> No
     call(setup.engine, "mail.fetch", account=setup.account_id)
     call(setup.engine, "account.set-storage", account=setup.account_id, storage="local")  # the account shares the Local Folders index
     path = setup.engine.directories.index_file(LOCAL_ACCOUNT_ID)
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:  # closed too, not only committed: on Windows an open file cannot be replaced
         connection.execute("UPDATE meta SET value = '1' WHERE key = 'schema'")  # an old format: the next command rebuilds it
     results: list[object] = []
 
@@ -730,6 +736,48 @@ def test_the_position_of_a_message_is_where_message_list_shows_it(setup: Setup) 
                 found = call(setup.engine, "message.position", account=setup.account_id, folder="Inbox", message=message_id, sort=sort, oldest_first=oldest_first)
                 assert found.position == place, (sort, oldest_first)
     assert call(setup.engine, "message.position", account=setup.account_id, folder="Sent", message=listed[0]).position is None  # not in that folder
+
+
+def test_a_pop3_check_tells_each_new_message_as_a_fact(setup: Setup) -> None:
+    told: list[Change] = []
+    setup.engine.changed = told.append
+    result = call(setup.engine, "mail.fetch", account=setup.account_id)
+    added = [change for change in told if change.kind == "added"]
+    assert len(added) == result.downloaded > 0 and all(change.row is not None and change.folder == "Inbox" for change in added)
+    assert not [change for change in told if change.kind == "mailbox_changed"]
+
+
+def test_an_action_on_one_message_never_lists_its_folder(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    first, second = (row.message_id for row in call(setup.engine, "message.list", account=setup.account_id).messages[:2])
+
+    def listed(store: Store, folder_path: tuple[str, ...]) -> list[object]:
+        raise AssertionError("an action on one message listed its whole folder")
+
+    monkeypatch.setattr(Store, "list_messages", listed)
+    call(setup.engine, "message.show", account=setup.account_id, folder="Inbox", message=first)  # opening reads the flags
+    call(setup.engine, "message.flag", account=setup.account_id, folder="Inbox", message=first, flagged=True)
+    moved = call(setup.engine, "message.move", account=setup.account_id, folder="Inbox", message=second, target="Trash")
+    assert moved is not None
+    monkeypatch.undo()
+    flags = {row.message_id: row.flags for row in call(setup.engine, "message.list", account=setup.account_id).messages}
+    assert "flagged" in flags[first] and second not in flags
+
+
+def test_a_message_read_while_shown_stays_in_a_search_of_unread_mail(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    unread = [row.message_id for row in call(setup.engine, "message.search", account=setup.account_id, folder="Inbox", unread=True)]
+    read = unread[0]
+    call(setup.engine, "message.flag", account=setup.account_id, folder="Inbox", message=read, seen=True)
+    values = {"account": setup.account_id, "folder": "Inbox", "unread": True}
+    assert read not in [row.message_id for row in call(setup.engine, "message.search", **values)]
+    kept = [row.message_id for row in call(setup.engine, "message.search", stay=(read,), **values)]
+    assert kept == unread  # the same messages in the same order: the read one stays where it was
+    assert sum(group.count for group in call(setup.engine, "message.groups", stay=(read,), **values)) == len(unread)
+    assert call(setup.engine, "message.places", stay=(read,), messages=(read,), **values).positions == (0,)
+    assert [row.message_id for row in call(setup.engine, "message.search", account=setup.account_id, folder="Inbox", stay=(read,))] == [
+        row.message_id for row in call(setup.engine, "message.search", account=setup.account_id, folder="Inbox")
+    ]  # without a filter of marks, stay changes nothing
 
 
 def test_the_places_of_several_messages_are_where_message_list_and_message_search_show_them(setup: Setup) -> None:

@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,9 +13,10 @@ from tests.test_engine_commands import Setup, call, first_id, setup  # noqa: F40
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_export.py 0.0.22"
+__version__ = "test_engine_export.py 0.5.161"
 
 # --- Version history ----------------------------------------------------
+# v0.5.161: the root check asks for the user id only where the system has one (the file failed to load on Windows)
 # v0.0.22: Initial export, source and plain text tests
 
 
@@ -54,7 +56,7 @@ def test_export_to_an_impossible_place_fails_cleanly(setup: Setup, tmp_path: Pat
     assert not [path for path in tmp_path.rglob('*') if path.name.endswith(('.part', '.eml'))]
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root can write anywhere")
+@pytest.mark.skipif(sys.platform != "win32" and os.geteuid() == 0, reason="root can write anywhere")  # Windows has no geteuid
 def test_export_into_a_read_only_folder_fails_cleanly(setup: Setup, tmp_path: Path) -> None:
     message = stored(setup, raw_message(subject="New", message_id="<e4@x>"))
     locked = tmp_path / "locked"

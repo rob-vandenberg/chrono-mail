@@ -1,3 +1,4 @@
+import bisect
 import json
 import re
 from collections.abc import Callable
@@ -95,9 +96,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.160"
+__version__ = "mainwindow.py 0.5.161"
 
 # --- Version history ----------------------------------------------------
+# v0.5.161: only new group headers are spanned (not every header after every change)
 # v0.5.160: a new sort, and fetching the list again after a change from outside, rearrange the list in place: Qt's selection moves with each message (whole rows, never one cell); the hand-made reselect is gone
 # v0.5.158: the folder list follows the facts (numbers per folder, a folder made, renamed or deleted); a change from outside fetches only the mailbox it concerns, once, one at a time; no reload after a check, an import, sending or tags (D-146 step 4)
 # v0.5.157: the facts of the engine drive the list (no reload after an action); an action takes the messages selected at the key press, the selection and the reading pane move at once, messages with an action under way are greyed (D-146 step 3)
@@ -838,6 +840,7 @@ class MainWindow(QMainWindow):
         self.act_conversations.toggled.connect(self._toggle_conversations)
         self.act_show_groups.toggled.connect(self._toggle_groups)
         self.list_model.groups_changed.connect(self._span_group_headers)
+        self.list_model.header_rows_added.connect(self._span_new_headers)
         self.list_model.modelReset.connect(self._span_group_headers)  # a reset (another layout, other columns) forgets the spans
         self.list_view.header_clicked.connect(self.list_model.toggle_group)
         self.conversation_bar.message_chosen.connect(self._show_conversation_member)
@@ -938,8 +941,15 @@ class MainWindow(QMainWindow):
         self._apply_view()
 
     def _span_group_headers(self) -> None:
-        """A group header is one bar over all columns (the view keeps a span with its row as rows come and go)."""
+        """A group header is one bar over all columns: every header, after a reset or a new layout (the view keeps a span
+        with its row as rows come and go, so a change of single rows does not come here)."""
         for row in self.list_model.header_rows():
+            self.list_view.setFirstColumnSpanned(row, QModelIndex(), True)
+
+    def _span_new_headers(self, first: int, last: int) -> None:
+        """Rows came in: only the new headers among them get their bar."""
+        starts = self.list_model.header_rows()
+        for row in starts[bisect.bisect_left(starts, first):bisect.bisect_right(starts, last)]:
             self.list_view.setFirstColumnSpanned(row, QModelIndex(), True)
 
     def _toggle_conversations(self, on: bool) -> None:

@@ -25,9 +25,10 @@ from chrono_mail.index.model import (
 from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS, UPGRADE_6_TO_7
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.5.160"
+__version__ = "index.py 0.5.162"
 
 # --- Version history ----------------------------------------------------
+# v0.5.162: a search filter can name messages that stay although they no longer match unread, flagged or the tag
 # v0.5.160: positions: where several messages stand in a folder in the chosen order, in one pass
 # v0.5.153: position: where a message stands in a folder in the chosen order
 # v0.5.134: Tags: kept per message, found with a filter or tag: in a search; an index of format 6 is upgraded in place
@@ -546,10 +547,22 @@ class Index:
         if folder is not None:
             conditions.append(f"{steer}m.folder = ?")
             parameters.append(_folder_key(folder))
+        marks: list[str] = []  # the conditions on what a person changes while a view shows the message
         if filters.unread is not None:
-            conditions.append("(m.flags & 1) = 0" if filters.unread else "(m.flags & 1) != 0")
+            marks.append("(m.flags & 1) = 0" if filters.unread else "(m.flags & 1) != 0")
         if filters.flagged is not None:
-            conditions.append("(m.flags & 4) != 0" if filters.flagged else "(m.flags & 4) = 0")
+            marks.append("(m.flags & 4) != 0" if filters.flagged else "(m.flags & 4) = 0")
+        mark_values: list[object] = []
+        if filters.tag:
+            marks.append("m.store_id IN (SELECT store_id FROM message_tags WHERE tag = ?)")
+            mark_values.append(" ".join(filters.tag.split()).casefold())
+        if marks and filters.stay:  # read, unflagged or untagged while shown: it stays until the view is left
+            stay = sorted(filters.stay)
+            conditions.append(f"(({' AND '.join(marks)}) OR m.store_id IN ({', '.join('?' * len(stay))}))")
+            parameters.extend((*mark_values, *stay))
+        else:
+            conditions.extend(marks)
+            parameters.extend(mark_values)
         if filters.has_attachments is not None:
             conditions.append("m.has_attachments = ?")
             parameters.append(int(filters.has_attachments))
@@ -565,7 +578,7 @@ class Index:
                 " AND (COALESCE(n.date, -4611686018427387904) > COALESCE(m.date, -4611686018427387904)"
                 " OR (COALESCE(n.date, -4611686018427387904) = COALESCE(m.date, -4611686018427387904) AND n.id > m.id)))"
             )
-        for tag in (*wanted_tags, *((filters.tag,) if filters.tag else ())):
+        for tag in wanted_tags:
             conditions.append("m.store_id IN (SELECT store_id FROM message_tags WHERE tag = ?)")
             parameters.append(" ".join(tag.split()).casefold())
         for tag in excluded_tags:

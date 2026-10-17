@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from chrono_mail.config import AccountSettings, ServerRole
-from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag
+from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_addressbook import AddressesParameters, contact_addresses
 from chrono_mail.engine.commands_emclient import fingerprint_of_raw, known_messages
@@ -20,18 +20,20 @@ from chrono_mail.engine.schedule import SNOOZE_GROUPS, SNOOZED_FILE, SNOOZED_FOL
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
-from chrono_mail.engine.session import OUTBOX, Engine, quiet_command
+from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.index.model import DateBounds, GroupCount
 from chrono_mail.mime import Address, Attachment, OutgoingMessage, ParsedMessage, build_message, parse_message
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
-from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
+from chrono_mail.sync import ImapReport, ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.160"
+__version__ = "commands_mail.py 0.5.163"
 
 # --- Version history ----------------------------------------------------
+# v0.5.163: a mail check tells each change as a fact (new, removed, marks, tags, kept in Recovered, folders made or gone) instead of one "mailbox changed"; message.places can give the group heading of each message (headings)
+# v0.5.162: stay: messages a view keeps although they no longer match its unread, flagged or tag filter (read, unflagged or untagged while it showed them)
 # v0.5.160: message.places: where several messages stand in a folder or a search, the order worked out once (a new sort keeps the selected messages)
 # v0.5.158: a sent message is reported where it is stored (Sent, or the Outbox when it failed); a mail check that made folders reports its mailbox as changed
 # v0.5.156: message.locate: where a message stands in a folder or a search, and under which group heading (a list puts a message that came in at its place)
@@ -187,8 +189,8 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
                 step=lambda text: engine.activity(account_id, "receive", text, None, None),
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
-        if report.downloaded:
-            engine.mailbox_changed(mailbox.store.account_id)  # the sync stored mail past the mailbox's operations: views of it fetch again
+        for reference in report.new_references:
+            mailbox.report_added(reference)  # stored past the mailbox's operations: each new message is told as a fact (D-150)
         if report.new_references:
             engine.activity(account_id, "receive", "Applying rules", None, None)
         ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
@@ -218,7 +220,7 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
         link.validity.clear()
         state = ImapState(engine.directories.imap_state_file(mailbox.account_id), durable=engine.durable)
         account_id = mailbox.account_id
-        folders_before = {folder.path for folder in mailbox.folders()}
+        folders_before = {folder.path: folder for folder in mailbox.folders()}
 
         def downloading(folder: str, done: int, total: int) -> None:
             engine.progress(f"Downloading {folder}", done, total)
@@ -232,8 +234,7 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
                 progress=downloading, step=lambda text: engine.activity(account_id, "receive", text, None, None),
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
-    if any(item.downloaded or item.flags_updated or item.removed or item.recovered for item in report.folders) or {folder.path for folder in mailbox.folders()} != folders_before:
-        engine.mailbox_changed(mailbox.store.account_id)  # what the server changed came in past the mailbox's operations
+    _report_sync(mailbox, report, folders_before)
     inbox = mailbox.role_folder(FolderRole.INBOX)
     if report.new_references:
         engine.activity(account_id, "receive", "Applying rules", None, None)
@@ -242,6 +243,29 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
     remarks = (*report.failed, *report.notes, *notes, *ruled.failed)
     blocked = tuple(BlockedFolder(item.folder, item.blocked, item.blocked_count) for item in report.folders if item.blocked is not None)
     return FetchResult(report.downloaded, 0, tuple(remarks), 0, None, 0, report.aborted, ruled.actions, blocked)
+
+
+def _report_sync(mailbox: Mailbox, report: ImapReport, folders_before: dict[tuple[str, ...], Folder]) -> None:
+    """What the sync changed here came in past the mailbox's operations: each change is told as a fact, as an action of
+    the person is (D-150): folders made first, then the messages, then folders that went."""
+    folders_after = {folder.path: folder for folder in mailbox.folders()}
+    for path, folder in folders_after.items():
+        if path not in folders_before:
+            mailbox.report_folder_made(folder)
+    for item in report.folders:
+        for reference in item.new_references:
+            mailbox.report_added(reference)
+        for reference, flags, was_unread in item.flag_changes:
+            mailbox.report_flags(reference, flags, was_unread)
+        for reference, tags in item.tag_changes:
+            mailbox.report_tags(reference, tags)
+        for reference, was_unread in item.removed_messages:
+            mailbox.report_removed(reference, was_unread)
+        for before, now in item.recovered_messages:
+            mailbox.report_moved(before, now)
+    for path in folders_before:
+        if path not in folders_after:
+            mailbox.report_folder_deleted(path)
 
 
 @dataclass(frozen=True, slots=True)
@@ -647,6 +671,7 @@ class SearchParameters:
     oldest_first: bool = field(default=False, metadata=option("Oldest (or smallest, or A first) at the top"))
     offset: int = field(default=0, metadata=option("How many results to skip (not for message.groups)"))
     limit: int = field(default=50, metadata=option("How many results to show (not for message.groups)"))
+    stay: tuple[str, ...] = field(default=(), metadata=option("A message that stays although it no longer matches unread, flagged or tag: it was changed while shown (repeat for more)"))
 
 
 def date_bounds(now: datetime) -> DateBounds:
@@ -678,6 +703,7 @@ def _search_filter(parameters: SearchParameters) -> SearchFilter:
         unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments,
         date_from=_day(parameters.date_from, "date_from", end=False), date_to=_day(parameters.date_to, "date_to", end=True),
         minimum_size=parameters.minimum_size, maximum_size=parameters.maximum_size, newest_per_thread=parameters.conversations, tag=parameters.tag,
+        stay=frozenset(parameters.stay),
     )
 
 
@@ -755,11 +781,20 @@ def message_locate(engine: Engine, parameters: LocateParameters) -> LocateResult
 @dataclass(frozen=True, slots=True)
 class PlacesParameters(SearchParameters):
     messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+    headings: bool = field(default=False, metadata=option("Also the group heading each message falls under"))
 
 
 @dataclass(frozen=True, slots=True)
 class PlacesResult:
     positions: tuple[int | None, ...]  # for each message asked, in the same order: where it stands (0 is the first), None when it is not in the view
+    group_keys: tuple[str, ...] = ()  # with headings: for each message, the key of its group heading ("" when it has none)
+    group_names: tuple[str, ...] = ()
+
+
+def with_headings(positions: tuple[int | None, ...], groups: tuple[GroupCount, ...]) -> PlacesResult:
+    """The places with the group heading of each (worked out from the groups in list order with their counts)."""
+    found = [group_of(groups, position) if position is not None else ("", "") for position in positions]
+    return PlacesResult(positions, tuple(key for key, _ in found), tuple(name for _, name in found))
 
 
 def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult:
@@ -770,14 +805,20 @@ def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult
     if plain and parameters.folder is not None:
         with open_mailbox(engine, parameters.account) as mailbox:
             found = mailbox.index.positions(mailbox.folder(parameters.folder), parameters.messages, _sort_field(parameters.sort), not parameters.oldest_first)
-        return PlacesResult(tuple(found.get(message_id) for message_id in parameters.messages))
+        return _headed(engine, parameters, tuple(found.get(message_id) for message_id in parameters.messages))
     if parameters.folder is not None and not parameters.query and _search_filter(parameters) == SearchFilter():
         with open_mailbox(engine, parameters.account) as mailbox:
             ordered = _ordered_ids(engine, mailbox, mailbox.folder(parameters.folder), parameters.sort, parameters.oldest_first)
     else:
         ordered = [row.message_id for row in message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))]
     places = {message_id: number for number, message_id in enumerate(ordered)}
-    return PlacesResult(tuple(places.get(message_id) for message_id in parameters.messages))
+    return _headed(engine, parameters, tuple(places.get(message_id) for message_id in parameters.messages))
+
+
+def _headed(engine: Engine, parameters: PlacesParameters, positions: tuple[int | None, ...]) -> PlacesResult:
+    if not parameters.headings or all(position is None for position in positions):
+        return PlacesResult(positions)
+    return with_headings(positions, message_groups(engine, parameters))
 
 
 def message_thread(engine: Engine, parameters: MessageParameters) -> tuple[MessageRow, ...]:
@@ -959,8 +1000,8 @@ def message_compose(engine: Engine, parameters: ComposeParameters) -> ComposeRes
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register("mail.fetch", "Download new messages from the POP3 server", AccountParameters, quiet_command(mail_fetch))
-    registry.register("mail.settle", "Answer for an IMAP folder that a safety rule held back (may delete on the server or here)", SettleParameters, quiet_command(mail_settle), destructive=True)
+    registry.register("mail.fetch", "Download new messages from the server (POP3), or synchronise with it (IMAP)", AccountParameters, mail_fetch)  # each change is told as a fact (D-150)
+    registry.register("mail.settle", "Answer for an IMAP folder that a safety rule held back (may delete on the server or here)", SettleParameters, mail_settle, destructive=True)
     registry.register("mail.send", "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send)
     registry.register("message.list", "List the messages of a folder", ListParameters, message_list)
     registry.register("message.position", "Where a message stands in a folder in a sort order (0 is the first)", PositionParameters, message_position)

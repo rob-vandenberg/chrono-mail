@@ -6,11 +6,13 @@ import pytest
 from chrono_mail.core import CryptoError, FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.crypto import generate_data_key
 from chrono_mail.store import Store
+from chrono_mail.store.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_store_store.py 0.5.133"
+__version__ = "test_store_store.py 0.5.161"
 
 # --- Version history ----------------------------------------------------
+# v0.5.161: flags: the flags of one message from the name of its file
 # v0.5.133: written_together: a batch made safe on disk at once
 # v0.0.7: Initial store tests
 
@@ -129,6 +131,18 @@ def test_flags_are_renames_and_the_message_moves_to_cur(tmp_path: Path) -> None:
     assert store.read(reference) == RAW
     store.set_flags(reference, frozenset())
     assert store.list_messages(INBOX)[0].relative_path == f"cur/{reference.store_id}!2,"
+
+
+def test_the_flags_of_one_message_come_from_its_file_name(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    reference = store.deliver(INBOX, RAW)
+    other = store.deliver(INBOX, RAW, flags=frozenset({MessageFlag.SEEN}))
+    assert store.flags(reference) == frozenset() and store.flags(other) == {MessageFlag.SEEN}
+    path = store.set_flags(reference, frozenset({MessageFlag.FLAGGED, MessageFlag.REPLIED}))
+    assert store.flags(reference) == store.flags(reference, hint=path) == {MessageFlag.FLAGGED, MessageFlag.REPLIED}
+    store.delete(other)
+    with pytest.raises(MessageNotFoundError):
+        store.flags(other)
 
 
 def test_unseen_message_with_no_flags_stays_in_new(tmp_path: Path) -> None:
