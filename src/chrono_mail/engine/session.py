@@ -25,9 +25,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 0.5.159"
+__version__ = "session.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: place_lock: one lock per mailbox, held by a change from its index write until its fact is told and by a question while it reads (D-151); is_quiet
 # v0.5.159: a quiet big job tells "collection_changed" for calendars, task lists and address books, "mailbox_changed" for mail
 # v0.5.155: changed and report: the facts of every change of mail (D-146); quietly: a big job reports one "mailbox changed" per mailbox at its end
 # v0.5.154: open_index opens the index only inside its lock: on Windows a command that opened it while another replaced its files made one of them fail
@@ -143,6 +144,8 @@ class Engine:
     activity: Activity = field(default=_no_activity)  # the steps of a mail check or a send of one account (connecting, listing, downloading …)
     changed: Callable[[Change], None] = field(default=_no_change)  # every fact of a change of mail, as it happens (D-146)
     _quiet: threading.local = field(default_factory=threading.local, init=False, repr=False)
+    _place_locks: dict[str, threading.RLock] = field(default_factory=dict, init=False, repr=False)
+    _place_locks_guard: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _imap_links: dict[str, ImapLink] = field(default_factory=dict, init=False, repr=False)
     _imap_links_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)
@@ -158,6 +161,17 @@ class Engine:
         summary = "collection_changed" if change.kind.startswith(("item_", "collection_")) else "mailbox_changed"
         if (change.mailbox, summary) not in quiet.touched:
             quiet.touched.append((change.mailbox, summary))
+
+    def place_lock(self, place: str) -> threading.RLock:
+        """The lock of one mailbox (a place where mail is kept): a change holds it from writing the index until its fact is
+        told, and a question about the mailbox's messages holds it while it reads the index. So an answer never counts a
+        change that has not been told yet, and the list can trust that it describes what it knows (D-151)."""
+        with self._place_locks_guard:
+            return self._place_locks.setdefault(place, threading.RLock())
+
+    def is_quiet(self) -> bool:
+        """Whether this thread runs a big job quietly (its changes are told as one "mailbox changed" at its end)."""
+        return self._quiet_state().depth > 0
 
     def mailbox_changed(self, mailbox: str) -> None:
         """A big job changed this mailbox without going through the mailbox's operations (a sync, a rebuilt index)."""

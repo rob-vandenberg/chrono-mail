@@ -12,9 +12,10 @@ from chrono_mail.ui.sourcedialog import SourceDialog
 from tests.ui.world import World, answer_save_file, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_export.py 0.0.22"
+__version__ = "test_ui_export.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.0.22: Initial save as, view source and print tests
 
 
@@ -25,7 +26,7 @@ def started(qtbot: QtBot, world: World) -> World:
 
 
 def select(world: World, row: int) -> None:
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(row))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(row, 0))
 
 
 def test_save_as_writes_an_eml_file_named_after_the_subject(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,7 +137,7 @@ def test_the_print_document_has_only_our_markup_and_escapes_everything(world: Wo
 
 def test_actions_without_a_selection_do_nothing(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(-1))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(-1, 0))
     for action in (world.window.act_save_as, world.window.act_source, world.window.act_print):
         action.trigger()
     qtbot.wait(100)

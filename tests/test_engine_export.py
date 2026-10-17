@@ -13,9 +13,10 @@ from tests.test_engine_commands import Setup, call, first_id, setup  # noqa: F40
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_export.py 0.5.161"
+__version__ = "test_engine_export.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: the mode of the exported file is checked only where files have mode bits; the read-only folder test is skipped on Windows; the root check in a function the type check for Windows understands
 # v0.5.161: the root check asks for the user id only where the system has one (the file failed to load on Windows)
 # v0.0.22: Initial export, source and plain text tests
 
@@ -32,7 +33,8 @@ def test_export_writes_the_message_exactly_as_received(setup: Setup, tmp_path: P
     target.parent.mkdir()
     result = call(setup.engine, "message.export", account=setup.account_id, folder="Inbox", message=message, path=str(target))
     assert result.size == len(raw) and target.read_bytes() == raw
-    assert oct(target.stat().st_mode & 0o777) == "0o600"  # a copy of private mail is private
+    if sys.platform != "win32":  # Windows has no such mode bits: the file is private through the rights of the user's folder
+        assert oct(target.stat().st_mode & 0o777) == "0o600"  # a copy of private mail is private
     assert [path.name for path in target.parent.iterdir()] == ["keep.eml"]  # no leftovers
 
 
@@ -56,7 +58,13 @@ def test_export_to_an_impossible_place_fails_cleanly(setup: Setup, tmp_path: Pat
     assert not [path for path in tmp_path.rglob('*') if path.name.endswith(('.part', '.eml'))]
 
 
-@pytest.mark.skipif(sys.platform != "win32" and os.geteuid() == 0, reason="root can write anywhere")  # Windows has no geteuid
+def running_as_root() -> bool:
+    if sys.platform != "win32":  # Windows has no geteuid; inside this block the type check for Windows skips it
+        return os.geteuid() == 0
+    return False
+
+
+@pytest.mark.skipif(sys.platform == "win32" or running_as_root(), reason="Windows cannot make a folder read-only this way; root can write anywhere")
 def test_export_into_a_read_only_folder_fails_cleanly(setup: Setup, tmp_path: Path) -> None:
     message = stored(setup, raw_message(subject="New", message_id="<e4@x>"))
     locked = tmp_path / "locked"

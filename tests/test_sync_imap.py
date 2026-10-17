@@ -1,23 +1,26 @@
 import json
 from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from chrono_mail.core import ConnectionSecurity, FolderRole, MessageFlag, ServerSettings, StorageError
+from chrono_mail.core import ConnectionSecurity, Folder, FolderRole, MessageFlag, MessageRef, ServerSettings, StorageError
 from chrono_mail.crypto import generate_data_key
 from chrono_mail.index import Index
 from chrono_mail.protocols.imap import FolderEntry, ImapClient, ImapLimits
 from chrono_mail.store import Store
 from chrono_mail.sync import FolderReport, ImapReport, ImapState, ImapSyncOptions, plan_folders, sync_imap
+from chrono_mail.sync.announce import SILENT, Announcer
 from tests.fakeimap import FakeImapServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_imap.py 0.4.119"
+__version__ = "test_sync_imap.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: each change made here is told in one step with its index write (new, marks, removed, a folder made)
 # v0.4.119: A folder held back by a safety rule is reported; the person's four answers
 # v0.3.114: Messages gone on both sides are forgotten without a warning
 # v0.0.44: Folder choices, roles and check interval per account
@@ -27,6 +30,45 @@ __version__ = "test_sync_imap.py 0.4.119"
 
 INBOX = ("Inbox",)
 LIMITS = ImapLimits(read_timeout_seconds=3, connect_timeout_seconds=3)
+
+
+class Recording:
+    """An announcer that notes each change it is told about, whether it was told inside changing(), and whether the index
+    already had the change then (the index write and the fact are one step, D-151)."""
+
+    def __init__(self, index: Index) -> None:
+        self.index = index
+        self.inside = 0
+        self.told: list[tuple[str, str, bool, bool]] = []  # kind, store id, inside changing, in the index
+
+    @contextmanager
+    def changing(self) -> Generator[None]:
+        self.inside += 1
+        try:
+            yield
+        finally:
+            self.inside -= 1
+
+    def _note(self, kind: str, reference: MessageRef) -> None:
+        self.told.append((kind, reference.store_id, self.inside > 0, self.index.get(reference.store_id) is not None))
+
+    def added(self, reference: MessageRef) -> None:
+        self._note("added", reference)
+
+    def removed(self, reference: MessageRef, was_unread: bool) -> None:
+        self._note("removed", reference)
+
+    def flags(self, reference: MessageRef, flags: frozenset[MessageFlag], was_unread: bool) -> None:
+        self._note("flags", reference)
+
+    def tags(self, reference: MessageRef, tags: tuple[str, ...]) -> None:
+        self._note("tags", reference)
+
+    def moved(self, before: MessageRef, now: MessageRef) -> None:
+        self._note("moved", now)
+
+    def folder_made(self, folder: Folder) -> None:
+        self.told.append(("folder_made", "/".join(folder.path), self.inside > 0, True))
 
 
 def mail(number: int) -> bytes:
@@ -41,10 +83,10 @@ class World:
     server: FakeImapServer
     path: Path
 
-    def sync(self, options: ImapSyncOptions = ImapSyncOptions(), state: ImapState | None = None) -> ImapReport:
+    def sync(self, options: ImapSyncOptions = ImapSyncOptions(), state: ImapState | None = None, announcer: Announcer = SILENT) -> ImapReport:
         settings = ServerSettings("127.0.0.1", self.server.port, ConnectionSecurity.NONE, "user")
         with ImapClient(settings, "secret", LIMITS) as client:
-            return sync_imap(client, self.store, self.index, self.state if state is None else state, options)
+            return sync_imap(client, self.store, self.index, self.state if state is None else state, options, announcer=announcer)
 
     def messages(self, folder: tuple[str, ...]) -> dict[str, tuple[bytes, frozenset[MessageFlag]]]:
         return {m.ref.store_id: (self.store.read(m.ref), m.flags) for m in self.store.list_messages(folder)}
@@ -658,3 +700,24 @@ def test_the_choices_survive_the_file_and_compaction(tmp_path: Path) -> None:
     assert state.compact_if_needed()
     again = ImapState(tmp_path / "state.log", durable=False)
     assert (again.hidden, again.forced, again.roles) == ({"A"}, {"B"}, {"C": "junk"}) and again.ignored_lines == 0
+
+
+def test_each_change_made_here_is_told_in_one_step_with_its_index_write(world: World) -> None:
+    first = world.server.add("INBOX", mail(1))
+    second = world.server.add("INBOX", mail(2))
+    recording = Recording(world.index)
+    world.sync(announcer=recording)
+    assert [kind for kind, _, _, _ in recording.told if kind != "folder_made"] == ["added", "added"]  # and the server's folders made here
+    assert all(inside and indexed for kind, _, inside, indexed in recording.told if kind == "added")
+    recording.told.clear()
+    with world.server.lock:
+        next(message for message in world.server.folders["INBOX"].messages if message.uid == first).flags.add("\\Seen")
+    world.server.remove("INBOX", second)
+    world.server.add("Projects", mail(3))
+    world.sync(announcer=recording)
+    kinds = [kind for kind, _, _, _ in recording.told]
+    assert sorted(kinds) == ["added", "flags", "folder_made", "removed"]
+    assert all(inside for kind, _, inside, _ in recording.told if kind != "folder_made")
+    assert all(indexed for kind, _, _, indexed in recording.told if kind in ("added", "flags"))
+    assert not next(indexed for kind, _, _, indexed in recording.told if kind == "removed")  # gone from the index when told
+    assert kinds.index("folder_made") < kinds.index("added")  # the folder before its mail

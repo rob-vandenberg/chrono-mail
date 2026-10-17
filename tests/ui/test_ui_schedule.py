@@ -14,9 +14,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 0.5.145"
+__version__ = "test_ui_schedule.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.145: the Refresh menu checks as the person's own choice (manual)
 # v0.2.101: Cancel snooze
 # v0.2.100: The Snoozed until column of the Snoozed folder, its sorting, groups and the cards
@@ -104,7 +105,7 @@ def test_the_window_sends_what_is_due_and_wakes_snoozed_mail(world: World, qtbot
 def test_snoozing_from_the_window(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(0))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
     real_clock(world)
     choose_time(monkeypatch, in_hours(5))
     world.window.act_snooze.trigger()
@@ -210,7 +211,7 @@ def test_the_snooze_button_offers_ready_made_times(world: World, qtbot: QtBot) -
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
     button = world.window.toolbar.widgetForAction(world.window.act_snooze)
     assert isinstance(button, QToolButton) and button.text() == "Snooze" and button.popupMode() == QToolButton.ToolButtonPopupMode.InstantPopup and button.menu() is world.window.snooze_menu
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(0))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
     real_clock(world)
     world.window._fill_snooze_menu()  # noqa: SLF001
     texts = [action.text() for action in world.window.snooze_menu.actions()]
@@ -329,7 +330,7 @@ def test_cancel_snooze_brings_a_message_back_now(world: World, qtbot: QtBot) -> 
     window._fill_snooze_menu()  # noqa: SLF001
     assert window.snooze_menu.actions()[0] is window.act_cancel_snooze
     target = str(getattr(window.list_model.row_at(0), "message_id"))
-    window.list_view.setCurrentIndex(window.list_model.index(0))
+    window.list_view.setCurrentIndex(window.list_model.index(0, 0))
     window.act_cancel_snooze.trigger()
     wait(qtbot, lambda: window.list_model.rowCount() == 2)
     inbox = world.call("message.list", account=world.account_id, folder="Inbox").messages

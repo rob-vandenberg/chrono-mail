@@ -17,9 +17,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 0.5.163"
+__version__ = "models.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: an answer is used only when no fact about the view came after it was asked (_mark, D-151); every row says it never has children; the index override is gone
 # v0.5.163: messages that come in at once are taken in with one question (message.places with headings); messages that went from a part not loaded give one rearrange, never a reset
 # v0.5.162: a message read, unflagged or untagged in a view that shows only such messages stays there until the view is left, also after a sort or a fetch (the engine is told which, D-149)
 # v0.5.161: header_rows_added: only the rows where new group headers came are announced (the window spans those, not all headers after every change)
@@ -145,6 +146,7 @@ class _Rows:
     exhausted: bool = False
     loading_more: bool = False
     shifts: int = 0  # changes that moved places (a row in or out): an answer asked for before one is asked for again
+    heard: int = 0  # facts of the engine about this view's mail: an answer asked for before one may or may not count it (D-151)
 
 
 def _filters_marks(spec: ViewSpec) -> bool:
@@ -192,6 +194,8 @@ class MessageListModel(QAbstractTableModel):
         self._stay: dict[tuple[str, str], None] = {}  # messages read, unflagged or untagged while this view showed them: they stay until it is left
         self._arriving: list[object] = []  # facts of messages that came in, taken in together (a mail check brings several at once)
         self._arrival_planned: bool = False
+        self._in_flight: int = 0  # messages that came in whose places are being asked: heard, but not in the rows yet
+        self._waiting_pages: set[int] = set()  # pages asked while messages heard were not placed yet: asked again once they are
         self._rearrange_planned: bool = False  # a message went from a part not loaded: one rearrange for all of them
         self.selected_rows: Callable[[], list[int]] = lambda: []  # the rows selected in the window and its current row (a new order keeps them)
         self._folded: dict[tuple[str, str | None, str], set[str]] = {}  # per folder (or combined view) and sort order: the folded groups, until the program closes
@@ -226,6 +230,7 @@ class MessageListModel(QAbstractTableModel):
         self.pending.clear()
         self._stay.clear()  # the view is left: what was changed in it no longer stays
         self._arriving.clear()
+        self._waiting_pages.clear()
         self._rearrange_planned = False
         self.settled = spec is None or (self.settled and spec == self._spec and self._available() == 0)  # an empty view reloaded stays settled; one with messages waits for them
         self.beginResetModel()
@@ -380,13 +385,13 @@ class MessageListModel(QAbstractTableModel):
             return
         target: ViewSpec = spec
         self._generation += 1  # answers asked for the old order (pages, more rows) are no longer wanted
-        generation, shifts = self._generation, self._rows.shifts
+        generation, mark = self._generation, self._mark()
         kept = self._kept_messages()
 
         def still_wanted() -> bool:
             if generation != self._generation:
                 return False  # another view or another order was asked for meanwhile
-            if shifts != self._rows.shifts or self._kept_messages() != kept:
+            if mark != self._mark() or self._kept_messages() != kept:
                 self.rearrange(target)  # a row came in or went, or another message was selected: asked again
                 return False
             return True
@@ -441,6 +446,12 @@ class MessageListModel(QAbstractTableModel):
 
         command = "message.combined-groups" if target.combined is not None else "message.groups"
         self._backend.call(command, self.request_values(target), groups_arrived, groups_failed, owner=self)
+
+    def _mark(self) -> tuple[int, int]:
+        """Where the list stands: the rows that came or went, and the facts it heard. An answer of the engine is used only
+        when the list stands where it stood when the question was asked; the engine reads its index only while no change
+        is between its write and its fact, so such an answer describes exactly what the list knows (D-151)."""
+        return (self._rows.shifts, self._rows.heard)
 
     @staticmethod
     def _same_messages(old: ViewSpec, new: ViewSpec) -> bool:
@@ -514,10 +525,6 @@ class MessageListModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._columns)
 
     @override
-    def index(self, row: int, column: int = 0, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> QModelIndex:
-        return super().index(row, column, parent)
-
-    @override
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> object:
         if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(self._columns) or self._columns[section] not in BY_ID:
             return None
@@ -582,7 +589,7 @@ class MessageListModel(QAbstractTableModel):
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
         if index.isValid() and self.is_header(index.row()):
             return Qt.ItemFlag.ItemNeverHasChildren  # not enabled: the arrow keys pass it, it cannot be selected
-        base = super().flags(index)
+        base = super().flags(index) | Qt.ItemFlag.ItemNeverHasChildren  # the list is flat: Qt never asks a row for children
         return base | Qt.ItemFlag.ItemIsDragEnabled if index.isValid() else base
 
     @override
@@ -718,6 +725,7 @@ class MessageListModel(QAbstractTableModel):
         spec = self._spec
         if spec is None or not self._concerns(spec, str(getattr(change, "mailbox", ""))):
             return
+        self._rows.heard += 1  # answers asked for before this fact are asked again (D-151)
         kind = str(getattr(change, "kind", ""))
         message_id = str(getattr(change, "message_id", ""))
         folder = str(getattr(change, "folder", ""))
@@ -935,12 +943,14 @@ class MessageListModel(QAbstractTableModel):
             self.rearrange(spec)
             return
         rows: list[object] = [getattr(change, "row") for change in arriving]
-        generation, shifts = self._generation, self._rows.shifts
+        generation, mark = self._generation, self._mark()
+        self._in_flight += len(arriving)
 
         def located(result: object) -> None:
+            self._in_flight -= len(arriving)
             if generation != self._generation:
                 return
-            if shifts != self._rows.shifts:  # a row came in or went out meanwhile: their places are asked again
+            if mark != self._mark() or self._unplaced():  # a fact came meanwhile, or other messages heard are not placed yet: asked again
                 for change in arriving:
                     self._bring_in(change)
                 return
@@ -952,13 +962,26 @@ class MessageListModel(QAbstractTableModel):
                 row = rows[number]
                 if self._find_position(str(getattr(row, "message_id"))) < 0:
                     self._insert(position, row, keys[number] if keys else "", names[number] if names else "")
+            waiting, self._waiting_pages = self._waiting_pages, set()
+            for page in sorted(waiting):  # the rows now hold every message heard: what was asked meanwhile is asked again
+                if any(slot is None for slot in self._rows.slots[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]):
+                    self._request_page(page)
+
+        def failed(error: ChronoMailError) -> None:
+            self._in_flight -= len(arriving)
+            self._failed(error)
 
         values = self.request_values(spec)
         values["messages"] = [str(getattr(row, "message_id")) for row in rows]
         values["headings"] = True
         if spec.combined is not None:
             values["mailboxes"] = [str(getattr(change, "mailbox")) for change in arriving]
-        self._backend.call("message.combined-places" if spec.combined is not None else "message.places", values, located, self._failed, owner=self)
+        self._backend.call("message.combined-places" if spec.combined is not None else "message.places", values, located, failed, owner=self)
+
+    def _unplaced(self) -> int:
+        """Messages heard that are not in the rows yet (waiting to be taken in, or their places being asked): the rows do
+        not hold everything the list heard, so an answer about places cannot be used until they are placed (D-151)."""
+        return len(self._arriving) + self._in_flight
 
     def _plan_rearrange(self) -> None:
         """Messages went from a part of the list not loaded, where their place is not known: once the burst is over, the
@@ -1109,15 +1132,17 @@ class MessageListModel(QAbstractTableModel):
         if spec is None or page in self._rows.requested:
             return
         self._rows.requested.add(page)
-        generation, shifts = self._generation, self._rows.shifts
+        generation, mark = self._generation, self._mark()
 
         def arrived(result: object) -> None:
             if generation != self._generation:
                 return  # the view has changed since: this answer is for something that is no longer shown
             rows = list(getattr(result, "messages"))
-            if shifts != self._rows.shifts:  # a row came in or went out since it was asked: its places are not those of now
+            if mark != self._mark() or (self._unplaced() and self._rows.slots):  # a fact came since it was asked, or messages heard are not placed yet
                 self._rows.requested.discard(page)
-                if page == 0 or any(slot is None for slot in self._rows.slots[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]):
+                if self._unplaced() and self._rows.slots:
+                    self._waiting_pages.add(page)  # asked again once they are placed
+                elif page == 0 or any(slot is None for slot in self._rows.slots[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]):
                     self._request_page(page)
                 return
             if page == 0 and not self._rows.slots:

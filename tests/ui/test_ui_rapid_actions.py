@@ -12,9 +12,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rapid_actions.py 0.5.158"
+__version__ = "test_ui_rapid_actions.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.158: the folder list's Unread number is right afterwards
 # v0.5.157: Initial test (DEVELOPMENT's test made a project test): four quick Delete presses in Favorites > Unread act on the
 #           message the person sees selected at each press, at every pace and list size (D-146 step 3)
@@ -56,7 +57,7 @@ def test_four_quick_deletes_act_on_what_is_selected_at_each_press(empty: World, 
     first = next(row for row in range(model.rowCount()) if not model.is_header(row) and model.row_at(row) is not None)
     assert subject_of(world, model.row_at(first)) == SPAM[0]
     window.list_view.setFocus()
-    window.list_view.setCurrentIndex(model.index(first))
+    window.list_view.setCurrentIndex(model.index(first, 0))
 
     deleted: list[str] = []
     real_call = world.backend.call

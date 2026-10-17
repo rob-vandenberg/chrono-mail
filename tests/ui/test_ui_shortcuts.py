@@ -7,9 +7,10 @@ from tests.ui.test_ui_window import select, started
 from tests.ui.world import World, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_shortcuts.py 0.5.125"
+__version__ = "test_ui_shortcuts.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.125: The test waits until Mark as unread has finished before it marks the messages read
 # v0.4.117: Alt+M opens the Menu of the section that is shown
 # v0.0.61: The four section buttons and the sidebars of the calendar, task and contact sections
@@ -146,7 +147,7 @@ def test_marking_as_read_redraws_every_cell_of_the_selected_rows(world: World, q
 
     window.list_model.dataChanged.connect(record)
     for row in range(3):
-        window.list_view.selectionModel().select(window.list_model.index(row), window.list_view.selectionModel().SelectionFlag.Select | window.list_view.selectionModel().SelectionFlag.Rows)
+        window.list_view.selectionModel().select(window.list_model.index(row, 0), window.list_view.selectionModel().SelectionFlag.Select | window.list_view.selectionModel().SelectionFlag.Rows)
     window.act_unread.trigger()
     wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001 - the messages were unread already: wait for the change itself
     wait(qtbot, lambda: all("seen" not in row_of(window, position).flags for position in range(3)))

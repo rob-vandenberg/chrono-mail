@@ -14,6 +14,7 @@ from chrono_mail.config import ServerRole
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AuthenticationError, ConfigurationError, CryptoError, MessageFormatError, ProtocolError, StorageError
 from chrono_mail.engine import Engine, UsageError, build_registry
 from chrono_mail.engine.changes import Change
+from chrono_mail.index import entry_from_raw
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.crypto import DataKey, InMemoryKeyStore
 from chrono_mail.store import Store
@@ -23,9 +24,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 0.5.163"
+__version__ = "test_engine_commands.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: a question waits while a change is written to the index but not yet told
 # v0.5.163: a POP3 check tells each new message as a fact
 # v0.5.162: a message read while shown stays in a search of unread mail when it is named in stay
 # v0.5.161: an action on one message (open, mark, move) never lists its whole folder; the test that makes an index old closes its connection (on Windows the open file kept the rebuild from replacing it)
@@ -736,6 +738,35 @@ def test_the_position_of_a_message_is_where_message_list_shows_it(setup: Setup) 
                 found = call(setup.engine, "message.position", account=setup.account_id, folder="Inbox", message=message_id, sort=sort, oldest_first=oldest_first)
                 assert found.position == place, (sort, oldest_first)
     assert call(setup.engine, "message.position", account=setup.account_id, folder="Sent", message=listed[0]).position is None  # not in that folder
+
+
+def test_a_question_waits_while_a_change_is_written_but_not_yet_told(setup: Setup) -> None:
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    told: list[Change] = []
+    setup.engine.changed = told.append
+    written, release = threading.Event(), threading.Event()
+    answered: list[int] = []
+    raw = mail(9)
+
+    def change() -> None:
+        with open_mailbox(setup.engine, setup.account_id) as mailbox, mailbox.changing():
+            reference = mailbox.store.deliver(mailbox.folder("Inbox"), raw, verify=True)
+            mailbox.index.add(entry_from_raw(reference, mailbox.store.locate(reference), frozenset(), len(raw), raw))
+            written.set()
+            release.wait(5)
+            mailbox.report_added(reference)
+
+    writer = threading.Thread(target=change)
+    writer.start()
+    assert written.wait(5)
+    asker = threading.Thread(target=lambda: answered.append(call(setup.engine, "message.list", account=setup.account_id, folder="Inbox").total))
+    asker.start()
+    asker.join(0.3)
+    assert answered == []  # it waits: the index has the message, but its fact is not told yet
+    release.set()
+    writer.join(5)
+    asker.join(5)
+    assert answered == [4] and told[-1].kind == "added"  # the fact first, then an answer that counts it
 
 
 def test_a_pop3_check_tells_each_new_message_as_a_fact(setup: Setup) -> None:

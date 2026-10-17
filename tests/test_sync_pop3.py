@@ -1,29 +1,71 @@
 from collections.abc import Callable, Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 from chrono_mail.config import Pop3DeletePolicy, Pop3Options
-from chrono_mail.core import ConnectionSecurity, FolderRole, MessageFlag, MessageRef, ServerSettings, StorageError
+from chrono_mail.core import ConnectionSecurity, Folder, FolderRole, MessageFlag, MessageRef, ServerSettings, StorageError
 from chrono_mail.crypto import generate_data_key
 from chrono_mail.index import Index
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.store import Store
 from chrono_mail.sync import FetchReport, Pop3State, fetch_pop3
+from chrono_mail.sync.announce import SILENT, Announcer
 from tests.fakepop3 import FakePop3Server
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_pop3.py 0.0.10"
+__version__ = "test_sync_pop3.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: each new message is told in one step with its index entry (announcer)
 # v0.0.10: Initial POP3 sync tests
 
 INBOX = ("Inbox",)
 DAY = 86_400
 LIMIT = 1_000_000
 CLIENT_LIMITS = Pop3Limits(read_timeout_seconds=3, connect_timeout_seconds=3)
+
+
+class Recording:
+    """An announcer that notes each change it is told about, whether it was told inside changing(), and whether the index
+    already had the change then (the index write and the fact are one step, D-151)."""
+
+    def __init__(self, index: Index) -> None:
+        self.index = index
+        self.inside = 0
+        self.told: list[tuple[str, str, bool, bool]] = []  # kind, store id, inside changing, in the index
+
+    @contextmanager
+    def changing(self) -> Generator[None]:
+        self.inside += 1
+        try:
+            yield
+        finally:
+            self.inside -= 1
+
+    def _note(self, kind: str, reference: MessageRef) -> None:
+        self.told.append((kind, reference.store_id, self.inside > 0, self.index.get(reference.store_id) is not None))
+
+    def added(self, reference: MessageRef) -> None:
+        self._note("added", reference)
+
+    def removed(self, reference: MessageRef, was_unread: bool) -> None:
+        self._note("removed", reference)
+
+    def flags(self, reference: MessageRef, flags: frozenset[MessageFlag], was_unread: bool) -> None:
+        self._note("flags", reference)
+
+    def tags(self, reference: MessageRef, tags: tuple[str, ...]) -> None:
+        self._note("tags", reference)
+
+    def moved(self, before: MessageRef, now: MessageRef) -> None:
+        self._note("moved", now)
+
+    def folder_made(self, folder: Folder) -> None:
+        self.told.append(("folder_made", "/".join(folder.path), self.inside > 0, True))
 
 
 class SimulatedCrash(BaseException):
@@ -42,10 +84,12 @@ class World:
     server: FakePop3Server
     clock: list[float]
 
-    def fetch(self, options: Pop3Options = Pop3Options(), checkpoint: Callable[[str], None] = lambda name: None, index: Index | None = None) -> FetchReport:
+    def fetch(
+        self, options: Pop3Options = Pop3Options(), checkpoint: Callable[[str], None] = lambda name: None, index: Index | None = None, announcer: Announcer = SILENT,
+    ) -> FetchReport:
         settings = ServerSettings("127.0.0.1", self.server.port, ConnectionSecurity.NONE, "user")
         with Pop3Client(settings, "secret", CLIENT_LIMITS) as client:
-            return fetch_pop3(client, self.store, self.index if index is None else index, self.state, INBOX, options, LIMIT, lambda: self.clock[0], checkpoint)
+            return fetch_pop3(client, self.store, self.index if index is None else index, self.state, INBOX, options, LIMIT, lambda: self.clock[0], checkpoint, announcer=announcer)
 
     def stored_bodies(self) -> list[bytes]:
         return sorted(self.store.read(m.ref) for folder in self.store.list_folders() for m in self.store.list_messages(folder.path))
@@ -74,6 +118,13 @@ def test_new_messages_are_stored_indexed_and_remembered(world: World) -> None:
     assert world.index.count(INBOX) == 3 and [m.subject for m in world.index.search("body")] != []
     assert set(world.state.records) == {"uid1", "uid2", "uid3"}
     assert set(world.server.messages) == {"uid1", "uid2", "uid3"}  # the default keeps the server copy
+
+
+def test_each_new_message_is_told_in_one_step_with_its_index_entry(world: World) -> None:
+    recording = Recording(world.index)
+    report = world.fetch(announcer=recording)
+    assert [kind for kind, _, _, _ in recording.told] == ["added"] * 3 == ["added"] * report.downloaded
+    assert all(inside and indexed for _, _, inside, indexed in recording.told)  # told inside changing(), the index already had it
 
 
 def test_second_run_downloads_nothing(world: World) -> None:

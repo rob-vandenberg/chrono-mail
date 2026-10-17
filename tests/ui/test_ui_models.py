@@ -15,9 +15,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_ROLE_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 0.5.157"
+__version__ = "test_ui_models.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.157: a delete no longer resets the list at all (D-146 step 3)
 # v0.5.139: a reload (after a delete, in a folder and in Unread) never leaves the list empty for a moment
 # v0.2.96: A group header in the card layout is 36 px high
@@ -147,8 +148,8 @@ def test_model_data_only_answers_the_row_role(big: World, qtbot: QtBot) -> None:
     model = model_for(big, qtbot)
     model.show(ViewSpec(big.account_id, "Inbox"))
     wait(qtbot, lambda: model.rowCount() == 250)
-    assert model.index(0).data(Qt.ItemDataRole.DisplayRole) is None and model.index(0).data(ROW_ROLE) is not None
-    assert model.index(-1).data(ROW_ROLE) is None and model.rowCount(model.index(0)) == 0
+    assert model.index(0, 0).data(Qt.ItemDataRole.DisplayRole) is None and model.index(0, 0).data(ROW_ROLE) is not None
+    assert model.index(-1, 0).data(ROW_ROLE) is None and model.rowCount(model.index(0, 0)) == 0
 
 
 # --- the folder tree ----------------------------------------------------------------------------------------------------------
@@ -298,7 +299,7 @@ def test_the_preview_of_the_selected_row_stays_readable(world: World, qtbot: QtB
     view.show()
     model.show(ViewSpec(world.account_id, "Inbox"))
     wait(qtbot, lambda: model.rowCount() > 0 and model.row_at(0) is not None)
-    view.setCurrentIndex(model.index(0))
+    view.setCurrentIndex(model.index(0, 0))
     qtbot.wait(150)
     image = view.viewport().grab().toImage()
     background = image.pixelColor(image.width() - 12, 5)
@@ -397,7 +398,7 @@ def test_a_selected_card_is_grey_while_the_list_has_no_focus(world: World, qtbot
     view.show()
     model.show(ViewSpec(world.account_id, "Inbox"))
     wait(qtbot, lambda: model.rowCount() > 0 and model.row_at(0) is not None)
-    view.setCurrentIndex(model.index(0))
+    view.setCurrentIndex(model.index(0, 0))
     blue = view.palette().color(QPalette.ColorRole.Highlight).name()
     for focused, expected in ((True, blue), (False, selection_grey())):
         view.setProperty("focused", focused)
@@ -482,7 +483,7 @@ def _counted_resets(window: object) -> list[int]:
 def _delete_first(world: World, qtbot: QtBot, rows_before: int) -> list[int]:
     window = world.window
     seen = _counted_resets(window)
-    window.list_view.setCurrentIndex(window.list_model.index(next(row for row in range(window.list_model.rowCount()) if window.list_model.row_at(row) is not None)))
+    window.list_view.setCurrentIndex(window.list_model.index(next(row for row in range(window.list_model.rowCount()) if window.list_model.row_at(row) is not None), 0))
     window.delete_selected()
     wait(qtbot, lambda: window.list_model.rowCount() < rows_before and world.backend._pending == {})  # noqa: SLF001
     return seen

@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sections.py 0.0.86"
+__version__ = "test_ui_sections.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.0.86: A message is selected before the mail actions are compared
 # v0.0.85: The mail title ends with the program name
 # v0.0.76: Contacts before Tasks (Ctrl+3 and Ctrl+4)
@@ -67,7 +68,7 @@ def test_the_sidebar_lists_the_calendars_under_their_account_and_remembers_what_
 def test_mail_actions_are_off_in_the_other_sections_and_come_back_as_they_were(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     window = world.window
-    window.list_view.setCurrentIndex(window.list_model.index(0))
+    window.list_view.setCurrentIndex(window.list_model.index(0, 0))
     before = {name: getattr(window, f"act_{name}").isEnabled() for name in window.MAIL_ONLY}
     assert before["reply"] and not before["not_junk"]  # not junk is only on in Junk
     window.switch_section(TASKS)

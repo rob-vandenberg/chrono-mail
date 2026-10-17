@@ -7,12 +7,14 @@ from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.mime import parse_message
 from chrono_mail.protocols.imap import FetchedItem, FolderEntry, ImapClient, ImapRefused, keyword_to_tag, tag_to_keyword
 from chrono_mail.store import Store, StoredMessage
+from chrono_mail.sync.announce import SILENT, Announcer
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 0.5.163"
+__version__ = "imap_sync.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: each change made here is told the moment it is made, in one step with its index write (announcer, D-151); the report no longer lists them
 # v0.5.163: the report names each message removed here, each change of flags or tags taken over from the server, and each message kept in Recovered (the engine reports them as facts)
 # v0.5.145: step: the steps of a sync (listing the folders, each folder), for the Operations window
 # v0.5.138: Tags as keywords: compared, sent, taken over, downloaded and uploaded with the flags; a folder that keeps no keywords keeps its tags here
@@ -89,10 +91,6 @@ class FolderReport:
     new_references: tuple[MessageRef, ...] = ()  # the messages downloaded into this folder
     blocked: str | None = None  # a safety rule held the folder back (BLOCKED_...): the person is asked
     blocked_count: int = 0  # how many messages it is about
-    removed_messages: tuple[tuple[MessageRef, bool], ...] = ()  # each message removed here (gone from the server), and whether it was unread
-    flag_changes: tuple[tuple[MessageRef, frozenset[MessageFlag], bool], ...] = ()  # each message whose flags were taken over from the server: its flags now, and whether it was unread
-    tag_changes: tuple[tuple[MessageRef, tuple[str, ...]], ...] = ()  # each message whose tags were taken over from the server: its tags now
-    recovered_messages: tuple[tuple[MessageRef, MessageRef], ...] = ()  # each message kept in Recovered: where it was, where it is now
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,16 +228,12 @@ class _Counts:
     new: list[MessageRef] = field(default_factory=list)
     blocked: str | None = None
     blocked_count: int = 0
-    gone: list[tuple[MessageRef, bool]] = field(default_factory=list)
-    marked: list[tuple[MessageRef, frozenset[MessageFlag], bool]] = field(default_factory=list)
-    retagged: list[tuple[MessageRef, tuple[str, ...]]] = field(default_factory=list)
-    kept: list[tuple[MessageRef, MessageRef]] = field(default_factory=list)
+    announcer: Announcer = SILENT  # told about each change made here, at the moment it is made
 
     def report(self, folder: str) -> FolderReport:
         return FolderReport(
             folder, self.downloaded, self.adopted, self.flags_updated, self.removed, self.recovered, self.flags_sent, self.expunged, self.uploaded,
             tuple(self.failed), self.note, tuple(self.new), self.blocked, self.blocked_count,
-            removed_messages=tuple(self.gone), flag_changes=tuple(self.marked), tag_changes=tuple(self.retagged), recovered_messages=tuple(self.kept),
         )
 
 
@@ -258,7 +252,7 @@ class _Folder:
 
 def sync_imap(
     client: ImapClient, store: Store, index: Index | None, state: ImapState, options: ImapSyncOptions = ImapSyncOptions(), progress: Progress | None = None,
-    step: Step | None = None,
+    step: Step | None = None, announcer: Announcer = SILENT,
 ) -> ImapReport:
     """Make server and store agree, in both directions, folder by folder.
 
@@ -284,15 +278,17 @@ def sync_imap(
         for plan in plans:
             if plan.local_path not in existing:
                 try:
-                    store.ensure_folder(plan.local_path, plan.role)
+                    folder, made = store.ensure_folder(plan.local_path, plan.role)
                     existing.add(plan.local_path)
+                    if made:
+                        announcer.folder_made(folder)
                 except ChronoMailError as error:
                     notes.append(f"The local folder for '{_printable(plan.server_name)}' could not be made: {error}")
         plans = [plan for plan in plans if plan.local_path in existing]
         plans.extend(_create_on_server(client, store, state, listed, plans, notes))
         moved = _move_pass(client, store, index, state, plans, notes)
         for plan in plans:
-            counts = _Counts()
+            counts = _Counts(announcer=announcer)
             if step is not None:
                 step(f"Synchronising {'/'.join(plan.local_path)}")
             try:
@@ -443,10 +439,12 @@ def _remove_gone(store: Store, index: Index | None, state: ImapState, view: _Fol
         stored = view.stored.get(entry.store_id)
         try:
             if where is not None:
-                if index is not None:
-                    index.remove(entry.store_id)
-                store.delete(MessageRef(store.account_id, where[0], entry.store_id), hint=where[1])
-                counts.gone.append((MessageRef(store.account_id, where[0], entry.store_id), stored is not None and MessageFlag.SEEN not in stored.flags))
+                gone = MessageRef(store.account_id, where[0], entry.store_id)
+                with counts.announcer.changing():
+                    if index is not None:
+                        index.remove(entry.store_id)
+                    store.delete(gone, hint=where[1])
+                    counts.announcer.removed(gone, stored is not None and MessageFlag.SEEN not in stored.flags)
         except ChronoMailError as error:
             counts.failed.append(f"UID {uid}: it could not be removed here: {error}")
             continue
@@ -533,17 +531,19 @@ def _update_flags(store: Store, index: Index | None, state: ImapState, view: _Fo
         wanted = message_flags(server_now)
         try:
             if wanted != message.flags:
-                path = store.set_flags(message.ref, wanted, hint=message.relative_path)
-                if index is not None:
-                    index.update_flags(entry.store_id, wanted, path)
-                counts.marked.append((message.ref, wanted, MessageFlag.SEEN not in message.flags))
+                with counts.announcer.changing():
+                    path = store.set_flags(message.ref, wanted, hint=message.relative_path)
+                    if index is not None:
+                        index.update_flags(entry.store_id, wanted, path)
+                    counts.announcer.flags(message.ref, wanted, MessageFlag.SEEN not in message.flags)
             new_tags = server_tags(item.flags)
             if view.keywords and not _same_tags(new_tags, current_tags):
-                kept = store.tags.set(entry.store_id, new_tags)
-                view.tags[entry.store_id] = kept
-                if index is not None:
-                    index.update_tags(entry.store_id, kept)
-                counts.retagged.append((message.ref, kept))
+                with counts.announcer.changing():
+                    kept = store.tags.set(entry.store_id, new_tags)
+                    view.tags[entry.store_id] = kept
+                    if index is not None:
+                        index.update_tags(entry.store_id, kept)
+                    counts.announcer.tags(message.ref, kept)
         except ChronoMailError as error:
             counts.failed.append(f"UID {uid}: the flags could not be changed here: {error}")
             continue
@@ -643,11 +643,13 @@ def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folde
     state.map(local, uid, reference.store_id, server_now if tags or not view.keywords else system_flags(server_now))
     counts.downloaded += 1
     counts.new.append(reference)
-    if index is not None:
-        try:
-            index.add(replace_entry(entry_from_raw(reference, store.locate(reference), message_flags(server_now), len(raw), raw), tags=tags))
-        except ChronoMailError:
-            counts.failed.append(f"UID {uid}: it is stored but not yet in the index (the next repair of the index adds it)")
+    with counts.announcer.changing():
+        if index is not None:
+            try:
+                index.add(replace_entry(entry_from_raw(reference, store.locate(reference), message_flags(server_now), len(raw), raw), tags=tags))
+            except ChronoMailError:
+                counts.failed.append(f"UID {uid}: it is stored but not yet in the index (the next repair of the index adds it)")
+        counts.announcer.added(reference)
 
 
 def _recover(store: Store, index: Index | None, local: tuple[str, ...], store_ids: list[str], counts: _Counts) -> None:
@@ -665,11 +667,12 @@ def _recover(store: Store, index: Index | None, local: tuple[str, ...], store_id
             continue
         try:
             before = MessageRef(store.account_id, where[0], store_id)
-            moved = store.move(before, target, hint=where[1])
-            if index is not None:
-                index.move(store_id, target, store.locate(moved))
+            with counts.announcer.changing():
+                moved = store.move(before, target, hint=where[1])
+                if index is not None:
+                    index.move(store_id, target, store.locate(moved))
+                counts.announcer.moved(before, moved)
             counts.recovered += 1
-            counts.kept.append((before, moved))
         except ChronoMailError as error:
             counts.failed.append(f"A message could not be kept in {RECOVERED}: {error}")
 

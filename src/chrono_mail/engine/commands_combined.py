@@ -13,9 +13,10 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 0.5.163"
+__version__ = "commands_combined.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: a Favorites view and its groups read each mailbox's index under its place lock (D-151)
 # v0.5.163: message.combined-places can give the group heading of each message (headings)
 # v0.5.162: stay_messages and stay_mailboxes: messages a Favorites view keeps after they were read, unflagged or untagged in it
 # v0.5.160: message.combined-places: where several messages stand in a Favorites view, the order worked out once
@@ -119,7 +120,7 @@ def message_combined(engine: Engine, parameters: CombinedParameters) -> tuple[Me
     from_contact: dict[tuple[str, str], bool] = {}  # (account, store id) -> from (or to) a contact
     known = contact_address_set(engine) if contact else frozenset[str]()
     for account in _places(engine, parameters.accounts):
-        with open_mailbox(engine, account) as mailbox:
+        with open_mailbox(engine, account) as mailbox, mailbox.reading():
             for folder in mailbox.folders():
                 if _chosen(view, folder):
                     rows = mailbox.index.search(parameters.query, folder.path, _filters(view, parameters, account), 0, EVERYTHING if contact else want, sort, descending)
@@ -146,7 +147,7 @@ def message_combined_groups(engine: Engine, parameters: CombinedParameters) -> t
     bounds = date_bounds(datetime.now())
     counts: dict[str, GroupCount] = {}
     for account in _places(engine, parameters.accounts):
-        with open_mailbox(engine, account) as mailbox:
+        with open_mailbox(engine, account) as mailbox, mailbox.reading():
             for folder in mailbox.folders():
                 if _chosen(view, folder):
                     for group in mailbox.index.groups(bounds, parameters.query, folder.path, _filters(view, parameters, account), sort, descending):

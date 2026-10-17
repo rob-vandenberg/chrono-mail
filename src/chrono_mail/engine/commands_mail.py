@@ -2,6 +2,7 @@ import base64
 import mimetypes
 import os
 from collections.abc import Iterable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from email.utils import getaddresses, parseaddr
@@ -9,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 from chrono_mail.config import AccountSettings, ServerRole
-from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag
+from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_addressbook import AddressesParameters, contact_addresses
 from chrono_mail.engine.commands_emclient import fingerprint_of_raw, known_messages
@@ -26,12 +27,13 @@ from chrono_mail.index.model import DateBounds, GroupCount
 from chrono_mail.mime import Address, Attachment, OutgoingMessage, ParsedMessage, build_message, parse_message
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
-from chrono_mail.sync import ImapReport, ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
+from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 0.5.163"
+__version__ = "commands_mail.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: a mail check tells each change the moment it makes it (MailboxAnnouncer); list, search, groups and places read the index under the mailbox's place lock (D-151)
 # v0.5.163: a mail check tells each change as a fact (new, removed, marks, tags, kept in Recovered, folders made or gone) instead of one "mailbox changed"; message.places can give the group heading of each message (headings)
 # v0.5.162: stay: messages a view keeps although they no longer match its unread, flagged or tag filter (read, unflagged or untagged while it showed them)
 # v0.5.160: message.places: where several messages stand in a folder or a search, the order worked out once (a new sort keeps the selected messages)
@@ -186,11 +188,9 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
             report = fetch_pop3(
                 client, mailbox.store, mailbox.index, state, inbox, settings.pop3, MAXIMUM_MESSAGE_BYTES, engine.clock,
                 progress=downloading, already_here=already_here if known is not None else None,
-                step=lambda text: engine.activity(account_id, "receive", text, None, None),
+                step=lambda text: engine.activity(account_id, "receive", text, None, None), announcer=MailboxAnnouncer(mailbox),
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
-        for reference in report.new_references:
-            mailbox.report_added(reference)  # stored past the mailbox's operations: each new message is told as a fact (D-150)
         if report.new_references:
             engine.activity(account_id, "receive", "Applying rules", None, None)
         ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
@@ -231,10 +231,10 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
             engine.activity(account_id, "receive", "Connected", None, None)
             report = sync_imap(
                 client, mailbox.store, mailbox.index, state, ImapSyncOptions(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES, confirmed=confirmed),
-                progress=downloading, step=lambda text: engine.activity(account_id, "receive", text, None, None),
+                progress=downloading, step=lambda text: engine.activity(account_id, "receive", text, None, None), announcer=MailboxAnnouncer(mailbox),
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
-    _report_sync(mailbox, report, folders_before)
+    _report_sync(mailbox, folders_before)
     inbox = mailbox.role_folder(FolderRole.INBOX)
     if report.new_references:
         engine.activity(account_id, "receive", "Applying rules", None, None)
@@ -245,24 +245,39 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
     return FetchResult(report.downloaded, 0, tuple(remarks), 0, None, 0, report.aborted, ruled.actions, blocked)
 
 
-def _report_sync(mailbox: Mailbox, report: ImapReport, folders_before: dict[tuple[str, ...], Folder]) -> None:
-    """What the sync changed here came in past the mailbox's operations: each change is told as a fact, as an action of
-    the person is (D-150): folders made first, then the messages, then folders that went."""
-    folders_after = {folder.path: folder for folder in mailbox.folders()}
-    for path, folder in folders_after.items():
-        if path not in folders_before:
-            mailbox.report_folder_made(folder)
-    for item in report.folders:
-        for reference in item.new_references:
-            mailbox.report_added(reference)
-        for reference, flags, was_unread in item.flag_changes:
-            mailbox.report_flags(reference, flags, was_unread)
-        for reference, tags in item.tag_changes:
-            mailbox.report_tags(reference, tags)
-        for reference, was_unread in item.removed_messages:
-            mailbox.report_removed(reference, was_unread)
-        for before, now in item.recovered_messages:
-            mailbox.report_moved(before, now)
+class MailboxAnnouncer:
+    """A mail check tells each change through the mailbox the moment it makes it, holding the mailbox's place lock around
+    the index write and the fact (D-150, D-151)."""
+
+    def __init__(self, mailbox: Mailbox) -> None:
+        self.mailbox: Mailbox = mailbox
+
+    def changing(self) -> AbstractContextManager[object]:
+        return self.mailbox.changing()
+
+    def added(self, reference: MessageRef) -> None:
+        self.mailbox.report_added(reference)
+
+    def removed(self, reference: MessageRef, was_unread: bool) -> None:
+        self.mailbox.report_removed(reference, was_unread)
+
+    def flags(self, reference: MessageRef, flags: frozenset[MessageFlag], was_unread: bool) -> None:
+        self.mailbox.report_flags(reference, flags, was_unread)
+
+    def tags(self, reference: MessageRef, tags: tuple[str, ...]) -> None:
+        self.mailbox.report_tags(reference, tags)
+
+    def moved(self, before: MessageRef, now: MessageRef) -> None:
+        self.mailbox.report_moved(before, now)
+
+    def folder_made(self, folder: Folder) -> None:
+        self.mailbox.report_folder_made(folder)
+
+
+def _report_sync(mailbox: Mailbox, folders_before: dict[tuple[str, ...], Folder]) -> None:
+    """Folders the sync took away here (the server no longer has them) are told at its end; everything else was told the
+    moment it happened."""
+    folders_after = {folder.path for folder in mailbox.folders()}
     for path in folders_before:
         if path not in folders_after:
             mailbox.report_folder_deleted(path)
@@ -497,7 +512,7 @@ class ListResult:
 
 
 def message_list(engine: Engine, parameters: ListParameters) -> ListResult:
-    with open_mailbox(engine, parameters.account) as mailbox:
+    with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         folder = mailbox.folder(parameters.folder)
         total = mailbox.index.count(folder)
         times = _snoozed_times(engine, mailbox) if folder == SNOOZED else None
@@ -533,7 +548,7 @@ class PositionResult:
 
 def message_position(engine: Engine, parameters: PositionParameters) -> PositionResult:
     """Where a message stands in a folder in the order message.list gives it."""
-    with open_mailbox(engine, parameters.account) as mailbox:
+    with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         folder = mailbox.folder(parameters.folder)
         if _special_order(parameters.sort, folder):
             ordered = _ordered_ids(engine, mailbox, folder, parameters.sort, parameters.oldest_first)
@@ -708,7 +723,7 @@ def _search_filter(parameters: SearchParameters) -> SearchFilter:
 
 
 def message_search(engine: Engine, parameters: SearchParameters) -> tuple[MessageRow, ...]:
-    with open_mailbox(engine, parameters.account) as mailbox:
+    with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         times = _snoozed_times(engine, mailbox) if folder in (SNOOZED, None) else None
         if times is not None and _snooze_sort(parameters.sort, folder) and folder is not None:
@@ -726,7 +741,7 @@ def message_groups(engine: Engine, parameters: SearchParameters) -> tuple[GroupC
     """The groups of a folder or a search, in the order of message.search (or message.list) with the same options, each with its number of messages."""
     if parameters.sort == CONTACT_SORT:
         return ()  # a yes/no sort has no group headers
-    with open_mailbox(engine, parameters.account) as mailbox:
+    with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         if folder is not None and _snooze_sort(parameters.sort, folder):
             times, now = _snoozed_times(engine, mailbox), datetime.fromtimestamp(engine.clock()).astimezone()
@@ -803,11 +818,11 @@ def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult
     keeps its selection at its new place."""
     plain = not parameters.query and parameters.folder and _search_filter(parameters) == SearchFilter() and parameters.sort not in ("snoozed", CONTACT_SORT)
     if plain and parameters.folder is not None:
-        with open_mailbox(engine, parameters.account) as mailbox:
+        with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
             found = mailbox.index.positions(mailbox.folder(parameters.folder), parameters.messages, _sort_field(parameters.sort), not parameters.oldest_first)
         return _headed(engine, parameters, tuple(found.get(message_id) for message_id in parameters.messages))
     if parameters.folder is not None and not parameters.query and _search_filter(parameters) == SearchFilter():
-        with open_mailbox(engine, parameters.account) as mailbox:
+        with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
             ordered = _ordered_ids(engine, mailbox, mailbox.folder(parameters.folder), parameters.sort, parameters.oldest_first)
     else:
         ordered = [row.message_id for row in message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))]

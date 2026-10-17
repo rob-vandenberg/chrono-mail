@@ -2,7 +2,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import pytest
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, Qt
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import models
@@ -11,9 +11,10 @@ from chrono_mail.ui.models import MessageListModel, ViewSpec
 from tests.ui.world import World, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_list_changes.py 0.5.163"
+__version__ = "test_ui_list_changes.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: a message that arrives during another check is placed where the engine has it (the owner's case); an answer and a page asked before a fact about the view are asked again; message rows never have children
 # v0.5.163: messages that come in at once are placed with one question; messages gone from a part not loaded give one rearrange, never a reset
 # v0.5.156: Initial tests: the list applies each fact of the engine to its own rows, without fetching the view again (D-146 step 2)
 
@@ -210,3 +211,96 @@ def test_a_message_gone_from_a_part_not_loaded_under_headings_rearranges_once_an
     wait(qtbot, lambda: watched.model.message_count() == 1 and world.backend._pending == {})  # noqa: SLF001
     assert watched.resets == 0 and watched.asked.count("message.groups") == 1  # the one not loaded: one rearrange, never a reset
     assert watched.headers() == ["Message 1"]
+
+
+def deliver(world: World, number: int) -> None:
+    from chrono_mail.engine.mailbox import open_mailbox
+
+    with open_mailbox(world.engine, world.account_id) as mailbox:
+        mailbox.deliver(mailbox.folder("Inbox"), mail(number), frozenset())
+
+
+def late(world: World, monkeypatch: pytest.MonkeyPatch, watched: Watched, command: str, wanted: Callable[[Mapping[str, object]], bool], meanwhile: Callable[[], None]) -> None:
+    """The first answer to this command arrives after something else happened (meanwhile runs just before it is used)."""
+    asking = world.backend.call
+    done: list[bool] = []
+
+    def call(
+        name: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False,
+        in_order: bool = False, checking: bool = False,
+    ) -> int:
+        if name == command and wanted(values) and not done:
+            done.append(True)
+
+            def arrived(result: object) -> None:
+                meanwhile()
+                on_success(result)
+
+            return asking(name, values, arrived, on_error, owner, waiting, in_order, checking)
+        return asking(name, values, on_success, on_error, owner, waiting, in_order, checking)
+
+    monkeypatch.setattr(world.backend, "call", call)
+
+
+def test_an_answer_asked_before_a_fact_about_the_view_is_asked_again(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, "Inbox"))
+    late(world, monkeypatch, watched, "message.places", lambda values: True, lambda: deliver(world, 5))
+    deliver(world, 4)  # its place is asked; before the answer is used, another message comes in
+    wait(qtbot, lambda: watched.model.message_count() == 5 and world.backend._pending == {})  # noqa: SLF001
+    assert watched.subjects() == listed(world) and watched.resets == 0
+
+
+def test_a_page_asked_before_a_fact_about_the_view_is_asked_again(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(models, "PAGE_SIZE", 1)  # one message per page
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, "Inbox"))
+    pages: list[object] = []
+    late(world, monkeypatch, watched, "message.list", lambda values: pages.append(values["offset"]) is None and values["offset"] == 2, lambda: deliver(world, 4))
+    watched.model.row_at(2, fetch=True)  # the last page is asked; before it is used, a newer message comes in (all places move one down)
+    wait(qtbot, lambda: world.backend._pending == {} and watched.model.message_count() == 4)  # noqa: SLF001
+    for row in range(4):
+        watched.model.row_at(row, fetch=True)
+    wait(qtbot, lambda: world.backend._pending == {} and all(watched.model.row_at(row) is not None for row in range(4)))  # noqa: SLF001
+    assert watched.subjects() == listed(world)  # every row at its place: the page asked before the fact was asked again
+    assert pages.count(2) >= 2
+
+
+def test_message_rows_never_have_children(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, "Inbox"))
+    model = watched.model
+    assert all(model.flags(model.index(row, 0)) & Qt.ItemFlag.ItemNeverHasChildren for row in range(model.rowCount()))
+    assert "index" not in MessageListModel.__dict__  # Qt's own, without a call into Python for every row
+
+
+def test_a_message_that_arrives_during_another_check_is_placed_where_the_engine_has_it(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The owner's case: a check stored its first new message and is still downloading the next, while another message
+    comes in. Its place must be counted against the rows the list holds, never against mail it has not heard of."""
+    import threading
+
+    from tests.fakepop3 import FakePop3Server
+    from tests.fakeserver import Conversation
+
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, "Inbox", sort="subject"))
+    world.pop.messages["uid4"] = mail(4)
+    world.pop.messages["uid5"] = mail(5)
+    second, release = threading.Event(), threading.Event()
+    sending = FakePop3Server._send_message
+
+    def slow(conversation: Conversation, message: bytes) -> None:
+        if b"Subject: Message 5" in message:
+            second.set()
+            release.wait(5)  # the check waits here: Message 4 is stored, Message 5 not yet
+        sending(conversation, message)
+
+    monkeypatch.setattr(FakePop3Server, "_send_message", staticmethod(slow))
+    checking = threading.Thread(target=lambda: world.call("mail.fetch", account=world.account_id))
+    checking.start()
+    assert second.wait(5)
+    from chrono_mail.engine.mailbox import open_mailbox
+
+    with open_mailbox(world.engine, world.account_id) as mailbox:  # meanwhile another message comes in (an action, a rule, another check)
+        mailbox.deliver(mailbox.folder("Inbox"), mail(35), frozenset())
+    wait(qtbot, lambda: world.backend._pending == {} and "Message 35" in watched.subjects())  # noqa: SLF001
+    release.set()
+    checking.join(5)
+    wait(qtbot, lambda: world.backend._pending == {} and watched.model.message_count() == 6)  # noqa: SLF001
+    assert watched.subjects() == listed(world, sort="subject")  # every row where the engine has it

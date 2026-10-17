@@ -13,9 +13,10 @@ from tests.test_import_emclient import make_exports
 __all__ = ["setup", "world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_changes.py 0.5.156"
+__version__ = "test_engine_changes.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: a mail check tells each new message as a fact (D-150; this test still expected one "mailbox changed")
 # v0.5.156: the three bulk commands tell one fact; an action with an outdated folder is refused and never hides the message
 # v0.5.155: Initial tests: every change of mail reports exactly its fact, right after it happened (D-146)
 
@@ -34,10 +35,10 @@ def kinds(told: list[Change]) -> list[str]:
     return [change.kind for change in told]
 
 
-def test_a_mail_check_is_one_fact_for_its_mailbox_not_one_per_message(setup: Setup) -> None:
+def test_a_mail_check_tells_each_new_message_and_nothing_more(setup: Setup) -> None:
     told = listen(setup)
-    call(setup.engine, "mail.fetch", account=setup.account_id)
-    assert told == [Change("mailbox_changed", setup.account_id)]
+    result = call(setup.engine, "mail.fetch", account=setup.account_id)
+    assert [change.kind for change in told] == ["added"] * result.downloaded and result.downloaded > 0  # one fact per message, never "mailbox changed" (D-150)
     told.clear()
     call(setup.engine, "mail.fetch", account=setup.account_id)
     assert told == []  # nothing new: nothing to tell, so no view fetches again

@@ -17,9 +17,10 @@ from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, GROUP_HEADER_ROL
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 0.5.159"
+__version__ = "test_ui_window.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.159: the delete test waits for the status text (the row goes with the fact, the text comes with the answer just after)
 # v0.5.139: a reload keeps the old rows until the new ones arrive: the unread test waits for the new ones
 # v0.5.135: the Filter menu has Tagged with
@@ -59,11 +60,11 @@ def started(qtbot: QtBot, world: World, rows: int = 3) -> World:
 
 def subjects(window: MainWindow) -> list[str]:
     model = window.list_model
-    return [model.index(row).data(ROW_ROLE).subject for row in range(model.rowCount())]
+    return [model.index(row, 0).data(ROW_ROLE).subject for row in range(model.rowCount())]
 
 
 def select(window: MainWindow, row: int) -> None:
-    window.list_view.setCurrentIndex(window.list_model.index(row))
+    window.list_view.setCurrentIndex(window.list_model.index(row, 0))
 
 
 def tree_labels(window: MainWindow) -> list[str]:
@@ -129,7 +130,7 @@ def test_message_buttons_are_greyed_out_while_no_message_is_selected(world: Worl
     message_buttons = [window.act_reply, window.act_reply_all, window.act_forward, window.act_archive, window.act_snooze, window.act_delete, window.act_open]
     assert not any(action.isEnabled() for action in message_buttons) and not window.mark_button.isEnabled() and not window.move_button.isEnabled()
     assert window.act_new.isEnabled() and window.act_refresh.isEnabled()
-    window.list_view.setCurrentIndex(window.list_model.index(0))
+    window.list_view.setCurrentIndex(window.list_model.index(0, 0))
     assert all(action.isEnabled() for action in message_buttons) and window.mark_button.isEnabled() and window.move_button.isEnabled()
     window.list_view.clearSelection()
     window.switch_section(CALENDAR)
@@ -182,10 +183,10 @@ def test_a_big_folder_is_loaded_page_by_page(tmp_path: Path, qtbot: QtBot, dialo
         model = world.window.list_model
         assert model.row_at(0) is not None and model.row_at(99) is not None
         assert model.row_at(150) is None and model.row_at(249) is None  # pages 1 and 2 have not been asked for
-        assert model.index(150).data(ROW_ROLE) is None  # asking starts the fetch
+        assert model.index(150, 0).data(ROW_ROLE) is None  # asking starts the fetch
         wait(qtbot, lambda: model.row_at(150) is not None)
         assert model.row_at(249) is None
-        wait(qtbot, lambda: model.index(249).data(ROW_ROLE) is not None)
+        wait(qtbot, lambda: model.index(249, 0).data(ROW_ROLE) is not None)
         assert model.row_at(249) is not None
         assert len({row_of(world.window, row).message_id for row in (0, 99, 150, 249)}) == 4
         world.window.list_view.scrollToBottom()

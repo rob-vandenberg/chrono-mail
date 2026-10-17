@@ -9,9 +9,10 @@ from tests.ui.world import account_node, World, row_of, wait
 from tests.ui.test_ui_window import started
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dragdrop.py 0.2.105"
+__version__ = "test_ui_dragdrop.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.2.105: The badge starts past the cursor, by the desktop's cursor size
 # v0.2.104: The drag is offered as the copy kind (the desktop's arrow with a plus) and the drop still moves
 # v0.0.48: Dragging messages shows a small badge, not the selected rows
@@ -43,7 +44,7 @@ def move_probe(world: World, point: QPoint, data: QMimeData) -> bool:
 
 def test_the_list_offers_the_selected_messages_for_dragging(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
-    indexes = [world.window.list_model.index(0), world.window.list_model.index(1)]
+    indexes = [world.window.list_model.index(0, 0), world.window.list_model.index(1, 0)]
     assert world.window.list_model.flags(indexes[0]) & Qt.ItemFlag.ItemIsDragEnabled
     assert not world.window.list_model.flags(QModelIndex()) & Qt.ItemFlag.ItemIsDragEnabled
     data = world.window.list_model.mimeData(indexes)
@@ -55,7 +56,7 @@ def test_the_list_offers_the_selected_messages_for_dragging(world: World, qtbot:
 
 def test_dropping_messages_on_a_folder_moves_them(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
-    indexes = [world.window.list_model.index(0), world.window.list_model.index(1)]
+    indexes = [world.window.list_model.index(0, 0), world.window.list_model.index(1, 0)]
     data = world.window.list_model.mimeData(indexes)
     junk = folder_point(world, "Junk")
     assert move_probe(world, junk, data)
@@ -66,7 +67,7 @@ def test_dropping_messages_on_a_folder_moves_them(world: World, qtbot: QtBot) ->
 
 def test_drops_that_make_no_sense_are_refused(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
-    data = world.window.list_model.mimeData([world.window.list_model.index(0)])
+    data = world.window.list_model.mimeData([world.window.list_model.index(0, 0)])
     for point in (folder_point(world, "Inbox"), folder_point(world, "Outbox"), QPoint(2, 2000)):  # same folder, Outbox, nothing there
         assert not move_probe(world, point, data)
         assert not drop(world, point, data)
@@ -105,7 +106,7 @@ def test_dragging_shows_a_small_badge_and_not_the_selected_rows(world: World, qt
     view = world.window.list_view
     assert isinstance(view, MessageListView)
     for row in range(3):
-        view.selectionModel().select(world.window.list_model.index(row), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+        view.selectionModel().select(world.window.list_model.index(row, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
     started: list[tuple[int, int]] = []
     kinds: list[object] = []
 

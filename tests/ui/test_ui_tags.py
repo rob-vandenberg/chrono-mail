@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started, subjects
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tags.py 0.5.135"
+__version__ = "test_ui_tags.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.135: Initial tests: tags in the mail window (Tag menu, filter, folder list, reading pane, Tags window, colours)
 
 
@@ -23,12 +24,12 @@ def select(world: World, *rows: int) -> None:
     view, model = world.window.list_view, world.window.list_model
     view.selectionModel().clearSelection()
     for row in rows:
-        view.selectionModel().select(model.index(row), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
-    view.selectionModel().setCurrentIndex(model.index(rows[0]), QItemSelectionModel.SelectionFlag.NoUpdate)
+        view.selectionModel().select(model.index(row, 0), QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
+    view.selectionModel().setCurrentIndex(model.index(rows[0], 0), QItemSelectionModel.SelectionFlag.NoUpdate)
 
 
 def tags_of(world: World, row: int) -> tuple[str, ...]:
-    return tuple(world.window.list_model.index(row).data(ROW_ROLE).tags)
+    return tuple(world.window.list_model.index(row, 0).data(ROW_ROLE).tags)
 
 
 def tag_rows(world: World, qtbot: QtBot, *rows: int, name: str = "Work") -> None:
@@ -80,8 +81,8 @@ def test_the_tags_section_of_the_folder_list_shows_the_mail_of_a_tag(world: Worl
 def test_the_reading_pane_shows_the_tags_of_the_message(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     tag_rows(world, qtbot, 0)
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(1))
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(0))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(1, 0))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
     wait(qtbot, lambda: "Work" in world.window.reader._tags.text() and world.window.reader._tags.isVisibleTo(world.window.reader))
 
 

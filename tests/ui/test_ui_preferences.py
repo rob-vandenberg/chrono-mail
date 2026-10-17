@@ -21,9 +21,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 0.5.124"
+__version__ = "test_ui_preferences.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.124: Show on startup: its list and the value saved (D-121)
 # v0.4.119: A folder held back by a safety rule is a question; the answer is sent with mail.settle
 # v0.3.116: The list is shown again after an action in which a message failed; the error stays
@@ -95,7 +96,7 @@ def test_marking_as_read_follows_the_setting(world: World, qtbot: QtBot, monkeyp
 
     edit_settings(world, qtbot, monkeypatch, never)
     unread = next(position for position in range(3) if "seen" not in row_of(world.window, position).flags)
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(unread))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(unread, 0))
     wait(qtbot, lambda: world.window._shown is not None)  # noqa: SLF001
     qtbot.wait(1200)
     assert "seen" not in row_of(world.window, unread).flags
@@ -111,7 +112,7 @@ def test_a_long_or_short_delay_for_marking_read(world: World, qtbot: QtBot, monk
     edit_settings(world, qtbot, monkeypatch, quick)
     assert prefs.get_int(settings_of(world), "mark_read_delay_ms", 0, 10_000) == 0
     unread = next(position for position in range(3) if "seen" not in row_of(world.window, position).flags)
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(unread))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(unread, 0))
     wait(qtbot, lambda: "seen" in row_of(world.window, unread).flags, timeout=3000)
 
 
@@ -258,7 +259,7 @@ def test_replies_follow_the_quote_setting_and_the_signature_goes_to_the_end(worl
     edit_settings(world, qtbot, monkeypatch, change)
     world.window.start()
     settle(qtbot, world, 3)
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(0))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
     world.window.act_reply.trigger()
     wait(qtbot, lambda: len(world.window._composers) == 1)  # noqa: SLF001
     text = world.window._composers[0].body.toPlainText()  # noqa: SLF001

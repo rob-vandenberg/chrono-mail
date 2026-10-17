@@ -21,9 +21,10 @@ from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.store import MessageNotFoundError, Store, clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 0.5.163"
+__version__ = "mailbox.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: a change holds the mailbox's place lock from its index write until its fact is told; reading and changing for questions and mail checks (D-151)
 # v0.5.163: report_removed, report_flags, report_tags, report_folder_made, report_folder_deleted: what a mail check changed is told as facts
 # v0.5.161: current_flags reads the flags from the name of the message's file instead of listing the whole folder
 # v0.5.158: report_added and report_moved: sending stores its copies past the mailbox's operations and reports them here (D-146 step 4)
@@ -56,6 +57,7 @@ class Mailbox:
     settings: AccountSettings
     store: Store
     index: Index
+    _held: int = 0  # how often this mailbox holds its place lock: from an index write until the fact of the change is told
 
     @property
     def account_id(self) -> str:
@@ -108,7 +110,10 @@ class Mailbox:
         return message is not None and MessageFlag.SEEN not in message.flags
 
     def _tell(self, change: Change) -> None:
-        self.engine.report(change)
+        try:
+            self.engine.report(change)
+        finally:
+            self.let_go()
 
     @property
     def _place(self) -> str:
@@ -387,11 +392,36 @@ class Mailbox:
         self._removed(ref)
 
     def _index(self, change: Callable[[], None]) -> None:
-        """The store is the truth: if the index cannot be updated, the next reconcile repairs it."""
+        """The store is the truth: if the index cannot be updated, the next reconcile repairs it. The mailbox's place lock
+        is taken first and kept until the change is told (_tell), so no question reads the index in between (D-151); a big
+        job that runs quietly tells its changes only at its end, so it does not hold the lock."""
+        if not self.engine.is_quiet():
+            self.engine.place_lock(self._place).acquire()
+            self._held += 1
         try:
             change()
         except ChronoMailError:
             pass
+
+    def let_go(self) -> None:
+        """The changes written to the index are told (or failed): the place lock is free again."""
+        lock = self.engine.place_lock(self._place)
+        while self._held:
+            self._held -= 1
+            lock.release()
+
+    @contextmanager
+    def reading(self) -> Generator[None]:
+        """A question about the messages of this mailbox: it reads the index while no change is between its write and its
+        fact (D-151)."""
+        with self.engine.place_lock(self._place):
+            yield
+
+    @contextmanager
+    def changing(self) -> Generator[None]:
+        """A change made past the mailbox's operations (a mail check): its index write and its fact in one step."""
+        with self.engine.place_lock(self._place):
+            yield
 
     def folders(self) -> list[Folder]:
         return self.store.list_folders()
@@ -523,7 +553,9 @@ def open_mailbox(engine: Engine, account: str) -> Generator[Mailbox]:
     storage = engine.storage_settings(settings)  # the account's own folders, or the shared Local Folders
     store = engine.open_store(storage)
     index = engine.open_index(storage, store)
+    mailbox = Mailbox(engine, settings, store, index)
     try:
-        yield Mailbox(engine, settings, store, index)
+        yield mailbox
     finally:
+        mailbox.let_go()  # a change that failed between its index write and its fact never keeps the lock
         index.close()

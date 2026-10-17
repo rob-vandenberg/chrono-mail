@@ -14,9 +14,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 0.5.162"
+__version__ = "test_ui_columns.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.162: a message read in Favorites > Unread stays there after a sort and a fetch, until the view is left
 # v0.5.161: a delete spans no group header again, and the headers keep their bar
 # v0.5.160: After a new sort the whole row stays selected and Delete deletes it (folder, Favorites); several selected messages stay selected; a message chosen meanwhile wins; fetching the list again keeps the whole row; the list is never reset
@@ -205,11 +206,11 @@ def test_the_window_applies_the_editor_and_keeps_it(world: World, qtbot: QtBot, 
 def test_the_reading_pane_can_be_switched_off_and_a_message_opens_in_a_window(world: World, qtbot: QtBot) -> None:
     world.window.start()
     settle(qtbot, world, 3)
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(0))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
     wait(qtbot, lambda: world.window._shown is not None)  # noqa: SLF001
     world.window.set_reading_pane("off")
     assert world.window.reading_pane.isHidden() and world.window._shown is None  # noqa: SLF001
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(1))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(1, 0))
     qtbot.wait(150)
     assert world.window._shown is None  # nothing is opened, so nothing is marked read  # noqa: SLF001
     world.window.act_open.trigger()
@@ -226,7 +227,7 @@ def test_the_reading_pane_can_be_switched_off_and_a_message_opens_in_a_window(wo
 def test_a_message_window_can_start_a_reply(world: World, qtbot: QtBot) -> None:
     world.window.start()
     settle(qtbot, world, 3)
-    world.window.list_view.setCurrentIndex(world.window.list_model.index(0))
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
     world.window.open_selected()
     wait(qtbot, lambda: len(world.window._message_windows) == 1)  # noqa: SLF001
     window: MessageWindow = world.window._message_windows[0]  # noqa: SLF001

@@ -16,9 +16,10 @@ from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_
 from chrono_mail.store.tags import MessageTags
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 0.5.161"
+__version__ = "store.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: one lock per message file around finding and using it (read, flags, copy, rename, delete): a change of flags renames the file, so a read could find a name that was gone a moment later
 # v0.5.161: flags: the flags of one message from the name of its file
 # v0.5.134: tags: a copy gets the tags of the original, a message deleted for good loses them
 # v0.5.133: written_together: a bulk import makes a whole batch safe on disk at once instead of every message
@@ -63,6 +64,9 @@ def _make_safe(files: list[Path]) -> None:
             os.close(descriptor)
     for directory in {path.parent for path in files}:
         fsync_directory(directory)
+
+
+_MESSAGE_LOCKS: tuple[threading.RLock, ...] = tuple(threading.RLock() for _ in range(256))
 
 
 class MessageNotFoundError(StorageError):
@@ -402,6 +406,12 @@ class Store:
             self._durable = True
             _make_safe(written)
 
+    def _message_lock(self, store_id: str) -> threading.RLock:
+        """The lock of one message's file: finding a file and using it (read, rename, delete) is one step, because a
+        change of flags renames the file. A fixed set of locks shared by every Store of this process (a store is opened
+        per command); two messages may share one, which only makes one wait a moment."""
+        return _MESSAGE_LOCKS[hash((str(self.root), store_id)) % len(_MESSAGE_LOCKS)]
+
     def _locate(self, directory: Path, store_id: str, hint: str | None = None) -> Path:
         if hint is not None and hint.split("/", 1)[0] in ("new", "cur"):
             candidate = directory / hint
@@ -421,11 +431,13 @@ class Store:
 
     def read(self, ref: MessageRef, hint: str | None = None) -> bytes:
         """The raw message. Raises CryptoError when the file is damaged."""
-        path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
-        try:
-            return self._decode(path.read_bytes())
-        except OSError as error:
-            raise StorageError(f"The message could not be read: {error.strerror}") from None
+        with self._message_lock(ref.store_id):  # a change of flags is a rename: finding and reading are one step
+            path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
+            try:
+                blob = path.read_bytes()
+            except OSError as error:
+                raise StorageError(f"The message could not be read: {error.strerror}") from None
+        return self._decode(blob)
 
     def locate(self, ref: MessageRef, hint: str | None = None) -> str:
         """The current relative path ("new/..." or "cur/...") of a message inside its folder."""
@@ -434,7 +446,8 @@ class Store:
 
     def flags(self, ref: MessageRef, hint: str | None = None) -> frozenset[MessageFlag]:
         """The flags of one message, from the name of its file (the folder is not listed)."""
-        path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
+        with self._message_lock(ref.store_id):
+            path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
         parsed = parse_name(path.name)
         if parsed is None:
             raise MessageNotFoundError("Message not found")
@@ -489,62 +502,65 @@ class Store:
     def set_flags(self, ref: MessageRef, flags: frozenset[MessageFlag], hint: str | None = None) -> str:
         """Change the flags (a rename). Letters we do not model are kept. Returns the new relative path."""
         directory = self._folder_directory(ref.folder_path)
-        for _ in range(3):
-            path = self._locate(directory, ref.store_id, hint)
-            hint = None
-            parsed = parse_name(path.name)
-            assert parsed is not None
-            _, extra = split_info(parsed[1] or "")
-            info = join_info(flags, extra)
-            if info == "" and path.parent.name == "new":
-                return f"new/{path.name}"
-            target = directory / "cur" / build_name(ref.store_id, info)
-            if target == path:
-                return f"cur/{path.name}"
-            try:
-                self._checkpoint("flags:before-rename")
-                os.rename(path, target)
-                self._checkpoint("flags:after-rename")
-                if self._durable:
-                    fsync_directory(target.parent)
-                    if path.parent != target.parent:
-                        fsync_directory(path.parent)
-            except FileNotFoundError:
-                continue  # someone else changed the file first: look again
-            except OSError as error:
-                raise StorageError(f"The flags could not be changed: {error.strerror}") from None
-            return f"cur/{target.name}"
-        raise StorageError("The message kept changing while its flags were being set")
+        with self._message_lock(ref.store_id):  # no read of this message happens during the rename
+            for _ in range(3):
+                path = self._locate(directory, ref.store_id, hint)
+                hint = None
+                parsed = parse_name(path.name)
+                assert parsed is not None
+                _, extra = split_info(parsed[1] or "")
+                info = join_info(flags, extra)
+                if info == "" and path.parent.name == "new":
+                    return f"new/{path.name}"
+                target = directory / "cur" / build_name(ref.store_id, info)
+                if target == path:
+                    return f"cur/{path.name}"
+                try:
+                    self._checkpoint("flags:before-rename")
+                    os.rename(path, target)
+                    self._checkpoint("flags:after-rename")
+                    if self._durable:
+                        fsync_directory(target.parent)
+                        if path.parent != target.parent:
+                            fsync_directory(path.parent)
+                except FileNotFoundError:
+                    continue  # someone else changed the file first: look again
+                except OSError as error:
+                    raise StorageError(f"The flags could not be changed: {error.strerror}") from None
+                return f"cur/{target.name}"
+            raise StorageError("The message kept changing while its flags were being set")
 
     def move(self, ref: MessageRef, target_folder: tuple[str, ...], hint: str | None = None) -> MessageRef:
         """Move a message to another folder in one atomic rename. The store id stays the same."""
         source_directory = self._folder_directory(ref.folder_path)
         target_directory = self._folder_directory(target_folder)
-        path = self._locate(source_directory, ref.store_id, hint)
-        destination = target_directory / path.parent.name / path.name
-        if destination.exists():
-            raise StorageError("The target folder already holds this message")
-        try:
-            self._checkpoint("move:before-rename")
-            os.rename(path, destination)
-            self._checkpoint("move:after-rename")
-            if self._durable:
-                fsync_directory(destination.parent)
-                fsync_directory(path.parent)
-        except OSError as error:
-            raise StorageError(f"The message could not be moved: {error.strerror}") from None
-        return MessageRef(self.account_id, target_folder, ref.store_id)
+        with self._message_lock(ref.store_id):
+            path = self._locate(source_directory, ref.store_id, hint)
+            destination = target_directory / path.parent.name / path.name
+            if destination.exists():
+                raise StorageError("The target folder already holds this message")
+            try:
+                self._checkpoint("move:before-rename")
+                os.rename(path, destination)
+                self._checkpoint("move:after-rename")
+                if self._durable:
+                    fsync_directory(destination.parent)
+                    fsync_directory(path.parent)
+            except OSError as error:
+                raise StorageError(f"The message could not be moved: {error.strerror}") from None
+            return MessageRef(self.account_id, target_folder, ref.store_id)
 
     def copy(self, ref: MessageRef, target_folder: tuple[str, ...], hint: str | None = None) -> MessageRef:
         """Copy a message (same flags, new identity). The copy is verified before this returns."""
-        path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
-        parsed = parse_name(path.name)
-        assert parsed is not None
-        flags, extra = split_info(parsed[1] or "")
-        try:
-            blob = path.read_bytes()
-        except OSError as error:
-            raise StorageError(f"The message could not be read: {error.strerror}") from None
+        with self._message_lock(ref.store_id):
+            path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
+            parsed = parse_name(path.name)
+            assert parsed is not None
+            flags, extra = split_info(parsed[1] or "")
+            try:
+                blob = path.read_bytes()
+            except OSError as error:
+                raise StorageError(f"The message could not be read: {error.strerror}") from None
         store_id = new_store_id()
         destination = self._write_blob(self._folder_directory(target_folder), store_id, blob, flags, extra)
         try:
@@ -561,14 +577,15 @@ class Store:
 
     def delete(self, ref: MessageRef, hint: str | None = None) -> None:
         """Remove a message file for good."""
-        path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
-        try:
-            self._checkpoint("delete:before-unlink")
-            path.unlink()
-            if self._durable:
-                fsync_directory(path.parent)
-        except OSError as error:
-            raise StorageError(f"The message could not be deleted: {error.strerror}") from None
+        with self._message_lock(ref.store_id):
+            path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
+            try:
+                self._checkpoint("delete:before-unlink")
+                path.unlink()
+                if self._durable:
+                    fsync_directory(path.parent)
+            except OSError as error:
+                raise StorageError(f"The message could not be deleted: {error.strerror}") from None
         try:
             self.tags.forget(ref.store_id)
         except StorageError:

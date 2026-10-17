@@ -1,4 +1,5 @@
 import os
+import threading
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,10 @@ from chrono_mail.store import Store
 from chrono_mail.store.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_store_store.py 0.5.161"
+__version__ = "test_store_store.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: a read never finds a name that a change of flags took away; the tests that replace os.sync also run where it does not exist (Windows)
 # v0.5.161: flags: the flags of one message from the name of its file
 # v0.5.133: written_together: a batch made safe on disk at once
 # v0.0.7: Initial store tests
@@ -143,6 +145,27 @@ def test_the_flags_of_one_message_come_from_its_file_name(tmp_path: Path) -> Non
     store.delete(other)
     with pytest.raises(MessageNotFoundError):
         store.flags(other)
+
+
+def test_a_read_never_finds_a_name_that_a_change_of_flags_took_away(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    store = make_store(tmp_path)
+    reference = store.deliver(INBOX, RAW)
+    real_locate = Store._locate
+    renames: list[threading.Thread] = []
+
+    def locate_then_rename(self: Store, directory: Path, store_id: str, hint: str | None = None) -> Path:
+        path = real_locate(self, directory, store_id, hint)
+        if not renames:  # another thread marks the message read right after it was found
+            renames.append(threading.Thread(target=lambda: store.set_flags(reference, frozenset({MessageFlag.SEEN}))))
+            renames[0].start()
+            renames[0].join(0.3)  # it waits for the reader (the message's lock), or renames the file at once (no lock)
+        return path
+
+    monkeypatch.setattr(Store, "_locate", locate_then_rename)
+    assert store.read(reference) == RAW  # the name found is still there when it is read
+    renames[0].join(5)
+    monkeypatch.undo()
+    assert store.flags(reference) == {MessageFlag.SEEN}  # and the change of flags was made afterwards
 
 
 def test_unseen_message_with_no_flags_stays_in_new(tmp_path: Path) -> None:
@@ -351,7 +374,7 @@ def test_written_together_makes_the_whole_batch_safe_once_at_the_end(tmp_path: P
     store = make_store(tmp_path, durable=True)
     calls: list[str] = []
     monkeypatch.setattr(os, "fsync", lambda _descriptor=0: calls.append("fsync"))
-    monkeypatch.setattr(os, "sync", lambda: calls.append("sync"))
+    monkeypatch.setattr(os, "sync", lambda: calls.append("sync"), raising=False)
     with store.written_together():
         first = store.deliver(INBOX, b"Subject: a\r\n\r\nA")
         store.deliver(INBOX, b"Subject: b\r\n\r\nB")
@@ -366,7 +389,7 @@ def test_written_together_makes_the_whole_batch_safe_once_at_the_end(tmp_path: P
 def test_written_together_without_a_sync_of_everything_makes_each_file_safe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = make_store(tmp_path, durable=True)
     calls: list[str] = []
-    monkeypatch.delattr(os, "sync")  # as on Windows
+    monkeypatch.delattr(os, "sync", raising=False)  # as on Windows
     monkeypatch.setattr(os, "fsync", lambda _descriptor=0: calls.append("fsync"))
     with store.written_together():
         store.deliver(INBOX, b"Subject: a\r\n\r\nA")
@@ -377,7 +400,7 @@ def test_written_together_without_a_sync_of_everything_makes_each_file_safe(tmp_
 def test_written_together_also_makes_safe_what_was_written_before_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     store = make_store(tmp_path, durable=True)
     calls: list[str] = []
-    monkeypatch.setattr(os, "sync", lambda: calls.append("sync"))
+    monkeypatch.setattr(os, "sync", lambda: calls.append("sync"), raising=False)
     with pytest.raises(RuntimeError), store.written_together():
         store.deliver(INBOX, b"Subject: a\r\n\r\nA")
         raise RuntimeError("stopped")

@@ -3,9 +3,10 @@ import os
 import sys
 
 # --- Version ------------------------------------------------------------
-__version__ = "running.py 0.5.161"
+__version__ = "running.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: the Linux part is a block for "not Windows" (an early return did not satisfy the type check for Windows)
 # v0.5.161: the Linux part says it is not for Windows, so the type check on Windows reports nothing
 # v0.5.147: Windows: every process above this one (parent, grandparent …) is skipped, not only the parent: a run from source is launcher, redirector, program
 # v0.5.144: Initial: whether Chrono Mail is already running for this user, by looking at the processes themselves (Linux and Windows)
@@ -47,26 +48,25 @@ def running_programs() -> list[int]:
 
 def _running_on_linux(ignored: set[int]) -> list[int]:
     """Every process has its name in /proc/<number>/comm and belongs to the user who owns /proc/<number>."""
-    if sys.platform == "win32":
-        return []  # never called there; it tells the type check on Windows that os.getuid exists below
-    user = os.getuid()
-    try:
-        entries = list(os.scandir("/proc"))
-    except OSError:
-        return []
     found: list[int] = []
-    for entry in entries:
-        if not entry.name.isdigit() or int(entry.name) in ignored:
-            continue
+    if sys.platform != "win32":  # never called on Windows; inside this block the type check for Windows knows to skip it
+        user = os.getuid()
         try:
-            if entry.stat().st_uid != user:
-                continue
-            with open(f"/proc/{entry.name}/comm", encoding="utf-8", errors="replace") as file:
-                name = file.read().strip()
+            entries = list(os.scandir("/proc"))
         except OSError:
-            continue  # the process ended meanwhile
-        if name == PROCESS_NAME:
-            found.append(int(entry.name))
+            return []
+        for entry in entries:
+            if not entry.name.isdigit() or int(entry.name) in ignored:
+                continue
+            try:
+                if entry.stat().st_uid != user:
+                    continue
+                with open(f"/proc/{entry.name}/comm", encoding="utf-8", errors="replace") as file:
+                    name = file.read().strip()
+            except OSError:
+                continue  # the process ended meanwhile
+            if name == PROCESS_NAME:
+                found.append(int(entry.name))
     return found
 
 

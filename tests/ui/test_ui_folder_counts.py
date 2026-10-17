@@ -12,9 +12,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_folder_counts.py 0.5.158"
+__version__ = "test_ui_folder_counts.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.158: Initial tests: the folder list follows the facts; a change from outside is fetched once, one at a time (D-146 step 4)
 
 
@@ -82,7 +83,7 @@ def test_a_folder_made_renamed_and_deleted_is_one_entry_each(world: World, qtbot
 def test_changes_from_outside_are_fetched_once_one_at_a_time_and_keep_the_selection(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     started(qtbot, world)
     window, account = world.window, world.account_id
-    window.list_view.setCurrentIndex(window.list_model.index(1))
+    window.list_view.setCurrentIndex(window.list_model.index(1, 0))
     chosen = str(getattr(window.list_model.row_at(1), "message_id"))
     commands = asked(world, monkeypatch)
     for _ in range(3):  # three big jobs report the mailbox in a row

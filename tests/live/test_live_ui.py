@@ -18,9 +18,10 @@ from tests.live.account import LiveAccount
 from tests.ui.world import Dialogs, dialogs, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_ui.py 0.4.122"
+__version__ = "test_live_ui.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.4.122: The Trash list has group header rows: they are skipped when the message is looked for
 # v0.0.13: Initial live user interface test
 
@@ -83,7 +84,7 @@ def test_send_receive_read_and_delete_through_the_window(live_window: tuple[Main
             qtbot.wait(2000)
         position = next((row for row in range(window.list_model.rowCount()) if row_of(window, row) is not None and token in row_of(window, row).subject), -1)
         assert position >= 0, "the message did not arrive in time"
-        window.list_view.setCurrentIndex(window.list_model.index(position))
+        window.list_view.setCurrentIndex(window.list_model.index(position, 0))
         wait(qtbot, lambda: token in window.reader.text_view.toPlainText(), timeout=15000)
         assert token in window.reader._subject.text()  # noqa: SLF001
         assert not server_has(live_account, token)  # the account deletes from the server after download
@@ -94,7 +95,7 @@ def test_send_receive_read_and_delete_through_the_window(live_window: tuple[Main
         window.tree.setCurrentIndex(trash)
         wait(qtbot, lambda: window._folder == "Trash" and window.list_model.rowCount() >= 1)  # noqa: SLF001
         row = next(r for r in range(window.list_model.rowCount()) if row_of(window, r) is not None and token in row_of(window, r).subject)  # header bars are not messages
-        window.list_view.setCurrentIndex(window.list_model.index(row))
+        window.list_view.setCurrentIndex(window.list_model.index(row, 0))
         dialogs.answer = QMessageBox.StandardButton.Yes
         window.act_delete.trigger()
         wait(qtbot, lambda: window.status_label.text().startswith("Deleted 1 message"))

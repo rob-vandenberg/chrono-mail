@@ -96,9 +96,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 0.5.161"
+__version__ = "mainwindow.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.5.161: only new group headers are spanned (not every header after every change)
 # v0.5.160: a new sort, and fetching the list again after a change from outside, rearrange the list in place: Qt's selection moves with each message (whole rows, never one cell); the hand-made reselect is gone
 # v0.5.158: the folder list follows the facts (numbers per folder, a folder made, renamed or deleted); a change from outside fetches only the mailbox it concerns, once, one at a time; no reload after a check, an import, sending or tags (D-146 step 4)
@@ -2038,7 +2039,7 @@ class MainWindow(QMainWindow):
         for position in positions:
             row = self.list_model.row_at(position)
             if row is not None and "seen" not in getattr(row, "flags"):
-                self.list_view.setCurrentIndex(self.list_model.index(position))
+                self.list_view.setCurrentIndex(self.list_model.index(position, 0))
                 return
 
     def _take_away(self, message_ids: list[str]) -> None:
@@ -2072,7 +2073,7 @@ class MainWindow(QMainWindow):
             self._clear_reader()
             self._shown = None
             return
-        index = model.index(target)
+        index = model.index(target, 0)
         self.list_view.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
         self.list_view.scrollTo(index)
 
@@ -2288,8 +2289,8 @@ class MainWindow(QMainWindow):
         while 0 <= position < count and self.list_model.is_header(position):  # group headers are passed
             position += step
         if 0 <= position < count:
-            self.list_view.setCurrentIndex(self.list_model.index(position))
-            self.list_view.scrollTo(self.list_model.index(position))
+            self.list_view.setCurrentIndex(self.list_model.index(position, 0))
+            self.list_view.scrollTo(self.list_model.index(position, 0))
 
     def toggle_read(self) -> None:
         rows = self._selected_rows()
@@ -2373,8 +2374,8 @@ class MainWindow(QMainWindow):
         while 0 <= position < count:
             row = self.list_model.row_at(position)
             if row is not None and "seen" not in getattr(row, "flags"):
-                self.list_view.setCurrentIndex(self.list_model.index(position))
-                self.list_view.scrollTo(self.list_model.index(position))
+                self.list_view.setCurrentIndex(self.list_model.index(position, 0))
+                self.list_view.scrollTo(self.list_model.index(position, 0))
                 return True
             position += step
         return self._unread_in_another_folder(step)

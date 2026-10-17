@@ -7,12 +7,14 @@ from chrono_mail.core import ChronoMailError, MessageRef, ProtocolError
 from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Refused
 from chrono_mail.store import Store
+from chrono_mail.sync.announce import SILENT, Announcer
 from chrono_mail.sync.pop3_state import DownloadRecord, Pop3State
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3_fetch.py 0.5.145"
+__version__ = "pop3_fetch.py 0.5.164"
 
 # --- Version history ----------------------------------------------------
+# v0.5.164: each message is told the moment it is stored, in one step with its index entry (announcer, D-151)
 # v0.5.145: step: the steps of a check (listing the messages, deleting on the server), for the Operations window
 # v0.5.133: already_here first looks at the header alone (TOP n 0); only a message that is not here is downloaded whole
 # v0.5.132: already_here: a message that is already in the store (imported) is recorded as downloaded, not stored twice
@@ -78,6 +80,7 @@ def fetch_pop3(
     progress: Progress | None = None,
     already_here: AlreadyHere | None = None,
     step: Step | None = None,
+    announcer: Announcer = SILENT,
 ) -> FetchReport:
     """Download new messages through a connected client.
 
@@ -104,7 +107,7 @@ def fetch_pop3(
             seen.add(unique_id)
             if progress is not None:
                 progress(position, len(new))
-            _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number), already_here)
+            _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number), already_here, announcer)
         _apply_policy(store, state, options, now, run, on_server)
         if run.to_delete:
             if step is not None:
@@ -132,6 +135,7 @@ def _download_one(
     unique_id: str,
     size: int | None,
     already_here: AlreadyHere | None = None,
+    announcer: Announcer = SILENT,
 ) -> None:
     header: bytes | None = None
     if already_here is not None:
@@ -168,11 +172,13 @@ def _download_one(
     checkpoint("fetch:after-state")
     run.downloaded += 1
     run.new_references.append(reference)
-    if index is not None:
-        try:
-            index.add(entry_from_raw(reference, f"new/{reference.store_id}", frozenset(), len(raw), raw))
-        except ChronoMailError:
-            run.index_problems += 1  # the message is safe in the store; reconcile_index() will add it
+    with announcer.changing():  # its index entry and its fact in one step (D-151)
+        if index is not None:
+            try:
+                index.add(entry_from_raw(reference, f"new/{reference.store_id}", frozenset(), len(raw), raw))
+            except ChronoMailError:
+                run.index_problems += 1  # the message is safe in the store; reconcile_index() will add it
+        announcer.added(reference)
     if options.policy is Pop3DeletePolicy.DELETE_AFTER_DOWNLOAD:
         run.to_delete[unique_id] = number  # verified when it was stored; deleted together with the others below
 
