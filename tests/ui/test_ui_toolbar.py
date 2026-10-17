@@ -12,9 +12,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_toolbar.py 0.5.170"
+__version__ = "test_ui_toolbar.py 1.1.173"
 
 # --- Version history ----------------------------------------------------
+# v1.1.173: The window's minimum is 768 px in every section (more only when the contents need it at a larger size), also when it is shown in Calendar before Mail was ever on screen
 # v0.5.170: Another section never makes the window wider (one toolbar, a row per section)
 # v0.5.169: At 240 px the small month calendar shows all seven days
 # v0.5.168: A section's search field is Mail's without This folder; the small month calendar lets the sidebar be 240 px
@@ -285,3 +286,32 @@ def test_showing_another_section_keeps_the_width_of_the_narrowest_window(world: 
         qtbot.wait(50)
         assert window.width() == narrowest, section  # the owner's report: Mail made the window 26 px wider
 
+
+def test_the_window_is_never_narrower_than_768_pixels_and_mail_keeps_the_width_of_calendar(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.show()
+    window.switch_section(CALENDAR)  # shown in Calendar before Mail was laid out on screen (it was 652 px, then Mail made it 768)
+    window.resize(100, 700)
+    qtbot.wait(50)
+    assert window.width() == 768 and window.minimumWidth() == 768
+    window.switch_section(MAIL)
+    qtbot.wait(50)
+    assert window.width() == 768
+
+
+def test_at_a_larger_size_the_minimum_is_what_the_contents_need_and_it_comes_back(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.show()
+    for factor, larger in ((2.0, True), (1.0, False)):
+        window.try_interface_scale(factor)
+        qtbot.wait(50)
+        widths = set()
+        for section in (CALENDAR, MAIL, CONTACTS, TASKS):
+            window.switch_section(section)
+            window.resize(100, 700)
+            qtbot.wait(30)
+            widths.add(window.width())
+        assert len(widths) == 1, (factor, widths)  # one minimum for every section
+        assert (widths.pop() > 768) is larger, factor  # 768, or more when the contents need it (926 at 2.00)

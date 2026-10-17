@@ -126,3 +126,4 @@ IMAP and IMAPS accounts: folder sync, server-side flags, offline cache in the sa
 - DONE (1.0.170) The first public release: the owner moved the major version to 1; the .deb and .rpm are on the GitHub release page (the Windows setup.exe follows from DEVELOPMENT).
 - DONE (1.0.171) The actions of a rule can be moved up and down in the rule editor (D-157).
 - DONE (1.1.172) Every colour is the program's own, in one file (`core/colours.py`): a dark theme (the colours Linux showed) and a light theme (white, from the owner's reference screenshot); Fusion on every platform; the Style setting is gone; a thin line under group headings (D-158).
+- DONE (1.1.173) The window's minimum width is 768 px in every section (more only when the contents need it at a larger size), so showing Mail never makes the window wider (D-159).

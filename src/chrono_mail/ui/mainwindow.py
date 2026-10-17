@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QLabel,
+    QLayout,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -96,9 +97,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 1.1.172"
+__version__ = "mainwindow.py 1.1.173"
 
 # --- Version history ----------------------------------------------------
+# v1.1.173: The window's minimum width is fixed in every section (768 px, or what the contents need at a larger size), so showing Mail never makes it wider
 # v1.1.172: The Tag button's colour from the colour file (D-158)
 # v0.5.170: one toolbar for the window that shows the row of the section on screen (switching made the window wider, D-156)
 # v0.5.167: the toolbar of every section folds its buttons into More when the window is narrow (FoldingToolbar, D-154); Menu and the search field always stay
@@ -238,6 +240,7 @@ def bool_setting(settings: QSettings, key: str, default: bool) -> bool:
 
 
 MAXIMUM_TREE_STATE: int = 2000  # opened or closed nodes that are remembered
+MINIMUM_WIDTH: int = 768  # the window is never narrower, in every section (the owner's choice)
 
 
 class MainWindow(QMainWindow):
@@ -346,6 +349,7 @@ class MainWindow(QMainWindow):
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.setMinimumWidth(px(180))
+        self.setMinimumWidth(MINIMUM_WIDTH)  # one minimum for all sections: showing another section never makes the window wider
         self.tree.setObjectName("folderTree")
 
         self.list_model = MessageListModel(self.backend, self)
@@ -1337,12 +1341,23 @@ class MainWindow(QMainWindow):
         for composer in self._composers:
             composer.set_text_size(self._writing_points(factor))
 
+    def _fix_minimum_width(self) -> None:
+        """One minimum width for every section: 768 px, or what the contents need at a larger size factor (they need
+        926 px at 2.00). Fixed, so that Qt never makes the window wider when another section is shown."""
+        self.setMinimumWidth(0)  # what the contents need, without the minimum that was set before
+        for part in self.findChildren(QLayout):  # parts that are not shown keep their old sizes until asked again
+            part.invalidate()
+        layout = self.layout()
+        needed = layout.totalMinimumSize().width() if layout is not None else 0
+        self.setMinimumWidth(max(MINIMUM_WIDTH, needed))
+
     def _apply_scaled_parts(self) -> None:
         """The sizes the style list does not hold: this window's at its own size factor, the message windows' and the
         composers' at that of the other windows."""
         self.section_bar.apply_scale()
         self.window_toolbar.apply_scale()
         self.tree.setMinimumWidth(px(180))
+        QTimer.singleShot(0, self._fix_minimum_width)  # once the new sizes and the style sheet are all in place
         for reader in (self.reader, *(window.reader for window in self._message_windows)):
             reader.apply_scale()
         for window in (*self._message_windows, *self._composers):

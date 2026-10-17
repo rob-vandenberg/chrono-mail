@@ -1087,3 +1087,9 @@ Step 2 (0.3.108): "Message list" (`list_scale`; an older `list_font_size` in poi
 - Icons keep the colours in their files (only their text-coloured parts follow the theme, as before); the owner decides later. Colours a person chooses (tags, calendars) are theirs and not in the file.
 **Reason:** reported from DEVELOPMENT (0.5.170): on Windows in dark mode the group headings could hardly be told from the rows. The cause: in "System" the palette came from the platform while our own colours (the heading bar) were chosen to fit KDE's; any own colour could clash with any platform. **Accepted cost:** a person's own system colour scheme (a KDE scheme, Windows high contrast) no longer shows in Chrono Mail.
 
+## D-159 One minimum width for the window: 768 px
+*2026-10-17*
+
+**Decision:** the main window is never narrower than 768 px, in every section (`MINIMUM_WIDTH` in `ui/mainwindow.py`, the owner's choice: narrow enough). At a larger size factor the contents can need more (817 px at 1.50, 926 at 2.00); then that is the minimum. It is worked out after every change of the size factors, once the new sizes and the style sheet are in place, from freshly measured contents (every layout is asked again: parts that are not shown keep old sizes otherwise), and set as the window's fixed minimum, so Qt no longer changes it while sections are switched. Not chosen: 768 times the size factor (at 0.75 it let the window be narrower than its contents, at 2.00 it forced 1,536 px).
+**Reason:** the owner's report on 1.1.172: shown in Calendar before Mail was ever on screen, the window could be made 652 px narrow and Mail then made it 768. Qt kept a stale minimum for the main area while Mail was hidden (a hidden part does not pass on its size changes) and enlarged the window when Mail was shown. With the minimum fixed, a section that is shown can never ask for more than the window already has.
+
