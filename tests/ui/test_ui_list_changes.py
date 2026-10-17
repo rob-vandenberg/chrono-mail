@@ -11,9 +11,10 @@ from chrono_mail.ui.models import MessageListModel, ViewSpec
 from tests.ui.world import World, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_list_changes.py 0.5.165"
+__version__ = "test_ui_list_changes.py 0.5.166"
 
 # --- Version history ----------------------------------------------------
+# v0.5.166: messages of one name from several addresses share one heading
 # v0.5.165: mail that streams in from checks at the same moment is placed while it comes (DEVELOPMENT's case)
 # v0.5.164: a message that arrives during another check is placed where the engine has it (the owner's case); an answer and a page asked before a fact about the view are asked again; message rows never have children
 # v0.5.163: messages that come in at once are placed with one question; messages gone from a part not loaded give one rearrange, never a reset
@@ -338,3 +339,13 @@ def test_mail_that_streams_in_from_checks_at_the_same_moment_is_placed_while_it_
     engine = [row.subject for row in world.call("message.combined", view="inboxes", sort="subject", limit=1000)]
     assert watched.subjects() == engine and watched.resets == 0
     assert watched.asked.count("message.combined-places") < 100  # one question per burst, not one per message
+
+
+def test_messages_of_one_name_from_several_addresses_share_one_heading(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.engine.mailbox import open_mailbox
+
+    with open_mailbox(world.engine, world.account_id) as mailbox:
+        for number, sender in ((7, "Albert Heijn Winkelteam <one@spam.example>"), (8, "Albert Heijn Winkelteam <two@other.example>")):
+            mailbox.deliver(mailbox.folder("Inbox"), mail(number, sender=sender), frozenset())
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, "Inbox", sort="sender", oldest_first=True), groups=True)
+    assert watched.headers().count("Albert Heijn Winkelteam") == 1  # the heading shows the name, and groups by it

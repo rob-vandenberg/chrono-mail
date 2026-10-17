@@ -12,9 +12,10 @@ from chrono_mail.sync.rebuild import rebuild_index, reconcile_index
 from tests.test_index_index import INBOX, make_entry, subjects
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_tags.py 0.5.134"
+__version__ = "test_index_tags.py 0.5.166"
 
 # --- Version history ----------------------------------------------------
+# v0.5.166: format 6 is upgraded on through 7 to 8
 # v0.5.134: Initial tests: tags in the index (kept, found, upgraded in place, rebuilt from the store)
 
 
@@ -66,7 +67,10 @@ def test_an_index_of_format_6_is_upgraded_in_place_without_a_rebuild(tmp_path: P
     for statement in STATEMENTS:
         if statement in TAG_STATEMENTS:
             continue
-        connection.execute(statement.replace(",\n        tags TEXT NOT NULL DEFAULT ''", ""))
+        if "sender_name" in statement and statement.startswith("CREATE INDEX"):
+            connection.execute("CREATE INDEX messages_by_sender ON messages (folder, sender COLLATE NOCASE, id)")  # as format 6 had it
+            continue
+        connection.execute(statement.replace(",\n        tags TEXT NOT NULL DEFAULT '',\n        sender_name TEXT NOT NULL DEFAULT ''", ""))
     connection.execute("INSERT INTO meta VALUES ('schema', '6')")
     connection.execute(
         "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments)"
@@ -80,7 +84,7 @@ def test_an_index_of_format_6_is_upgraded_in_place_without_a_rebuild(tmp_path: P
     index.update_tags("c" * 32, ("Work",))
     assert subjects(index.search("tag:work", INBOX)) == ["Kept"]
     index.close()
-    assert sqlite3.connect(path).execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == "7"
+    assert sqlite3.connect(path).execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == "8"  # on to 7, then 8
 
 
 def test_a_rebuild_and_a_repair_take_the_tags_from_the_store(tmp_path: Path) -> None:

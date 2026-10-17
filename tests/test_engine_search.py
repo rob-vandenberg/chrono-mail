@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_search.py 0.3.109"
+__version__ = "test_engine_search.py 0.5.166"
 
 # --- Version history ----------------------------------------------------
+# v0.5.166: the groups by sender are named and counted by the name the From column shows
 # v0.3.109: Sorting by contact, attachment and preview through the commands; no groups for the yes/no sorts
 # v0.2.94: Search results in any sort order; message.groups; date group boundaries
 # v0.0.19: Initial tests of the advanced search options
@@ -84,7 +85,7 @@ def test_search_follows_the_sort_order(setup: Setup) -> None:
 def test_groups_through_the_command(setup: Setup) -> None:
     fill(setup)
     groups: list[Any] = list(call(setup.engine, "message.groups", account=setup.account_id, folder="Inbox", sort="sender", oldest_first=True))
-    assert [(group.value, group.count) for group in groups] == [("Ann <ann@x.org>", 2), ("Bob <bob@x.org>", 1)]
+    assert [(group.value, group.count) for group in groups] == [("Ann", 2), ("Bob", 1)]  # the sender as the From column shows it
     sizes: list[Any] = list(call(setup.engine, "message.groups", account=setup.account_id, query="cats", sort="size"))
     assert [(group.key, group.count) for group in sizes] == [("tiny", 2)]
 

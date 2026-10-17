@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 0.5.134"
+__version__ = "schema.py 0.5.166"
 
 # --- Version history ----------------------------------------------------
+# v0.5.166: Schema 8: sender_name, the sender as the From column shows it (sorting and grouping by sender use it); schema 7 is upgraded in place
 # v0.5.134: Schema 7: the tags of each message (a column to show them, a table to find them); schema 6 is upgraded in place
 # v0.4.117: Schema 6: the partial index for unread counts is gone (the index of the Unread sort serves them)
 # v0.3.109: Schema 5: indexes for sorting by unread, flagged, replied, attachment and preview
@@ -10,7 +11,7 @@ __version__ = "schema.py 0.5.134"
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 7
+SCHEMA_VERSION: int = 8
 MINIMUM_SQLITE_VERSION: tuple[int, int, int] = (3, 43, 0)  # contentless FTS5 tables that allow deletes
 FOLDER_SEPARATOR: str = "\x1f"
 
@@ -37,11 +38,12 @@ STATEMENTS: tuple[str, ...] = (
         thread_key TEXT NOT NULL,
         has_attachments INTEGER NOT NULL,
         preview TEXT NOT NULL DEFAULT '',
-        tags TEXT NOT NULL DEFAULT ''
+        tags TEXT NOT NULL DEFAULT '',
+        sender_name TEXT NOT NULL DEFAULT ''
     )""",
     "CREATE INDEX messages_by_date ON messages (folder, date DESC, id DESC)",
     "CREATE INDEX messages_by_subject ON messages (folder, subject COLLATE NOCASE, id)",
-    "CREATE INDEX messages_by_sender ON messages (folder, sender COLLATE NOCASE, id)",
+    "CREATE INDEX messages_by_sender_name ON messages (folder, sender_name COLLATE NOCASE, id)",  # the sender as the From column shows it
     "CREATE INDEX messages_by_size ON messages (folder, size, id)",
     # The sort keys of the yes/no sorts are written exactly like _SORT_COLUMN in index.py, or SQLite does not use these indexes.
     "CREATE INDEX messages_by_unread ON messages (folder, (flags & 1), date DESC, id DESC)",  # also serves unread counts: (flags & 1) = 0 is a seek
@@ -69,4 +71,13 @@ STATEMENTS: tuple[str, ...] = (
 
 # Schema 6 to 7 without a rebuild: the tags were new, so every message starts without any.
 UPGRADE_6_TO_7: tuple[str, ...] = ("ALTER TABLE messages ADD COLUMN tags TEXT NOT NULL DEFAULT ''", *TAG_STATEMENTS)
+
+# Schema 7 to 8 without a rebuild: the name of each sender as the From column shows it, worked out from what is stored
+# (the function shown_name is given to the connection by the index).
+UPGRADE_7_TO_8: tuple[str, ...] = (
+    "ALTER TABLE messages ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''",
+    "UPDATE messages SET sender_name = shown_name(sender)",
+    "DROP INDEX IF EXISTS messages_by_sender",
+    "CREATE INDEX messages_by_sender_name ON messages (folder, sender_name COLLATE NOCASE, id)",
+)
 

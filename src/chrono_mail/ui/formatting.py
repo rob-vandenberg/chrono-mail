@@ -3,10 +3,13 @@ from datetime import UTC, datetime, timedelta, tzinfo
 
 from PySide6.QtGui import QColor
 
+from chrono_mail.core import shown_name
+
 # --- Version ------------------------------------------------------------
-__version__ = "formatting.py 0.2.100"
+__version__ = "formatting.py 0.5.166"
 
 # --- Version history ----------------------------------------------------
+# v0.5.166: display_name uses the one rule of core (shown_name), the same as the index
 # v0.2.100: coming_date: a time still to come (time today, weekday and time this week, else the date and time)
 # v0.0.64: The calendar section
 # v0.0.14: avatar colours from 72 hues with guaranteed contrast
@@ -18,11 +21,8 @@ AVATAR_LIGHTNESS: float = 0.30  # dark enough for white initials: contrast 4.7 o
 
 
 def display_name(sender: str) -> str:
-    """The name part of 'Name <address>', or the address when there is no name."""
-    if "<" in sender and sender.rstrip().endswith(">"):
-        name = sender[: sender.rindex("<")].strip().strip('"')
-        return name or sender[sender.rindex("<") + 1 : -1].strip()
-    return sender.strip()
+    """The name part of 'Name <address>', or the address when there is no name (the one rule the index uses too)."""
+    return shown_name(sender)
 
 
 def initials(name: str) -> str:

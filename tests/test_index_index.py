@@ -9,16 +9,18 @@ from typing import Literal, override
 
 import pytest
 
-from chrono_mail.core import MessageFlag, MessageRef, StorageError
+from chrono_mail.core import MessageFlag, MessageRef, StorageError, shown_name
 from chrono_mail.index import Index, IndexedMessage, IndexEntry, ParsedQuery, SearchFilter, SortField, entry_from_raw, match_expression, parse_query
 from chrono_mail.index.index import IndexBuilder, _order
+from chrono_mail.index.schema import STATEMENTS
 from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 0.5.162"
+__version__ = "test_index_index.py 0.5.166"
 
 # --- Version history ----------------------------------------------------
+# v0.5.166: sorting and grouping by sender follow the name the From column shows; format 7 is upgraded in place
 # v0.5.162: messages named in stay are found although they no longer match unread, flagged or the tag
 # v0.5.160: positions: where several messages stand, in one pass, as page() lists them
 # v0.5.130: A failed open closes its connection (old format, unreadable format, damaged), so the rebuild can replace the files on Windows
@@ -515,7 +517,8 @@ def test_groups_count_what_the_list_shows_in_the_same_order(tmp_path: Path) -> N
                 run = listed[position:position + group.count]
                 if sort in (SortField.SENDER, SortField.SUBJECT, SortField.RECIPIENTS):
                     attribute = {SortField.SENDER: "sender", SortField.SUBJECT: "subject", SortField.RECIPIENTS: "recipients"}[sort]
-                    assert {str(getattr(message, attribute)).lower() for message in run} == {group.key}
+                    values = [shown_name(message.sender) if sort is SortField.SENDER else str(getattr(message, attribute)) for message in run]  # the sender as the From column shows it
+                    assert {value.lower() for value in values} == {group.key}
                 position += group.count
     index.close()
 
@@ -680,3 +683,44 @@ def test_after_a_failed_open_the_rebuild_replaces_the_files_and_the_index_opens(
     index = Index(path)
     assert index.count(("Inbox",)) == 0  # the new, empty index of the current format
     index.close()
+
+
+def test_sorting_and_grouping_by_sender_follow_the_name_the_from_column_shows(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    index.add_many([
+        make_entry(1, sender="Albert Heijn Winkelteam <one@spam.example>"),
+        make_entry(2, sender="Albert Heijn Winkelteam <two@other.example>"),
+        make_entry(3, sender='"Albert Heijn" <three@x.example>'),  # quoted: sorts under its name, not under the quote mark
+        make_entry(4, sender="Zeta <z@example.com>"),
+        make_entry(5, sender="anwb@example.com"),  # no name: the address is what the column shows
+    ])
+    groups = index.groups(bounds_at(1), folder=INBOX, sort=SortField.SENDER, descending=False)
+    assert [(group.value, group.count) for group in groups] == [("Albert Heijn", 1), ("Albert Heijn Winkelteam", 2), ("anwb@example.com", 1), ("Zeta", 1)]
+    listed = index.page(INBOX, SortField.SENDER, descending=False)
+    assert [message.store_id[-1] for message in listed][:3] == ["3", "1", "2"]  # the quoted name first, then both of one name together
+
+
+def test_an_index_of_format_7_is_upgraded_in_place_with_the_names_the_from_column_shows(tmp_path: Path) -> None:
+    path = tmp_path / "index.sqlite"
+    connection = sqlite3.connect(path)
+    for statement in STATEMENTS:
+        if "sender_name" in statement and statement.startswith("CREATE INDEX"):
+            connection.execute("CREATE INDEX messages_by_sender ON messages (folder, sender COLLATE NOCASE, id)")  # as format 7 had it
+            continue
+        connection.execute(statement.replace(",\n        sender_name TEXT NOT NULL DEFAULT ''", ""))
+    connection.execute("INSERT INTO meta VALUES ('schema', '7')")
+    for number, sender in ((1, '"Albert Heijn" <a@x.example>'), (2, "Albert Heijn <b@y.example>")):
+        connection.execute(
+            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments)"
+            " VALUES (?, 'Inbox', 'new/x', 0, 0, 1, 'Kept', ?, '', NULL, 't', 0)", (f"{number:032x}", sender),
+        )
+    connection.commit()
+    connection.close()
+    index = Index(path)
+    groups = index.groups(bounds_at(1), folder=INBOX, sort=SortField.SENDER)
+    assert [(group.value, group.count) for group in groups] == [("Albert Heijn", 2)]  # both kept, one heading
+    index.close()
+    upgraded = sqlite3.connect(path)
+    assert upgraded.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == "8"
+    assert upgraded.execute("SELECT count(*) FROM sqlite_master WHERE name = 'messages_by_sender'").fetchone()[0] == 0
+    upgraded.close()

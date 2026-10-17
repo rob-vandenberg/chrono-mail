@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from chrono_mail.core import MessageFlag, StorageError
+from chrono_mail.core import MessageFlag, StorageError, shown_name
 from chrono_mail.index.model import (
     DATE_GROUPS,
     SIZE_GROUPS,
@@ -22,12 +22,13 @@ from chrono_mail.index.model import (
     flags_from_bits,
     flags_to_bits,
 )
-from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS, UPGRADE_6_TO_7
+from chrono_mail.index.schema import FOLDER_SEPARATOR, MINIMUM_SQLITE_VERSION, SCHEMA_VERSION, STATEMENTS, UPGRADE_6_TO_7, UPGRADE_7_TO_8
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 0.5.162"
+__version__ = "index.py 0.5.166"
 
 # --- Version history ----------------------------------------------------
+# v0.5.166: sorting and grouping by sender use the name the From column shows (sender_name); format 7 is upgraded in place (D-153)
 # v0.5.162: a search filter can name messages that stay although they no longer match unread, flagged or the tag
 # v0.5.160: positions: where several messages stand in a folder in the chosen order, in one pass
 # v0.5.153: position: where a message stands in a folder in the chosen order
@@ -46,7 +47,7 @@ _COLUMNS: str = "m.store_id, m.folder, m.path, m.flags, m.date, m.size, m.subjec
 _SORT_COLUMN: dict[SortField, str] = {
     SortField.DATE: "m.date",
     SortField.SUBJECT: "m.subject COLLATE NOCASE",
-    SortField.SENDER: "m.sender COLLATE NOCASE",
+    SortField.SENDER: "m.sender_name COLLATE NOCASE",  # the sender as the From column shows it
     SortField.SIZE: "m.size",
     SortField.RECIPIENTS: "m.recipients COLLATE NOCASE",
     SortField.UNREAD: "(m.flags & 1)",  # 0 for unread, so that SQLite seeks it for unread counts too; _order turns its direction round
@@ -59,7 +60,7 @@ _SORT_COLUMN: dict[SortField, str] = {
 }
 _NEWEST_WITHIN: frozenset[SortField] = YES_NO_SORTS | {SortField.FOLDER, SortField.CONVERSATION, SortField.PREVIEW}  # messages with the same value: newest first, either way
 _TEXT_GROUP_COLUMN: dict[SortField, str] = {
-    SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender", SortField.RECIPIENTS: "m.recipients", SortField.FOLDER: "m.folder", SortField.PREVIEW: "m.preview",
+    SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender_name", SortField.RECIPIENTS: "m.recipients", SortField.FOLDER: "m.folder", SortField.PREVIEW: "m.preview",
 }
 _FIELD_COLUMN: dict[str, str] = {"from": "sender", "to": "recipients", "subject": "subject", "body": "body"}
 _TERM: re.Pattern[str] = re.compile(r'(-?)(?:(\w+):)?("[^"]*"?|\S+)')
@@ -203,12 +204,16 @@ class Index:
         self._connection.execute("PRAGMA journal_mode = WAL")
         self._connection.execute("PRAGMA synchronous = NORMAL")
         self._connection.execute("PRAGMA temp_store = MEMORY")
+        self._connection.create_function("shown_name", 1, shown_name, deterministic=True)  # for the upgrade to format 8
         if self._connection.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0:
             self._create_schema()
         else:
             version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
             if version is not None and str(version[0]) == "6":
                 self._upgrade_to_7()
+                version = ("7",)
+            if version is not None and str(version[0]) == "7":
+                self._upgrade_to_8()
                 version = (str(SCHEMA_VERSION),)
             if version is None or str(version[0]) != str(SCHEMA_VERSION):
                 raise StorageError("The index has an unknown format; rebuild it")
@@ -224,7 +229,14 @@ class Index:
         with self._transaction():
             for statement in UPGRADE_6_TO_7:
                 self._connection.execute(statement)
-            self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
+            self._connection.execute("UPDATE meta SET value = '7' WHERE key = 'schema'")
+
+    def _upgrade_to_8(self) -> None:
+        """Format 7 to 8 without a rebuild: the name of each sender as the From column shows it, from what is stored."""
+        with self._transaction():
+            for statement in UPGRADE_7_TO_8:
+                self._connection.execute(statement)
+            self._connection.execute("UPDATE meta SET value = '8' WHERE key = 'schema'")
 
     def close(self) -> None:
         self._connection.close()
@@ -245,8 +257,8 @@ class Index:
         self._connection.execute("DELETE FROM text WHERE rowid IN (SELECT id FROM messages WHERE store_id = ?)", (entry.store_id,))
         replaced = self._connection.execute("DELETE FROM messages WHERE store_id = ?", (entry.store_id,)).rowcount
         cursor = self._connection.execute(
-            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview, tags)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview, tags, sender_name)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 entry.store_id,
                 _folder_key(entry.folder),
@@ -262,6 +274,7 @@ class Index:
                 int(entry.has_attachments),
                 entry.preview,
                 _tags_text(entry.tags),
+                shown_name(entry.sender),
             ),
         )
         self._write_tags(entry.store_id, entry.tags)

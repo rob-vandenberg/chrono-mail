@@ -4,7 +4,7 @@ from typing import Literal
 from datetime import datetime
 import string
 
-from chrono_mail.core import Folder, FolderRole
+from chrono_mail.core import Folder, FolderRole, shown_name
 from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, not_heard, with_headings, _rows, contact_address_set, date_bounds, from_contacts, group_of
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, UsageError, option
@@ -13,9 +13,10 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 0.5.165"
+__version__ = "commands_combined.py 0.5.166"
 
 # --- Version history ----------------------------------------------------
+# v0.5.166: a Favorites view sorted by sender sorts by the name the From column shows, as the index does
 # v0.5.165: message.combined-places counts only the messages the asker has heard of (D-152)
 # v0.5.164: a Favorites view and its groups read each mailbox's index under its place lock (D-151)
 # v0.5.163: message.combined-places can give the group heading of each message (headings)
@@ -76,6 +77,8 @@ def _row_key(row: MessageRow, sort: str) -> tuple[bool, float] | int | str:
         return (row.date is not None, row.date.timestamp() if row.date is not None else 0.0)  # without a date: last when newest first
     if sort == "size":
         return row.size
+    if sort == "sender":
+        return shown_name(row.sender).translate(_NO_CASE)  # as the index sorts it: the name the From column shows
     return str(getattr(row, _TEXT_OF_SORT[sort])).translate(_NO_CASE)
 
 
