@@ -96,7 +96,7 @@ exact version). Never build an installer from code that is not a pushed version.
 
 **A new repository since 2.0.283** (D-230): the old repository on GitHub was deleted and made again with the same name and settings, without personal details and without the old history. Before the first pull of 2.0.283 or later, move `C:\Python\chrono-mail` aside (for example to `C:\Python\chrono-mail-old`), clone it again as above, and copy your `tests` folder back into it. No file with a personal detail (an account address, a server name, a computer name, a password) may stay in the project folder, not even a git-ignored one: clean your `tests` the same way as on the Linux computer (the neutral words of D-230), and keep the live-test logins in `C:\Users\<you>\.claude\chrono-mail\live-tests\` (see below).
 
-**The tests are not in git since 1.1.176** (D-161): `tests/` is git-ignored and is not on GitHub from that version on. The first pull of 1.1.176 or later deletes the `tests` folder here, because git stops tracking it; later pulls leave it alone. For that one pull: copy `C:\Python\chrono-mail\tests` aside (for example to `C:\Python\tests-backup`), pull, and copy it back to `C:\Python\chrono-mail\tests`. Tests added or changed on the Kubuntu machine after 1.1.175 reach the Windows computer only when the owner copies them over; changes to tests made here do not go into git either.
+**The tests are in git again since 2.0.296** (D-233; from 1.1.176 to 2.0.295 they were git-ignored, D-161). Before the first pull of 2.0.296: move `C:\Python\chrono-mail\tests` aside (for example to `C:\Python\tests-windows`), because git will not write over a folder it does not track; the pull then brings the tests. Your own Windows-only test changes stay in that copy until the owner plans a synchronisation back; never push test changes from here unasked.
 
 ### 3.3 A development environment (to run Chrono Mail from the code and to run the tests)
 
@@ -142,7 +142,7 @@ second start, also of the other copy, shows the window that runs already.
 - **UI:** Qt 6 Widgets (`src/chrono_mail/ui/`), HTML mail in Qt WebEngine with JavaScript off and remote content
   blocked; the program's own copy of the Breeze icons (`src/chrono_mail/ui/resources/`, also the app icon
   `chrono-mail.ico` and `chrono-mail.svg`).
-- **Tests:** `tests/` (not in git since 1.1.176, see section 3.2; about 1,670 offline tests; `tests/ui/` for the window, Qt runs offscreen), `tests/live/` against
+- **Tests:** `tests/` (in git again since 2.0.296, see section 3.2; about 1,670 offline tests; `tests/ui/` for the window, Qt runs offscreen), `tests/live/` against
   real servers (opt-in), fake servers in `tests/fake*.py`.
 - **Packaging:** `packaging/` (section 7).
 - **The owner's accounts:** three POP3 accounts that share the Local Folders, and an IMAP account on a Kerio server.

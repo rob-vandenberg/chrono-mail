@@ -1,0 +1,111 @@
+import base64
+
+import keyring.errors
+import pytest
+
+from chrono_mail.core import CryptoError
+from chrono_mail.crypto import CredentialStoreError, InMemoryKeyStore, KeyNotFoundError, KeyringKeyStore, KeyStore, generate_data_key
+from tests.doubles import BrokenBackend, MemoryBackend
+
+# --- Version ------------------------------------------------------------
+__version__ = "test_crypto_keystore.py 1.1.197"
+
+# --- Version history ----------------------------------------------------
+# v1.1.197: A key that is not there and a store that cannot be asked are told apart, each with the store's reason
+# v0.5.133: an error of the desktop's password service is a CryptoError with its reason
+# v0.0.6: Initial key store tests
+
+
+def make_stores() -> list[KeyStore]:
+    return [InMemoryKeyStore(), KeyringKeyStore("chrono-mail-test", MemoryBackend())]
+
+
+def test_save_and_load() -> None:
+    for store in make_stores():
+        key = generate_data_key()
+        store.save(key)
+        assert store.load(key.key_id) == key
+
+
+def test_missing_key_raises_crypto_error() -> None:
+    for store in make_stores():
+        with pytest.raises(CryptoError, match="not found"):
+            store.load(b"\x00" * 8)
+
+
+def test_delete_removes_the_key_and_is_idempotent() -> None:
+    for store in make_stores():
+        key = generate_data_key()
+        store.save(key)
+        store.delete(key.key_id)
+        store.delete(key.key_id)
+        with pytest.raises(CryptoError, match="not found"):
+            store.load(key.key_id)
+
+
+def test_several_keys_live_side_by_side() -> None:
+    for store in make_stores():
+        first, second = generate_data_key(), generate_data_key()
+        store.save(first)
+        store.save(second)
+        assert store.load(first.key_id) == first
+        assert store.load(second.key_id) == second
+
+
+def test_keyring_entry_is_base64_text_under_the_service_name() -> None:
+    backend = MemoryBackend()
+    store = KeyringKeyStore("chrono-mail-test", backend)
+    key = generate_data_key()
+    store.save(key)
+    ((service, name), value), = backend.entries.items()
+    assert service == "chrono-mail-test"
+    assert name == f"data-key-{key.key_id.hex()}"
+    assert base64.b64decode(value) == key.reveal()
+
+
+@pytest.mark.parametrize("damaged", ["not base64 !!!", base64.b64encode(b"short").decode(), ""])
+def test_damaged_entry_raises_crypto_error(damaged: str) -> None:
+    backend = MemoryBackend()
+    store = KeyringKeyStore("chrono-mail-test", backend)
+    key = generate_data_key()
+    backend.entries[("chrono-mail-test", f"data-key-{key.key_id.hex()}")] = damaged
+    with pytest.raises(CryptoError):
+        store.load(key.key_id)
+
+
+def test_entry_holding_another_key_is_rejected() -> None:
+    backend = MemoryBackend()
+    store = KeyringKeyStore("chrono-mail-test", backend)
+    wanted, other = generate_data_key(), generate_data_key()
+    backend.entries[("chrono-mail-test", f"data-key-{wanted.key_id.hex()}")] = base64.b64encode(other.reveal()).decode()
+    with pytest.raises(CryptoError):
+        store.load(wanted.key_id)
+
+
+def test_unavailable_credential_store_raises_crypto_error_without_key_bytes() -> None:
+    store = KeyringKeyStore("chrono-mail-test", BrokenBackend())
+    key = generate_data_key()
+    for action in (lambda: store.save(key), lambda: store.load(key.key_id), lambda: store.delete(key.key_id)):
+        with pytest.raises(CryptoError) as raised:
+            action()
+        assert key.reveal().hex() not in str(raised.value)
+
+
+def test_an_error_of_the_desktop_password_service_is_a_crypto_error_with_its_reason() -> None:
+    from tests.doubles import SessionLostBackend
+
+    store = KeyringKeyStore("chrono-mail-test", SessionLostBackend())
+    key = generate_data_key()
+    for action in (lambda: store.save(key), lambda: store.load(key.key_id), lambda: store.delete(key.key_id)):
+        with pytest.raises(CryptoError) as raised:
+            action()
+        assert "Can't find session" in str(raised.value) and key.reveal().hex() not in str(raised.value)
+
+
+def test_a_missing_key_and_a_store_that_cannot_be_asked_are_told_apart() -> None:
+    for store in make_stores():
+        with pytest.raises(KeyNotFoundError, match="not found"):
+            store.load(b"\x00" * 8)
+    with pytest.raises(CredentialStoreError) as raised:
+        KeyringKeyStore("chrono-mail-test", BrokenBackend()).load(b"\x00" * 8)
+    assert "KeyringLocked: locked" in str(raised.value) and not isinstance(raised.value, KeyNotFoundError)
