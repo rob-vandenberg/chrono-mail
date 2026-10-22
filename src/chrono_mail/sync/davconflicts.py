@@ -12,9 +12,11 @@ from chrono_mail.pim.merge import Clash
 from chrono_mail.pimstore import PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "davconflicts.py 1.1.236"
+__version__ = "davconflicts.py 2.0.286"
 
 # --- Version history ----------------------------------------------------
+# v2.0.286: The name or colour of a collection changed here and on the server, or a name the server refused for good (D-192, the Windows
+#           computer's F3)
 # v1.1.236: A collection made here (offline) that the server refused to make (R-29)
 # v1.1.235: A collection deleted here (offline) that the server changed meanwhile, or whose delete the server refused (R-28)
 # v1.1.234: A whole calendar, task list or address book deleted on the server with changes here not yet sent (COLLECTION_DELETED_ON_SERVER);
@@ -35,7 +37,10 @@ COLLECTION_CHANGED_ON_SERVER: str = "collection_changed_on_server"  # a whole co
 COLLECTION_DELETE_REFUSED: str = "collection_delete_refused"  # a whole collection deleted here (offline), the server refused the delete
 COLLECTION_CREATE_REFUSED: str = "collection_create_refused"  # a whole collection made here (offline), the server refused to make it
 COLLECTION_REASONS: frozenset[str] = frozenset({COLLECTION_DELETED_ON_SERVER, COLLECTION_CHANGED_ON_SERVER, COLLECTION_DELETE_REFUSED, COLLECTION_CREATE_REFUSED})
-REASONS: frozenset[str] = frozenset({CLASH, REFUSED, DELETED_ON_SERVER, CHANGED_ON_SERVER, DELETE_REFUSED}) | COLLECTION_REASONS
+COLLECTION_LOOK_CLASH: str = "collection_look_clash"  # a collection's name or colour changed here and on the server (D-192)
+COLLECTION_LOOK_REFUSED: str = "collection_look_refused"  # a collection's name changed here that the server refused for good (D-192)
+LOOK_REASONS: frozenset[str] = frozenset({COLLECTION_LOOK_CLASH, COLLECTION_LOOK_REFUSED})
+REASONS: frozenset[str] = frozenset({CLASH, REFUSED, DELETED_ON_SERVER, CHANGED_ON_SERVER, DELETE_REFUSED}) | COLLECTION_REASONS | LOOK_REASONS
 
 
 @dataclass(frozen=True, slots=True)

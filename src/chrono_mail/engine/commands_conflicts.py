@@ -1,10 +1,10 @@
 """The sync conflicts of the calendars, task lists and address books, and what waits for their servers (D-194): listed, and settled by the person
 (Chrono Mail's version, the server's, or a choice per field). Settings > Sync conflicts and the command line use these commands."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from chrono_mail.core import LOCAL_ACCOUNT_ID, ChronoMailError, CollectionInfo, MessageRef, ProtocolError, StorageError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_WAITING, ChronoMailError, CollectionInfo, CollectionLook, MessageRef, ProtocolError, StorageError
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_dav import _client, _lock_for, _state_path, keep_looks
@@ -21,8 +21,11 @@ from chrono_mail.sync.davconflicts import (
     COLLECTION_CREATE_REFUSED,
     COLLECTION_DELETE_REFUSED,
     COLLECTION_DELETED_ON_SERVER,
+    COLLECTION_LOOK_CLASH,
+    COLLECTION_LOOK_REFUSED,
     COLLECTION_REASONS,
     DELETE_REFUSED,
+    LOOK_REASONS,
     REFUSED,
     SyncConflict,
     load_conflicts,
@@ -33,7 +36,7 @@ from chrono_mail.sync.davdeletes import forget as forget_delete
 from chrono_mail.sync.davdeletes import load_waiting
 from chrono_mail.sync.davconflicts import forget as forget_conflict
 from chrono_mail.sync.davitems import DONE, ItemGateway
-from chrono_mail.sync.davsync import DavState, digest_of, forget_collection
+from chrono_mail.sync.davsync import PUBLIC_SUFFIX, DavState, digest_of, forget_collection
 from chrono_mail.sync.imap_sync import message_flags
 from chrono_mail.sync.mailconflicts import (
     CONFLICTS_FILE,
@@ -53,9 +56,11 @@ from chrono_mail.sync.mailconflicts import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_conflicts.py 1.1.240"
+__version__ = "commands_conflicts.py 2.0.286"
 
 # --- Version history ----------------------------------------------------
+# v2.0.286: A collection's name or colour changed here and on the server (Use Chrono Mail, Use Server data, per field) or a name the server
+#           refused (Use Server data, Retry sync): the choice goes into what the account keeps, the synchronisation started at once does it (D-192, F3)
 # v1.1.240: A folder renamed or deleted offline: refused (Use Server data undoes it here, Retry sync) or changed on the server meanwhile (Use
 #           Chrono Mail deletes it anyway, Use Server data brings it back) (R-31)
 # v1.1.239: Mail conflicts and what waits are asked and settled through the mailbox, never its store (R-37)
@@ -84,6 +89,8 @@ REASON_WORDS: dict[str, str] = {
     COLLECTION_CHANGED_ON_SERVER: "Deleted here, changed on the server",
     COLLECTION_DELETE_REFUSED: "The server did not take the delete",
     COLLECTION_CREATE_REFUSED: "The server did not make it",
+    COLLECTION_LOOK_CLASH: "Changed here and on the server",
+    COLLECTION_LOOK_REFUSED: "The server did not take the name",
     MARKS_REFUSED: "The server did not take the marks",
     MOVE_REFUSED: "The server did not take the move",
     MESSAGE_REFUSED: "The server did not store the message",
@@ -137,6 +144,13 @@ def _summary(engine: Engine, account: str, store: PimStore, conflict: SyncConfli
             conflict.conflict_id, account, account_name(engine, account), conflict.collection, "", "", COLLECTION_KINDS.get(conflict.kind, conflict.kind),
             conflict.reason, REASON_WORDS[conflict.reason], conflict.name, conflict.detail, True, False, conflict.when, (),
             server_allowed=False, keep_allowed=True, retry_allowed=True,
+        )
+    if conflict.reason in LOOK_REASONS:  # a collection's name or colour (D-192): a choice per field; a refusal only the server's or Retry sync
+        refused = conflict.reason == COLLECTION_LOOK_REFUSED
+        return ConflictSummary(
+            conflict.conflict_id, account, account_name(engine, account), conflict.collection, "", "", COLLECTION_KINDS.get(conflict.kind, conflict.kind),
+            conflict.reason, REASON_WORDS[conflict.reason], conflict.name, conflict.detail, False, not refused, conflict.when,
+            tuple(ConflictField(c.key, c.label, c.local, c.server) for c in conflict.clashes), retry_allowed=refused,
         )
     if conflict.reason in COLLECTION_REASONS:  # about a whole collection: it is the Name, and only a whole side can be chosen
         refused = conflict.reason == COLLECTION_DELETE_REFUSED
@@ -261,6 +275,15 @@ def conflict_settle(engine: Engine, parameters: SettleParameters) -> SettleResul
                 for conflict in mine:
                     touched.add(account)
                     side = parameters.side
+                    if conflict.reason in LOOK_REASONS:
+                        problem = _settle_look(engine, account, store, conflict, side, wanted[conflict.conflict_id])
+                        if problem:
+                            problems.append(f"{conflict.name}: {problem}")
+                            still_open.append(conflict.conflict_id)
+                        else:
+                            settled.append(conflict.conflict_id)
+                            retried.add(account)  # the synchronisation started at once sends Chrono Mail's or takes the server's
+                        continue
                     if conflict.reason in COLLECTION_REASONS:
                         problem = _settle_collection(engine, account, store, client, conflict, side)
                         if problem:
@@ -352,6 +375,46 @@ def _settle_collection(engine: Engine, account: str, store: PimStore, client: Da
     forget_conflict(store, conflict.conflict_id)
     key = f"{tie.get('component', '')} {canonical_href(tie.get('href', conflict.href))}"
     keep_looks(engine, account, {key: next((look for look in engine.config().find(account).collection_looks if look.key == key), None)}, {key: None})
+    return ""
+
+
+def _settle_look(engine: Engine, account: str, store: PimStore, conflict: SyncConflict, side: str, choices: dict[str, str]) -> str:
+    """Settle a collection's name or colour conflict (D-192); returns what went wrong ("" when settled). The choice goes into what the account keeps:
+    Chrono Mail's waits to be sent (the server's value now is what it must still have then, else it clashes again), the server's is followed and
+    shown here at once; Retry sync (a refusal) sends the name again. The synchronisation started at once does the rest."""
+    refused = conflict.reason == COLLECTION_LOOK_REFUSED
+    if side == "retry" and not refused:
+        return "it was changed on both sides; trying again would only clash again, so choose a side"
+    if (side == LOCAL or LOCAL in choices.values()) and refused:
+        return "the server does not take Chrono Mail's name; only the server's can be used, or Retry sync"
+    if side not in (LOCAL, SERVER, "retry") and not choices:
+        return "choose Use Chrono Mail or Use Server data" if not refused else "choose Use Server data or Retry sync"
+    try:
+        info = store.get_collection(conflict.collection)
+    except StorageError:
+        forget_conflict(store, conflict.conflict_id)  # it is gone here already: nothing is left to settle
+        return ""
+    key = f"{info.server_value('component')} {canonical_href(info.server_value('href'))}"
+    before = next((look for look in engine.config().find(account).collection_looks if look.key == key), None)
+    look = before if before is not None else CollectionLook(key)
+    name, colour = info.name, info.colour
+    for clash in conflict.clashes:
+        choice = choices.get(clash.key, side) if choices else side
+        if choice not in (LOCAL, SERVER, "retry"):
+            return "choose a side for every field"
+        theirs = choice == SERVER
+        if clash.key == "name":
+            look = replace(look, name="", name_state=LOOK_FOLLOWS, base_name="") if theirs else replace(look, name=clash.local, name_state=LOOK_WAITING, base_name=clash.server)
+            if theirs:
+                name = clash.server + (PUBLIC_SUFFIX if info.server_value("public") == "1" else "")
+        else:
+            look = replace(look, colour="", colour_state=LOOK_FOLLOWS, base_colour="") if theirs else replace(look, colour=clash.local, colour_state=LOOK_WAITING, base_colour=clash.server)
+            if theirs:
+                colour = clash.server
+    keep_looks(engine, account, {key: before}, {key: None if look.empty else look})
+    if (name, colour) != (info.name, info.colour):
+        store.update_collection(info.collection_id, name=name, colour=colour)  # told by the store as collection_edited (D-146)
+    forget_conflict(store, conflict.conflict_id)
     return ""
 
 
