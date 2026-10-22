@@ -12,9 +12,11 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 2.0.290"
+__version__ = "models.py 2.0.298"
 
 # --- Version history ----------------------------------------------------
+# v2.0.298: the owner's order: Inbox, Unread, Outbox, Sent, Drafts, Flagged, then the other standard folders (D-232); Favorites the same with
+#           All Inboxes first and Unreplied after Flagged (D-061)
 # v2.0.290: Favorites in the owner's order: Unread, All Inboxes, Flagged, Unreplied, Drafts, Outbox, Sent, Snoozed, Scheduled, Archive, Junk, Trash (D-061)
 # v2.0.289: Unread, Inbox, Flagged, then the standard folders in the owner's order (D-232)
 # v2.0.288: One definition of the standard folders (standard_kind, in the order of LOCAL_FOLDER_KINDS) for the order of the list, Settings >
@@ -87,13 +89,13 @@ COUNT_ROLE: int = Qt.ItemDataRole.UserRole + 10  # the number of unread messages
 
 
 FAVORITES: tuple[tuple[str, str, str], ...] = (  # view id (message.combined), label, icon
-    ("unread", "Unread", "unread"),  # the owner's order (2.0.290): as under every account (D-232), All Inboxes in the Inbox's place
-    ("inboxes", "All Inboxes", "inbox"),
-    ("flagged", "Flagged", "flagged"),
-    ("unreplied", "Unreplied", "unreplied"),
-    ("drafts", "Drafts", "drafts"),
+    ("inboxes", "All Inboxes", "inbox"),  # the owner's order (2.0.298): as under every account (D-232), All Inboxes in the Inbox's place
+    ("unread", "Unread", "unread"),
     ("outbox", "Outbox", "outbox"),
     ("sent", "Sent", "sent"),
+    ("drafts", "Drafts", "drafts"),
+    ("flagged", "Flagged", "flagged"),
+    ("unreplied", "Unreplied", "unreplied"),
     ("snoozed", "Snoozed", "snoozed"),
     ("scheduled", "Scheduled", "scheduled"),
     ("archive", "Archive", "archive"),
@@ -351,11 +353,10 @@ class FolderTreeModel(QAbstractItemModel):
             Qt.ItemDataRole.DecorationRole: folder_icon("local" if local else "account"), ICON_NAME_ROLE: "local" if local else "account",
             KIND_ROLE: "account", ACCOUNT_ROLE: account_id,
         })
-        unread, flagged = (
+        unread_entry, flagged_entry = (
             TreeEntry((kind, account_id, "", ""), {Qt.ItemDataRole.DisplayRole: label, Qt.ItemDataRole.DecorationRole: folder_icon(kind), ICON_NAME_ROLE: kind, KIND_ROLE: kind, ACCOUNT_ROLE: account_id})
             for kind, label in (("unread", "Unread"), ("flagged", "Flagged"))
         )
-        top.append(unread)
         nodes: dict[tuple[str, ...], TreeEntry] = {}
         ordered = sorted(folders.get(account_id, []), key=lambda info: (_order(info.role, info.path), info.path.lower()))
         for info in ordered:
@@ -371,8 +372,8 @@ class FolderTreeModel(QAbstractItemModel):
                 nodes[path].values.update(entry.values)
             else:
                 nodes[path] = (nodes[path[:-1]] if len(path) > 1 else top).append(entry)
-        inbox = next((number for number, child in enumerate(top.children) if child.data(FOLDER_ROLE_ROLE) == "inbox"), 0)
-        top.children.insert(inbox + 1, flagged)  # Unread, Inbox, Flagged (the owner, D-232); without an Inbox right after Unread
+        top.children.insert(_place_after(top.children, "drafts"), flagged_entry)  # Inbox, Unread, Outbox, Sent, Drafts, Flagged (the owner, D-232)
+        top.children.insert(_place_after(top.children, "inbox"), unread_entry)  # each in its place also when the folder before it is missing
         return top
 
     def _favorites(self, mailbox_ids: list[str], folders: Mapping[str, Sequence[FolderInfo]], everything: bool) -> TreeEntry:
@@ -622,9 +623,17 @@ def standard_kind(path: str, role: str) -> str:
 
 
 def _order(role: str, path: str = "") -> int:
-    """Every standard folder first, in the order of LOCAL_FOLDER_KINDS (Flagged goes right after the Inbox); the person's own folders follow by name (D-232)."""
+    """Every standard folder first, in the order of LOCAL_FOLDER_KINDS (Unread goes after the Inbox, Flagged after Drafts); the person's own folders follow by name (D-232)."""
     kind = standard_kind(path, role)
     return LOCAL_FOLDER_KINDS.index(kind) if kind else len(LOCAL_FOLDER_KINDS)
+
+
+def _place_after(children: list[TreeEntry], kind: str) -> int:
+    """Where an entry that follows this standard folder goes: before the first folder that comes later in the order (D-232)."""
+    last = LOCAL_FOLDER_KINDS.index(kind)
+    return next(
+        (number for number, child in enumerate(children) if _order(str(child.data(FOLDER_ROLE_ROLE)), str(child.data(FOLDER_PATH_ROLE))) > last), len(children),
+    )
 
 
 def local_folder_kind(path: str, role: str) -> str:

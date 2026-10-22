@@ -176,7 +176,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-153** Sorting and grouping by From use the shown name.
 - **D-099** Snoozed until column (Snoozed folder) from the properties files.
 - **D-101** Archiving notes the source folder; Unarchive goes back there (else the Inbox). Ctrl+J is Junk / Not junk.
-- **D-061** Favorites, in this order: Unread, All Inboxes, Flagged, Unreplied, Drafts, Outbox, Sent, Snoozed, Scheduled, Archive, Junk, Trash (Scheduled, Snoozed and Archive only once some mailbox has them, appearing in place). Then the accounts, Local Folders last. **The "Inboxes" section never comes back.**
+- **D-061** Favorites, in this order: All Inboxes, Unread, Outbox, Sent, Drafts, Flagged, Unreplied, Snoozed, Scheduled, Archive, Junk, Trash (Scheduled, Snoozed and Archive only once some mailbox has them, appearing in place). Then the accounts, Local Folders last. **The "Inboxes" section never comes back.**
 - **D-062** Any folder can be pinned to Favorites. Accounts go in named groups with their own All Inboxes; a group always holds an account. Reordering by menu, not dragging.
 - **D-119** Clicking an account or group row shows its Inbox or All Inboxes; an empty finished list says so.
 - **D-121** Settings > General > Show on startup: last folder (default), a Favorites or Tags view, a folder, or a section, chosen in a folded tree in the drop-down's own popup; entries Settings > Sidebar hides are greyed. Rejected: a popup window of our own (it held all input of the desktop).
@@ -213,7 +213,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-166** Page order of Settings: General, Appearance, Sidebar, Message list, Reading, Writing, Accounts, Rules, Tags, Scheduled messages, Operations window, Security and storage, Keyboard.
 - **D-167** Settings > Sidebar decides what the folder list shows (Favorites entries, Tags, Local Folders, an account's own tree); no ticks for the person's own folders; what Show on startup chose is always shown; the last visible thing cannot be switched off.
 - **D-173** Settings > Sidebar also has a tick per standard folder of Local Folders that exists.
-- **D-232** (the owner) **Every standard folder comes before the person's folders**, in one order from one definition: Unread, Inbox, Flagged, Drafts, Outbox, Sent, Snoozed, Scheduled, Recovered, Archive, Junk, Trash; then the person's folders by name.
+- **D-232** (the owner) **Every standard folder comes before the person's folders**, in one order from one definition: Inbox, Unread, Outbox, Sent, Drafts, Flagged, Snoozed, Scheduled, Recovered, Archive, Junk, Trash; then the person's folders by name. Unread and Flagged keep their place when a folder before them is missing.
 - **D-168** → D-209.
 - **D-141** The Operations bars are our own widget (Windows' style ignores stylesheet colours).
 - **D-045** Rich text subset (bold, italic, underline, lists, links), sent as multipart/alternative; outgoing HTML cleaned; switching to plain asks first.

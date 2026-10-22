@@ -22,9 +22,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 2.0.290"
+__version__ = "test_ui_preferences.py 2.0.298"
 
 # --- Version history ----------------------------------------------------
+# v2.0.298: Settings > Sidebar's Favorites ticks in the owner's new order (D-061)
 # v2.0.290: Settings > Sidebar's Favorites ticks in the owner's order (D-061)
 # v2.0.281: Rebuild the search index is done by the main window (rebuild_requested, D-229)
 # v2.0.280: the Message list page shows and returns the columns of the open folder (B-16)
@@ -539,7 +540,7 @@ def test_the_sidebar_page_switches_entries_on_and_off_after_ok(world: World, qtb
 
     def change(dialog: SettingsDialog) -> None:
         page = dialog.sidebar_page
-        assert list(page.standard_boxes) == ["unread", "inboxes", "flagged", "unreplied", "drafts", "outbox", "sent", "junk", "trash"]  # Snoozed and Archive: not used
+        assert list(page.standard_boxes) == ["inboxes", "unread", "outbox", "sent", "drafts", "flagged", "unreplied", "junk", "trash"]  # Snoozed and Archive: not used
         assert all(box.isChecked() for box in page.standard_boxes.values()) and len(page.pin_boxes) == 1
         assert list(page.account_boxes) == [world.account_id]  # an account with its own folders
         assert page.commands() == []  # nothing changed: nothing is sent

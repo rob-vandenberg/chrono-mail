@@ -18,9 +18,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, PAGE_SIZE, ROW_ROLE, M
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 2.0.290"
+__version__ = "test_ui_models.py 2.0.298"
 
 # --- Version history ----------------------------------------------------
+# v2.0.298: the owner's order: Inbox, Unread, Outbox, Sent, Drafts, Flagged; Favorites All Inboxes, Unread, …, Flagged, Unreplied (D-232, D-061)
 # v2.0.290: Favorites in the owner's order: Unread, All Inboxes, Flagged, Unreplied, Drafts, Outbox, Sent, Snoozed, Scheduled, Archive, Junk, Trash (D-061)
 # v2.0.289: Unread, Inbox, Flagged, then the owner's order (D-232)
 # v2.0.288: Snoozed sorts with the standard folders, before the person's own (D-232)
@@ -211,11 +212,11 @@ def test_tree_with_nested_and_virtual_folders() -> None:
             walk(index, depth + 1)
 
     walk(QModelIndex(), 0)
-    assert labels == ["me@example.com", "  Unread", "  Inbox", "  Flagged", "  Drafts", "  Sent", "  Archive", "    2026", "      Q1", "  Trash", "  Alpha", "  Zeta"]  # the standard folders together, then the own ones
+    assert labels == ["me@example.com", "  Inbox", "  Unread", "  Sent", "  Drafts", "  Flagged", "  Archive", "    2026", "      Q1", "  Trash", "  Alpha", "  Zeta"]  # the standard folders together, then the own ones
     top = model.index(0, 0)
     kinds = [model.index(row, 0, top).data(KIND_ROLE) for row in range(model.rowCount(top))]
-    assert kinds[:3] == ["unread", "folder", "flagged"] and model.index(1, 0, top).data(FOLDER_ROLE_ROLE) == "inbox"  # Unread, Inbox, Flagged (D-232)
-    inbox, drafts = model.index(1, 0, top), model.index(3, 0, top)
+    assert kinds[:3] == ["folder", "unread", "folder"] and model.index(0, 0, top).data(FOLDER_ROLE_ROLE) == "inbox"  # Inbox, Unread (D-232)
+    inbox, drafts = model.index(0, 0, top), model.index(3, 0, top)
     assert inbox.data(COUNT_ROLE) == 4 and drafts.data(COUNT_ROLE) == 0
     assert not inbox.data(Qt.ItemDataRole.FontRole) or not QFont(inbox.data(Qt.ItemDataRole.FontRole)).bold()  # the name is never bold
 
@@ -363,7 +364,7 @@ def test_favorites_and_local_folders_in_the_tree() -> None:
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
     counts = [model.index(row, 0, favorites).data(COUNT_ROLE) for row in range(model.rowCount(favorites))]
-    assert labels[:2] == ["Unread", "All Inboxes"] and labels[-1] == "Trash" and counts[:2] == [7, 7] and counts[-1] == 7 and len(labels) == 9  # shared mail counted once (Snoozed and Archive are not used here)
+    assert labels[:2] == ["All Inboxes", "Unread"] and labels[-1] == "Trash" and counts[:2] == [7, 7] and counts[-1] == 7 and len(labels) == 9  # shared mail counted once (Snoozed and Archive are not used here)
     model.show_favorites = model.show_local_folders = False
     model.populate(accounts, folders)
     assert tops(model) == ["one@example.com", "two@example.com"]
@@ -393,7 +394,7 @@ def test_the_unread_count_is_drawn_bold_at_the_right_edge(qtbot: QtBot) -> None:
         return any(image.pixelColor(x, y) != background for x in range(left, right) for y in range(rect.top() + 2, rect.bottom() - 1))
 
     top = model.index(0, 0)
-    inbox, drafts = model.index(1, 0, top), model.index(3, 0, top)  # Unread, Inbox, Flagged, Drafts (D-232)
+    inbox, drafts = model.index(0, 0, top), model.index(2, 0, top)  # Inbox, Unread, Drafts, Flagged (D-232)
     edge = view.viewport().width() - COUNT_MARGIN
     assert inked(inbox, edge - 20, edge) and not inked(inbox, edge, view.viewport().width())  # the number ends at the margin
     assert not inked(drafts, edge - 40, view.viewport().width())  # no number when nothing is unread
@@ -548,12 +549,12 @@ def test_snoozed_and_archive_show_only_once_used_and_a_hidden_tree_goes(qtbot: Q
     model.populate(accounts, plain)
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
-    assert labels == ["Unread", "All Inboxes", "Flagged", "Unreplied", "Drafts", "Outbox", "Sent", "Junk", "Trash"]
+    assert labels == ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"]
     used = {"a" * 32: [Info("Inbox", "inbox", 0), Info("Snoozed", "other", 0), Info("Archive", "archive", 0)], "b" * 32: [Info("Inbox", "inbox", 0)]}
     model.populate(accounts, used)
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
-    assert labels == ["Unread", "All Inboxes", "Flagged", "Unreplied", "Drafts", "Outbox", "Sent", "Snoozed", "Archive", "Junk", "Trash"]
+    assert labels == ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Snoozed", "Archive", "Junk", "Trash"]
     model.hidden_trees = {"b" * 32}
     model.populate(accounts, used)
     assert tops(model) == ["Favorites", "one@example.com"]
@@ -580,7 +581,7 @@ def test_a_hidden_standard_folder_of_local_folders_goes_with_the_folders_inside_
         return [str(model.index(row, 0, top).data()) for row in range(model.rowCount(top))]
 
     model.populate(accounts, folders)
-    assert children() == ["Unread", "Inbox", "Flagged", "Snoozed", "Trash", "Projects"]  # Snoozed is a standard folder: before the own ones (D-232)
+    assert children() == ["Inbox", "Unread", "Flagged", "Snoozed", "Trash", "Projects"]  # Snoozed is a standard folder: before the own ones (D-232)
     model.hidden_local = {"inbox", "snoozed", "scheduled"}
     model.populate(accounts, folders)
     assert children() == ["Unread", "Flagged", "Trash", "Projects"]  # Inbox/Sub went with its Inbox
@@ -599,7 +600,7 @@ def test_a_hidden_standard_folder_of_local_folders_goes_with_the_folders_inside_
     del infos[-3:]
     model.forced_folders = {(local, "Inbox/Sub")}  # chosen under Show on startup: shown, with the folder it is in
     model.populate(accounts, folders)
-    assert children() == ["Unread", "Inbox", "Flagged", "Trash", "Projects"]
+    assert children() == ["Inbox", "Unread", "Flagged", "Trash", "Projects"]
     assert model.find_item(local, "folder", "Inbox/Sub") is not None
 
 
@@ -613,4 +614,4 @@ def test_favorites_scheduled_is_shown_only_once_a_scheduled_folder_exists() -> N
     model.populate(accounts, {"a" * 32: [Info("Inbox", "inbox"), Info("Outbox", "other"), Info("Scheduled", "other")]})
     favorites = model.index(0, 0)
     names = [str(model.index(row, 0, favorites).data(NAME_ROLE)) for row in range(model.rowCount(favorites))]
-    assert names.index("Scheduled") == names.index("Sent") + 1  # the owner's order: Sent, Snoozed, Scheduled (no Snoozed folder here)
+    assert names.index("Scheduled") == names.index("Unreplied") + 1  # the owner's order: Unreplied, Snoozed, Scheduled (no Snoozed folder here)

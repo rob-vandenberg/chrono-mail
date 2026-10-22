@@ -19,9 +19,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 2.0.292"
+__version__ = "test_ui_window.py 2.0.298"
 
 # --- Version history ----------------------------------------------------
+# v2.0.298: Favorites and the folders under an account in the owner's new order (D-061, D-232)
 # v2.0.292: Favorites and the folders under an account in the owner's order (D-061, D-232; the Windows computer's report)
 # v2.0.280: the sort is remembered per folder (B-16)
 # v1.9.276: The count line says "1 message"
@@ -130,7 +131,7 @@ def test_first_start_without_an_account_asks_for_one(empty_world: World, qtbot: 
 
 def test_tree_shows_the_account_and_its_folders_with_unread_counts(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
-    assert tree_labels(world.window) == ["Favorites", "  Unread  (3)", "  All Inboxes  (3)", "  Flagged", "  Unreplied", "  Drafts", "  Outbox", "  Sent", "  Junk", "  Trash", "me@example.com", "  Unread", "  Inbox  (3)", "  Flagged", "  Drafts", "  Outbox", "  Sent", "  Junk", "  Trash"]  # the owner's order (D-061, D-232)
+    assert tree_labels(world.window) == ["Favorites", "  All Inboxes  (3)", "  Unread  (3)", "  Outbox", "  Sent", "  Drafts", "  Flagged", "  Unreplied", "  Junk", "  Trash", "me@example.com", "  Inbox  (3)", "  Unread", "  Outbox", "  Sent", "  Drafts", "  Flagged", "  Junk", "  Trash"]  # the owner's order (D-061, D-232)
     assert world.window.count_label.text() == "3 messages, 3 unread"
     assert world.window.sort_button.text() == "Sorted by Received ▾"
     assert world.window.windowTitle() == "Inbox (3) - Chrono Mail"
@@ -1095,7 +1096,7 @@ def test_next_unread_goes_on_to_the_next_folder_with_unread_mail(world: World, q
 def test_the_favorites_show_the_same_folder_of_every_mailbox_and_can_be_switched_off(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     favorites = world.window.tree_model.index(0, 0)
-    inboxes = world.window.tree_model.index(1, 0, favorites)  # Unread, All Inboxes (the owner's order, D-061)
+    inboxes = world.window.tree_model.index(0, 0, favorites)  # All Inboxes first (the owner's order, D-061)
     assert favorites.data() == "Favorites" and inboxes.data() == "All Inboxes" and inboxes.data(COUNT_ROLE) == 3
     world.window.tree.setCurrentIndex(inboxes)
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
@@ -1141,7 +1142,7 @@ def test_the_folder_list_menu_offers_favorites_and_groups(world: World, qtbot: Q
 
     started(qtbot, world)
     account = account_node(world.window)
-    inbox = world.window.tree_model.index(1, 0, account)  # Unread, Inbox, Flagged (D-232)
+    inbox = world.window.tree_model.index(0, 0, account)  # Inbox, Unread (D-232)
     assert inbox.data() == "Inbox" and inbox.data(COUNT_ROLE) == 3
 
     def offered(index: QModelIndex) -> list[str]:
@@ -1153,7 +1154,7 @@ def test_the_folder_list_menu_offers_favorites_and_groups(world: World, qtbot: Q
     assert "Put in group" in offered(account) and "Take out of its group" not in offered(account)
     world.window.folders.sidebar_call(FAVORITE_PIN, PinParameters(world.account_id, "Inbox"))  # noqa: SLF001
     wait(qtbot, lambda: any(pin.folder == "Inbox" for pin in world.call("sidebar.show").pins))
-    wait(qtbot, lambda: "  Inbox  (3)" in tree_labels(world.window)[:12] and offered(world.window.tree_model.index(2, 0, account_node(world.window))) == [])
+    wait(qtbot, lambda: "  Inbox  (3)" in tree_labels(world.window)[:12] and offered(world.window.tree_model.index(0, 0, account_node(world.window))) == [])
     pinned = world.window.tree_model.index(9, 0, world.window.tree_model.index(0, 0))  # after the nine standard favorites
     assert pinned.data(KIND_ROLE) == "pinlink" and offered(pinned)[0] == "Remove from Favorites" and offered(pinned)[-2:] == ["Move up", "Move down"]
     standard = world.window.tree_model.index(2, 0, world.window.tree_model.index(0, 0))
