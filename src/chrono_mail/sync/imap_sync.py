@@ -14,9 +14,11 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 1.1.249"
+__version__ = "imap_sync.py 2.0.285"
 
 # --- Version history ----------------------------------------------------
+# v2.0.285: After sending a message's marks the check knows the server's marks as they are now (as read, plus what it added, minus what it
+#           removed), so a mark the server changed on that message meanwhile is shown in the same check, not the next (the Windows computer's F2)
 # v1.1.249: A message removed here because the server no longer has it leaves the folder's list of this check too, so it is not taken for mail
 #           made here and tried as an upload (a false "could not be read for sending" line, R-40)
 # v1.1.248: A check does work for what changed, not for the size of the mailbox (R-09): this computer's mail and its properties folder are read
@@ -344,7 +346,6 @@ class _Folder:
     stored: dict[str, StoredMessage]  # the messages that are in the local folder now
     on_server: dict[int, FetchedItem]
     locations: dict[str, tuple[tuple[str, ...], str]]  # where every stored message is, in all folders
-    pushed: set[int] = field(default_factory=set)  # UIDs whose flags we just sent: the summary we hold is out of date for them
     tags: dict[str, tuple[str, ...]] = field(default_factory=dict)  # store id -> its tags here
     keywords: bool = True  # the folder keeps keywords on the server (PERMANENTFLAGS with \\*): tags go there too
     held: set[str] = field(default_factory=set)  # messages with an open sync conflict: not sent again while it is open (D-195)
@@ -719,7 +720,9 @@ def _push_flags(client: ImapClient, store: Store, index: Index | None, state: Im
             view.held.add(entry.store_id)
             continue
         state.set_flags(local, uid, mine)
-        view.pushed.add(uid)
+        taken = {name.lower() for name in removed}
+        kept = [flag for flag in view.on_server[uid].flags if flag.lower() not in taken]
+        view.on_server[uid] = replace_entry(view.on_server[uid], flags=frozenset(kept + [flag for flag in added if flag.lower() not in spelling]))  # the server's marks now
         counts.flags_sent += 1
 
 
@@ -728,7 +731,7 @@ def _update_flags(store: Store, index: Index | None, state: ImapState, view: _Fo
     for uid, entry in state.folder_entries(local).items():
         item = view.on_server.get(uid)
         message = view.stored.get(entry.store_id)
-        if item is None or message is None or uid in view.pushed:
+        if item is None or message is None:
             continue
         server_now = kept_flags(item.flags) if view.keywords else system_flags(kept_flags(item.flags))
         if server_now == entry.flags:
