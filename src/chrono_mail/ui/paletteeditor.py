@@ -24,16 +24,20 @@ from chrono_mail.engine.commands_pim import COLLECTION_SET_PALETTE, CollectionSu
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.icons import theme_icon
+from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 2.0.290"
+__version__ = "paletteeditor.py 2.0.291"
 
 # --- Version history ----------------------------------------------------
+# v2.0.291: A small margin at the right of the list, so the delete buttons do not touch the scrollbar (the owner)
 # v2.0.290: No outline around the list of colours (the owner)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.222: Title "Event colours"; the Calendar row of the event editor at the top (the owner)
 # v1.1.221: The colours of the calendar's account, named in the title (D-191)
 # v1.1.219: Initial: the colours of one calendar (its own first, which cannot be deleted), each with a name; and how an appointment's colour is found (D-191)
+
+LIST_RIGHT_MARGIN: int = 8  # pixels between the delete buttons and the scrollbar, at the windows' size
 
 OTHER_COLOUR_NAME: str = "Other colour"  # an appointment coloured by another program, with no colour of the palette
 
@@ -125,7 +129,7 @@ class PaletteEditor(QDialog):
         layout.addLayout(form)
         self.holder = QWidget(self)
         self.rows_layout = QVBoxLayout(self.holder)
-        self.rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.rows_layout.setContentsMargins(0, 0, px_for(self, LIST_RIGHT_MARGIN), 0)  # room between the delete buttons and the scrollbar (the owner)
         self.rows_layout.addStretch(1)
         self.rows: list[ColourRow] = []
         for entry in palette_of_summary(calendar):

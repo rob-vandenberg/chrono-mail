@@ -2571,3 +2571,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Found: 2.0.289 left ui/test_ui_startup_view.py::test_a_hidden_folder_of_local_folders_is_greyed_among_the_choices expecting the old order of Local Folders' standard folders (that file was not among the tests run for 2.0.289); corrected now.
 - Server rule D-193: only the order and the look on this computer.
 - Checks: the Favorites order tests (ui/test_ui_startup_view, _models, _preferences) fail on 2.0.289 (6 and 1 error) and pass now; the palette editor test checks the frame (fails on 2.0.289); related tests pass (ui/test_ui_startup_view, _models, _preferences, _tree_rows, _folder_counts, _calendar, _icons: 111 and 13); Pyrefly 0 (Linux and win32); layer check kept. Full suite not run.
+
+## 2026-10-22 2.0.291 Event colours: room between the delete buttons and the scrollbar (the owner)
+- `ui/paletteeditor.py`: the list of colours has a right margin of 8 px at the windows' size (`LIST_RIGHT_MARGIN`, `px_for`), so the delete buttons no longer touch the scrollbar (the owner's screenshot).
+- Server rule D-193: only the look on this computer.
+- Checks: ui/test_ui_calendar.py's palette editor test checks the margin (fails on 2.0.290); ui/test_ui_calendar: 13 passed; Pyrefly 0 (Linux and win32); layer check kept.
