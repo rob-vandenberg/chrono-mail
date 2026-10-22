@@ -2661,6 +2661,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: new test_ui_indexrebuilds::test_a_click_on_the_bar_brings_the_window_back_and_after_the_end_the_operations_window (fails on 2.0.302). Ran: test_ui_indexrebuilds (10), the Operations tests of test_ui_operations, test_ui_parts: all passed. Pyrefly src 0 (Linux and win32), the new test 0 (the file's 6 old problems unchanged); layer check kept.
 
 ## 2026-10-23 2.0.304 The background filling of the index in batches of 100 (the owner)
-- FILL_BATCH 500 -> 100: on the owner's 140,000 messages (about 20 minutes) the counter moves about every second instead of every 4 s; a restart reads at most 100 messages again. Cost not measured; estimated a few percent (one commit and one opening of the index per batch).
+- FILL_BATCH 500 -> 100: the counter moves every 2 s instead of every 10 s; a restart reads at most 100 messages again. Measured by the owner: 2 s per 100, the same speed as 10 s per 500 before, so the batch size costs nothing measurable; the pass takes about 45 minutes on 140,000 messages (about 20 ms per message: decrypting and parsing it).
 - Server rule D-193: nothing reaches the server.
 - Tests: test_engine_rebuilds (6 passed; its test sets its own batch size). Pyrefly src 0 (Linux and win32); layer check kept.
+
+## 2026-10-23 2.0.305 Menu > Message: a Go to submenu (the owner)
+- The owner: Menu > Message was very tall (30 lines). Next message, Previous message, Next unread message, Previous unread message and Go to folder… moved into a Go to submenu (26 lines); the Mark group stays as it is (often used). The keys work as before: the letter keys belong to the message list and the reading pane (D-217).
+- Server rule D-193: only the menu changes.
+- Tests: new test_ui_shortcuts::test_the_message_menu_keeps_moving_to_another_message_in_its_go_to_submenu (fails on 2.0.304); test_ui_shortcuts 10 passed. Pyrefly src 0 (Linux and win32), the new test 0; layer check kept.

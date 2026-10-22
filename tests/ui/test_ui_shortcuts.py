@@ -4,12 +4,13 @@ from PySide6.QtWidgets import QMenu, QMessageBox, QToolButton
 from pytestqt.qtbot import QtBot
 
 from tests.ui.test_ui_window import select, started
-from tests.ui.world import World, row_of, wait
+from tests.ui.world import World, menu_named, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_shortcuts.py 1.9.264"
+__version__ = "test_ui_shortcuts.py 2.0.305"
 
 # --- Version history ----------------------------------------------------
+# v2.0.305: Menu > Message > Go to holds the five ways to move to another message or folder; their keys work as before
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.7.262: The one-letter keys and Insert work in the message list and the reading pane, never in the folder list (R-43)
 # v1.5.259: Enter and Insert act on the selected messages only while the message list has the focus; typed into the search field they open and flag nothing
@@ -37,6 +38,16 @@ def test_the_standard_keys_are_those_people_expect(world: World) -> None:
         assert getattr(window, f"act_{name}").shortcut().toString() == keys, name
     taken = [action.shortcut().toString() for name, action in vars(window).items() if name.startswith("act_") and hasattr(action, "shortcut") and action.shortcut().toString()]
     assert len(taken) == len(set(taken))  # no key is given twice
+
+
+def test_the_message_menu_keeps_moving_to_another_message_in_its_go_to_submenu(world: World) -> None:
+    """The owner: Menu > Message was very tall; the five ways to move on went into Go to, and their keys still work."""
+    window = world.window
+    go_to = menu_named(window, "Message", "Go to")
+    expected = [window.act_next_message, window.act_previous_message, window.act_next_unread, window.act_previous_unread, window.act_go_to_folder]
+    assert go_to.actions() == expected
+    assert not any(action in menu_named(window, "Message").actions() for action in expected)
+    assert all(action in window.actions() or action in window.list_view.actions() for action in expected)  # their keys work where they belong (D-217)
 
 
 def test_a_key_that_is_a_letter_works_only_in_the_message_list_and_the_reading_pane(world: World) -> None:

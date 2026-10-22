@@ -56,9 +56,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.0.303"
+__version__ = "mainwindow.py 2.0.305"
 
 # --- Version history ----------------------------------------------------
+# v2.0.305: Menu > Message: Next and Previous message, Next and Previous unread message and Go to folder… in a Go to submenu (the owner)
 # v2.0.303: a click on the busy bar brings the index window back while an index is updated, else the Operations window (D-229)
 # v2.0.302: the copies of attachments opened in an earlier run are removed at start (D-236)
 # v2.0.281: at start every index is checked and the ones that cannot be used are rebuilt before the mail is shown; the rebuild window,
@@ -596,8 +597,9 @@ class MainWindow(QMainWindow):
         message_menu.addAction(self.act_delete)
         message_menu.addAction(self.act_delete_forever)
         message_menu.addSeparator()
+        go_to_menu = message_menu.addMenu("Go to")  # the owner: the menu was very tall; the keys work as before
         for action in (self.act_next_message, self.act_previous_message, self.act_next_unread, self.act_previous_unread, self.act_go_to_folder):
-            message_menu.addAction(action)
+            go_to_menu.addAction(action)
         message_menu.addSeparator()
         for action in (self.act_save_as, self.act_print, self.act_source):
             message_menu.addAction(action)
