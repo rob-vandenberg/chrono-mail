@@ -26,7 +26,7 @@ from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.mailtags import MailTags
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.models import (
-    ACCOUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, GROUP_ROLE, KIND_ROLE, LOCAL_PLACES, NAME_ROLE, PIN_ROLE, UNREAD_ROLE, FolderNode,
+    FAVORITES, ACCOUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, GROUP_ROLE, KIND_ROLE, LOCAL_PLACES, NAME_ROLE, PIN_ROLE, UNREAD_ROLE, FolderNode,
     FolderTreeModel, TreeEntry,
 )
 from chrono_mail.ui.prefs import InUse, Remembered
@@ -37,9 +37,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 2.0.280"
+__version__ = "folderpane.py 2.0.299"
 
 # --- Version history ----------------------------------------------------
+# v2.0.299: a right-click in Favorites lists every standard favorite with a tick; a click shows or hides it (D-234); Show again and
+#           Hide from Favorites gone
 # v2.0.280: folder_moved: a folder renamed or deleted, so its column setup follows (B-16)
 # v1.9.274: R-19 round 4: the accounts, folders and facts are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: every engine call typed; sidebar_call takes a typed command, change_favorites typed steps
@@ -638,10 +640,6 @@ class FolderPane(QObject):
             up.setEnabled(position > 0)
             down = menu.addAction("Move down", lambda: self.move_pin(order, position, 1))
             down.setEnabled(0 <= position < len(order) - 1)
-        elif kind == EntryKind.FAVORITE:
-            view = str(index.data(FOLDER_PATH_ROLE))
-            menu.addSeparator()
-            menu.addAction("Hide from Favorites", lambda: self.sidebar_call(FAVORITE_SHOW, VisibleParameters(view, False)))
         elif kind == EntryKind.ACCOUNT and str(index.data(ACCOUNT_ROLE)) and not self._state.is_local(account):
             self._group_menu(menu, account)
         elif kind == EntryKind.GROUP:
@@ -649,12 +647,22 @@ class FolderPane(QObject):
             menu.addSeparator()
             menu.addAction("Rename group…", lambda: self._rename_group(group, str(index.data(Qt.ItemDataRole.DisplayRole))))
             menu.addAction("Remove group", lambda: self.sidebar_call(GROUP_REMOVE, GroupParameters(group)))
-        if kind == EntryKind.SECTION:  # a group is made from an account's Put in group menu, so it always holds that account
-            hidden = list(sidebar.hidden)
-            if hidden:
-                shown = menu.addMenu("Show again")
-                for view in hidden:
-                    shown.addAction(view.capitalize(), lambda chosen=view: self.sidebar_call(FAVORITE_SHOW, VisibleParameters(chosen, True)))
+        if kind in (EntryKind.FAVORITE, EntryKind.PINLINK) or (kind == EntryKind.SECTION and index.data(Qt.ItemDataRole.DisplayRole) == "Favorites"):
+            self._favorite_ticks(menu)  # a group is made from an account's Put in group menu, so it always holds that account
+
+    def _favorite_ticks(self, menu: QMenu) -> None:
+        """Every standard favorite, ticked while shown; a click shows or hides it (the setting of Settings > Sidebar, D-234). What Show
+        on startup chose stays ticked and greyed; the last entry left in Favorites is greyed, so the heading and this menu stay."""
+        hidden, forced = set(self._state.sidebar.hidden), self.model.forced
+        shown = [view for view, _ in self._state.favorites_in_use() if view not in hidden or view in forced]
+        alone = len(shown) == 1 and not self.model.pins
+        menu.addSeparator()
+        for view, label, _ in FAVORITES:
+            on = view not in hidden or view in forced
+            action = menu.addAction(label, lambda _checked=False, chosen=view, now=on: self.sidebar_call(FAVORITE_SHOW, VisibleParameters(chosen, not now)))
+            action.setCheckable(True)
+            action.setChecked(on)
+            action.setEnabled(view not in forced and not (alone and view in shown))
 
     def _group_menu(self, menu: QMenu, account: str) -> None:
         menu.addSeparator()

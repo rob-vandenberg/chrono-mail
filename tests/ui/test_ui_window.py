@@ -19,9 +19,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 2.0.298"
+__version__ = "test_ui_window.py 2.0.299"
 
 # --- Version history ----------------------------------------------------
+# v2.0.299: a right-click in Favorites lists every standard favorite with a tick, a click shows or hides it (D-234)
 # v2.0.298: Favorites and the folders under an account in the owner's new order (D-061, D-232)
 # v2.0.292: Favorites and the folders under an account in the owner's order (D-061, D-232; the Windows computer's report)
 # v2.0.280: the sort is remembered per folder (B-16)
@@ -1156,10 +1157,45 @@ def test_the_folder_list_menu_offers_favorites_and_groups(world: World, qtbot: Q
     wait(qtbot, lambda: any(pin.folder == "Inbox" for pin in world.call("sidebar.show").pins))
     wait(qtbot, lambda: "  Inbox  (3)" in tree_labels(world.window)[:12] and offered(world.window.tree_model.index(0, 0, account_node(world.window))) == [])
     pinned = world.window.tree_model.index(9, 0, world.window.tree_model.index(0, 0))  # after the nine standard favorites
-    assert pinned.data(KIND_ROLE) == "pinlink" and offered(pinned)[0] == "Remove from Favorites" and offered(pinned)[-2:] == ["Move up", "Move down"]
+    assert pinned.data(KIND_ROLE) == "pinlink" and offered(pinned)[:4] == ["Remove from Favorites", "Rename…", "Move up", "Move down"]
+    assert offered(pinned)[4:] == STANDARD_FAVORITES  # then every standard favorite (D-234)
     standard = world.window.tree_model.index(2, 0, world.window.tree_model.index(0, 0))
-    assert offered(standard) == ["Hide from Favorites"]  # a group is made from an account (1.1.190)
-    assert offered(world.window.tree_model.index(0, 0)) == []  # nothing to offer on the heading while nothing is hidden: no menu
+    assert offered(standard) == STANDARD_FAVORITES  # a group is made from an account (1.1.190)
+    assert offered(world.window.tree_model.index(0, 0)) == STANDARD_FAVORITES  # the heading too, also while nothing is hidden
+
+
+STANDARD_FAVORITES = ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Snoozed", "Scheduled", "Archive", "Junk", "Trash"]
+
+
+def test_a_right_click_in_favorites_ticks_every_standard_favorite_and_a_click_shows_or_hides_it(world: World, qtbot: QtBot) -> None:
+    """The owner (D-234): every favorite is listed, ticked while shown; a click toggles it; the last one left is greyed."""
+    started(qtbot, world)
+
+    def menu_of_heading() -> QMenu:
+        menu = QMenu()
+        world.window.folders.tree_extras(menu, world.window.tree_model.index(0, 0))  # noqa: SLF001
+        return menu
+
+    def ticks() -> dict[str, tuple[bool, bool]]:
+        menu = menu_of_heading()
+        return {action.text(): (action.isChecked(), action.isEnabled()) for action in menu.actions() if action.text()}
+
+    def click(label: str) -> None:
+        menu = menu_of_heading()  # kept while its action runs
+        next(action for action in menu.actions() if action.text() == label).trigger()
+
+    first = ticks()
+    assert list(first) == STANDARD_FAVORITES and all(checked and enabled for checked, enabled in first.values())  # nothing hidden: all ticked
+    click("Sent")
+    wait(qtbot, lambda: "  Sent" not in tree_labels(world.window)[:10] and ticks()["Sent"] == (False, True))  # hidden, still listed
+    click("Sent")
+    wait(qtbot, lambda: "  Sent" in tree_labels(world.window)[:10] and ticks()["Sent"] == (True, True))  # shown again
+    in_use = ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk"]  # Trash stays
+    for label in in_use:
+        click(label)
+        wait(qtbot, lambda label=label: not ticks()[label][0])
+    assert ticks()["Trash"] == (True, False)  # the last one left in Favorites cannot be hidden: the heading and its menu stay
+    assert ticks()["Sent"] == (False, True)
 
 
 def test_the_count_line_says_one_message_not_one_messages(world: World, qtbot: QtBot) -> None:

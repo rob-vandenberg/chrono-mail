@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-233 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-234 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-234**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-235**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -178,6 +178,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-101** Archiving notes the source folder; Unarchive goes back there (else the Inbox). Ctrl+J is Junk / Not junk.
 - **D-061** Favorites, in this order: All Inboxes, Unread, Outbox, Sent, Drafts, Flagged, Unreplied, Snoozed, Scheduled, Archive, Junk, Trash (Scheduled, Snoozed and Archive only once some mailbox has them, appearing in place). Then the accounts, Local Folders last. **The "Inboxes" section never comes back.**
 - **D-062** Any folder can be pinned to Favorites. Accounts go in named groups with their own All Inboxes; a group always holds an account. Reordering by menu, not dragging.
+- **D-234** (the owner) **A right-click anywhere in Favorites lists every standard favorite with a tick** (ticked: shown); a click shows or hides it, the same setting as Settings > Sidebar. Always there, also when nothing is hidden. What Show on startup chose and the last entry left are greyed. A pinned folder's own items come first. Rejected: a Display sub-menu (nothing else to choose there); Show again and Hide from Favorites (the ticks do both).
 - **D-119** Clicking an account or group row shows its Inbox or All Inboxes; an empty finished list says so.
 - **D-121** Settings > General > Show on startup: last folder (default), a Favorites or Tags view, a folder, or a section, chosen in a folded tree in the drop-down's own popup; entries Settings > Sidebar hides are greyed. Rejected: a popup window of our own (it held all input of the desktop).
 - **D-063** → D-103.
