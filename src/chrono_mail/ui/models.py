@@ -12,9 +12,11 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 1.9.274"
+__version__ = "models.py 2.0.288"
 
 # --- Version history ----------------------------------------------------
+# v2.0.288: One definition of the standard folders (standard_kind, in the order of LOCAL_FOLDER_KINDS) for the order of the list, Settings >
+#           Sidebar and the icons: every standard folder, Snoozed and Recovered too, before every folder the person made (D-232; the owner)
 # v1.9.274: R-19 round 4: the accounts and folders of the folder list are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.269: Drafts, Outbox, Scheduled and Snoozed show how many messages they hold (not sent or delivered yet), the other folders their unread messages (D-225)
 # v1.6.261: pending_trees gone: the folder list is laid out once at start, with every place's folders
@@ -597,27 +599,32 @@ def favorite_number(view: str, mailbox_ids: list[str], folders: Mapping[str, Seq
     return favorite_unread(view, mailbox_ids, folders, "messages" if view in OUTGOING_FAVORITES else "unread")
 
 
-# The standard folders stay together at the top, in this order (after Unread and Flagged); the person's own folders follow by name.
-_ROLE_ORDER: dict[str, int] = {"inbox": 0, "drafts": 1, "sent": 2, "outbox": 3, "scheduled": 4, "archive": 5, "junk": 6, "trash": 7}
-_OWN_FOLDERS: int = 8
 SCHEDULED_TARGET_ROLES: tuple[str, ...] = ("drafts", "trash")  # where a scheduled message may be moved: back to drafts, or away (D-178)
 LOCAL_PLACES: dict[str, str] = {"Outbox": "outbox", "Scheduled": "scheduled"}  # folders that exist only here, with no role on a server
 
 
+# The folders the program makes itself without a role, known by their place (a server gives them none)
+_KIND_BY_PATH: dict[str, str] = {"Outbox": "outbox", "Scheduled": "scheduled", "Snoozed": "snoozed", "Recovered": "recovered"}
+
+
+def standard_kind(path: str, role: str) -> str:
+    """Which standard folder this is (one of LOCAL_FOLDER_KINDS), or "" for a folder the person made: by its role, or by its place for
+    the folders the program makes without a role. The one definition the order of the list, Settings > Sidebar and the icons use (D-232)."""
+    kind = _KIND_BY_PATH.get(path, role)
+    return kind if kind in LOCAL_FOLDER_KINDS else ""
+
+
 def _order(role: str, path: str = "") -> int:
-    if path in LOCAL_PLACES:  # the Scheduled folder follows the Outbox: what waits to go out stays together
-        return _ROLE_ORDER[LOCAL_PLACES[path]]
-    return _ROLE_ORDER.get(role, _OWN_FOLDERS)
+    """Every standard folder first, in the order of LOCAL_FOLDER_KINDS (after Unread and Flagged); the person's own folders follow by name (D-232)."""
+    kind = standard_kind(path, role)
+    return LOCAL_FOLDER_KINDS.index(kind) if kind else len(LOCAL_FOLDER_KINDS)
 
 
 def local_folder_kind(path: str, role: str) -> str:
     """Which standard folder of Local Folders this is (one of LOCAL_FOLDER_KINDS), or "" for the person's own folders and
     every folder inside another."""
-    if "/" in path:
-        return ""
-    kind = "snoozed" if path == "Snoozed" else LOCAL_PLACES.get(path, role)
-    return kind if kind in LOCAL_FOLDER_KINDS else ""
+    return "" if "/" in path else standard_kind(path, role)
 
 
 def _icon_kind(path: str, role: str) -> str:
-    return LOCAL_PLACES.get(path, role)
+    return standard_kind(path, role) or role
