@@ -12,9 +12,10 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 2.0.289"
+__version__ = "models.py 2.0.290"
 
 # --- Version history ----------------------------------------------------
+# v2.0.290: Favorites in the owner's order: Unread, All Inboxes, Flagged, Unreplied, Drafts, Outbox, Sent, Snoozed, Scheduled, Archive, Junk, Trash (D-061)
 # v2.0.289: Unread, Inbox, Flagged, then the standard folders in the owner's order (D-232)
 # v2.0.288: One definition of the standard folders (standard_kind, in the order of LOCAL_FOLDER_KINDS) for the order of the list, Settings >
 #           Sidebar and the icons: every standard folder, Snoozed and Recovered too, before every folder the person made (D-232; the owner)
@@ -86,15 +87,15 @@ COUNT_ROLE: int = Qt.ItemDataRole.UserRole + 10  # the number of unread messages
 
 
 FAVORITES: tuple[tuple[str, str, str], ...] = (  # view id (message.combined), label, icon
-    ("inboxes", "All Inboxes", "inbox"),  # the owner's order (2026-10-20)
-    ("unread", "Unread", "unread"),
-    ("outbox", "Outbox", "outbox"),
-    ("scheduled", "Scheduled", "scheduled"),  # what waits to go out stays together (2026-10-20)
-    ("sent", "Sent", "sent"),
-    ("drafts", "Drafts", "drafts"),
+    ("unread", "Unread", "unread"),  # the owner's order (2.0.290): as under every account (D-232), All Inboxes in the Inbox's place
+    ("inboxes", "All Inboxes", "inbox"),
     ("flagged", "Flagged", "flagged"),
-    ("snoozed", "Snoozed", "snoozed"),
     ("unreplied", "Unreplied", "unreplied"),
+    ("drafts", "Drafts", "drafts"),
+    ("outbox", "Outbox", "outbox"),
+    ("sent", "Sent", "sent"),
+    ("snoozed", "Snoozed", "snoozed"),
+    ("scheduled", "Scheduled", "scheduled"),
     ("archive", "Archive", "archive"),
     ("junk", "Junk", "junk"),
     ("trash", "Trash", "trash"),

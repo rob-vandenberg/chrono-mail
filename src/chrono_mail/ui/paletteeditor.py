@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -25,9 +26,10 @@ from chrono_mail.ui.colours import red
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 1.9.275"
+__version__ = "paletteeditor.py 2.0.290"
 
 # --- Version history ----------------------------------------------------
+# v2.0.290: No outline around the list of colours (the owner)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.222: Title "Event colours"; the Calendar row of the event editor at the top (the owner)
 # v1.1.221: The colours of the calendar's account, named in the title (D-191)
@@ -131,6 +133,7 @@ class PaletteEditor(QDialog):
         scroll = QScrollArea(self)
         scroll.setWidget(self.holder)
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)  # no outline around the list (the owner)
         scroll.setMinimumHeight(320)
         layout.addWidget(scroll, 1)
         self.result_label = QLabel("", self)
