@@ -2582,3 +2582,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Not changed: ui/test_ui_models.py::test_the_unread_count_is_drawn_bold_at_the_right_edge passes or fails by the font on Windows; added to the Windows computer's research of the "Sans Serif" font (its brief, point 5).
 - Server rule D-193: nothing here touches server data.
 - Checks: the 22 window test files: 370 passed and these 2 failed before the correction; test_ui_advancedsearch, test_ui_schedule, test_ui_window: 115 passed after it.
+
+## 2026-10-22 2.0.293 Window tests on Windows get real fonts (the Windows computer's answer to its brief)
+- Cause found by the Windows computer: Qt's offscreen platform (set by tests/conftest.py) finds no font files on Windows (0 families), "Sans Serif" falls back to a font about twice as wide; that alone made the ten window tests fail (minimum width 1029 instead of 768, Mark and Tag folded into More so the Tab test saw only the search field, the selection test's centre pixel on a white letter of the wider text). With the Windows font folder all ten pass; the real program is right.
+- Changed (tests only): tests/conftest.py sets QT_QPA_FONTDIR to %WINDIR%\Fonts on Windows when it is not set; tests/ui/conftest.py gives the window tests on Windows Segoe UI 9 pt (the real program's font there; "Sans Serif" resolves to a decorative font with that folder) before the first look is taken; ui/test_ui_theme.py's selection test reads the row's most common colour, never one pixel.
+- Still researched by the Windows computer (its brief, section 6): the contacts test that fails about 1 run in 4 (the edit's save has no effect within 8 s: an error, no answer, or dropped), and five look tests on the real Windows platform.
+- Server rule D-193: nothing here touches server data. The program unchanged.
+- Checks on Linux: ui/test_ui_theme, _toolbar, _appearance, _parts: 86 passed; test_config: 66 passed. The Windows part is for the Windows computer to confirm (this computer has its fonts).
