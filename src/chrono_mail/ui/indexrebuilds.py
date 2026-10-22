@@ -14,9 +14,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "indexrebuilds.py 2.0.281"
+__version__ = "indexrebuilds.py 2.0.303"
 
 # --- Version history ----------------------------------------------------
+# v2.0.303: show_window: the window comes back after Run in background (a click on the bar in the status line, D-229)
 # v2.0.281: Initial version (D-229): at start every index is checked; the ones that cannot be used are rebuilt one after the other before
 #           the mail is shown, then the Sent dates of upgraded ones are filled in; a window with the account, a wide bar and how many of how
 #           many; Run in background while the old index stays usable; Abort after a question (closes the program when nothing usable is left)
@@ -124,6 +125,7 @@ class IndexRebuilds(QObject):
         self._current: str | None = None
         self._usable: bool = True
         self._background: bool = False
+        self._last_step: tuple[int, int, str, int, int, bool] | None = None  # what the window showed last: it comes back with it
         self._aborted: bool = False
         self.running: bool = False
         backend.rebuilding.connect(self._step)
@@ -232,10 +234,11 @@ class IndexRebuilds(QObject):
         self._status.rebuild_progress(name, step.done, step.total)
         if self._current is None:
             self._set_running(True)
+        self._last_step = (self._plan.index(step.account) + 1, len(self._plan), name, step.done, step.total, step.usable)
         if self._background:
             return
         window = self._window()
-        window.show_step(self._plan.index(step.account) + 1, len(self._plan), name, step.done, step.total, step.usable)
+        window.show_step(*self._last_step)
         if not window.isVisible():
             window.show()
 
@@ -245,6 +248,17 @@ class IndexRebuilds(QObject):
             self.window.background_chosen.connect(self._into_background)
             self.window.abort_chosen.connect(self._ask_abort)
         return self.window
+
+    def show_window(self) -> None:
+        """Bring the window back after Run in background (a click on the bar in the status line), at the point the work has reached."""
+        if not self.running or self._last_step is None:
+            return
+        self._background = False
+        window = self._window()
+        window.show_step(*self._last_step)
+        window.show()
+        window.raise_()
+        window.activateWindow()
 
     def _into_background(self) -> None:
         self._background = True

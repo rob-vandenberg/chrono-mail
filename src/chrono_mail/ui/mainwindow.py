@@ -56,9 +56,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.0.302"
+__version__ = "mainwindow.py 2.0.303"
 
 # --- Version history ----------------------------------------------------
+# v2.0.303: a click on the busy bar brings the index window back while an index is updated, else the Operations window (D-229)
 # v2.0.302: the copies of attachments opened in an earlier run are removed at start (D-236)
 # v2.0.281: at start every index is checked and the ones that cannot be used are rebuilt before the mail is shown; the rebuild window,
 #           the paused mail checks and Settings > Rebuild the search index go through IndexRebuilds (D-229)
@@ -647,7 +648,15 @@ class MainWindow(QMainWindow):
     def _build_status(self) -> None:
         self.report.install(self.statusBar())
         self.status_label, self.progress_bar, self.status_line = self.report.label, self.report.progress_bar, self.report.line
-        self.report.operations_requested.connect(self.checking.show_operations)
+        self.report.bar_clicked.connect(self._bar_clicked)
+        self.rebuilds.running_changed.connect(self.report.bar_hint)
+
+    def _bar_clicked(self) -> None:
+        """The busy bar: while an index is updated its window comes back (after Run in background), else the Operations window (D-229)."""
+        if self.rebuilds.running:
+            self.rebuilds.show_window()
+        else:
+            self.checking.show_operations()
 
     def _wire(self) -> None:
         self.section_bar.chosen.connect(self.switch_section)

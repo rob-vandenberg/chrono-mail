@@ -9,9 +9,10 @@ from tests.test_engine_rebuilds import as_format_11
 from tests.ui.world import World, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_indexrebuilds.py 2.0.281"
+__version__ = "test_ui_indexrebuilds.py 2.0.303"
 
 # --- Version history ----------------------------------------------------
+# v2.0.303: a click on the busy bar brings the window back after Run in background; afterwards it opens the Operations window
 # v2.0.281: Initial version: the rebuild window at start, Run in background only while the old index is usable, Abort after its
 #           question (closes the program only when nothing usable is left), the status line, the paused mail checks (D-229)
 
@@ -59,6 +60,25 @@ def test_run_in_background_hides_the_window_and_the_status_line_goes_on(world: W
     assert not rebuilds.window.isVisible() and world.window.report.label.text().endswith("50 of 100")
     world.backend.rebuilding.emit(RebuildStep(world.account_id, 0, 0, usable=True, ended=True))
     assert not rebuilds.running
+
+
+def test_a_click_on_the_bar_brings_the_window_back_and_after_the_end_the_operations_window(world: World) -> None:
+    """The owner (D-229): after Run in background the window could not be brought back."""
+    rebuilds, bar = world.window.rebuilds, world.window.progress_bar
+    world.backend.rebuilding.emit(RebuildStep(world.account_id, 10, 100, usable=True))
+    assert rebuilds.window is not None and bar.toolTip() == "Show the index progress"
+    rebuilds.window.background_button.click()
+    world.backend.rebuilding.emit(RebuildStep(world.account_id, 83, 100, usable=True))
+    assert not rebuilds.window.isVisible()
+    bar.clicked.emit()
+    assert rebuilds.window.isVisible() and rebuilds.window.count_label.text() == "83 of 100" and not world.window.operations.isVisible()
+    world.backend.rebuilding.emit(RebuildStep(world.account_id, 90, 100, usable=True))
+    assert rebuilds.window.count_label.text() == "90 of 100"  # it follows again
+    world.backend.rebuilding.emit(RebuildStep(world.account_id, 0, 0, usable=True, ended=True))
+    assert not rebuilds.running and bar.toolTip() == "Show the Operations window"
+    bar.clicked.emit()
+    assert world.window.operations.isVisible() and not rebuilds.window.isVisible()
+    world.window.operations.close()
 
 
 @pytest.mark.parametrize("usable", [True, False], ids=["usable", "nothing_usable"])
