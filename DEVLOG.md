@@ -2576,3 +2576,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - `ui/paletteeditor.py`: the list of colours has a right margin of 8 px at the windows' size (`LIST_RIGHT_MARGIN`, `px_for`), so the delete buttons no longer touch the scrollbar (the owner's screenshot).
 - Server rule D-193: only the look on this computer.
 - Checks: ui/test_ui_calendar.py's palette editor test checks the margin (fails on 2.0.290); ui/test_ui_calendar: 13 passed; Pyrefly 0 (Linux and win32); layer check kept.
+
+## 2026-10-22 2.0.292 The window tests that still expected the old order (the Windows computer's report of 2.0.290)
+- The Windows computer confirmed 2.0.288 to 2.0.290 on the real Windows display (the order under every account, Favorites, Event colours) and found tests/ui/test_ui_window.py still expecting the old order (3 tests): that file was not among the tests run for 2.0.288 to 2.0.290. Now every window test file that reads the folder list or Favorites was run (22 files, 372 tests): two more expected the old positions (test_ui_advancedsearch: Flagged and Inbox by row; test_ui_schedule: Scheduled right after Outbox). All five now expect the owner's order (D-061, D-232). The program unchanged.
+- Not changed: ui/test_ui_models.py::test_the_unread_count_is_drawn_bold_at_the_right_edge passes or fails by the font on Windows; added to the Windows computer's research of the "Sans Serif" font (its brief, point 5).
+- Server rule D-193: nothing here touches server data.
+- Checks: the 22 window test files: 370 passed and these 2 failed before the correction; test_ui_advancedsearch, test_ui_schedule, test_ui_window: 115 passed after it.
