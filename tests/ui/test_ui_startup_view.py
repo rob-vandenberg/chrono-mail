@@ -10,9 +10,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import REGISTRY, World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_startup_view.py 2.0.290"
+__version__ = "test_ui_startup_view.py 2.0.298"
 
 # --- Version history ----------------------------------------------------
+# v2.0.298: the owner's order: All Inboxes, Unread, Outbox, Sent, Drafts, Flagged, Unreplied in Favorites (D-061, D-232)
 # v2.0.290: Favorites and the standard folders in the owner's order (D-061, D-232)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.6.261: The start asks each place where mail is kept once and lays the folder list out once (no early build); the tray counts Local Folders once;
@@ -51,7 +52,7 @@ def test_the_choices_are_in_the_owners_order(world: World, qtbot: QtBot) -> None
     texts = [text for text, _, _, _, _ in choices]
     assert texts[0] == "Last selected folder" and choices[0][1] == ""
     assert texts[1] == "Favorites" and not choices[1][2]  # a heading, with its entries below it
-    assert texts[2:11] == ["Unread", "All Inboxes", "Flagged", "Unreplied", "Drafts", "Outbox", "Sent", "Junk", "Trash"] and all(choice[3] == 1 for choice in choices[2:11])
+    assert texts[2:11] == ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"] and all(choice[3] == 1 for choice in choices[2:11])
     local, calendar, other = texts.index("Local Folders"), texts.index("Calendar"), texts.index("other@example.com")
     assert 11 == local < calendar and texts[calendar : calendar + 3] == ["Calendar", "Contacts", "Tasks"] and calendar + 3 == other
     assert all(not choosable for text, _, choosable, _, _ in choices if text in ("Local Folders", "other@example.com"))
@@ -70,7 +71,7 @@ def test_a_hidden_folder_of_local_folders_is_greyed_among_the_choices(world: Wor
     choices = world.window.folders.startup_choices()  # noqa: SLF001
     trash = next(choice for choice in choices if choice[1] == f"mail\t{local}\tfolder\tTrash")
     assert not trash[2] and not trash[4]  # listed, greyed, cannot be chosen
-    expected = [("inbox", "Inbox"), ("drafts", "Drafts"), ("outbox", "Outbox"), ("sent", "Sent"), ("junk", "Junk"), ("trash", "Trash")]  # the owner's order (D-232)
+    expected = [("inbox", "Inbox"), ("outbox", "Outbox"), ("sent", "Sent"), ("drafts", "Drafts"), ("junk", "Junk"), ("trash", "Trash")]  # the owner's order (D-232)
     assert world.window.mail_state.local_standard_folders() == expected  # noqa: SLF001  (what exists, in the order of the folder list)
 
 
@@ -129,7 +130,7 @@ def test_the_startup_tree_opens_folded_and_a_heading_only_unfolds(world: World, 
     centre = tree.visualRect(favorites).center()
     QTest.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, centre)
     assert tree.isExpanded(favorites) and popup.isVisible() and chooser.currentText() == "Last selected folder"  # a heading only unfolds
-    unread = model.index(0, 0, favorites)  # Unread first in Favorites (the owner, 2.0.290)
+    unread = model.index(1, 0, favorites)  # Unread after All Inboxes in Favorites (the owner, 2.0.298)
     QTest.mouseClick(tree.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, tree.visualRect(unread).center())
     wait(qtbot, lambda: not popup.isVisible())
     assert chooser.currentText() == "Unread" and str(chooser.currentData()).startswith("mail\t")

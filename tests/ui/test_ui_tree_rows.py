@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import REGISTRY, World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tree_rows.py 2.0.289"
+__version__ = "test_ui_tree_rows.py 2.0.298"
 
 # --- Version history ----------------------------------------------------
+# v2.0.298: the owner's order: Inbox, Unread, Outbox, Sent, Drafts, Flagged, then the other standard folders (D-232)
 # v2.0.289: the owner's order: Unread, Inbox, Flagged, Drafts, Outbox, Sent, Snoozed, Scheduled, Recovered, Archive, Junk, Trash (D-232)
 # v2.0.288: every standard folder (Snoozed and Recovered too) before every folder the person made, in one order, in every kind of account (D-232)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
@@ -153,9 +154,9 @@ def test_the_standard_folders_stay_together_above_the_own_folders(world: World, 
     top = account_row(window, world.account_id)
     names = [str(window.tree_model.index(row, 0, top).data(Qt.ItemDataRole.DisplayRole)).split("  ")[0] for row in range(window.tree_model.rowCount(top))]
     own = names.index("Aardvark")
-    assert names[:3] == ["Unread", "Inbox", "Flagged"] and names[own:] == ["Aardvark", "Zebra"]
-    standard = names[3:own]
-    assert standard.index("Outbox") < standard.index("Sent") < standard.index("Trash")  # the owner's order (D-232); Junk and Trash before the own folders
+    assert names[:2] == ["Inbox", "Unread"] and names[own:] == ["Aardvark", "Zebra"]
+    standard = names[2:own]
+    assert standard.index("Outbox") < standard.index("Sent") < standard.index("Flagged") < standard.index("Trash")  # the owner's order (D-232); Junk and Trash before the own folders
 
 
 def test_the_empty_item_says_which_folder_it_empties(world: World, qtbot: QtBot) -> None:
@@ -172,7 +173,7 @@ def test_the_empty_item_says_which_folder_it_empties(world: World, qtbot: QtBot)
 
 # Every standard folder as each kind of account has it: by its role (from the server or made here), or by its place (made by the program, no role)
 STANDARD = [  # the owner's order (D-232)
-    ("Inbox", "inbox"), ("Drafts", "drafts"), ("Outbox", "other"), ("Sent", "sent"), ("Snoozed", "other"), ("Scheduled", "other"),
+    ("Inbox", "inbox"), ("Outbox", "other"), ("Sent", "sent"), ("Drafts", "drafts"), ("Snoozed", "other"), ("Scheduled", "other"),
     ("Recovered", "other"), ("Archive", "archive"), ("Junk", "junk"), ("Trash", "trash"),
 ]
 
@@ -197,4 +198,4 @@ def test_every_standard_folder_comes_before_every_folder_of_the_person_in_every_
     for row in range(model.rowCount(QModelIndex())):
         top = model.index(row, 0, QModelIndex())
         names = [str(model.index(number, 0, top).data(Qt.ItemDataRole.DisplayRole)).split("  ")[0] for number in range(model.rowCount(top))]
-        assert names == ["Unread", "Inbox", "Flagged", *(path for path, _ in STANDARD[1:]), "Aaa", "Taxes", "Zzz"]
+        assert names == ["Inbox", "Unread", "Outbox", "Sent", "Drafts", "Flagged", *(path for path, _ in STANDARD[4:]), "Aaa", "Taxes", "Zzz"]

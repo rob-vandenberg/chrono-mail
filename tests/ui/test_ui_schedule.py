@@ -16,9 +16,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, gone, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 2.0.292"
+__version__ = "test_ui_schedule.py 2.0.298"
 
 # --- Version history ----------------------------------------------------
+# v2.0.298: Scheduled in the owner's new order of the standard folders (D-232)
 # v2.0.292: Scheduled in the owner's order of the standard folders (D-232)
 # v2.0.280: the Snoozed folder starts with its own columns, sorted by Snoozed until soonest first; switched off, its sort falls back to Subject (B-16)
 # v1.9.268: R-21: Send now, Cancel snooze, Pause and Resume change only their own line; showing the page again keeps the lines and the selection; a failed Send now says why
@@ -421,7 +422,7 @@ def test_the_scheduled_folder_follows_the_outbox_and_shows_when_each_message_is_
     assert item is not None and item.parent() is not None
     parent = item.parent()
     paths = [str(parent.child(row).data(FOLDER_PATH_ROLE) or "") for row in range(parent.rowCount())]
-    assert paths.index("Scheduled") == paths.index("Sent") + 1  # the owner's order: Outbox, Sent, Snoozed, Scheduled (no Snoozed folder here; D-232)
+    assert paths.index("Scheduled") == paths.index("Drafts") + 2  # the owner's order: Drafts, Flagged, Snoozed, Scheduled (no Snoozed folder here; D-232)
     world.window.tree.setCurrentIndex(item.index())
     wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
     world.window.messages.set_sort("snoozed", True)  # noqa: SLF001

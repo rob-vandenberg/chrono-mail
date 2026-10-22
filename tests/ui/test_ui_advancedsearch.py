@@ -14,9 +14,10 @@ from tests.ui.test_ui_window import select, subjects
 from tests.ui.world import account_node, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_advancedsearch.py 2.0.292"
+__version__ = "test_ui_advancedsearch.py 2.0.298"
 
 # --- Version history ----------------------------------------------------
+# v2.0.298: the folders under an account in the owner's new order (D-232)
 # v2.0.292: the folders under an account in the owner's order (D-232)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.6.260: A view with dates or sizes asks the order for them (the list has one kind of view, R-15)
@@ -106,6 +107,6 @@ def test_changing_folder_drops_the_advanced_dates(world: World, qtbot: QtBot, mo
     world.window.act_advanced.trigger()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 0 and not world.window.filters.chip.isHidden())
     account = account_node(world.window)
-    world.window.tree.setCurrentIndex(world.window.tree_model.index(2, 0, account))  # Flagged (Unread, Inbox, Flagged: D-232)
-    world.window.tree.setCurrentIndex(world.window.tree_model.index(1, 0, account))  # Inbox again
+    world.window.tree.setCurrentIndex(world.window.tree_model.index(5, 0, account))  # Flagged (Inbox, Unread, Outbox, Sent, Drafts, Flagged: D-232)
+    world.window.tree.setCurrentIndex(world.window.tree_model.index(0, 0, account))  # Inbox again
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3 and world.window.filters.chip.isHidden())
