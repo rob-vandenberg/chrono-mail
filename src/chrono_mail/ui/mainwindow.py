@@ -56,9 +56,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.0.305"
+__version__ = "mainwindow.py 2.0.306"
 
 # --- Version history ----------------------------------------------------
+# v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left (D-101)
 # v2.0.305: Menu > Message: Next and Previous message, Next and Previous unread message and Go to folder… in a Go to submenu (the owner)
 # v2.0.303: a click on the busy bar brings the index window back while an index is updated, else the Operations window (D-229)
 # v2.0.302: the copies of attachments opened in an earlier run are removed at start (D-236)
@@ -671,6 +672,9 @@ class MainWindow(QMainWindow):
         self.act_conversations.toggled.connect(self.messages.toggle_conversations)
         self.act_show_groups.toggled.connect(self.messages.toggle_groups)
         self.list_view.selectionModel().selectionChanged.connect(self._update_message_actions)
+        self.list_view.selectionModel().selectionChanged.connect(self._show_archive_action)  # it follows the messages (D-101)
+        self.list_model.dataChanged.connect(self._show_archive_action)  # a selected message moved to or from an archive folder
+        self.list_model.modelReset.connect(self._show_archive_action)
         self.list_model.modelReset.connect(self._update_message_actions)
         self.list_model.rowsRemoved.connect(self._update_message_actions)
         self.list_model.rowsInserted.connect(self._update_message_actions)
@@ -1183,9 +1187,9 @@ class MainWindow(QMainWindow):
         self.columns.follow_view()
         self.messages.apply_view()
 
-    def _show_archive_action(self) -> None:
-        """In the Archive folder the Archive button, key and menu item are Unarchive."""
-        archived = self.mail_state.in_archive()
+    def _show_archive_action(self, *_: object) -> None:
+        """The Archive button, key and menu item are Unarchive when every selected message is archived, wherever they are shown (D-101)."""
+        archived = self.mail_state.all_archived(self.messages.selected_rows())
         self.act_archive.setText("Unarchive" if archived else "Archive")
         self.act_archive.setIconText("Unarchive" if archived else "Archive")
         self.act_archive.setIcon(theme_icon("archive-extract" if archived else "archive-insert"))

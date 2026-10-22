@@ -9,9 +9,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.models import FAVORITES, LOCAL_PLACES, USED_ONLY, favorite_in_use, local_folder_kind
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailstate.py 1.9.274"
+__version__ = "mailstate.py 2.0.306"
 
 # --- Version history ----------------------------------------------------
+# v2.0.306: all_archived: whether every selected message is in an archive folder (Archive or Unarchive follows the messages, D-101)
 # v1.9.274: R-19 round 4: the accounts, tags and rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.264: R-17: what the parts of the mail window share: the accounts, their folders with the engine's numbers, the sidebar, the
 #           tags and the current view, with the questions every part asks of them (they were asked again in many places)
@@ -130,8 +131,13 @@ class MailState:
         view = self.view
         return view.combined == "scheduled" or (view.combined is None and view.kind == EntryKind.FOLDER and view.folder == SCHEDULED_FOLDER_PATH)
 
-    def in_archive(self) -> bool:
-        return self.view.kind == EntryKind.FOLDER and self.view.folder_role == "archive"
+    def archived(self, row: MessageRow) -> bool:
+        """The message is in an archive folder of its account (by the folder's role, not its name)."""
+        return self.folder_role_of(self.account_of(row), row.folder) == "archive"
+
+    def all_archived(self, rows: list[MessageRow]) -> bool:
+        """Every one of these messages is in an archive folder: Archive is Unarchive for them, wherever they are shown (D-101)."""
+        return bool(rows) and all(self.archived(row) for row in rows)
 
     def can_make_folder(self) -> bool:
         """New folder needs one account: an account row, one of its folders (also its Unread and Flagged, a pinned folder)."""

@@ -16,9 +16,10 @@ from chrono_mail.ui.statusreport import MISSING_WARNING
 from tests.ui.world import Dialogs, World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_parts.py 1.9.273"
+__version__ = "test_ui_parts.py 2.0.306"
 
 # --- Version history ----------------------------------------------------
+# v2.0.306: in_archive is gone: Archive or Unarchive follows the selected messages (MailState.all_archived, D-101)
 # v1.9.273: The window's own calls (the key, the accounts) are typed (R-19)
 # v1.9.264: Initial tests of the parts of the main window (R-17): each part keeps its own data and works through what the others offer;
 #           the window stays small and never takes mail work back
@@ -92,7 +93,7 @@ def test_the_shared_record_knows_the_kind_of_view() -> None:
     state.view = CurrentView(account="", kind=EntryKind.FAVORITE, combined="scheduled")
     assert state.in_scheduled_view() and state.in_drafts() and not state.in_timed()
     state.view = CurrentView(account="a", kind=EntryKind.FOLDER, folder="Archive", folder_role="archive")
-    assert state.in_archive() and state.can_make_folder()
+    assert state.can_make_folder()
     state.view = CurrentView(account="", kind=EntryKind.FAVORITE, combined="inboxes")
     assert not state.can_make_folder()
 
