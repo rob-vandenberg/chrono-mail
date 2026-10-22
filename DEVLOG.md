@@ -2602,3 +2602,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - `core/credentials.py`: every call to the store (read, write, remove) waits at most 60 s (`STORE_TIME_LIMIT`, time to unlock the wallet) in a thread of its own; then `CredentialFailure` "The password store did not answer within 60 seconds (is the wallet waiting to be unlocked?)"; the late answer is ignored. D-127, D-030.
 - Server rule D-193: a save that fails this way changes nothing here or on the server.
 - Checks: two new tests (test_core_credentials: a store that never answers, limit 0.2 s; ui/test_ui_backend: a BaseException still answers once), both fail on 2.0.294; test_core_credentials, test_crypto*, test_config: 146 passed; ui/test_ui_backend, _contacts, _key_recovery: 41 passed; Pyrefly 0 (Linux and win32); layer check kept.
+
+## 2026-10-22 2.0.296 The tests are in git again (the owner)
+- The owner's request of chat 36 (make the tests public) was stopped then because the tests held personal details; 2.0.283 removed them (D-230), so the reason is gone. `tests/` is no longer in `.gitignore` nor in `gitpush.sh`'s private list; the live-test logins stay outside the project. D-233 (replaces D-161). TRANSFER-WINDOWS.md: the Windows computer moves its own `tests` folder aside before its first pull of 2.0.296 (its Windows-only test changes stay there, the owner's one-way rule). PROMPT-NEW-SESSION.md: tests/ off the private list.
+- Checks before the push: every file of tests/ scanned byte for byte for personal details (0 hits; 186 .py, 18 made-up .eml, 2 example .toml, 3.2 MB, no file over 500 KB); test_legal_names with tests/ published.
+- Server rule D-193: nothing here touches server data.

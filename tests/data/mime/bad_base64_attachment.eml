@@ -1,0 +1,10 @@
+From: a@example.com
+Subject: b64
+Content-Type: multipart/mixed; boundary=XX
+
+--XX
+Content-Type: application/octet-stream; name=x.bin
+Content-Transfer-Encoding: base64
+
+@@@@ not base64 !!!!
+--XX--

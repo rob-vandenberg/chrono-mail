@@ -1,0 +1,10 @@
+From: a@example.com
+Subject: cut
+Content-Type: multipart/mixed; boundary=XX
+
+--XX
+Content-Type: text/plain
+
+part one
+--XX
+Content-Type: text/pl

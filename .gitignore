@@ -10,7 +10,6 @@ tests/live/kerio.local.toml
 themes/
 backup/
 backups/
-tests/
 *.bat
 
 # hand-over notes between sessions (private)
