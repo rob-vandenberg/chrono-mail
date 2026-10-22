@@ -2659,3 +2659,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Now StatusReport.bar_clicked goes to the main window: while an index is rebuilt or filled in, IndexRebuilds.show_window brings the window back at the last step (it follows the steps again); otherwise the Operations window, as before. The bar's hover text says which. Refresh works during an index job (only the automatic checks wait), and every send and receive opens the Operations window by itself (D-139), so nothing is lost.
 - Server rule D-193: only the window changes.
 - Tests: new test_ui_indexrebuilds::test_a_click_on_the_bar_brings_the_window_back_and_after_the_end_the_operations_window (fails on 2.0.302). Ran: test_ui_indexrebuilds (10), the Operations tests of test_ui_operations, test_ui_parts: all passed. Pyrefly src 0 (Linux and win32), the new test 0 (the file's 6 old problems unchanged); layer check kept.
+
+## 2026-10-23 2.0.304 The background filling of the index in batches of 100 (the owner)
+- FILL_BATCH 500 -> 100: on the owner's 140,000 messages (about 20 minutes) the counter moves about every second instead of every 4 s; a restart reads at most 100 messages again. Cost not measured; estimated a few percent (one commit and one opening of the index per batch).
+- Server rule D-193: nothing reaches the server.
+- Tests: test_engine_rebuilds (6 passed; its test sets its own batch size). Pyrefly src 0 (Linux and win32); layer check kept.
