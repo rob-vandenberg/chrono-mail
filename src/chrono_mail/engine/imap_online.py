@@ -12,9 +12,11 @@ from chrono_mail.sync import ImapState, plan_folders, planned_anyway
 from chrono_mail.sync.imap_sync import LOCAL_ONLY  # first parts of the local folders that never exist on a server
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_online.py 1.1.247"
+__version__ = "imap_online.py 2.0.284"
 
 # --- Version history ----------------------------------------------------
+# v2.0.284: A folder made on the server is known to the sync at once (its server name and how the server numbers it), so a rename or delete
+#           before the next check, on the server or here offline, is followed and never makes it again (the Windows computer's F1)
 # v1.1.247: Many messages at once: prepare_flags, prepare_moves, prepare_copies and prepare_deletes do a group of a folder's messages on the
 #           server in one command per 500 UIDs (their presence asked with one UID SEARCH); each message's own step then takes what the server
 #           did for it (ready) instead of asking again (R-08)
@@ -174,6 +176,8 @@ class ServerSession:
         client.create_folder(name)
         client.subscribe(name)
         folders[local] = name
+        self.state.set_server_name(local, name)  # known to the sync at once, as when a check makes it (F1)
+        self._known(client, local, name)
         return name
 
     def _server_name(self, local: tuple[str, ...]) -> str | None:
