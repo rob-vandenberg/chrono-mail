@@ -2595,3 +2595,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Fix: `Backend._jobs` holds every job from its start, in every lane (the pool, in-order queue, checking, waiting), until `_deliver` has its answer. D-030 (engine part).
 - Server rule D-193: nothing here touches server data.
 - Checks: new test ui/test_ui_backend.py (every lane held, let go after the answer; fails on 2.0.293); ui/test_ui_backend, _contacts, _rapid_actions: 36 passed; Pyrefly 0 (Linux and win32); layer check kept.
+
+## 2026-10-22 2.0.295 A window never waits for ever (the Windows computer's note on 2.0.294)
+- The Windows computer showed two more ways to "Saving…" for ever: (a) a job ending with an error that is no Exception (a BaseException) sent no answer; (b) a wait without a limit. Agreed with the owner: (a) is fixed at its cause; for (b) a 10-second timer in the windows was rejected (it would call a slow but healthy save failed while the server still takes it); instead every wait was checked for a limit: server requests have theirs (30 s per calendar request, the mail protocols' timeouts), SQLite 30 s, engine locks are our own code (fixed at their cause if one hangs); the one wait outside our code without a limit was the system's password store.
+- `ui/backend.py`: `_Task.run` also catches what is no Exception and answers "The command ended without an answer: <kind>", so every job answers exactly once.
+- `core/credentials.py`: every call to the store (read, write, remove) waits at most 60 s (`STORE_TIME_LIMIT`, time to unlock the wallet) in a thread of its own; then `CredentialFailure` "The password store did not answer within 60 seconds (is the wallet waiting to be unlocked?)"; the late answer is ignored. D-127, D-030.
+- Server rule D-193: a save that fails this way changes nothing here or on the server.
+- Checks: two new tests (test_core_credentials: a store that never answers, limit 0.2 s; ui/test_ui_backend: a BaseException still answers once), both fail on 2.0.294; test_core_credentials, test_crypto*, test_config: 146 passed; ui/test_ui_backend, _contacts, _key_recovery: 41 passed; Pyrefly 0 (Linux and win32); layer check kept.

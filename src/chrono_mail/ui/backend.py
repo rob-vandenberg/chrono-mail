@@ -11,9 +11,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, TypedCommand, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 2.0.294"
+__version__ = "backend.py 2.0.295"
 
 # --- Version history ----------------------------------------------------
+# v2.0.295: A job answers exactly once however it ends (also an error that is no Exception), so a window never waits for ever
 # v2.0.294: Every job started is held here until its answer is delivered: Qt's pool only borrows it, so nothing can throw it away before
 #           it runs (a contact's save stayed on "Saving…" for ever in about 1 test run in 4 on the Windows computer)
 # v2.0.281: rebuilding: the engine's reports of an index being rebuilt or filled in, from any thread (D-229)
@@ -61,6 +62,8 @@ class _Task(QRunnable):
             self._done.finished.emit(self._request, None, error)
         except Exception as error:  # a bug must show up as an error message, never kill the worker silently
             self._done.finished.emit(self._request, None, ChronoMailError(f"Unexpected error: {type(error).__name__}: {error}"))
+        except BaseException as error:  # noqa: BLE001 - however a job ends, it answers exactly once (the window never waits for ever)
+            self._done.finished.emit(self._request, None, ChronoMailError(f"The command ended without an answer: {type(error).__name__}"))
         else:
             self._done.finished.emit(self._request, result, None)
 
