@@ -32,9 +32,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 2.0.280"
+__version__ = "commands_mail.py 2.0.301"
 
 # --- Version history ----------------------------------------------------
+# v2.0.301: message.show gives the pictures the text does not show (pictures), to be shown below it (B-11, D-235)
 # v2.0.280: the sort order sent (the message's own Date, with the date groups) and each row's sent moment (B-16)
 # v1.9.273: R-19: typed message.search
 # v1.9.270: R-19: typed message.show, message.thread, message.attachment.save, message.compose, mail.send, message.delete, mail.fetch, mail.settle, message.places, message.move
@@ -87,6 +88,7 @@ MAXIMUM_ATTACHMENT_BYTES: int = 100 * 1024 * 1024
 MAXIMUM_MESSAGE_BYTES: int = 256 * 1024 * 1024
 MAXIMUM_INLINE_IMAGE_BYTES: int = 5 * 1024 * 1024
 MAXIMUM_INLINE_IMAGES_TOTAL_BYTES: int = 20 * 1024 * 1024
+SHOWN_PICTURE_TYPES: frozenset[str] = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp"})  # shown below the text (B-11)
 def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage], snoozed: dict[str, int] | None = None) -> tuple[MessageRow, ...]:
     """Message rows with the size of their conversations and, in the Snoozed and the Scheduled folder, the time they leave it."""
     found = list(messages)
@@ -641,6 +643,7 @@ class ShowResult:
     problems: tuple[str, ...]
     inline_images: tuple[InlineImage, ...]
     reply_to: tuple[str, ...]
+    pictures: tuple[InlineImage, ...] = ()  # attached pictures the text does not show, in the message's order: shown below it (B-11)
 
 
 def _check_id(message_id: str) -> str:
@@ -653,18 +656,25 @@ def _shown(addresses: tuple[Address, ...]) -> tuple[str, ...]:
     return tuple(f"{a.name} <{a.address}>" if a.name else a.address for a in addresses)
 
 
-def _inline_images(parsed: ParsedMessage) -> tuple[InlineImage, ...]:
-    """Images the HTML refers to with cid:, small enough to be embedded in the page as data."""
-    found: list[InlineImage] = []
+def _inline_images(parsed: ParsedMessage) -> tuple[tuple[InlineImage, ...], tuple[InlineImage, ...]]:
+    """The pictures to embed in the page as data, small enough, together within one limit: those the HTML refers to with cid:, and the
+    attached pictures the text does not show, in the message's order, to be shown below it (B-11); a larger one stays an attachment only."""
+    referenced: list[InlineImage] = []
+    below: list[InlineImage] = []
     total = 0
     for attachment in parsed.attachments:
-        if not attachment.content_id or not attachment.content_type.startswith("image/") or len(attachment.data) > MAXIMUM_INLINE_IMAGE_BYTES:
+        shown_below = not attachment.inline and attachment.content_type in SHOWN_PICTURE_TYPES
+        if not (attachment.content_id or shown_below) or not attachment.content_type.startswith("image/") or len(attachment.data) > MAXIMUM_INLINE_IMAGE_BYTES:
             continue
         total += len(attachment.data)
         if total > MAXIMUM_INLINE_IMAGES_TOTAL_BYTES:
             break
-        found.append(InlineImage(attachment.content_id.strip("<>"), attachment.content_type, base64.b64encode(attachment.data).decode("ascii")))
-    return tuple(found)
+        data = base64.b64encode(attachment.data).decode("ascii")
+        if attachment.content_id:
+            referenced.append(InlineImage(attachment.content_id.strip("<>"), attachment.content_type, data))
+        if shown_below:
+            below.append(InlineImage((attachment.content_id or "").strip("<>"), attachment.content_type, data))
+    return tuple(referenced), tuple(below)
 
 
 def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
@@ -673,6 +683,7 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
         reference = mailbox.reference(folder, _check_id(parameters.message))
         raw = mailbox.store.read(reference, hint=mailbox.hint(reference.store_id))
         parsed = parse_message(raw)
+        referenced, below = _inline_images(parsed)
         return ShowResult(
             reference.store_id,
             "/".join(folder),
@@ -687,8 +698,9 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
             parsed.html_body,
             tuple(AttachmentInfo(a.filename, a.content_type, len(a.data), a.inline, suggest_filename(a.filename, a.content_type, position)) for position, a in enumerate(parsed.attachments)),
             parsed.defects,
-            _inline_images(parsed),
+            referenced,
             _shown(parsed.reply_to_addresses),
+            below,
         )
 
 
