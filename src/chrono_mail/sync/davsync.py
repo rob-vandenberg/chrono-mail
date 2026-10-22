@@ -8,7 +8,7 @@ from pathlib import Path
 
 from chrono_mail.core import LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, AuthenticationError, CollectionInfo, CollectionKind, CollectionLook, ProtocolError, StorageError
 from chrono_mail.pimstore import PimStore
-from chrono_mail.pim.merge import merge
+from chrono_mail.pim.merge import Clash, merge
 from chrono_mail.pimstore.extract import extract
 from chrono_mail.protocols.dav import (
     DavClient,
@@ -34,8 +34,11 @@ from chrono_mail.sync.davconflicts import (
     COLLECTION_CREATE_REFUSED,
     COLLECTION_DELETE_REFUSED,
     COLLECTION_DELETED_ON_SERVER,
+    COLLECTION_LOOK_CLASH,
+    COLLECTION_LOOK_REFUSED,
     DELETE_REFUSED,
     DELETED_ON_SERVER,
+    LOOK_REASONS,
     REFUSED,
     base_of,
     drop_base,
@@ -43,12 +46,16 @@ from chrono_mail.sync.davconflicts import (
     new_conflict,
     record,
 )
+from chrono_mail.sync.davconflicts import forget as forget_conflict
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 1.10.279"
+__version__ = "davsync.py 2.0.286"
 
 # --- Version history ----------------------------------------------------
+# v2.0.286: A collection's name or colour changed here and on the server, or a name the server refused for good, is a sync conflict (kept in
+#           step with every synchronisation, gone once both sides agree), no longer an error line at every synchronisation (D-192, the Windows
+#           computer's F3)
 # v1.10.279: An item deleted here offline that the server changed meanwhile is a sync conflict (changed on the server), as online; it was saved
 #            here again without a word (the owner)
 # v1.10.278: The server's item is read with DavClient.read (the multiget first): Kerio answers a GET of an existing contact with 404, which made a
@@ -234,29 +241,31 @@ def _first_look(local: CollectionInfo, remote: RemoteCollection, report: DavRepo
 
 def _follow(client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, kept: CollectionLook | None, report: DavReport) -> CollectionInfo:
     """Bring a collection's name and colour here in line with the server and the account's kept look: the server's when nothing is kept; a change
-    waiting here is sent when the server still has what it had then; a clash or a refusal is told and nothing is sent (D-192)."""
+    waiting here is sent when the server still has what it had then; a clash, or a name the server refused, is a sync conflict and nothing is sent
+    (D-192); a colour the server does not take is kept here (D-201)."""
     key = folder_key(remote)
     look = kept if kept is not None else (_first_look(local, remote, report) if local.server_value("followed") != "1" else CollectionLook(key))
     name, name_state, base_name, name_step = _settle(look.name, look.name_state, look.base_name, remote.name)
     colour, colour_state, base_colour, colour_step = _settle(look.colour, look.colour_state, look.base_colour, remote.colour)
     if colour_step == "send" and remote.kind == "contacts":
         colour_state, colour_step = LOOK_KEPT, ""  # an address book has no colour on the server: it is kept here
-    if name_step == "clash":
-        report.errors.append(f"{local.name}: renamed here to “{name}” and on the server to “{remote.name}”; nothing was sent, Chrono Mail keeps “{name}”")
-    if colour_step == "clash":
-        report.errors.append(f"{local.name}: its colour was changed here and on the server; nothing was sent, Chrono Mail keeps its own")
+    clashes = ((Clash("name", "Name", name, remote.name),) if name_step == "clash" else ()) + (
+        (Clash("colour", "Colour", colour, remote.colour),) if colour_step == "clash" else ()
+    )
+    refused = ""
     if name_step == "send" or colour_step == "send":
         outcomes, reason = send_look(client, remote.href, name if name_step == "send" else None, colour if colour_step == "send" else None)
         if outcomes.get("name") == DONE:
             name_state, base_name = LOOK_FOLLOWS, ""
         elif outcomes.get("name") == REFUSED:
             name_state = LOOK_KEPT
-            report.errors.append(f"{local.name}: the server did not take the name “{name}” ({reason}); Chrono Mail keeps it")
+            refused = reason or "the server did not take the name"
         if outcomes.get("colour") == DONE:
             colour_state, base_colour = LOOK_FOLLOWS, ""
         elif outcomes.get("colour") == REFUSED:
             colour_state = LOOK_KEPT
             report.errors.append(f"{local.name}: the server did not take its colour ({reason}); Chrono Mail keeps it on this computer")
+    _look_conflict(store, local, remote, clashes, refused, name_state == LOOK_KEPT and name != remote.name, name, report)
     settled = CollectionLook(key, name if name_state != LOOK_FOLLOWS else "", name_state, base_name, colour if colour_state != LOOK_FOLLOWS else "", colour_state, base_colour)
     now: CollectionLook | None = None if settled.empty else settled
     if now != kept:
@@ -266,6 +275,28 @@ def _follow(client: DavClient, store: PimStore, local: CollectionInfo, remote: R
     if shown_name != local.name or colour != local.colour or server != dict(local.server):
         local = store.update_collection(local.collection_id, name=shown_name, colour=colour, server=server)
     return local
+
+
+def _look_conflict(
+    store: PimStore, local: CollectionInfo, remote: RemoteCollection, clashes: tuple[Clash, ...], refused: str, still_refused: bool, name: str, report: DavReport,
+) -> None:
+    """Keep a collection's name and colour conflict in Sync conflicts (D-192, D-194): a clash (changed here and on the server), or a name the server
+    refused for good (while Chrono Mail keeps its name and the server has another). Updated, never doubled; gone once both sides agree."""
+    open_now = next((c for c in load_conflicts(store) if c.collection == local.collection_id and c.reason in LOOK_REASONS), None)
+    if clashes:
+        reason, found, detail = COLLECTION_LOOK_CLASH, clashes, ""
+    elif refused or still_refused:  # refused now, or earlier (also when the person renamed it online) and Chrono Mail still keeps its name
+        earlier = open_now.detail if open_now is not None and open_now.reason == COLLECTION_LOOK_REFUSED else ""
+        reason, found, detail = COLLECTION_LOOK_REFUSED, (Clash("name", "Name", name, remote.name),), refused or earlier
+    else:
+        if open_now is not None:
+            forget_conflict(store, open_now.conflict_id)  # both sides agree again (or the person's choice was taken)
+            report.conflicts += 1
+        return
+    if open_now is not None and open_now.reason == reason and open_now.clashes == found and open_now.href == remote.href:
+        return  # nothing new since the last synchronisation
+    record(store, new_conflict(local.collection_id, remote.href, "", local.kind.value, reason, local.name, "", "", found, detail=detail))
+    report.conflicts += 1
 
 
 def sync_dav(

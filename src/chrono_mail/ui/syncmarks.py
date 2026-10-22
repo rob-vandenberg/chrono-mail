@@ -13,9 +13,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncmarks.py 1.9.275"
+__version__ = "syncmarks.py 2.0.286"
 
 # --- Version history ----------------------------------------------------
+# v2.0.286: the icons of a collection's name or colour conflict: changed on both sides, or refused by the server (F3)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.240: Folders renamed or deleted offline: refused, or changed on the server (R-31)
 # v1.1.237: A mail folder deleted on the server with changes here is drawn as deleted on the server (R-30)
@@ -47,7 +48,7 @@ WHY_WORDS: dict[str, str] = {
 WHY_ICONS: dict[str, str] = {REFUSED: "dialog-cancel-symbolic", GONE_THERE: "network-server-database-symbolic", GONE_HERE: "computer-symbolic"}  # Breeze, lines only
 WITH_BADGE: frozenset[str] = frozenset({GONE_THERE, GONE_HERE})  # a solid minus badge: deleted on that side
 REASON_KINDS: dict[str, str] = {
-    "clash": BOTH, "deleted_on_server": GONE_THERE, "changed_on_server": GONE_HERE, "collection_deleted_on_server": GONE_THERE, "folder_deleted_on_server": GONE_THERE, "folder_deleted_with_mail_here": GONE_THERE, "collection_changed_on_server": GONE_HERE, "folder_deleted_here_changed": GONE_HERE,
+    "clash": BOTH, "deleted_on_server": GONE_THERE, "changed_on_server": GONE_HERE, "collection_deleted_on_server": GONE_THERE, "collection_look_clash": BOTH, "collection_look_refused": REFUSED, "folder_deleted_on_server": GONE_THERE, "folder_deleted_with_mail_here": GONE_THERE, "collection_changed_on_server": GONE_HERE, "folder_deleted_here_changed": GONE_HERE,
     "refused": REFUSED, "delete_refused": REFUSED, "marks_refused": REFUSED, "move_refused": REFUSED, "message_refused": REFUSED, "folder_refused": REFUSED, "collection_delete_refused": REFUSED, "folder_rename_refused": REFUSED, "folder_delete_refused": REFUSED,
 }
 
