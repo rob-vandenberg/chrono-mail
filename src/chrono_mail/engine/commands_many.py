@@ -1,0 +1,253 @@
+"""Actions on many messages of one folder at once (R-08): delete, move, copy, marks, archive, unarchive, junk, not junk, snooze. On an IMAP server
+the group goes in one command per 500 messages (Mailbox.prepare_*), then each message's own step runs as it would alone and tells its fact; a
+message that fails is named with its reason and the others go on. The answer says which were done and which not."""
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+from chrono_mail.core import ChronoMailError, Folder, FolderRole, MessageFlag, MessageRef
+from chrono_mail.engine.changes import flag_names
+from chrono_mail.engine.commands_actions import archive_folder, archive_one, junk_one, not_junk_one, unarchive_one, unarchive_target
+from chrono_mail.engine.commands_mail import _check_id, flags_wanted
+from chrono_mail.engine.commands_schedule import snooze_one
+from chrono_mail.engine.mailbox import Mailbox, open_mailbox
+from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
+from chrono_mail.engine.schedule import SNOOZED_FOLDER, parse_when
+from chrono_mail.engine.session import Engine
+from chrono_mail.store import MessageNotFoundError
+
+# --- Version ------------------------------------------------------------
+__version__ = "commands_many.py 1.9.265"
+
+# --- Version history ----------------------------------------------------
+# v1.9.265: NotDone.missing: the message was not done because its file is gone here, so the window warns about it (D-109; lost in 1.1.247)
+# v1.1.247: Initial: many messages of a folder in one command, on the server in groups (R-08)
+
+MAXIMUM_MESSAGES: int = 100_000  # in one command
+
+
+@dataclass(frozen=True, slots=True)
+class ManyParameters:
+    account: str = field(metadata=option("The account"))
+    folder: str = field(metadata=option("The folder the messages are in"))
+    messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+
+
+@dataclass(frozen=True, slots=True)
+class ManyTargetParameters:
+    account: str = field(metadata=option("The account"))
+    folder: str = field(metadata=option("The folder the messages are in"))
+    target: str = field(metadata=option("The folder to move or copy them to"))
+    messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+
+
+@dataclass(frozen=True, slots=True)
+class ManyDeleteParameters:
+    account: str = field(metadata=option("The account"))
+    folder: str = field(metadata=option("The folder the messages are in"))
+    messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+    permanent: bool = field(default=False, metadata=option("Remove for good instead of moving to Trash"))
+
+
+@dataclass(frozen=True, slots=True)
+class ManyFlagParameters:
+    account: str = field(metadata=option("The account"))
+    folder: str = field(metadata=option("The folder the messages are in"))
+    messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+    seen: bool | None = field(default=None, metadata=option("Mark read (true) or unread (false)"))
+    flagged: bool | None = field(default=None, metadata=option("Flag (true) or unflag (false)"))
+    replied: bool | None = field(default=None, metadata=option("Mark as replied to (true) or not (false)"))
+
+
+@dataclass(frozen=True, slots=True)
+class ManySnoozeParameters:
+    account: str = field(metadata=option("The account"))
+    folder: str = field(metadata=option("The folder the messages are in"))
+    until: str = field(metadata=option("When they come back, a local time like 2026-10-11T09:00"))
+    messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+
+
+@dataclass(frozen=True, slots=True)
+class NotDone:
+    message: str
+    reason: str
+    missing: bool = False  # its file is gone here (it is only in the index): the window warns and advises repairing the index (D-109)
+
+
+def _not_done(message: str, error: ChronoMailError) -> NotDone:
+    return NotDone(message, str(error), isinstance(error, MessageNotFoundError))
+
+
+@dataclass(frozen=True, slots=True)
+class ManyResult:
+    done: tuple[str, ...]  # the messages that were done (by the ids they were given with)
+    failed: tuple[NotDone, ...] = ()  # the ones that were not, each with its reason; nothing changed for them
+    gone: tuple[str, ...] = ()  # done ones whose file was gone here (they only left the index)
+    flags: tuple[tuple[str, tuple[str, ...]], ...] = ()  # marks: each done message with its marks now
+
+
+def _each(
+    engine: Engine, account: str, folder: str, messages: tuple[str, ...], prepare: Callable[[Mailbox, list[MessageRef]], None],
+    act: Callable[[Mailbox, MessageRef], object],
+) -> tuple[ManyResult, list[tuple[MessageRef, object]]]:
+    """The group: the messages named, prepared on the server together, then each one's own step; a failure is that message's alone."""
+    if len(messages) > MAXIMUM_MESSAGES:
+        raise UsageError(f"At most {MAXIMUM_MESSAGES:,} messages at once")
+    failed: list[NotDone] = []
+    answers: list[tuple[MessageRef, object]] = []
+    with open_mailbox(engine, account) as mailbox:
+        source = mailbox.folder(folder)
+        refs: list[MessageRef] = []
+        for message in dict.fromkeys(messages):
+            try:
+                refs.append(mailbox.reference(source, _check_id(message)))
+            except ChronoMailError as error:
+                failed.append(_not_done(message, error))
+        with mailbox.together():
+            try:
+                prepare(mailbox, refs)
+            except ChronoMailError as error:  # the server said no for the whole group: nothing was done there or here
+                return ManyResult((), (*failed, *(NotDone(ref.store_id, str(error)) for ref in refs))), []
+            for ref in refs:
+                try:
+                    answers.append((ref, act(mailbox, ref)))
+                except ChronoMailError as error:
+                    failed.append(_not_done(ref.store_id, error))
+    return ManyResult(tuple(ref.store_id for ref, _ in answers), tuple(failed)), answers
+
+
+def message_delete_many(engine: Engine, parameters: ManyDeleteParameters) -> ManyResult:
+    """Move many messages of a folder to Trash, or remove them for good (permanent, or in Trash)."""
+    result, answers = _each(
+        engine, parameters.account, parameters.folder, parameters.messages, lambda mailbox, refs: mailbox.prepare_deletes(refs, parameters.permanent),
+        lambda mailbox, ref: mailbox.delete(ref, parameters.permanent),
+    )
+    return ManyResult(result.done, result.failed, tuple(ref.store_id for ref, outcome in answers if outcome == "gone"))
+
+
+def message_move_many(engine: Engine, parameters: ManyTargetParameters) -> ManyResult:
+    target: tuple[str, ...] = ()
+
+    def prepare(mailbox: Mailbox, refs: list[MessageRef]) -> None:
+        nonlocal target
+        target = mailbox.folder(parameters.target)
+        mailbox.prepare_moves(refs, target)
+
+    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: mailbox.move(ref, target))[0]
+
+
+def message_copy_many(engine: Engine, parameters: ManyTargetParameters) -> ManyResult:
+    target: tuple[str, ...] = ()
+
+    def prepare(mailbox: Mailbox, refs: list[MessageRef]) -> None:
+        nonlocal target
+        target = mailbox.folder(parameters.target)
+        mailbox.prepare_copies(refs, target)
+
+    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: mailbox.copy(ref, target))[0]
+
+
+def message_flag_many(engine: Engine, parameters: ManyFlagParameters) -> ManyResult:
+    """Mark many messages read or unread, flagged or not, replied or not."""
+    wanted: dict[str, frozenset[MessageFlag]] = {}
+
+    def prepare(mailbox: Mailbox, refs: list[MessageRef]) -> None:
+        marks: dict[MessageRef, frozenset[MessageFlag]] = {}
+        for ref in refs:
+            try:
+                marks[ref] = flags_wanted(mailbox.current_flags(ref), parameters.seen, parameters.flagged, parameters.replied)
+            except ChronoMailError:
+                continue  # its own step says why
+        wanted.update((ref.store_id, flags) for ref, flags in marks.items())
+        mailbox.prepare_flags(marks)
+
+    def act(mailbox: Mailbox, ref: MessageRef) -> frozenset[MessageFlag]:
+        flags = wanted.get(ref.store_id) or flags_wanted(mailbox.current_flags(ref), parameters.seen, parameters.flagged, parameters.replied)
+        return mailbox.set_flags(ref, flags)
+
+    result, answers = _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act)
+    marks = tuple((ref.store_id, flag_names(flags)) for ref, flags in answers if isinstance(flags, frozenset))
+    return ManyResult(result.done, result.failed, flags=marks)
+
+
+def message_archive_many(engine: Engine, parameters: ManyParameters) -> ManyResult:
+    archive: list[tuple[Folder, bool]] = []  # the archive folder, found (or made) once
+
+    def prepare(mailbox: Mailbox, refs: list[MessageRef]) -> None:
+        archive.append(archive_folder(mailbox))
+        mailbox.prepare_moves(refs, archive[0][0].path)
+
+    def act(mailbox: Mailbox, ref: MessageRef) -> object:
+        return archive_one(mailbox, ref, *archive[0])
+
+    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act)[0]
+
+
+def message_unarchive_many(engine: Engine, parameters: ManyParameters) -> ManyResult:
+    """Back to the folder each came from: grouped by that folder on the server."""
+    targets: dict[str, tuple[tuple[str, ...], bool]] = {}
+
+    def prepare(mailbox: Mailbox, refs: list[MessageRef]) -> None:
+        groups: dict[tuple[str, ...], list[MessageRef]] = {}
+        for ref in refs:
+            try:
+                targets[ref.store_id] = unarchive_target(mailbox, ref)
+            except ChronoMailError:
+                continue
+            groups.setdefault(targets[ref.store_id][0], []).append(ref)
+        for target, members in groups.items():
+            mailbox.prepare_moves(members, target)
+
+    def act(mailbox: Mailbox, ref: MessageRef) -> object:
+        return unarchive_one(mailbox, ref, *(targets.get(ref.store_id) or unarchive_target(mailbox, ref)))
+
+    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act)[0]
+
+
+def message_junk_many(engine: Engine, parameters: ManyParameters) -> ManyResult:
+    result, answers = _each(
+        engine, parameters.account, parameters.folder, parameters.messages,
+        lambda mailbox, refs: mailbox.prepare_moves(refs, mailbox.role_folder(FolderRole.JUNK)),
+        lambda mailbox, ref: junk_one(mailbox, ref, mailbox.role_folder(FolderRole.JUNK)),
+    )
+    return ManyResult(result.done, result.failed, tuple(ref.store_id for ref, answer in answers if getattr(answer, "gone", False)))
+
+
+def message_not_junk_many(engine: Engine, parameters: ManyParameters) -> ManyResult:
+    return _each(
+        engine, parameters.account, parameters.folder, parameters.messages,
+        lambda mailbox, refs: mailbox.prepare_moves(refs, mailbox.role_folder(FolderRole.INBOX)), not_junk_one,
+    )[0]
+
+
+def message_snooze_many(engine: Engine, parameters: ManySnoozeParameters) -> ManyResult:
+    until = parse_when(parameters.until, engine.clock())
+
+    def prepare(mailbox: Mailbox, refs: list[MessageRef]) -> None:
+        mailbox.ensure_folder((SNOOZED_FOLDER,))
+        mailbox.prepare_moves(refs, (SNOOZED_FOLDER,))
+
+    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: snooze_one(mailbox, ref, until))[0]
+
+
+MESSAGE_DELETE_MANY: TypedCommand[ManyDeleteParameters, ManyResult] = TypedCommand("message.delete-many", ManyDeleteParameters, ManyResult)
+MESSAGE_MOVE_MANY: TypedCommand[ManyTargetParameters, ManyResult] = TypedCommand("message.move-many", ManyTargetParameters, ManyResult)
+MESSAGE_COPY_MANY: TypedCommand[ManyTargetParameters, ManyResult] = TypedCommand("message.copy-many", ManyTargetParameters, ManyResult)
+MESSAGE_FLAG_MANY: TypedCommand[ManyFlagParameters, ManyResult] = TypedCommand("message.flag-many", ManyFlagParameters, ManyResult)
+MESSAGE_ARCHIVE_MANY: TypedCommand[ManyParameters, ManyResult] = TypedCommand("message.archive-many", ManyParameters, ManyResult)
+MESSAGE_UNARCHIVE_MANY: TypedCommand[ManyParameters, ManyResult] = TypedCommand("message.unarchive-many", ManyParameters, ManyResult)
+MESSAGE_JUNK_MANY: TypedCommand[ManyParameters, ManyResult] = TypedCommand("message.junk-many", ManyParameters, ManyResult)
+MESSAGE_NOT_JUNK_MANY: TypedCommand[ManyParameters, ManyResult] = TypedCommand("message.not-junk-many", ManyParameters, ManyResult)
+MESSAGE_SNOOZE_MANY: TypedCommand[ManySnoozeParameters, ManyResult] = TypedCommand("message.snooze-many", ManySnoozeParameters, ManyResult)
+
+
+def register(registry: CommandRegistry) -> None:
+    registry.register(MESSAGE_DELETE_MANY.id, "Move many messages of a folder to Trash, or delete them for good", ManyDeleteParameters, message_delete_many)
+    registry.register(MESSAGE_MOVE_MANY.id, "Move many messages of a folder to another folder", ManyTargetParameters, message_move_many)
+    registry.register(MESSAGE_COPY_MANY.id, "Copy many messages of a folder to another folder", ManyTargetParameters, message_copy_many)
+    registry.register(MESSAGE_FLAG_MANY.id, "Mark many messages of a folder read or unread, flagged or not", ManyFlagParameters, message_flag_many)
+    registry.register(MESSAGE_ARCHIVE_MANY.id, "Move many messages of a folder to the Archive folder", ManyParameters, message_archive_many)
+    registry.register(MESSAGE_UNARCHIVE_MANY.id, "Move many archived messages back to where each came from", ManyParameters, message_unarchive_many)
+    registry.register(MESSAGE_JUNK_MANY.id, "Move many messages of a folder to the Junk folder", ManyParameters, message_junk_many)
+    registry.register(MESSAGE_NOT_JUNK_MANY.id, "Move many messages out of the Junk folder to the Inbox", ManyParameters, message_not_junk_many)
+    registry.register(MESSAGE_SNOOZE_MANY.id, "Put many messages of a folder away until a time", ManySnoozeParameters, message_snooze_many)

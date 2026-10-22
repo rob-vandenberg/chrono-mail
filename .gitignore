@@ -1,0 +1,38 @@
+.venv/
+.venv-win/
+.vscode/
+__pycache__/
+.pytest_cache/
+tests/live/account.local.toml
+*.egg-info/
+tests/live/dav.local.toml
+tests/live/kerio.local.toml
+themes/
+backup/
+backups/
+tests/
+*.bat
+
+# hand-over notes between sessions (private)
+TRANSFER.md
+PROMPT-NEW-SESSION.md
+
+# old text of STATUS.md, ARCHITECTURE.md and DECISIONS.md (private, search only)
+STATUS-ARCHIVE.md
+ARCHITECTURE-ARCHIVE.md
+DECISIONS-ARCHIVE.md
+
+# built program folders and installers (packaging/)
+build/
+dist/
+
+# samples exported from other mail programs (private mail and passwords): NEVER in git
+chrono-mail-import-samples/
+chrono-mail-factory-reset.py
+build-release.sh
+gitpush.sh
+AGENT-CHANNEL-RULES.md
+
+# working scripts and notes of the sessions (private)
+scratchpad/
+IDIOT-AI.md

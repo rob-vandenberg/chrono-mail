@@ -1,0 +1,35 @@
+# Chrono Mail
+
+An open-source desktop email client for Linux, built to offer the functions people expect from a full mail program.
+
+> **Status: early development.** There is no usable application yet. The project is in its design and setup phase.
+
+## Goals
+
+- A full-featured desktop mail client for Linux (KDE and GNOME), with Windows and macOS as a bonus.
+- Safe with your mail: crash-safe storage, and message contents encrypted on disk by default.
+- Fast with large mailboxes (designed for 500,000 messages).
+- Built in steps: SMTP and POP3 first, then IMAP, then more (Gmail, Exchange, calendar, contacts, tasks).
+
+## Technology
+
+Python, Qt 6 (PySide6), strict static type checking with Pyrefly.
+
+## Try it
+
+```bash
+git clone https://github.com/rob-vandenberg/chrono-mail && cd chrono-mail
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/chrono-mail          # the graphical program
+.venv/bin/chrono-mail-cli --help   # the command line (the same actions, without a screen)
+```
+
+On the first start the program asks for your first account (POP3 and SMTP) and shows the recovery code for the key that encrypts your stored mail. Keep that code: without the key the mail cannot be read.
+
+## For contributors and AI agents
+
+Start with [`AGENTS.md`](AGENTS.md), then [`PY-DEVELOPMENT-RULES.md`](PY-DEVELOPMENT-RULES.md) and [`STATUS.md`](STATUS.md).
+
+## License
+
+GNU Affero General Public License v3.0. See [`LICENSE`](LICENSE).

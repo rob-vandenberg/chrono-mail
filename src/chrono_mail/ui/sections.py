@@ -1,0 +1,98 @@
+from collections.abc import Callable
+
+from PySide6.QtCore import QObject, QSize, Qt, Signal
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QToolButton, QWidget
+
+from chrono_mail.ui.icons import section_icon
+from chrono_mail.ui.scale import px
+from chrono_mail.ui.toolbar import ToolbarRow
+
+# --- Version ------------------------------------------------------------
+__version__ = "sections.py 0.5.170"
+
+# --- Version history ----------------------------------------------------
+# v0.5.170: A section has a row of buttons that the window's one toolbar shows (D-156)
+# v0.5.167: A section's toolbar is a folding toolbar, like Mail's (D-154)
+# v0.3.106: The buttons follow the size factor of the interface (apply_scale)
+# v0.0.85: Section icons from the program's copy of the Breeze icons
+# v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
+# v0.0.73: The section buttons share the width and show the section that is open with a line under it
+# v0.0.61: Initial section buttons (Mail, Calendar, Tasks, Contacts) and the base of a section
+
+MAIL: str = "mail"
+CALENDAR: str = "calendar"
+TASKS: str = "tasks"
+CONTACTS: str = "contacts"
+SECTIONS: tuple[tuple[str, str, tuple[str, ...], str], ...] = (  # id, name, icon names, shortcut
+    (MAIL, "Mail", ("mail-message",), "Ctrl+1"),
+    (CALENDAR, "Calendar", ("view-calendar",), "Ctrl+2"),
+    (CONTACTS, "Contacts", ("user",), "Ctrl+3"),
+    (TASKS, "Tasks", ("view-calendar-tasks", "view-task"), "Ctrl+4"),
+)
+SECTION_ICONS: dict[str, str] = {MAIL: "mail-message", CALENDAR: "view-calendar", CONTACTS: "user", TASKS: "checkmark"}  # the files of the section buttons
+BUTTON_SIZE: int = 40
+
+
+class SectionBar(QWidget):
+    """The square buttons at the bottom of the left side: one for each section of the program. One of them is always pressed."""
+
+    chosen = Signal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("sectionBar")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.buttons: dict[str, QToolButton] = {}
+        for section, name, icons, shortcut in SECTIONS:
+            button = QToolButton(self)
+            button.setIcon(section_icon(SECTION_ICONS[section]))
+            button.setObjectName("sectionButton")
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            button.setCheckable(True)
+            button.setToolTip(f"{name} ({shortcut})")
+            button.setAccessibleName(name)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.clicked.connect(lambda checked=False, chosen=section: self.chosen.emit(chosen))
+            layout.addWidget(button)
+            self.buttons[section] = button
+        self.apply_scale()
+        self.show_section(MAIL)
+
+    def apply_scale(self) -> None:
+        """The icons and the height at the factor of the interface."""
+        for button in self.buttons.values():
+            button.setIconSize(QSize(px(22), px(22)))
+            button.setFixedHeight(px(BUTTON_SIZE))
+
+    def show_section(self, section: str) -> None:
+        for name, button in self.buttons.items():
+            button.setChecked(name == section)  # clicking the pressed one leaves it pressed
+
+
+class SectionPage(QObject):
+    """What a section other than mail is made of: the sidebar, the main area and the toolbar. The window puts them in its stacks and shows the right ones."""
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self.side: QWidget = QWidget()
+        self.content: QWidget = QWidget()
+        self.toolbar: ToolbarRow = ToolbarRow(parent if isinstance(parent, QWidget) else None)  # its row of buttons: the window's toolbar shows it while the section is shown
+        self.status: Callable[[str], None] = lambda text: None  # the window sets this: where to say how many items there are
+
+    def on_show(self) -> None:
+        """The section was chosen: show what is current."""
+
+    def new_item(self) -> None:
+        """File > New in this section (a new event, task or contact)."""
+
+    def refresh(self) -> None:
+        """Refresh in this section."""
+
+    def delete_selected(self) -> None:
+        """Delete in this section."""
+
+    def focus_search(self) -> None:
+        """The search key in this section."""
