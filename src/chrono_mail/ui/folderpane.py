@@ -26,7 +26,7 @@ from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.mailtags import MailTags
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.models import (
-    FAVORITES, ACCOUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, GROUP_ROLE, KIND_ROLE, LOCAL_PLACES, NAME_ROLE, PIN_ROLE, UNREAD_ROLE, FolderNode,
+    ACCOUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, GROUP_ROLE, KIND_ROLE, LOCAL_PLACES, NAME_ROLE, PIN_ROLE, UNREAD_ROLE, FolderNode,
     FolderTreeModel, TreeEntry,
 )
 from chrono_mail.ui.prefs import InUse, Remembered
@@ -37,9 +37,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 2.0.299"
+__version__ = "folderpane.py 2.0.300"
 
 # --- Version history ----------------------------------------------------
+# v2.0.300: the Favorites menu lists only the favorites that can appear (Snoozed, Scheduled, Archive once a mailbox has them, D-234)
 # v2.0.299: a right-click in Favorites lists every standard favorite with a tick; a click shows or hides it (D-234); Show again and
 #           Hide from Favorites gone
 # v2.0.280: folder_moved: a folder renamed or deleted, so its column setup follows (B-16)
@@ -651,13 +652,14 @@ class FolderPane(QObject):
             self._favorite_ticks(menu)  # a group is made from an account's Put in group menu, so it always holds that account
 
     def _favorite_ticks(self, menu: QMenu) -> None:
-        """Every standard favorite, ticked while shown; a click shows or hides it (the setting of Settings > Sidebar, D-234). What Show
+        """Every standard favorite that can appear (Snoozed, Scheduled and Archive once a mailbox has them), ticked while shown; a click shows or hides it (the setting of Settings > Sidebar, D-234). What Show
         on startup chose stays ticked and greyed; the last entry left in Favorites is greyed, so the heading and this menu stay."""
         hidden, forced = set(self._state.sidebar.hidden), self.model.forced
-        shown = [view for view, _ in self._state.favorites_in_use() if view not in hidden or view in forced]
+        in_use = self._state.favorites_in_use()  # the one list of Favorites and Settings > Sidebar
+        shown = [view for view, _ in in_use if view not in hidden or view in forced]
         alone = len(shown) == 1 and not self.model.pins
         menu.addSeparator()
-        for view, label, _ in FAVORITES:
+        for view, label in in_use:
             on = view not in hidden or view in forced
             action = menu.addAction(label, lambda _checked=False, chosen=view, now=on: self.sidebar_call(FAVORITE_SHOW, VisibleParameters(chosen, not now)))
             action.setCheckable(True)

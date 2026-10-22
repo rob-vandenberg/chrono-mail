@@ -19,9 +19,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 2.0.299"
+__version__ = "test_ui_window.py 2.0.300"
 
 # --- Version history ----------------------------------------------------
+# v2.0.300: the Favorites menu lists Snoozed, Scheduled and Archive only once a mailbox has that folder (D-234)
 # v2.0.299: a right-click in Favorites lists every standard favorite with a tick, a click shows or hides it (D-234)
 # v2.0.298: Favorites and the folders under an account in the owner's new order (D-061, D-232)
 # v2.0.292: Favorites and the folders under an account in the owner's order (D-061, D-232; the Windows computer's report)
@@ -1164,10 +1165,10 @@ def test_the_folder_list_menu_offers_favorites_and_groups(world: World, qtbot: Q
     assert offered(world.window.tree_model.index(0, 0)) == STANDARD_FAVORITES  # the heading too, also while nothing is hidden
 
 
-STANDARD_FAVORITES = ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Snoozed", "Scheduled", "Archive", "Junk", "Trash"]
+STANDARD_FAVORITES = ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"]  # Snoozed, Scheduled, Archive: no such folder yet
 
 
-def test_a_right_click_in_favorites_ticks_every_standard_favorite_and_a_click_shows_or_hides_it(world: World, qtbot: QtBot) -> None:
+def test_a_right_click_in_favorites_ticks_every_standard_favorite_and_a_click_shows_or_hides_it(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     """The owner (D-234): every favorite is listed, ticked while shown; a click toggles it; the last one left is greyed."""
     started(qtbot, world)
 
@@ -1196,6 +1197,14 @@ def test_a_right_click_in_favorites_ticks_every_standard_favorite_and_a_click_sh
         wait(qtbot, lambda label=label: not ticks()[label][0])
     assert ticks()["Trash"] == (True, False)  # the last one left in Favorites cannot be hidden: the heading and its menu stay
     assert ticks()["Sent"] == (False, True)
+    assert "Snoozed" not in ticks()  # no Snoozed folder anywhere: no Snoozed favorite, so no tick
+    inbox = world.window.folders.find_item((world.account_id, "folder", "Inbox"))  # noqa: SLF001
+    assert inbox is not None
+    world.window.tree.setCurrentIndex(inbox)
+    answer_input(monkeypatch, [("Snoozed", True)])
+    world.window.folders.new_folder()  # a Snoozed folder appears: so do its favorite and its tick, in their place
+    wait(qtbot, lambda: "Snoozed" in ticks())
+    assert list(ticks()).index("Snoozed") == list(ticks()).index("Unreplied") + 1
 
 
 def test_the_count_line_says_one_message_not_one_messages(world: World, qtbot: QtBot) -> None:
