@@ -2589,3 +2589,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Still researched by the Windows computer (its brief, section 6): the contacts test that fails about 1 run in 4 (the edit's save has no effect within 8 s: an error, no answer, or dropped), and five look tests on the real Windows platform.
 - Server rule D-193: nothing here touches server data. The program unchanged.
 - Checks on Linux: ui/test_ui_theme, _toolbar, _appearance, _parts: 86 passed; test_config: 66 passed. The Windows part is for the Windows computer to confirm (this computer has its fonts).
+
+## 2026-10-22 2.0.294 The window holds every job until its answer (the contacts save that never answered)
+- The Windows computer found a contact's Save left on "Saving…" for ever in about 1 test run in 4: the command was registered in `Backend._pending`, no worker ran it, `_deliver` never came, the engine never applied it. Waiting for a failure to show which of three it was took too long (the owner stopped it); the code itself shows the gap: `Backend.call` made a Python `_Task` (QRunnable) and handed it to Qt's pool without keeping a reference, so the job could be thrown away before it ran.
+- Fix: `Backend._jobs` holds every job from its start, in every lane (the pool, in-order queue, checking, waiting), until `_deliver` has its answer. D-030 (engine part).
+- Server rule D-193: nothing here touches server data.
+- Checks: new test ui/test_ui_backend.py (every lane held, let go after the answer; fails on 2.0.293); ui/test_ui_backend, _contacts, _rapid_actions: 36 passed; Pyrefly 0 (Linux and win32); layer check kept.

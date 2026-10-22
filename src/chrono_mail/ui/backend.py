@@ -11,9 +11,11 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, TypedCommand, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 2.0.281"
+__version__ = "backend.py 2.0.294"
 
 # --- Version history ----------------------------------------------------
+# v2.0.294: Every job started is held here until its answer is delivered: Qt's pool only borrows it, so nothing can throw it away before
+#           it runs (a contact's save stayed on "Saving…" for ever in about 1 test run in 4 on the Windows computer)
 # v2.0.281: rebuilding: the engine's reports of an index being rebuilt or filled in, from any thread (D-229)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: carried (the fields of one parameter object into another kind) lives here, for every window
@@ -94,6 +96,7 @@ class Backend(QObject):
         self._pending: dict[int, _Pending] = {}
         self._queued: dict[str, list[_Task]] = {}  # per message changed: the commands waiting for the one that runs
         self._queue_of: dict[int, str] = {}  # request -> its message
+        self._jobs: dict[int, _Task] = {}  # every job started, held until its answer is delivered (the pools only borrow it)
         engine.progress = lambda what, done, total: self.progress.emit(what, done, total)
         engine.notice = self.notice.emit
         engine.activity = lambda account_id, direction, step, done, total: self.activity.emit(account_id, direction, step, done, total)
@@ -112,6 +115,7 @@ class Backend(QObject):
         it counts as busy, but the person's actions do not wait behind it."""
         request = next(self._ids)
         task = _Task(request, self.engine, self.registry, command, dict(values), self._done)
+        self._jobs[request] = task
         if waiting:
             self._background[request] = _Pending(on_success, on_error, owner)
             self._waiting_pool.start(task)
@@ -155,6 +159,7 @@ class Backend(QObject):
 
     @Slot(int, object, object)
     def _deliver(self, request: int, result: object, error: object) -> None:
+        self._jobs.pop(request, None)  # answered: the job may go now
         key = self._queue_of.pop(request, None)
         if key is not None:
             waiting = self._queued.get(key, [])
