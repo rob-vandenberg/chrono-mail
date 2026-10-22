@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import override
 
 import pytest
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QPoint, Qt, QUrl
+from PySide6.QtGui import QContextMenuEvent
+from PySide6.QtWidgets import QApplication, QMenu
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from pytestqt.qtbot import QtBot
 
@@ -18,9 +20,10 @@ PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_reader.py 2.0.301"
+__version__ = "test_ui_reader.py 2.0.302"
 
 # --- Version history ----------------------------------------------------
+# v2.0.302: a click on a file selects it, a double click opens it, a right-click on it or on a picture offers Open attachment and Save as… (D-236)
 # v2.0.301: the attached pictures the text does not show are shown below it, fitted to the width, never enlarged (B-11)
 # v0.0.38: CI: the PDF test writes into its own folder
 # v0.0.13: Initial reading pane tests
@@ -284,7 +287,9 @@ def test_attachment_buttons(reader: ReaderWidget) -> None:
 
     reader.attachment_save_requested.connect(record)
     buttons[1].click()
-    assert requested == [(2, "attachment-3.txt")]
+    assert requested == [] and buttons[1].isChecked()  # a click only selects the file (D-236)
+    buttons[0].click()
+    assert buttons[0].isChecked() and not buttons[1].isChecked()  # one at a time
     reader.show_message(shown(text="no attachments"))
     assert reader._attachments.isHidden()  # noqa: SLF001
 
@@ -357,3 +362,61 @@ def test_the_pictures_of_an_html_message_come_below_its_text_as_wide_as_the_page
     assert page.index("Hello") < page.index('src="data:image/png;base64,iVBORw=="') < page.index("</body>") and "max-width:100%" in page
     assert pictures_below("<p>No body tag</p>", (InlineImage("", "image/gif", "R0lG"),)).endswith('margin-top:12px">')
     assert pictures_below("<p>Nothing</p>", ()) == "<p>Nothing</p>"
+
+
+def test_a_double_click_opens_a_file_and_a_right_click_offers_open_and_save(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """The owner (D-236): as in a file manager; Save as… opens the save window, Open attachment the program for the kind of file."""
+    from PySide6.QtTest import QTest
+
+    reader.show_message(shown(text="x", attachments=(AttachmentInfo("report.pdf", "application/pdf", 2048, False, "report.pdf"),)))
+    opened: list[tuple[int, str]] = []
+    saved: list[tuple[int, str]] = []
+
+    def record_open(position: int, name: str) -> None:
+        opened.append((position, name))
+
+    def record_save(position: int, name: str) -> None:
+        saved.append((position, name))
+
+    reader.attachment_open_requested.connect(record_open)
+    reader.attachment_save_requested.connect(record_save)
+    (chip,) = reader.chips()
+    QTest.mouseDClick(chip, Qt.MouseButton.LeftButton)
+    assert opened == [(0, "report.pdf")] and saved == [] and chip.isChecked()
+    menu = reader.attachment_menu(0)
+    assert [action.text() for action in menu.actions()] == ["Open attachment", "Save as…"]
+    menu.actions()[1].trigger()
+    menu.actions()[0].trigger()
+    assert saved == [(0, "report.pdf")] and opened == [(0, "report.pdf"), (0, "report.pdf")]
+    menu.close()
+    chip.customContextMenuRequested.emit(QPoint(2, 2))  # a right-click on the file: its menu, and the file is the selected one
+    shown_menu = next(widget for widget in QApplication.topLevelWidgets() if isinstance(widget, QMenu) and widget.isVisible())
+    assert [action.text() for action in shown_menu.actions()] == ["Open attachment", "Save as…"]
+    shown_menu.close()
+
+
+def test_a_right_click_on_a_picture_offers_open_and_save_and_on_the_text_the_text_menu(reader: ReaderWidget, qtbot: QtBot) -> None:
+    from dataclasses import replace
+
+    attachments = (AttachmentInfo("photo.png", "image/png", 100, False, "photo.png"),)
+    reader.show_message(replace(shown(text="See the picture.", attachments=attachments), pictures=(replace(picture(200, 100), position=0),)))
+    view = reader.text_view
+    requests: list[int] = []
+
+    def record(position: int, where: QPoint) -> None:
+        requests.append(position)
+
+    view.picture_menu_requested.connect(record)
+    layout = view.document().documentLayout()
+    block = view.document().lastBlock()
+    while block.isValid() and not layout.blockBoundingRect(block).height():
+        block = block.previous()
+    inside = layout.blockBoundingRect(block).center().toPoint() - QPoint(view.horizontalScrollBar().value(), view.verticalScrollBar().value())
+    left = QPoint(int(view.document().documentMargin()) + 5, inside.y())
+    assert view.picture_at(left) == 0
+    view.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, left, view.mapToGlobal(left)))
+    assert requests == [0]
+    assert view.picture_at(QPoint(int(view.document().documentMargin()) + 5, 5)) == -1  # the text: its own menu (Copy, Select All)
+    html_message = replace(shown(html="<p>Hi</p>", text=None, attachments=attachments), pictures=(InlineImage("", "image/png", "iVBORw==", 0),))
+    reader.show_message(html_message)
+    assert reader._picture_positions == {"data:image/png;base64,iVBORw==": 0}  # noqa: SLF001 - how a right-click on it is known

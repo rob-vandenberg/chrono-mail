@@ -12,6 +12,9 @@ from chrono_mail.engine.changes import MessageRow
 from chrono_mail.engine.commands_export import MESSAGE_EXPORT, MESSAGE_SOURCE, MESSAGE_TEXT, ExportParameters, SourceResult, TextResult
 from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, MESSAGE_SHOW, MESSAGE_THREAD, AttachmentSaveParameters, MessageParameters, ShowResult
 from chrono_mail.ui import prefs, scale, theme
+from chrono_mail.engine.commands_accounts import NoParameters
+from chrono_mail.engine.commands_attachments import MESSAGE_ATTACHMENT_CLEAN_OPENED, CleanResult
+from chrono_mail.ui.attachmentopening import open_attachment
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.composing import Composing
 from chrono_mail.ui.conversationbar import ConversationBar
@@ -28,9 +31,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 1.9.274"
+__version__ = "readingpane.py 2.0.302"
 
 # --- Version history ----------------------------------------------------
+# v2.0.302: Open attachment from the attachment row and the pictures (D-236)
 # v1.9.274: R-19 round 4: the rows and tags are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: every engine call typed; the answers read by their fields
 # v1.9.264: R-17: reading mail as a part of its own (out of ui/mainwindow.py): the reading pane with the conversation bar, the message
@@ -78,6 +82,7 @@ class ReadingPane(QObject):
         self.conversation_bar.message_chosen.connect(self._show_conversation_member)
         self.reader.sender_allowed.connect(self.sender_allowed)
         self.reader.attachment_save_requested.connect(self._save_attachment)
+        self.reader.attachment_open_requested.connect(self._open_attachment)
         self.reader.link_activated.connect(self.open_link)
         self.reader.link_hovered.connect(status.line.show_link)
         messages.view.selectionModel().currentChanged.connect(self.row_changed)
@@ -295,6 +300,23 @@ class ReadingPane(QObject):
             lambda error: self._status.report("Could not save the attachment", error),
             owner=self,
         )
+
+    def forget_opened_copies(self) -> None:
+        """At start: the copies of attachments opened in an earlier run go; nothing to tell either way (D-236)."""
+        self._backend.ask(MESSAGE_ATTACHMENT_CLEAN_OPENED, NoParameters(), self._copies_forgotten, self._copies_forgotten, owner=self)
+
+    def _copies_forgotten(self, outcome: CleanResult | ChronoMailError) -> None:
+        pass  # a copy another program still holds stays until the next start
+
+    def _open_attachment(self, position: int, name: str) -> None:
+        if self.shown is not None:
+            open_attachment(self._parent, self._backend, self.shown, position, name, self._open_failed, self)
+
+    def _open_failed(self, text: str, error: ChronoMailError | None) -> None:
+        if error is None:
+            self._status.show(text, error=True)
+        else:
+            self._status.report(text, error)
 
     def save_selected_as(self) -> None:
         """Message > Save as: a copy of the message as an .eml file."""

@@ -1,11 +1,12 @@
 import base64
 import html
 import re
+from functools import partial
 from email.utils import parseaddr
 from typing import override
 
-from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPalette, QResizeEvent, QTextCursor
+from PySide6.QtCore import QPoint, QPointF, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QImage, QMouseEvent, QPalette, QResizeEvent, QTextCursor
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -15,9 +16,11 @@ from PySide6.QtWebEngineCore import (
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QStackedWidget,
     QTextBrowser,
@@ -32,9 +35,11 @@ from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 2.0.301"
+__version__ = "reader.py 2.0.302"
 
 # --- Version history ----------------------------------------------------
+# v2.0.302: the attachment row: a click selects, a double click opens, a right-click offers Open attachment and Save as…; a right-click
+#           on a picture of the message offers the same (attachment_open_requested, D-236)
 # v2.0.301: the attached pictures the text does not show are shown below it, fitted to the width, never enlarged (B-11, D-235)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.5.257: link_hovered: the address of the link under the pointer (HTML and plain text) and whether it leads to another main domain than the sender's; "" when the pointer leaves it or the message changes (D-215)
@@ -154,12 +159,17 @@ def embed_inline_images(document: str, images: dict[str, tuple[str, str]]) -> st
     return _CID_PATTERN.sub(replace, document)
 
 
+def picture_url(picture: InlineImage) -> str:
+    """The address a picture of the message is shown by (its data), also how a right-click on it is known."""
+    return f"data:{html.escape(picture.content_type)};base64,{picture.data_base64}"
+
+
 def pictures_below(document: str, pictures: tuple[InlineImage, ...]) -> str:
     """The HTML text with the attached pictures it does not show below it, each as wide as the page at most (B-11)."""
     if not pictures:
         return document
     shown = "".join(
-        f'<img src="data:{html.escape(picture.content_type)};base64,{picture.data_base64}" alt="" '
+        f'<img src="{picture_url(picture)}" alt="" '
         'style="display:block; max-width:100%; height:auto; margin-top:12px">'
         for picture in pictures
     )
@@ -170,16 +180,22 @@ def pictures_below(document: str, pictures: tuple[InlineImage, ...]) -> str:
 class PlainTextView(QTextBrowser):
     """A plain-text message, with the attached pictures below the text: as wide as the view at most, never enlarged (B-11)."""
 
+    picture_menu_requested = Signal(int, QPoint)  # a right-click on a picture: its place among the attachments, where on the screen
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._pictures: dict[str, QImage] = {}
+        self._positions: dict[str, int] = {}
 
     def show_text(self, text: str, pictures: tuple[InlineImage, ...]) -> None:
-        self._pictures = {}
+        self._pictures.clear()
+        self._positions.clear()
         for picture in pictures:
             image = QImage.fromData(base64.b64decode(picture.data_base64))
             if not image.isNull():  # a picture Qt cannot read stays an attachment only
-                self._pictures[f"picture:{len(self._pictures)}"] = image
+                name = f"picture:{len(self._pictures)}"
+                self._pictures[name] = image
+                self._positions[name] = picture.position
         shown = "".join(f'<p><img src="{name}"></p>' for name in self._pictures)
         self.setHtml(f'<pre style="white-space: pre-wrap; font-family: inherit; margin: 0">{linkify(text)}</pre>{shown}')
         self._fit_pictures()
@@ -194,6 +210,20 @@ class PlainTextView(QTextBrowser):
     def resizeEvent(self, e: QResizeEvent, /) -> None:
         super().resizeEvent(e)
         self._fit_pictures()
+
+    def picture_at(self, point: QPoint) -> int:
+        """The place among the attachments of the picture at this point of the view, or -1."""
+        inside = QPointF(point) + QPointF(self.horizontalScrollBar().value(), self.verticalScrollBar().value())
+        return self._positions.get(self.document().documentLayout().imageAt(inside), -1)
+
+    @override
+    def contextMenuEvent(self, e: QContextMenuEvent, /) -> None:
+        position = self.picture_at(e.pos())
+        if position >= 0:
+            self.picture_menu_requested.emit(position, e.globalPos())  # a picture: Open attachment and Save as… (D-236)
+        else:
+            super().contextMenuEvent(e)  # the text: Copy, Select All
+
 
     def _fit_pictures(self) -> None:
         """Every picture as wide as the view allows, never wider than itself; the text and the scroll stay as they are."""
@@ -220,10 +250,33 @@ class PlainTextView(QTextBrowser):
             block = block.next()
 
 
+class AttachmentChip(QPushButton):
+    """One file of the attachment row: a click selects it, a double click opens it, a right-click offers Open attachment and Save as… (D-236)."""
+
+    open_requested = Signal()
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setFlat(True)
+        self.setCheckable(True)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.setToolTip("Double-click to open; right-click to open or save")
+        self.setStyleSheet("QPushButton:checked { background: palette(highlight); color: palette(highlighted-text); border-radius: 4px; }")
+
+    @override
+    def mouseDoubleClickEvent(self, e: QMouseEvent, /) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.setChecked(True)
+            self.open_requested.emit()
+        else:
+            super().mouseDoubleClickEvent(e)
+
+
 class ReaderWidget(QWidget):
     """Shows one message: the header, its attachments, and the text or HTML."""
 
     attachment_save_requested = Signal(int, str)  # position in the message, suggested file name
+    attachment_open_requested = Signal(int, str)  # position in the message, its file name: open it in the program for its kind (D-236)
     link_activated = Signal(QUrl)
     link_hovered = Signal(str, bool)  # the address of the link under the pointer ("" when it leaves one), and whether it leads elsewhere (D-215)
     sender_allowed = Signal(str)  # the person chose to always show remote content from this address
@@ -294,7 +347,13 @@ class ReaderWidget(QWidget):
         self._text.setFrameShape(QFrame.Shape.NoFrame)
         self._text.anchorClicked.connect(self.link_activated)
         self._text.highlighted.connect(self._text_hovered)
+        self._text.picture_menu_requested.connect(self._picture_menu)
         self._web, self._page, self._blocker = make_safe_view(self._stack)
+        self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)  # only a picture of the message has a menu (D-236)
+        self._web.customContextMenuRequested.connect(self._page_menu)
+        self._picture_positions: dict[str, int] = {}  # the address a picture is shown by -> its place among the attachments
+        self._chips: QButtonGroup = QButtonGroup(self)
+        self._names: dict[int, str] = {}
         self._page.link_clicked.connect(self.link_activated)
         self._page.linkHovered.connect(self._hover)
         self._stack.addWidget(self._placeholder)
@@ -375,6 +434,7 @@ class ReaderWidget(QWidget):
         pictures = shown.pictures
         if not html_body and shown.html_body:  # the HTML text is not shown: neither are the pictures it showed (B-11)
             pictures = (*shown.inline_images, *pictures)
+        self._picture_positions = {picture_url(image): image.position for image in (*shown.inline_images, *shown.pictures) if image.position >= 0}
         if html_body:
             self._current_html = pictures_below(embed_inline_images(html_body, self._images), pictures)
             self._blocker.allow_remote = self.always_remote or (bool(self._sender) and self._sender in self.allowed_senders)
@@ -396,18 +456,51 @@ class ReaderWidget(QWidget):
             widget = item.widget() if item is not None else None
             if widget is not None:
                 widget.deleteLater()
+        self._chips = QButtonGroup(self._attachments)  # one file selected at a time
+        self._names = {position: attachment.suggested_name for position, attachment in enumerate(attachments)}
         shown = 0
         for position, attachment in enumerate(attachments):
             if attachment.inline:
                 continue
-            button = QPushButton(f"📎 {attachment.suggested_name} ({file_size(attachment.size)})", self._attachments)
-            button.setFlat(True)
-            button.setToolTip("Click to save this attachment")
-            suggested = attachment.suggested_name
-            button.clicked.connect(lambda checked=False, index=position, name=suggested: self.attachment_save_requested.emit(index, name))
-            self._attachments_layout.insertWidget(self._attachments_layout.count() - 1, button)
+            chip = AttachmentChip(f"📎 {attachment.suggested_name} ({file_size(attachment.size)})", self._attachments)
+            self._chips.addButton(chip, position)
+            chip.open_requested.connect(partial(self._open_attachment, position))
+            chip.customContextMenuRequested.connect(partial(self._chip_menu, chip, position))
+            self._attachments_layout.insertWidget(self._attachments_layout.count() - 1, chip)
             shown += 1
         self._attachments.setVisible(shown > 0)
+
+    def chips(self) -> list[AttachmentChip]:
+        """The files of the attachment row, in their order."""
+        return [chip for chip in self._chips.buttons() if isinstance(chip, AttachmentChip)]
+
+    def _open_attachment(self, position: int) -> None:
+        self.attachment_open_requested.emit(position, self._names.get(position, ""))
+
+    def _chip_menu(self, chip: AttachmentChip, position: int, point: QPoint) -> None:
+        chip.setChecked(True)  # the file the menu is about is the selected one
+        self.attachment_menu(position).popup(chip.mapToGlobal(point))
+
+    def attachment_menu(self, position: int) -> QMenu:
+        """What a right-click on a file of the message offers: Open attachment and Save as… (D-236)."""
+        menu = QMenu(self)
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        name = self._names.get(position, "")
+        menu.addAction("Open attachment", partial(self.attachment_open_requested.emit, position, name))
+        menu.addAction("Save as…", partial(self.attachment_save_requested.emit, position, name))
+        return menu
+
+    def _picture_menu(self, position: int, where: QPoint) -> None:
+        self.attachment_menu(position).popup(where)
+
+    def _page_menu(self, point: QPoint) -> None:
+        """A right-click in an HTML message: a picture of the message offers Open attachment and Save as…; elsewhere nothing, as before."""
+        request = self._web.lastContextMenuRequest()
+        if request is None or request.mediaType() != request.MediaType.MediaTypeImage:
+            return
+        position = self._picture_positions.get(request.mediaUrl().toString(), -1)
+        if position >= 0:
+            self._picture_menu(position, self._web.mapToGlobal(point))
 
     def _after_load(self, ok: bool) -> None:
         if ok and self._blocker.blocked and not self._blocker.allow_remote:
@@ -447,7 +540,7 @@ class ReaderWidget(QWidget):
         return self._blocker
 
     @property
-    def text_view(self) -> QTextBrowser:
+    def text_view(self) -> PlainTextView:
         return self._text
 
     def showing_html(self) -> bool:

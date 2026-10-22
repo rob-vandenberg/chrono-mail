@@ -56,9 +56,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.0.281"
+__version__ = "mainwindow.py 2.0.302"
 
 # --- Version history ----------------------------------------------------
+# v2.0.302: the copies of attachments opened in an earlier run are removed at start (D-236)
 # v2.0.281: at start every index is checked and the ones that cannot be used are rebuilt before the mail is shown; the rebuild window,
 #           the paused mail checks and Settings > Rebuild the search index go through IndexRebuilds (D-229)
 # v2.0.280: Columns per folder (B-16): Apply to all folders in Menu > Folder; Settings > Message list and Message list… change the open
@@ -1036,6 +1037,7 @@ class MainWindow(QMainWindow):
         first one), then check for mail."""
         check = self.checking.check_mail if self.prefs.read().check_on_start else None
         self.messages.load_contact_addresses()
+        self.reading.forget_opened_copies()  # the copies of attachments opened in an earlier run go (D-236)
         self._with_key(lambda: self.rebuilds.start(lambda: self.reload_accounts(select_saved=True, then=check)))  # every index usable first (D-229)
 
     def _with_key(self, then: Callable[[], None]) -> None:
