@@ -13,9 +13,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 2.0.301"
+__version__ = "commands_folders.py 2.0.304"
 
 # --- Version history ----------------------------------------------------
+# v2.0.304: FILL_BATCH 100 (was 500): the counter moves about every second, a restart reads at most 100 messages again
 # v2.0.301: index.fill-sent also reads each message's attachments into the index (format 13, D-235)
 # v2.0.281: index.check (which places need a rebuild or their Sent dates filled in), index.prepare (rebuild one before it is used),
 #           index.fill-sent, index.abort; index.rebuild keeps the old index usable while the new one is built, then catches up (D-229)
@@ -192,7 +193,7 @@ def index_prepare(engine: Engine, parameters: AccountParameters) -> IndexResult:
     return IndexResult(0, 0, 0.0)
 
 
-FILL_BATCH: int = 500
+FILL_BATCH: int = 100
 
 
 @dataclass(frozen=True, slots=True)
