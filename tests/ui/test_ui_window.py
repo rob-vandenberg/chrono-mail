@@ -19,9 +19,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 2.0.302"
+__version__ = "test_ui_window.py 2.0.306"
 
 # --- Version history ----------------------------------------------------
+# v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left (the owner's search of all folders, D-101)
 # v2.0.302: an attachment is saved through its right-click menu's Save as… (a click only selects it, D-236)
 # v2.0.300: the Favorites menu lists Snoozed, Scheduled and Archive only once a mailbox has that folder (D-234)
 # v2.0.299: a right-click in Favorites lists every standard favorite with a tick, a click shows or hides it (D-234)
@@ -503,8 +504,8 @@ def test_in_the_archive_folder_archive_is_unarchive(world: World, qtbot: QtBot) 
     assert archive is not None
     window.tree.setCurrentIndex(archive)
     wait(qtbot, lambda: window.list_model.rowCount() == 1 and window.list_model.row_at(0) is not None)
-    assert window.act_archive.text() == "Unarchive"
     select(window, 0)
+    assert window.act_archive.text() == "Unarchive"  # the selected message is archived (D-101)
     window.act_archive.trigger()
     wait(qtbot, lambda: window.list_model.rowCount() == 0)
     assert target in {row.message_id for row in world.call("message.list", account=world.account_id, folder="Inbox").messages}
@@ -887,6 +888,31 @@ def open_folder(world: World, qtbot: QtBot, name: str, rows: int) -> None:
         if index.data(FOLDER_PATH_ROLE) == name:
             world.window.tree.setCurrentIndex(index)
     wait(qtbot, lambda: world.window.list_model.rowCount() == rows and world.window.mail_state.view.folder == name)  # noqa: SLF001
+
+
+def test_archive_or_unarchive_follows_the_selected_messages_not_the_folder_on_the_left(world: World, qtbot: QtBot) -> None:
+    """The owner (D-101): in a search of all folders started in Archive, Unarchive was offered for messages that were never archived."""
+    started(qtbot, world)
+    window = world.window
+    first = message_id_at(window, 0)
+    select(window, 0)
+    window.act_archive.trigger()
+    wait(qtbot, lambda: window.folders.find_item((world.account_id, "folder", "Archive")) is not None and window.list_model.rowCount() == 2)  # noqa: SLF001
+    unread = window.folders.find_item(("", "favorite", "unread"))  # noqa: SLF001 - the archived one and the two in the Inbox, together
+    assert unread is not None
+    window.tree.setCurrentIndex(unread)
+    wait(qtbot, lambda: window.list_model.rowCount() == 3 and all(window.list_model.row_at(row) is not None for row in range(3)))
+    folders = [row.folder for row in (window.list_model.row_at(number) for number in range(3)) if row is not None]
+    archived = folders.index("Archive")
+    select(window, archived)
+    assert window.act_archive.text() == "Unarchive"
+    select(window, (archived + 1) % 3)
+    assert window.act_archive.text() == "Archive"  # a message in the Inbox
+    window.list_view.selectAll()
+    assert window.act_archive.text() == "Archive"  # mixed: the others are archived, the archived one stays
+    window.act_archive.trigger()
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Archive").total == 3)
+    assert first in {row.message_id for row in world.call("message.list", account=world.account_id, folder="Archive").messages}
 
 
 def test_archive_moves_the_selected_messages_and_creates_the_folder(world: World, qtbot: QtBot) -> None:

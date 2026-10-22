@@ -2669,3 +2669,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - The owner: Menu > Message was very tall (30 lines). Next message, Previous message, Next unread message, Previous unread message and Go to folder… moved into a Go to submenu (26 lines); the Mark group stays as it is (often used). The keys work as before: the letter keys belong to the message list and the reading pane (D-217).
 - Server rule D-193: only the menu changes.
 - Tests: new test_ui_shortcuts::test_the_message_menu_keeps_moving_to_another_message_in_its_go_to_submenu (fails on 2.0.304); test_ui_shortcuts 10 passed. Pyrefly src 0 (Linux and win32), the new test 0; layer check kept.
+
+## 2026-10-23 2.0.306 Archive or Unarchive follows the selected messages (the owner, D-101)
+- The owner's screenshot: the Archive folder selected, a search of all folders: every result got Unarchive, also those never archived (Unarchive would have moved them to the Inbox). The other way round, Favorites > Archive and a search started elsewhere offered only Archive.
+- Cause: the button followed the view (MailState.in_archive: the folder on the left), not the messages. Now MailState.all_archived(selected rows), by each message's folder role (not its name "Archive"); the text follows every selection change and every change of a row; MessageActions.archive_selected unarchives when all are archived, else archives the others.
+- Server rule D-193: unchanged; Archive and Unarchive stay moves done on the server first for IMAP (D-117).
+- Tests: new test_ui_window::test_archive_or_unarchive_follows_the_selected_messages_not_the_folder_on_the_left (fails on 2.0.305); the Archive folder test selects first; test_ui_parts without in_archive. Ran: the archive tests of test_ui_window (8), test_ui_parts (14), test_ui_shortcuts (10): all passed. Pyrefly src 0 (Linux and win32), the new and changed test lines 0; layer check kept.

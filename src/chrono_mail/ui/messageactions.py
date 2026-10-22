@@ -27,9 +27,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 1.9.274"
+__version__ = "messageactions.py 2.0.306"
 
 # --- Version history ----------------------------------------------------
+# v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left: all archived is Unarchive, else the others are archived (D-101)
 # v1.9.274: R-19 round 4: the rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: every engine call typed; a scheduled message moved to Drafts is unscheduled by a typed call (_unschedules)
 # v1.9.265: A message not done because its file is gone gives the one warning of the action again (D-109; silent since 1.1.247)
@@ -128,10 +129,13 @@ class MessageActions(QObject):
         self.act_many(MESSAGE_UNARCHIVE_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages), self._state.targets(rows), f"Unarchived {len(rows)} message(s)", "Could not unarchive")
 
     def archive_selected(self) -> None:
-        if self._state.in_archive():
+        """Archive, or Unarchive when every selected message is archived: it follows the messages, never the folder on the left (a
+        search of all folders shows messages of every folder, D-101)."""
+        selected = self._messages.selected_rows()
+        if self._state.all_archived(selected):
             self.unarchive_selected()
             return
-        rows = [row for row in self._messages.selected_rows() if row.folder != "Archive"]  # already there
+        rows = [row for row in selected if not self._state.archived(row)]  # already there
         if not self._messages.selected_rows() or self._state.view.account is None:
             return
         if not rows:
