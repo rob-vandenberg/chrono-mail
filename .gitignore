@@ -31,8 +31,10 @@ chrono-mail-import-samples/
 chrono-mail-factory-reset.py
 build-release.sh
 gitpush.sh
+upload_release.sh
 AGENT-CHANNEL-RULES.md
 
 # working scripts and notes of the sessions (private)
 scratchpad/
 IDIOT-AI.md
+DEVELOPMENT/
