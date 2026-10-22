@@ -1,10 +1,11 @@
+import base64
 import html
 import re
 from email.utils import parseaddr
 from typing import override
 
 from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtGui import QColor, QFont, QImage, QPalette, QResizeEvent, QTextCursor
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -24,16 +25,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chrono_mail.engine.commands_mail import AttachmentInfo, ShowResult
+from chrono_mail.engine.commands_mail import AttachmentInfo, InlineImage, ShowResult
 from chrono_mail.core.colours import MAIL_PAGE
 from chrono_mail.mime.linkdomain import leads_elsewhere
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 1.9.275"
+__version__ = "reader.py 2.0.301"
 
 # --- Version history ----------------------------------------------------
+# v2.0.301: the attached pictures the text does not show are shown below it, fitted to the width, never enlarged (B-11, D-235)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.5.257: link_hovered: the address of the link under the pointer (HTML and plain text) and whether it leads to another main domain than the sender's; "" when the pointer leaves it or the message changes (D-215)
 # v1.1.172: The page colour from the colour file (D-158)
@@ -152,6 +154,72 @@ def embed_inline_images(document: str, images: dict[str, tuple[str, str]]) -> st
     return _CID_PATTERN.sub(replace, document)
 
 
+def pictures_below(document: str, pictures: tuple[InlineImage, ...]) -> str:
+    """The HTML text with the attached pictures it does not show below it, each as wide as the page at most (B-11)."""
+    if not pictures:
+        return document
+    shown = "".join(
+        f'<img src="data:{html.escape(picture.content_type)};base64,{picture.data_base64}" alt="" '
+        'style="display:block; max-width:100%; height:auto; margin-top:12px">'
+        for picture in pictures
+    )
+    end = document.lower().rfind("</body>")
+    return f"{document[:end]}{shown}{document[end:]}" if end >= 0 else document + shown
+
+
+class PlainTextView(QTextBrowser):
+    """A plain-text message, with the attached pictures below the text: as wide as the view at most, never enlarged (B-11)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._pictures: dict[str, QImage] = {}
+
+    def show_text(self, text: str, pictures: tuple[InlineImage, ...]) -> None:
+        self._pictures = {}
+        for picture in pictures:
+            image = QImage.fromData(base64.b64decode(picture.data_base64))
+            if not image.isNull():  # a picture Qt cannot read stays an attachment only
+                self._pictures[f"picture:{len(self._pictures)}"] = image
+        shown = "".join(f'<p><img src="{name}"></p>' for name in self._pictures)
+        self.setHtml(f'<pre style="white-space: pre-wrap; font-family: inherit; margin: 0">{linkify(text)}</pre>{shown}')
+        self._fit_pictures()
+        self.moveCursor(QTextCursor.MoveOperation.Start)
+
+    @override
+    def loadResource(self, type: int, name: QUrl | str, /) -> object:
+        image = self._pictures.get(QUrl(name).toString())
+        return image if image is not None else super().loadResource(type, QUrl(name))
+
+    @override
+    def resizeEvent(self, e: QResizeEvent, /) -> None:
+        super().resizeEvent(e)
+        self._fit_pictures()
+
+    def _fit_pictures(self) -> None:
+        """Every picture as wide as the view allows, never wider than itself; the text and the scroll stay as they are."""
+        if not self._pictures:
+            return
+        room = max(1.0, self.viewport().width() - 2 * self.document().documentMargin())
+        cursor = QTextCursor(self.document())
+        block = self.document().begin()
+        while block.isValid():
+            iterator = block.begin()
+            while not iterator.atEnd():
+                fragment = iterator.fragment()
+                image = self._pictures.get(fragment.charFormat().toImageFormat().name()) if fragment.charFormat().isImageFormat() else None
+                if image is not None:
+                    shape = fragment.charFormat().toImageFormat()
+                    width = min(float(image.width()), room)
+                    if abs(shape.width() - width) > 0.5:
+                        shape.setWidth(width)
+                        shape.setHeight(image.height() * width / max(1, image.width()))
+                        cursor.setPosition(fragment.position())
+                        cursor.setPosition(fragment.position() + fragment.length(), QTextCursor.MoveMode.KeepAnchor)
+                        cursor.setCharFormat(shape)
+                iterator += 1
+            block = block.next()
+
+
 class ReaderWidget(QWidget):
     """Shows one message: the header, its attachments, and the text or HTML."""
 
@@ -221,7 +289,7 @@ class ReaderWidget(QWidget):
         self._placeholder = QLabel("Select a message to read it", self._stack)
         self._placeholder.setAlignment(self._placeholder.alignment().AlignCenter)
         self._placeholder.setForegroundRole(QPalette.ColorRole.PlaceholderText)
-        self._text = QTextBrowser(self._stack)
+        self._text = PlainTextView(self._stack)
         self._text.setOpenLinks(False)
         self._text.setFrameShape(QFrame.Shape.NoFrame)
         self._text.anchorClicked.connect(self.link_activated)
@@ -304,16 +372,18 @@ class ReaderWidget(QWidget):
         self._always_remote.setVisible(bool(self._sender))
         if html_body and self.prefer_plain and text_body:
             html_body = None  # the person prefers the plain text part
+        pictures = shown.pictures
+        if not html_body and shown.html_body:  # the HTML text is not shown: neither are the pictures it showed (B-11)
+            pictures = (*shown.inline_images, *pictures)
         if html_body:
-            self._current_html = embed_inline_images(html_body, self._images)
+            self._current_html = pictures_below(embed_inline_images(html_body, self._images), pictures)
             self._blocker.allow_remote = self.always_remote or (bool(self._sender) and self._sender in self.allowed_senders)
             self._blocker.blocked = 0
             self._stack.setCurrentWidget(self._web)
             self._page.setHtml(self._current_html)
         else:
             self._stack.setCurrentWidget(self._text)
-            self._text.setHtml(f'<pre style="white-space: pre-wrap; font-family: inherit; margin: 0">{linkify((text_body or ""))}</pre>')
-            self._text.moveCursor(self._text.textCursor().MoveOperation.Start)
+            self._text.show_text(text_body or "", pictures)
 
     def set_tags(self, labels: str) -> None:
         """The tags of the shown message (rich text from TagColourBook.html); empty hides the line."""

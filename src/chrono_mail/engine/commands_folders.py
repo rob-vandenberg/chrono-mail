@@ -13,9 +13,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 2.0.281"
+__version__ = "commands_folders.py 2.0.301"
 
 # --- Version history ----------------------------------------------------
+# v2.0.301: index.fill-sent also reads each message's attachments into the index (format 13, D-235)
 # v2.0.281: index.check (which places need a rebuild or their Sent dates filled in), index.prepare (rebuild one before it is used),
 #           index.fill-sent, index.abort; index.rebuild keeps the old index usable while the new one is built, then catches up (D-229)
 # v1.9.271: R-19: typed index.rebuild, index.reconcile, store.verify
@@ -200,7 +201,7 @@ class FillResult:
 
 
 def index_fill_sent(engine: Engine, parameters: AccountParameters) -> FillResult:
-    """After the upgrade from format 11: read the moment each message carries (its Date line) into the index, a batch at a time,
+    """After an upgrade in place: read the moment each message carries (its Date line) and its attachments (D-235) into the index, a batch at a time,
     from where it stopped; the index stays in use meanwhile. Aborted: what is filled stays, the rest follows next time (D-229)."""
     settings = engine.storage_settings(engine.resolve_account(parameters.account))
     account_id = settings.account.account_id
@@ -218,12 +219,13 @@ def index_fill_sent(engine: Engine, parameters: AccountParameters) -> FillResult
                 if state is None:
                     break
                 rows = index.sent_to_fill(FILL_BATCH)
-                moments: list[tuple[int, datetime | None]] = []
+                moments: list[tuple[int, datetime | None, bool | None]] = []
                 for row_id, store_id, folder, relative in rows:
                     try:
-                        moments.append((row_id, parse_message(store.read(MessageRef(account_id, folder, store_id), hint=relative)).date))
+                        parsed = parse_message(store.read(MessageRef(account_id, folder, store_id), hint=relative))
+                        moments.append((row_id, parsed.date, any(not attachment.inline for attachment in parsed.attachments)))
                     except ChronoMailError:
-                        moments.append((row_id, None))  # cannot be read: no Sent date, as in a rebuild
+                        moments.append((row_id, None, None))  # cannot be read: no Sent date, as in a rebuild; its paperclip stays
                 finished = len(rows) < FILL_BATCH
                 index.fill_sent(moments, rows[-1][0] if rows else 0, finished)
             finally:

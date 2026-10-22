@@ -1,5 +1,6 @@
 import codecs
 import re
+from dataclasses import replace
 from datetime import UTC, datetime
 from email.headerregistry import AddressHeader, DateHeader
 from email.message import Message, MIMEPart
@@ -17,9 +18,11 @@ from chrono_mail.mime.limits import (
 from chrono_mail.mime.model import Address, Attachment, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "parser.py 1.9.276"
+__version__ = "parser.py 2.0.301"
 
 # --- Version history ----------------------------------------------------
+# v2.0.301: inline means shown in the text: only a part the HTML text refers to by cid:; every other part is an attachment, whatever its
+#           Content-Disposition says (an inline picture of a plain-text message was shown nowhere, D-235)
 # v1.9.276: received: the topmost Received line's moment, else Delivery-date (D-226); never raises
 # v0.0.16: Drafts
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
@@ -27,6 +30,7 @@ __version__ = "parser.py 1.9.276"
 # v0.0.5: Initial message parser
 
 _ID_PATTERN: re.Pattern[str] = re.compile(r"<[^<>\s]+>")
+_CID_REFERENCE: re.Pattern[str] = re.compile(r"cid:([^\s\"'()<>]+)", re.IGNORECASE)  # a part the HTML text shows
 _ADDRESS_HEADERS: tuple[str, ...] = ("from", "to", "cc", "reply-to", "bcc")
 _CHRONO_HEADER_PREFIX: str = "x-chrono-mail-"
 _MAXIMUM_CHRONO_HEADERS: int = 20
@@ -364,8 +368,19 @@ def _extract_body(root: MIMEPart, collector: _Collector) -> tuple[str | None, st
                     filename,
                     content_type,
                     scrub(str(content_id)).strip() if content_id else None,
-                    disposition == "inline" or is_body_candidate,
+                    False,  # decided below, once the HTML text is known
                     data,
                 )
             )
-    return text_body, html_body, attachments
+    return text_body, html_body, _mark_shown_parts(html_body, attachments)
+
+
+def _mark_shown_parts(html_body: str | None, attachments: list[Attachment]) -> list[Attachment]:
+    """inline: the part is shown inside the text, because the HTML text refers to it by cid:. Every other part is an attachment,
+    whatever the sender's Content-Disposition says: nothing else would ever show it (D-235)."""
+    referenced = {reference.strip("<>").lower() for reference in _CID_REFERENCE.findall(html_body or "")}
+    return [
+        replace(attachment, inline=(attachment.content_id or "").strip().strip("<>").lower() in referenced)
+        if not attachment.content_type.startswith("message/") else attachment
+        for attachment in attachments
+    ]

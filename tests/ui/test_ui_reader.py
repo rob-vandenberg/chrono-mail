@@ -12,15 +12,16 @@ from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_mail import AttachmentInfo, InlineImage, ShowResult
-from chrono_mail.ui.reader import ReaderWidget, embed_inline_images, linkify
+from chrono_mail.ui.reader import ReaderWidget, embed_inline_images, linkify, pictures_below
 
 PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_reader.py 0.0.38"
+__version__ = "test_ui_reader.py 2.0.301"
 
 # --- Version history ----------------------------------------------------
+# v2.0.301: the attached pictures the text does not show are shown below it, fitted to the width, never enlarged (B-11)
 # v0.0.38: CI: the PDF test writes into its own folder
 # v0.0.13: Initial reading pane tests
 
@@ -308,3 +309,51 @@ def test_a_pdf_of_an_html_message_for_review(reader: ReaderWidget, qtbot: QtBot,
     reader.web_page.printToPdf(str(tmp_path / "html-message.pdf"))
     qtbot.waitUntil(lambda: bool(done), timeout=10000)
     assert done == [True] and (tmp_path / "html-message.pdf").stat().st_size > 1000
+
+
+def picture(width: int, height: int) -> InlineImage:
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QImage, QImageWriter
+
+    image = QImage(width, height, QImage.Format.Format_RGB32)
+    image.fill(0x3366CC)
+    buffer = QBuffer()
+    buffer.open(QIODevice.OpenModeFlag.WriteOnly)
+    assert QImageWriter(buffer, b"png").write(image)  # QImage.save: the type hints and PySide disagree on the format's type
+    return InlineImage("", "image/png", base64.b64encode(bytes(buffer.data().data())).decode("ascii"))
+
+
+def picture_widths(reader: ReaderWidget) -> list[float]:
+    document = reader.text_view.document()
+    widths: list[float] = []
+    block = document.begin()
+    while block.isValid():
+        iterator = block.begin()
+        while not iterator.atEnd():
+            shape = iterator.fragment().charFormat()
+            if shape.isImageFormat():
+                widths.append(shape.toImageFormat().width())
+            iterator += 1
+        block = block.next()
+    return widths
+
+
+def test_the_pictures_of_a_plain_text_message_are_shown_below_it_as_wide_as_the_pane_at_most(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """B-11: an attached picture is shown below the text, shrunk to the width, never enlarged; also after the pane changes size."""
+    from dataclasses import replace
+
+    reader.show_message(replace(shown(text="See the pictures."), pictures=(picture(3000, 300), picture(40, 20))))
+    assert not reader.showing_html() and "See the pictures." in reader.text_view.toPlainText()
+    room = reader.text_view.viewport().width() - 2 * reader.text_view.document().documentMargin()
+    wide, small = picture_widths(reader)
+    assert 0 < wide <= room < 3000 and small == 40
+    reader.resize(400, 500)
+    qtbot.waitUntil(lambda: picture_widths(reader)[0] < wide)
+    assert picture_widths(reader)[0] <= reader.text_view.viewport().width()
+
+
+def test_the_pictures_of_an_html_message_come_below_its_text_as_wide_as_the_page_at_most() -> None:
+    page = pictures_below("<html><body><p>Hello</p></body></html>", (InlineImage("", "image/png", "iVBORw=="),))
+    assert page.index("Hello") < page.index('src="data:image/png;base64,iVBORw=="') < page.index("</body>") and "max-width:100%" in page
+    assert pictures_below("<p>No body tag</p>", (InlineImage("", "image/gif", "R0lG"),)).endswith('margin-top:12px">')
+    assert pictures_below("<p>Nothing</p>", ()) == "<p>Nothing</p>"

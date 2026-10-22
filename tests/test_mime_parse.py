@@ -5,9 +5,10 @@ from datetime import UTC, datetime, timedelta, timezone
 from chrono_mail.mime import Address, ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mime_parse.py 0.0.16"
+__version__ = "test_mime_parse.py 2.0.301"
 
 # --- Version history ----------------------------------------------------
+# v2.0.301: inline means shown in the text: only a part the HTML refers to by cid: (D-235)
 # v0.0.16: Drafts
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.5: Initial parser tests
@@ -195,3 +196,32 @@ def test_chrono_headers_are_limited_and_scrubbed() -> None:
     assert len(message.chrono_headers) == 20
     assert not any(has_surrogates(value) for _, value in message.chrono_headers)
     assert max(len(value) for _, value in message.chrono_headers) <= 1000
+
+
+PICTURE_IN_A_PLAIN_TEXT_MESSAGE: bytes = (  # as phones and some mail programs send it: the picture labelled inline, a small unnamed text after it
+    b"From: a@example.com\r\nSubject: A picture\r\nContent-Type: multipart/mixed; boundary=M\r\n\r\n"
+    b"--M\r\nContent-Type: text/plain\r\n\r\nSee the picture.\r\n"
+    b"--M\r\nContent-Type: image/png; name=photo.png\r\nContent-Disposition: inline; filename=photo.png\r\n"
+    b"Content-Transfer-Encoding: base64\r\n\r\niVBORw==\r\n"
+    b"--M\r\nContent-Type: text/plain\r\n\r\n\r\n\r\n--M--\r\n"
+)
+
+
+def test_a_part_labelled_inline_that_no_text_shows_is_an_attachment() -> None:
+    """The owner's bug (D-235): a picture labelled inline in a plain-text message was shown nowhere, not even as an attachment."""
+    message = parse_message(PICTURE_IN_A_PLAIN_TEXT_MESSAGE)
+    assert (message.text_body or "").strip() == "See the picture."
+    assert [(a.filename, a.content_type, a.inline) for a in message.attachments] == [("photo.png", "image/png", False), (None, "text/plain", False)]
+
+
+def test_only_a_picture_the_html_refers_to_is_shown_in_the_text() -> None:
+    raw = (
+        b"From: a@example.com\r\nContent-Type: multipart/related; boundary=R\r\n\r\n"
+        b"--R\r\nContent-Type: text/html\r\n\r\n<img src=\"CID:Logo\">\r\n"
+        b"--R\r\nContent-Type: image/png\r\nContent-ID: <logo>\r\nContent-Disposition: inline\r\n"
+        b"Content-Transfer-Encoding: base64\r\n\r\niVBORw==\r\n"
+        b"--R\r\nContent-Type: image/png\r\nContent-ID: <unused>\r\nContent-Disposition: inline\r\n"
+        b"Content-Transfer-Encoding: base64\r\n\r\niVBORw==\r\n--R--\r\n"
+    )
+    message = parse_message(raw)
+    assert [(a.content_id, a.inline) for a in message.attachments] == [("<logo>", True), ("<unused>", False)]  # the unused one would be shown nowhere

@@ -12,13 +12,15 @@ from chrono_mail.index import Index
 from chrono_mail.index.schema import SENT_FILL_KEY
 from chrono_mail.sync import rebuild_index
 from tests.mailfactory import raw_message
+from tests.test_mime_parse import PICTURE_IN_A_PLAIN_TEXT_MESSAGE
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is the fixture
 from tests.test_index_rebuild import make_store
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_rebuilds.py 2.0.281"
+__version__ = "test_engine_rebuilds.py 2.0.301"
 
 # --- Version history ----------------------------------------------------
+# v2.0.301: a picture labelled inline in a plain-text message: listed, shown below the text, its paperclip filled in by the upgrade from format 12 (D-235)
 # v2.0.281: Initial version: a rebuild counts first, can be aborted, keeps the old index usable meanwhile; format 11 is upgraded in place
 #           and its Sent dates filled in, resumable; the start check tells which places need what (D-229)
 
@@ -132,3 +134,24 @@ def test_format_11_is_upgraded_in_place_and_its_sent_dates_are_filled_in_from_wh
     assert index.sent_filling() is None and index._connection.execute("SELECT value FROM meta WHERE key = ?", (SENT_FILL_KEY,)).fetchone() is None  # noqa: SLF001
     index.close()
     assert call(setup.engine, "index.fill-sent", account=setup.account_id).filled == 0  # nothing left
+
+
+def test_a_picture_labelled_inline_is_listed_shown_below_the_text_and_its_paperclip_filled_in_after_the_upgrade(setup: Setup) -> None:
+    """The owner's bug (D-235): the picture was shown nowhere and the list had no paperclip; B-11: it is shown below the text too."""
+    fetched(setup)
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        mailbox.deliver(mailbox.folder("Inbox"), PICTURE_IN_A_PLAIN_TEXT_MESSAGE, frozenset())
+    row = next(row for row in call(setup.engine, "message.list", account=setup.account_id, folder="Inbox").messages if row.subject == "A picture")
+    assert row.attachments
+    message = call(setup.engine, "message.show", account=setup.account_id, folder="Inbox", message=row.message_id)
+    assert [(a.suggested_name, a.inline) for a in message.attachments][0] == ("photo.png", False) and len(message.attachments) == 2
+    assert [(picture.content_type, picture.data_base64) for picture in message.pictures] == [("image/png", "iVBORw==")]
+    connection = sqlite3.connect(index_path(setup))  # as 2.0.300 left it: format 12, no paperclip for this message
+    connection.execute("UPDATE messages SET has_attachments = 0")
+    connection.execute("UPDATE meta SET value = '12' WHERE key = 'schema'")
+    connection.commit()
+    connection.close()
+    assert call(setup.engine, "index.check")[0].need == "fill"  # upgraded in place: usable at once, filled in afterwards
+    assert call(setup.engine, "index.fill-sent", account=setup.account_id).filled == 4
+    rows = {row.subject: row.attachments for row in call(setup.engine, "message.list", account=setup.account_id, folder="Inbox").messages}
+    assert rows["A picture"] and sum(rows.values()) == 1  # only the one with an attachment

@@ -32,9 +32,10 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 2.0.281"
+__version__ = "index.py 2.0.301"
 
 # --- Version history ----------------------------------------------------
+# v2.0.301: format 12 is upgraded in place too (format 13, D-235): the filling in reads has_attachments with sent (fill_sent)
 # v2.0.281: format 11 is upgraded in place (sent added, filled in afterwards: sent_filling, sent_to_fill, fill_sent); when_closed: what an index
 #           opened by the engine lets go when it closes (D-229)
 # v2.0.280: sent, the message's own Date: kept, read with every row, sorted by with the date groups (the Sent column, B-16); format 11 is rebuilt
@@ -211,18 +212,18 @@ class Index(IndexDatabase):
             self._create_schema()
         else:
             version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
-            if version is not None and str(version[0]) == "11":
-                self._upgrade_from_11()
+            if version is not None and str(version[0]) in ("11", "12"):
+                self._upgrade_in_place(str(version[0]))
                 return
             # An older format is rebuilt from the messages (format 11 changed what date holds for every message, D-226), a newer one too
             if version is None or str(version[0]) != str(SCHEMA_VERSION):
                 raise StorageError("The index has an unknown format; rebuild it")
 
-    def _upgrade_from_11(self) -> None:
-        """Format 12 only adds the moment each message carries (sent): the index stays usable at once, sent is filled in afterwards
-        (sent_to_fill, fill_sent), from where it stopped (D-229)."""
+    def _upgrade_in_place(self, version: str) -> None:
+        """Format 12 added the moment each message carries (sent), format 13 the attachments by what the text shows (D-235): the index
+        stays usable at once, both are filled in afterwards (sent_to_fill, fill_sent), from where it stopped (D-229)."""
         with self._transaction():
-            for statement in UPGRADE_FROM_11:
+            for statement in UPGRADE_FROM_11 if version == "11" else ():
                 self._connection.execute(statement)
             self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
             self._connection.execute("INSERT INTO meta VALUES (?, '0')", (SENT_FILL_KEY,))
@@ -239,7 +240,7 @@ class Index(IndexDatabase):
             released()
 
     def sent_filling(self) -> tuple[int, int] | None:
-        """After the upgrade from format 11: how many messages have their sent moment and how many there are; None when all have it."""
+        """After an upgrade in place: how many messages have their sent moment and attachments read, and how many there are; None when all have."""
         filled_to = self._connection.execute("SELECT value FROM meta WHERE key = ?", (SENT_FILL_KEY,)).fetchone()
         if filled_to is None:
             return None
@@ -247,7 +248,7 @@ class Index(IndexDatabase):
         return int(done), int(total)
 
     def sent_to_fill(self, limit: int) -> list[tuple[int, str, tuple[str, ...], str]]:
-        """The next messages whose sent moment is still to be read: (row id, store id, folder, path), in the order of their row ids."""
+        """The next messages whose sent moment and attachments are still to be read: (row id, store id, folder, path), in the order of their row ids."""
         filled_to = self._connection.execute("SELECT value FROM meta WHERE key = ?", (SENT_FILL_KEY,)).fetchone()
         if filled_to is None:
             return []
@@ -256,10 +257,14 @@ class Index(IndexDatabase):
         ).fetchall()
         return [(int(row_id), str(store_id), _folder_path(str(folder)), str(path)) for row_id, store_id, folder, path in rows]
 
-    def fill_sent(self, moments: Sequence[tuple[int, datetime | None]], filled_to: int, finished: bool) -> None:
-        """The sent moments of these rows, and how far the filling has come (finished: every message has it now), in one step."""
+    def fill_sent(self, moments: Sequence[tuple[int, datetime | None, bool | None]], filled_to: int, finished: bool) -> None:
+        """The sent moments and attachments of these rows (None: the message could not be read, its attachments stay as they were), and how
+        far the filling has come (finished: every message has them now), in one step."""
         with self._transaction():
-            self._connection.executemany("UPDATE messages SET sent = ? WHERE id = ?", [(_epoch(moment), row_id) for row_id, moment in moments])
+            self._connection.executemany(
+                "UPDATE messages SET sent = ?, has_attachments = COALESCE(?, has_attachments) WHERE id = ?",
+                [(_epoch(moment), None if attachments is None else int(attachments), row_id) for row_id, moment, attachments in moments],
+            )
             if finished:
                 self._connection.execute("DELETE FROM meta WHERE key = ?", (SENT_FILL_KEY,))
             else:

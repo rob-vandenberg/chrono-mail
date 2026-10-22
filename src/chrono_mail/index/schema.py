@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 2.0.281"
+__version__ = "schema.py 2.0.301"
 
 # --- Version history ----------------------------------------------------
+# v2.0.301: format 13: has_attachments follows the new meaning of inline (D-235); 12 and 11 are upgraded in place and filled in afterwards
 # v2.0.281: format 11 is upgraded in place to 12 (the empty sent column and its index; SENT_FILL_KEY says how far sent was filled in), never rebuilt (D-229)
 # v2.0.280: format 12: sent, the moment the message itself carries (its Date line), with a sort index (the Sent column, B-16); format 11 is rebuilt
 # v1.9.276: format 11: the date column is the server's receive time (D-226); format 10 is rebuilt
@@ -18,9 +19,9 @@ __version__ = "schema.py 2.0.281"
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 12  # 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
+SCHEMA_VERSION: int = 13  # 13: has_attachments by what the text shows (D-235; 12 and 11 upgraded in place, filled in afterwards); 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
 FOLDER_SEPARATOR: str = "\x1f"
-SENT_FILL_KEY: str = "sent_filled_to"  # meta, after the upgrade from format 11: the row id up to which sent was read from the messages; gone when all are done
+SENT_FILL_KEY: str = "sent_filled_to"  # meta, after an upgrade in place: the row id up to which sent and has_attachments were read from the messages; gone when all are done
 UPGRADE_FROM_11: tuple[str, ...] = (  # format 12 only adds the sent moment: the old index stays usable, sent is filled in afterwards (index.fill-sent)
     "ALTER TABLE messages ADD COLUMN sent INTEGER",
     "CREATE INDEX messages_by_sent ON messages (folder, sent DESC, id DESC)",
