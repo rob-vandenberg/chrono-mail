@@ -32,9 +32,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 2.0.301"
+__version__ = "commands_mail.py 2.0.302"
 
 # --- Version history ----------------------------------------------------
+# v2.0.302: InlineImage.position: the picture's place among the attachments, to open or save it from a right-click (D-236)
 # v2.0.301: message.show gives the pictures the text does not show (pictures), to be shown below it (B-11, D-235)
 # v2.0.280: the sort order sent (the message's own Date, with the date groups) and each row's sent moment (B-16)
 # v1.9.273: R-19: typed message.search
@@ -624,6 +625,7 @@ class InlineImage:
     content_id: str  # without the angle brackets, as referenced by cid: in the HTML
     content_type: str
     data_base64: str
+    position: int = -1  # its place in message.show's attachments (to open or save it), -1: unknown
 
 
 @dataclass(frozen=True, slots=True)
@@ -662,7 +664,7 @@ def _inline_images(parsed: ParsedMessage) -> tuple[tuple[InlineImage, ...], tupl
     referenced: list[InlineImage] = []
     below: list[InlineImage] = []
     total = 0
-    for attachment in parsed.attachments:
+    for position, attachment in enumerate(parsed.attachments):
         shown_below = not attachment.inline and attachment.content_type in SHOWN_PICTURE_TYPES
         if not (attachment.content_id or shown_below) or not attachment.content_type.startswith("image/") or len(attachment.data) > MAXIMUM_INLINE_IMAGE_BYTES:
             continue
@@ -671,9 +673,9 @@ def _inline_images(parsed: ParsedMessage) -> tuple[tuple[InlineImage, ...], tupl
             break
         data = base64.b64encode(attachment.data).decode("ascii")
         if attachment.content_id:
-            referenced.append(InlineImage(attachment.content_id.strip("<>"), attachment.content_type, data))
+            referenced.append(InlineImage(attachment.content_id.strip("<>"), attachment.content_type, data, position))
         if shown_below:
-            below.append(InlineImage((attachment.content_id or "").strip("<>"), attachment.content_type, data))
+            below.append(InlineImage((attachment.content_id or "").strip("<>"), attachment.content_type, data, position))
     return tuple(referenced), tuple(below)
 
 

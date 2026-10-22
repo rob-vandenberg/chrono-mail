@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-235 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-236 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-236**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-237**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -64,6 +64,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-035** A missing key at start opens a dialog: recovery code, recovery file, or try again; "Not now" leaves a red status line.
 - **D-043** Export writes the .eml as received (atomic, 0600, unencrypted); source view capped at 2,000,000 characters; printing never uses the mail's HTML.
 - **D-235** (the owner) **A part is left out of the attachments only when the text shows it** (the HTML text refers to it by cid:), whatever the sender labelled it; everything that asks "has attachments" follows. Attached pictures the text does not show are shown below it, fitted to the width, never enlarged, and stay attachments too (B-11). Why: a picture labelled inline in a plain-text message was shown nowhere.
+- **D-236** (the owner) **A file of the message works as in a file manager**: a click selects it, a double click opens it, a right-click on it or on a picture of the message offers Open attachment and Save as…. Open writes a copy, readable by the person only, to Chrono Mail's own folder (emptied at the next start) and hands it to the program for its kind of file; **a file that runs when opened is asked about first**. Why: a click saved at once; one click must never run a stranger's program.
 - **D-100** Folders are made under a lock per store (`ensure_folder` everywhere); twins are merged when the store opens. Not covered: the program and the CLI at the same moment. Cancel snooze: back to the origin folder, else the Inbox, unread.
 - **D-107** Every index change starts with `BEGIN IMMEDIATE`. A missing message file is `MessageNotFoundError`.
 - **D-108** Maintenance runs once per place where mail is kept; its report can be copied.

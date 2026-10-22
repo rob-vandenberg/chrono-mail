@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_actions, commands_addressbook, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_view, commands_watch
+from chrono_mail.engine import commands_accounts, commands_actions, commands_attachments, commands_addressbook, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_view, commands_watch
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 1.10.277"
+__version__ = "catalog.py 2.0.302"
 
 # --- Version history ----------------------------------------------------
+# v2.0.302: Opening attachments in another program (message.attachment.open, message.attachment.clean-opened, D-236)
 # v1.10.277: Contact groups (contact-group.*, R-39)
 # v1.6.260: The order of a view and rows asked by the message (message.order, message.combined-order, message.rows, R-15)
 # v1.1.247: Actions on many messages of a folder at once (message.*-many, R-08)
@@ -37,6 +38,7 @@ def build_registry() -> CommandRegistry:
     commands_accounts.register(registry)
     commands_folders.register(registry)
     commands_mail.register(registry)
+    commands_attachments.register(registry)
     commands_drafts.register(registry)
     commands_actions.register(registry)
     commands_export.register(registry)

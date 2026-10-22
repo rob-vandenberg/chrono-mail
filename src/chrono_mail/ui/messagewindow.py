@@ -11,6 +11,7 @@ from chrono_mail.engine.commands_mail import ShowResult
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, AttachmentSaveParameters
 from chrono_mail.ui import scale, theme
+from chrono_mail.ui.attachmentopening import open_attachment
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.linkhint import StatusLine
@@ -18,9 +19,10 @@ from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 1.9.275"
+__version__ = "messagewindow.py 2.0.302"
 
 # --- Version history ----------------------------------------------------
+# v2.0.302: Open attachment from the attachment row and the pictures (D-236)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.270: R-19: saving an attachment is a typed call
 # v1.5.257: The bar at the bottom shows where the link under the pointer leads, with the orange triangle for another main domain (D-215)
@@ -71,11 +73,18 @@ class MessageWindow(QMainWindow):
         self.statusBar().addWidget(self.status_line, 1)
         self.reader.link_hovered.connect(self.status_line.show_link)
         self.reader.attachment_save_requested.connect(self._save_attachment)
+        self.reader.attachment_open_requested.connect(self._open_attachment)
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
         save_geometry(self, self._settings, "message_window_geometry")
         super().closeEvent(event)
+
+    def _open_attachment(self, position: int, name: str) -> None:
+        open_attachment(self, self._backend, self._where, position, name, self._open_failed, self)
+
+    def _open_failed(self, text: str, error: ChronoMailError | None) -> None:
+        self.statusBar().showMessage(text if error is None else f"{text}: {error}", 8000)
 
     def _save_attachment(self, position: int, suggested: str) -> None:
         account, folder, message_id = self._where

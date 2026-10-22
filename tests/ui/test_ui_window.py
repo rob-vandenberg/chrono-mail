@@ -19,9 +19,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 2.0.300"
+__version__ = "test_ui_window.py 2.0.302"
 
 # --- Version history ----------------------------------------------------
+# v2.0.302: an attachment is saved through its right-click menu's Save as… (a click only selects it, D-236)
 # v2.0.300: the Favorites menu lists Snoozed, Scheduled and Archive only once a mailbox has that folder (D-234)
 # v2.0.299: a right-click in Favorites lists every standard favorite with a tick, a click shows or hides it (D-234)
 # v2.0.298: Favorites and the folders under an account in the owner's new order (D-061, D-232)
@@ -783,7 +784,8 @@ def test_an_attachment_can_be_saved(tmp_path: Path, qtbot: QtBot, dialogs: Dialo
         assert len(buttons) == 1 and "report.pdf" in buttons[0].text()
         target = tmp_path / "saved-report.pdf"
         answer_save_file(monkeypatch, target)
-        buttons[0].click()
+        buttons[0].click()  # a click only selects it (D-236)
+        world.window.reader.attachment_menu(0).actions()[1].trigger()  # Save as…
         wait(qtbot, lambda: target.exists())
         assert target.read_bytes() == b"%PDF-1.4 content"
         wait(qtbot, lambda: world.window.status_label.text().startswith("Saved"))

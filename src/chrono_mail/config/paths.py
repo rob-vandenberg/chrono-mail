@@ -7,9 +7,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 0.0.60"
+__version__ = "paths.py 2.0.302"
 
 # --- Version history ----------------------------------------------------
+# v2.0.302: opened_directory: copies of attachments opened in another program (D-236)
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.33: rules file
@@ -59,6 +60,11 @@ class AppDirectories:
 
     def pop3_state_file(self, account_id: str) -> Path:
         return self.account_directory(account_id) / "pop3-state.log"
+
+    @property
+    def opened_directory(self) -> Path:
+        """Copies of attachments opened in another program, readable by the person only; emptied at the next start (D-236)."""
+        return self.data_directory / "opened"
 
     def imap_state_file(self, account_id: str) -> Path:
         return self.account_directory(account_id) / "imap-state.log"
