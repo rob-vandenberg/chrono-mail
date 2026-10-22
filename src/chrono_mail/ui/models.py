@@ -12,9 +12,10 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 2.0.288"
+__version__ = "models.py 2.0.289"
 
 # --- Version history ----------------------------------------------------
+# v2.0.289: Unread, Inbox, Flagged, then the standard folders in the owner's order (D-232)
 # v2.0.288: One definition of the standard folders (standard_kind, in the order of LOCAL_FOLDER_KINDS) for the order of the list, Settings >
 #           Sidebar and the icons: every standard folder, Snoozed and Recovered too, before every folder the person made (D-232; the owner)
 # v1.9.274: R-19 round 4: the accounts and folders of the folder list are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -349,8 +350,11 @@ class FolderTreeModel(QAbstractItemModel):
             Qt.ItemDataRole.DecorationRole: folder_icon("local" if local else "account"), ICON_NAME_ROLE: "local" if local else "account",
             KIND_ROLE: "account", ACCOUNT_ROLE: account_id,
         })
-        for kind, label in (("unread", "Unread"), ("flagged", "Flagged")):
-            top.append(TreeEntry((kind, account_id, "", ""), {Qt.ItemDataRole.DisplayRole: label, Qt.ItemDataRole.DecorationRole: folder_icon(kind), ICON_NAME_ROLE: kind, KIND_ROLE: kind, ACCOUNT_ROLE: account_id}))
+        unread, flagged = (
+            TreeEntry((kind, account_id, "", ""), {Qt.ItemDataRole.DisplayRole: label, Qt.ItemDataRole.DecorationRole: folder_icon(kind), ICON_NAME_ROLE: kind, KIND_ROLE: kind, ACCOUNT_ROLE: account_id})
+            for kind, label in (("unread", "Unread"), ("flagged", "Flagged"))
+        )
+        top.append(unread)
         nodes: dict[tuple[str, ...], TreeEntry] = {}
         ordered = sorted(folders.get(account_id, []), key=lambda info: (_order(info.role, info.path), info.path.lower()))
         for info in ordered:
@@ -366,6 +370,8 @@ class FolderTreeModel(QAbstractItemModel):
                 nodes[path].values.update(entry.values)
             else:
                 nodes[path] = (nodes[path[:-1]] if len(path) > 1 else top).append(entry)
+        inbox = next((number for number, child in enumerate(top.children) if child.data(FOLDER_ROLE_ROLE) == "inbox"), 0)
+        top.children.insert(inbox + 1, flagged)  # Unread, Inbox, Flagged (the owner, D-232); without an Inbox right after Unread
         return top
 
     def _favorites(self, mailbox_ids: list[str], folders: Mapping[str, Sequence[FolderInfo]], everything: bool) -> TreeEntry:
@@ -615,7 +621,7 @@ def standard_kind(path: str, role: str) -> str:
 
 
 def _order(role: str, path: str = "") -> int:
-    """Every standard folder first, in the order of LOCAL_FOLDER_KINDS (after Unread and Flagged); the person's own folders follow by name (D-232)."""
+    """Every standard folder first, in the order of LOCAL_FOLDER_KINDS (Flagged goes right after the Inbox); the person's own folders follow by name (D-232)."""
     kind = standard_kind(path, role)
     return LOCAL_FOLDER_KINDS.index(kind) if kind else len(LOCAL_FOLDER_KINDS)
 
