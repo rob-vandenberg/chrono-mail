@@ -11,9 +11,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebar.py 2.0.288"
+__version__ = "sidebar.py 2.0.289"
 
 # --- Version history ----------------------------------------------------
+# v2.0.289: the owner's order: Inbox, Drafts, Outbox, Sent, Snoozed, Scheduled, Recovered, Archive, Junk, Trash (D-232)
 # v2.0.288: LOCAL_FOLDER_KINDS is every standard folder in the one order the folder list shows them first: Snoozed after Scheduled, Recovered last (D-232)
 # v1.1.252: pins_followed: the pins of a renamed folder (and of the folders inside it) follow it to its new name, keeping their own name and place (R-41)
 # v1.1.204: hidden_local_folders: standard folders of Local Folders that the folder list does not show (Settings > Sidebar)
@@ -28,7 +29,7 @@ MAXIMUM_FILE_BYTES: int = 1024 * 1024
 ITEM_ID: re.Pattern[str] = re.compile(r"[0-9a-f]{16}")
 # Every standard folder, in the one order every account's folder list shows them, before the person's own folders (D-232); Settings >
 # Sidebar can hide those of Local Folders
-LOCAL_FOLDER_KINDS: tuple[str, ...] = ("inbox", "drafts", "sent", "outbox", "scheduled", "snoozed", "archive", "junk", "trash", "recovered")
+LOCAL_FOLDER_KINDS: tuple[str, ...] = ("inbox", "drafts", "outbox", "sent", "snoozed", "scheduled", "recovered", "archive", "junk", "trash")  # the owner's order
 
 
 def new_item_id() -> str:
