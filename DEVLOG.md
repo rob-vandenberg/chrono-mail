@@ -2564,3 +2564,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Server rule D-193: only the order on this computer.
 - Checks: the order tests (ui/test_ui_tree_rows.py, ui/test_ui_models.py) expect the owner's order: 6 fail on 2.0.288, all pass now; related tests pass (ui/test_ui_tree_rows, _models, _icons, _preferences, _folder_counts, _keys: 92; test_engine_sidebar, test_config: 73); Pyrefly 0 (Linux and win32); layer check kept. Full suite not run.
 - Next: Favorites in the same order (the owner, with the Proceed; its own changelist).
+
+## 2026-10-22 2.0.290 Favorites in the owner's order; Event colours without an outline (the owner)
+- Favorites: Unread, All Inboxes, Flagged, Unreplied, Drafts, Outbox, Sent, Snoozed, Scheduled, Archive, Junk, Trash (`ui/models.py` FAVORITES; the order under every account, D-232, with All Inboxes in the Inbox's place and Unreplied after Flagged, the owner). Settings > Sidebar and Show on startup follow it. D-061 updated.
+- The Event colours window (`ui/paletteeditor.py`): the scroll area around the list of colours has no frame (the owner's screenshots, Linux and Windows).
+- Found: 2.0.289 left ui/test_ui_startup_view.py::test_a_hidden_folder_of_local_folders_is_greyed_among_the_choices expecting the old order of Local Folders' standard folders (that file was not among the tests run for 2.0.289); corrected now.
+- Server rule D-193: only the order and the look on this computer.
+- Checks: the Favorites order tests (ui/test_ui_startup_view, _models, _preferences) fail on 2.0.289 (6 and 1 error) and pass now; the palette editor test checks the frame (fails on 2.0.289); related tests pass (ui/test_ui_startup_view, _models, _preferences, _tree_rows, _folder_counts, _calendar, _icons: 111 and 13); Pyrefly 0 (Linux and win32); layer check kept. Full suite not run.
