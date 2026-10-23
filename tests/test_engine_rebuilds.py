@@ -17,9 +17,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_index_rebuild import make_store
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_rebuilds.py 2.0.301"
+__version__ = "test_engine_rebuilds.py 2.5.335"
 
 # --- Version history ----------------------------------------------------
+# v2.5.335: index.prepare tells how many messages it indexed (it said 0), also when no rebuild was needed
 # v2.0.301: a picture labelled inline in a plain-text message: listed, shown below the text, its paperclip filled in by the upgrade from format 12 (D-235)
 # v2.0.281: Initial version: a rebuild counts first, can be aborted, keeps the old index usable meanwhile; format 11 is upgraded in place
 #           and its Sent dates filled in, resumable; the start check tells which places need what (D-229)
@@ -103,6 +104,15 @@ def test_prepare_rebuilds_an_unusable_index_with_how_many_of_how_many_and_can_be
     with pytest.raises(RebuildAborted):
         call(setup.engine, "index.prepare", account=setup.account_id)
     assert call(setup.engine, "index.check")[0].need == "rebuild"  # still unusable: it starts again next time
+
+
+def test_prepare_tells_how_many_messages_it_indexed(setup: Setup) -> None:
+    fetched(setup)
+    index_path(setup).write_bytes(b"not a database")
+    rebuilt = call(setup.engine, "index.prepare", account=setup.account_id)
+    assert (rebuilt.messages, rebuilt.unreadable) == (3, 0) and rebuilt.seconds > 0  # the index window says "3 messages indexed"
+    ready = call(setup.engine, "index.prepare", account=setup.account_id)
+    assert (ready.messages, ready.unreadable, ready.seconds) == (3, 0, 0.0)  # nothing to rebuild: what the index holds
 
 
 def test_format_11_is_upgraded_in_place_and_its_sent_dates_are_filled_in_from_where_they_stopped(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:

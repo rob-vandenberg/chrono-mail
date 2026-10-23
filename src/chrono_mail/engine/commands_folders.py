@@ -13,9 +13,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 2.1.311"
+__version__ = "commands_folders.py 2.5.335"
 
 # --- Version history ----------------------------------------------------
+# v2.5.335: index.prepare tells how many messages it indexed (it always said 0: the index window's report read "0 messages indexed")
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.304: FILL_BATCH 100 (was 500): the counter moves about every second, a restart reads at most 100 messages again
 # v2.0.301: index.fill-sent also reads each message's attachments into the index (format 13, D-235)
@@ -187,11 +188,21 @@ def index_check(engine: Engine, parameters: NoParameters) -> tuple[IndexState, .
 
 
 def index_prepare(engine: Engine, parameters: AccountParameters) -> IndexResult:
-    """Make the index of this place usable before anything uses it: rebuilt when it cannot be used (aborted: RebuildAborted)."""
+    """Make the index of this place usable before anything uses it: rebuilt when it cannot be used (aborted: RebuildAborted). Tells what
+    the rebuild did, or, when none was needed, how many messages the index holds."""
     settings = engine.storage_settings(engine.resolve_account(parameters.account))
     store = engine.open_store(settings)
-    engine.open_index(settings, store).close()
-    return IndexResult(0, 0, 0.0)
+    path = engine.directories.index_file(settings.account.account_id)
+    with index_lock(path):  # accounts in Local Folders share one index: a second rebuild would build the same file at the same time
+        if not engine.index_usable(path):
+            index, report = engine.rebuild(settings.account.account_id, store, path, usable=False)  # nothing can use it until then
+            index.close()
+            return IndexResult(report.indexed, report.unreadable, report.seconds)
+    index = engine.open_index(settings, store)
+    try:
+        return IndexResult(index.message_count(), 0, 0.0)
+    finally:
+        index.close()
 
 
 FILL_BATCH: int = 100
