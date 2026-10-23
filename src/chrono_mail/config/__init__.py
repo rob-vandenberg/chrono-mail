@@ -19,15 +19,16 @@ from chrono_mail.config.passwords import (
     PasswordStore,
     ServerRole,
 )
-from chrono_mail.config.paths import AppDirectories, default_directories
+from chrono_mail.config.paths import AppDirectories, default_directories, profile_directories
 from chrono_mail.config.tags import KINDS as TAG_KINDS, SHORTCUTS as TAG_SHORTCUTS, TagColours, TagEntry, load_tags, parse_tags, save_tags, tags_to_text
 from chrono_mail.config.sidebar import LOCAL_FOLDER_KINDS, Group, Pin, Sidebar, load_sidebar, parse_sidebar, save_sidebar, sidebar_to_text
 from chrono_mail.config.rules import Action, Condition, Rule, RuleSet, load_rules, new_rule_id, parse_rules, rules_to_text, save_rules
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 1.1.204"
+__version__ = "__init__.py 2.3.320"
 
 # --- Version history ----------------------------------------------------
+# v2.3.320: Export profile_directories (D-243)
 # v1.1.204: Export LOCAL_FOLDER_KINDS
 # v0.5.135: Export TagEntry, TAG_KINDS and TAG_SHORTCUTS
 # v0.0.72: Accepted certificates belong to one server (host and port)
@@ -84,6 +85,7 @@ __all__ = [
     "ServerRole",
     "config_to_text",
     "default_directories",
+    "profile_directories",
     "load_config",
     "new_account_id",
     "parse_config",
