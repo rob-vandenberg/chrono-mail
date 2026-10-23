@@ -15,6 +15,10 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/chrono-mail-cli --help   # the command line (the same actions, without a screen)
 ```
 
+## The demo profile
+
+`./demo.sh` starts Chrono Mail with a made-up person's mail, apart from your own (`~/chrono-mail-demo`, built by `tools/demo/` the first time; `./demo.sh --fresh` builds it again). It is meant for screenshots and for trying things out; it never contacts a server. Close your own Chrono Mail first: one copy runs at a time.
+
 ## Where to start reading
 
 Start with [`AGENTS.md`](AGENTS.md), then [`PY-DEVELOPMENT-RULES.md`](PY-DEVELOPMENT-RULES.md) and [`STATUS.md`](STATUS.md). The design is in [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`DECISIONS.md`](DECISIONS.md); how the installers are made is in [`packaging/PACKAGING.md`](packaging/PACKAGING.md).

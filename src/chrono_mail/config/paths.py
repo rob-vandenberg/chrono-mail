@@ -7,9 +7,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 2.1.308"
+__version__ = "paths.py 2.3.320"
 
 # --- Version history ----------------------------------------------------
+# v2.3.320: profile_directories: everything of one profile in one folder of its own (the demo for screenshots, D-243)
 # v2.1.308: junk_filter_file: what the junk filter learned (D-238)
 # v2.0.302: opened_directory: copies of attachments opened in another program (D-236)
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
@@ -81,3 +82,8 @@ def default_directories() -> AppDirectories:
         platformdirs.user_config_path(APPLICATION_NAME, appauthor=False),
         platformdirs.user_data_path(APPLICATION_NAME, appauthor=False),
     )
+
+
+def profile_directories(folder: Path) -> AppDirectories:
+    """Everything of a profile in one folder of its own (its settings in config, its mail in data), apart from the person's own (D-243)."""
+    return AppDirectories(folder / "config", folder / "data")

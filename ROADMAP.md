@@ -152,7 +152,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 |---|---|---|
 | U.1 | `README.md` for the people who use the program (what it is, install and uninstall the easy way first, the first start, the recovery code); the developer notes moved to `CONTRIBUTING.md`. | done (2.3.317) |
 | U.2 | The user guide in `docs/`, one page at a time, each read by the owner before the next: Getting started, Accounts, Reading mail, Writing and sending, Keeping order, Junk mail, Searching, Calendar, Contacts, Tasks, Working offline and sync conflicts, Keeping your mail safe, Moving from another program, Keyboard shortcuts, Questions and problems. | in progress: the contents page `docs/README.md` and Getting started done (2.3.317) |
-| U.3 | Screenshots with made-up mail, after the restyle of Settings and of Calendar, Contacts and Tasks. | open |
+| U.3 | Screenshots with made-up mail, after the restyle of Settings and of Calendar, Contacts and Tasks. The demo profile for them (D-243, `./demo.sh`): step 1, the 14 accounts, folders, Local Folders, rules and settings, done (2.3.320); step 2 the 100,000 messages and spam, step 3 calendar, tasks and contacts, step 4 the list of every action and setting with what in the demo shows it. | in progress |
 | U.4 | Windows in the README once a setup.exe is on the release page. | open |
 
 ## Local Folders and Favorites (from 0.0.45)
