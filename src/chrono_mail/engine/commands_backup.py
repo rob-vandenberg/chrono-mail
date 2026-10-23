@@ -23,9 +23,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_backup.py 2.4.324"
+__version__ = "commands_backup.py 2.4.326"
 
 # --- Version history ----------------------------------------------------
+# v2.4.326: backup.contents per account with its parts and counts; backup.restore of the chosen accounts, parts and passwords (D-244)
 # v2.4.324: Restore: key.ensure, backup.contents, backup.restore, backup.check-account; backup.cancel stops a restore too (D-244)
 # v2.4.322: Initial: backup.choices, backup.new-password, backup.make, backup.cancel (Menu > File > Back up…, D-244)
 
@@ -93,10 +94,11 @@ class ReadParameters:
 
 @dataclass(frozen=True, slots=True)
 class ContentsRow:
-    account_id: str
+    entry_id: str  # the account's id; local-folders and this-computer for what was kept only on that computer
     name: str
-    mail: bool
-    items: bool
+    parts: tuple[str, ...]
+    messages: int
+    items: int
     here: bool
 
 
@@ -118,6 +120,14 @@ class RestoreParameters:
     password: str | None = field(default=None, metadata=option("The backup password, when the backup is protected", secret=True))
     remove_first: bool = field(default=False, metadata=option("Remove all data on this computer first (never on a server; put back when the restore fails)"))
     replace_existing: bool = field(default=False, metadata=option("Replace items that already exist (otherwise they are skipped)"))
+    accounts: tuple[str, ...] = field(default=(), metadata=option("The accounts to restore (as backup.contents names them); none given: all"))
+    messages: bool = field(default=True, metadata=option("Restore the messages"))
+    rules: bool = field(default=True, metadata=option("Restore the mail rules"))
+    calendars: bool = field(default=True, metadata=option("Restore the calendar items"))
+    contacts: bool = field(default=True, metadata=option("Restore the contacts"))
+    tasks: bool = field(default=True, metadata=option("Restore the tasks"))
+    settings: bool = field(default=True, metadata=option("Restore the settings"))
+    passwords: bool = field(default=True, metadata=option("Restore the account passwords, when the backup holds them"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +166,7 @@ def backup_contents(engine: Engine, parameters: ReadParameters) -> ContentsResul
     contents = read_contents(engine, Path(parameters.path).expanduser(), parameters.password)
     return ContentsResult(
         contents.created, contents.version, contents.parts,
-        tuple(ContentsRow(row.account_id, row.name, row.mail, row.items, row.here) for row in contents.accounts),
+        tuple(ContentsRow(row.entry_id, row.name, row.parts, row.messages, row.items, row.here) for row in contents.accounts),
         contents.messages, contents.items, contents.passwords, contents.protected,
     )
 
@@ -164,7 +174,14 @@ def backup_contents(engine: Engine, parameters: ReadParameters) -> ContentsResul
 def backup_restore(engine: Engine, parameters: RestoreParameters) -> RestoreResult:
     """Put a backup back on this computer: an account that is not here whole, one that is here with what it lacks (the server's data stays
     the server's to bring)."""
-    report = restore_backup(engine, RestoreChoice(Path(parameters.path).expanduser(), parameters.password, parameters.remove_first, parameters.replace_existing))
+    wanted = {
+        MESSAGES: parameters.messages, RULES: parameters.rules, CALENDARS: parameters.calendars, CONTACTS: parameters.contacts,
+        TASKS: parameters.tasks, SETTINGS: parameters.settings,
+    }
+    report = restore_backup(engine, RestoreChoice(
+        Path(parameters.path).expanduser(), parameters.password, parameters.remove_first, parameters.replace_existing, parameters.accounts or None,
+        frozenset(part for part, chosen in wanted.items() if chosen), parameters.passwords,
+    ))
     return RestoreResult(tuple(report.made), tuple(report.filled), report.messages, report.items, report.skipped, report.window_settings, tuple(report.notes))
 
 

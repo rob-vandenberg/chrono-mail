@@ -2,6 +2,7 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QFileDialog, QLabel, QMessageBox
 from pytestqt.qtbot import QtBot
 
@@ -15,9 +16,10 @@ from chrono_mail.ui.windowsettings import window_settings_text
 from tests.ui.world import Dialogs, World, answer_input, answer_open_file, build_world, menu_named, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_restore.py 2.4.325"
+__version__ = "test_ui_restore.py 2.4.326"
 
 # --- Version history ----------------------------------------------------
+# v2.4.326: the ticks: only what the backup holds, the accounts with their counts, greyed parts and Restore… (D-244)
 # v2.4.325: the window's settings of a backup are in use at once, and a Quit keeps them
 # v2.4.324: Initial: File > Restore… (D-244): the key first on a fresh installation, then the file, then its password (asked again when
 #           wrong); the Restore window's report with the test of every account it made; the recovery code window during a restore;
@@ -59,7 +61,8 @@ def test_a_protected_backup_asks_its_password_again_when_wrong_and_doubles_nothi
     answer_input(monkeypatch, [("WRONGPASSWORD", True), (password, True)])
     window = restore_window(world, qtbot)
     assert any(kind == "warning" and "does not open" in text for kind, _, text in world.dialogs.shown)
-    assert "already here" in window.summary.text() and "Messages: 3" in window.summary.text() and "passwords are in it" in window.summary.text()
+    rows = [window.accounts.item(number).text() for number in range(window.accounts.count())]
+    assert rows[0] == "me@example.com: 3 messages (already here: what it lacks is added)" and window.passwords.isVisible() and window.passwords.isChecked()
     assert window.remove_first.isEnabled() and window.replace_existing.isEnabled() and not window.remove_first.isChecked()
     window.remove_first.setChecked(True)
     assert not window.replace_existing.isEnabled()  # nothing is left to replace when everything is removed first
@@ -154,3 +157,20 @@ def test_the_window_settings_of_a_backup_are_in_use_at_once(world: World, qtbot:
     restore.close()
     window.quit_program()  # Quit saves what is in use now: the restored settings
     assert window.settings.value("reading_pane") == "bottom" and '"size"' not in str(window.settings.value("folder_columns"))
+
+
+def test_the_ticks_show_only_what_the_backup_holds_and_grey_what_cannot_be_restored(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    BACKUP_MAKE.answer(REGISTRY.run(world.engine, BACKUP_MAKE.id, {
+        "path": str(tmp_path / "mail.cmz"), "accounts": (world.account_id,), "calendars": False, "contacts": False, "tasks": False, "settings": False,
+    }))
+    answer_open_file(monkeypatch, tmp_path / "mail.cmz")
+    window = restore_window(world, qtbot)
+    assert list(window.part_boxes) == ["messages", "rules"] and not window.passwords.isVisible()  # a backup without passwords: nothing to choose
+    assert window.restore_button.isEnabled() and window.select_all.isChecked()
+    window.select_all.click()
+    assert not window.restore_button.isEnabled() and not window.part_boxes["messages"].isEnabled() and window.part_boxes["rules"].isEnabled()
+    window.accounts.item(0).setCheckState(Qt.CheckState.Checked)
+    assert window.restore_button.isEnabled() and window.part_boxes["messages"].isEnabled() and window.select_all.isChecked()
+    for box in window.part_boxes.values():
+        box.setChecked(False)
+    assert not window.restore_button.isEnabled()

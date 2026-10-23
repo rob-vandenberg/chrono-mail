@@ -21,7 +21,7 @@ from chrono_mail.config.sidebar import save_sidebar
 from chrono_mail.config.tags import load_tags
 from chrono_mail.core import AccountKind, ChronoMailError, CollectionInfo, CollectionKind, CryptoError, FolderRole, MessageFlag, StorageError
 from chrono_mail.crypto import DataKey, encrypt_message, generate_data_key
-from chrono_mail.engine.backup import CANCEL, FORMAT_VERSION, JOB_LOCK, MANIFEST_ENTRY
+from chrono_mail.engine.backup import CANCEL, FORMAT_VERSION, JOB_LOCK, LOCAL_ITEMS, LOCAL_MAIL, MANIFEST_ENTRY
 from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import open_pim
@@ -34,9 +34,11 @@ from chrono_mail.store.layout import parse_name, split_info
 from chrono_mail.sync.imap_state import ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 2.4.324"
+__version__ = "restore.py 2.4.326"
 
 # --- Version history ----------------------------------------------------
+# v2.4.326: the contents per account (Local Folders and this computer apart, with their parts and counts); a restore of the chosen
+#           accounts, parts and passwords only (D-244)
 # v2.4.324: Initial: Menu > File > Restore…: a .cmz backup back on this computer: an account that is not here whole, under its own
 #           identity; one that is here item by item, the server's data left to the server (D-193); "Remove all data on this computer
 #           first" sets this computer's data aside and removes it only after the restore succeeded; "Replace items that already
@@ -79,11 +81,15 @@ class _Reading(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class ContentsAccount:
-    account_id: str
+class ContentsEntry:
+    """One row of the Restore window's account list: an account of the backup (Local Folders and this computer's calendars, contacts and
+    tasks apart, as in the Backup window), the parts it has and how many messages and items."""
+
+    entry_id: str  # the account's id, LOCAL_MAIL or LOCAL_ITEMS
     name: str
-    mail: bool
-    items: bool
+    parts: tuple[str, ...]
+    messages: int
+    items: int
     here: bool  # the account exists on this computer: it is filled in item by item, never replaced whole
 
 
@@ -94,7 +100,7 @@ class BackupContents:
     created: str
     version: str
     parts: tuple[str, ...]
-    accounts: tuple[ContentsAccount, ...]
+    accounts: tuple[ContentsEntry, ...]
     messages: int
     items: int
     passwords: bool
@@ -107,6 +113,9 @@ class RestoreChoice:
     password: str | None
     remove_first: bool = False
     replace_existing: bool = False
+    entries: tuple[str, ...] | None = None  # the accounts to restore (ids, LOCAL_MAIL, LOCAL_ITEMS); None: every one in the backup
+    parts: frozenset[str] | None = None  # the parts to restore; None: every one in the backup
+    passwords: bool = True  # the account passwords, when the backup holds them
 
 
 @dataclass
@@ -202,21 +211,57 @@ def read_contents(engine: Engine, path: Path, password: str | None) -> BackupCon
     archive, manifest, protected = _open(path, password)
     try:
         backup_config = _backup_config(archive)
+        accounts = _entries(engine.config(), archive, manifest, backup_config)
     finally:
         archive.close()
-    config = engine.config()
-    rows = _accounts(manifest)
-    accounts = tuple(
-        ContentsAccount(settings.account.account_id, rows.get(settings.account.account_id, ("", False, False))[0] or _plain_name(settings),
-                        rows.get(settings.account.account_id, ("", False, False))[1], rows.get(settings.account.account_id, ("", False, False))[2],
-                        _same_here(config, settings) is not None)
-        for settings in backup_config.accounts
-    )
     parts = manifest.get("parts")
     return BackupContents(
         str(manifest.get("created", "")), str(manifest.get("version", "")), tuple(str(part) for part in parts) if isinstance(parts, list) else (),
         accounts, _number(manifest.get("messages")), _number(manifest.get("items")), manifest.get("passwords") is True, protected,
     )
+
+
+def _entries(config: AppConfig, archive: _Reading, manifest: dict[str, object], backup_config: AppConfig) -> tuple[ContentsEntry, ...]:
+    """The rows of the account list, in the order of the Backup window (Local Folders and this computer last); the counts come from the
+    backup's list of files, nothing is decrypted for them."""
+    names = archive.namelist()
+    rows = _accounts(manifest)
+    raw_parts = manifest.get("parts")
+    in_backup = {str(part) for part in cast(list[object], raw_parts)} if isinstance(raw_parts, list) else set[str]()
+    entries: list[ContentsEntry] = []
+    local: list[ContentsEntry] = []
+    for settings in backup_config.accounts:
+        account_id = settings.account.account_id
+        prefix = f"data/accounts/{account_id}/"
+        name, mail, items = rows.get(account_id, ("", True, True))
+        relatives = [name_in[len(prefix):].split("/") for name_in in names if name_in.startswith(prefix)]
+        messages = sum(1 for relative in relatives if _is_message(relative))
+        kinds = set(_collection_kinds(archive, names, prefix).values()) if items else set[CollectionKind]()
+        item_count = sum(1 for relative in relatives if _is_item(relative)) if items else 0
+        item_parts = tuple(part for part, kind in _ITEM_KINDS.items() if kind in kinds and part in in_backup)
+        mail_parts: tuple[str, ...] = ("messages",) if mail and "messages" in in_backup and settings.account.kind is not AccountKind.DAV else ()
+        here = _same_here(config, settings) is not None
+        if settings.account.kind is AccountKind.LOCAL:
+            if mail_parts:
+                local.append(ContentsEntry(LOCAL_MAIL, "Local Folders", mail_parts, messages, 0, here))
+            if item_parts:
+                local.append(ContentsEntry(LOCAL_ITEMS, "On this computer", item_parts, 0, item_count, here))
+            continue
+        entries.append(ContentsEntry(account_id, name or _plain_name(settings), mail_parts + item_parts, messages, item_count, here))
+    return tuple(entries + local)
+
+
+def _collection_kinds(archive: _Reading, names: list[str], prefix: str) -> dict[str, CollectionKind]:
+    """The calendars, task lists and address books of an account in the backup, by their folder name."""
+    kinds: dict[str, CollectionKind] = {}
+    for name in names:
+        relative = name[len(prefix):].split("/") if name.startswith(prefix) else list[str]()
+        if len(relative) == 4 and relative[:2] == ["pim", "collections"] and relative[3] == "collection.json":
+            try:
+                kinds[relative[2]] = CollectionKind(_json_object(_read(archive, name)).get("kind"))
+            except ValueError:
+                continue
+    return kinds
 
 
 def _number(value: object) -> int:
@@ -307,38 +352,49 @@ def _restore(engine: Engine, archive: _Reading, manifest: dict[str, object], key
     sealed = {name for name in cast(list[object], manifest.get("sealed")) if isinstance(name, str)} if isinstance(manifest.get("sealed"), list) else set[str]()
     raw_parts = manifest.get("parts")
     parts = {str(part) for part in cast(list[object], raw_parts)} if isinstance(raw_parts, list) else set[str]()
+    if choice.parts is not None:
+        parts &= choice.parts
     kinds = {kind for part, kind in _ITEM_KINDS.items() if part in parts}
     backup_config = _backup_config(archive)
-    passwords = _passwords(archive, names)
+    chosen = [(settings, *_chosen(choice.entries, settings)) for settings in backup_config.accounts]
+    chosen = [(settings, "messages" in parts and mail, bool(kinds) and items) for settings, mail, items in chosen if mail or items]
+    passwords = _passwords(archive, names) if choice.passwords else dict[str, dict[str, str]]()
     report = RestoreReport()
-    progress = _Progress(engine, _totals(names, backup_config))
-    for settings in backup_config.accounts:  # Local Folders first: accounts may keep their mail in it
-        if settings.account.kind is not AccountKind.LOCAL:
-            continue
-        _one_account(engine, archive, names, sealed, kinds, key, settings, choice, report, progress)
-    for settings in backup_config.accounts:
-        if settings.account.kind is AccountKind.LOCAL:
-            continue
-        _one_account(engine, archive, names, sealed, kinds, key, settings, choice, report, progress)
+    progress = _Progress(engine, _totals(archive, names, [(settings.account.account_id, mail, items) for settings, mail, items in chosen], kinds))
+    for settings, mail, items in sorted(chosen, key=lambda row: row[0].account.kind is not AccountKind.LOCAL):  # Local Folders first: accounts may keep their mail in it
+        _one_account(engine, archive, names, sealed, kinds if items else set[CollectionKind](), mail, key, settings, choice, report, progress)
     if "rules" in parts:
         _restore_rules(engine, archive, names, choice.replace_existing)
     if "settings" in parts:
         _restore_settings(engine, archive, names, sealed, key, choice.replace_existing, report)
-    _restore_passwords(engine, passwords, report, choice.replace_existing)
+    restored = {settings.account.account_id for settings, _, _ in chosen}
+    _restore_passwords(engine, {account_id: kept for account_id, kept in passwords.items() if account_id in restored}, report, choice.replace_existing)
     return report
 
 
-def _totals(names: list[str], backup_config: AppConfig) -> dict[str, int]:
-    accounts = {settings.account.account_id for settings in backup_config.accounts}
+def _chosen(entries: tuple[str, ...] | None, settings: AccountSettings) -> tuple[bool, bool]:
+    """Whether the person chose this account's mail and its calendars, contacts and tasks (Local Folders and this computer apart)."""
+    account_id = settings.account.account_id
+    if entries is None:
+        return True, True
+    if settings.account.kind is AccountKind.LOCAL:
+        return LOCAL_MAIL in entries, LOCAL_ITEMS in entries
+    return account_id in entries, account_id in entries
+
+
+def _totals(archive: _Reading, names: list[str], chosen: list[tuple[str, bool, bool]], kinds: set[CollectionKind]) -> dict[str, int]:
+    """How many messages and items the restore goes through (the progress counts them)."""
     totals = {DOING_MESSAGES: 0, DOING_ITEMS: 0}
-    for name in names:
-        parts = name.split("/")
-        if len(parts) < 4 or parts[0] != "data" or parts[1] != "accounts" or parts[2] not in accounts:
-            continue
-        if _is_message(parts[3:]):
-            totals[DOING_MESSAGES] += 1
-        elif _is_item(parts[3:]):
-            totals[DOING_ITEMS] += 1
+    for account_id, mail, items in chosen:
+        prefix = f"data/accounts/{account_id}/"
+        collections = {folder for folder, kind in _collection_kinds(archive, names, prefix).items() if kind in kinds} if items else set[str]()
+        for name in names:
+            if name.startswith(prefix):
+                relative = name[len(prefix):].split("/")
+                if mail and _is_message(relative):
+                    totals[DOING_MESSAGES] += 1
+                elif _is_item(relative) and relative[2] in collections:
+                    totals[DOING_ITEMS] += 1
     return totals
 
 
@@ -365,19 +421,21 @@ def _passwords(archive: _Reading, names: list[str]) -> dict[str, dict[str, str]]
 
 
 def _one_account(
-    engine: Engine, archive: _Reading, names: list[str], sealed: set[str], kinds: set[CollectionKind], key: DataKey, settings: AccountSettings,
+    engine: Engine, archive: _Reading, names: list[str], sealed: set[str], kinds: set[CollectionKind], mail: bool, key: DataKey, settings: AccountSettings,
     choice: RestoreChoice, report: RestoreReport, progress: _Progress,
 ) -> None:
+    """One account of the backup: its mail when mail, its calendars, contacts and tasks of these kinds; its definition always."""
     here = _same_here(engine.config(), settings)
     prefix = f"data/accounts/{settings.account.account_id}/"
     if here is None:
-        _restore_whole(engine, archive, [name for name in names if name.startswith(prefix)], prefix, sealed, kinds, key, settings, report, progress)
+        _restore_whole(engine, archive, [name for name in names if name.startswith(prefix)], prefix, sealed, kinds, mail, key, settings, report, progress)
         report.made.append(settings.account.account_id)
         return
     account_id = here.account.account_id
     if choice.replace_existing and account_id == settings.account.account_id and settings.account.kind is not AccountKind.LOCAL:
         engine.change_config(lambda fresh: fresh.with_account(settings))  # the account's own settings as they were in the backup
-    _fill_mail(engine, archive, names, prefix, here, choice.replace_existing, report, progress)
+    if mail:
+        _fill_mail(engine, archive, names, prefix, here, choice.replace_existing, report, progress)
     if kinds:
         _fill_items(engine, archive, names, prefix, here, kinds, choice.replace_existing, report, progress)
     report.filled.append(account_id)
@@ -387,7 +445,7 @@ def _one_account(
 
 
 def _restore_whole(
-    engine: Engine, archive: _Reading, names: list[str], prefix: str, sealed: set[str], kinds: set[CollectionKind], key: DataKey,
+    engine: Engine, archive: _Reading, names: list[str], prefix: str, sealed: set[str], kinds: set[CollectionKind], mail: bool, key: DataKey,
     settings: AccountSettings, report: RestoreReport, progress: _Progress,
 ) -> None:
     """The account's files are written in a folder of their own and that folder is renamed into place in one step, so the account comes
@@ -401,7 +459,7 @@ def _restore_whole(
     try:
         for name in names:
             relative = name[len(prefix):].split("/")
-            if not relative[-1] or not _wanted(relative, collections_kept):
+            if not relative[-1] or not _wanted(relative, collections_kept, mail):
                 continue
             doing = DOING_MESSAGES if _is_message(relative) else DOING_ITEMS if _is_item(relative) else ""
             if doing:
@@ -457,25 +515,15 @@ def _complete_layout(account: Path) -> None:
 
 def _kept_collections(archive: _Reading, names: list[str], prefix: str, kinds: set[CollectionKind]) -> set[str]:
     """The calendars, task lists and address books of the chosen kinds in the backup, by their folder name."""
-    kept: set[str] = set()
-    for name in names:
-        relative = name[len(prefix):].split("/")
-        if len(relative) == 4 and relative[:2] == ["pim", "collections"] and relative[3] == "collection.json":
-            description = _json_object(_read(archive, name))
-            try:
-                if CollectionKind(description.get("kind")) in kinds:
-                    kept.add(relative[2])
-            except ValueError:
-                continue
-    return kept
+    return {folder for folder, kind in _collection_kinds(archive, names, prefix).items() if kind in kinds}
 
 
-def _wanted(relative: list[str], collections_kept: set[str]) -> bool:
+def _wanted(relative: list[str], collections_kept: set[str], mail: bool) -> bool:
     if relative[0] == "pim" and len(relative) > 2 and relative[1] == "collections":
         return relative[2] in collections_kept
     if relative[0] == "pim":
         return bool(collections_kept)  # the description and the server's state go with the collections
-    return True
+    return mail  # the messages, and what the account knows of its server's mail (POP3 and IMAP state)
 
 
 def _json_object(data: bytes) -> dict[str, object]:
