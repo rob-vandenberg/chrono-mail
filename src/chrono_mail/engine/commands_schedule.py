@@ -12,14 +12,16 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.recurring import MAXIMUM_ATTEMPTS, Repeat, advance, describe_repeat, index_after, next_due, repeat_from_text, repeat_text
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER, SNOOZED_LOCK, describe_when, parse_when
 from chrono_mail.engine.session import OUTBOX, Engine
+from chrono_mail.engine.undorecord import UndoRecorder
 from chrono_mail.mime import REPEAT_HEADER, SEND_AT_HEADER, Address, OutgoingMessage, ParsedMessage, build_message, parse_message, send_time, with_extra_headers
 from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 2.1.311"
+__version__ = "commands_schedule.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: Cancel snooze of one message (message.wake with a message and undo) can be undone: back to Snoozed with its record (B-18)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: a scheduled reply, once sent, teaches the junk filter that its source is good mail (D-238)
 # v1.9.270: R-19: typed mail.unschedule (its answer is the draft it became)
@@ -542,6 +544,7 @@ MESSAGE_SNOOZED: TypedCommand[AccountOptional, tuple[SnoozedInfo, ...]] = TypedC
 class WakeParameters:
     account: str | None = field(default=None, metadata=option("Only this account (default: all accounts)"))
     message: str | None = field(default=None, metadata=option("Bring this snoozed message back now"))
+    undo: int = field(default=0, metadata=option("The number of the action, so Undo can put it back (0: it is not undone)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -556,7 +559,7 @@ def message_wake(engine: Engine, parameters: WakeParameters) -> WakeResult:
     now, woken, waiting = engine.clock(), 0, 0
     with SNOOZED_LOCK:
         for members in _places(engine, parameters.account):
-            found = _wake_place(engine, members[0].account.account_id, parameters.message, now)
+            found = _wake_place(engine, members[0].account.account_id, parameters.message, now, parameters.undo)
             woken, waiting = woken + found[0], waiting + found[1]
     return WakeResult(woken, waiting)
 
@@ -564,13 +567,16 @@ def message_wake(engine: Engine, parameters: WakeParameters) -> WakeResult:
 MESSAGE_WAKE: TypedCommand[WakeParameters, WakeResult] = TypedCommand("message.wake", WakeParameters, WakeResult)
 
 
-def _wake_place(engine: Engine, account: str, wanted: str | None, now: float) -> tuple[int, int]:
+def _wake_place(engine: Engine, account: str, wanted: str | None, now: float, undo: int = 0) -> tuple[int, int]:
+    """undo: Cancel snooze of the wanted message by the person: it is noted, so Undo can snooze it again (B-18); a timer's wake never is."""
     woken, waiting = 0, 0
     with open_mailbox(engine, account) as mailbox:
         try:
             here = {message.ref.store_id: message.ref for message in mailbox.store.list_messages((SNOOZED_FOLDER,))}
         except StorageError:
             return 0, 0  # there is no Snoozed folder
+        recorder = UndoRecorder(mailbox, account, undo if wanted in here else 0)
+        recorder.before([wanted] if wanted in here and wanted is not None else [])
         records = mailbox.store.properties.readable(here)
         for store_id, reference in here.items():
             record = records.get(store_id)
@@ -597,6 +603,9 @@ def _wake_place(engine: Engine, account: str, wanted: str | None, now: float) ->
             except StorageError:
                 pass  # the message is back; a record outside the Snoozed folder is never read, and a new snooze writes it anew
             woken += 1
+        if wanted is not None:
+            recorder.after([wanted])
+            recorder.keep("Cancel snooze")
     return woken, waiting
 
 

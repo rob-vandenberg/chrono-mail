@@ -24,12 +24,14 @@ from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.models import LOCAL_PLACES, SCHEDULED_TARGET_ROLES
 from chrono_mail.ui.statusreport import StatusReport
+from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 2.0.306"
+__version__ = "messageactions.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: every action of the person has its number for Undo (one key press, however many commands); Undo waits for the commands under way (B-18)
 # v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left: all archived is Unarchive, else the others are archived (D-101)
 # v1.9.274: R-19 round 4: the rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: every engine call typed; a scheduled message moved to Drafts is unscheduled by a typed call (_unschedules)
@@ -44,9 +46,10 @@ _WEEKDAYS: tuple[str, ...] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  
 class MessageActions(QObject):
     """What can be done with the selected messages. Every action is a command of the engine; the rows follow its facts (D-146)."""
 
-    def __init__(self, backend: Backend, state: MailState, status: StatusReport, messages: MessageListPane, parent: QWidget) -> None:
+    def __init__(self, backend: Backend, state: MailState, status: StatusReport, messages: MessageListPane, undoing: Undoing, parent: QWidget) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
+        self._undoing: Undoing = undoing
         self._state: MailState = state
         self._status: StatusReport = status
         self._messages: MessageListPane = messages
@@ -57,8 +60,9 @@ class MessageActions(QObject):
 
     # --- marks --------------------------------------------------------------------------------------------------
 
-    def set_flags(self, targets: list[tuple[str, str]], values: dict[str, bool], account: str | None = None) -> None:
-        """Marks for many messages: one command per folder (on an IMAP server in groups, R-08); each row takes its marks from the answer."""
+    def set_flags(self, targets: list[tuple[str, str]], values: dict[str, bool], account: str | None = None, undo: int = 0) -> None:
+        """Marks for many messages: one command per folder (on an IMAP server in groups, R-08); each row takes its marks from the answer.
+        undo: the number of the person's action (0: not undone, as the mark of a message opened in the reading pane)."""
         account_id = account or self._state.view.account
         if account_id is None or not targets:
             return
@@ -68,7 +72,7 @@ class MessageActions(QObject):
                 self._messages.model.replace_flags(message_id, flags)  # the folder list's numbers follow the facts (D-146)
 
         self.act_many(
-            MESSAGE_FLAG_MANY, lambda account, folder, messages: ManyFlagParameters(account, folder, messages, seen=values.get("seen"), flagged=values.get("flagged")),
+            MESSAGE_FLAG_MANY, lambda account, folder, messages: ManyFlagParameters(account, folder, messages, seen=values.get("seen"), flagged=values.get("flagged"), undo=undo),
             [(account_id, folder, message_id) for folder, message_id in targets], "", "Could not change", take_away=False, each=answered,
         )
 
@@ -80,8 +84,9 @@ class MessageActions(QObject):
             values["flagged"] = flagged
         rows = self._messages.selected_rows()
         account_of = self._state.account_of
+        number = self._undoing.new_action()  # one key press, however many accounts: one step of Undo
         for account in dict.fromkeys(account_of(row) for row in rows):  # the combined views mix accounts
-            self.set_flags([(row.folder, row.message_id) for row in rows if account_of(row) == account], values, account)
+            self.set_flags([(row.folder, row.message_id) for row in rows if account_of(row) == account], values, account, number)
 
     def toggle_read(self) -> None:
         rows = self._messages.selected_rows()
@@ -104,8 +109,9 @@ class MessageActions(QObject):
         in_trash = self._state.view.folder_role == "trash"
         if in_trash and QMessageBox.question(self._parent, "Delete", f"Delete {len(rows)} message(s) for good? This cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
+        number = self._undoing.new_action()
         self.act_many(
-            MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages), self._state.targets(rows),
+            MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages, undo=number), self._state.targets(rows),
             f"Deleted {len(rows)} message(s)" if in_trash else f"Moved {len(rows)} message(s) to Trash", "Could not delete",
         )
 
@@ -126,7 +132,11 @@ class MessageActions(QObject):
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
-        self.act_many(MESSAGE_UNARCHIVE_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages), self._state.targets(rows), f"Unarchived {len(rows)} message(s)", "Could not unarchive")
+        number = self._undoing.new_action()
+        self.act_many(
+            MESSAGE_UNARCHIVE_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number), self._state.targets(rows),
+            f"Unarchived {len(rows)} message(s)", "Could not unarchive",
+        )
 
     def archive_selected(self) -> None:
         """Archive, or Unarchive when every selected message is archived: it follows the messages, never the folder on the left (a
@@ -141,7 +151,11 @@ class MessageActions(QObject):
         if not rows:
             self._status.show("The selected message(s) are in the archive already")
             return
-        self.act_many(MESSAGE_ARCHIVE_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages), self._state.targets(rows), f"Archived {len(rows)} message(s)", "Could not archive")
+        number = self._undoing.new_action()
+        self.act_many(
+            MESSAGE_ARCHIVE_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number), self._state.targets(rows),
+            f"Archived {len(rows)} message(s)", "Could not archive",
+        )
 
     def junk_selected(self, junk: bool) -> None:
         """Move the selected messages to the Junk folder, or (in Junk) back to the Inbox."""
@@ -149,7 +163,11 @@ class MessageActions(QObject):
         if not rows or self._state.view.account is None:
             return
         finished = f"Moved {len(rows)} message(s) to Junk" if junk else f"Moved {len(rows)} message(s) back to the Inbox"
-        self.act_many(MESSAGE_JUNK_MANY if junk else MESSAGE_NOT_JUNK_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages), self._state.targets(rows), finished, "Could not move")
+        number = self._undoing.new_action()
+        self.act_many(
+            MESSAGE_JUNK_MANY if junk else MESSAGE_NOT_JUNK_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number),
+            self._state.targets(rows), finished, "Could not move",
+        )
 
     def junk_key(self) -> None:
         """One key does both, as the folder decides: Move to Junk, or in Junk back to the Inbox."""
@@ -183,8 +201,9 @@ class MessageActions(QObject):
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
+        number = self._undoing.new_action()
         self.act_many(
-            MESSAGE_SNOOZE_MANY, lambda account, folder, messages: ManySnoozeParameters(account, folder, until, messages), self._state.targets(rows),
+            MESSAGE_SNOOZE_MANY, lambda account, folder, messages: ManySnoozeParameters(account, folder, until, messages, undo=number), self._state.targets(rows),
             f"Snoozed {len(rows)} message(s) until {until.replace('T', ' ')}", "Could not snooze",
         )
 
@@ -195,6 +214,7 @@ class MessageActions(QObject):
             return
         account = self._state.view.account
         remaining = len(rows)
+        number = self._undoing.new_action()
         self._messages.take_away([row.message_id for row in rows])
 
         def done(result: object) -> None:
@@ -211,7 +231,8 @@ class MessageActions(QObject):
         for row in rows:
             message_id = row.message_id
             on_success, on_error = self._each(message_id, done, failed)
-            self._backend.ask(MESSAGE_WAKE, WakeParameters(self._state.account_of(row) or account, message_id), on_success, on_error, owner=self, in_order=True)
+            self._undoing.started()
+            self._backend.ask(MESSAGE_WAKE, WakeParameters(self._state.account_of(row) or account, message_id, undo=number), on_success, on_error, owner=self, in_order=True)
 
     # --- move and copy -----------------------------------------------------------------------------------------------------
 
@@ -234,8 +255,9 @@ class MessageActions(QObject):
         rows = self._messages.selected_rows()
         if not rows:
             return
+        number = self._undoing.new_action()
         self.act_many(
-            MESSAGE_COPY_MANY, lambda account, folder, messages: ManyTargetParameters(account, folder, target, messages), self._state.targets(rows),
+            MESSAGE_COPY_MANY, lambda account, folder, messages: ManyTargetParameters(account, folder, target, messages, undo=number), self._state.targets(rows),
             f"Copied {len(rows)} message(s) to {target}", "Could not copy", take_away=False,
         )
 
@@ -272,9 +294,11 @@ class MessageActions(QObject):
             done, failed = self._answers(len(unschedule), finished, "Could not move")
             for account, folder, message_id in unschedule:
                 on_success, on_error = self._each(message_id, done, failed)
+                self._undoing.started()
                 self._backend.ask(MAIL_UNSCHEDULE, MessageParameters(account, folder, message_id), on_success, on_error, owner=self, in_order=True)
         if moves:
-            self.act_many(MESSAGE_MOVE_MANY, lambda account, folder, messages: ManyTargetParameters(account, folder, target, messages), moves, finished, "Could not move")
+            number = self._undoing.new_action()  # a scheduled message moved to Drafts is not undone (its schedule is gone from the message)
+            self.act_many(MESSAGE_MOVE_MANY, lambda account, folder, messages: ManyTargetParameters(account, folder, target, messages, undo=number), moves, finished, "Could not move")
 
     def _unschedules(self, account: str, folder: str, target: str) -> bool:
         """Whether a move is the engine's unschedule: a scheduled message moved to Drafts goes back to being a draft (its schedule
@@ -293,8 +317,14 @@ class MessageActions(QObject):
         def done(result: MarkReadResult) -> None:
             changed = result.changed
             self._status.finished(f"Marked {changed} message(s) in {folder} as read" if changed else f"Nothing to mark in {folder}")
+            self._undoing.ended()
 
-        self._backend.ask(FOLDER_MARK_READ, FolderActionParameters(view.account, folder), done, lambda error: self._status.report("Could not mark the messages", error), owner=self)
+        def failed(error: ChronoMailError) -> None:
+            self._status.report("Could not mark the messages", error)
+            self._undoing.ended()
+
+        self._undoing.started()
+        self._backend.ask(FOLDER_MARK_READ, FolderActionParameters(view.account, folder, undo=self._undoing.new_action()), done, failed, owner=self)
 
     def empty_folder(self) -> None:
         """Delete everything in Trash or Junk for good, after asking."""
@@ -351,6 +381,7 @@ class MessageActions(QObject):
                 if each is not None:
                     each(result)
                 finish()
+                self._undoing.ended()
 
             def refused(error: ChronoMailError, messages: list[str] = messages) -> None:
                 for message_id in messages:
@@ -359,7 +390,9 @@ class MessageActions(QObject):
                 if isinstance(error, MessageNotFoundError):
                     self._status.warn_missing()
                 finish()
+                self._undoing.ended()
 
+            self._undoing.started()
             self._backend.ask(command, parameters(account, folder, tuple(messages)), answered, refused, owner=self, in_order=True)
 
     def _answers(self, count: int, finished: str, title: str) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
@@ -392,9 +425,11 @@ class MessageActions(QObject):
         def ended(result: object) -> None:
             self._messages.model.clear_pending(message_id)
             done(result)
+            self._undoing.ended()
 
         def refused(error: ChronoMailError) -> None:
             self._messages.model.clear_pending(message_id)
             failed(error)
+            self._undoing.ended()
 
         return ended, refused

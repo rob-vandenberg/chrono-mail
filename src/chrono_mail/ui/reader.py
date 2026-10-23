@@ -5,8 +5,8 @@ from functools import partial
 from email.utils import parseaddr
 from typing import override
 
-from PySide6.QtCore import QPoint, QPointF, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QImage, QMouseEvent, QPalette, QResizeEvent, QTextCursor
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPalette, QResizeEvent, QTextCursor
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -35,9 +35,10 @@ from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 2.0.302"
+__version__ = "reader.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: the plain-text view, read only, leaves Ctrl+Z and Redo to the window's Undo and Redo (it claimed them with nothing to undo, B-18)
 # v2.0.302: the attachment row: a click selects, a double click opens, a right-click offers Open attachment and Save as…; a right-click
 #           on a picture of the message offers the same (attachment_open_requested, D-236)
 # v2.0.301: the attached pictures the text does not show are shown below it, fitted to the width, never enlarged (B-11, D-235)
@@ -200,6 +201,15 @@ class PlainTextView(QTextBrowser):
         self.setHtml(f'<pre style="white-space: pre-wrap; font-family: inherit; margin: 0">{linkify(text)}</pre>{shown}')
         self._fit_pictures()
         self.moveCursor(QTextCursor.MoveOperation.Start)
+
+    @override
+    def event(self, e: QEvent, /) -> bool:
+        """Read only, the text has nothing to undo: the keys of Undo and Redo go to the window's Undo and Redo of mail (B-18)."""
+        if e.type() == QEvent.Type.ShortcutOverride and isinstance(e, QKeyEvent) and self.isReadOnly():
+            if e.matches(QKeySequence.StandardKey.Undo) or e.matches(QKeySequence.StandardKey.Redo):
+                e.ignore()
+                return False
+        return super().event(e)
 
     @override
     def loadResource(self, type: int, name: QUrl | str, /) -> object:

@@ -14,13 +14,15 @@ from chrono_mail.engine.pimaccess import open_pim, pim_account_ids
 from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
+from chrono_mail.engine.undorecord import UndoRecorder
 from chrono_mail.pim.edit import retag_item
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tags.py 2.1.311"
+__version__ = "commands_tags.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: message.tag with undo: the tags each message had are noted, so Undo can put them back (B-18)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed tag.create, tag.edit, tag.delete
 # v1.9.270: R-19: typed message.tag
@@ -88,6 +90,7 @@ class MailTagParameters:
     add: tuple[str, ...] = field(default=(), metadata=option("Tags to add (repeat for more)"))
     remove: tuple[str, ...] = field(default=(), metadata=option("Tags to take away (repeat for more)"))
     replace: bool = field(default=False, metadata=option("Give the messages exactly the tags of add (all others go)"))
+    undo: int = field(default=0, metadata=option("The number of the action, so Undo can put it back (0: it is not undone)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,14 +116,29 @@ def message_tag(engine: Engine, parameters: MailTagParameters) -> tuple[MessageT
     try:
         with open_mailbox(engine, parameters.account) as mailbox:
             folder = mailbox.folder(parameters.folder)
-            for message in parameters.messages:
-                current = () if parameters.replace else mailbox.tags_of(message)
-                wanted = clean_tags([*(tag for tag in current if tag.casefold() not in removed), *(tag for tag in added if tag.casefold() not in removed)])
-                results.append(MessageTagsResult(message, mailbox.set_tags(mailbox.reference(folder, message), wanted)))
+            recorder = UndoRecorder(mailbox, parameters.account, parameters.undo)
+            recorder.before(parameters.messages)
+            try:
+                for message in parameters.messages:
+                    current = () if parameters.replace else mailbox.tags_of(message)
+                    wanted = clean_tags([*(tag for tag in current if tag.casefold() not in removed), *(tag for tag in added if tag.casefold() not in removed)])
+                    results.append(MessageTagsResult(message, mailbox.set_tags(mailbox.reference(folder, message), wanted)))
+            finally:  # what was done before a failure can be undone too
+                recorder.after(result.message for result in results)
+                recorder.keep(_tags_name(parameters))
         give_colours(engine, added)
     except StorageError as error:
         raise UsageError(str(error)) from None
     return tuple(results)
+
+
+def _tags_name(parameters: MailTagParameters) -> str:
+    """What a change of tags is called in Undo: "Tag Work", "Remove tag Work", or "Change the tags"."""
+    if not parameters.replace and len(parameters.add) == 1 and not parameters.remove:
+        return f"Tag {parameters.add[0]}"
+    if not parameters.replace and len(parameters.remove) == 1 and not parameters.add:
+        return f"Remove tag {parameters.remove[0]}"
+    return "Change the tags"
 
 
 def give_colours(engine: Engine, names: tuple[str, ...]) -> None:

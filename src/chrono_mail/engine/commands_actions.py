@@ -1,20 +1,22 @@
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 
-from chrono_mail.core import AccountKind, ChronoMailError, Folder, FolderRole, MessageRef, StorageError
+from chrono_mail.core import AccountKind, ChronoMailError, Folder, FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
 from chrono_mail.engine.commands_rules import apply_to_new
 from chrono_mail.engine.junkfilter import learn
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
+from chrono_mail.engine.undorecord import UndoRecorder
 from chrono_mail.mime import parse_message
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_actions.py 2.1.311"
+__version__ = "commands_actions.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: Mark all as read with undo: the messages it marked are noted, so Undo makes them unread again (B-18)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: Junk and Not junk teach the junk filter; Not junk runs the rules on the message, so it goes where they would have put it (D-238)
 # v1.9.270: R-19: typed folder.mark-read, folder.empty
@@ -173,6 +175,7 @@ def not_junk_one(mailbox: Mailbox, reference: MessageRef) -> JunkResult:
 class FolderActionParameters:
     account: str = field(metadata=option("The account"))
     folder: str = field(metadata=option("The folder"))
+    undo: int = field(default=0, metadata=option("Mark all as read: the number of the action, so Undo can put it back (0: it is not undone)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,7 +188,14 @@ def folder_mark_read(engine: Engine, parameters: FolderActionParameters) -> Mark
     """Mark every unread message of a folder as read."""
     with open_mailbox(engine, parameters.account) as mailbox:
         path = mailbox.folder(parameters.folder)
-        return MarkReadResult("/".join(path), mailbox.mark_folder_read(path))
+        recorder = UndoRecorder(mailbox, parameters.account, parameters.undo)
+        unread = [message.ref.store_id for message in mailbox.store.list_messages(path) if MessageFlag.SEEN not in message.flags] if parameters.undo > 0 else []
+        recorder.before(unread)
+        try:
+            return MarkReadResult("/".join(path), mailbox.mark_folder_read(path))
+        finally:
+            recorder.after(unread)
+            recorder.keep("Mark all as read")
 
 
 @dataclass(frozen=True, slots=True)

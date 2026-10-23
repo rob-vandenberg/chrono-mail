@@ -1,9 +1,9 @@
 import base64
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QModelIndex, QPoint, QPointF, QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import QModelIndex, QObject, QPoint, QPointF, QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDragLeaveEvent, QDragMoveEvent, QPalette
 from PySide6.QtWidgets import QApplication, QDialog, QInputDialog, QLabel, QMenu, QMessageBox
 from pytestqt.qtbot import QtBot
@@ -12,6 +12,7 @@ from chrono_mail.config import ServerRole
 from chrono_mail.engine.commands_sidebar import FAVORITE_PIN, PinParameters
 from chrono_mail.ui.sections import CALENDAR, MAIL
 from chrono_mail.ui.accountdialog import AccountDialog
+from chrono_mail.ui.backend import Failure, Success
 from chrono_mail.ui.columnsdialog import ListChoice
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, KIND_ROLE
@@ -19,9 +20,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 2.1.310"
+__version__ = "test_ui_window.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: the commands of a move counted without the question what Undo would do (mail.undo-labels, B-18)
 # v2.1.310: a group's account starts with Inbox, then Unread (the order of D-232 since 2.0.298)
 # v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left (the owner's search of all folders, D-101)
 # v2.0.302: an attachment is saved through its right-click menu's Save as… (a click only selects it, D-236)
@@ -627,11 +629,19 @@ def test_several_messages_go_as_one_command_and_failures_are_told_once(world: Wo
     monkeypatch.setattr(Mailbox, "move", move)
     asked: list[str] = []
     real_call = world.backend.call
-    monkeypatch.setattr(world.backend, "call", lambda command, *rest, **named: (asked.append(command), real_call(command, *rest, **named))[1])
+
+    def counted(
+        command: str, values: Mapping[str, object], on_success: Success, on_error: Failure | None = None, owner: QObject | None = None, waiting: bool = False,
+        in_order: bool = False, checking: bool = False,
+    ) -> int:
+        asked.append(command)
+        return real_call(command, values, on_success, on_error, owner, waiting, in_order, checking)
+
+    monkeypatch.setattr(world.backend, "call", counted)
     window.list_view.selectAll()
     window.mail_actions.move_selected("Junk")
     wait(qtbot, lambda: model.rowCount() == 1 and not model.pending)
-    assert asked == ["message.move-many"]  # one command for the three
+    assert [command for command in asked if command != "mail.undo-labels"] == ["message.move-many"]  # one command for the three
     assert str(getattr(model.row_at(0), "message_id")) == refused  # it came back
     assert window.status_label.text() == "Could not move: 1 of 3 message(s): the disk is full"
     assert world.call("message.list", account=world.account_id, folder="Junk").total == 2

@@ -10,18 +10,20 @@ from chrono_mail.core import ChronoMailError, ConfigurationError, CryptoError, F
 from chrono_mail.crypto import DataKey
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_addressbook import AddressesParameters, contact_addresses
-from chrono_mail.engine.junkwords import JUNK_SCORE, JunkWords, fingerprint, load_words, save_words, tokens
+from chrono_mail.engine.junkwords import GOOD, JUNK, JUNK_SCORE, JunkWords, fingerprint, load_words, save_words, tokens
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand
 from chrono_mail.engine.rule_engine import Subject, applies_to, condition_holds, header_values, rule_matches
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER
 from chrono_mail.engine.session import OUTBOX, Engine
+from chrono_mail.engine.undorecord import Verdicts
 from chrono_mail.mime import ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "junkfilter.py 2.1.312"
+__version__ = "junkfilter.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: learn and learn_from_move say what each message was learned as before (Verdicts); set_verdicts puts that back (Undo, B-18)
 # v2.1.312: the busy bar names junk.learn-existing "Junk filter: checking mail for spam" (the owner: calm, not alarming)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.310: junk.learn-existing tells how far it is (mailbox n of m, messages read of all), every 100 messages
@@ -101,33 +103,57 @@ def _learn_all(engine: Engine, gathered: list[tuple[str, frozenset[str]]], junk:
         return changed
 
 
-def _gather(mailbox: Mailbox, references: list[MessageRef]) -> list[tuple[str, frozenset[str]]]:
-    gathered: list[tuple[str, frozenset[str]]] = []
+def _gather(mailbox: Mailbox, references: list[MessageRef]) -> list[tuple[str, str, frozenset[str]]]:
+    """Each message that can be read: its store id, its fingerprint and its words."""
+    gathered: list[tuple[str, str, frozenset[str]]] = []
     for reference in references:
         try:
             raw = mailbox.store.read(reference, hint=mailbox.hint(reference.store_id))
         except ChronoMailError:
             continue  # a message that cannot be read teaches nothing
-        gathered.append((fingerprint(raw), tokens(parse_message(raw))))
+        gathered.append((reference.store_id, fingerprint(raw), tokens(parse_message(raw))))
     return gathered
 
 
-def learn(mailbox: Mailbox, references: list[MessageRef], junk: bool) -> None:
-    """The person said these messages are junk (or good). Never raises: learning never stands in the way of what the person did."""
-    if references:
-        _learn_all(mailbox.engine, _gather(mailbox, references), junk)
+def set_verdicts(mailbox: Mailbox, wanted: list[tuple[MessageRef, str | None]]) -> Verdicts:
+    """Give these messages these verdicts (JUNK, GOOD, or None: not learned at all). Never raises: learning never stands in the way of
+    what the person did. Returns the ones that changed."""
+    changed: Verdicts = {}
+    if not wanted:
+        return changed
+    verdict_of = {reference.store_id: verdict for reference, verdict in wanted}
+    gathered = _gather(mailbox, [reference for reference, _ in wanted])
+    engine = mailbox.engine
+    with engine.junk.lock:
+        words = _loaded(engine)
+        if words is None:
+            return changed
+        for store_id, key, found in gathered:
+            before = words.verdicts.get(key)
+            if words.set_verdict(key, found, verdict_of[store_id]):
+                changed[store_id] = (before, verdict_of[store_id])
+        if changed:
+            _save(engine, words)
+    return changed
 
 
-def learn_from_move(mailbox: Mailbox, source: tuple[str, ...], references: list[MessageRef]) -> None:
+def learn(mailbox: Mailbox, references: list[MessageRef], junk: bool) -> Verdicts:
+    """The person said these messages are junk (or good). Never raises. Returns what changed (Undo puts it back, B-18)."""
+    verdict = JUNK if junk else GOOD
+    return set_verdicts(mailbox, [(reference, verdict) for reference in references])
+
+
+def learn_from_move(mailbox: Mailbox, source: tuple[str, ...], references: list[MessageRef]) -> Verdicts:
     """A move by the person: into Junk teaches junk; out of Junk (not to Trash) teaches good."""
     if not references:
-        return
+        return {}
     roles = {folder.path: folder.role for folder in mailbox.store.list_folders()}
     before, after = roles.get(source), roles.get(references[0].folder_path)
     if after is FolderRole.JUNK and before is not FolderRole.JUNK:
-        learn(mailbox, references, junk=True)
-    elif before is FolderRole.JUNK and after not in (FolderRole.JUNK, FolderRole.TRASH):
-        learn(mailbox, references, junk=False)
+        return learn(mailbox, references, junk=True)
+    if before is FolderRole.JUNK and after not in (FolderRole.JUNK, FolderRole.TRASH):
+        return learn(mailbox, references, junk=False)
+    return {}
 
 
 # --- new mail --------------------------------------------------------------------------------------------------------

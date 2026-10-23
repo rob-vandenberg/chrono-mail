@@ -15,12 +15,14 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.schedule import SNOOZED_FOLDER, parse_when
 from chrono_mail.engine.session import Engine
+from chrono_mail.engine.undorecord import UndoRecorder, Verdicts
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_many.py 2.1.311"
+__version__ = "commands_many.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: undo: an action given with a number notes each message before and after, so Undo can put it back (B-18)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: Junk, Not junk and moves into or out of Junk teach the junk filter, once for the whole group (D-238)
 # v1.9.265: NotDone.missing: the message was not done because its file is gone here, so the window warns about it (D-109; lost in 1.1.247)
@@ -34,6 +36,7 @@ class ManyParameters:
     account: str = field(metadata=option("The account"))
     folder: str = field(metadata=option("The folder the messages are in"))
     messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+    undo: int = field(default=0, metadata=option("The number of the action, so Undo can put it back (0: it is not undone)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +45,7 @@ class ManyTargetParameters:
     folder: str = field(metadata=option("The folder the messages are in"))
     target: str = field(metadata=option("The folder to move or copy them to"))
     messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+    undo: int = field(default=0, metadata=option("The number of the action, so Undo can put it back (0: it is not undone)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +54,7 @@ class ManyDeleteParameters:
     folder: str = field(metadata=option("The folder the messages are in"))
     messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
     permanent: bool = field(default=False, metadata=option("Remove for good instead of moving to Trash"))
+    undo: int = field(default=0, metadata=option("The number of the action, so Undo can put it back (0: it is not undone)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +65,7 @@ class ManyFlagParameters:
     seen: bool | None = field(default=None, metadata=option("Mark read (true) or unread (false)"))
     flagged: bool | None = field(default=None, metadata=option("Flag (true) or unflag (false)"))
     replied: bool | None = field(default=None, metadata=option("Mark as replied to (true) or not (false)"))
+    undo: int = field(default=0, metadata=option("The number of the action, so Undo can put it back (0: it is not undone)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +74,7 @@ class ManySnoozeParameters:
     folder: str = field(metadata=option("The folder the messages are in"))
     until: str = field(metadata=option("When they come back, a local time like 2026-10-11T09:00"))
     messages: tuple[str, ...] = field(default=(), metadata=option("A message id (repeat for more)"))
+    undo: int = field(default=0, metadata=option("The number of the action, so Undo can put it back (0: it is not undone)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,10 +98,12 @@ class ManyResult:
 
 def _each(
     engine: Engine, account: str, folder: str, messages: tuple[str, ...], prepare: Callable[[Mailbox, list[MessageRef]], None],
-    act: Callable[[Mailbox, MessageRef], object], after: Callable[[Mailbox, list[tuple[MessageRef, object]]], None] | None = None,
+    act: Callable[[Mailbox, MessageRef], object], after: Callable[[Mailbox, list[tuple[MessageRef, object]]], Verdicts] | None = None,
+    undo: tuple[int, str] = (0, ""),
 ) -> tuple[ManyResult, list[tuple[MessageRef, object]]]:
     """The group: the messages named, prepared on the server together, then each one's own step; a failure is that message's alone.
-    after: what follows for the ones done, once for the group (the junk filter learns them)."""
+    after: what follows for the ones done, once for the group (the junk filter learns them, and says what it learned).
+    undo: the action's number and name: each message is noted before and after, so Undo can put it back (B-18)."""
     if len(messages) > MAXIMUM_MESSAGES:
         raise UsageError(f"At most {MAXIMUM_MESSAGES:,} messages at once")
     failed: list[NotDone] = []
@@ -107,6 +116,8 @@ def _each(
                 refs.append(mailbox.reference(source, _check_id(message)))
             except ChronoMailError as error:
                 failed.append(_not_done(message, error))
+        recorder = UndoRecorder(mailbox, account, undo[0])
+        recorder.before(ref.store_id for ref in refs)
         with mailbox.together():
             try:
                 prepare(mailbox, refs)
@@ -117,8 +128,13 @@ def _each(
                     answers.append((ref, act(mailbox, ref)))
                 except ChronoMailError as error:
                     failed.append(_not_done(ref.store_id, error))
-        if after is not None and answers:
-            after(mailbox, answers)
+        verdicts = after(mailbox, answers) if after is not None and answers else {}
+        copies = [(ref, answer) for ref, answer in answers if isinstance(answer, MessageRef) and answer.store_id != ref.store_id]  # a copy has an id of its own
+        for original, copy in copies:
+            recorder.copied(original, copy)
+        copied = {original.store_id for original, _ in copies}
+        recorder.after((ref.store_id for ref, _ in answers if ref.store_id not in copied), verdicts)
+        recorder.keep(undo[1])
     return ManyResult(tuple(ref.store_id for ref, _ in answers), tuple(failed)), answers
 
 
@@ -126,7 +142,7 @@ def message_delete_many(engine: Engine, parameters: ManyDeleteParameters) -> Man
     """Move many messages of a folder to Trash, or remove them for good (permanent, or in Trash)."""
     result, answers = _each(
         engine, parameters.account, parameters.folder, parameters.messages, lambda mailbox, refs: mailbox.prepare_deletes(refs, parameters.permanent),
-        lambda mailbox, ref: mailbox.delete(ref, parameters.permanent),
+        lambda mailbox, ref: mailbox.delete(ref, parameters.permanent), undo=(parameters.undo, "Move to Trash"),
     )
     return ManyResult(result.done, result.failed, tuple(ref.store_id for ref, outcome in answers if outcome == "gone"))
 
@@ -139,10 +155,13 @@ def message_move_many(engine: Engine, parameters: ManyTargetParameters) -> ManyR
         target = mailbox.folder(parameters.target)
         mailbox.prepare_moves(refs, target)
 
-    def taught(mailbox: Mailbox, answers: list[tuple[MessageRef, object]]) -> None:  # into or out of Junk (D-238)
-        learn_from_move(mailbox, answers[0][0].folder_path, [moved for _, moved in answers if isinstance(moved, MessageRef)])
+    def taught(mailbox: Mailbox, answers: list[tuple[MessageRef, object]]) -> Verdicts:  # into or out of Junk (D-238)
+        return learn_from_move(mailbox, answers[0][0].folder_path, [moved for _, moved in answers if isinstance(moved, MessageRef)])
 
-    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: mailbox.move(ref, target), taught)[0]
+    return _each(
+        engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: mailbox.move(ref, target), taught,
+        undo=(parameters.undo, f"Move to {parameters.target}"),
+    )[0]
 
 
 def message_copy_many(engine: Engine, parameters: ManyTargetParameters) -> ManyResult:
@@ -153,7 +172,10 @@ def message_copy_many(engine: Engine, parameters: ManyTargetParameters) -> ManyR
         target = mailbox.folder(parameters.target)
         mailbox.prepare_copies(refs, target)
 
-    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: mailbox.copy(ref, target))[0]
+    return _each(
+        engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: mailbox.copy(ref, target),
+        undo=(parameters.undo, f"Copy to {parameters.target}"),
+    )[0]
 
 
 def message_flag_many(engine: Engine, parameters: ManyFlagParameters) -> ManyResult:
@@ -174,9 +196,21 @@ def message_flag_many(engine: Engine, parameters: ManyFlagParameters) -> ManyRes
         flags = wanted.get(ref.store_id) or flags_wanted(mailbox.current_flags(ref), parameters.seen, parameters.flagged, parameters.replied)
         return mailbox.set_flags(ref, flags)
 
-    result, answers = _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act)
+    result, answers = _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act, undo=(parameters.undo, _marks_name(parameters)))
     marks = tuple((ref.store_id, flag_names(flags)) for ref, flags in answers if isinstance(flags, frozenset))
     return ManyResult(result.done, result.failed, flags=marks)
+
+
+def _marks_name(parameters: ManyFlagParameters) -> str:
+    """What a change of marks is called in Undo: "Mark as read", "Flag", or "Change the marks" for more at once."""
+    names: list[str] = []
+    if parameters.seen is not None:
+        names.append("Mark as read" if parameters.seen else "Mark as unread")
+    if parameters.flagged is not None:
+        names.append("Flag" if parameters.flagged else "Unflag")
+    if parameters.replied is not None:
+        names.append("Mark as replied" if parameters.replied else "Mark as not replied")
+    return names[0] if len(names) == 1 else "Change the marks"
 
 
 def message_archive_many(engine: Engine, parameters: ManyParameters) -> ManyResult:
@@ -189,7 +223,7 @@ def message_archive_many(engine: Engine, parameters: ManyParameters) -> ManyResu
     def act(mailbox: Mailbox, ref: MessageRef) -> object:
         return archive_one(mailbox, ref, *archive[0])
 
-    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act)[0]
+    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act, undo=(parameters.undo, "Archive"))[0]
 
 
 def message_unarchive_many(engine: Engine, parameters: ManyParameters) -> ManyResult:
@@ -210,7 +244,7 @@ def message_unarchive_many(engine: Engine, parameters: ManyParameters) -> ManyRe
     def act(mailbox: Mailbox, ref: MessageRef) -> object:
         return unarchive_one(mailbox, ref, *(targets.get(ref.store_id) or unarchive_target(mailbox, ref)))
 
-    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act)[0]
+    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act, undo=(parameters.undo, "Unarchive"))[0]
 
 
 def _junk_results(answers: list[tuple[MessageRef, object]]) -> list[JunkResult]:
@@ -222,7 +256,7 @@ def message_junk_many(engine: Engine, parameters: ManyParameters) -> ManyResult:
         engine, parameters.account, parameters.folder, parameters.messages,
         lambda mailbox, refs: mailbox.prepare_moves(refs, mailbox.role_folder(FolderRole.JUNK)),
         lambda mailbox, ref: junk_one(mailbox, ref, mailbox.role_folder(FolderRole.JUNK)),
-        lambda mailbox, answers: learn(mailbox, junk_places(mailbox, _junk_results(answers)), junk=True),
+        lambda mailbox, answers: learn(mailbox, junk_places(mailbox, _junk_results(answers)), junk=True), undo=(parameters.undo, "Move to Junk"),
     )
     return ManyResult(result.done, result.failed, tuple(ref.store_id for ref, answer in answers if getattr(answer, "gone", False)))
 
@@ -231,7 +265,7 @@ def message_not_junk_many(engine: Engine, parameters: ManyParameters) -> ManyRes
     return _each(
         engine, parameters.account, parameters.folder, parameters.messages,
         lambda mailbox, refs: mailbox.prepare_moves(refs, mailbox.role_folder(FolderRole.INBOX)), not_junk_one,
-        lambda mailbox, answers: learn(mailbox, junk_places(mailbox, _junk_results(answers)), junk=False),
+        lambda mailbox, answers: learn(mailbox, junk_places(mailbox, _junk_results(answers)), junk=False), undo=(parameters.undo, "Not junk"),
     )[0]
 
 
@@ -242,7 +276,9 @@ def message_snooze_many(engine: Engine, parameters: ManySnoozeParameters) -> Man
         mailbox.ensure_folder((SNOOZED_FOLDER,))
         mailbox.prepare_moves(refs, (SNOOZED_FOLDER,))
 
-    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: snooze_one(mailbox, ref, until))[0]
+    return _each(
+        engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: snooze_one(mailbox, ref, until), undo=(parameters.undo, "Snooze"),
+    )[0]
 
 
 MESSAGE_DELETE_MANY: TypedCommand[ManyDeleteParameters, ManyResult] = TypedCommand("message.delete-many", ManyDeleteParameters, ManyResult)
