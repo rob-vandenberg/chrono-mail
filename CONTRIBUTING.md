@@ -17,7 +17,7 @@ python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 ## The demo profile
 
-`./demo.sh` starts Chrono Mail with a made-up person's mail, apart from your own (`~/chrono-mail-demo`, built by `tools/demo/` the first time; `./demo.sh --fresh` builds it again). It is meant for screenshots and for trying things out; it never contacts a server. Close your own Chrono Mail first: one copy runs at a time.
+`./demo.sh` starts Chrono Mail with a made-up person's mail, apart from your own (`~/chrono-mail-demo`, built by `tools/demo/` the first time, about a quarter of an hour for its 100,000 messages; `./demo.sh --fresh` builds it again). What it shows is listed in [`tools/demo/COVERAGE.md`](tools/demo/COVERAGE.md). It is meant for screenshots and for trying things out; it never contacts a server. Close your own Chrono Mail first: one copy runs at a time.
 
 ## Where to start reading
 

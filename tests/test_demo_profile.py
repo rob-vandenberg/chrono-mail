@@ -15,9 +15,10 @@ from tools.demo.build import BuiltDemo, build_demo, remove_demo
 from tools.demo.cast import ACCOUNTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_demo_profile.py 2.3.320"
+__version__ = "test_demo_profile.py 2.3.321"
 
 # --- Version history ----------------------------------------------------
+# v2.3.321: Built without mail (the mail has its own tests)
 # v2.3.320: Initial: the demo profile's accounts, folders, rules and settings, and its removal (D-243)
 
 
@@ -29,7 +30,7 @@ def stores() -> tuple[InMemoryPasswordStore, InMemoryKeyStore]:
 @pytest.fixture
 def built(tmp_path: Path, stores: tuple[InMemoryPasswordStore, InMemoryKeyStore]) -> tuple[BuiltDemo, Engine]:
     passwords, keys = stores
-    demo = build_demo(tmp_path / "demo", passwords, keys)
+    demo = build_demo(tmp_path / "demo", passwords, keys, messages=0)  # the accounts only: the mail is tested in test_demo_mail.py
     return demo, Engine(profile_directories(demo.folder), passwords, keys)
 
 
