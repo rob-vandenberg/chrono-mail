@@ -146,6 +146,15 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | I.1 | Import from the reference client's three exports (settings .xml, mail .eml folder, backup .zip): POP3 accounts with passwords, rules, contacts, all mail into Local Folders with its read, flagged and replied marks; resumable, no duplicates. | done (0.5.132); the owner's own import and check to do |
 | I.2 | The rest of the password key (passwords longer than 12 characters), from a test export with a known long password. | open |
 
+## Documentation (B-07, from 2.3.317, D-242)
+
+| # | Task | Status |
+|---|---|---|
+| U.1 | `README.md` for the people who use the program (what it is, install and uninstall the easy way first, the first start, the recovery code); the developer notes moved to `CONTRIBUTING.md`. | done (2.3.317) |
+| U.2 | The user guide in `docs/`, one page at a time, each read by the owner before the next: Getting started, Accounts, Reading mail, Writing and sending, Keeping order, Junk mail, Searching, Calendar, Contacts, Tasks, Working offline and sync conflicts, Keeping your mail safe, Moving from another program, Keyboard shortcuts, Questions and problems. | in progress: the contents page `docs/README.md` and Getting started done (2.3.317) |
+| U.3 | Screenshots with made-up mail, after the restyle of Settings and of Calendar, Contacts and Tasks. | open |
+| U.4 | Windows in the README once a setup.exe is on the release page. | open |
+
 ## Local Folders and Favorites (from 0.0.45)
 - DONE (0.0.45) Local Folders as shared storage for POP3 accounts, choice at setup and in the account settings, safe move both ways, identical reply behaviour.
 - Next: sidebar (Local Folders node, collapsible accounts, account groups), unified views with Favorites and Inboxes sections, pinned folders, switches in the settings.

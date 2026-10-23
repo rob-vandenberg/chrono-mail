@@ -3,11 +3,12 @@ from dataclasses import dataclass, replace
 from typing import override
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Signal
-from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QWidget
+from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_outbox import MAIL_CANCEL_SEND, MAIL_END_COUNTDOWN, CancelSendResult, OutboxMessageParameters
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.colours import theme
 from chrono_mail.ui.composing import Composing
 from chrono_mail.ui.mailchecking import MailChecking
 from chrono_mail.ui.mailstate import MailState
@@ -15,13 +16,17 @@ from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "sendnotices.py 2.2.314"
+__version__ = "sendnotices.py 2.3.317"
 
 # --- Version history ----------------------------------------------------
+# v2.3.317: the notice as the owner's mockup: the text above, Send now and Cancel below it at the right, a rounded outline, more room
 # v2.2.314: Initial: the notice of a delayed send at the bottom left (Send now, Cancel, its countdown) and the question on Quit while
 #           messages wait in the Outbox (B-21, B-20)
 
 MARGIN: int = 8  # between the notices, and to the edges of the window
+INSIDE: int = 12  # the room inside a notice, all round
+OUTLINE: int = 2  # the width of its outline
+ROUNDING: int = 6  # the radius of its corners
 
 
 def quit_question(parent: QWidget, count: int) -> tuple[str, bool]:
@@ -46,7 +51,8 @@ class Waiting:
 
 
 class SendNotice(QFrame):
-    """One delayed send at the bottom left of the main window: "Sending "Subject" in 7 s" with Send now and Cancel; it counts down."""
+    """One delayed send at the bottom left of the main window, as the owner's mockup: "Sending "Subject" in 7 s" above, Send now and Cancel
+    below it at the right, in a rounded outline; it counts down."""
 
     send_now = Signal()
     cancel = Signal()
@@ -54,17 +60,24 @@ class SendNotice(QFrame):
 
     def __init__(self, subject: str, seconds: int, parent: QWidget) -> None:
         super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setAutoFillBackground(True)  # the window's own colours (D-158)
+        self.setObjectName("sendNotice")
+        self.setStyleSheet(  # the window's own background, the outline from the colour file (D-158)
+            f"#sendNotice {{ background-color: palette(window); border: {OUTLINE}px solid {theme().notice_border}; border-radius: {ROUNDING}px; }}"
+        )
         self._subject: str = subject or "(no subject)"
         self.remaining: int = seconds
         self.label: QLabel = QLabel(self)
         self.send_button: QPushButton = QPushButton("Send now", self)
         self.cancel_button: QPushButton = QPushButton("Cancel", self)
-        layout = QHBoxLayout(self)
-        layout.addWidget(self.label, 1)
-        layout.addWidget(self.send_button)
-        layout.addWidget(self.cancel_button)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(INSIDE, INSIDE, INSIDE, INSIDE)
+        layout.setSpacing(MARGIN)
+        layout.addWidget(self.label)
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        buttons.addWidget(self.send_button)
+        buttons.addWidget(self.cancel_button)
+        layout.addLayout(buttons)
         self.send_button.clicked.connect(self.send_now)
         self.cancel_button.clicked.connect(self.cancel)
         self._timer: QTimer = QTimer(self)

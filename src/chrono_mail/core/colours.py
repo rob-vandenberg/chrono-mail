@@ -2,9 +2,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 1.1.219"
+__version__ = "colours.py 2.3.317"
 
 # --- Version history ----------------------------------------------------
+# v2.3.317: notice_border: the outline of the notice of a delayed send (the owner's mockup)
 # v1.1.219: The colours a new calendar suggests (Google Calendar's eleven event colours) and the CSS colour names of RFC 7986 COLOR (D-191)
 # v1.1.215: pane_separator and pane_separator_dots: the one separator between the panes (D-188)
 # v1.1.191: One blue for both themes (#2a6fc4, the owner's choice); the text on the accent is white unless white's contrast is below 3:1
@@ -59,6 +60,7 @@ class Theme:
     drag_badge: str  # the "N messages" badge while messages are dragged
     chip_text_light: str  # text on a dark tag colour
     chip_text_dark: str  # text on a light tag colour
+    notice_border: str  # the outline of the notice of a delayed send, at the bottom left of the main window
 
 
 # --- The dark theme -------------------------------------------------------------------------------------------------------
@@ -113,6 +115,7 @@ DARK: Theme = Theme(
     drag_badge="#e6285aa0",
     chip_text_light="#ffffff",
     chip_text_dark="#000000",
+    notice_border="#9a9da1",
 )
 
 
@@ -168,6 +171,7 @@ LIGHT: Theme = Theme(
     drag_badge="#e6285aa0",
     chip_text_light="#ffffff",
     chip_text_dark="#000000",
+    notice_border="#8c8c8c",
 )
 
 

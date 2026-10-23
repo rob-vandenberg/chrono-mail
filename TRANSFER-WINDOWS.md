@@ -126,7 +126,8 @@ second start, also of the other copy, shows the window that runs already.
 | `DECISIONS.md` | every design decision D-001 to D-123 with its reason (the recent ones about IMAP: D-117, D-118, D-120; about the installers: D-123) | before proposing to change a design choice |
 | `ROADMAP.md` | milestones and tasks with their status (Windows: task 1.14) | when picking or finishing a task |
 | `DEVLOG.md` | an append-only log, one entry per finished task, with the tests that ran | when you need history |
-| `README.md` | the public description of the project | for orientation |
+| `README.md` | the description for people who use the program: what it is, install, uninstall, the first start | for orientation |
+| `CONTRIBUTING.md` | the short entry for developers: run it from the source, where to start reading | for orientation |
 | `pyproject.toml` | the version (`[project] version`), the dependencies, the dev tools (`[project.optional-dependencies] dev`: pyrefly, pytest, pytest-qt, import-linter), the entry points (`chrono-mail`, `chrono-mail-cli`), pytest settings (live, oskeyring and perf tests are opt-in), Pyrefly in strict mode, and the import-linter layer contracts | when you need any of those |
 
 `TRANSFER.md` and `PROMPT-NEW-SESSION.md` are the Kubuntu machine's private hand-over files and are not in git.

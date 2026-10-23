@@ -1,3 +1,4 @@
+import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
@@ -7,10 +8,24 @@ from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.sections import CONTACTS, MAIL
 from tests.ui.world import World, dialogs, settle, wait, world  # noqa: F401 - fixtures
 
+
+def said(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every text the status line is given from now on (another part may write the line again a moment later, so it is never read at one moment)."""
+    texts: list[str] = []
+    real_show = window.report.show
+
+    def show(text: str, error: bool = False) -> None:
+        texts.append(text)
+        real_show(text, error)
+
+    monkeypatch.setattr(window.report, "show", show)
+    return texts
+
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_undo.py 2.2.313"
+__version__ = "test_ui_undo.py 2.3.317"
 
 # --- Version history ----------------------------------------------------
+# v2.3.317: the status line's texts are recorded, never read at one moment (another part may write the line again)
 # v2.2.313: Initial (B-18): Ctrl+Z and Ctrl+Y in the message list, Ctrl+Z right after an action, Ctrl+Z in a text field, greyed outside Mail
 
 
@@ -47,14 +62,15 @@ def deleted_first(qtbot: QtBot, world: World) -> str:
     return subject
 
 
-def test_ctrl_z_brings_the_deleted_message_back_selected_and_ctrl_y_deletes_it_again(world: World, qtbot: QtBot) -> None:
+def test_ctrl_z_brings_the_deleted_message_back_selected_and_ctrl_y_deletes_it_again(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     window = world.window
     subject = deleted_first(qtbot, world)
+    texts = said(window, monkeypatch)
     assert window.act_undo.isEnabled() and not window.act_redo.isEnabled()
     press(window, Qt.Key.Key_Z)
     wait(qtbot, lambda: window.list_model.rowCount() == 3 and window.act_redo.text() == "Redo Move to Trash (1 message)")
     wait(qtbot, lambda: subject_at(window, window.list_view.currentIndex().row()) == subject)
-    assert window.report.label.text() == "Undone: Move to Trash (1 message)" and held(world, "Trash") == 0
+    assert "Undone: Move to Trash (1 message)" in texts and held(world, "Trash") == 0
     assert window.act_undo.text() == "Undo" and not window.act_undo.isEnabled()
     press(window, Qt.Key.Key_Y)
     wait(qtbot, lambda: window.list_model.rowCount() == 2 and held(world, "Trash") == 1 and window.act_undo.isEnabled())
@@ -64,13 +80,14 @@ def test_ctrl_z_brings_the_deleted_message_back_selected_and_ctrl_y_deletes_it_a
     wait(qtbot, lambda: window.list_model.rowCount() == 2 and held(world, "Trash") == 1)
 
 
-def test_ctrl_z_right_after_delete_waits_for_it_and_undoes_it(world: World, qtbot: QtBot) -> None:
+def test_ctrl_z_right_after_delete_waits_for_it_and_undoes_it(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     window = started(qtbot, world)
+    texts = said(window, monkeypatch)
     window.list_view.setFocus()
     window.list_view.setCurrentIndex(window.list_model.index(0, 0))
     press(window, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier)
     press(window, Qt.Key.Key_Z)  # before the delete is answered
-    wait(qtbot, lambda: window.report.label.text() == "Undone: Move to Trash (1 message)")
+    wait(qtbot, lambda: "Undone: Move to Trash (1 message)" in texts)
     wait(qtbot, lambda: window.list_model.rowCount() == 3 and held(world, "Trash") == 0 and held(world, "Inbox") == 3)
 
 
