@@ -9,9 +9,10 @@ from tests.test_engine_rebuilds import as_format_11
 from tests.ui.world import World, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_indexrebuilds.py 2.1.310"
+__version__ = "test_ui_indexrebuilds.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: the hover text's last line says what a click does (the lines above name what runs)
 # v2.1.310: "The index is ready." is read when the rebuild ends: the junk filter's first learning may say more after it (D-238)
 # v2.0.303: a click on the busy bar brings the window back after Run in background; afterwards it opens the Operations window
 # v2.0.281: Initial version: the rebuild window at start, Run in background only while the old index is usable, Abort after its
@@ -24,7 +25,12 @@ def test_an_unusable_index_is_rebuilt_before_the_mail_is_shown(world: World, qtb
     shown: list[tuple[str, str, bool]] = []
     window.rebuilds.running_changed.connect(lambda running: shown.append(("running", str(running), window.list_model.rowCount() > 0)))
     said_when_done: list[str] = []
-    window.rebuilds.running_changed.connect(lambda running: None if running else said_when_done.append(window.report.label.text()))
+
+    def ended(running: bool) -> None:
+        if not running:
+            said_when_done.append(window.report.label.text())
+
+    window.rebuilds.running_changed.connect(ended)
     window.start()
     wait(qtbot, lambda: window.list_model.rowCount() == 3 and not window.rebuilds.running and world.backend._pending == {})  # noqa: SLF001
     assert shown[0] == ("running", "True", False) and shown[-1][:2] == ("running", "False")  # rebuilt first, the mail shown after
@@ -69,7 +75,7 @@ def test_a_click_on_the_bar_brings_the_window_back_and_after_the_end_the_operati
     """The owner (D-229): after Run in background the window could not be brought back."""
     rebuilds, bar = world.window.rebuilds, world.window.progress_bar
     world.backend.rebuilding.emit(RebuildStep(world.account_id, 10, 100, usable=True))
-    assert rebuilds.window is not None and bar.toolTip() == "Show the index progress"
+    assert rebuilds.window is not None and bar.toolTip().split("\n")[-1] == "Click to show the index progress"
     rebuilds.window.background_button.click()
     world.backend.rebuilding.emit(RebuildStep(world.account_id, 83, 100, usable=True))
     assert not rebuilds.window.isVisible()
@@ -78,7 +84,7 @@ def test_a_click_on_the_bar_brings_the_window_back_and_after_the_end_the_operati
     world.backend.rebuilding.emit(RebuildStep(world.account_id, 90, 100, usable=True))
     assert rebuilds.window.count_label.text() == "90 of 100"  # it follows again
     world.backend.rebuilding.emit(RebuildStep(world.account_id, 0, 0, usable=True, ended=True))
-    assert not rebuilds.running and bar.toolTip() == "Show the Operations window"
+    assert not rebuilds.running and bar.toolTip().split("\n")[-1] == "Click to show the Operations window"
     bar.clicked.emit()
     assert world.window.operations.isVisible() and not rebuilds.window.isVisible()
     world.window.operations.close()

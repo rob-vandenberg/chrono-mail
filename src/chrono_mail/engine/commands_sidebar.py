@@ -10,9 +10,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_sidebar.py 1.9.270"
+__version__ = "commands_sidebar.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.270: R-19: typed favorite.*, sidebar.show-tree, sidebar.show-local-folder, group.*
 # v1.1.252: a change of the sidebar file holds the engine's sidebar lock (a rename moves pins at the same time, R-41)
 # v1.1.251: sidebar.show is typed (SIDEBAR_SHOW), and EMPTY_SIDEBAR for a window that has none yet (R-11)
@@ -227,15 +228,15 @@ GROUP_ASSIGN: TypedCommand[AssignParameters, SidebarInfo] = TypedCommand("group.
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(SIDEBAR_SHOW.id, "Show the pinned folders and the groups of accounts", NoParameters, sidebar_show)
-    registry.register(FAVORITE_PIN.id, "Pin a folder to Favorites", PinParameters, favorite_pin)
-    registry.register(FAVORITE_UNPIN.id, "Take a pinned folder out of Favorites", PinnedParameters, favorite_unpin)
-    registry.register(FAVORITE_RENAME.id, "Give a pinned folder another name in Favorites", RenamePinParameters, favorite_rename)
-    registry.register(FAVORITE_REORDER.id, "Put the pinned folders in another order", ReorderParameters, favorite_reorder)
-    registry.register(SIDEBAR_SHOW_TREE.id, "Show or hide the folder tree of an account in the folder list", TreeParameters, sidebar_show_tree)
-    registry.register(SIDEBAR_SHOW_LOCAL_FOLDER.id, "Show or hide a standard folder of Local Folders in the folder list", LocalFolderParameters, sidebar_show_local_folder)
-    registry.register(FAVORITE_SHOW.id, "Switch a standard favorite (All Inboxes, Unread ...) on or off", VisibleParameters, favorite_show)
-    registry.register(GROUP_ADD.id, "Make a group of accounts", GroupAddParameters, group_add)
-    registry.register(GROUP_RENAME.id, "Rename a group", GroupRenameParameters, group_rename)
-    registry.register(GROUP_REMOVE.id, "Remove a group (its accounts stay)", GroupParameters, group_remove)
-    registry.register(GROUP_ASSIGN.id, "Put an account in a group, or take it out of its group", AssignParameters, group_assign)
+    registry.register(SIDEBAR_SHOW.id, "Show the pinned folders and the groups of accounts", NoParameters, sidebar_show, doing="Reading the folder list")
+    registry.register(FAVORITE_PIN.id, "Pin a folder to Favorites", PinParameters, favorite_pin, doing="Pinning a folder to Favorites")
+    registry.register(FAVORITE_UNPIN.id, "Take a pinned folder out of Favorites", PinnedParameters, favorite_unpin, doing="Taking a folder out of Favorites")
+    registry.register(FAVORITE_RENAME.id, "Give a pinned folder another name in Favorites", RenamePinParameters, favorite_rename, doing="Renaming a favorite")
+    registry.register(FAVORITE_REORDER.id, "Put the pinned folders in another order", ReorderParameters, favorite_reorder, doing="Ordering the favorites")
+    registry.register(SIDEBAR_SHOW_TREE.id, "Show or hide the folder tree of an account in the folder list", TreeParameters, sidebar_show_tree, doing="Showing or hiding an account's folders")
+    registry.register(SIDEBAR_SHOW_LOCAL_FOLDER.id, "Show or hide a standard folder of Local Folders in the folder list", LocalFolderParameters, sidebar_show_local_folder, doing="Showing or hiding a folder")
+    registry.register(FAVORITE_SHOW.id, "Switch a standard favorite (All Inboxes, Unread ...) on or off", VisibleParameters, favorite_show, doing="Showing or hiding a favorite")
+    registry.register(GROUP_ADD.id, "Make a group of accounts", GroupAddParameters, group_add, doing="Making a group of accounts")
+    registry.register(GROUP_RENAME.id, "Rename a group", GroupRenameParameters, group_rename, doing="Renaming a group of accounts")
+    registry.register(GROUP_REMOVE.id, "Remove a group (its accounts stay)", GroupParameters, group_remove, doing="Removing a group of accounts")
+    registry.register(GROUP_ASSIGN.id, "Put an account in a group, or take it out of its group", AssignParameters, group_assign, doing="Putting an account in a group")

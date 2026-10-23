@@ -45,9 +45,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 2.1.308"
+__version__ = "commands_accounts.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: junk_filter in the summary and in account.edit (D-238)
 # v1.9.272: certificate.inspect takes kind https (a calendar and contacts server, tls only): Look at the server's certificate in the sections' Add account… always failed (since 1.1.212)
 # v1.9.271: R-19: typed account.add, -check, -edit, -list, -remove, -trust-certificate, -forget-certificates, certificate.inspect, key.status, -export-file, -recovery-code, -restore-file, -restore-code
@@ -711,17 +712,17 @@ KEY_RESTORE_CODE: TypedCommand[KeyRestoreCodeParameters, KeyStatus] = TypedComma
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(CERTIFICATE_INSPECT.id, "Look at the certificate of a server (nothing is accepted by looking)", CertificateParameters, certificate_inspect)
-    registry.register(ACCOUNT_TRUST_CERTIFICATE.id, "Accept a server certificate for an account (by its fingerprint)", TrustParameters, account_trust_certificate)
-    registry.register(ACCOUNT_FORGET_CERTIFICATES.id, "Forget the accepted certificates of an account", AccountParameters, account_forget_certificates)
-    registry.register(ACCOUNT_ADD.id, "Add a POP3/SMTP account and create its (encrypted) message store", AccountAddParameters, account_add)
-    registry.register(ACCOUNT_CHECK.id, "Test the connection and login to both servers before creating an account", AccountCheckParameters, account_check)
-    registry.register(ACCOUNT_EDIT.id, "Change the name, address, servers, passwords, signature or server-copy policy of an account", AccountEditParameters, account_edit)
-    registry.register(ACCOUNT_LIST.id, "List the accounts", NoParameters, account_list)
-    registry.register(ACCOUNT_REMOVE.id, "Forget an account and its passwords (the mail on disk is kept)", AccountParameters, account_remove, destructive=True)
-    registry.register("account.policy", "Set what happens to messages on the POP3 server after download", AccountPolicyParameters, account_policy)
-    registry.register(KEY_STATUS.id, "Show the data key id and whether the credential store has it", NoParameters, key_status)
-    registry.register(KEY_EXPORT_FILE.id, "Write the data key, protected by a passphrase, to a recovery file", KeyExportParameters, key_export_file)
-    registry.register(KEY_RECOVERY_CODE.id, "Show the data key as a printable recovery code", NoParameters, key_recovery_code)
-    registry.register(KEY_RESTORE_FILE.id, "Put the data key back into the credential store from a recovery file", KeyRestoreFileParameters, key_restore_file)
-    registry.register(KEY_RESTORE_CODE.id, "Put the data key back into the credential store from a recovery code", KeyRestoreCodeParameters, key_restore_code)
+    registry.register(CERTIFICATE_INSPECT.id, "Look at the certificate of a server (nothing is accepted by looking)", CertificateParameters, certificate_inspect, doing="Reading the server's certificate")
+    registry.register(ACCOUNT_TRUST_CERTIFICATE.id, "Accept a server certificate for an account (by its fingerprint)", TrustParameters, account_trust_certificate, doing="Accepting a certificate")
+    registry.register(ACCOUNT_FORGET_CERTIFICATES.id, "Forget the accepted certificates of an account", AccountParameters, account_forget_certificates, doing="Forgetting the accepted certificates")
+    registry.register(ACCOUNT_ADD.id, "Add a POP3/SMTP account and create its (encrypted) message store", AccountAddParameters, account_add, doing="Adding an account")
+    registry.register(ACCOUNT_CHECK.id, "Test the connection and login to both servers before creating an account", AccountCheckParameters, account_check, doing="Testing the connection to the servers")
+    registry.register(ACCOUNT_EDIT.id, "Change the name, address, servers, passwords, signature or server-copy policy of an account", AccountEditParameters, account_edit, doing="Saving the account's settings")
+    registry.register(ACCOUNT_LIST.id, "List the accounts", NoParameters, account_list, doing="Reading the accounts")
+    registry.register(ACCOUNT_REMOVE.id, "Forget an account and its passwords (the mail on disk is kept)", AccountParameters, account_remove, destructive=True, doing="Removing an account")
+    registry.register("account.policy", "Set what happens to messages on the POP3 server after download", AccountPolicyParameters, account_policy, doing="Saving what happens to mail on the server")
+    registry.register(KEY_STATUS.id, "Show the data key id and whether the credential store has it", NoParameters, key_status, doing="Checking the encryption key")
+    registry.register(KEY_EXPORT_FILE.id, "Write the data key, protected by a passphrase, to a recovery file", KeyExportParameters, key_export_file, doing="Writing the recovery file")
+    registry.register(KEY_RECOVERY_CODE.id, "Show the data key as a printable recovery code", NoParameters, key_recovery_code, doing="Reading the recovery code")
+    registry.register(KEY_RESTORE_FILE.id, "Put the data key back into the credential store from a recovery file", KeyRestoreFileParameters, key_restore_file, doing="Restoring the key from the recovery file")
+    registry.register(KEY_RESTORE_CODE.id, "Put the data key back into the credential store from a recovery code", KeyRestoreCodeParameters, key_restore_code, doing="Restoring the key from the recovery code")

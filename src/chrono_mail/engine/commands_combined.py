@@ -15,9 +15,10 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 2.0.280"
+__version__ = "commands_combined.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.280: the sort order sent (the message's own Date) merges and groups like Received (B-16)
 # v1.9.270: R-19: typed message.combined-places
 # v1.6.260: gather(): each mailbox read once under its lock for the rows, the groups and the numbers of a view together; message.combined-places
@@ -299,7 +300,7 @@ MESSAGE_COMBINED_PLACES: TypedCommand[CombinedPlacesParameters, PlacesResult] = 
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register("message.combined", "List the messages of the same kind of folder in all mailboxes", CombinedParameters, message_combined)
-    registry.register("message.combined-locate", "Where a message stands in a Favorites view, and its group heading", CombinedLocateParameters, message_combined_locate)
-    registry.register(MESSAGE_COMBINED_PLACES.id, "Where several messages stand in a Favorites view (0 is the first)", CombinedPlacesParameters, message_combined_places)
-    registry.register("message.combined-groups", "The groups of a combined view (as sorted) with their number of messages", CombinedParameters, message_combined_groups)
+    registry.register("message.combined", "List the messages of the same kind of folder in all mailboxes", CombinedParameters, message_combined, doing="Loading the messages")
+    registry.register("message.combined-locate", "Where a message stands in a Favorites view, and its group heading", CombinedLocateParameters, message_combined_locate, doing="Finding a message in the list")
+    registry.register(MESSAGE_COMBINED_PLACES.id, "Where several messages stand in a Favorites view (0 is the first)", CombinedPlacesParameters, message_combined_places, doing="Finding messages in the list")
+    registry.register("message.combined-groups", "The groups of a combined view (as sorted) with their number of messages", CombinedParameters, message_combined_groups, doing="Loading the messages")

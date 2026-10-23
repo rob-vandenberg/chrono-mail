@@ -10,9 +10,10 @@ from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.sync import ImapState, plan_folders, planned_anyway
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_imap.py 1.9.271"
+__version__ = "commands_imap.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed account.folders, account.set-folders
 # v1.1.241: Standard folders and the ones ticked here are planned whether or not they are on the server's list of folders to show (R-34)
 # v0.5.123: A folder left out is ignored completely: its copy here is no longer shown; waits for a running mail check (D-120)
@@ -134,5 +135,5 @@ ACCOUNT_SET_FOLDERS: TypedCommand[SetFolders, SetFoldersResult] = TypedCommand("
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(ACCOUNT_FOLDERS.id, "List the folders on the server of an IMAP account and which are synchronised", FolderAccount, account_folders)
-    registry.register(ACCOUNT_SET_FOLDERS.id, "Choose which folders of an IMAP account are synchronised and which standard folder each is", SetFolders, account_set_folders)
+    registry.register(ACCOUNT_FOLDERS.id, "List the folders on the server of an IMAP account and which are synchronised", FolderAccount, account_folders, doing="Reading the folders on the server")
+    registry.register(ACCOUNT_SET_FOLDERS.id, "Choose which folders of an IMAP account are synchronised and which standard folder each is", SetFolders, account_set_folders, doing="Saving the folders to synchronise")

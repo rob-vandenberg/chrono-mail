@@ -10,9 +10,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, OutgoingMessage, build_message, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_drafts.py 1.9.270"
+__version__ = "commands_drafts.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.270: R-19: typed draft.open, draft.save
 # v0.0.86: A draft can be a forward as attachment
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
@@ -156,5 +157,5 @@ DRAFT_SAVE: TypedCommand[DraftSaveParameters, DraftSaveResult] = TypedCommand("d
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(DRAFT_SAVE.id, "Save the message being written in the Drafts folder (replacing its earlier version)", DraftSaveParameters, draft_save)
-    registry.register(DRAFT_OPEN.id, "Read a draft, to go on editing it", DraftOpenParameters, draft_open)
+    registry.register(DRAFT_SAVE.id, "Save the message being written in the Drafts folder (replacing its earlier version)", DraftSaveParameters, draft_save, doing="Saving a draft")
+    registry.register(DRAFT_OPEN.id, "Read a draft, to go on editing it", DraftOpenParameters, draft_open, doing="Opening a draft")

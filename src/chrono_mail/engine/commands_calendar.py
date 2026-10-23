@@ -15,9 +15,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, parse_m
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 1.9.273"
+__version__ = "commands_calendar.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.273: R-19: typed event.show, -add, -edit, -delete
 # v1.1.225: Every change of an item goes through item_writer: on its server first when it has one (R-23, D-194)
 # v1.1.221: The colours of an appointment come from its account's palette (D-191)
@@ -605,11 +606,11 @@ EVENT_DELETE: TypedCommand[DeleteParameters, DeleteResult] = TypedCommand("event
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(EVENT_LIST.id, "List the events of some days, repeating ones expanded", ListParameters, event_list)
-    registry.register(EVENT_SHOW.id, "Show an event", ItemParameters, event_show)
-    registry.register(EVENT_ADD.id, "Add an event", AddParameters, event_add)
-    registry.register(EVENT_EDIT.id, "Change an event, or one occurrence of a repeating event", EditParameters, event_edit)
-    registry.register(EVENT_DELETE.id, "Delete an event, or one occurrence of a repeating event", DeleteParameters, event_delete, destructive=True)
-    registry.register("event.move", "Move an event to another calendar of the same account", MoveParameters, event_move)
-    registry.register("event.import", "Import events from iCalendar text", ImportParameters, quiet_command(event_import))
-    registry.register("event.export", "Export an event or a calendar as iCalendar text", ExportParameters, event_export)
+    registry.register(EVENT_LIST.id, "List the events of some days, repeating ones expanded", ListParameters, event_list, doing="Loading the calendar")
+    registry.register(EVENT_SHOW.id, "Show an event", ItemParameters, event_show, doing="Loading an event")
+    registry.register(EVENT_ADD.id, "Add an event", AddParameters, event_add, doing="Adding an event")
+    registry.register(EVENT_EDIT.id, "Change an event, or one occurrence of a repeating event", EditParameters, event_edit, doing="Saving an event")
+    registry.register(EVENT_DELETE.id, "Delete an event, or one occurrence of a repeating event", DeleteParameters, event_delete, destructive=True, doing="Deleting an event")
+    registry.register("event.move", "Move an event to another calendar of the same account", MoveParameters, event_move, doing="Moving an event")
+    registry.register("event.import", "Import events from iCalendar text", ImportParameters, quiet_command(event_import), doing="Importing events")
+    registry.register("event.export", "Export an event or a calendar as iCalendar text", ExportParameters, event_export, doing="Exporting events")

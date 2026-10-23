@@ -17,9 +17,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 1.9.273"
+__version__ = "commands_pim.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.273: R-19: typed pim.enable, collection.list, -edit, -delete
 # v1.9.271: R-19: typed tag.rename, tag.colour
 # v1.9.270: R-19: typed tag.list
@@ -343,13 +344,13 @@ COLLECTION_DELETE: TypedCommand[DeleteParameters, DeleteResult] = TypedCommand("
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(PIM_ENABLE.id, "Make sure there is a calendar, a task list and an address book on this computer, and list them", NoParameters, pim_enable)
-    registry.register(COLLECTION_LIST.id, "List the calendars, task lists and address books", ListParameters, collection_list)
-    registry.register(COLLECTION_CREATE.id, "Make a calendar, a task list or an address book (in a server's account: on the server first)", CreateParameters, collection_create)
-    registry.register(COLLECTION_ACCOUNTS.id, "List where a calendar, task list or address book can be made", NoParameters, collection_accounts)
-    registry.register(COLLECTION_EDIT.id, "Rename a calendar, task list or address book, or give it another colour", EditParameters, collection_edit)
-    registry.register(COLLECTION_SET_PALETTE.id, "Keep a calendar's colours: its own, then the others in order", PaletteParameters, collection_set_palette)
-    registry.register(COLLECTION_DELETE.id, "Take a calendar, task list or address book away with everything in it", DeleteParameters, collection_delete, destructive=True)
-    registry.register(TAG_LIST.id, "List the tags in use, with colours and counts", NoParameters, tag_list)
-    registry.register(TAG_COLOUR.id, "Give a tag a colour", ColourParameters, tag_colour)
-    registry.register(TAG_RENAME.id, "Give a tag another name everywhere", RenameParameters, quiet_command(tag_rename))
+    registry.register(PIM_ENABLE.id, "Make sure there is a calendar, a task list and an address book on this computer, and list them", NoParameters, pim_enable, doing="Preparing the calendars, task lists and address books")
+    registry.register(COLLECTION_LIST.id, "List the calendars, task lists and address books", ListParameters, collection_list, doing="Reading the calendars, task lists and address books")
+    registry.register(COLLECTION_CREATE.id, "Make a calendar, a task list or an address book (in a server's account: on the server first)", CreateParameters, collection_create, doing="Making a calendar, task list or address book")
+    registry.register(COLLECTION_ACCOUNTS.id, "List where a calendar, task list or address book can be made", NoParameters, collection_accounts, doing="Reading where calendars and address books can be made")
+    registry.register(COLLECTION_EDIT.id, "Rename a calendar, task list or address book, or give it another colour", EditParameters, collection_edit, doing="Renaming or recolouring a calendar, task list or address book")
+    registry.register(COLLECTION_SET_PALETTE.id, "Keep a calendar's colours: its own, then the others in order", PaletteParameters, collection_set_palette, doing="Saving the event colours")
+    registry.register(COLLECTION_DELETE.id, "Take a calendar, task list or address book away with everything in it", DeleteParameters, collection_delete, destructive=True, doing="Deleting a calendar, task list or address book")
+    registry.register(TAG_LIST.id, "List the tags in use, with colours and counts", NoParameters, tag_list, doing="Reading the tags")
+    registry.register(TAG_COLOUR.id, "Give a tag a colour", ColourParameters, tag_colour, doing="Saving a tag's colour")
+    registry.register(TAG_RENAME.id, "Give a tag another name everywhere", RenameParameters, quiet_command(tag_rename), doing="Renaming a tag")

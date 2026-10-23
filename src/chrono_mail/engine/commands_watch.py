@@ -7,9 +7,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.protocols.imap import ImapClient, ImapRefused
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_watch.py 1.9.270"
+__version__ = "commands_watch.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.270: R-19: typed mail.wait
 # v0.0.43: Certificate exceptions
 # v0.0.32: Initial mail.wait (IMAP IDLE)
@@ -53,4 +54,4 @@ MAIL_WAIT: TypedCommand[WaitParameters, WaitResult] = TypedCommand("mail.wait", 
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MAIL_WAIT.id, "Wait until the server reports new mail in the Inbox (IMAP), for at most the given time", WaitParameters, mail_wait)
+    registry.register(MAIL_WAIT.id, "Wait until the server reports new mail in the Inbox (IMAP), for at most the given time", WaitParameters, mail_wait, doing="Waiting for new mail")

@@ -11,9 +11,10 @@ from tests.enginefactory import make_engine
 from tests.ui.world import World, dialogs, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_backend.py 2.0.295"
+__version__ = "test_ui_backend.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: the backend tells which commands run (what each is doing, for which account), not only how many
 # v2.0.295: a job that ends with an error that is no Exception still answers, once
 # v2.0.294: every job is held by the backend from its start until its answer is delivered, in every lane
 # v0.5.133: an action does not wait behind running mail checks
@@ -155,7 +156,7 @@ def test_an_action_does_not_wait_behind_running_mail_checks(backend: Backend, qt
         started.append(1)
         release.wait(10)
 
-    backend.registry.register("test.slow-check", "A mail check that takes long", NoParameters, slow_check)
+    backend.registry.register("test.slow-check", "A mail check that takes long", NoParameters, slow_check, doing="Checking slowly")
     finished: list[str] = []
     try:
         for _ in range(6):  # more checks than there are places
@@ -208,3 +209,30 @@ def test_a_job_that_ends_with_an_error_that_is_no_exception_still_answers_once(b
     qtbot.wait(100)
     assert len(errors) == 1 and "ended without an answer: Stopped" in str(errors[0])
     assert stopping._pending == {} and stopping._jobs == {}  # noqa: SLF001 - nothing stays waiting
+
+
+def test_the_backend_tells_which_commands_run_and_for_which_account(backend: Backend, qtbot: QtBot) -> None:
+    import threading
+
+    from chrono_mail.engine.commands_accounts import AccountParameters
+    from chrono_mail.ui.backend import RunningJob
+
+    release = threading.Event()
+
+    def slow(engine: object, parameters: AccountParameters) -> None:
+        release.wait(10)
+
+    backend.registry.register("test.slow", "Takes long", AccountParameters, slow, doing="Taking long")
+    told: list[object] = []
+    backend.jobs_changed.connect(told.append)
+    done: list[object] = []
+    try:
+        backend.call("test.slow", {"account": "abc"}, done.append)
+        backend.call("account.list", {}, done.append)
+        assert backend.running() == (RunningJob("Taking long", "abc"), RunningJob("Reading the accounts", ""))
+        assert told[-1] == backend.running()
+        qtbot.waitUntil(lambda: backend.running() == (RunningJob("Taking long", "abc"),), timeout=5000)  # the quick one answered
+    finally:
+        release.set()
+    qtbot.waitUntil(lambda: len(done) == 2, timeout=10000)
+    assert backend.running() == () and told[-1] == ()

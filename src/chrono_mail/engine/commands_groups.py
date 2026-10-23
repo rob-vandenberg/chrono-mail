@@ -11,9 +11,10 @@ from chrono_mail.pim.contact import Contact, GroupForm, bare_uid, contact_to_tex
 from chrono_mail.pimstore import IndexedItem, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_groups.py 1.10.277"
+__version__ = "commands_groups.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.10.277: Initial contact groups (contact-group.*, R-39): list, create, rename, delete, add and remove members, the addresses of a group; every change on the
 #            server first like every card (D-193)
 
@@ -240,10 +241,10 @@ CONTACT_GROUP_ADDRESSES: TypedCommand[GroupItem, GroupAddresses] = TypedCommand(
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(CONTACT_GROUP_LIST.id, "List the contact groups of the address books", GroupListParameters, group_list)
-    registry.register(CONTACT_GROUP_CREATE.id, "Make a contact group", GroupCreateParameters, group_create)
-    registry.register(CONTACT_GROUP_RENAME.id, "Rename a contact group", GroupRenameParameters, group_rename)
-    registry.register(CONTACT_GROUP_DELETE.id, "Delete a contact group (its members stay)", GroupItem, group_delete, destructive=True)
-    registry.register(CONTACT_GROUP_ADD_MEMBERS.id, "Put contacts in a group", GroupMembersParameters, group_add_members)
-    registry.register(CONTACT_GROUP_REMOVE_MEMBERS.id, "Take contacts out of a group (they stay in the address book)", GroupMembersParameters, group_remove_members)
-    registry.register(CONTACT_GROUP_ADDRESSES.id, "The addresses a message to a group goes to", GroupItem, group_addresses_command)
+    registry.register(CONTACT_GROUP_LIST.id, "List the contact groups of the address books", GroupListParameters, group_list, doing="Reading the contact groups")
+    registry.register(CONTACT_GROUP_CREATE.id, "Make a contact group", GroupCreateParameters, group_create, doing="Making a contact group")
+    registry.register(CONTACT_GROUP_RENAME.id, "Rename a contact group", GroupRenameParameters, group_rename, doing="Renaming a contact group")
+    registry.register(CONTACT_GROUP_DELETE.id, "Delete a contact group (its members stay)", GroupItem, group_delete, destructive=True, doing="Deleting a contact group")
+    registry.register(CONTACT_GROUP_ADD_MEMBERS.id, "Put contacts in a group", GroupMembersParameters, group_add_members, doing="Putting contacts in a group")
+    registry.register(CONTACT_GROUP_REMOVE_MEMBERS.id, "Take contacts out of a group (they stay in the address book)", GroupMembersParameters, group_remove_members, doing="Taking contacts out of a group")
+    registry.register(CONTACT_GROUP_ADDRESSES.id, "The addresses a message to a group goes to", GroupItem, group_addresses_command, doing="Reading the addresses of a group")

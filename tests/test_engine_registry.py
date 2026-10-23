@@ -13,9 +13,10 @@ from chrono_mail.engine.registry import option
 from tests.enginefactory import make_engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_registry.py 2.0.287"
+__version__ = "test_engine_registry.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing): required, never empty, written for people
 # v2.0.287: contact-group.delete is destructive; the path as the system writes it (the Windows computer's report)
 # v1.9.266: R-45: dav.link is destructive (since 1.1.210: an unticked folder's copy here goes to the deleted items)
 # v0.5.156: tag.delete is destructive (since 0.5.134; the list here was not updated then)
@@ -40,7 +41,7 @@ class Sample:
 
 def run(tmp_path: Path, values: dict[str, object]) -> Sample:
     registry = CommandRegistry()
-    registry.register("sample.run", "Run the sample", Sample, lambda engine, parameters: parameters)
+    registry.register("sample.run", "Run the sample", Sample, lambda engine, parameters: parameters, doing="Running the sample")
     result = registry.run(make_engine(tmp_path), "sample.run", values)
     assert isinstance(result, Sample)
     return result
@@ -90,9 +91,9 @@ def test_unknown_command(tmp_path: Path) -> None:
 
 def test_a_command_cannot_be_registered_twice() -> None:
     registry = CommandRegistry()
-    registry.register("a.b", "x", Sample, lambda engine, parameters: None)
+    registry.register("a.b", "x", Sample, lambda engine, parameters: None, doing="Doing x")
     with pytest.raises(ValueError):
-        registry.register("a.b", "x", Sample, lambda engine, parameters: None)
+        registry.register("a.b", "x", Sample, lambda engine, parameters: None, doing="Doing x")
 
 
 def test_unsupported_parameter_types_are_refused_at_registration() -> None:
@@ -101,12 +102,12 @@ def test_unsupported_parameter_types_are_refused_at_registration() -> None:
         values: dict[str, int] = field(default_factory=dict)
 
     with pytest.raises(TypeError):
-        CommandRegistry().register("bad.type", "x", Bad, lambda engine, parameters: None)
+        CommandRegistry().register("bad.type", "x", Bad, lambda engine, parameters: None, doing="Doing x")
 
 
 def test_specifications_describe_the_parameters() -> None:
     registry = CommandRegistry()
-    registry.register("sample.run", "Run the sample", Sample, lambda engine, parameters: None, destructive=True)
+    registry.register("sample.run", "Run the sample", Sample, lambda engine, parameters: None, destructive=True, doing="Running the sample")
     command = registry.get("sample.run")
     assert command.destructive and command.description == "Run the sample"
     by_name = {spec.name: spec for spec in command.parameters}
@@ -176,3 +177,16 @@ def test_raw_bytes_and_unknown_objects_are_not_results() -> None:
     with pytest.raises(TypeError):
         to_data(object())
     assert dataclasses.is_dataclass(Outer)
+
+
+def test_a_command_must_say_what_it_is_doing() -> None:
+    with pytest.raises(ValueError):
+        CommandRegistry().register("a.b", "x", Sample, lambda engine, parameters: None, doing="  ")
+
+
+def test_every_command_of_the_program_says_what_it_is_doing_in_plain_words() -> None:
+    from chrono_mail.engine import build_registry
+
+    for command in build_registry().commands():
+        assert command.doing.strip() == command.doing and command.doing[:1].isupper(), command.id
+        assert not command.doing.endswith(".") and "." not in command.doing.split(":")[0] and "_" not in command.doing, command.id  # never an id

@@ -14,9 +14,10 @@ from chrono_mail.pim.times import format_moment, local_zone, parse_moment, zone_
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 1.9.273"
+__version__ = "commands_tasklist.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.273: R-19: typed task.show, -add, -edit, -complete, -reopen, -delete, -move
 # v1.1.225: Every change of an item goes through item_writer: on its server first when it has one (R-23, D-194)
 # v1.1.205: task.places: where every task stands, from the index alone, never cut (R-02); task.list for several lists (lists) and for given tasks (items), open before done, ordered on the index and only the tasks of the answer read; typed (TASK_LIST, TASK_PLACES)
@@ -533,14 +534,14 @@ TASK_MOVE: TypedCommand[MoveParameters, TaskInfo] = TypedCommand("task.move", Mo
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(TASK_LIST.id, "List tasks: open before done, then in order of their due date", ListParameters, task_list)
-    registry.register(TASK_PLACES.id, "Where every task stands in the list (for a window that asks for the rows as they come into view)", PlacesParameters, task_places)
-    registry.register(TASK_SHOW.id, "Show a task", ItemParameters, task_show)
-    registry.register(TASK_ADD.id, "Add a task", AddParameters, task_add)
-    registry.register(TASK_EDIT.id, "Change a task", EditParameters, task_edit)
-    registry.register(TASK_COMPLETE.id, "Mark a task done (a repeating task goes on to its next time)", ItemParameters, task_complete)
-    registry.register(TASK_REOPEN.id, "Make a done task open again", ItemParameters, task_reopen)
-    registry.register(TASK_DELETE.id, "Delete a task", ItemParameters, task_delete, destructive=True)
-    registry.register(TASK_MOVE.id, "Move a task to another task list of the same account", MoveParameters, task_move)
-    registry.register("task.import", "Import tasks from iCalendar text", ImportParameters, quiet_command(task_import))
-    registry.register("task.export", "Export a task or a task list as iCalendar text", ExportParameters, task_export)
+    registry.register(TASK_LIST.id, "List tasks: open before done, then in order of their due date", ListParameters, task_list, doing="Loading the tasks")
+    registry.register(TASK_PLACES.id, "Where every task stands in the list (for a window that asks for the rows as they come into view)", PlacesParameters, task_places, doing="Loading the tasks")
+    registry.register(TASK_SHOW.id, "Show a task", ItemParameters, task_show, doing="Loading a task")
+    registry.register(TASK_ADD.id, "Add a task", AddParameters, task_add, doing="Adding a task")
+    registry.register(TASK_EDIT.id, "Change a task", EditParameters, task_edit, doing="Saving a task")
+    registry.register(TASK_COMPLETE.id, "Mark a task done (a repeating task goes on to its next time)", ItemParameters, task_complete, doing="Marking a task done")
+    registry.register(TASK_REOPEN.id, "Make a done task open again", ItemParameters, task_reopen, doing="Opening a task again")
+    registry.register(TASK_DELETE.id, "Delete a task", ItemParameters, task_delete, destructive=True, doing="Deleting a task")
+    registry.register(TASK_MOVE.id, "Move a task to another task list of the same account", MoveParameters, task_move, doing="Moving a task")
+    registry.register("task.import", "Import tasks from iCalendar text", ImportParameters, quiet_command(task_import), doing="Importing tasks")
+    registry.register("task.export", "Export a task or a task list as iCalendar text", ExportParameters, task_export, doing="Exporting tasks")

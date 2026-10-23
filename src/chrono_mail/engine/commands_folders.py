@@ -13,9 +13,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 2.0.304"
+__version__ = "commands_folders.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.304: FILL_BATCH 100 (was 500): the counter moves about every second, a restart reads at most 100 messages again
 # v2.0.301: index.fill-sent also reads each message's attachments into the index (format 13, D-235)
 # v2.0.281: index.check (which places need a rebuild or their Sent dates filled in), index.prepare (rebuild one before it is used),
@@ -320,15 +321,15 @@ STORE_VERIFY: TypedCommand[AccountParameters, VerifyResult] = TypedCommand("stor
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(FOLDER_LIST.id, "List the folders with their message counts", AccountParameters, folder_list)
-    registry.register(FOLDER_CREATE.id, "Create a folder", FolderParameters, folder_create)
-    registry.register(FOLDER_RENAME.id, "Rename a folder with everything below it", FolderRenameParameters, folder_rename)
-    registry.register(FOLDER_DELETE.id, "Delete a folder (its files are kept in .deleted)", FolderDeleteParameters, folder_delete, destructive=True)
-    registry.register(INDEX_REBUILD.id, "Rebuild the search index from the message store", AccountParameters, index_rebuild)
-    registry.register(INDEX_CHECK.id, "Tell which indexes must be rebuilt or filled in", NoParameters, index_check)
-    registry.register(INDEX_PREPARE.id, "Make an index usable, rebuilding it when it cannot be used", AccountParameters, index_prepare)
-    registry.register(INDEX_FILL_SENT.id, "Fill in the Sent dates of an index upgraded from format 11", AccountParameters, index_fill_sent)
-    registry.register(INDEX_ABORT.id, "Abort rebuilding or filling in an index", AccountParameters, index_abort)
-    registry.register(INDEX_RECONCILE.id, "Repair the index after an interruption", AccountParameters, index_reconcile)
-    registry.register(STORE_VERIFY.id, "Check that every stored message is intact", AccountParameters, store_verify)
-    registry.register("store.recover", "Clean up leftovers of an interrupted run", AccountParameters, store_recover)
+    registry.register(FOLDER_LIST.id, "List the folders with their message counts", AccountParameters, folder_list, doing="Reading the folders")
+    registry.register(FOLDER_CREATE.id, "Create a folder", FolderParameters, folder_create, doing="Creating a folder")
+    registry.register(FOLDER_RENAME.id, "Rename a folder with everything below it", FolderRenameParameters, folder_rename, doing="Renaming a folder")
+    registry.register(FOLDER_DELETE.id, "Delete a folder (its files are kept in .deleted)", FolderDeleteParameters, folder_delete, destructive=True, doing="Deleting a folder")
+    registry.register(INDEX_REBUILD.id, "Rebuild the search index from the message store", AccountParameters, index_rebuild, doing="Rebuilding the search index")
+    registry.register(INDEX_CHECK.id, "Tell which indexes must be rebuilt or filled in", NoParameters, index_check, doing="Checking the search indexes")
+    registry.register(INDEX_PREPARE.id, "Make an index usable, rebuilding it when it cannot be used", AccountParameters, index_prepare, doing="Rebuilding the search index")
+    registry.register(INDEX_FILL_SENT.id, "Fill in the Sent dates of an index upgraded from format 11", AccountParameters, index_fill_sent, doing="Filling in the search index")
+    registry.register(INDEX_ABORT.id, "Abort rebuilding or filling in an index", AccountParameters, index_abort, doing="Stopping the index rebuild")
+    registry.register(INDEX_RECONCILE.id, "Repair the index after an interruption", AccountParameters, index_reconcile, doing="Repairing the search index")
+    registry.register(STORE_VERIFY.id, "Check that every stored message is intact", AccountParameters, store_verify, doing="Checking the stored messages")
+    registry.register("store.recover", "Clean up leftovers of an interrupted run", AccountParameters, store_recover, doing="Cleaning up after an interruption")

@@ -8,9 +8,10 @@ from chrono_mail.engine.rule_engine import RuleReport, Subject, apply_rules, app
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_rules.py 1.9.271"
+__version__ = "commands_rules.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed rule.list, -add, -edit, -remove, -enable, -move, -run
 # v0.5.156: Run rules on a folder is a big job: one "mailbox changed" at its end (D-146)
 # v0.0.49: Rules without conditions for one account
@@ -229,10 +230,10 @@ RULE_RUN: TypedCommand[RuleRunParameters, RuleRunResult] = TypedCommand("rule.ru
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(RULE_LIST.id, "List the rules, in the order they are applied", NoRuleParameters, rule_list)
-    registry.register(RULE_ADD.id, "Add a rule: conditions on a message and what to do with it", RuleAddParameters, rule_add)
-    registry.register(RULE_EDIT.id, "Change a rule", RuleEditParameters, rule_edit)
-    registry.register(RULE_REMOVE.id, "Remove a rule", RuleIdParameters, rule_remove, destructive=True)
-    registry.register(RULE_ENABLE.id, "Switch a rule on or off", RuleEnableParameters, rule_enable)
-    registry.register(RULE_MOVE.id, "Change the place of a rule in the order", RuleMoveParameters, rule_move)
-    registry.register(RULE_RUN.id, "Apply the rules to the messages already in a folder", RuleRunParameters, quiet_command(rule_run))
+    registry.register(RULE_LIST.id, "List the rules, in the order they are applied", NoRuleParameters, rule_list, doing="Reading the rules")
+    registry.register(RULE_ADD.id, "Add a rule: conditions on a message and what to do with it", RuleAddParameters, rule_add, doing="Adding a rule")
+    registry.register(RULE_EDIT.id, "Change a rule", RuleEditParameters, rule_edit, doing="Saving a rule")
+    registry.register(RULE_REMOVE.id, "Remove a rule", RuleIdParameters, rule_remove, destructive=True, doing="Removing a rule")
+    registry.register(RULE_ENABLE.id, "Switch a rule on or off", RuleEnableParameters, rule_enable, doing="Switching a rule on or off")
+    registry.register(RULE_MOVE.id, "Change the place of a rule in the order", RuleMoveParameters, rule_move, doing="Ordering the rules")
+    registry.register(RULE_RUN.id, "Apply the rules to the messages already in a folder", RuleRunParameters, quiet_command(rule_run), doing="Applying rules")
