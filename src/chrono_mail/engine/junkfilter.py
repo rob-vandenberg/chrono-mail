@@ -19,12 +19,14 @@ from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.mime import ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "junkfilter.py 2.1.308"
+__version__ = "junkfilter.py 2.1.310"
 
 # --- Version history ----------------------------------------------------
+# v2.1.310: junk.learn-existing tells how far it is (mailbox n of m, messages read of all), every 100 messages
 # v2.1.308: Initial junk filter: new mail, learning from the person and the server, the first learning of the mail kept (D-238)
 
 EXISTING_EACH: int = 2_000  # per place where mail is kept: the newest junk and the newest read good mail learned at first
+PROGRESS_STEP: int = 100  # messages between two reports of how far the first learning is
 SPAM_HEADERS: tuple[str, ...] = ("X-Spam-Flag", "X-Spam-Status", "X-Spam")  # SpamAssassin, rspamd and the servers that copy them
 NOT_LEARNED_AS_GOOD: frozenset[FolderRole] = frozenset({FolderRole.JUNK, FolderRole.TRASH, FolderRole.DRAFTS})
 
@@ -231,8 +233,9 @@ class JunkLearnResult:
     good: int  # messages learned as good
 
 
-def _existing(engine: Engine, place: str) -> tuple[list[tuple[str, frozenset[str]]], list[tuple[str, frozenset[str]]]]:
-    """The newest junk and the newest read good mail of one place where mail is kept, as fingerprints and words."""
+def _existing(engine: Engine, place: str, what: str) -> tuple[list[tuple[str, frozenset[str]]], list[tuple[str, frozenset[str]]]]:
+    """The newest junk and the newest read good mail of one place where mail is kept, as fingerprints and words; how far it is, is told
+    as what (the status line shows it)."""
     with open_mailbox(engine, place) as mailbox:
         folders = mailbox.store.list_folders()
         junk_rows = [row for folder in folders if folder.role is FolderRole.JUNK for row in mailbox.index.page(folder.path, limit=EXISTING_EACH)][:EXISTING_EACH]
@@ -243,10 +246,17 @@ def _existing(engine: Engine, place: str) -> tuple[list[tuple[str, frozenset[str
         good_rows.sort(key=lambda row: row.date.timestamp() if row.date is not None else 0.0, reverse=True)
         store = mailbox.store
     learned: tuple[list[tuple[str, frozenset[str]]], list[tuple[str, frozenset[str]]]] = ([], [])
-    for side, rows in ((0, junk_rows), (1, good_rows[:EXISTING_EACH])):
+    chosen = ((0, junk_rows), (1, good_rows[:EXISTING_EACH]))
+    total = sum(len(rows) for _, rows in chosen)
+    done = 0
+    engine.progress(what, done, total)
+    for side, rows in chosen:
         for row in rows:
             if engine.stop_event.is_set():
                 return learned
+            done += 1
+            if done % PROGRESS_STEP == 0:
+                engine.progress(what, done, total)
             try:
                 raw = store.read(MessageRef(store.account_id, row.folder, row.store_id), hint=row.path)
             except ChronoMailError:
@@ -263,11 +273,10 @@ def junk_learn_existing(engine: Engine, parameters: NoParameters) -> JunkLearnRe
     if done is None:
         return JunkLearnResult(0, 0, 0)
     places = junk = good = 0
-    for place in engine.storage_groups():
-        if place in done:
-            continue
+    waiting = [place for place in engine.storage_groups() if place not in done]
+    for position, place in enumerate(waiting, 1):
         try:
-            junk_items, good_items = _existing(engine, place)
+            junk_items, good_items = _existing(engine, place, f"Junk filter: learning from your mail, mailbox {position} of {len(waiting)}")
         except ChronoMailError as error:
             _tell_once(engine, f"The junk filter could not learn from the mail kept: {error}")
             continue
