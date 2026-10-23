@@ -18,9 +18,10 @@ from chrono_mail.mime import ParsedMessage
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "junkwords.py 2.1.308"
+__version__ = "junkwords.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: set_verdict: a message's verdict set to junk, good or none at all (Undo puts back what was learned before, B-18)
 # v2.1.308: Initial junk filter words: tokens, learning, scoring, the encrypted file (D-238)
 
 FORMAT: int = 1
@@ -90,13 +91,19 @@ class JunkWords:
 
     def learn(self, key: str, found: frozenset[str], junk: bool) -> bool:
         """Learn one message as junk or good; one learned the other way first is unlearned. False: it was learned so already."""
-        wanted = JUNK if junk else GOOD
+        return self.set_verdict(key, found, JUNK if junk else GOOD)
+
+    def set_verdict(self, key: str, found: frozenset[str], wanted: str | None) -> bool:
+        """One message's verdict: JUNK, GOOD, or None (not learned at all); its words are counted again to match. False: it was so already."""
         before = self.verdicts.pop(key, None)
         if before == wanted:
-            self.verdicts[key] = wanted
+            if wanted is not None:
+                self.verdicts[key] = wanted
             return False
         if before is not None:
             self._count(found, before, -1)
+        if wanted is None:
+            return True
         self._count(found, wanted, 1)
         self.verdicts[key] = wanted
         while len(self.verdicts) > MAXIMUM_REMEMBERED:

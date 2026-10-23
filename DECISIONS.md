@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-239 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-240 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-240**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-241**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -214,6 +214,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-068** Standard keys follow the established desktop mail programs; all changeable in Settings > Keyboard. View source Ctrl+Alt+U.
 - **D-114** Alt+M opens the section's Menu.
 - **D-239** (the owner) **While the busy bar moves, its hover text always says what runs**: one line per kind of work with its accounts, then what a click does; it follows while shown. Every command says what it is doing in plain words where it is registered (required); the job runner tells which commands run, not only how many. Rejected: a hover text per special job (everything else said nothing).
+- **D-240** (B-18, the owner) **Undo and Redo of the person's actions on mail** (Ctrl+Z; Ctrl+Y or Ctrl+Shift+Z; Menu > Message names the action): each message back where it was, its marks, tags, notes and junk verdict as before. An undo is a new action, server first (D-193); a message changed since is left alone and told. One key press is one step; 100 kept until quit. Never undone: rules, the junk filter, timers, deletes for good, sending, a scheduled message made a draft. A text field keeps Ctrl+Z.
 - **D-138** The Operations window: a row per account with its step and bar; the log never holds contents or passwords.
 - **D-139** Every send and receive opens it; only actions the person starts bring it to the front.
 - **D-166** Page order of Settings: General, Appearance, Sidebar, Message list, Reading, Writing, Accounts, Rules, Tags, Scheduled messages, Operations window, Security and storage, Keyboard.

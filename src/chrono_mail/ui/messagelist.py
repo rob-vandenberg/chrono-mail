@@ -23,9 +23,10 @@ from chrono_mail.ui.models import LOCAL_PLACES
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 2.0.280"
+__version__ = "messagelist.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: arriving: a message that came into the view and waits for its place (Undo selects it once it is placed, B-18)
 # v2.0.280: set_column_labels: a column called otherwise in the open kind of folder (Sent is Saved in Drafts, B-16)
 # v1.9.274: R-19 round 4: the rows and the facts heard are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.273: R-19: carried moved to backend.py
@@ -764,6 +765,10 @@ class MessageListModel(QAbstractTableModel):
         row = self._row_of(key) if key is not None else None
         if key is not None and row is not None:
             self._replace(key, dataclasses.replace(row, tags=tags))
+
+    def arriving(self, message_id: str) -> bool:
+        """Whether a message came into the view and waits for the engine to say where it goes (it is in the list once placed)."""
+        return any(row.message_id == message_id for waiting in self._waiting() for row in waiting.values())
 
     def find(self, message_id: str) -> int:
         """The row of a message in the list, or -1 (also while its group is folded)."""

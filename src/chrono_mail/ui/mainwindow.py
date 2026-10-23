@@ -53,12 +53,14 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.tasksview import TasksPage
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
 from chrono_mail.ui.tray import TrayController
+from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.1.311"
+__version__ = "mainwindow.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: Undo (Ctrl+Z) and Redo (Ctrl+Y, Ctrl+Shift+Z) of the actions on mail, at the top of Menu > Message, saying what they would do (B-18)
 # v2.1.311: the status part knows the accounts' names and hears which commands run (the busy bar's hover text names them)
 # v2.1.308: at start, once the indexes are usable, the junk filter learns from the mail already kept (D-238)
 # v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left (D-101)
@@ -312,7 +314,8 @@ class MainWindow(QMainWindow):
         self.report = StatusReport(self, state.account_name)
         book = TagColourBook()  # one set of tag colours for the list, the cards and the reading pane
         self.messages = MessageListPane(backend, state, self.report, self.prefs, memory, book, lambda: self.act_conversations.isChecked(), self)
-        self.tags = MailTags(backend, state, self.report, self.messages, book, self.open_tags, self)
+        self.undoing = Undoing(backend, self.report, self.messages, self)  # B-18
+        self.tags = MailTags(backend, state, self.report, self.messages, book, self.open_tags, self.undoing, self)
         self.folders = FolderPane(backend, state, self.report, self.prefs, memory, self.tags, self.messages, self)
         self.tree, self.tree_model = self.folders.tree, self.folders.model
         self.list_model, self.list_view = self.messages.model, self.messages.view
@@ -323,7 +326,7 @@ class MainWindow(QMainWindow):
         self.messages.finish_header(self.filters.button, self.filters.chip)
         for first, then in ((self.tree, self.list_view), (self.list_view, self.sort_button), (self.sort_button, self.filters.button)):
             QWidget.setTabOrder(first, then)  # the Tab key goes as the person reads the window: folders, messages, Sorted by, Filter
-        self.mail_actions = MessageActions(backend, state, self.report, self.messages, self)
+        self.mail_actions = MessageActions(backend, state, self.report, self.messages, self.undoing, self)
         self.composing = Composing(backend, state, self.report, self.prefs, self.messages, self)
         self.columns = MessageColumns(self.messages, state, self.prefs, memory, self)
         self.splitter = PaneSplitter(Qt.Orientation.Horizontal, self)
@@ -413,6 +416,11 @@ class MainWindow(QMainWindow):
         self.act_not_junk = self._action("Not junk (move to Inbox)", lambda: actions.junk_selected(False), None, "mail-mark-notjunk")
         self.act_cancel_snooze = self._action("Cancel snooze", actions.cancel_snooze_selected)
         self.act_not_junk.setEnabled(False)
+        self.act_undo = self._action("Undo", self.undoing.undo, "Ctrl+Z")  # the text says what it would undo; a text field keeps Ctrl+Z for its typing
+        self.act_redo = self._action("Redo", self.undoing.redo, "Ctrl+Y")
+        self.act_redo_other = self._action("Redo (second key)", self.undoing.redo, "Ctrl+Shift+Z")  # the other usual key, not in the menu
+        for action in (self.act_undo, self.act_redo, self.act_redo_other):
+            action.setEnabled(False)
         self.act_next_unread = self._action("Next unread message", lambda: messages.go_to_unread(1), "N")
         self.act_previous_unread = self._action("Previous unread message", lambda: messages.go_to_unread(-1), "P")
         self.act_archive = self._action("Archive", actions.archive_selected, "A", "archive-insert")
@@ -580,6 +588,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.act_recovery)
         file_menu.addAction(self.act_restore_key)
         message_menu = root.addMenu("&Message")
+        message_menu.addAction(self.act_undo)
+        message_menu.addAction(self.act_redo)
+        message_menu.addSeparator()
         message_menu.addAction(self.act_open)
         message_menu.addAction(self.act_edit_draft)
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
@@ -665,6 +676,7 @@ class MainWindow(QMainWindow):
 
     def _wire(self) -> None:
         self.section_bar.chosen.connect(self.switch_section)
+        self.undoing.labels_changed.connect(self._show_undo)
         self.contacts_page.compose_requested.connect(self.composing.compose_to)
         self.contacts_page.mail_accounts_source = self.mail_state.accounts_with_mail
         self.folders.entry_chosen.connect(self._open_entry)
@@ -802,9 +814,24 @@ class MainWindow(QMainWindow):
                 button.showMenu()
                 return
 
+    def _show_undo(self) -> None:
+        """Undo and Redo say what they would do ("Undo Move to Trash (3 messages)"); greyed when there is nothing, and outside Mail.
+        Undo stays usable while an action is under way: it waits for it, then undoes it."""
+        undoing, mail = self.undoing, self._section == MAIL
+        self.act_undo.setText(f"Undo {undoing.undo_label}" if undoing.undo_label else "Undo")
+        self.act_redo.setText(f"Redo {undoing.redo_label}" if undoing.redo_label else "Redo")
+        self.act_undo.setEnabled(mail and (bool(undoing.undo_label) or undoing.busy))
+        self.act_redo.setEnabled(mail and bool(undoing.redo_label))
+        self.act_redo_other.setEnabled(self.act_redo.isEnabled())
+
+    KEY_NAMES: dict[str, str] = {"undo": "Undo", "redo": "Redo"}  # their text says what they would do; Settings > Keyboard shows only the name
+
     def _shortcut_registry(self) -> dict[str, tuple[str, str]]:
         """Every action that can be given keys: its name, the text, and the standard keys."""
-        return {name[4:]: (action.text(), self._default_shortcuts.get(name, "")) for name, action in vars(self).items() if name.startswith("act_") and isinstance(action, QAction)}
+        return {
+            name[4:]: (self.KEY_NAMES.get(name[4:], action.text()), self._default_shortcuts.get(name, ""))
+            for name, action in vars(self).items() if name.startswith("act_") and isinstance(action, QAction)
+        }
 
     # --- sync conflicts -------------------------------------------------------------------------------------
 
@@ -1248,6 +1275,7 @@ class MainWindow(QMainWindow):
                 self.messages.load_contact_addresses()  # contacts may have been added or changed
         else:
             self.act_delete.setEnabled(True)  # Delete of the calendar, contacts and tasks
+        self._show_undo()
         index = 0 if section == MAIL else 1 + list(self.pages).index(section)
         self.side_stack.setCurrentIndex(index)
         self._show_mail_conflicts()

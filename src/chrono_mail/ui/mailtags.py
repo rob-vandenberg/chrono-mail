@@ -14,11 +14,13 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail
+from chrono_mail.ui.undoing import Undoing
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailtags.py 1.9.274"
+__version__ = "mailtags.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: a tag given or taken away is one action of Undo (B-18)
 # v1.9.274: R-19 round 4: the tags and rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: tag.list and message.tag typed
 # v1.9.264: R-17: the tags of the mail as a part of their own (out of ui/mainwindow.py): the tags with their colours and keys, the Tag
@@ -31,8 +33,11 @@ class MailTags(QObject):
     arrived = Signal()  # tag.list answered (or failed): the folder list takes the Tags entries in
     message_tags_changed = Signal(str, object)  # a message got other tags (message id, tags): the reading pane follows
 
-    def __init__(self, backend: Backend, state: MailState, status: StatusReport, messages: MessageListPane, book: TagColourBook, open_tags: Callable[[], None], parent: QWidget) -> None:
+    def __init__(
+        self, backend: Backend, state: MailState, status: StatusReport, messages: MessageListPane, book: TagColourBook, open_tags: Callable[[], None], undoing: Undoing, parent: QWidget,
+    ) -> None:
         super().__init__(parent)
+        self._undoing: Undoing = undoing
         self._backend: Backend = backend
         self._state: MailState = state
         self._status: StatusReport = status
@@ -116,10 +121,17 @@ class MailTags(QObject):
                 self.message_tags_changed.emit(message_id, tags)
             if new and add:
                 self.load()  # a message that loses the tag stays in a tag's list until it is left, as a read message in Unread (D-146)
+            self._undoing.ended()
 
+        def failed(error: ChronoMailError) -> None:
+            self._status.report("Could not change the tags", error)
+            self._undoing.ended()
+
+        number = self._undoing.new_action()  # one key press, however many folders: one step of Undo
         for (account, folder), ids in groups.items():
-            parameters = MailTagParameters(account, folder, tuple(ids), add=(name,) if add else (), remove=() if add else (name,))
-            self._backend.ask(MESSAGE_TAG, parameters, done, lambda error: self._status.report("Could not change the tags", error), owner=self)
+            parameters = MailTagParameters(account, folder, tuple(ids), add=(name,) if add else (), remove=() if add else (name,), undo=number)
+            self._undoing.started()
+            self._backend.ask(MESSAGE_TAG, parameters, done, failed, owner=self)
 
     def _new_tag(self) -> None:
         name, ok = QInputDialog.getText(self._parent, "New tag", "Name of the new tag (the selected messages get it):")

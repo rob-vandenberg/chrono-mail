@@ -1,8 +1,8 @@
 import bisect
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace as changed
 
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, QObject, Qt, Signal
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QModelIndex, QObject, Qt, Signal
 from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QMenu, QToolButton, QTreeView, QVBoxLayout, QWidget
 
 from chrono_mail.engine.changes import Change, MessageRow
@@ -23,9 +23,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 2.0.280"
+__version__ = "messagelistpane.py 2.2.313"
 
 # --- Version history ----------------------------------------------------
+# v2.2.313: select_messages: the messages Undo brought back are selected where the list shows them, also those placed after the answer (B-18)
 # v2.0.280: the sort is the open folder's (use_sort, given by its setup, B-16); Sent (Saved in Drafts) in the Sorted by menu
 # v1.9.276: the count line says "1 message" (it said "1 messages")
 # v1.9.274: R-19 round 4: the selected rows and facts are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -89,6 +90,9 @@ class MessageListPane(QObject):
         self.model.load_failed.connect(status.load_failed)
         self.model.loaded.connect(self._select_unread_after_load)
         self.model.rearranged.connect(self._show_current_row)
+        self._to_select: list[str] = []  # messages Undo brought back, selected as they take their place in the list
+        for placed in (self.model.rowsInserted, self.model.rearranged, self.model.loaded):
+            placed.connect(self._select_placed)
         self.model.selected_rows = self.selected_and_current_rows
         self.model.shown_rows = self._rows_on_screen
         self.model.loaded.connect(self._list_refetched)
@@ -349,6 +353,31 @@ class MessageListPane(QObject):
         index = model.index(target, 0)
         self.view.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
         self.view.scrollTo(index)
+
+    def select_messages(self, message_ids: Iterable[str]) -> None:
+        """Select these messages where the list shows them (Undo brought them back); the first is the current one, in view. Those still
+        on their way into the list (the engine is asked where they go) are selected with the others when they are placed."""
+        self._to_select = list(message_ids)
+        self._select_placed()
+
+    def _select_placed(self, *_: object) -> None:
+        wanted = self._to_select
+        if not wanted:
+            return
+        if not any(self.model.arriving(message_id) for message_id in wanted):
+            self._to_select = []  # every one is placed, or not in this view
+        rows = sorted(row for row in (self.model.find(message_id) for message_id in wanted) if row >= 0)
+        if not rows:
+            return
+        last_column = self.model.columnCount() - 1
+        selection = QItemSelection()
+        for row in rows:
+            selection.select(self.model.index(row, 0), self.model.index(row, last_column))
+        first = self.model.index(rows[0], 0)
+        flags = QItemSelectionModel.SelectionFlag
+        self.view.selectionModel().setCurrentIndex(first, flags.ClearAndSelect | flags.Rows)
+        self.view.selectionModel().select(selection, flags.Select | flags.Rows)
+        self.view.scrollTo(first)
 
     def step_message(self, step: int) -> None:
         """Select the next (or the previous) message of the list."""
