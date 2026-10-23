@@ -52,4 +52,4 @@ The demo has no real server, so whatever needs one answers with a connection err
 2. Server certificates (certificate inspect, account trust-certificate, forget-certificates).
 3. Finding calendars and contacts on a server (dav discover, find, find-new, link, sync, account add-dav, set-dav).
 4. Sync conflicts (conflict list, settle; mail settle, sync waiting): the demo has none. One can be made on purpose when a screenshot needs it.
-5. Importing from another mail program (import emclient …): it needs that program's export files.
+5. Importing from another mail program (Menu > File > Import…): it needs that program's export files.

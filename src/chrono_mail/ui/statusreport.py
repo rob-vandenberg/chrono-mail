@@ -12,9 +12,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 2.1.311"
+__version__ = "statusreport.py 2.4.322"
 
 # --- Version history ----------------------------------------------------
+# v2.4.322: backup_hint: while a backup runs in the background, a click on the busy bar brings the Back up window back (D-244)
 # v2.1.311: the busy bar's hover text always names what runs (every command's doing, with its accounts), then what a click does; it follows
 #           while shown; learning_junk is gone (the general rule covers it)
 # v2.1.310: learning_junk: the bar's hover text says the junk filter is learning from the mail kept (D-238)
@@ -25,6 +26,7 @@ __version__ = "statusreport.py 2.1.311"
 
 CLICK_OPERATIONS: str = "Click to show the Operations window"
 CLICK_INDEX: str = "Click to show the index progress"
+CLICK_BACKUP: str = "Click to show the backup progress"
 MISSING_WARNING: str = "Some messages no longer exist on disk. Go to Settings > Security and storage and click Repair the search index."
 
 
@@ -50,6 +52,7 @@ class StatusReport(QObject):
         self.line: StatusLine = StatusLine(self.label, parent)  # while the pointer is on a link in the reading pane: where it leads (D-215)
         self._is_error: bool = False
         self._index_running: bool = False
+        self._backup_running: bool = False
         self._missing_timer: QTimer = QTimer(self)  # the answers of an action come one message at a time: one warning for all of them
         self._missing_timer.setSingleShot(True)
         self._missing_timer.setInterval(300)
@@ -91,6 +94,11 @@ class StatusReport(QObject):
         self._index_running = index_running
         self._bar_tip()
 
+    def backup_hint(self, backup_running: bool) -> None:
+        """While a backup runs (also in the background), a click on the bar shows its window (unless an index is updated)."""
+        self._backup_running = backup_running
+        self._bar_tip()
+
     def jobs_changed(self, jobs: object) -> None:
         """The commands running now (the backend's RunningJob tuple): the hover text names them."""
         self._jobs = tuple(job for job in jobs if isinstance(job, RunningJob)) if isinstance(jobs, tuple) else ()
@@ -107,7 +115,7 @@ class StatusReport(QObject):
         lines = [f"{doing}: {', '.join(names)}" if names else doing for doing, names in accounts.items()]
         if self._index_running:
             lines.sort(key=lambda line: "index" not in line)  # the index's own line first (stable: the rest keep their order)
-        return "\n".join([*lines, CLICK_INDEX if self._index_running else CLICK_OPERATIONS])
+        return "\n".join([*lines, CLICK_INDEX if self._index_running else CLICK_BACKUP if self._backup_running else CLICK_OPERATIONS])
 
     def _bar_tip(self) -> None:
         text = self.bar_text()

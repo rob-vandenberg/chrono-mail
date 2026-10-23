@@ -146,6 +146,13 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | I.1 | Import from the reference client's three exports (settings .xml, mail .eml folder, backup .zip): POP3 accounts with passwords, rules, contacts, all mail into Local Folders with its read, flagged and replied marks; resumable, no duplicates. | done (0.5.132); the owner's own import and check to do |
 | I.2 | The rest of the password key (passwords longer than 12 characters), from a test export with a known long password. | open |
 
+## Backup and restore (B-22, from 2.4.322, D-244)
+
+| # | Task | Status |
+|---|---|---|
+| K.1 | Menu > File > Back up…: the parts (Messages, Mail rules, Calendar items, Contacts, Tasks, Settings) and the accounts (Select all; Local Folders and On this computer apart); Include account passwords forces Protect the backup with a password; the backup password made by the program (24 capitals, lower-case letters, digits) with Copy and "I have saved the backup password"; progress, Cancel, Run in background, the busy bar brings the window back; the file written under a temporary name; Restore… greyed; the key items renamed "Show the recovery code…" and "Use a recovery code…". | done (2.4.322) |
+| K.2 | Menu > File > Restore… (the agreed design): 1. no key on this computer yet: it is made first and its recovery code shown in its own window (the recovery code window during a restore: Escape and close ask first, one line "This code is for this computer. The password of your backup is asked for in the next step.", Copy says "Copied" for 2 s, "this computer's password store", no "Save a recovery file…"); 2. then the .cmz is chosen; 3. its backup password asked only when it is protected. Options, both off: "Remove all data on this computer first" (this computer's copy only, never the server; set aside and removed only after the restore finished and checked, put back on a failure or cancel) and "Replace items that already exist" (off: skipped). Everything comes back with its account ids, the sealed files encrypted again with this computer's key (store.json and pim.json get its key id); the indexes rebuilt; the server wins at the first check (dav-state and imap-state only for what was restored). Afterwards every account made is tested like Add account and a short list says per account: connected, or why not (no connection, certificate, login); an accepted certificate is carried over without asking. | open |
+
 ## Documentation (B-07, from 2.3.317, D-242)
 
 | # | Task | Status |

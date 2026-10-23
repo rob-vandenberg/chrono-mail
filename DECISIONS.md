@@ -2,7 +2,7 @@
 
 The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-243 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-244**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-245**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -75,6 +75,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-115** → D-145.
 - **D-145** The index lock is `engine/session.py` `index_lock`; one rebuild at a time.
 - **D-125** Bulk import syncs once per batch, then writes the journal. A duplicate counts only when its index copy decrypts. Rejected: writing without any sync.
+- **D-244** (B-22, the owner) **Back up and Restore are Chrono Mail's own .cmz file** (Import and Export are for other programs). A .cmz is a ZIP of the chosen parts of the chosen accounts exactly as kept here, decrypted, each account with its definition and identity; passwords only in a protected backup; protection is standard ZIP AES-256 with a 24-letter-and-digit password the program makes. A backup only reads. A restore makes the other computer look the same; the server still wins (D-193). Why: a backup must survive the loss of this computer and its key. Rejected: a password the person chooses; Chrono Mail's own encryption (the file should open with 7-Zip too).
 
 ## 4. Security and privacy
 

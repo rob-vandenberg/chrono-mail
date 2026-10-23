@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # --- Version ------------------------------------------------------------
-# build_in_container.sh 2.3.318
+# build_in_container.sh 2.4.322
 # --- Version history ----------------------------------------------------
+# v2.4.322: The AES code of pycryptodomex (Cryptodome), which pyzipper uses for a protected backup (D-244)
 # v2.3.318: Our own SQLite 3.54.1 (checksum checked) instead of Ubuntu 22.04's 3.37.2, which is too old for the index; the build stops when the packed SQLite is older than the program needs
 # v1.5.257: The Public Suffix List file of publicsuffixlist (the main domain of a link, D-215)
 # v0.5.131: Only pyproject.toml, README.md, LICENSE, src and packaging are copied into the container (never private files); the program's own package information, so that it knows its version (About said "version unknown")
@@ -87,6 +88,7 @@ cd /work
     --include-package-data=tzdata:zones \
     --include-package-data=dateutil \
     --include-package-data=publicsuffixlist:public_suffix_list.dat \
+    --include-package=Cryptodome \
     --output-dir=/out \
     --output-filename=chrono-mail \
     packaging/chrono_mail_main.py

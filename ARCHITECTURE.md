@@ -65,7 +65,12 @@ Only `ui` may import PySide6.
 - Never the source of truth: it can be deleted at any time and rebuilt from the store. Normally updated one change at a time.
 - SQLite with FTS5, one per account, **not encrypted** (dates, senders, recipients and subjects are treated as lower sensitivity). Format history in D-031.
 
-### 4.3 Keys (D-023)
+### 4.3 Backup (D-244)
+
+- File > Back up… writes a `.cmz`: a ZIP (AES-256 when protected) with `chrono-mail-backup.json` (format, version, date, parts, accounts, the files that are encrypted here: `sealed`), `config/` (the chosen accounts' definitions without this computer's key id, rules, sidebar, tags, the window's own settings as `window.json`, `passwords.json` only when protected) and `data/` (the files of the chosen accounts exactly as kept here, decrypted; never the indexes, `.deleted` or `tmp`). `engine/backup.py`, commands `backup.*`.
+- The file list is taken under each mailbox's lock; a message that moves meanwhile is found again by its id and backed up once.
+
+### 4.4 Keys (D-023)
 
 - The data key encrypts message files. It lives in the OS credential store (KWallet, GNOME Keyring/Secret Service, Windows Credential Manager, macOS Keychain) through `keyring`. A master-password mode is not built.
 - **Key backup and recovery is mandatory:** a passphrase-protected recovery file (scrypt + AES-GCM) and a printable recovery code with a checksum.

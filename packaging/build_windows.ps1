@@ -1,6 +1,7 @@
 # --- Version ------------------------------------------------------------
-# build_windows.ps1 1.5.257
+# build_windows.ps1 2.4.322
 # --- Version history ----------------------------------------------------
+# v2.4.322: The AES code of pycryptodomex (Cryptodome), which pyzipper uses for a protected backup (D-244)
 # v1.5.257: The Public Suffix List file of publicsuffixlist (the main domain of a link, D-215)
 # v0.5.131: The program's own package information, so that it knows its version (About said "version unknown")
 # v0.5.129: First run on Windows: Inno Setup in Program Files (x86) is found; time-zone files once; only the parts of win32ctypes the password store uses
@@ -43,6 +44,7 @@ if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
     --include-package-data=tzdata:zones `
     --include-package-data=dateutil `
     --include-package-data=publicsuffixlist:public_suffix_list.dat `
+    --include-package=Cryptodome `
     --windows-console-mode=disable `
     --windows-icon-from-ico="$Root\src\chrono_mail\ui\resources\chrono-mail.ico" `
     --product-name="Chrono Mail" `

@@ -13,9 +13,10 @@ from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from tests.ui.world import World, answer_input, answer_open_file, menu_named, reject_dialog, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_key_recovery.py 1.9.266"
+__version__ = "test_ui_key_recovery.py 2.4.322"
 
 # --- Version history ----------------------------------------------------
+# v2.4.322: the key items are "Show the recovery code…" and "Use a recovery code…" (D-244)
 # v1.9.266: R-45: Not now looks for the red of the theme in use, not the light theme's red
 # v1.1.197: The dialog says why the key could not be had and tells a wallet that could not be opened apart; Try again shows the newest reason
 # v0.0.73: The menus are inside one Menu button
@@ -209,7 +210,7 @@ def test_an_unencrypted_account_never_asks_for_a_key(tmp_path: Path, qtbot: QtBo
 
 
 def test_the_menu_has_the_action(world: World) -> None:
-    assert world.window.act_restore_key.text() == "Restore the encryption key…"
+    assert world.window.act_restore_key.text() == "Use a recovery code…" and world.window.act_recovery.text() == "Show the recovery code…"
     file_menu = menu_named(world.window, "File")
     assert world.window.act_restore_key in file_menu.actions()
 

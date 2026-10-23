@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_actions, commands_attachments, commands_addressbook, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_view, commands_watch, junkfilter, undo
+from chrono_mail.engine import commands_accounts, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_view, commands_watch, junkfilter, undo
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 2.2.313"
+__version__ = "catalog.py 2.4.322"
 
 # --- Version history ----------------------------------------------------
+# v2.4.322: Back up (backup.choices, backup.new-password, backup.make, backup.cancel, D-244)
 # v2.2.313: Undo and Redo of actions on mail (mail.undo, mail.redo, mail.undo-labels, B-18)
 # v2.1.308: The junk filter's first learning of the mail kept (junk.learn-existing, D-238)
 # v2.0.302: Opening attachments in another program (message.attachment.open, message.attachment.clean-opened, D-236)
@@ -44,6 +45,7 @@ def build_registry() -> CommandRegistry:
     commands_drafts.register(registry)
     commands_actions.register(registry)
     commands_export.register(registry)
+    commands_backup.register(registry)
     commands_contacts.register(registry)
     commands_watch.register(registry)
     commands_rules.register(registry)
