@@ -18,9 +18,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_many.py 2.1.308"
+__version__ = "commands_many.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: Junk, Not junk and moves into or out of Junk teach the junk filter, once for the whole group (D-238)
 # v1.9.265: NotDone.missing: the message was not done because its file is gone here, so the window warns about it (D-109; lost in 1.1.247)
 # v1.1.247: Initial: many messages of a folder in one command, on the server in groups (R-08)
@@ -256,12 +257,12 @@ MESSAGE_SNOOZE_MANY: TypedCommand[ManySnoozeParameters, ManyResult] = TypedComma
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MESSAGE_DELETE_MANY.id, "Move many messages of a folder to Trash, or delete them for good", ManyDeleteParameters, message_delete_many)
-    registry.register(MESSAGE_MOVE_MANY.id, "Move many messages of a folder to another folder", ManyTargetParameters, message_move_many)
-    registry.register(MESSAGE_COPY_MANY.id, "Copy many messages of a folder to another folder", ManyTargetParameters, message_copy_many)
-    registry.register(MESSAGE_FLAG_MANY.id, "Mark many messages of a folder read or unread, flagged or not", ManyFlagParameters, message_flag_many)
-    registry.register(MESSAGE_ARCHIVE_MANY.id, "Move many messages of a folder to the Archive folder", ManyParameters, message_archive_many)
-    registry.register(MESSAGE_UNARCHIVE_MANY.id, "Move many archived messages back to where each came from", ManyParameters, message_unarchive_many)
-    registry.register(MESSAGE_JUNK_MANY.id, "Move many messages of a folder to the Junk folder", ManyParameters, message_junk_many)
-    registry.register(MESSAGE_NOT_JUNK_MANY.id, "Move many messages out of the Junk folder to the Inbox", ManyParameters, message_not_junk_many)
-    registry.register(MESSAGE_SNOOZE_MANY.id, "Put many messages of a folder away until a time", ManySnoozeParameters, message_snooze_many)
+    registry.register(MESSAGE_DELETE_MANY.id, "Move many messages of a folder to Trash, or delete them for good", ManyDeleteParameters, message_delete_many, doing="Deleting messages")
+    registry.register(MESSAGE_MOVE_MANY.id, "Move many messages of a folder to another folder", ManyTargetParameters, message_move_many, doing="Moving messages")
+    registry.register(MESSAGE_COPY_MANY.id, "Copy many messages of a folder to another folder", ManyTargetParameters, message_copy_many, doing="Copying messages")
+    registry.register(MESSAGE_FLAG_MANY.id, "Mark many messages of a folder read or unread, flagged or not", ManyFlagParameters, message_flag_many, doing="Changing the marks of messages")
+    registry.register(MESSAGE_ARCHIVE_MANY.id, "Move many messages of a folder to the Archive folder", ManyParameters, message_archive_many, doing="Archiving messages")
+    registry.register(MESSAGE_UNARCHIVE_MANY.id, "Move many archived messages back to where each came from", ManyParameters, message_unarchive_many, doing="Moving messages out of the archive")
+    registry.register(MESSAGE_JUNK_MANY.id, "Move many messages of a folder to the Junk folder", ManyParameters, message_junk_many, doing="Moving messages to Junk")
+    registry.register(MESSAGE_NOT_JUNK_MANY.id, "Move many messages out of the Junk folder to the Inbox", ManyParameters, message_not_junk_many, doing="Taking messages out of Junk")
+    registry.register(MESSAGE_SNOOZE_MANY.id, "Put many messages of a folder away until a time", ManySnoozeParameters, message_snooze_many, doing="Snoozing messages")

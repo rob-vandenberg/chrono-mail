@@ -11,9 +11,10 @@ from chrono_mail.store import StoredMessage
 from chrono_mail.sync import send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 1.9.270"
+__version__ = "commands_outbox.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.270: R-19: typed mail.send-outbox
 # v0.5.158: a message Send All sent is reported as moved from the Outbox to Sent (D-146 step 4)
 # v0.5.145: Send All reports its steps per sending account (engine.activity), only for accounts with mail waiting; failures name their account
@@ -113,4 +114,4 @@ MAIL_SEND_OUTBOX: TypedCommand[SendOutboxParameters, SendOutboxResult] = TypedCo
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MAIL_SEND_OUTBOX.id, "Send the messages that wait in the Outbox (not the scheduled ones)", SendOutboxParameters, mail_send_outbox)
+    registry.register(MAIL_SEND_OUTBOX.id, "Send the messages that wait in the Outbox (not the scheduled ones)", SendOutboxParameters, mail_send_outbox, doing="Sending the Outbox")

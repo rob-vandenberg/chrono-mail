@@ -23,9 +23,10 @@ from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 2.1.310"
+__version__ = "mailchecking.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: the busy bar names the learning by itself (the general rule): no hint of its own
 # v2.1.310: learn_existing_junk tells when it is done (and the bar's hover text says what it does meanwhile)
 # v2.1.308: the status line says how many new messages went to Junk; learn_existing_junk at start (D-238)
 # v2.0.281: no automatic mail check while an index is rebuilt or filled in; one when it ends (D-229)
@@ -353,15 +354,12 @@ class MailChecking(QObject):
         """At start: the junk filter learns once from the mail already kept in each place (D-238); the status line follows how far it is."""
 
         def done(result: JunkLearnResult) -> None:
-            self._status.learning_junk(False)
             if result.places:
                 self._status.show(f"Junk filter: learned from {result.places} mailbox{'es' if result.places != 1 else ''}")
 
         def failed(error: ChronoMailError) -> None:
-            self._status.learning_junk(False)
             self._status.report("Junk filter: learning from your mail", error)
 
-        self._status.learning_junk(True)
         self._backend.ask(JUNK_LEARN_EXISTING, NoParameters(), done, failed, owner=self)
 
     def ask_about_blocked(self, account_id: str, item: BlockedFolder) -> None:

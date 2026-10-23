@@ -8,12 +8,13 @@ from typing import Protocol, cast, override
 from PySide6.QtCore import QCoreApplication, QObject, QRunnable, QThreadPool, Signal, Slot
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.engine import CommandRegistry, Engine, TypedCommand, build_registry
+from chrono_mail.engine import CommandRegistry, Engine, TypedCommand, UsageError, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 2.0.295"
+__version__ = "backend.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: jobs_changed and running(): which commands run (what each is doing, for which account), not only how many: the busy bar names them
 # v2.0.295: A job answers exactly once however it ends (also an error that is no Exception), so a window never waits for ever
 # v2.0.294: Every job started is held here until its answer is delivered: Qt's pool only borrows it, so nothing can throw it away before
 #           it runs (a contact's save stayed on "Saving…" for ever in about 1 test run in 4 on the Windows computer)
@@ -35,11 +36,20 @@ Success = Callable[[object], None]
 Failure = Callable[[ChronoMailError], None]
 
 
+@dataclass(frozen=True, slots=True)
+class RunningJob:
+    """A command that runs: what the program is doing, in plain words, and the account it is for ("" when none)."""
+
+    doing: str
+    account: str = ""
+
+
 @dataclass
 class _Pending:
     on_success: Success
     on_error: Failure | None
     owner: QObject | None  # when this object is gone, the answer is dropped instead of delivered
+    job: RunningJob = RunningJob("")
 
 
 class _Done(QObject):
@@ -77,6 +87,7 @@ class Backend(QObject):
 
     progress = Signal(str, int, object)  # what, done, total (None when unknown)
     busy_changed = Signal(int)  # number of commands running
+    jobs_changed = Signal(object)  # the commands running, as a tuple of RunningJob (the busy bar's hover text names them)
     notice = Signal(str)  # something the person should know, from any thread
     activity = Signal(str, str, str, object, object)  # account id, "receive" or "send", step, done, total (None when unknown)
     changed = Signal(object)  # a Change of the engine: one fact of a change of mail (D-146)
@@ -123,8 +134,8 @@ class Backend(QObject):
             self._background[request] = _Pending(on_success, on_error, owner)
             self._waiting_pool.start(task)
             return request
-        self._pending[request] = _Pending(on_success, on_error, owner)
-        self.busy_changed.emit(len(self._pending))
+        self._pending[request] = _Pending(on_success, on_error, owner, self._job(command, values))
+        self._tell_busy()
         if checking:
             self._checking_pool.start(task)
             return request
@@ -137,6 +148,22 @@ class Backend(QObject):
             self._queued[key] = []
         self._pool.start(task)
         return request
+
+    def _job(self, command: str, values: Mapping[str, object]) -> RunningJob:
+        try:
+            doing = self.registry.get(command).doing
+        except UsageError:
+            doing = command  # an unknown command fails when it runs; until then it is named by its id
+        account = values.get("account")
+        return RunningJob(doing, account if isinstance(account, str) else "")
+
+    def _tell_busy(self) -> None:
+        self.busy_changed.emit(len(self._pending))
+        self.jobs_changed.emit(self.running())
+
+    def running(self) -> tuple[RunningJob, ...]:
+        """The commands running now (the ones that only wait, as mail.wait, do not count), in the order they were started."""
+        return tuple(pending.job for pending in self._pending.values())
 
     def ask[P, R](
         self, command: TypedCommand[P, R], parameters: P, on_success: Callable[[R], None], on_error: Failure | None = None, owner: QObject | None = None,
@@ -173,7 +200,7 @@ class Backend(QObject):
         pending = self._background.pop(request, None)
         if pending is None:
             pending = self._pending.pop(request, None)
-            self.busy_changed.emit(len(self._pending))
+            self._tell_busy()
         if pending is None:
             return
         if pending.owner is not None and not _alive(pending.owner):

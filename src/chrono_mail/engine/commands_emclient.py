@@ -40,9 +40,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 1.9.271"
+__version__ = "commands_emclient.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed import.emclient-scan, import.emclient
 # v1.2.254: The names of the export's standard folders come from one table (emclient_source.STANDARD_FOLDERS), shared with the rules
 # v0.5.155: the import is a big job: one "mailbox changed" at the end of each batch instead of a fact per message (D-146)
@@ -668,6 +669,6 @@ IMPORT_EMCLIENT: TypedCommand[ImportParameters, ImportResult] = TypedCommand("im
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(IMPORT_EMCLIENT_SCAN.id, "What an import from eM Client's exports would bring in (changes nothing)", ScanParameters, scan)
-    registry.register("import.emclient-passwords", "Store again the passwords of accounts that are here already, from eM Client's settings export", PasswordsParameters, update_passwords)
-    registry.register(IMPORT_EMCLIENT.id, "Import accounts, passwords, rules, contacts and mail from eM Client's exports", ImportParameters, quiet_command(run_import))
+    registry.register(IMPORT_EMCLIENT_SCAN.id, "What an import from eM Client's exports would bring in (changes nothing)", ScanParameters, scan, doing="Reading the exports to import")
+    registry.register("import.emclient-passwords", "Store again the passwords of accounts that are here already, from eM Client's settings export", PasswordsParameters, update_passwords, doing="Importing passwords")
+    registry.register(IMPORT_EMCLIENT.id, "Import accounts, passwords, rules, contacts and mail from eM Client's exports", ImportParameters, quiet_command(run_import), doing="Importing mail and settings")

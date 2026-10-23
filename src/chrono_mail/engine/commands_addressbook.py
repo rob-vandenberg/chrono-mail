@@ -12,9 +12,10 @@ from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, bare
 from chrono_mail.pimstore import IndexedItem, ItemQuery, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 1.10.277"
+__version__ = "commands_addressbook.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.10.277: Contact groups (R-39): the list leaves groups out and gives one group's members (group); a contact shows its groups; a contact deleted
 #            or moved away is taken out of the groups of its address book; a card keeps its own vCard version
 # v1.9.273: R-19: typed contact.show, -add, -edit, -delete, -move, -import, -export
@@ -515,12 +516,12 @@ CONTACT_EXPORT: TypedCommand[ExportParameters, ExportResult] = TypedCommand("con
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(CONTACT_LIST.id, "List contacts, sorted by family name", ListParameters, contact_list)
-    registry.register(CONTACT_SHOW.id, "Show a contact", ItemParameters, contact_show)
-    registry.register(CONTACT_ADDRESSES.id, "List the e-mail addresses of all contacts", AddressesParameters, contact_addresses)
-    registry.register(CONTACT_ADD.id, "Add a contact", AddParameters, contact_add)
-    registry.register(CONTACT_EDIT.id, "Change a contact", EditParameters, contact_edit)
-    registry.register(CONTACT_DELETE.id, "Delete a contact", ItemParameters, contact_delete, destructive=True)
-    registry.register(CONTACT_MOVE.id, "Move a contact to another address book of the same account", MoveParameters, contact_move)
-    registry.register(CONTACT_IMPORT.id, "Import contacts from vCard text", ImportParameters, quiet_command(contact_import))
-    registry.register(CONTACT_EXPORT.id, "Export a contact or an address book as vCard text", ExportParameters, contact_export)
+    registry.register(CONTACT_LIST.id, "List contacts, sorted by family name", ListParameters, contact_list, doing="Loading the contacts")
+    registry.register(CONTACT_SHOW.id, "Show a contact", ItemParameters, contact_show, doing="Loading a contact")
+    registry.register(CONTACT_ADDRESSES.id, "List the e-mail addresses of all contacts", AddressesParameters, contact_addresses, doing="Reading the addresses of the contacts")
+    registry.register(CONTACT_ADD.id, "Add a contact", AddParameters, contact_add, doing="Adding a contact")
+    registry.register(CONTACT_EDIT.id, "Change a contact", EditParameters, contact_edit, doing="Saving a contact")
+    registry.register(CONTACT_DELETE.id, "Delete a contact", ItemParameters, contact_delete, destructive=True, doing="Deleting a contact")
+    registry.register(CONTACT_MOVE.id, "Move a contact to another address book of the same account", MoveParameters, contact_move, doing="Moving a contact")
+    registry.register(CONTACT_IMPORT.id, "Import contacts from vCard text", ImportParameters, quiet_command(contact_import), doing="Importing contacts")
+    registry.register(CONTACT_EXPORT.id, "Export a contact or an address book as vCard text", ExportParameters, contact_export, doing="Exporting contacts")

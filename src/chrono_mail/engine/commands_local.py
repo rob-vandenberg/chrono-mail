@@ -12,9 +12,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import Pop3State, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_local.py 1.9.271"
+__version__ = "commands_local.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed account.set-storage
 # v1.1.206: Moving an account's mail to or from Local Folders takes each message's properties along (its tags were left behind before) (D-176)
 # v0.5.155: moving an account's mail to or from Local Folders reports both mailboxes as changed (D-146)
@@ -189,5 +190,5 @@ ACCOUNT_SET_STORAGE: TypedCommand[StorageParameters, StorageResult] = TypedComma
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register("local.enable", "Make the Local Folders mailbox", NoParameters, local_enable)
-    registry.register(ACCOUNT_SET_STORAGE.id, "Keep a POP3 account's mail in its own folders or in the shared Local Folders (moves the mail)", StorageParameters, account_set_storage)
+    registry.register("local.enable", "Make the Local Folders mailbox", NoParameters, local_enable, doing="Making Local Folders")
+    registry.register(ACCOUNT_SET_STORAGE.id, "Keep a POP3 account's mail in its own folders or in the shared Local Folders (moves the mail)", StorageParameters, account_set_storage, doing="Moving the account's mail")

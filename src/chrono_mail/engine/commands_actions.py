@@ -12,9 +12,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_actions.py 2.1.308"
+__version__ = "commands_actions.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: Junk and Not junk teach the junk filter; Not junk runs the rules on the message, so it goes where they would have put it (D-238)
 # v1.9.270: R-19: typed folder.mark-read, folder.empty
 # v1.1.247: archive_one, unarchive_target, unarchive_one, junk_one, not_junk_one: one message's step, also for many at once (R-08)
@@ -208,9 +209,9 @@ FOLDER_EMPTY: TypedCommand[FolderActionParameters, EmptyResult] = TypedCommand("
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register("message.junk", "Move a message to the Junk folder", MessageParameters, message_junk)
-    registry.register("message.not-junk", "Move a message from the Junk folder back to the Inbox", MessageParameters, message_not_junk)
-    registry.register("message.archive", "Move a message to the Archive folder", MessageParameters, message_archive)
-    registry.register("message.unarchive", "Move an archived message back to the folder it came from (the Inbox when unknown)", MessageParameters, message_unarchive)
-    registry.register(FOLDER_MARK_READ.id, "Mark every message of a folder as read", FolderActionParameters, folder_mark_read)
-    registry.register(FOLDER_EMPTY.id, "Delete everything in Trash or Junk for good", FolderActionParameters, folder_empty, destructive=True)
+    registry.register("message.junk", "Move a message to the Junk folder", MessageParameters, message_junk, doing="Moving a message to Junk")
+    registry.register("message.not-junk", "Move a message from the Junk folder back to the Inbox", MessageParameters, message_not_junk, doing="Taking a message out of Junk")
+    registry.register("message.archive", "Move a message to the Archive folder", MessageParameters, message_archive, doing="Archiving a message")
+    registry.register("message.unarchive", "Move an archived message back to the folder it came from (the Inbox when unknown)", MessageParameters, message_unarchive, doing="Moving a message out of the archive")
+    registry.register(FOLDER_MARK_READ.id, "Mark every message of a folder as read", FolderActionParameters, folder_mark_read, doing="Marking a folder as read")
+    registry.register(FOLDER_EMPTY.id, "Delete everything in Trash or Junk for good", FolderActionParameters, folder_empty, destructive=True, doing="Emptying a folder")

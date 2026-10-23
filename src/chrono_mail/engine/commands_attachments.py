@@ -12,9 +12,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_attachments.py 2.0.302"
+__version__ = "commands_attachments.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.302: Initial message.attachment.open (a private copy to open in another program; whether it is a program) and
 #           message.attachment.clean-opened (D-236)
 
@@ -95,5 +96,5 @@ MESSAGE_ATTACHMENT_CLEAN_OPENED: TypedCommand[NoParameters, CleanResult] = Typed
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MESSAGE_ATTACHMENT_OPEN.id, "Copy one attachment to a private folder, to open it in another program", AttachmentOpenParameters, message_attachment_open)
-    registry.register(MESSAGE_ATTACHMENT_CLEAN_OPENED.id, "Remove the copies of attachments opened in an earlier run", NoParameters, message_attachment_clean_opened)
+    registry.register(MESSAGE_ATTACHMENT_OPEN.id, "Copy one attachment to a private folder, to open it in another program", AttachmentOpenParameters, message_attachment_open, doing="Opening an attachment")
+    registry.register(MESSAGE_ATTACHMENT_CLEAN_OPENED.id, "Remove the copies of attachments opened in an earlier run", NoParameters, message_attachment_clean_opened, doing="Removing copies of opened attachments")

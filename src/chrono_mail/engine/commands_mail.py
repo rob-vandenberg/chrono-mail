@@ -33,9 +33,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 2.1.308"
+__version__ = "commands_mail.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: the junk filter: new Inbox mail goes through it before the rules (FetchResult.junked); a move into or out of Junk and a
 #           sent reply teach it (D-238)
 # v2.0.302: InlineImage.position: the picture's place among the attachments, to open or save it from a right-click (D-236)
@@ -1140,20 +1141,20 @@ MESSAGE_SEARCH: TypedCommand[SearchParameters, tuple[MessageRow, ...]] = TypedCo
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MAIL_FETCH.id, "Download new messages from the server (POP3), or synchronise with it (IMAP)", AccountParameters, mail_fetch)  # each change is told as a fact (D-150)
-    registry.register(MAIL_SETTLE.id, "Answer for an IMAP folder that a safety rule held back (may delete on the server or here)", SettleParameters, mail_settle, destructive=True)
-    registry.register(MAIL_SEND.id, "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send)
-    registry.register("message.list", "List the messages of a folder", ListParameters, message_list)
-    registry.register("message.position", "Where a message stands in a folder in a sort order (0 is the first)", PositionParameters, message_position)
-    registry.register("message.locate", "Where a message stands in a folder or a search, and its group heading", LocateParameters, message_locate)
-    registry.register(MESSAGE_PLACES.id, "Where several messages stand in a folder or a search (0 is the first)", PlacesParameters, message_places)
-    registry.register(MESSAGE_THREAD.id, "List the messages of the conversation a message belongs to", MessageParameters, message_thread)
-    registry.register(MESSAGE_SHOW.id, "Show one message", MessageParameters, message_show)
-    registry.register(MESSAGE_SEARCH.id, "Search messages", SearchParameters, message_search)
-    registry.register("message.groups", "The groups of a folder or a search (date, size, sender, recipients or subject, as sorted) with their number of messages", SearchParameters, message_groups)
-    registry.register(MESSAGE_ATTACHMENT_SAVE.id, "Save one attachment of a message to a file", AttachmentSaveParameters, message_attachment_save)
-    registry.register(MESSAGE_COMPOSE.id, "Prepare a reply, a reply to all, or a forward of a message", ComposeParameters, message_compose)
-    registry.register("message.flag", "Change the read, flagged or replied marks of a message", FlagParameters, message_flag)
-    registry.register(MESSAGE_MOVE.id, "Move a message to another folder", TransferParameters, message_move)
-    registry.register("message.copy", "Copy a message to another folder", TransferParameters, message_copy)
-    registry.register(MESSAGE_DELETE.id, "Move a message to Trash, or delete it for good", DeleteParameters, message_delete, destructive=True)
+    registry.register(MAIL_FETCH.id, "Download new messages from the server (POP3), or synchronise with it (IMAP)", AccountParameters, mail_fetch, doing="Checking for new mail")  # each change is told as a fact (D-150)
+    registry.register(MAIL_SETTLE.id, "Answer for an IMAP folder that a safety rule held back (may delete on the server or here)", SettleParameters, mail_settle, destructive=True, doing="Synchronising a folder")
+    registry.register(MAIL_SEND.id, "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send, doing="Sending a message")
+    registry.register("message.list", "List the messages of a folder", ListParameters, message_list, doing="Loading the messages")
+    registry.register("message.position", "Where a message stands in a folder in a sort order (0 is the first)", PositionParameters, message_position, doing="Finding a message in the list")
+    registry.register("message.locate", "Where a message stands in a folder or a search, and its group heading", LocateParameters, message_locate, doing="Finding a message in the list")
+    registry.register(MESSAGE_PLACES.id, "Where several messages stand in a folder or a search (0 is the first)", PlacesParameters, message_places, doing="Finding messages in the list")
+    registry.register(MESSAGE_THREAD.id, "List the messages of the conversation a message belongs to", MessageParameters, message_thread, doing="Loading a conversation")
+    registry.register(MESSAGE_SHOW.id, "Show one message", MessageParameters, message_show, doing="Opening a message")
+    registry.register(MESSAGE_SEARCH.id, "Search messages", SearchParameters, message_search, doing="Searching")
+    registry.register("message.groups", "The groups of a folder or a search (date, size, sender, recipients or subject, as sorted) with their number of messages", SearchParameters, message_groups, doing="Loading the messages")
+    registry.register(MESSAGE_ATTACHMENT_SAVE.id, "Save one attachment of a message to a file", AttachmentSaveParameters, message_attachment_save, doing="Saving an attachment")
+    registry.register(MESSAGE_COMPOSE.id, "Prepare a reply, a reply to all, or a forward of a message", ComposeParameters, message_compose, doing="Preparing a reply or forward")
+    registry.register("message.flag", "Change the read, flagged or replied marks of a message", FlagParameters, message_flag, doing="Changing a message's marks")
+    registry.register(MESSAGE_MOVE.id, "Move a message to another folder", TransferParameters, message_move, doing="Moving a message")
+    registry.register("message.copy", "Copy a message to another folder", TransferParameters, message_copy, doing="Copying a message")
+    registry.register(MESSAGE_DELETE.id, "Move a message to Trash, or delete it for good", DeleteParameters, message_delete, destructive=True, doing="Deleting a message")

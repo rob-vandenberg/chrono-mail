@@ -18,9 +18,10 @@ from chrono_mail.pim.edit import retag_item
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tags.py 1.9.271"
+__version__ = "commands_tags.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed tag.create, tag.edit, tag.delete
 # v1.9.270: R-19: typed message.tag
 # v1.1.225: a tag deleted from the items goes through item_writer: on their server first (R-23, D-194)
@@ -246,7 +247,7 @@ TAG_DELETE: TypedCommand[DeleteParameters, DeletedTag] = TypedCommand("tag.delet
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MESSAGE_TAG.id, "Add tags to messages, take tags away, or give them exactly these tags", MailTagParameters, message_tag)
-    registry.register(TAG_CREATE.id, "Make a tag with a colour", CreateParameters, tag_create)
-    registry.register(TAG_EDIT.id, "Give a tag a shortcut key, say what it is for, or move it up or down in the list", EditParameters, tag_edit)
-    registry.register(TAG_DELETE.id, "Take a tag away from all mail, contacts, events and tasks", DeleteParameters, quiet_command(tag_delete), destructive=True)
+    registry.register(MESSAGE_TAG.id, "Add tags to messages, take tags away, or give them exactly these tags", MailTagParameters, message_tag, doing="Tagging messages")
+    registry.register(TAG_CREATE.id, "Make a tag with a colour", CreateParameters, tag_create, doing="Making a tag")
+    registry.register(TAG_EDIT.id, "Give a tag a shortcut key, say what it is for, or move it up or down in the list", EditParameters, tag_edit, doing="Saving a tag")
+    registry.register(TAG_DELETE.id, "Take a tag away from all mail, contacts, events and tasks", DeleteParameters, quiet_command(tag_delete), destructive=True, doing="Deleting a tag")

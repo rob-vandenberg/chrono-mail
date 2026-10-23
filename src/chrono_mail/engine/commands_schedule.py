@@ -17,9 +17,10 @@ from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 2.1.308"
+__version__ = "commands_schedule.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: a scheduled reply, once sent, teaches the junk filter that its source is good mail (D-238)
 # v1.9.270: R-19: typed mail.unschedule (its answer is the draft it became)
 # v1.9.268: R-21: Send now, Pause and Resume answer with the message's line as it is now (None: it no longer waits), so the Scheduled page
@@ -702,14 +703,14 @@ MAIL_UNSCHEDULE: TypedCommand[MessageParameters, DraftSaveResult] = TypedCommand
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MAIL_REPEAT_PAUSE.id, "Stop sending a repeating message until it is resumed", MessageParameters, repeat_pause)
-    registry.register(MAIL_REPEAT_RESUME.id, "Go on sending a repeating message", MessageParameters, repeat_resume)
-    registry.register("mail.repeat-change", "Change the start, end or interval of a repeating message", RepeatChange, repeat_change)
-    registry.register("mail.repeat-cancel", "End a repeating message and remove its pattern", MessageParameters, repeat_cancel, destructive=True)
-    registry.register(MAIL_SCHEDULED.id, "List the messages waiting to be sent at a time", AccountOptional, mail_scheduled)
-    registry.register(MAIL_SEND_DUE.id, "Send the scheduled messages whose time has come", SendDueParameters, mail_send_due)
-    registry.register(MAIL_EDIT_SCHEDULED.id, "Change a scheduled message: its content, and its time and repeat unless kept; it keeps its id", ScheduledEdit, mail_edit_scheduled)
-    registry.register(MAIL_UNSCHEDULE.id, "Move a scheduled message back to drafts", MessageParameters, mail_unschedule)
-    registry.register("message.snooze", "Put a message away until a time", SnoozeParameters, message_snooze)
-    registry.register(MESSAGE_SNOOZED.id, "List the snoozed messages", AccountOptional, message_snoozed)
-    registry.register(MESSAGE_WAKE.id, "Bring back snoozed messages whose time has come", WakeParameters, message_wake)
+    registry.register(MAIL_REPEAT_PAUSE.id, "Stop sending a repeating message until it is resumed", MessageParameters, repeat_pause, doing="Pausing a repeating message")
+    registry.register(MAIL_REPEAT_RESUME.id, "Go on sending a repeating message", MessageParameters, repeat_resume, doing="Resuming a repeating message")
+    registry.register("mail.repeat-change", "Change the start, end or interval of a repeating message", RepeatChange, repeat_change, doing="Changing a repeating message")
+    registry.register("mail.repeat-cancel", "End a repeating message and remove its pattern", MessageParameters, repeat_cancel, destructive=True, doing="Ending a repeating message")
+    registry.register(MAIL_SCHEDULED.id, "List the messages waiting to be sent at a time", AccountOptional, mail_scheduled, doing="Reading the scheduled messages")
+    registry.register(MAIL_SEND_DUE.id, "Send the scheduled messages whose time has come", SendDueParameters, mail_send_due, doing="Sending scheduled messages")
+    registry.register(MAIL_EDIT_SCHEDULED.id, "Change a scheduled message: its content, and its time and repeat unless kept; it keeps its id", ScheduledEdit, mail_edit_scheduled, doing="Saving a scheduled message")
+    registry.register(MAIL_UNSCHEDULE.id, "Move a scheduled message back to drafts", MessageParameters, mail_unschedule, doing="Moving a scheduled message to Drafts")
+    registry.register("message.snooze", "Put a message away until a time", SnoozeParameters, message_snooze, doing="Snoozing a message")
+    registry.register(MESSAGE_SNOOZED.id, "List the snoozed messages", AccountOptional, message_snoozed, doing="Reading the snoozed messages")
+    registry.register(MESSAGE_WAKE.id, "Bring back snoozed messages whose time has come", WakeParameters, message_wake, doing="Bringing back snoozed messages")

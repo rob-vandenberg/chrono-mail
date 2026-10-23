@@ -56,9 +56,10 @@ from chrono_mail.sync.mailconflicts import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_conflicts.py 2.0.286"
+__version__ = "commands_conflicts.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.286: A collection's name or colour changed here and on the server (Use Chrono Mail, Use Server data, per field) or a name the server
 #           refused (Use Server data, Retry sync): the choice goes into what the account keeps, the synchronisation started at once does it (D-192, F3)
 # v1.1.240: A folder renamed or deleted offline: refused (Use Server data undoes it here, Retry sync) or changed on the server meanwhile (Use
@@ -607,6 +608,6 @@ SYNC_WAITING: TypedCommand[NoParameters, WaitingList] = TypedCommand("sync.waiti
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(CONFLICT_LIST.id, "List the sync conflicts of the calendars, task lists and address books", NoParameters, conflict_list)
-    registry.register(CONFLICT_SETTLE.id, "Settle sync conflicts: Chrono Mail's version, the server's, or per field", SettleParameters, conflict_settle)
-    registry.register(SYNC_WAITING.id, "List the changes made here that wait for the calendar servers", NoParameters, sync_waiting)
+    registry.register(CONFLICT_LIST.id, "List the sync conflicts of the calendars, task lists and address books", NoParameters, conflict_list, doing="Reading the sync conflicts")
+    registry.register(CONFLICT_SETTLE.id, "Settle sync conflicts: Chrono Mail's version, the server's, or per field", SettleParameters, conflict_settle, doing="Settling sync conflicts")
+    registry.register(SYNC_WAITING.id, "List the changes made here that wait for the calendar servers", NoParameters, sync_waiting, doing="Reading what waits for the servers")

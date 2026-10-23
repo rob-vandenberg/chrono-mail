@@ -10,9 +10,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_export.py 1.9.270"
+__version__ = "commands_export.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.270: R-19: typed message.export, message.source, message.text
 # v0.0.22: Initial export, source and plain text commands
 
@@ -105,6 +106,6 @@ MESSAGE_TEXT: TypedCommand[MessageParameters, TextResult] = TypedCommand("messag
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MESSAGE_EXPORT.id, "Save a message as an .eml file", ExportParameters, message_export)
-    registry.register(MESSAGE_SOURCE.id, "Show the raw source of a message", MessageParameters, message_source)
-    registry.register(MESSAGE_TEXT.id, "A message as plain text (used for printing)", MessageParameters, message_text)
+    registry.register(MESSAGE_EXPORT.id, "Save a message as an .eml file", ExportParameters, message_export, doing="Saving a message as a file")
+    registry.register(MESSAGE_SOURCE.id, "Show the raw source of a message", MessageParameters, message_source, doing="Loading a message's source")
+    registry.register(MESSAGE_TEXT.id, "A message as plain text (used for printing)", MessageParameters, message_text, doing="Preparing a message for printing")

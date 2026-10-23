@@ -56,9 +56,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.1.308"
+__version__ = "mainwindow.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: the status part knows the accounts' names and hears which commands run (the busy bar's hover text names them)
 # v2.1.308: at start, once the indexes are usable, the junk filter learns from the mail already kept (D-238)
 # v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left (D-101)
 # v2.0.305: Menu > Message: Next and Previous message, Next and Previous unread message and Go to folder… in a Go to submenu (the owner)
@@ -308,7 +309,7 @@ class MainWindow(QMainWindow):
         """The parts of the mail window and the panes they make, laid out: the folders (or a section's sidebar) at the left, the
         message list and the reading pane at the right."""
         backend, state, memory = self.backend, self.mail_state, self.memory
-        self.report = StatusReport(self)
+        self.report = StatusReport(self, state.account_name)
         book = TagColourBook()  # one set of tag colours for the list, the cards and the reading pane
         self.messages = MessageListPane(backend, state, self.report, self.prefs, memory, book, lambda: self.act_conversations.isChecked(), self)
         self.tags = MailTags(backend, state, self.report, self.messages, book, self.open_tags, self)
@@ -686,6 +687,7 @@ class MainWindow(QMainWindow):
         self.messages.view_changed.connect(self.filters.show_state)
         self.messages.view_changed.connect(self.search.show_state)
         self.backend.busy_changed.connect(self.report.busy_changed)
+        self.backend.jobs_changed.connect(self.report.jobs_changed)
         self.backend.progress.connect(self.report.progress)
         self.backend.notice.connect(self.report.notice)
         self.backend.activity.connect(self.checking.activity)

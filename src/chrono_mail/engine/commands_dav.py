@@ -18,9 +18,10 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 1.9.271"
+__version__ = "commands_dav.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed account.set-dav
 # v1.9.270: R-19: typed dav.sync
 # v1.1.236: The synchronisation's answer also says how many collections made here offline were made on the server (made_on_server, R-29)
@@ -463,10 +464,10 @@ ACCOUNT_SET_DAV: TypedCommand[SetDavParameters, AccountSummary] = TypedCommand("
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(ACCOUNT_SET_DAV.id, "Set the calendar and contacts server (CalDAV and CardDAV) of an account", SetDavParameters, dav_set)
-    registry.register("dav.discover", "List what the calendar and contacts server of an account offers", DiscoverParameters, dav_discover)
-    registry.register(DAV_SYNC.id, "Synchronise calendars, task lists and address books with the server, both ways", SyncParameters, quiet_command(dav_sync))
-    registry.register(DAV_FIND.id, "Find the calendars, task lists and address books of an account (at an address, or by looking for its server)", FindParameters, dav_find)
-    registry.register(DAV_FIND_NEW.id, "List what a calendar and contacts server offers to a login that is not an account yet", FindNewParameters, dav_find_new)
-    registry.register(ACCOUNT_ADD_DAV.id, "Add an account of calendars, contacts and tasks only (no mail)", AddDavParameters, account_add_dav)
-    registry.register(DAV_LINK.id, "Keep the folders of a calendar and contacts server in step with an account, except the ones left out", LinkParameters, dav_link, destructive=True)
+    registry.register(ACCOUNT_SET_DAV.id, "Set the calendar and contacts server (CalDAV and CardDAV) of an account", SetDavParameters, dav_set, doing="Saving the calendar and contacts server")
+    registry.register("dav.discover", "List what the calendar and contacts server of an account offers", DiscoverParameters, dav_discover, doing="Asking the calendar server what it offers")
+    registry.register(DAV_SYNC.id, "Synchronise calendars, task lists and address books with the server, both ways", SyncParameters, quiet_command(dav_sync), doing="Synchronising calendars, contacts and tasks")
+    registry.register(DAV_FIND.id, "Find the calendars, task lists and address books of an account (at an address, or by looking for its server)", FindParameters, dav_find, doing="Looking for calendars, contacts and tasks")
+    registry.register(DAV_FIND_NEW.id, "List what a calendar and contacts server offers to a login that is not an account yet", FindNewParameters, dav_find_new, doing="Looking for calendars, contacts and tasks")
+    registry.register(ACCOUNT_ADD_DAV.id, "Add an account of calendars, contacts and tasks only (no mail)", AddDavParameters, account_add_dav, doing="Adding an account of calendars and contacts")
+    registry.register(DAV_LINK.id, "Keep the folders of a calendar and contacts server in step with an account, except the ones left out", LinkParameters, dav_link, destructive=True, doing="Saving the calendars, contacts and tasks to keep in step")

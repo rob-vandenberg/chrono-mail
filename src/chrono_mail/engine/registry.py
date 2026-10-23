@@ -14,9 +14,10 @@ if TYPE_CHECKING:
     from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "registry.py 1.1.205"
+__version__ = "registry.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing), in plain words: the busy bar names what runs
 # v1.1.205: TypedCommand: a command with the types of its parameters and its answer, so every caller is checked by the type checker (R-02, R-19)
 # v0.0.12: Initial command registry
 
@@ -48,6 +49,7 @@ class Command:
     description: str
     parameters: tuple[ParameterSpec, ...]
     destructive: bool
+    doing: str  # what the program is doing while the command runs, in plain words (the busy bar's hover text)
     _parameter_type: type
     _handler: Callable[["Engine", object], object]
 
@@ -184,9 +186,13 @@ class CommandRegistry:
         parameter_type: type[P],
         handler: Callable[["Engine", P], R],
         destructive: bool = False,
+        *,
+        doing: str,
     ) -> None:
         if command_id in self._commands:
             raise ValueError(f"Command {command_id} is registered twice")
+        if not doing.strip():
+            raise ValueError(f"Command {command_id} does not say what it is doing")
         hints = typing.get_type_hints(parameter_type)
         specs = tuple(_spec(parameter_field, hints[parameter_field.name]) for parameter_field in dataclasses.fields(cast(type, parameter_type)))
         self._commands[command_id] = Command(
@@ -194,6 +200,7 @@ class CommandRegistry:
             description,
             specs,
             destructive,
+            doing,
             parameter_type,
             lambda engine, parameters: handler(engine, cast(P, parameters)),
         )

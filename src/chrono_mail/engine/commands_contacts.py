@@ -10,9 +10,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_contacts.py 1.10.277"
+__version__ = "commands_contacts.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.10.277: A contact group whose name matches is suggested too: choosing it puts every member's address in the field (R-39)
 # v1.9.273: R-19: typed contact.suggest
 # v0.0.45: Local Folders: POP3 accounts can keep their mail in a shared mailbox
@@ -83,4 +84,4 @@ CONTACT_SUGGEST: TypedCommand[SuggestParameters, tuple[Suggestion, ...]] = Typed
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(CONTACT_SUGGEST.id, "Suggest addresses from the mail for what is being typed", SuggestParameters, contact_suggest)
+    registry.register(CONTACT_SUGGEST.id, "Suggest addresses from the mail for what is being typed", SuggestParameters, contact_suggest, doing="Looking up addresses")

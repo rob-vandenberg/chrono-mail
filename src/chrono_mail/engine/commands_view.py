@@ -10,9 +10,10 @@ from chrono_mail.index import SearchFilter
 from chrono_mail.index.model import GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_view.py 1.6.260"
+__version__ = "commands_view.py 2.1.311"
 
 # --- Version history ----------------------------------------------------
+# v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.6.260: Initial: message.order and message.combined-order (the whole order of a view: every message's id, folder and unread mark, the
 #           headings, the first rows), message.rows (rows asked by the message, never by a place) (R-15)
 
@@ -143,6 +144,6 @@ MESSAGE_ROWS: TypedCommand[RowsParameters, RowsAnswer] = TypedCommand("message.r
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MESSAGE_ORDER.id, "The order of a folder or a search: every message's id, folder and unread mark, with the first rows", OrderParameters, message_order)
-    registry.register(MESSAGE_COMBINED_ORDER.id, "The order of a Favorites view: every message's mailbox, id, folder and unread mark, with the first rows", CombinedOrderParameters, message_combined_order)
-    registry.register(MESSAGE_ROWS.id, "The rows of named messages, as the message list shows them", RowsParameters, message_rows)
+    registry.register(MESSAGE_ORDER.id, "The order of a folder or a search: every message's id, folder and unread mark, with the first rows", OrderParameters, message_order, doing="Loading the messages")
+    registry.register(MESSAGE_COMBINED_ORDER.id, "The order of a Favorites view: every message's mailbox, id, folder and unread mark, with the first rows", CombinedOrderParameters, message_combined_order, doing="Loading the messages")
+    registry.register(MESSAGE_ROWS.id, "The rows of named messages, as the message list shows them", RowsParameters, message_rows, doing="Loading the messages")
