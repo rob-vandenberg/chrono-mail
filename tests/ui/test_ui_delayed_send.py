@@ -4,7 +4,7 @@ import pytest
 from PySide6.QtWidgets import QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.engine.commands_mail import ListParameters, message_list
+from chrono_mail.engine.commands_mail import ListParameters, SendParameters, mail_send, message_list
 from chrono_mail.ui import sendnotices
 from chrono_mail.ui.composer import ComposeWindow
 from chrono_mail.ui.mainwindow import MainWindow
@@ -15,9 +15,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_delayed_send.py 2.3.315"
+__version__ = "test_ui_delayed_send.py 2.3.316"
 
 # --- Version history ----------------------------------------------------
+# v2.3.316: the refresh at start does its own choice; the two rows of Settings, each greyed with its tick
 # v2.3.315: Send only (the timer sends and fetches nothing, the server's "new mail" fetches nothing); the one Automatically row of Settings
 # v2.2.314: Initial (B-21, B-20): the notice of a delayed send (Send now, Cancel, its end), until the next refresh, the scheduled refresh
 #           (Send and Receive, or Receive only), the question on Quit, the settings
@@ -194,13 +195,43 @@ def test_with_send_only_the_servers_new_mail_fetches_nothing(tmp_path: Path, qtb
         assert received == []
 
 
-def test_the_automatic_row_greys_its_choice_and_minutes_with_its_tick(world: World, qtbot: QtBot) -> None:
-    world.window.settings.setValue("auto_check", False)
-    world.window.settings.setValue("scheduled_refresh", "send")
-    dialog = SettingsDialog(world.backend, world.window.settings)
+def test_each_refresh_row_greys_its_choice_with_its_tick(world: World, qtbot: QtBot) -> None:
+    settings = world.window.settings
+    settings.setValue("auto_check", False)
+    settings.setValue("check_on_start", False)
+    settings.setValue("scheduled_refresh", "send")
+    dialog = SettingsDialog(world.backend, settings)
     qtbot.addWidget(dialog)
-    assert [dialog.scheduled_refresh.itemText(index) for index in range(dialog.scheduled_refresh.count())] == ["Send and Receive", "Receive only", "Send only"]
-    assert dialog.scheduled_refresh.currentData() == "send" and not dialog.scheduled_refresh.isEnabled() and not dialog.interval.isEnabled()
+    for box in (dialog.start_refresh, dialog.scheduled_refresh):
+        assert [box.itemText(index) for index in range(box.count())] == ["Send and Receive", "Receive only", "Send only"] and not box.isEnabled()
+    assert dialog.start_refresh.currentData() == "send_receive" and dialog.scheduled_refresh.currentData() == "send" and not dialog.interval.isEnabled()
+    dialog.check_on_start.setChecked(True)
+    assert dialog.start_refresh.isEnabled() and not dialog.scheduled_refresh.isEnabled()
     dialog.auto_check.setChecked(True)
-    assert dialog.scheduled_refresh.isEnabled() and dialog.interval.isEnabled() and dialog.auto_check.text() == "Automatically"
-    assert dialog.check_on_start.text() == "Refresh when the program starts" and world.window.act_auto.text() == "Refresh automatically"
+    assert dialog.scheduled_refresh.isEnabled() and dialog.interval.isEnabled()
+    dialog.start_refresh.setCurrentIndex(dialog.start_refresh.findData("receive"))
+    chosen = dialog.chosen()
+    assert (chosen.start_refresh, chosen.scheduled_refresh, chosen.check_on_start, chosen.auto_check) == ("receive", "send", True, True)
+    assert dialog.check_on_start.text() == "Refresh when the program starts" and dialog.auto_check.text() == "Automatic refresh"
+    assert world.window.act_auto.text() == "Refresh automatically"
+
+
+@pytest.mark.parametrize("start", ["send_receive", "receive"])
+def test_the_refresh_at_start_does_its_own_choice(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, start: str) -> None:
+    mail_send(world.engine, SendParameters(world.account_id, to=("you@example.com",), subject="Waiting", body="x", hold=True))
+    settings = world.window.settings
+    settings.setValue("check_on_start", True)
+    settings.setValue("start_refresh", start)
+    settings.setValue("scheduled_refresh", "send_receive" if start == "receive" else "receive")  # the automatic row says the other
+    checking = world.window.checking
+    received: list[set[str] | None] = []
+    real_check = checking.check_accounts
+
+    def recorded(only: set[str] | None, manual: bool = False, new_round: bool = True, also_calendars: set[str] | None = None) -> None:
+        received.append(only)
+        real_check(only, manual, new_round, also_calendars)
+
+    monkeypatch.setattr(checking, "check_accounts", recorded)
+    world.window.start()
+    wait(qtbot, lambda: bool(received) and not checking.checking and not checking.sending and world.backend._pending == {})  # noqa: SLF001 - the refresh at start is done
+    assert len(world.smtp.received) == (1 if start == "send_receive" else 0)

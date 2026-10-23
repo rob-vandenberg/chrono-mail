@@ -58,9 +58,10 @@ from chrono_mail.core.colours import DARK, LIGHT, text_on_accent
 from chrono_mail.ui.colours import is_dark, red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 2.3.315"
+__version__ = "settingsdialog.py 2.3.316"
 
 # --- Version history ----------------------------------------------------
+# v2.3.316: General: "Refresh when the program starts [choice]" and "Automatic refresh [choice] every [n minutes]", each greyed with its tick (the owner)
 # v2.3.315: General: one row "Automatically [Send and Receive / Receive only / Send only] every [n minutes]"; "Refresh when the program starts" (the owner)
 # v2.2.314: General: Scheduled refresh (Send and Receive, or Receive only), the two delays of sending, the warning on Quit (B-21, B-20)
 # v2.0.281: Rebuild the search index goes to the main window (rebuild_requested): one place after the other with the rebuild window, while the
@@ -364,18 +365,15 @@ class SettingsDialog(QDialog):
         form.addRow("Show on startup:", self.startup_box)
         self.check_on_start = QCheckBox("Refresh when the program starts", page)
         self.check_on_start.setChecked(self._chosen.check_on_start)
-        self.auto_check = QCheckBox("Automatically", page)
+        self.auto_check = QCheckBox("Automatic refresh", page)
         self.auto_check.setChecked(self._chosen.auto_check)
         self.interval = QSpinBox(page)
         self.interval.setRange(1, 240)
         self.interval.setSuffix(" minutes")
         self.interval.setValue(self._chosen.auto_check_minutes)
         self.interval.setEnabled(self.auto_check.isChecked())
-        self.scheduled_refresh = QComboBox(page)  # what a refresh the person did not click does; the Refresh button always sends and receives
-        for text, value in (("Send and Receive", "send_receive"), ("Receive only", "receive"), ("Send only", "send")):
-            self.scheduled_refresh.addItem(text, value)
-        self.scheduled_refresh.setCurrentIndex(max(0, self.scheduled_refresh.findData(self._chosen.scheduled_refresh)))
-        self.scheduled_refresh.setEnabled(self.auto_check.isChecked())
+        self.start_refresh = self._refresh_choice(self._chosen.start_refresh, self.check_on_start, page)  # the Refresh button always sends and receives
+        self.scheduled_refresh = self._refresh_choice(self._chosen.scheduled_refresh, self.auto_check, page)
         self.send_delay = QCheckBox("Delay sending a message by", page)
         self.send_delay.setChecked(self._chosen.send_delay)
         self.send_delay_seconds = QSpinBox(page)
@@ -393,8 +391,12 @@ class SettingsDialog(QDialog):
         self.tray.setChecked(self._chosen.tray and tray_available)
         self.close_to_tray = QCheckBox("Closing the window keeps Chrono Mail running in the notification area", page)
         self.close_to_tray.setChecked(self._chosen.close_to_tray and tray_available)
-        form.addRow(self.check_on_start)
-        automatic_row = QHBoxLayout()  # the owner: one row, "Automatically [Send and Receive] every [20 minutes]"
+        start_row = QHBoxLayout()
+        start_row.addWidget(self.check_on_start)
+        start_row.addWidget(self.start_refresh)
+        start_row.addStretch(1)
+        form.addRow(start_row)
+        automatic_row = QHBoxLayout()  # the owner: one row, "Automatic refresh [Send and Receive] every [20 minutes]"
         automatic_row.addWidget(self.auto_check)
         automatic_row.addWidget(self.scheduled_refresh)
         automatic_row.addWidget(QLabel("every", page))
@@ -418,9 +420,18 @@ class SettingsDialog(QDialog):
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())
         self.auto_check.toggled.connect(self.interval.setEnabled)
-        self.auto_check.toggled.connect(self.scheduled_refresh.setEnabled)
         self.send_delay.toggled.connect(self.send_delay_seconds.setEnabled)
         return page
+
+    def _refresh_choice(self, chosen: str, tick: QCheckBox, page: QWidget) -> QComboBox:
+        """What a refresh does (Send and Receive, Receive only, Send only), greyed while its tick is off."""
+        box = QComboBox(page)
+        for text, value in (("Send and Receive", "send_receive"), ("Receive only", "receive"), ("Send only", "send")):
+            box.addItem(text, value)
+        box.setCurrentIndex(max(0, box.findData(chosen)))
+        box.setEnabled(tick.isChecked())
+        tick.toggled.connect(box.setEnabled)
+        return box
 
     def _operations_page(self) -> QWidget:
         """When the Operations window (the progress of every send and receive) shows itself and hides again."""
@@ -957,7 +968,7 @@ class SettingsDialog(QDialog):
         accent_dark, accent_light = self._accents()
         return Preferences(
             check_on_start=self.check_on_start.isChecked(), auto_check=self.auto_check.isChecked(), auto_check_minutes=self.interval.value(),
-            scheduled_refresh=str(self.scheduled_refresh.currentData()), send_delay=self.send_delay.isChecked(), send_delay_seconds=self.send_delay_seconds.value(),
+            start_refresh=str(self.start_refresh.currentData()), scheduled_refresh=str(self.scheduled_refresh.currentData()), send_delay=self.send_delay.isChecked(), send_delay_seconds=self.send_delay_seconds.value(),
             send_on_refresh=self.send_on_refresh.isChecked(), warn_outbox_on_quit=self.warn_outbox_on_quit.isChecked(),
             notifications=self.notifications.isChecked(), tray=self.tray.isChecked(), close_to_tray=self.close_to_tray.isChecked(),
             operations_show_on_send_receive=self.operations_show.isChecked(), operations_hide_when_done=self.operations_hide.isChecked(),

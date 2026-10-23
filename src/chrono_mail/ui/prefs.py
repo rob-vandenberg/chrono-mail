@@ -8,9 +8,10 @@ from chrono_mail.ui.columns import valid_columns
 from chrono_mail.ui.scale import STANDARD, clamp
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 2.3.315"
+__version__ = "prefs.py 2.3.316"
 
 # --- Version history ----------------------------------------------------
+# v2.3.316: start_refresh: what the refresh at start does, apart from the automatic one (the owner)
 # v2.3.315: scheduled_refresh may also be send (only sends, the owner)
 # v2.2.314: scheduled_refresh (Send and Receive, or Receive only), send_delay with its seconds, send_on_refresh, warn_outbox_on_quit (B-21, B-20)
 # v2.0.280: Columns per folder (B-16): the columns are no longer one setting of the Settings window; Remembered keeps the setup of each folder
@@ -40,6 +41,7 @@ DEFAULTS: dict[str, object] = {
     "check_on_start": True,
     "auto_check": True,
     "auto_check_minutes": 5,
+    "start_refresh": "send_receive",  # what the refresh when the program starts does: send_receive, receive or send
     "scheduled_refresh": "send_receive",  # what a refresh the person did not click does: send_receive, receive (only fetches) or send (only sends)
     "send_delay": False,  # Send puts the message in the Outbox for send_delay_seconds, with a notice to send it now or cancel (B-21)
     "send_delay_seconds": 10,
@@ -241,6 +243,7 @@ class Preferences:
     check_on_start: bool = True
     auto_check: bool = True
     auto_check_minutes: int = 5
+    start_refresh: str = "send_receive"
     scheduled_refresh: str = "send_receive"
     send_delay: bool = False
     send_delay_seconds: int = 10
@@ -286,7 +289,7 @@ class Preferences:
 _LIMITS: dict[str, tuple[int, int]] = {"auto_check_minutes": (1, 240), "mark_read_delay_ms": (0, 10_000), "autosave_seconds": (0, 600), "send_delay_seconds": (1, 999)}
 _CHOICES: dict[str, tuple[str, ...]] = {
     "color_scheme": COLOR_SCHEMES, "list_layout": LIST_LAYOUTS, "reading_pane": READING_PANES, "date_style": DATE_STYLES, "list_density": DENSITIES,
-    "mark_read": MARK_READ, "reply_quote": REPLY_QUOTES, "scheduled_refresh": SCHEDULED_REFRESHES,
+    "mark_read": MARK_READ, "reply_quote": REPLY_QUOTES, "scheduled_refresh": SCHEDULED_REFRESHES, "start_refresh": SCHEDULED_REFRESHES,
 }
 _KEY_OF: dict[str, str] = {"startup": "startup_view"}  # the field and its name in the settings file, where they differ
 
@@ -303,6 +306,7 @@ def read_preferences(settings: QSettings) -> Preferences:
         check_on_start=get_bool(settings, "check_on_start"),
         auto_check=get_bool(settings, "auto_check"),
         auto_check_minutes=number("auto_check_minutes"),
+        start_refresh=choice("start_refresh"),
         scheduled_refresh=choice("scheduled_refresh"),
         send_delay=get_bool(settings, "send_delay"),
         send_delay_seconds=number("send_delay_seconds"),
