@@ -12,11 +12,13 @@ from chrono_mail.engine.commands_folders import INDEX_ABORT, INDEX_CHECK, INDEX_
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.statusreport import StatusReport
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "indexrebuilds.py 2.0.303"
+__version__ = "indexrebuilds.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.0.303: show_window: the window comes back after Run in background (a click on the bar in the status line, D-229)
 # v2.0.281: Initial version (D-229): at start every index is checked; the ones that cannot be used are rebuilt one after the other before
 #           the mail is shown, then the Sent dates of upgraded ones are filled in; a window with the account, a wide bar and how many of how
@@ -188,7 +190,7 @@ class IndexRebuilds(QObject):
         if command is None:
             self._backend.ask(INDEX_FILL_SENT, parameters, lambda result: self._done(account, None), lambda error: self._done(account, error), owner=self)
         else:
-            self._backend.ask(command, parameters, lambda result: self._done(account, f"{result.messages:,} messages indexed"), lambda error: self._done(account, error), owner=self)
+            self._backend.ask(command, parameters, lambda result: self._done(account, f"{counted(result.messages, 'message')} indexed"), lambda error: self._done(account, error), owner=self)
 
     def _done(self, account: str, outcome: str | ChronoMailError | None) -> None:
         if isinstance(outcome, ChronoMailError) and not isinstance(outcome, RebuildAborted):

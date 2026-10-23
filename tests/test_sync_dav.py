@@ -11,9 +11,10 @@ from chrono_mail.sync.davsync import DavReport, sync_dav, unsent_changes
 from tests.fakedav import Collection, FakeDav
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_dav.py 1.1.234"
+__version__ = "test_sync_dav.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: the line of an item that could not be fetched counts it one way ("1 item")
 # v1.1.234: a collection deleted on the server goes here only on the server's confirmation; a failed list or check removes nothing; changed here:
 #           a sync conflict (R-25)
 # v1.1.225: a change on both sides is a sync conflict (no more "[Conflict]" copies); nothing of it is sent until the person settles it (D-194)
@@ -383,7 +384,7 @@ def test_one_item_that_times_out_costs_only_that_item(tmp_path: Path) -> None:
         setup = Setup(tmp_path, server)
         report = sync_dav(SlowItemClient(server.url, "ann", "secret"), setup.store, setup.state, durable=False)
         assert len(setup.titles(CollectionKind.EVENTS)) == 29
-        assert report.errors == ["Calendar: 1 item(s) could not be fetched; they are asked for again at the next synchronisation"]
+        assert report.errors == ["Calendar: 1 item could not be fetched; asked for again at the next synchronisation"]
         assert setup.sync().errors == [] and len(setup.titles(CollectionKind.EVENTS)) == 30  # the token was kept back: it comes next time
 
 

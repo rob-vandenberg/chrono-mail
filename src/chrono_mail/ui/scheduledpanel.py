@@ -14,9 +14,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "scheduledpanel.py 1.9.275"
+__version__ = "scheduledpanel.py 2.4.327"
 
 # --- Version history ----------------------------------------------------
+# v2.4.327: Pause and Resume for a one-off scheduled message too; a paused one says so in its line (D-245)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.268: R-21: Send now, Cancel snooze, Pause and Resume change only their own line (it leaves, the next one is selected; or it
 #           moves to its new time, selected); showing the page again brings the list in line in place, the selection kept; Send now
@@ -41,6 +42,8 @@ def scheduled_text(item: ScheduledInfo) -> str:
     if item.repeat:
         state = "paused" if item.paused else f"sent {item.times_sent} times so far"
         text += f"   [{item.repeat}; {state}]"
+    elif item.paused:
+        text += "   [paused]"
     return text
 
 
@@ -216,9 +219,9 @@ class ScheduledPanel(QWidget):
             self.now_button.setText("Send now")
             self.now_button.setToolTip("Send this message now, without waiting for its time")
         self.edit_button.setEnabled(isinstance(info, ScheduledInfo))
-        repeating = isinstance(info, ScheduledInfo) and bool(info.repeat)  # a snoozed message never repeats
-        self.pause_button.setEnabled(repeating)
-        self.pause_button.setText("Resume" if isinstance(info, ScheduledInfo) and repeating and info.paused else "Pause")
+        scheduled = isinstance(info, ScheduledInfo)  # a snoozed message is not sent: nothing to pause
+        self.pause_button.setEnabled(scheduled)
+        self.pause_button.setText("Resume" if isinstance(info, ScheduledInfo) and info.paused else "Pause")
 
     def now(self) -> None:
         info = self._selected()
@@ -248,9 +251,10 @@ class ScheduledPanel(QWidget):
 
     def pause_or_resume(self) -> None:
         info = self._selected()
-        if not isinstance(info, ScheduledInfo) or not info.repeat:
+        if not isinstance(info, ScheduledInfo):
             return
-        command, text = (MAIL_REPEAT_RESUME, "It is sent again from now on") if info.paused else (MAIL_REPEAT_PAUSE, "Paused")
+        resumed = "It is sent again from now on" if info.repeat else "It is sent at its time; when that has passed, within a minute"
+        command, text = (MAIL_REPEAT_RESUME, resumed) if info.paused else (MAIL_REPEAT_PAUSE, "Paused")
         parameters = MessageParameters(info.account, "Scheduled", info.message_id)
         self._backend.ask(command, parameters, lambda result: self._repeat_changed(info.message_id, text, result), self._failed, owner=self)
 

@@ -8,9 +8,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "compose.py 0.0.86"
+__version__ = "compose.py 2.4.331"
 
 # --- Version history ----------------------------------------------------
+# v2.4.331: suggest_filename takes out the marks that turn text around and puts "_" before a Windows device name (W11)
 # v0.0.86: Forward as attachment: the original goes along as an .eml file
 # v0.0.42: Settings window with pages for everything
 # v0.0.13: Initial reply and forward drafts
@@ -19,11 +20,17 @@ ComposeKind = Literal["reply", "reply_all", "forward", "forward_attachment"]
 _REPLY_PREFIX: re.Pattern[str] = re.compile(r"^\s*(?:re|aw|antw|sv|vs)\s*:\s*", re.IGNORECASE)
 _FORWARD_PREFIX: re.Pattern[str] = re.compile(r"^\s*(?:fwd?|wg|tr|vs)\s*:\s*", re.IGNORECASE)
 _UNSAFE_NAME: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
+_DIRECTION_MARKS: re.Pattern[str] = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")  # they turn "gpj.exe" into what reads "exe.jpg"
+_DEVICE_NAME: re.Pattern[str] = re.compile(r"con|prn|aux|nul|com[1-9]|lpt[1-9]", re.IGNORECASE)  # Windows devices, whatever the extension
 
 
 def suggest_filename(filename: str | None, content_type: str, position: int) -> str:
-    """A safe file name for saving an attachment: no path, no control or reserved characters, not too long."""
-    cleaned = _UNSAFE_NAME.sub("_", (filename or "").replace("\\", "/").rsplit("/", 1)[-1]).strip(" .")[:150]
+    """A safe file name for saving an attachment: no path, no control or reserved characters, no marks that turn the text around (the
+    name reads as it is), never a Windows device name (CON, NUL, COM1…: the data went to the device, W11), not too long."""
+    bare = _DIRECTION_MARKS.sub("", (filename or "").replace("\\", "/").rsplit("/", 1)[-1])
+    cleaned = _UNSAFE_NAME.sub("_", bare).strip(" .")[:150]
+    if _DEVICE_NAME.fullmatch(cleaned.split(".", 1)[0].rstrip(" ")):  # the part before the first dot decides, spaces after it ignored
+        cleaned = f"_{cleaned}"
     if cleaned:
         return cleaned
     extension = mimetypes.guess_extension(content_type) or ".bin"

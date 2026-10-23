@@ -60,9 +60,11 @@ from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.4.325"
+__version__ = "mainwindow.py 2.4.332"
 
 # --- Version history ----------------------------------------------------
+# v2.4.332: Exit asks about a running backup or restore last, so its promise holds (W3); Restore a backup… from the first-account window (W2)
+# v2.4.329: the Archive or Unarchive label follows rows_changed: once per moment, not once per changed row (W13)
 # v2.4.325: after a restore that brought the window's settings: taken in at once as Settings OK does, every folder's columns read again,
 #           the size and the panes as at start; then the startup folder opens (D-244)
 # v2.4.324: File > Restore… (the mail checks wait meanwhile; afterwards every index usable, the accounts loaded again and one check);
@@ -714,7 +716,7 @@ class MainWindow(QMainWindow):
         self.act_show_groups.toggled.connect(self.messages.toggle_groups)
         self.list_view.selectionModel().selectionChanged.connect(self._update_message_actions)
         self.list_view.selectionModel().selectionChanged.connect(self._show_archive_action)  # it follows the messages (D-101)
-        self.list_model.dataChanged.connect(self._show_archive_action)  # a selected message moved to or from an archive folder
+        self.messages.rows_changed.connect(self._show_archive_action)  # a selected message moved to or from an archive folder
         self.list_model.modelReset.connect(self._show_archive_action)
         self.list_model.modelReset.connect(self._update_message_actions)
         self.list_model.rowsRemoved.connect(self._update_message_actions)
@@ -779,7 +781,7 @@ class MainWindow(QMainWindow):
             self.hide()  # the program keeps running in the notification area
             event.ignore()
             return
-        if not may_quit(self, self.backups.running, self.restores.running) or not self.composing.close_all() or not self.notices.before_quit(self.quit_program):
+        if not self.composing.close_all() or not self.notices.before_quit(self.quit_program) or not may_quit(self, self.backups.running, self.restores.running):  # the backup question last: what it promises then happens (W3)
             event.ignore()
             return
         save_geometry(self, self.settings, "geometry")
@@ -1167,7 +1169,7 @@ class MainWindow(QMainWindow):
         self.backend.ask(ACCOUNT_LIST, NoParameters(), listed, lambda error: self.report.report("Accounts", error), owner=self)
 
     def add_account(self, first: bool = False, after: Callable[[], None] | None = None) -> None:
-        dialog = AccountDialog(self.backend, first_account=first, parent=self)
+        dialog = AccountDialog(self.backend, first_account=first, parent=self, restore=self.restores.start)  # Restore a backup… (W2)
         if dialog.exec() != AccountDialog.DialogCode.Accepted:
             return
         key_created = dialog.key_created

@@ -9,7 +9,7 @@ from chrono_mail.core import ProtocolError, StorageError
 from chrono_mail.engine.mailbox import Mailbox
 from chrono_mail.protocols.imap import ImapClient, ImapRefused
 from tests.enginefactory import make_engine
-from tests.fakeimap import FakeImapServer
+from tests.fakeimap import FakeFolder, FakeImapServer
 from tests.fakesmtp import FakeSmtpServer
 from tests.test_engine_commands import call
 from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a fixture
@@ -17,9 +17,10 @@ from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap_online.py 1.1.238"
+__version__ = "test_engine_imap_online.py 2.4.330"
 
 # --- Version history ----------------------------------------------------
+# v2.4.330: Junk by hand works when the server's Junk folder is not subscribed (it failed with "Mailbox already exists", W7)
 # v1.1.238: a move on a server without MOVE and UIDPLUS leaves another program's deleted-marked mail alone (R-35)
 # v0.4.121: Many actions at once, a mail check while deleting, a connection the server closed, a renumbered folder
 # v0.4.120: Initial tests: the actions of an IMAP account are done on the server first (D-117)
@@ -243,3 +244,12 @@ def test_a_folder_the_server_renumbered_is_left_to_the_sync_and_nothing_is_lost(
     world.fetch()  # the sync matches the messages again by their Message-ID
     # Nothing is lost: the delete made while the numbers did not match is not done, and the message is shown again.
     assert sorted(row.subject for row in world.rows("Inbox")) == ["Message 1", "Message 2", "Message 3"] and len(world.imap.uids("INBOX")) == 3
+
+
+def test_junk_by_hand_uses_a_junk_folder_the_server_does_not_show(world: World) -> None:
+    """The Windows computer's W7: the server's Junk was not subscribed, so every move to Junk tried to make it and was refused."""
+    world.imap.folders["Junk"] = FakeFolder(uid_validity=3000, subscribed=False)
+    rows = filled(world, 2)
+    call(world.engine, "message.junk-many", account=world.account, folder="Inbox", messages=[rows[0].message_id])
+    assert len(world.imap.uids("Junk")) == 1 and [row.subject for row in world.rows("Junk")] == [rows[0].subject]
+    assert not any(command.startswith("CREATE") and "Junk" in command for command in world.imap.commands)

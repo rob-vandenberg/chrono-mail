@@ -20,9 +20,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 2.2.313"
+__version__ = "test_ui_window.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
 # v2.2.313: the commands of a move counted without the question what Undo would do (mail.undo-labels, B-18)
 # v2.1.310: a group's account starts with Inbox, then Unread (the order of D-232 since 2.0.298)
 # v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left (the owner's search of all folders, D-101)
@@ -430,7 +431,7 @@ def test_delete_moves_to_trash_and_deleting_in_trash_asks_first(world: World, qt
     select(world.window, 0)
     world.window.act_delete.trigger()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
-    wait(qtbot, lambda: world.window.status_label.text() == "Moved 1 message(s) to Trash")  # the row goes with the fact, the text comes with the answer just after
+    wait(qtbot, lambda: world.window.status_label.text() == "Moved 1 message to Trash")  # the row goes with the fact, the text comes with the answer just after
     assert world.call("message.list", account=world.account_id, folder="Trash").total == 1
     trash = next(world.window.folders.find_item((world.account_id, "folder", "Trash")) for _ in [0])  # noqa: SLF001
     assert trash is not None
@@ -643,7 +644,7 @@ def test_several_messages_go_as_one_command_and_failures_are_told_once(world: Wo
     wait(qtbot, lambda: model.rowCount() == 1 and not model.pending)
     assert [command for command in asked if command != "mail.undo-labels"] == ["message.move-many"]  # one command for the three
     assert str(getattr(model.row_at(0), "message_id")) == refused  # it came back
-    assert window.status_label.text() == "Could not move: 1 of 3 message(s): the disk is full"
+    assert window.status_label.text() == "Could not move: 1 of 3 messages: the disk is full"
     assert world.call("message.list", account=world.account_id, folder="Junk").total == 2
 
 
@@ -665,7 +666,7 @@ def test_get_mail_downloads_new_messages_and_shows_them(world: World, qtbot: QtB
     assert not world.window.act_refresh.isEnabled()  # a check is running
     wait(qtbot, lambda: world.window.list_model.rowCount() == 4)
     wait(qtbot, lambda: world.window.act_refresh.isEnabled())
-    assert world.window.status_label.text() == "Mail checked: 1 new message(s)"
+    assert world.window.status_label.text() == "Mail checked: 1 new message"
     wait(qtbot, lambda: any(label.startswith("  Inbox  (4)") for label in tree_labels(world.window)))
     world.window.act_refresh.trigger()
     wait(qtbot, lambda: world.window.status_label.text() == "Mail checked: nothing new")
@@ -863,7 +864,7 @@ def test_deleting_right_after_clicking_does_not_report_a_missing_message(world: 
     world.window.act_delete.trigger()  # the message is moved while its content is still being fetched
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
     qtbot.wait(600)
-    assert world.window.status_label.text() == "Moved 1 message(s) to Trash"
+    assert world.window.status_label.text() == "Moved 1 message to Trash"
     assert "c0392b" not in world.window.status_label.styleSheet()
 
 
@@ -872,7 +873,7 @@ def test_mail_is_checked_when_the_program_starts(tmp_path: Path, qtbot: QtBot, d
         world.window.settings.setValue("check_on_start", True)
         world.window.start()
         wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
-        wait(qtbot, lambda: world.window.status_label.text() == "Mail checked: 3 new message(s)")
+        wait(qtbot, lambda: world.window.status_label.text() == "Mail checked: 3 new messages")
         assert world.window.act_refresh.isEnabled()
 
 

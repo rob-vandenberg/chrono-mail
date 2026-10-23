@@ -12,11 +12,13 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import green, red_style
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 1.9.274"
+__version__ = "calendaraccount.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.274: R-19 round 4: the mail accounts offered are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.271: R-19: accepting a certificate is a typed call
 # v1.1.213: No help line under Account name
@@ -117,7 +119,7 @@ class CalendarAccountDialog(QDialog):
                 return
             self._found = result
             self.add_button.setEnabled(True)
-            self.result_label.setText(f"<span style='color:{green()}'><b>✓</b> {len(result.folders)} folder(s) found on {result.url.replace('<', '&lt;')}.</span>")
+            self.result_label.setText(f"<span style='color:{green()}'><b>✓</b> {counted(len(result.folders), 'folder')} found on {result.url.replace('<', '&lt;')}.</span>")
 
         def failed(error: ChronoMailError) -> None:
             self.find_button.setEnabled(True)

@@ -4,13 +4,15 @@ import sys
 from pathlib import Path
 
 from chrono_mail.engine.commands_attachments import is_program
+from chrono_mail.engine.compose import suggest_filename
 from chrono_mail.engine.mailbox import open_mailbox
 from tests.test_engine_commands import Setup, call, first_id, rich, setup  # noqa: F401 - rich and setup are fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_attachments.py 2.0.302"
+__version__ = "test_engine_attachments.py 2.4.331"
 
 # --- Version history ----------------------------------------------------
+# v2.4.331: the Windows types that install or run are programs (W10); device names and marks that turn text around are made safe (W11)
 # v2.0.302: Initial tests: Open attachment writes a private copy, tells a program apart, and the copies go at the next start (D-236)
 
 PROGRAM_MAIL: bytes = (
@@ -50,3 +52,22 @@ def test_the_copies_of_an_earlier_run_go_at_the_next_start(rich: Setup) -> None:
     call(rich.engine, "message.attachment.open", account=rich.account_id, folder="Inbox", message=first_id(rich), index=2)
     assert len(list(opened.iterdir())) == 1
     assert call(rich.engine, "message.attachment.clean-opened").removed == 1 and list(opened.iterdir()) == []
+
+
+def test_windows_types_that_install_or_run_are_asked_about_first() -> None:
+    """The Windows computer's W10: setup.msix was handed to Windows without the question."""
+    for name in ("setup.msix", "App.appx", "get.appinstaller", "tool.application", "link.url", "help.chm", "console.msc", "x.scf", "a.ws",
+                 "b.wsc", "add-in.xll", "disk.vhd", "disk.VHDX", "files.cab"):
+        assert is_program(name), name
+    assert not is_program("photo.jpg") and not is_program("notes.txt")
+
+
+def test_device_names_and_turned_text_never_reach_the_file_system() -> None:
+    """The Windows computer's W11: an attachment named CON or nul.pdf was written to the device and its data was gone."""
+    for name, safe in (("CON", "_CON"), ("con.txt", "_con.txt"), ("NUL", "_NUL"), ("nul.pdf", "_nul.pdf"), ("aux.txt", "_aux.txt"),
+                       ("COM1.txt", "_COM1.txt"), ("LPT1", "_LPT1"), ("prn.docx", "_prn.docx"), ("CON .txt", "_CON .txt")):
+        assert suggest_filename(name, "application/octet-stream", 0) == safe
+    for kept in ("console.txt", "com10.txt", "nullable.pdf", "contract.pdf"):
+        assert suggest_filename(kept, "application/octet-stream", 0) == kept
+    assert suggest_filename("invoice\u202egpj.exe", "application/octet-stream", 0) == "invoicegpj.exe"  # it reads as what it is
+    assert is_program(suggest_filename("invoice\u202egpj.exe", "application/octet-stream", 0))

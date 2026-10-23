@@ -8,9 +8,10 @@ from chrono_mail.ui.rulespanel import RulesPanel
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rules.py 1.9.271"
+__version__ = "test_ui_rules.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
 # v1.9.271: The rule editor's values are typed (R-19)
 # v1.9.265: the Menu items are checked in test_ui_theme.py only (this copy had fallen behind, R-44)
 # v1.1.200: The Rules and Scheduled messages pages are found by name (their places moved when pages were added)
@@ -239,7 +240,7 @@ def test_a_rule_can_be_applied_to_the_current_folder(world: World, qtbot: QtBot)
     world.call("rule.add", name="Read all", condition=["subject:contains:message"], action=["mark_read"])
     dialog = open_rules(world, qtbot, 1)
     dialog.run_button.click()
-    wait(qtbot, lambda: "3 message(s) looked at, 3 matched" in dialog.status.text())
+    wait(qtbot, lambda: "3 messages looked at, 3 matched" in dialog.status.text())
     assert dialog.ran and all(row.flags == ("seen",) for row in world.call("message.list", account=world.account_id, folder="Inbox").messages)
 
 

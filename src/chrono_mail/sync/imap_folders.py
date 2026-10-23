@@ -15,11 +15,13 @@ from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.announce import Announcer
 from chrono_mail.sync.imap_state import ImapEntry, ImapState
 from chrono_mail.sync.mailconflicts import FOLDER_GONE_CHANGED, FOLDER_GONE_WITH_MAIL, held_under, record
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_folders.py 1.1.241"
+__version__ = "imap_folders.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.1.241: A folder taken off the server's list of folders to show is synchronised one last time, then taken away here (R-34)
 # v1.1.237: Initial: folders deleted or renamed on the server followed here, only on the server's confirmation (R-30)
 
@@ -128,7 +130,7 @@ def _deleted_on_server(
         return
     if only_here or changed:
         reason = FOLDER_GONE_WITH_MAIL if only_here else FOLDER_GONE_CHANGED
-        record(store, reason, path, "", "/".join(path), f"{only_here} message(s) exist only here" if only_here else f"{changed} message(s) changed here")
+        record(store, reason, path, "", "/".join(path), f"{counted(only_here, 'message')} only here" if only_here else f"{counted(changed, 'message')} changed here")
         for folder in folders:
             state.forget_folder(folder, state.server_names.get(folder, ""))
         changes.conflicts += 1

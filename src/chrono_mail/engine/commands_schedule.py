@@ -18,9 +18,11 @@ from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 2.2.313"
+__version__ = "commands_schedule.py 2.4.327"
 
 # --- Version history ----------------------------------------------------
+# v2.4.327: a one-off scheduled message can be paused and resumed too (mail.repeat-pause and mail.repeat-resume, X-Chrono-Mail-Paused);
+#           paused_if_overdue: a restore pauses the scheduled messages whose time passed (D-245)
 # v2.2.313: Cancel snooze of one message (message.wake with a message and undo) can be undone: back to Snoozed with its record (B-18)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: a scheduled reply, once sent, teaches the junk filter that its source is good mail (D-238)
@@ -49,6 +51,7 @@ __version__ = "commands_schedule.py 2.2.313"
 
 SEND_AT: str = SEND_AT_HEADER
 KIND: str = "x-chrono-mail-kind"
+PAUSED: str = "x-chrono-mail-paused"  # a one-off scheduled message that waits for Resume ("yes"); a repeating one keeps it in its timetable
 _REPEAT_LOCK = threading.Lock()  # two checks at the same moment must not send the same message twice
 
 
@@ -58,6 +61,11 @@ def _notes(parsed: ParsedMessage) -> dict[str, str]:
 
 def _due_time(parsed: ParsedMessage) -> int | None:
     return send_time(parsed)
+
+
+def _paused(parsed: ParsedMessage) -> bool:
+    """Whether a one-off scheduled message is paused: it is not sent at its time, only by Send now or after Resume."""
+    return _notes(parsed).get(PAUSED) == "yes"
 
 
 def _repeat_of(parsed: ParsedMessage) -> Repeat | None:
@@ -198,7 +206,7 @@ def _info(members: list[AccountSettings], reference: MessageRef, parsed: ParsedM
             repeat.last_error, repeat.months, repeat.weeks, repeat.days, repeat.start, repeat.end,
         )
     due = _due_time(parsed)
-    return None if due is None else ScheduledInfo(sender.account.account_id, reference.store_id, describe_when(due), due, parsed.subject, to)
+    return None if due is None else ScheduledInfo(sender.account.account_id, reference.store_id, describe_when(due), due, parsed.subject, to, paused=_paused(parsed))
 
 
 def mail_scheduled(engine: Engine, parameters: AccountOptional) -> tuple[ScheduledInfo, ...]:
@@ -279,6 +287,8 @@ def mail_edit_scheduled(engine: Engine, parameters: ScheduledEdit) -> ScheduledI
             notes = [("X-Chrono-Mail-Kind", "scheduled"), ("X-Chrono-Mail-Send-At", str(when))]
         old = _notes(parsed)
         notes += [(name, old[name.lower()]) for name in ("X-Chrono-Mail-Source", "X-Chrono-Mail-Mark-Replied") if name.lower() in old]  # a reply stays a reply
+        if repeat is None and _paused(parsed):
+            notes.append(("X-Chrono-Mail-Paused", "yes"))  # paused stays, as with a repeating message: only Resume ends it
         raw = build_message(replace(outgoing, extra_headers=tuple(notes)), draft=True)
         mailbox.replace_waiting(reference, raw)
         info = _info(members, reference, parse_message(raw))
@@ -341,7 +351,7 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                 due = _due_time(parsed)  # the message itself is the truth
                 if due is None:
                     continue  # not scheduled
-                if not parameters.message and due > now:
+                if not parameters.message and (due > now or _paused(parsed)):
                     waiting += 1
                     continue
                 sender = _sender(members, parsed)
@@ -657,15 +667,56 @@ def _change_repeat(engine: Engine, parameters: MessageParameters, change: Callab
         return replace(_state(key, changed), line=_line(members, mailbox, key))
 
 
-def repeat_pause(engine: Engine, parameters: MessageParameters) -> RepeatState:
-    """Stop sending a repeating message until it is resumed."""
-    return _change_repeat(engine, parameters, lambda repeat: replace(repeat, paused=True))
+def _pause_one_off(engine: Engine, parameters: MessageParameters, paused: bool) -> RepeatState | None:
+    """Pause or resume a one-off scheduled message (the mark is in the message itself); None when the message repeats. A one-off message
+    resumed after its time is sent by the next minute check: the person's own choice."""
+    (members,) = _places(engine, parameters.account)
+    with open_mailbox(engine, parameters.account) as mailbox, _REPEAT_LOCK:
+        key = _check_id(parameters.message)
+        try:
+            reference = _waiting_place(mailbox, key)
+        except MessageNotFoundError:
+            raise UsageError("That message no longer waits in the Scheduled folder (it was sent or moved meanwhile)") from None
+        parsed = _read(mailbox, reference)
+        if _repeat_of(parsed) is not None:
+            return None
+        due = _due_time(parsed)
+        if due is None:
+            raise UsageError("That message is not scheduled")
+        if _paused(parsed) != paused:
+            raw = mailbox.store.read(reference, hint=mailbox.hint(reference.store_id))
+            mailbox.replace_waiting(reference, with_extra_headers(raw, {"X-Chrono-Mail-Paused": "yes" if paused else None}))
+        return RepeatState(key, paused, describe_when(due), "", _line(members, mailbox, key))
 
 
-def repeat_resume(engine: Engine, parameters: MessageParameters) -> RepeatState:
-    """Go on sending a repeating message; the sends that were missed meanwhile are skipped."""
+def pause_scheduled(engine: Engine, parameters: MessageParameters) -> RepeatState:
+    """Stop sending a scheduled message until it is resumed: a one-off one or a repeating one (D-245)."""
+    return _pause_one_off(engine, parameters, True) or _change_repeat(engine, parameters, lambda repeat: replace(repeat, paused=True))
+
+
+def resume_scheduled(engine: Engine, parameters: MessageParameters) -> RepeatState:
+    """Go on with a paused scheduled message: a one-off one is sent at its time (at once when it has passed); a repeating one skips the sends
+    that were missed meanwhile."""
     now = engine.clock()
-    return _change_repeat(engine, parameters, lambda repeat: replace(repeat, paused=False, index=index_after(repeat, now), attempts=0))
+    return _pause_one_off(engine, parameters, False) or _change_repeat(
+        engine, parameters, lambda repeat: replace(repeat, paused=False, index=index_after(repeat, now), attempts=0),
+    )
+
+
+def paused_if_overdue(raw: bytes, now: float) -> bytes | None:
+    """A scheduled message that comes back from a backup after its time: the same message paused, one-off and repeating ones alike, so a
+    restore never sends old mail by itself (D-245); None when it is not scheduled, its time is still to come, or it is paused already."""
+    parsed = parse_message(raw)
+    repeat = _repeat_of(parsed)
+    if repeat is not None:
+        due = next_due(repeat)
+        if repeat.paused or due is None or due > now:
+            return None
+        return with_extra_headers(raw, {"X-Chrono-Mail-Repeat": repeat_text(replace(repeat, paused=True))})
+    due = _due_time(parsed)
+    if due is None or due > now or _paused(parsed):
+        return None
+    return with_extra_headers(raw, {"X-Chrono-Mail-Paused": "yes"})
 
 
 MAIL_REPEAT_PAUSE: TypedCommand[MessageParameters, RepeatState] = TypedCommand("mail.repeat-pause", MessageParameters, RepeatState)
@@ -712,8 +763,8 @@ MAIL_UNSCHEDULE: TypedCommand[MessageParameters, DraftSaveResult] = TypedCommand
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(MAIL_REPEAT_PAUSE.id, "Stop sending a repeating message until it is resumed", MessageParameters, repeat_pause, doing="Pausing a repeating message")
-    registry.register(MAIL_REPEAT_RESUME.id, "Go on sending a repeating message", MessageParameters, repeat_resume, doing="Resuming a repeating message")
+    registry.register(MAIL_REPEAT_PAUSE.id, "Stop sending a scheduled message until it is resumed", MessageParameters, pause_scheduled, doing="Pausing a scheduled message")
+    registry.register(MAIL_REPEAT_RESUME.id, "Go on with a paused scheduled message", MessageParameters, resume_scheduled, doing="Resuming a scheduled message")
     registry.register("mail.repeat-change", "Change the start, end or interval of a repeating message", RepeatChange, repeat_change, doing="Changing a repeating message")
     registry.register("mail.repeat-cancel", "End a repeating message and remove its pattern", MessageParameters, repeat_cancel, destructive=True, doing="Ending a repeating message")
     registry.register(MAIL_SCHEDULED.id, "List the messages waiting to be sent at a time", AccountOptional, mail_scheduled, doing="Reading the scheduled messages")

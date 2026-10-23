@@ -36,11 +36,13 @@ from chrono_mail.ui.dragdata import read_contacts_mime_data
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.newcollection import NewCollectionDialog
 from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 1.10.277"
+__version__ = "collectionpanel.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.10.277: Contact groups under their address book (R-39): kept in step in place (set_groups), their menu and Delete key given by the Contacts
 #            page, contacts dropped on a group; the chosen group's address book is the one chosen (current_id)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -361,7 +363,7 @@ class CollectionPanel(QWidget):
         info = self.info(collection_id)
         count = info.items if info is not None else 0
         word = KIND_WORDS[self.kind][1]
-        name = f"Delete the {word} “{info.name if info is not None else ''}”" + (f" and its {count} item(s)" if count else "")
+        name = f"Delete the {word} “{info.name if info is not None else ''}”" + (f" and its {counted(count, 'item')}" if count else "")
         if info is not None and info.server:  # deleted on the server first: every program that synchronises with it follows (D-197)
             others = tuple(other for other in info.together)
             text = (

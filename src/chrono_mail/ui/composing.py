@@ -18,9 +18,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 2.2.314"
+__version__ = "composing.py 2.4.332"
 
 # --- Version history ----------------------------------------------------
+# v2.4.332: New works while no folder is selected: the default account, else the open one, else the first (W9)
 # v2.2.314: send_waiting: a delayed send of a message window waits in the Outbox; open_taken_back: a cancelled send opens again (B-21)
 # v1.9.274: R-19 round 4: the rows and the draft or reply it opens are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: every engine call typed
@@ -47,11 +48,13 @@ class Composing(QObject):
         self.composers: list[ComposeWindow] = []
 
     def new_message(self) -> None:
-        if self._state.view.account is None:
-            return
+        """New: from the default account, else the open folder's, else the first account; also while no folder is selected (just after the
+        start or a restore, W9). Without a mail account there is nothing to send from."""
         wanted = self._prefs.read().default_account
-        known = set(self._state.mail_account_ids())
-        self.open_composer(wanted if wanted in known else self._state.view.account, None, None)
+        known = self._state.mail_account_ids()
+        account = wanted if wanted in known else self._state.view.account or (known[0] if known else None)
+        if account is not None:
+            self.open_composer(account, None, None)
 
     def compose_to(self, address: str) -> None:
         """A new message to this address (from a contact)."""

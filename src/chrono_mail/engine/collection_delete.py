@@ -12,11 +12,13 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.protocols.dav import DavError, canonical_href, passing_failure
 from chrono_mail.sync.davdeletes import changed_on_server, remember
 from chrono_mail.sync.davsync import DavState
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collection_delete.py 1.1.235"
+__version__ = "collection_delete.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.1.235: Initial: a server's collection deleted on the server first; offline here and remembered; changed on the server: nothing deleted (R-28)
 
 
@@ -65,7 +67,7 @@ def delete_collection(engine: Engine, account_id: str, store: PimStore, info: Co
                     changed = -1  # the server confirms it is not there any more: nothing to delete there
                 if changed > 0:
                     raise UsageError(
-                        f"“{info.name}” was changed on the server since it was last synchronised ({changed} item(s)): nothing was deleted. "
+                        f"“{info.name}” was changed on the server since it was last synchronised ({counted(changed, 'item')}): nothing was deleted. "
                         "Refresh to bring the changes here, then delete it again if you still want to"
                     )
                 if changed == 0:

@@ -12,9 +12,11 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_attachments.py 2.1.311"
+__version__ = "commands_attachments.py 2.4.331"
 
 # --- Version history ----------------------------------------------------
+# v2.4.331: the Windows types that install or run (.msix, .appx, .appinstaller, .application, .url, .chm, .msc, .scf, .ws, .wsc, .xll,
+#           .vhd, .vhdx, .cab) are asked about first (W10)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.302: Initial message.attachment.open (a private copy to open in another program; whether it is a program) and
 #           message.attachment.clean-opened (D-236)
@@ -24,6 +26,8 @@ PROGRAM_EXTENSIONS: frozenset[str] = frozenset({
     ".exe", ".com", ".bat", ".cmd", ".msi", ".msp", ".scr", ".pif", ".cpl", ".hta", ".lnk", ".reg", ".ps1", ".psm1", ".vbs", ".vbe", ".js",
     ".jse", ".wsf", ".wsh", ".jar", ".sh", ".bash", ".run", ".bin", ".desktop", ".appimage", ".deb", ".rpm", ".py", ".pyw", ".pl", ".command",
     ".app", ".pkg", ".dmg", ".scpt", ".iso", ".img",
+    ".msix", ".msixbundle", ".appx", ".appxbundle", ".appinstaller", ".application", ".url", ".chm", ".msc", ".scf", ".ws", ".wsc", ".xll",
+    ".vhd", ".vhdx", ".cab",  # Windows: they install an app, run code, point at a program or are mounted like .iso (W10)
 })
 
 

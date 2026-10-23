@@ -24,11 +24,13 @@ from chrono_mail.engine.commands_rules import (
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.ruleedit import RuleEditDialog
 from chrono_mail.ui.colours import red
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "rulespanel.py 1.9.275"
+__version__ = "rulespanel.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.271: R-19: every engine call typed; the rules are RuleInfo
 # v1.1.174: The button Change… is called Edit…
@@ -188,6 +190,6 @@ class RulesPanel(QWidget):
 
         def done(result: RuleRunResult) -> None:
             self.ran = True
-            self.status.setText(f"{result.examined} message(s) looked at, {result.matched} matched, {result.actions} action(s) done in {folder}.")
+            self.status.setText(f"{counted(result.examined, 'message')} looked at, {result.matched:,} matched, {counted(result.actions, 'action')} done in {folder}.")
 
         self._backend.ask(RULE_RUN, RuleRunParameters(account, folder, rule.rule_id), done, self._failed, owner=self)

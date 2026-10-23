@@ -56,11 +56,13 @@ from chrono_mail.ui.startupchooser import StartupChooser
 from chrono_mail.ui.tagsdialog import TagsPanel
 from chrono_mail.core.colours import DARK, LIGHT, text_on_accent
 from chrono_mail.ui.colours import is_dark, red
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 2.3.316"
+__version__ = "settingsdialog.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.3.316: General: "Refresh when the program starts [choice]" and "Automatic refresh [choice] every [n minutes]", each greyed with its tick (the owner)
 # v2.3.315: General: one row "Automatically [Send and Receive / Receive only / Send only] every [n minutes]"; "Refresh when the program starts" (the owner)
 # v2.2.314: General: Scheduled refresh (Send and Receive, or Receive only), the two delays of sending, the warning on Quit (B-21, B-20)
@@ -246,7 +248,7 @@ class SettingsContext:
 def verify_line(outcome: VerifyResult) -> str:
     """Check the messages: one account's line of the report."""
     damaged = f"<span style='color:{red()}'>{len(outcome.damaged)} damaged</span>" if outcome.damaged else "all can be read"
-    return f"{outcome.checked} messages checked, {damaged}"
+    return f"{counted(outcome.checked, 'message')} checked, {damaged}"
 
 
 def reconcile_line(outcome: ReconcileResult) -> str:

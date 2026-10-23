@@ -1,8 +1,9 @@
 import bisect
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from dataclasses import replace as changed
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, QModelIndex, QObject, Qt, Signal
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QModelIndex, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QMenu, QToolButton, QTreeView, QVBoxLayout, QWidget
 
 from chrono_mail.engine.changes import Change, MessageRow
@@ -16,6 +17,7 @@ from chrono_mail.ui.delegate import ColumnDelegate, MessageDelegate
 from chrono_mail.ui.elidedlabel import ElidedLabel
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelist import MessageListModel, ViewSpec
+from chrono_mail.ui.messageorder import split_key
 from chrono_mail.ui.messagelistview import MessageListView
 from chrono_mail.ui.models import LOCAL_PLACES
 from chrono_mail.ui.prefs import InUse, Remembered
@@ -23,9 +25,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 2.2.314"
+__version__ = "messagelistpane.py 2.4.329"
 
 # --- Version history ----------------------------------------------------
+# v2.4.329: selected_rows gives every selected message, loaded or not (Ctrl+A acted on 100 of 1,142, W12), read from the selection's
+#           ranges (W13); with_rows asks the rows a choice of marks or tags needs; rows_changed once per moment of changed rows (W13)
 # v2.2.314: Sorted by Send at in the Outbox too (a delayed send, B-21)
 # v2.2.313: select_messages: the messages Undo brought back are selected where the list shows them, also those placed after the answer (B-18)
 # v2.0.280: the sort is the open folder's (use_sort, given by its setup, B-16); Sent (Saved in Drafts) in the Sorted by menu
@@ -44,6 +48,17 @@ SORT_CHOICES: tuple[tuple[str, str], ...] = (
 )
 
 
+
+@dataclass(frozen=True, slots=True)
+class SelectedMessage:
+    """A selected message by its place, whether its row is loaded or not: an action needs only its account, folder and id."""
+
+    key: str  # its key in the list (its mailbox and id in a view of several mailboxes)
+    account: str  # its mailbox in a view of several mailboxes; "" in a view of one (MailState.account_of gives the view's)
+    folder: str
+    message_id: str
+    row: MessageRow | None  # None while it has not come into view
+
 class MessageListPane(QObject):
     """The message list: the one owner of the current view (what the list shows) and of the sort order."""
 
@@ -51,6 +66,7 @@ class MessageListPane(QObject):
     sort_changed = Signal()  # another sort order: the sorted column's arrow follows
     taken_away = Signal(bool)  # the message being opened went with an action; True: nothing is selected any more
     conversations_toggled = Signal()
+    rows_changed = Signal()  # rows of the list changed (marks, folder, greyed): once for all the changes of one moment, never once per row (W13)
 
     def __init__(
         self, backend: Backend, state: MailState, status: StatusReport, prefs: InUse, memory: Remembered, tag_book: TagColourBook,
@@ -90,6 +106,10 @@ class MessageListPane(QObject):
         self.model.counts_changed.connect(self._counts_changed)
         self.model.load_failed.connect(status.load_failed)
         self.model.loaded.connect(self._select_unread_after_load)
+        self._rows_check: QTimer = QTimer(self)
+        self._rows_check.setSingleShot(True)
+        self._rows_check.timeout.connect(self.rows_changed)
+        self.model.dataChanged.connect(self._rows_check.start)
         self.model.rearranged.connect(self._show_current_row)
         self._to_select: list[str] = []  # messages Undo brought back, selected as they take their place in the list
         for placed in (self.model.rowsInserted, self.model.rearranged, self.model.loaded):
@@ -283,9 +303,19 @@ class MessageListPane(QObject):
 
     # --- the selection ---------------------------------------------------------------------------------------
 
+    def _selected_list_rows(self) -> list[int]:
+        """The rows of the list that are selected, read from the selection's ranges: Qt's selectedRows asks every cell of every selected
+        row, which cost seconds for a large selection (W13)."""
+        rows: set[int] = set()
+        selection = self.view.selectionModel().selection()
+        for number in range(selection.count()):
+            chosen = selection.at(number)
+            rows.update(range(chosen.top(), chosen.bottom() + 1))
+        return sorted(rows)
+
     def selected_and_current_rows(self) -> list[int]:
         """The rows of the list that are selected, and the current row (a new order keeps them selected)."""
-        rows = {index.row() for index in self.view.selectionModel().selectedIndexes()}
+        rows = set(self._selected_list_rows())
         current = self.view.currentIndex()
         if current.isValid():
             rows.add(current.row())
@@ -313,14 +343,30 @@ class MessageListPane(QObject):
         index = self.view.currentIndex()
         return self.model.row_at(index.row()) if index.isValid() else None
 
-    def selected_rows(self) -> list[MessageRow]:
-        """The messages selected now, without those that have an action under way (they get no second one)."""
-        rows: list[MessageRow] = []
-        for index in self.view.selectionModel().selectedRows():
-            row = self.model.row_at(index.row())
-            if row is not None and row.message_id not in self.model.pending:
-                rows.append(row)
-        return rows
+    def selected_rows(self) -> list[SelectedMessage]:
+        """The messages selected now, every one of them, also those whose rows have not come into view yet (Ctrl+A on a large folder; W12),
+        without those that have an action under way (they get no second one)."""
+        chosen: list[SelectedMessage] = []
+        for list_row in self._selected_list_rows():
+            place = self.model.place_at(list_row)
+            if place is None:
+                continue
+            key, folder, row = place
+            mailbox, message_id = split_key(key)
+            if message_id not in self.model.pending:
+                chosen.append(SelectedMessage(key, mailbox, folder, message_id, row))
+        return chosen
+
+    def with_rows(self, chosen: list[SelectedMessage], act: Callable[[list[MessageRow]], None]) -> None:
+        """Act on the rows of these messages, for a choice that needs their marks or tags: the rows not loaded yet are asked first, so the
+        choice counts every message, not only those that came into view (W12)."""
+
+        def loaded() -> None:
+            rows = [row for row in (item.row or self.model.loaded_row(item.key) for item in chosen) if row is not None]
+            if rows:
+                act(rows)
+
+        self.model.load_rows([item.key for item in chosen if item.row is None], loaded)
 
     def take_away(self, message_ids: list[str]) -> None:
         """At the key press of an action that takes messages out of the view: they are greyed until the engine reports the

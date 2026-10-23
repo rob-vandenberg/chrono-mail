@@ -10,16 +10,20 @@ from chrono_mail.config import ServerRole
 from chrono_mail.engine import UsageError
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.store import Store
+from chrono_mail.engine.commands_schedule import paused_if_overdue
+from chrono_mail.engine.recurring import Repeat, repeat_from_text, repeat_text
 from chrono_mail.engine.schedule import describe_when, parse_when, snooze_group, snooze_presets
+from chrono_mail.mime import parse_message, with_extra_headers
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_schedule.py 1.9.276"
+__version__ = "test_engine_schedule.py 2.4.327"
 
 # --- Version history ----------------------------------------------------
+# v2.4.327: a one-off scheduled message can be paused and resumed; a restore pauses the overdue ones, one-off and repeating (D-245)
 # v1.9.276: The send times filled in after the upgrade from format 8 are gone: every older index is rebuilt (D-226)
 # v1.1.207: mail.edit-scheduled: in place, the same id, time and repeat kept or changed (D-177)
 # v1.1.206: Snooze records are in the messages' properties files; the snoozed.json tests are gone with that file (D-176)
@@ -339,3 +343,40 @@ def test_only_a_waiting_message_with_a_recipient_can_be_edited(setup: Setup) -> 
     call(setup.engine, "mail.unschedule", account=setup.account_id, folder="Scheduled", message=first)
     with pytest.raises(UsageError, match="no longer waits"):
         edit(setup, first, keep_time=True)
+
+
+def test_a_paused_one_off_message_waits_until_it_is_resumed(setup: Setup) -> None:
+    at(setup, 0)
+    result = schedule(setup)
+    paused = call(setup.engine, "mail.repeat-pause", account=setup.account_id, folder="Scheduled", message=result.message_id)
+    assert paused.paused and paused.line is not None and paused.line.paused and paused.repeat == ""
+    at(setup, 3 * 3600)
+    assert call(setup.engine, "mail.send-due").sent == 0 and setup.smtp.received == []  # its time passed while paused
+    (info,) = call(setup.engine, "mail.scheduled")
+    assert info.paused
+    resumed = call(setup.engine, "mail.repeat-resume", account=setup.account_id, folder="Scheduled", message=result.message_id)
+    assert not resumed.paused and resumed.line is not None and not resumed.line.paused
+    assert call(setup.engine, "mail.send-due").sent == 1 and len(setup.smtp.received) == 1  # resumed after its time: the next check sends it
+
+
+def test_send_now_sends_a_paused_message(setup: Setup) -> None:
+    at(setup, 0)
+    result = schedule(setup)
+    call(setup.engine, "mail.repeat-pause", account=setup.account_id, folder="Scheduled", message=result.message_id)
+    assert call(setup.engine, "mail.send-due", account=setup.account_id, message=result.message_id).sent == 1 and len(setup.smtp.received) == 1
+
+
+def test_only_scheduled_messages_whose_time_passed_are_paused_after_a_restore() -> None:
+    raw = raw_message(subject="Greeting")
+    one_off = with_extra_headers(raw, {"X-Chrono-Mail-Kind": "scheduled", "X-Chrono-Mail-Send-At": str(int(NOW) - 60)})
+    paused = paused_if_overdue(one_off, NOW)
+    assert paused is not None and dict(parse_message(paused).chrono_headers)["x-chrono-mail-paused"] == "yes"
+    assert paused_if_overdue(paused, NOW) is None  # paused already
+    later = with_extra_headers(raw, {"X-Chrono-Mail-Kind": "scheduled", "X-Chrono-Mail-Send-At": str(int(NOW) + 60)})
+    assert paused_if_overdue(later, NOW) is None and paused_if_overdue(raw, NOW) is None
+    repeat = Repeat(int(NOW) - 86_400, None, days=7)
+    repeating = with_extra_headers(raw, {"X-Chrono-Mail-Kind": "recurring", "X-Chrono-Mail-Send-At": str(repeat.start), "X-Chrono-Mail-Repeat": repeat_text(repeat)})
+    paused = paused_if_overdue(repeating, NOW)
+    assert paused is not None
+    kept = repeat_from_text(dict(parse_message(paused).chrono_headers)["x-chrono-mail-repeat"])
+    assert kept is not None and kept.paused and kept.start == repeat.start

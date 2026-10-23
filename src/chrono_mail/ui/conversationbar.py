@@ -5,11 +5,13 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QFrame, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 from chrono_mail.engine.changes import MessageRow
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "conversationbar.py 1.9.274"
+__version__ = "conversationbar.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.274: R-19 round 4: the rows of the conversation are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v0.0.18: Initial conversation bar
 
@@ -55,7 +57,7 @@ class ConversationBar(QFrame):
         if len(rows) < 2:
             self.hide()
             return
-        self._title.setText(f"Conversation: {len(rows)} messages")
+        self._title.setText(f"Conversation: {counted(len(rows), 'message')}")
         for row in rows:
             date = row.date
             when = date.astimezone().strftime("%d %b %H:%M") if isinstance(date, datetime) else ""

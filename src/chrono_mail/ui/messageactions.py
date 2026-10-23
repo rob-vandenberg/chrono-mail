@@ -1,11 +1,10 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import QMenu, QMessageBox, QWidget
 
-from chrono_mail.engine.changes import MessageRow
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_actions import FOLDER_EMPTY, FOLDER_MARK_READ, EmptyResult, FolderActionParameters, MarkReadResult
 from chrono_mail.engine.commands_mail import MessageParameters
@@ -20,17 +19,20 @@ from chrono_mail.engine.schedule import snooze_presets
 from chrono_mail.store import MessageNotFoundError
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
-from chrono_mail.ui.mailstate import MailState
+from chrono_mail.ui.mailstate import MailState, Placed
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.models import LOCAL_PLACES, SCHEDULED_TARGET_ROLES
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.whendialog import WhenDialog
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 2.2.313"
+__version__ = "messageactions.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
+# v2.4.329: every action takes every selected message, also those not loaded yet (W12); Toggle read and Toggle flag count them all
 # v2.2.313: every action of the person has its number for Undo (one key press, however many commands); Undo waits for the commands under way (B-18)
 # v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left: all archived is Unarchive, else the others are archived (D-101)
 # v1.9.274: R-19 round 4: the rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -77,42 +79,45 @@ class MessageActions(QObject):
         )
 
     def mark_selected(self, seen: bool | None = None, flagged: bool | None = None) -> None:
+        self.mark_messages(self._messages.selected_rows(), seen, flagged)
+
+    def mark_messages(self, rows: Sequence[Placed], seen: bool | None = None, flagged: bool | None = None) -> None:
         values: dict[str, bool] = {}
         if seen is not None:
             values["seen"] = seen
         if flagged is not None:
             values["flagged"] = flagged
-        rows = self._messages.selected_rows()
         account_of = self._state.account_of
         number = self._undoing.new_action()  # one key press, however many accounts: one step of Undo
         for account in dict.fromkeys(account_of(row) for row in rows):  # the combined views mix accounts
             self.set_flags([(row.folder, row.message_id) for row in rows if account_of(row) == account], values, account, number)
 
     def toggle_read(self) -> None:
-        rows = self._messages.selected_rows()
-        if rows:
-            self.mark_selected(seen=any("seen" not in row.flags for row in rows))  # all read: unread, else read
+        """All read: unread, else read; counted over every selected message (their rows are asked first when they are not loaded)."""
+        chosen = self._messages.selected_rows()
+        if chosen:
+            self._messages.with_rows(chosen, lambda rows: self.mark_messages(chosen, seen=any("seen" not in row.flags for row in rows)))
 
     def toggle_flag(self) -> None:
-        rows = self._messages.selected_rows()
-        if rows:
-            self.mark_selected(flagged=any("flagged" not in row.flags for row in rows))
+        chosen = self._messages.selected_rows()
+        if chosen:
+            self._messages.with_rows(chosen, lambda rows: self.mark_messages(chosen, flagged=any("flagged" not in row.flags for row in rows)))
 
     # --- delete, archive, junk ---------------------------------------------------------------------------------------
 
     def delete_selected(self) -> None:
         self.delete_rows(self._messages.selected_rows())
 
-    def delete_rows(self, rows: list[MessageRow]) -> None:
+    def delete_rows(self, rows: Sequence[Placed]) -> None:
         if not rows or self._state.view.account is None:
             return
         in_trash = self._state.view.folder_role == "trash"
-        if in_trash and QMessageBox.question(self._parent, "Delete", f"Delete {len(rows)} message(s) for good? This cannot be undone.") != QMessageBox.StandardButton.Yes:
+        if in_trash and QMessageBox.question(self._parent, "Delete", f"Delete {counted(len(rows), 'message')} for good? This cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages, undo=number), self._state.targets(rows),
-            f"Deleted {len(rows)} message(s)" if in_trash else f"Moved {len(rows)} message(s) to Trash", "Could not delete",
+            f"Deleted {counted(len(rows), 'message')}" if in_trash else f"Moved {counted(len(rows), 'message')} to Trash", "Could not delete",
         )
 
     def delete_permanently(self) -> None:
@@ -120,11 +125,11 @@ class MessageActions(QObject):
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
-        if QMessageBox.question(self._parent, "Delete permanently", f"Delete {len(rows)} message(s) for good, without moving them to Trash? This cannot be undone.") != QMessageBox.StandardButton.Yes:
+        if QMessageBox.question(self._parent, "Delete permanently", f"Delete {counted(len(rows), 'message')} for good, without moving them to Trash? This cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
         self.act_many(
             MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages, permanent=True), self._state.targets(rows),
-            f"Deleted {len(rows)} message(s) for good", "Could not delete",
+            f"Deleted {counted(len(rows), 'message')} for good", "Could not delete",
         )
 
     def unarchive_selected(self) -> None:
@@ -135,7 +140,7 @@ class MessageActions(QObject):
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_UNARCHIVE_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number), self._state.targets(rows),
-            f"Unarchived {len(rows)} message(s)", "Could not unarchive",
+            f"Unarchived {counted(len(rows), 'message')}", "Could not unarchive",
         )
 
     def archive_selected(self) -> None:
@@ -149,12 +154,12 @@ class MessageActions(QObject):
         if not self._messages.selected_rows() or self._state.view.account is None:
             return
         if not rows:
-            self._status.show("The selected message(s) are in the archive already")
+            self._status.show("Everything selected is in the archive already")
             return
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_ARCHIVE_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number), self._state.targets(rows),
-            f"Archived {len(rows)} message(s)", "Could not archive",
+            f"Archived {counted(len(rows), 'message')}", "Could not archive",
         )
 
     def junk_selected(self, junk: bool) -> None:
@@ -162,7 +167,7 @@ class MessageActions(QObject):
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
-        finished = f"Moved {len(rows)} message(s) to Junk" if junk else f"Moved {len(rows)} message(s) back to the Inbox"
+        finished = f"Moved {counted(len(rows), 'message')} to Junk" if junk else f"Moved {counted(len(rows), 'message')} back to the Inbox"
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_JUNK_MANY if junk else MESSAGE_NOT_JUNK_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number),
@@ -204,7 +209,7 @@ class MessageActions(QObject):
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_SNOOZE_MANY, lambda account, folder, messages: ManySnoozeParameters(account, folder, until, messages, undo=number), self._state.targets(rows),
-            f"Snoozed {len(rows)} message(s) until {until.replace('T', ' ')}", "Could not snooze",
+            f"Snoozed {counted(len(rows), 'message')} until {until.replace('T', ' ')}", "Could not snooze",
         )
 
     def cancel_snooze_selected(self) -> None:
@@ -221,7 +226,7 @@ class MessageActions(QObject):
             nonlocal remaining
             remaining -= 1
             if remaining == 0:
-                self._status.finished(f"Brought back {len(rows)} message(s)")
+                self._status.finished(f"Brought back {counted(len(rows), 'message')}")
 
         def failed(error: ChronoMailError) -> None:
             nonlocal remaining
@@ -258,7 +263,7 @@ class MessageActions(QObject):
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_COPY_MANY, lambda account, folder, messages: ManyTargetParameters(account, folder, target, messages, undo=number), self._state.targets(rows),
-            f"Copied {len(rows)} message(s) to {target}", "Could not copy", take_away=False,
+            f"Copied {counted(len(rows), 'message')} to {target}", "Could not copy", take_away=False,
         )
 
     def fill_move_menu(self) -> None:
@@ -288,7 +293,7 @@ class MessageActions(QObject):
         the others in one command per folder (R-08)."""
         unschedule = [item for item in targets if self._unschedules(item[0], item[1], target)]
         moves = [item for item in targets if item not in unschedule]
-        finished = f"Moved {len(targets)} message(s) to {target}"
+        finished = f"Moved {counted(len(targets), 'message')} to {target}"
         if unschedule:
             self._messages.take_away([message_id for _, _, message_id in unschedule])
             done, failed = self._answers(len(unschedule), finished, "Could not move")
@@ -316,7 +321,7 @@ class MessageActions(QObject):
 
         def done(result: MarkReadResult) -> None:
             changed = result.changed
-            self._status.finished(f"Marked {changed} message(s) in {folder} as read" if changed else f"Nothing to mark in {folder}")
+            self._status.finished(f"Marked {counted(changed, 'message')} in {folder} as read" if changed else f"Nothing to mark in {folder}")
             self._undoing.ended()
 
         def failed(error: ChronoMailError) -> None:
@@ -337,7 +342,7 @@ class MessageActions(QObject):
             return
 
         def done(result: EmptyResult) -> None:
-            self._status.finished(f"Deleted {result.removed} message(s) from {folder}")
+            self._status.finished(f"Deleted {counted(result.removed, 'message')} from {folder}")
 
         self._backend.ask(FOLDER_EMPTY, FolderActionParameters(view.account, folder), done, lambda error: self._status.report("Could not empty the folder", error), owner=self)
 
@@ -366,7 +371,7 @@ class MessageActions(QObject):
                 return
             if failures:
                 reason = failures[0].reason if all(item.reason == failures[0].reason for item in failures) else f"{failures[0].reason} (and other reasons)"
-                self._status.report(title, ChronoMailError(f"{len(failures):,} of {total:,} message(s): {reason}"))
+                self._status.report(title, ChronoMailError(f"{len(failures):,} of {counted(total, 'message')}: {reason}"))
             if finished:
                 self._status.finished(finished, keep_error=bool(failures))
 
