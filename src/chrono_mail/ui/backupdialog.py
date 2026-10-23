@@ -6,6 +6,7 @@ from PySide6.QtCore import QObject, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QFont, QGuiApplication
 from PySide6.QtWidgets import (
     QCheckBox,
+    QMessageBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -38,13 +39,15 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.windowsettings import window_settings_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "backupdialog.py 2.4.322"
+__version__ = "backupdialog.py 2.4.324"
 
 # --- Version history ----------------------------------------------------
+# v2.4.324: may_quit: Quit while a backup is made or restored asks first (D-244)
+# v2.4.323: "Backup" is one word (the owner): the menu item and the button Backup…, the window and its save window Backup
 # v2.4.322: Initial: Menu > File > Back up…: what to back up, which accounts, the passwords only in a protected backup, the backup
 #           password made by Chrono Mail with Copy and "I have saved the backup password", progress, Cancel, Run in background (D-244)
 
-MENU_TEXT: str = "Back up…"
+MENU_TEXT: str = "Backup…"
 PARTS: tuple[tuple[str, str], ...] = (
     (MESSAGES, "Messages"), (RULES, "Mail rules"), (CALENDARS, "Calendar items"), (CONTACTS, "Contacts"), (TASKS, "Tasks"), (SETTINGS, "Settings"),
 )
@@ -68,7 +71,7 @@ def size_text(size: int) -> str:
 
 
 class BackupDialog(QDialog):
-    """Menu > File > Back up…: a .cmz file of the chosen parts of the chosen accounts. While it runs, the window may be put away (Run in
+    """Menu > File > Backup…: a .cmz file of the chosen parts of the chosen accounts. While it runs, the window may be put away (Run in
     background); a click on the busy bar brings it back. The backup only reads: nothing changes here or on a server (D-193)."""
 
     running_changed = Signal(bool)  # the busy bar's click and hover text follow it
@@ -79,7 +82,7 @@ class BackupDialog(QDialog):
         self._backend: Backend = backend
         self._settings: QSettings = settings
         self.running: bool = False
-        self.setWindowTitle("Back up")
+        self.setWindowTitle("Backup")
         self.setMinimumWidth(560)
         layout = QVBoxLayout(self)
 
@@ -211,7 +214,7 @@ class BackupDialog(QDialog):
 
     def _update(self) -> None:
         """Grey what cannot be used now (never hidden): parts no chosen account has, the protection while the passwords are included,
-        the backup password while the backup is not protected, and Back up… until everything it needs is chosen."""
+        the backup password while the backup is not protected, and Backup… until everything it needs is chosen."""
         idle = not self.running
         items = self._items()
         ticked = [item for item in items if item.checkState() == Qt.CheckState.Checked]
@@ -247,7 +250,7 @@ class BackupDialog(QDialog):
         if self.running or not self.back_up_button.isEnabled():
             return
         start_in = Path.home() / suggested_name(date.today())
-        path, _ = QFileDialog.getSaveFileName(self, "Back up", str(start_in), f"Chrono Mail backup (*{EXTENSION})")
+        path, _ = QFileDialog.getSaveFileName(self, "Backup", str(start_in), f"Chrono Mail backup (*{EXTENSION})")
         if not path:
             return
         parts = self.chosen_parts()
@@ -329,7 +332,7 @@ class BackupDialog(QDialog):
 
 
 class BackupWindow(QObject):
-    """The main window's part for File > Back up…: one Back up window at a time, kept while a backup runs so a click on the busy bar
+    """The main window's part for File > Backup…: one Backup window at a time, kept while a backup runs so a click on the busy bar
     brings it back; the status line says what came of it."""
 
     def __init__(self, backend: Backend, settings: QSettings, report: StatusReport, parent: QWidget) -> None:
@@ -360,3 +363,15 @@ class BackupWindow(QObject):
         if self.window is not None and not self.window.running:
             self.window.deleteLater()
             self.window = None
+
+
+def may_quit(parent: QWidget, backing_up: bool, restoring: bool) -> bool:
+    """Quit while a backup is made or restored: asked first (the backup is stopped and no file is kept; a restore stops, and what was
+    set aside comes back)."""
+    if not (backing_up or restoring):
+        return True
+    text = (
+        "A backup is being made. Quit anyway? The backup stops and no file is kept." if backing_up
+        else "A backup is being restored. Quit anyway? The restore stops; what came back whole stays, and data that was set aside is put back."
+    )
+    return QMessageBox.question(parent, "Quit", text) == QMessageBox.StandardButton.Yes

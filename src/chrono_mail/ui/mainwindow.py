@@ -26,9 +26,11 @@ from chrono_mail.ui.folderpane import FolderMenu, FolderPane
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.backupdialog import MENU_TEXT as BACKUP_MENU_TEXT
-from chrono_mail.ui.backupdialog import BackupWindow
+from chrono_mail.ui.backupdialog import BackupWindow, may_quit
 from chrono_mail.ui.importdialog import MENU_TEXT as IMPORT_MENU_TEXT
 from chrono_mail.ui.importdialog import ImportDialog
+from chrono_mail.ui.restoredialog import MENU_TEXT as RESTORE_MENU_TEXT
+from chrono_mail.ui.restoredialog import RestoreWindow
 from chrono_mail.ui.indexrebuilds import IndexRebuilds
 from chrono_mail.ui.mailchecking import MailChecking
 from chrono_mail.ui.mailstate import MailState
@@ -60,9 +62,11 @@ from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.4.322"
+__version__ = "mainwindow.py 2.4.324"
 
 # --- Version history ----------------------------------------------------
+# v2.4.324: File > Restore… (the mail checks wait meanwhile; afterwards every index usable, the accounts loaded again and one check);
+#           Quit while a backup is made or restored asks first; the key's status line names "Use a recovery code" (D-244)
 # v2.4.322: File > Back up… (the Back up window; a click on the busy bar brings it back while it runs) and Restore… (greyed until the
 #           restore is built); the key items are "Show the recovery code…" and "Use a recovery code…" (D-244)
 # v2.3.316: the refresh at start does its own choice (start_refresh, the owner)
@@ -295,7 +299,10 @@ class MainWindow(QMainWindow):
         self.notices = SendNotices(backend, self.mail_state, self.checking, self.composing, self.report, self.prefs, self)  # delayed sends (B-21), Quit (B-20)
         self.composing.send_waiting.connect(self.notices.add)
         self.rebuilds: IndexRebuilds = IndexRebuilds(backend, self.report, self.mail_state.account_name, self)  # D-229
-        self.backups: BackupWindow = BackupWindow(backend, settings, self.report, self)  # File > Back up… (D-244)
+        self.backups: BackupWindow = BackupWindow(backend, settings, self.report, self)  # File > Backup… (D-244)
+        self.restores: RestoreWindow = RestoreWindow(backend, settings, self)  # File > Restore…: the mail checks wait while it runs
+        self.restores.running_changed.connect(self.checking.import_running)
+        self.restores.restored.connect(lambda: self.rebuilds.start(lambda: self.reload_accounts(select_saved=True, then=self.checking.check_mail)))
         self.rebuilds.running_changed.connect(self.checking.rebuild_running)
         self.rebuilds.quit_requested.connect(self.quit_program)
         self._build_toolbar()
@@ -463,8 +470,7 @@ class MainWindow(QMainWindow):
         self.act_add_account = self._action("Add an account…", lambda: self.add_account(), icon="list-add")
         self.act_recovery = self._action("Show the recovery code…", lambda: RecoveryDialog(self.backend, self).exec())
         self.act_backup = self._action(BACKUP_MENU_TEXT, lambda: self.backups.show())
-        self.act_restore = self._action("Restore…", lambda: self.backups.show())  # greyed until the restore is built (D-244)
-        self.act_restore.setEnabled(False)
+        self.act_restore = self._action(RESTORE_MENU_TEXT, lambda: self.restores.start())
         self.act_import = self._action(IMPORT_MENU_TEXT, self.show_import)
         self.act_restore_key = self._action("Use a recovery code…", self.restore_key)
         self.act_restore_key.setToolTip("Get the encryption key back with its recovery code or a recovery file")
@@ -765,7 +771,7 @@ class MainWindow(QMainWindow):
             self.hide()  # the program keeps running in the notification area
             event.ignore()
             return
-        if not self.composing.close_all() or not self.notices.before_quit(self.quit_program):
+        if not may_quit(self, self.backups.running, self.restores.running) or not self.composing.close_all() or not self.notices.before_quit(self.quit_program):
             event.ignore()
             return
         save_geometry(self, self.settings, "geometry")
@@ -1133,10 +1139,10 @@ class MainWindow(QMainWindow):
             self.report.show("The encryption key is back.")
             then()
         else:
-            self.report.show("The encryption key is missing, so your mail cannot be read yet. Use File > Restore the encryption key.", error=True)
+            self.report.show("The encryption key is missing, so your mail cannot be read yet. Use File > Use a recovery code.", error=True)
 
     def restore_key(self) -> None:
-        """File > Restore the encryption key: ask for the key and, when it is back, load everything."""
+        """File > Use a recovery code: ask for the key and, when it is back, load everything."""
         self._ask_for_key(lambda: self.reload_accounts(select_saved=True))
 
     def reload_accounts(self, select_saved: bool = False, then: Callable[[], None] | None = None) -> None:

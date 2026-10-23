@@ -67,8 +67,9 @@ Only `ui` may import PySide6.
 
 ### 4.3 Backup (D-244)
 
-- File > Back up… writes a `.cmz`: a ZIP (AES-256 when protected) with `chrono-mail-backup.json` (format, version, date, parts, accounts, the files that are encrypted here: `sealed`), `config/` (the chosen accounts' definitions without this computer's key id, rules, sidebar, tags, the window's own settings as `window.json`, `passwords.json` only when protected) and `data/` (the files of the chosen accounts exactly as kept here, decrypted; never the indexes, `.deleted` or `tmp`). `engine/backup.py`, commands `backup.*`.
+- File > Backup… writes a `.cmz`: a ZIP (AES-256 when protected) with `chrono-mail-backup.json` (format, version, date, parts, accounts, the files that are encrypted here: `sealed`), `config/` (the chosen accounts' definitions without this computer's key id, rules, sidebar, tags, the window's own settings as `window.json`, `passwords.json` only when protected) and `data/` (the files of the chosen accounts exactly as kept here, decrypted; never the indexes, `.deleted` or `tmp`). `engine/backup.py`, commands `backup.*`.
 - The file list is taken under each mailbox's lock; a message that moves meanwhile is found again by its id and backed up once.
+- File > Restore… (`engine/restore.py`): an account that is not here is written whole in `accounts/.restoring-<id>` and renamed into place, its `sealed` files encrypted with this computer's key and `store.json`/`pim.json` given its key id, the empty Maildir and collection folders made again (a ZIP keeps no empty folders); an account that is here gets the messages (by id, else folder and Message-ID) and items (by UID) it lacks, never what its IMAP state or DAV state shows the server had. Remove all data first moves `accounts`, the junk words and the rules, sidebar and tags files to `restore-aside-*` and takes the accounts out of the settings; a failure or cancel puts them back, success removes them.
 
 ### 4.4 Keys (D-023)
 

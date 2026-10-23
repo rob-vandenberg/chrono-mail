@@ -30,9 +30,10 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 2.2.314"
+__version__ = "mailbox.py 2.4.324"
 
 # --- Version history ----------------------------------------------------
+# v2.4.324: restore_here: a message from a backup, kept here only under its own id (an IMAP account sends it at the next check, D-244)
 # v2.2.314: the Outbox is timed too (a message there may wait for its moment, B-21); tell_changed: a row shows its new Send at
 # v2.0.280: row_of: the row's sent moment (the Sent column, B-16)
 # v1.1.252: A renamed folder takes its pins in Favorites along (and those of the folders inside it), before the rename is told (R-41)
@@ -396,6 +397,15 @@ class Mailbox:
             commit = server.append(folder, raw, flags)
             reference = self._deliver_here(folder, raw, flags)
             commit(reference.store_id)
+        return reference
+
+    def restore_here(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag], store_id: str) -> MessageRef:
+        """A message from a backup that is not here: stored and indexed here only, under the id it had (its properties keep fitting).
+        In an IMAP account it is a message made here: the next check puts it on the server, as one made offline (D-193)."""
+        reference = self.store.deliver(folder, raw, flags=flags, verify=True, store_id=store_id)
+        path = self.store.locate(reference)
+        self._index(lambda: self.index.add(entry_from_raw(reference, path, flags, len(raw), raw)))
+        self._tell_added(reference)
         return reference
 
     def _deliver_here(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag]) -> MessageRef:

@@ -10,9 +10,10 @@ from chrono_mail.core import StorageError
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "properties.py 2.2.314"
+__version__ = "properties.py 2.4.324"
 
 # --- Version history ----------------------------------------------------
+# v2.4.324: put_text: the properties of a message from a backup (D-244)
 # v2.2.314: send_not_before (a message in the Outbox may not be sent before this moment) and replies_to (the message a reply answers,
 #           marked as replied once it is really sent)
 # v1.1.248: readable and tags take the listing of the properties folder made earlier (present), so a check lists it once (R-09)
@@ -206,6 +207,20 @@ class MessageProperties:
             current, here = self._read(store_id)
             if current.empty() and not here:
                 self._write(store_id, found, whole)
+
+    def put_text(self, store_id: str, text: str, replace_existing: bool) -> bool:
+        """The properties of a message from a backup, as the backup kept them; existing ones are kept unless replace_existing.
+        Whether they were written. A file that cannot be read is refused (StorageError), never written."""
+        try:
+            found, whole = _from_data(json.loads(text))
+        except ValueError:
+            raise StorageError("The properties of a message in the backup are damaged") from None
+        with self._lock(store_id):
+            current, here = self._read(store_id)
+            if not replace_existing and not (current.empty() and not here):
+                return False
+            self._write(store_id, found, whole)
+            return True
 
     def stored_ids(self) -> set[str]:
         """The ids of the messages that have a properties file (one listing of the folder, nothing is read)."""

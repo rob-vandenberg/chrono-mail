@@ -22,9 +22,10 @@ from chrono_mail.store.atomic import fsync_directory
 from chrono_mail.store.layout import parse_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "backup.py 2.4.322"
+__version__ = "backup.py 2.4.324"
 
 # --- Version history ----------------------------------------------------
+# v2.4.324: one backup or restore at a time (JOB_LOCK); backup.cancel stops either (CANCEL); backup_running
 # v2.4.322: Initial: Menu > File > Back up…: a .cmz file (a ZIP, AES-256 with a generated password when protected) with
 #           the chosen parts of the chosen accounts, exactly as kept here but readable without this computer's key (D-244)
 
@@ -54,8 +55,8 @@ DOING_SETTINGS: str = "Backing up settings"
 _LEFT_OUT_NAMES: frozenset[str] = frozenset({".deleted", "tmp"})  # removed folders and messages still being written
 _INDEX_SUFFIXES: tuple[str, ...] = (".sqlite", ".sqlite-wal", ".sqlite-shm", ".sqlite-journal")  # rebuilt after a restore
 
-_cancel: threading.Event = threading.Event()
-_running: threading.Lock = threading.Lock()  # one backup at a time
+CANCEL: threading.Event = threading.Event()  # set by backup.cancel: the backup or restore that runs stops
+JOB_LOCK: threading.Lock = threading.Lock()  # one backup or restore at a time
 
 
 class BackupCancelled(ChronoMailError):
@@ -82,11 +83,16 @@ def valid_backup_password(password: str) -> bool:
     return len(password) == PASSWORD_LENGTH and all(character in PASSWORD_ALPHABET for character in password)
 
 
+def backup_running() -> bool:
+    """Whether a backup or restore runs now (Quit asks first)."""
+    return JOB_LOCK.locked()
+
+
 def cancel_backup() -> bool:
-    """Stop the backup that runs (its unfinished file is removed). Whether one was running."""
-    running = _running.locked()
+    """Stop the backup or restore that runs (a backup's unfinished file is removed). Whether one was running."""
+    running = JOB_LOCK.locked()
     if running:
-        _cancel.set()
+        CANCEL.set()
     return running
 
 
@@ -188,9 +194,9 @@ def write_backup(engine: Engine, choice: BackupChoice) -> BackupReport:
     """Write the backup. Nothing here or on a server changes (D-193): the backup only reads. The file is written under a temporary
     name and only renamed into place when it is complete, so a cancel or a failure leaves nothing behind."""
     target = _check(choice)
-    if not _running.acquire(blocking=False):
-        raise UsageError("A backup is being made already")
-    _cancel.clear()
+    if not JOB_LOCK.acquire(blocking=False):
+        raise UsageError("A backup is being made or restored already")
+    CANCEL.clear()
     temporary = target.with_name(target.name + ".part")
     try:
         report = _write(engine, choice, target, temporary)
@@ -198,8 +204,8 @@ def write_backup(engine: Engine, choice: BackupChoice) -> BackupReport:
         temporary.unlink(missing_ok=True)
         raise
     finally:
-        _cancel.clear()
-        _running.release()
+        CANCEL.clear()
+        JOB_LOCK.release()
     return report
 
 
@@ -246,7 +252,7 @@ def _write(engine: Engine, choice: BackupChoice, target: Path, temporary: Path) 
             for name, text in _config_entries(engine, config, choice, chosen):
                 _add(archive, name, text.encode("utf-8"))
             for item in files:
-                if _cancel.is_set() or engine.stop_event.is_set():
+                if CANCEL.is_set() or engine.stop_event.is_set():
                     raise BackupCancelled("The backup was cancelled; no file was left behind")
                 written = _add_file(engine, archive, item, key, messages, sealed, unreadable)
                 if written and item.counted:
