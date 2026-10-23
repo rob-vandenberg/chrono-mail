@@ -2692,3 +2692,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Account setting junk_filter (config, account.edit, AccountSummary), the tick in Edit account > General; FetchResult.junked and the status line "n moved to Junk".
 - Server rule D-193: every move to Junk is the normal move, on the IMAP server first, offline here and sent later, so two computers show the same; what the filter learned is this computer's only (D-201). The $Junk/$NotJunk marks are not set (B-19).
 - Tests: new tests/test_engine_junk.py (16) and tests/ui/test_ui_junkfilter.py (1), all new behaviour (no junk filter in 2.0.307). Ran: those, test_engine_actions, -many, -rules, -account_edit, test_config, test_index_index, test_engine_schedule, -outbox, -imap, -imap_online, -local, test_typed_calls, test_layers (321 passed); tests/ui test_ui_settings, -parts, -window, -rules: 113 passed, 1 failed (test_a_pinned_folder_and_a_group_show_in_the_folder_list, fails on 2.0.307 too: the folder order of 2.0.298). Pyrefly 0 on src and the new tests (Linux and win32); layer check kept. The full suite was not run.
+
+## 2026-10-23 2.1.309 SonarQube Cloud skips the test mail samples (D-237)
+- The analysis of 2.0.307 had one warning: "problems with file encoding". Every code file is valid UTF-8; the cause is three deliberately broken sample mails in tests/data/mime (bad_charset, binary_garbage, latin1_declared_utf8). Automatic analysis keeps no logs to confirm it.
+- `.sonarcloud.properties`: `sonar.test.exclusions=tests/data` (no wildcards allowed there; whether a folder works is to be seen at the next analysis; else the three files by name). A lasting warning would hide a real one.
+- After 2.0.307 the owner marked the 18 remaining findings False positive: 0 open, 3 fixed.
+- Server rule D-193: not touched. No program code changed; no tests to run.
