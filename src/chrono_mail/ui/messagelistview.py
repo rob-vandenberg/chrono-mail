@@ -11,11 +11,13 @@ from chrono_mail.ui.messagelist import HEADER_ICON_ROLE, MessageListModel
 from chrono_mail.ui.scale import lpx
 
 from chrono_mail.ui.theme import show_focus
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 1.9.275"
+__version__ = "messagelistview.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.6.260: The header icon role from messagelist.py (R-15)
 # v1.1.172: The drag badge's colours from the theme (D-158)
@@ -44,7 +46,7 @@ def cursor_size() -> int:
 
 def drag_badge(count: int) -> QPixmap:
     """A small label ("3 messages") for a drag. The rows themselves are not drawn: a long selection would hide the folder under the pointer."""
-    text = "1 message" if count == 1 else f"{count} messages"
+    text = counted(count, "message")
     font = QApplication.font()
     metrics = QFontMetrics(font)
     width, height = metrics.horizontalAdvance(text) + 20, metrics.height() + 10

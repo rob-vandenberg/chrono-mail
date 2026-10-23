@@ -1,5 +1,7 @@
+from collections.abc import Sequence
+from typing import Protocol
+
 from chrono_mail.config import LOCAL_FOLDER_KINDS
-from chrono_mail.engine.changes import MessageRow
 from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.engine.commands_folders import FolderInfo
 from chrono_mail.engine.commands_pim import TagInfo
@@ -9,15 +11,29 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.models import FAVORITES, LOCAL_PLACES, USED_ONLY, favorite_in_use, local_folder_kind
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailstate.py 2.2.314"
+__version__ = "mailstate.py 2.4.329"
 
 # --- Version history ----------------------------------------------------
+# v2.4.329: account_of, targets and archived take any message by its place (a row, or a selected message not loaded yet, W12)
 # v2.2.314: in_timed: the Outbox too (a delayed send shows when it goes, B-21); outbox_count: the messages waiting in the Outbox, each place where mail is kept counted once (the warning on Quit, B-20)
 # v2.0.306: all_archived: whether every selected message is in an archive folder (Archive or Unarchive follows the messages, D-101)
 # v1.9.274: R-19 round 4: the accounts, tags and rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.264: R-17: what the parts of the mail window share: the accounts, their folders with the engine's numbers, the sidebar, the
 #           tags and the current view, with the questions every part asks of them (they were asked again in many places)
 
+
+
+class Placed(Protocol):
+    """A message by its place: a row of the list, or a selected message whose row has not come into view (W12)."""
+
+    @property
+    def account(self) -> str: ...
+
+    @property
+    def folder(self) -> str: ...
+
+    @property
+    def message_id(self) -> str: ...
 
 class MailState:
     """What the parts of the mail window know in common. Each part changes only what it is the owner of; the others read it."""
@@ -108,11 +124,11 @@ class MailState:
 
     # --- the view ------------------------------------------------------------------------------------------
 
-    def account_of(self, row: MessageRow) -> str:
+    def account_of(self, row: Placed) -> str:
         """The account a row of the list belongs to: rows of the combined views say so themselves."""
         return row.account or self.view.account or ""
 
-    def targets(self, rows: list[MessageRow]) -> list[tuple[str, str, str]]:
+    def targets(self, rows: Sequence[Placed]) -> list[tuple[str, str, str]]:
         """(account, folder, message) of each row (a Favorites view mixes accounts)."""
         account = self.view.account or ""
         return [(self.account_of(row) or account, row.folder, row.message_id) for row in rows]
@@ -136,11 +152,11 @@ class MailState:
         view = self.view
         return view.combined == "scheduled" or (view.combined is None and view.kind == EntryKind.FOLDER and view.folder == SCHEDULED_FOLDER_PATH)
 
-    def archived(self, row: MessageRow) -> bool:
+    def archived(self, row: Placed) -> bool:
         """The message is in an archive folder of its account (by the folder's role, not its name)."""
         return self.folder_role_of(self.account_of(row), row.folder) == "archive"
 
-    def all_archived(self, rows: list[MessageRow]) -> bool:
+    def all_archived(self, rows: Sequence[Placed]) -> bool:
         """Every one of these messages is in an archive folder: Archive is Unarchive for them, wherever they are shown (D-101)."""
         return bool(rows) and all(self.archived(row) for row in rows)
 

@@ -15,9 +15,10 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 1.9.264"
+__version__ = "test_ui_dav.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.1.236: New calendar… on an account's heading is set to that account and made on its server; on the empty area to the local ones (R-29)
 # v1.1.225: a change not yet on the server is made offline (a new task goes to the server first otherwise)
@@ -57,7 +58,7 @@ def test_the_server_is_found_and_saved_in_the_account_dialog(world: World, qtbot
         dialog.dav_password.setText("secret")
         assert dialog.dav_check_button.text() == "Find calendars, contacts and tasks"
         dialog.dav_check_button.click()
-        wait(qtbot, lambda: "3 folder(s) found. The ticks take effect with Save." in dialog.dav_result.text())
+        wait(qtbot, lambda: "3 folders found. The ticks take effect with Save." in dialog.dav_result.text())
         assert len(dialog.dav_folders.ticks) == 3 and dialog.dav_folders.any_ticked() and not dialog.dav_folders.left_out()
         untick(dialog.dav_folders, "tasks")
         assert world.call("account.list")[0].dav_url == ""  # nothing saved before Save
@@ -219,7 +220,7 @@ def test_a_new_account_of_calendars_only_is_added_in_the_window(world: World, qt
         dialog.password.setText("secret")
         dialog.account_name.setText("Family calendar")
         dialog.find_button.click()
-        wait(qtbot, lambda: "3 folder(s) found" in dialog.result_label.text())
+        wait(qtbot, lambda: "3 folders found" in dialog.result_label.text())
         assert dialog.add_button.isEnabled()
         dialog.add_button.click()
         wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
@@ -236,8 +237,8 @@ def test_the_window_can_give_a_mail_account_its_calendar_server(world: World, qt
         assert not dialog.account_name.isEnabled() and dialog.username.placeholderText() == "(the same as for mail)"
         dialog.url.setText(server.url)
         dialog.find_button.click()
-        wait(qtbot, lambda: "folder(s) found" in dialog.result_label.text() or "span" in dialog.result_label.text())
-        assert "folder(s) found" in dialog.result_label.text(), dialog.result_label.text()
+        wait(qtbot, lambda: " found" in dialog.result_label.text() or "span" in dialog.result_label.text())
+        assert " found" in dialog.result_label.text(), dialog.result_label.text()
         dialog.add_button.click()
         wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
         assert world.call("account.list")[0].dav_url == server.url and not any(item.kind == "dav" for item in world.call("account.list"))

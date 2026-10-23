@@ -23,17 +23,22 @@ from chrono_mail.engine.commands_backup import (
     RestoreResult,
 )
 from chrono_mail.engine.commands_accounts import NoParameters
+from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.restore import BackupPasswordNeeded, NotABackup, RestoreCancelled, WrongBackupPassword
 from chrono_mail.sync.imap_state import ImapState
 from tests.enginefactory import make_engine
+from chrono_mail.mime import with_extra_headers
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 2.4.326"
+__version__ = "test_engine_restore.py 2.4.328"
 
 # --- Version history ----------------------------------------------------
+# v2.4.328: an account without files comes back (W1); a damaged message is left out and the rest comes back (W5); a cut-off backup is
+#           damaged or incomplete (W4); only the rules of the accounts that came back (R2)
+# v2.4.327: a restore sends nothing by itself: the Outbox's mail comes back in Drafts, an overdue scheduled message paused (D-245)
 # v2.4.326: only the chosen accounts, parts and passwords come back; the contents per account with their counts
 # v2.4.324: Initial: Restore (D-244): a backup put back on an empty computer looks the same; the backup password; not a backup; an
 #           account that is here gets only what it lacks, never twice and never what its server holds; Remove all data first and a
@@ -267,3 +272,112 @@ def test_only_the_chosen_accounts_parts_and_passwords_come_back(tmp_path: Path) 
     assert {settings.account.account_id for settings in second.config().accounts} == {LOCAL_ACCOUNT_ID, anna}
     assert second.passwords.get(anna, ServerRole.INCOMING) is None and not second.directories.rules_file.exists()
     assert len(_mail(second)) == 3 and not (second.directories.pim_directory(LOCAL_ACCOUNT_ID) / "pim.json").exists()
+
+
+def _waiting(engine: Engine) -> tuple[str, str]:
+    """A reply in the Outbox and a message scheduled for a time that has passed, in Local Folders; their ids."""
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        outbox = mailbox.deliver(mailbox.folder("Outbox"), raw_message(subject="Old reply", message_id="<old-reply@example.com>"), frozenset({MessageFlag.SEEN}))
+        scheduled, _ = mailbox.ensure_folder(("Scheduled",))
+        raw = with_extra_headers(raw_message(subject="Old greeting", message_id="<old-greeting@example.com>"), {
+            "X-Chrono-Mail-Kind": "scheduled", "X-Chrono-Mail-Send-At": str(int(engine.clock()) - 86_400),
+        })
+        late = mailbox.deliver(scheduled.path, raw, frozenset({MessageFlag.SEEN}))
+    return outbox.store_id, late.store_id
+
+
+def _sends_nothing(engine: Engine, result: RestoreResult, outbox: str, late: str) -> None:
+    assert (result.to_drafts, result.paused) == (1, 1)
+    mail = _mail(engine)
+    assert mail[outbox][0] == "Drafts" and mail[late][0] == "Scheduled"
+    (info,) = REGISTRY.ask(engine, MAIL_SCHEDULED, AccountOptional())
+    assert info.message_id == late and info.paused
+
+
+def test_a_restore_sends_nothing_by_itself(tmp_path: Path) -> None:
+    """The Windows computer's W6: a restore sent the old Outbox. What waited to be sent comes back waiting for the person (D-245): the Outbox's
+    mail in Drafts, a scheduled message whose time passed paused; on an empty computer (whole) and on one that lacks them (filled)."""
+    first = _computer(tmp_path / "first")
+    outbox, late = _waiting(first)
+    password = _backup(first, tmp_path / "all.cmz")
+    second = make_engine(tmp_path / "second")
+    REGISTRY.run(second, KEY_ENSURE.id, {})
+    _sends_nothing(second, _restore(second, tmp_path / "all.cmz", password), outbox, late)
+    with open_mailbox(first, LOCAL_ACCOUNT_ID) as mailbox:
+        mailbox.delete(mailbox.reference(("Outbox",), outbox), permanent=True)
+        mailbox.delete(mailbox.reference(("Scheduled",), late), permanent=True)
+    _sends_nothing(first, _restore(first, tmp_path / "all.cmz", password), outbox, late)
+
+
+def _add_local_pop3(engine: Engine) -> str:
+    """A POP3 account that keeps its mail in Local Folders and has fetched nothing yet: it has no files of its own."""
+    REGISTRY.run(engine, "account.add", {
+        "display_name": "Shop", "email_address": "shop@example.com", "username": "shop", "password": "secret", "incoming_host": "127.0.0.3",
+        "incoming_port": 1, "incoming_security": "none", "outgoing_host": "127.0.0.3", "outgoing_port": 1, "outgoing_security": "none", "storage": "local",
+    })
+    return next(settings.account.account_id for settings in engine.config().accounts if settings.account.email_address == "shop@example.com")
+
+
+def test_an_account_without_any_files_comes_back(tmp_path: Path) -> None:
+    """The Windows computer's W1: such an account stopped every restore with FileNotFoundError."""
+    first = _computer(tmp_path / "first")
+    shop = _add_local_pop3(first)
+    password = _backup(first, tmp_path / "all.cmz")
+    second = make_engine(tmp_path / "second")
+    REGISTRY.run(second, KEY_ENSURE.id, {})
+    result = _restore(second, tmp_path / "all.cmz", password)
+    assert shop in result.made and shop in {settings.account.account_id for settings in second.config().accounts}
+    assert _mail(second) == _mail(first) and load_rules(second.directories.rules_file) == load_rules(first.directories.rules_file)
+    assert second.passwords.get(shop, ServerRole.INCOMING) == "secret"
+
+
+def _damage_one_message(backup: Path) -> str:
+    """Flip bytes in the middle of one message's data in the backup (its contents page and directory stay intact); its name."""
+    with zipfile.ZipFile(backup) as archive:
+        entry = next(info for info in archive.infolist() if "/cur/" in info.filename or "/new/" in info.filename)
+        local = entry.header_offset
+    data = bytearray(backup.read_bytes())
+    name_length, extra_length = int.from_bytes(data[local + 26:local + 28], "little"), int.from_bytes(data[local + 28:local + 30], "little")
+    middle = local + 30 + name_length + extra_length + entry.compress_size // 2
+    for offset in range(middle, middle + 8):
+        data[offset] ^= 0xFF
+    backup.write_bytes(bytes(data))
+    return entry.filename
+
+
+def test_a_damaged_message_is_left_out_and_everything_else_comes_back(tmp_path: Path) -> None:
+    """The Windows computer's W5 and W4: one damaged message stopped the whole restore, and the report showed its raw bytes."""
+    first = _computer(tmp_path / "first")
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    _damage_one_message(tmp_path / "all.cmz")
+    second = make_engine(tmp_path / "second")
+    REGISTRY.run(second, KEY_ENSURE.id, {})
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert result.damaged == 1 and result.messages == 2 and result.items == 1
+    assert {settings.account.account_id for settings in second.config().accounts} == {settings.account.account_id for settings in first.config().accounts}
+    assert load_rules(second.directories.rules_file) == load_rules(first.directories.rules_file)
+    before = _mail(first)
+    result = _restore(first, tmp_path / "all.cmz", "", remove_first=True)  # nothing may be lost: what was here is kept aside
+    assert result.damaged == 1 and any("is kept in" in note for note in result.notes)
+    assert len(list((first.directories.data_directory).glob("restore-aside-*"))) == 1 and len(_mail(first)) == len(before) - 1
+
+
+def test_a_cut_off_backup_is_damaged_or_incomplete(tmp_path: Path) -> None:
+    first = _computer(tmp_path / "first")
+    _backup(first, tmp_path / "all.cmz")
+    whole = (tmp_path / "all.cmz").read_bytes()
+    (tmp_path / "half.cmz").write_bytes(whole[: len(whole) // 2])
+    with pytest.raises(NotABackup, match="damaged or incomplete"):
+        REGISTRY.ask(make_engine(tmp_path / "second"), BACKUP_CONTENTS, ReadParameters(str(tmp_path / "half.cmz")))
+
+
+def test_only_the_rules_of_the_accounts_that_come_back_are_restored(tmp_path: Path) -> None:
+    first = _computer(tmp_path / "first")
+    anna = next(settings.account.account_id for settings in first.config().accounts if settings.account.email_address == "anna@example.com")
+    own = Rule("fedcba9876543210", "Anna's invoices", (Condition("subject", "contains", "invoice"),), (Action("mark_read"),), accounts=(anna,))
+    save_rules(first.directories.rules_file, RuleSet((*RULES.rules, own)))
+    password = _backup(first, tmp_path / "all.cmz")
+    second = make_engine(tmp_path / "second")
+    REGISTRY.run(second, KEY_ENSURE.id, {})
+    REGISTRY.ask(second, BACKUP_RESTORE, RestoreParameters(str(tmp_path / "all.cmz"), password, accounts=("local-folders",), settings=False, passwords=False))
+    assert load_rules(second.directories.rules_file) == RULES  # the rule of Anna, not ticked, stays out

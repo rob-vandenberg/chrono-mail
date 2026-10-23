@@ -13,11 +13,13 @@ from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import PimStore
 from chrono_mail.sync.davitems import CONFLICT, WAITING, ItemGateway, Outcome, ServerRefused, on_server
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim_server.py 1.1.225"
+__version__ = "pim_server.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.1.225: Initial: items of a server's collections saved, deleted and moved on the server first (R-23, D-194)
 
 
@@ -88,7 +90,7 @@ class ItemWriter:
             self.engine.notice(f"The server of {account_name(self.engine, self.account)} could not be reached: {self.waiting} change(s) go there at the next synchronisation")
             self.engine.report(Change("waiting_changed", self.account))
         if self.conflicts:
-            self.engine.notice(f"{self.conflicts} item(s) of {account_name(self.engine, self.account)} were changed on the server meanwhile: see Settings > Sync conflicts")
+            self.engine.notice(f"{counted(self.conflicts, 'item')} of {account_name(self.engine, self.account)} were changed on the server meanwhile: see Settings > Sync conflicts")
             self.engine.report(Change("conflicts_changed", self.account))
 
 

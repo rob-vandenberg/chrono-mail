@@ -48,11 +48,13 @@ from chrono_mail.sync.davconflicts import (
 )
 from chrono_mail.sync.davconflicts import forget as forget_conflict
 from chrono_mail.store.atomic import replace_file_atomically
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 2.0.286"
+__version__ = "davsync.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.0.286: A collection's name or colour changed here and on the server, or a name the server refused for good, is a sync conflict (kept in
 #           step with every synchronisation, gone once both sides agree), no longer an error line at every synchronisation (D-192, the Windows
 #           computer's F3)
@@ -539,7 +541,7 @@ def _pull(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
     complete_fetch = trusted
     missing = [href for href in wanted if href not in fetched]
     if missing:
-        report.errors.append(f"{remote.name}: {len(missing)} item(s) could not be fetched; they are asked for again at the next synchronisation")
+        report.errors.append(f"{remote.name}: {counted(len(missing), 'item')} could not be fetched; asked for again at the next synchronisation")
         complete_fetch = False
     for href in wanted:
         if href not in fetched:

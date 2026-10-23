@@ -28,11 +28,13 @@ from chrono_mail.engine.commands_calendar import EditParameters as EventEdit
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circle_icon, palette_of_summary
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 1.9.275"
+__version__ = "eventeditor.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: parameters gives the typed edit (EditParameters); add and edit are typed calls; the event is an EventInfo
 # v1.1.219: Colour: one of the calendar's colours (its own by default), with Edit colours… (D-191)
@@ -181,7 +183,7 @@ class EventEditor(QDialog):
         minutes = str(reminders[0].minutes_before) if reminders and reminders[0].minutes_before is not None else ""
         index = self.reminder.findData(minutes)
         if index < 0 and minutes:
-            self.reminder.addItem(f"{minutes} minutes before", minutes)
+            self.reminder.addItem(f"{counted(int(minutes), 'minute')} before" if minutes.isdigit() else f"{minutes} minutes before", minutes)
             index = self.reminder.count() - 1
         self.reminder.setCurrentIndex(max(0, index))
         self.busy.setCurrentIndex(0 if event.busy else 1)

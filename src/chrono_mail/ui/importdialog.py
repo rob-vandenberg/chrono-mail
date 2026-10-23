@@ -23,11 +23,13 @@ from PySide6.QtWidgets import (
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, IMPORT_EMCLIENT_SCAN, ImportParameters, ImportResult, ScanParameters, ScanResult
 from chrono_mail.ui.backend import Backend
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 1.9.271"
+__version__ = "importdialog.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.271: R-19: reading the exports and the import are typed calls
 # v0.5.151: on_running: the main window learns when an import starts and ends (mail checks wait meanwhile)
 # v0.5.143: Import waits for the reading of the exports; a late or older reading answer is ignored; the progress bar follows the count, which the engine gives over the whole import
@@ -60,12 +62,12 @@ def scan_summary(scan: ScanResult) -> str:
     if scan.rules or scan.rules_not_imported:
         lines.append(f"Rules: {scan.rules}" + (f"; not imported: {_listed(scan.rules_not_imported)}" if scan.rules_not_imported else "") + ".")
     if scan.messages:
-        line = f"Mail: {scan.messages:,} messages in {scan.folders} folders"
+        line = f"Mail: {counted(scan.messages, 'message')} in {counted(scan.folders, 'folder')}"
         if scan.messages_done:
             line += f", {scan.messages_done:,} of them done by an earlier import (it continues)"
         lines.append(line + ".")
     if scan.marks:
-        lines.append(f"Read, flagged and replied marks for {scan.marks:,} messages.")
+        lines.append(f"Read, flagged and replied marks for {counted(scan.marks, 'message')}.")
     if scan.contacts:
         lines.append(f"Contacts: {scan.contacts}.")
     if scan.tags or scan.tagged:

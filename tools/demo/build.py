@@ -12,6 +12,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings
 
+from chrono_mail.core.words import counted
 from chrono_mail.config import AppDirectories, KeyringPasswordStore, Rule, RuleSet, ServerRole, profile_directories, save_rules
 from chrono_mail.config import Action, Condition, new_rule_id
 from chrono_mail.config.passwords import PasswordStore
@@ -29,9 +30,11 @@ from tools.demo.people import make_people
 from tools.demo.pim import PimMaker
 
 # --- Version ------------------------------------------------------------
-__version__ = "build.py 2.3.321"
+__version__ = "build.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: the time it took in seconds under a minute and a half ("in 40 seconds", not "in 1 minutes"); about six minutes for 100,000
+#           messages, as measured (the Windows computer's note)
 # v2.3.321: The mail (100,000 messages by default, --messages for fewer), the calendars, tasks and contacts, with progress in the terminal
 # v2.3.320: Initial: builds the demo profile of the documentation: its 14 accounts, their folders, Local Folders and the rules (D-243)
 
@@ -180,12 +183,13 @@ def main(argv: list[str] | None = None) -> int:
     if (folder / MARKER).is_file():
         print(f"The demo profile is ready in {folder}.")
         return 0
-    print(f"Building the demo profile in {folder} (about a quarter of an hour for 100,000 messages)...")
+    print(f"Building the demo profile in {folder} (about six minutes for 100,000 messages)...")
     began = time.monotonic()
     built = build_demo(folder, passwords, keys, arguments.messages, show_progress)
-    minutes = (time.monotonic() - began) / 60
-    print(f"The demo profile is built in {built.folder} in {minutes:.0f} minutes: {len(built.account_ids)} accounts, {built.messages:,} messages, "
-          f"{built.events} calendar entries, {built.tasks} tasks, {built.contacts} contacts.")
+    seconds = round(time.monotonic() - began)
+    took = counted(seconds, "second") if seconds < 90 else counted(round(seconds / 60), "minute")
+    print(f"The demo profile is built in {built.folder} in {took}: {counted(len(built.account_ids), 'account')}, {counted(built.messages, 'message')}, "
+          f"{counted(built.events, 'calendar entry', 'calendar entries')}, {counted(built.tasks, 'task')}, {counted(built.contacts, 'contact')}.")
     return 0
 
 

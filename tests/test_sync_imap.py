@@ -17,9 +17,10 @@ from tests.fakeimap import FakeImapServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_imap.py 2.0.285"
+__version__ = "test_sync_imap.py 2.4.330"
 
 # --- Version history ----------------------------------------------------
+# v2.4.330: a Junk folder the server has but does not show (unsubscribed) is used, by its special-use mark or its name, never made again (W7)
 # v2.0.285: a mark the server changed meanwhile shows in the same check that sends the mark made here (F2)
 # v1.9.266: R-45: the compaction tests put COMPACT_MINIMUM_LINES back (it stayed 1 or 100 for every later test)
 # v1.1.241: the server's list of folders to show is followed: a folder taken off it goes here after one last synchronisation, a folder put on it
@@ -1004,3 +1005,21 @@ def test_folder_changes_made_offline_survive_a_reload_and_a_compaction(tmp_path:
         assert (rename.kind, rename.server_name, rename.old_path) == ("rename", "A", ("A",)) and ("A2",) not in loaded.pending
         assert (delete.kind, delete.server_name, delete.validity, delete.uids) == ("delete", "B", 6, frozenset({3}))
         assert ("A3",) in loaded.validity and ("B",) not in loaded.validity
+
+
+def test_a_standard_folder_the_server_marks_is_planned_whether_or_not_it_is_subscribed() -> None:
+    """The Windows computer's W7: the Dovecot test account's Junk (special-use \\Junk) was not subscribed and never mapped."""
+    plans, _ = plan_folders([entry("INBOX"), entry("Sent", "\\sent"), entry("Junk", "\\junk"), entry("Old")], subscribed=frozenset({"INBOX", "Sent"}))
+    assert {(plan.server_name, plan.role) for plan in plans} == {("INBOX", FolderRole.INBOX), ("Sent", FolderRole.SENT), ("Junk", FolderRole.JUNK)}
+
+
+@pytest.mark.parametrize("marked", [True, False])
+def test_an_unsubscribed_junk_folder_on_the_server_is_used_never_made_again(world: World, marked: bool) -> None:
+    world.server.add("INBOX", mail(1))
+    world.server.add("Junk", mail(2))
+    world.server.folders["Junk"].subscribed = False
+    if marked:
+        world.server.folders["Junk"].attributes = ["\\Junk"]
+    world.sync()
+    assert world.state.server_names.get(("Junk",)) == "Junk" and not any(command.startswith("CREATE") for command in world.server.commands)
+    assert len(world.messages(("Junk",))) == 1

@@ -16,9 +16,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_delayed_send.py 2.3.317"
+__version__ = "test_ui_delayed_send.py 2.4.327"
 
 # --- Version history ----------------------------------------------------
+# v2.4.327: the check after a restore, a rebuild, an import or a first account never sends; a refresh a rebuild held back runs after it (D-245)
 # v2.3.317: the status line's texts are recorded, never read at one moment; Cancel waits for the window it opens (not the one that sent, which may exist until Qt deletes it); the notice as the owner's mockup: the buttons below the text at the right, the outline from the colour file
 # v2.3.316: the refresh at start does its own choice; the two rows of Settings, each greyed with its tick
 # v2.3.315: Send only (the timer sends and fetches nothing, the server's "new mail" fetches nothing); the one Automatically row of Settings
@@ -255,4 +256,33 @@ def test_the_refresh_at_start_does_its_own_choice(world: World, qtbot: QtBot, mo
     monkeypatch.setattr(checking, "check_accounts", recorded)
     world.window.start()
     wait(qtbot, lambda: bool(received) and not checking.checking and not checking.sending and world.backend._pending == {})  # noqa: SLF001 - the refresh at start is done
+    assert len(world.smtp.received) == (1 if start == "send_receive" else 0)
+
+
+def test_the_check_after_a_restore_or_a_rebuild_never_sends(world: World, qtbot: QtBot) -> None:
+    """The Windows computer's W6: the check after a restore sent the restored Outbox. It only receives (D-245)."""
+    delays(world, 0, on_refresh=True)
+    world.window.settings.setValue("scheduled_refresh", "send_receive")
+    written(qtbot, world).send_button.click()
+    wait(qtbot, lambda: held(world, "Outbox") == 1)
+    checking = world.window.checking
+    checking.check_mail()
+    checking.rebuild_running(True)
+    checking.rebuild_running(False)  # nothing was held back: the check after it only receives
+    wait(qtbot, lambda: not checking.checking and not checking.sending and world.backend._pending == {})  # noqa: SLF001
+    assert world.smtp.received == [] and held(world, "Outbox") == 1
+
+
+@pytest.mark.parametrize("start", ["send_receive", "receive"])
+def test_a_refresh_a_rebuild_held_back_runs_after_it_with_its_own_choice(world: World, qtbot: QtBot, start: str) -> None:
+    delays(world, 0, on_refresh=True)
+    world.window.settings.setValue("start_refresh", start)
+    written(qtbot, world).send_button.click()
+    wait(qtbot, lambda: held(world, "Outbox") == 1)
+    checking = world.window.checking
+    checking.rebuild_running(True)
+    checking.start_refresh()  # the refresh at start, while an index is filled in
+    assert not checking.sending and not checking.checking
+    checking.rebuild_running(False)
+    wait(qtbot, lambda: not checking.checking and not checking.sending and world.backend._pending == {})  # noqa: SLF001
     assert len(world.smtp.received) == (1 if start == "send_receive" else 0)

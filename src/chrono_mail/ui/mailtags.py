@@ -1,15 +1,16 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QInputDialog, QMenu, QWidget
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.engine.changes import MessageRow
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
 from chrono_mail.engine.commands_tags import MESSAGE_TAG, MailTagParameters, MessageTagsResult
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.mailstate import MailState
+from chrono_mail.ui.mailstate import MailState, Placed
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
@@ -17,9 +18,10 @@ from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail
 from chrono_mail.ui.undoing import Undoing
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailtags.py 2.2.313"
+__version__ = "mailtags.py 2.4.329"
 
 # --- Version history ----------------------------------------------------
+# v2.4.329: a tag goes to every selected message, also those not loaded yet; the shortcut and the menu's ticks count them all (W12)
 # v2.2.313: a tag given or taken away is one action of Undo (B-18)
 # v1.9.274: R-19 round 4: the tags and rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: tag.list and message.tag typed
@@ -97,18 +99,33 @@ class MailTags(QObject):
             self._shortcuts.append(action)
 
     def toggle_tag_by_key(self, name: str) -> None:
-        """A tag's shortcut: give the tag to the selected messages, or take it away when all of them have it."""
-        rows = self._messages.selected_rows()
-        everyone = bool(rows) and all(any(have.casefold() == name.casefold() for have in tuple(row.tags)) for row in rows)
-        self.toggle_tag(name, not everyone)
+        """A tag's shortcut: give the tag to the selected messages, or take it away when all of them have it (all of them counted, also
+        those not loaded yet, W12)."""
+        chosen = self._messages.selected_rows()
+
+        def decide(rows: list[MessageRow]) -> None:
+            everyone = all(any(have.casefold() == name.casefold() for have in tuple(row.tags)) for row in rows)
+            self.toggle_tag(name, not everyone, chosen)
+
+        if chosen:
+            self._messages.with_rows(chosen, decide)
 
     def fill_tag_menu(self, menu: QMenu) -> None:
-        rows = self._messages.selected_rows()
-        fill_tag_menu(menu, self._state.tags, self.book, [tuple(row.tags) for row in rows], self.toggle_tag, self._new_tag, self._open_tags)
+        """The ticks say which tags the selected messages have; rows not loaded yet are asked first and the menu is filled again with them."""
+        chosen = self._messages.selected_rows()
+        loaded = [item.row for item in chosen if item.row is not None]
+        fill_tag_menu(menu, self._state.tags, self.book, [tuple(row.tags) for row in loaded], self.toggle_tag, self._new_tag, self._open_tags)
+        if len(loaded) < len(chosen):
 
-    def toggle_tag(self, name: str, add: bool) -> None:
+            def refill(rows: list[MessageRow]) -> None:
+                if menu.isVisible():
+                    fill_tag_menu(menu, self._state.tags, self.book, [tuple(row.tags) for row in rows], self.toggle_tag, self._new_tag, self._open_tags)
+
+            self._messages.with_rows(chosen, refill)
+
+    def toggle_tag(self, name: str, add: bool, chosen: Sequence[Placed] | None = None) -> None:
         """Give a tag to the selected messages (add) or take it away; the rows show the new tags at once."""
-        rows = self._messages.selected_rows()
+        rows = self._messages.selected_rows() if chosen is None else chosen
         groups: dict[tuple[str, str], list[str]] = {}
         for row in rows:
             groups.setdefault((self._state.account_of(row), row.folder), []).append(row.message_id)

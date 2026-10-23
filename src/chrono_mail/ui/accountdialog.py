@@ -1,6 +1,7 @@
+from collections.abc import Callable
 from typing import Literal, override
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -25,9 +26,10 @@ from chrono_mail.ui.colours import red
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, mail_server_kind, policy_of, security_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 1.9.272"
+__version__ = "accountdialog.py 2.4.332"
 
 # --- Version history ----------------------------------------------------
+# v2.4.332: the first-account window offers Restore a backup… (the Windows computer's W2)
 # v1.9.272: the certificate look gets typed security and kind
 # v1.9.271: R-19: Test connection and Add are typed calls
 # v1.1.243: The server boxes are the shared ServerFields (the same as the account editor's); a typed port stays when Security changes; the
@@ -56,20 +58,32 @@ POLICIES: tuple[tuple[str, str], ...] = (
 class AccountDialog(QDialog):
     """Adds a POP3/SMTP account. Nothing is created until the connection has been tested or the person insists."""
 
-    def __init__(self, backend: Backend, first_account: bool = False, parent: QWidget | None = None) -> None:
+    def _restore_instead(self) -> None:
+        """Restore a backup… instead of adding an account: this window closes, then the restore starts (its windows are never under this one)."""
+        self.reject()
+        if self._restore is not None:
+            QTimer.singleShot(0, self._restore)
+
+    def __init__(self, backend: Backend, first_account: bool = False, parent: QWidget | None = None, restore: Callable[[], None] | None = None) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
         self._pins: dict[str, tuple[tuple[str, int, str], str]] = {}  # incoming/outgoing -> (host, port, security) it was accepted for, fingerprint
         self._cert_servers: list[str] = []
         self.created_account_id: str | None = None
         self.key_created: bool = False
+        self._restore: Callable[[], None] | None = restore  # the first-account window's Restore a backup…: the main window's restore
         self.setWindowTitle("Add an account")
         self.setMinimumWidth(520)
         layout = QVBoxLayout(self)
         if first_account:
-            welcome = QLabel("<b>Welcome to Chrono Mail.</b><br>Add your first e-mail account to get started.", self)
+            welcome = QLabel("<b>Welcome to Chrono Mail.</b><br>Add your first e-mail account to get started, or bring back a backup of Chrono Mail.", self)
             welcome.setWordWrap(True)
             layout.addWidget(welcome)
+        self.restore_button: QPushButton = QPushButton("Restore a backup…", self)
+        self.restore_button.setVisible(first_account and restore is not None)
+        if first_account and restore is not None:
+            self.restore_button.clicked.connect(self._restore_instead)  # a person on a new computer looks for it here first (W2)
+            layout.addWidget(self.restore_button, 0, Qt.AlignmentFlag.AlignLeft)
 
         who = QGroupBox("Your account", self)
         who_form = QFormLayout(who)

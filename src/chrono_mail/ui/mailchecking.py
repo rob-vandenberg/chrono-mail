@@ -21,11 +21,15 @@ from chrono_mail.ui.operations import OperationsWindow
 from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 2.3.316"
+__version__ = "mailchecking.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
+# v2.4.327: check_mail (after a rebuild, an import, a restore, a first account) only receives; a refresh a rebuild held back runs after it
+#           with its own choice (D-245, the Windows computer's W6)
 # v2.3.316: start_refresh: the refresh at start does its own choice of Settings > General (the owner)
 # v2.3.315: Send only: a scheduled refresh only sends the Outbox (the calendars stay in step), and the server's "new mail" fetches nothing (the owner)
 # v2.2.314: a refresh the person did not click (the timers, the check at start and after a rebuild) sends the Outbox first, as Refresh does,
@@ -91,6 +95,7 @@ class MailChecking(QObject):
         self.sending: bool = False  # Send All is running
         self.importing: bool = False  # an import runs: mail checks wait (a check meanwhile could store a message the import stores again)
         self.rebuilding: bool = False  # an index is rebuilt or filled in: the automatic checks wait (D-229)
+        self._held_refresh: str | None = None  # the choice of a refresh the rebuild held back (send_receive or receive): it runs afterwards
         self.dav_syncing: bool = False
         self.watching: set[str] = set()  # accounts with a wait for new mail in progress
         self.no_push: set[str] = set()  # accounts whose server cannot tell about new mail
@@ -195,7 +200,7 @@ class MailChecking(QObject):
 
         def finish() -> None:
             if changes["sent"] or changes["woken"]:
-                self._status.finished(f"{changes['sent']} scheduled message(s) sent, {changes['woken']} snoozed message(s) back")
+                self._status.finished(f"{counted(changes['sent'], 'scheduled message')} sent, {counted(changes['woken'], 'snoozed message')} back")
 
         def sent(result: SendDueResult) -> None:
             changes["sent"] = result.sent
@@ -210,10 +215,15 @@ class MailChecking(QObject):
         self._backend.ask(MAIL_SEND_DUE, SendDueParameters(), sent, lambda error: self._status.report("Scheduled messages", error), owner=self)
 
     def rebuild_running(self, running: bool) -> None:
-        """An index is rebuilt or filled in: the timers and the push skip their turn (Refresh still works); when it ends, one check (D-229)."""
+        """An index is rebuilt or filled in: the timers and the push skip their turn (Refresh still works); when it ends, one check (D-229):
+        the refresh it held back with that refresh's own choice (the one at start, a timer's), else one that only receives (D-245)."""
         was, self.rebuilding = self.rebuilding, running
         if was and not running:
-            self.check_mail()
+            held, self._held_refresh = self._held_refresh, None
+            if held is not None:
+                self.scheduled_refresh(None, how=held)
+            else:
+                self.check_mail()
 
     def import_running(self, running: bool) -> None:
         """An import starts or ends: no mail checks meanwhile, and Refresh is off."""
@@ -223,8 +233,9 @@ class MailChecking(QObject):
     # --- send and receive ----------------------------------------------------------------------------------------------
 
     def check_mail(self) -> None:
-        """The check after an index rebuild, an import or a first account: an automatic refresh the person did not click."""
-        self.scheduled_refresh(None)
+        """The check after an index rebuild, an import, a restore or a first account: it brings the servers' mail in and never sends the
+        Outbox, which only the person, the refresh at start and the timers do (D-245: a restore of an old backup sent its old Outbox)."""
+        self.check_accounts(None)
 
     def start_refresh(self) -> None:
         """The refresh when the program starts: what Settings > General chose for it."""
@@ -240,7 +251,10 @@ class MailChecking(QObject):
             if not (self.importing or self.sending):
                 self.send_outbox(account=next(iter(only)) if only is not None and len(only) == 1 else None)
             return
-        if how != "send_receive" or self.importing or (self.rebuilding or self.checking or self.sending):
+        if self.rebuilding and not self.importing:  # it runs, with its own choice, when the rebuild is done
+            self._held_refresh = "send_receive" if "send_receive" in (how, self._held_refresh) else how
+            return
+        if how != "send_receive" or self.importing or (self.checking or self.sending):
             self.check_accounts(only, also_calendars=also_calendars)
             return
 
@@ -287,7 +301,7 @@ class MailChecking(QObject):
             if failed:
                 self._status.show("Sending: " + "; ".join(failed), error=True)
             elif sent:
-                self._status.show(f"Sent {sent} message(s) from the Outbox")
+                self._status.show(f"Sent {counted(sent, 'message')} from the Outbox")
             if then is not None:
                 then()
             else:
@@ -342,7 +356,7 @@ class MailChecking(QObject):
                 self._status.show("Mail check: " + "; ".join(problems), error=True)
             else:
                 junk = f", {totals['junk']} moved to Junk" if totals["junk"] else ""
-                self._status.show(f"Mail checked: {totals['new']} new message(s){junk}" if totals["new"] else "Mail checked: nothing new")
+                self._status.show(f"Mail checked: {counted(totals['new'], 'new message')}{junk}" if totals["new"] else "Mail checked: nothing new")
             self.new_mail.emit(new_by_account)
             if not self._asking_blocked:  # a check during an open question (the timer) does not ask a second time
                 self._asking_blocked = True
@@ -403,13 +417,13 @@ class MailChecking(QObject):
             return
         name = self._state.account_name(account_id)
         question, answers = BLOCKED_QUESTIONS[kind]
-        chosen = ask_choice(self._parent, "Messages out of step", question.format(count=count, folder=folder, account=name), [label for label, _, _ in answers])
+        chosen = ask_choice(self._parent, "Messages out of step", question.format(count=f"{count:,}", folder=folder, account=name), [label for label, _, _ in answers])
         if chosen is None:
             return  # asked again at the next check
         _, choice, done_text = answers[chosen]
 
         def done(result: FetchResult) -> None:
-            self._status.finished(f"{folder} of {name}: {count} message(s) {done_text}")  # its "mailbox changed" fetches again
+            self._status.finished(f"{folder} of {name}: {counted(count, 'message')} {done_text}")  # its "mailbox changed" fetches again
 
         self._status.show(f"{folder} of {name}: synchronising…")
         self._backend.ask(MAIL_SETTLE, SettleParameters(account_id, folder, choice), done, lambda error: self._status.report(f"Could not settle {folder}", error), owner=self)

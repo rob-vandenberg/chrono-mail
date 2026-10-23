@@ -23,9 +23,11 @@ from chrono_mail.ui.models import LOCAL_PLACES
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 2.2.314"
+__version__ = "messagelist.py 2.4.329"
 
 # --- Version history ----------------------------------------------------
+# v2.4.329: place_at gives every message's key and folder, loaded or not, and load_rows asks the rows a decision needs (W12); a redraw
+#           of many messages is one per run of rows (W13)
 # v2.2.314: the column of the Outbox is called Send at too (a delayed send, B-21)
 # v2.2.313: arriving: a message that came into the view and waits for its place (Undo selects it once it is placed, B-18)
 # v2.0.280: set_column_labels: a column called otherwise in the open kind of folder (Sent is Saved in Drafts, B-16)
@@ -309,6 +311,41 @@ class MessageListModel(QAbstractTableModel):
     def _key_at_row(self, row: int) -> str | None:
         position = self.message_position(row)
         return None if position is None else self._order.key_at(position)
+
+    def place_at(self, row: int) -> tuple[str, str, MessageRow | None] | None:
+        """The message at this row by its key and folder, with its row when it is loaded: every message of the view has them, loaded or
+        not, so an action on a selection larger than what came into view acts on all of it (W12). None on a group header."""
+        position = self.message_position(row)
+        key = None if position is None else self._order.key_at(position)
+        if position is None or key is None:
+            return None
+        return key, self._order.folder_at(position), self._rows.get(key)
+
+    def loaded_row(self, key: str) -> MessageRow | None:
+        return self._rows.get(key)
+
+    def load_rows(self, keys: Sequence[str], then: Callable[[], None]) -> None:
+        """Ask the rows of these messages that are not loaded yet, then call then (also when a question failed: what came is loaded)."""
+        spec = self._spec
+        missing = [key for key in keys if key not in self._rows]
+        if spec is None or not missing:
+            then()
+            return
+        per_mailbox: dict[str, list[str]] = {}
+        for key in missing:
+            mailbox, message_id = split_key(key)
+            per_mailbox.setdefault(mailbox or spec.account, []).append(message_id)
+        remaining = len(per_mailbox)
+
+        def one_answered() -> None:
+            nonlocal remaining
+            remaining -= 1
+            if remaining == 0:
+                then()
+
+        self._asked.update(missing)
+        for mailbox, message_ids in per_mailbox.items():
+            self._ask_rows(spec, mailbox, message_ids, one_answered)
 
     def _kept_keys(self) -> list[str]:
         """The messages that keep their place in Qt's selection (the selected ones and the current one, as the window tells)."""
@@ -691,13 +728,15 @@ class MessageListModel(QAbstractTableModel):
         for mailbox, message_ids in per_mailbox.items():
             self._ask_rows(spec, mailbox, message_ids)
 
-    def _ask_rows(self, spec: ViewSpec, mailbox: str, message_ids: list[str]) -> None:
+    def _ask_rows(self, spec: ViewSpec, mailbox: str, message_ids: list[str], then: Callable[[], None] | None = None) -> None:
         question, view, combined = self._ask(), self._view, spec.combined is not None
         asked = [self._key(mailbox, message_id) for message_id in message_ids]
 
         def answered(answer: RowsAnswer) -> None:
             facts = self._answered(question)
             if view != self._view:
+                if then is not None:
+                    then()
                 return
             self._asked.difference_update(asked)
             changed: list[int] = []
@@ -712,12 +751,16 @@ class MessageListModel(QAbstractTableModel):
                 changed.append(self._order.position(key))
             self._redraw_positions(changed)
             self.loaded.emit()
+            if then is not None:
+                then()
 
         def failed(error: ChronoMailError) -> None:
             self._answered(question)
             if view == self._view:
                 self._asked.difference_update(asked)
                 self._failed(error)
+            if then is not None:
+                then()
 
         self._backend.ask(MESSAGE_ROWS, RowsParameters(mailbox, tuple(message_ids), combined), answered, failed, owner=self)
 
@@ -954,11 +997,15 @@ class MessageListModel(QAbstractTableModel):
             self._redraw([message_id])
 
     def _redraw(self, message_ids: list[str]) -> None:
+        """One redraw for each run of rows next to each other, not one per message: whatever follows the redraws then runs once per run,
+        not once per message (an action on 1,000 selected messages froze the window for minutes, W13)."""
         last = max(0, self.columnCount() - 1)
-        for message_id in message_ids:
-            row = self.find(message_id)
-            if row >= 0:
-                self.dataChanged.emit(self.index(row, 0), self.index(row, last))
+        rows = sorted(row for row in (self.find(message_id) for message_id in message_ids) if row >= 0)
+        start = 0
+        for position in range(1, len(rows) + 1):
+            if position == len(rows) or rows[position] != rows[position - 1] + 1:
+                self.dataChanged.emit(self.index(rows[start], 0), self.index(rows[position - 1], last))
+                start = position
 
     def _may_hold(self, change: Change) -> bool:
         """Whether a message that came into a folder may belong in this view; when it may, the engine says where."""

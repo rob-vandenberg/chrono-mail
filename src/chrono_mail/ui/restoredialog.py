@@ -45,11 +45,15 @@ from chrono_mail.engine.restore import DOING_ITEMS, DOING_MESSAGES, BackupPasswo
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.windowsettings import apply_window_settings
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restoredialog.py 2.4.326"
+__version__ = "restoredialog.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
+# v2.4.328: the report says how many damaged messages and items were left out (W5)
+# v2.4.327: the report says what of the Outbox went to Drafts and which scheduled messages were paused (D-245)
 # v2.4.326: ticks for what to restore (only the parts the backup holds), the accounts with Select all and their counts, and the
 #           account passwords when the backup holds them; greyed, never hidden (D-244)
 # v2.4.325: restored tells whether the window's settings came back: the window takes them in at once (D-244)
@@ -87,7 +91,7 @@ def entry_text(row: ContentsRow) -> str:
     """An account's line in the list: its name, how many messages and items, and whether it is here already."""
     counts: list[str] = []
     if MESSAGES in row.parts:
-        counts.append(f"{row.messages:,} messages")
+        counts.append(counted(row.messages, "message"))
     if any(part in row.parts for part in (CALENDARS, CONTACTS, TASKS)):
         counts.append(f"{row.items:,} calendar items, contacts and tasks")
     return row.name + (": " + ", ".join(counts) if counts else "") + (" (already here: what it lacks is added)" if row.here else "")
@@ -259,10 +263,19 @@ class RestoreDialog(QDialog):
     def _done(self, result: RestoreResult) -> None:
         self._finished = True
         self._finish()
-        lines = [f"The backup is restored: {result.messages:,} messages and {result.items:,} calendar items, contacts and tasks came back."]
+        lines = [f"The backup is restored: {counted(result.messages, 'message')} and {result.items:,} calendar items, contacts and tasks came back."]
         if result.skipped:
             lines.append(f"{result.skipped:,} were here already, or are on their server, and were left as they are.")
         settings_back = bool(result.window_settings) and apply_window_settings(self._settings, result.window_settings, self.remove_first.isChecked() or self.replace_existing.isChecked()) > 0
+        held: list[str] = []
+        if result.to_drafts:
+            held.append(f"{result.to_drafts:,} {'message' if result.to_drafts == 1 else 'messages'} that waited in the Outbox {'is' if result.to_drafts == 1 else 'are'} in Drafts")
+        if result.paused:
+            held.append(f"{result.paused:,} scheduled {'message is' if result.paused == 1 else 'messages are'} paused (the time had passed)")
+        if held:
+            lines.append("; ".join(held) + ". Nothing is sent until you send it.")  # D-245
+        if result.damaged:
+            lines.append(f"{result.damaged:,} {'message or item was' if result.damaged == 1 else 'messages and items were'} damaged in the backup and left out; everything else came back.")
         lines.extend(result.notes)
         self._lines = lines
         self._tested = {account_id: TESTING for account_id in result.made if account_id != LOCAL_ACCOUNT_ID}

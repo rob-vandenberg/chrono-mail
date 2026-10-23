@@ -1,9 +1,11 @@
+import dataclasses
 import json
 import os
 import shutil
 import tempfile
 import time
 import zipfile
+import zlib
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -14,7 +16,7 @@ from typing import Protocol, cast
 
 import pyzipper
 
-from chrono_mail.config import AccountSettings, AppConfig, RuleSet, ServerRole, TagColours, parse_config, parse_rules, parse_sidebar, parse_tags, save_rules, save_tags
+from chrono_mail.config import AccountSettings, AppConfig, Rule, RuleSet, ServerRole, TagColours, parse_config, parse_rules, parse_sidebar, parse_tags, save_rules, save_tags
 from chrono_mail.config.files import load_config
 from chrono_mail.config.rules import load_rules
 from chrono_mail.config.sidebar import save_sidebar
@@ -22,11 +24,12 @@ from chrono_mail.config.tags import load_tags
 from chrono_mail.core import AccountKind, ChronoMailError, CollectionInfo, CollectionKind, CryptoError, FolderRole, MessageFlag, StorageError
 from chrono_mail.crypto import DataKey, encrypt_message, generate_data_key
 from chrono_mail.engine.backup import CANCEL, FORMAT_VERSION, JOB_LOCK, LOCAL_ITEMS, LOCAL_MAIL, MANIFEST_ENTRY
+from chrono_mail.engine.commands_schedule import SCHEDULED, paused_if_overdue
 from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import UsageError
-from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
+from chrono_mail.engine.session import OUTBOX, STANDARD_FOLDERS, Engine
 from chrono_mail.pimstore.extract import extract
 from chrono_mail.store import Store
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
@@ -34,9 +37,14 @@ from chrono_mail.store.layout import parse_name, split_info
 from chrono_mail.sync.imap_state import ImapState
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 2.4.326"
+__version__ = "restore.py 2.4.328"
 
 # --- Version history ----------------------------------------------------
+# v2.4.328: every backup restores (FIXES-2.4.326.md phase 2): an account without files comes back (its folder is made first, W1); a damaged
+#           message or item is left out and told, the restore goes on, and the data set aside is kept then (W5); a damaged entry is named,
+#           never its bytes, and a cut-off backup is "damaged or incomplete" (W4); only the rules of the accounts that came back (R2)
+# v2.4.327: nothing that comes back is sent by itself: the Outbox's messages go to Drafts, a scheduled message whose time passed is paused
+#           (D-245, the Windows computer's W6)
 # v2.4.326: the contents per account (Local Folders and this computer apart, with their parts and counts); a restore of the chosen
 #           accounts, parts and passwords only (D-244)
 # v2.4.324: Initial: Menu > File > Restore…: a .cmz backup back on this computer: an account that is not here whole, under its own
@@ -47,11 +55,16 @@ __version__ = "restore.py 2.4.326"
 DOING_MESSAGES: str = "Restoring messages"  # the progress reports (the status line and the Restore window)
 DOING_ITEMS: str = "Restoring calendars, contacts and tasks"
 MAXIMUM_MANIFEST_BYTES: int = 200_000_000
+DRAFTS: tuple[str, ...] = ("Drafts",)  # where the Outbox's messages go when the store has no folder for drafts yet
 _ITEM_KINDS: dict[str, CollectionKind] = {"calendars": CollectionKind.EVENTS, "contacts": CollectionKind.CONTACTS, "tasks": CollectionKind.TASKS}
 
 
 class NotABackup(UsageError):
     """The file is not a backup of Chrono Mail (or it is damaged)."""
+
+
+class DamagedEntry(NotABackup):
+    """One file in the backup cannot be read back (damaged): a message or an item is left out and told, the restore goes on (W5)."""
 
 
 class BackupPasswordNeeded(UsageError):
@@ -125,6 +138,9 @@ class RestoreReport:
     messages: int = 0
     items: int = 0
     skipped: int = 0  # messages and items that were here already (or that the server holds)
+    to_drafts: int = 0  # messages that waited in the Outbox: in Drafts now, never sent by themselves (D-245)
+    paused: int = 0  # scheduled messages whose time had passed: paused (D-245)
+    damaged: list[str] = field(default_factory=list[str])  # messages and items of the backup that could not be read: left out (W5)
     window_settings: str = ""  # the window's own settings from the backup (the window puts them in place)
     notes: list[str] = field(default_factory=list[str])
 
@@ -171,7 +187,7 @@ def _open(path: Path, password: str | None) -> tuple[_Reading, dict[str, object]
     except FileNotFoundError:
         raise UsageError(f"{path} does not exist") from None
     except (OSError, zipfile.BadZipFile, pyzipper.BadZipFile, ValueError):
-        raise NotABackup("This file is not a backup of Chrono Mail") from None
+        raise NotABackup(_unreadable_words(path)) from None
     try:
         if MANIFEST_ENTRY not in archive.namelist():
             raise NotABackup("This file is not a backup of Chrono Mail")
@@ -195,6 +211,16 @@ def _open(path: Path, password: str | None) -> tuple[_Reading, dict[str, object]
         raise
 
 
+def _unreadable_words(path: Path) -> str:
+    """What a file that does not open as a backup is: a ZIP file that is cut off or damaged, or no backup at all."""
+    try:
+        with path.open("rb") as file:
+            start = file.read(4)
+    except OSError:
+        start = b""
+    return "This backup is damaged or incomplete" if start == b"PK\x03\x04" else "This file is not a backup of Chrono Mail"
+
+
 def _read(archive: _Reading, name: str) -> bytes:
     try:
         if archive.getinfo(name).file_size > MAXIMUM_MANIFEST_BYTES and name == MANIFEST_ENTRY:
@@ -202,8 +228,8 @@ def _read(archive: _Reading, name: str) -> bytes:
         return archive.read(name)
     except RuntimeError:  # pyzipper: a wrong password
         raise WrongBackupPassword("This password does not open the backup") from None
-    except (zipfile.BadZipFile, pyzipper.BadZipFile, OSError, ValueError, EOFError) as error:
-        raise NotABackup(f"The backup is damaged: {error}") from None
+    except (zipfile.BadZipFile, pyzipper.BadZipFile, OSError, ValueError, EOFError, zlib.error):  # zlib: damaged compressed data
+        raise DamagedEntry(f"The backup is damaged: {name} cannot be read") from None  # never the error's text: it may hold the entry's raw bytes (W4)
 
 
 def read_contents(engine: Engine, path: Path, password: str | None) -> BackupContents:
@@ -337,7 +363,9 @@ def restore_backup(engine: Engine, choice: RestoreChoice) -> RestoreReport:
                 if aside is not None:
                     _put_back(engine, aside)
                 raise
-            if aside is not None:
+            if aside is not None and report.damaged:  # never lose mail: what was here stays until the person removes it
+                report.notes.append(f"Because part of the backup was damaged, the data that was on this computer before is kept in {aside}")
+            elif aside is not None:
                 _let_go(engine, aside, report)
             return report
         finally:
@@ -364,7 +392,7 @@ def _restore(engine: Engine, archive: _Reading, manifest: dict[str, object], key
     for settings, mail, items in sorted(chosen, key=lambda row: row[0].account.kind is not AccountKind.LOCAL):  # Local Folders first: accounts may keep their mail in it
         _one_account(engine, archive, names, sealed, kinds if items else set[CollectionKind](), mail, key, settings, choice, report, progress)
     if "rules" in parts:
-        _restore_rules(engine, archive, names, choice.replace_existing)
+        _restore_rules(engine, archive, names, choice.replace_existing, _ids_here(engine.config(), [settings for settings, _, _ in chosen]))
     if "settings" in parts:
         _restore_settings(engine, archive, names, sealed, key, choice.replace_existing, report)
     restored = {settings.account.account_id for settings, _, _ in chosen}
@@ -455,6 +483,7 @@ def _restore_whole(
     target = directories.account_directory(account_id)
     building = target.with_name(f".restoring-{account_id}")
     shutil.rmtree(building, ignore_errors=True)
+    building.mkdir(parents=True)  # made here, not by the first file written: an account may have no files at all (a POP3 account not fetched yet, W1)
     collections_kept = _kept_collections(archive, names, prefix, kinds)
     try:
         for name in names:
@@ -464,7 +493,13 @@ def _restore_whole(
             doing = DOING_MESSAGES if _is_message(relative) else DOING_ITEMS if _is_item(relative) else ""
             if doing:
                 progress.step(doing)
-            data = _read(archive, name)
+            try:
+                data = _read(archive, name)
+            except DamagedEntry:
+                if not doing:
+                    raise  # the account's own files (its folders, its state): without them it cannot come back whole
+                report.damaged.append(name)
+                continue
             if name in sealed:
                 data = encrypt_message(data, key)
             elif relative in (["store", "store.json"], ["pim", "pim.json"]):
@@ -483,6 +518,10 @@ def _restore_whole(
             store = Store.create(building / "store", account_id, key if settings.encrypted else None, durable=engine.durable)
             for path_of_folder, role in STANDARD_FOLDERS:
                 store.create_folder(path_of_folder, role)
+        description = building / "store" / "store.json"
+        if mail and description.exists():
+            sealed_store = _json_object(description.read_bytes()).get("encrypted") is True
+            _hold_back(Store.open(building / "store", key if sealed_store else None, durable=engine.durable), engine.clock(), report)
         if target.exists():  # the files of an account removed earlier (its mail is kept on removal): kept beside it, never written over
             kept = target.with_name(f"{account_id}-kept-{time.strftime('%Y%m%d-%H%M%S')}")
             os.replace(target, kept)
@@ -497,6 +536,28 @@ def _restore_whole(
     if settings.storage == "local":
         ensure_local_folders(engine)
     engine.change_config(lambda fresh: fresh.with_account(settings))
+
+
+def _hold_back(store: Store, now: float, report: RestoreReport) -> None:
+    """Mail that comes back from a backup is never sent by itself (D-245): the Outbox's messages go to Drafts, for the person to send; a
+    scheduled message whose time has passed is paused (Settings > Scheduled messages > Resume)."""
+    folders = store.list_folders()
+    if any(folder.path == OUTBOX for folder in folders):
+        waiting = store.list_messages(OUTBOX)
+        if waiting:
+            drafts = next((folder.path for folder in folders if folder.role is FolderRole.DRAFTS), None) or store.ensure_folder(DRAFTS, FolderRole.DRAFTS)[0].path
+            for message in waiting:
+                store.move(message.ref, drafts)
+                report.to_drafts += 1
+    if any(folder.path == SCHEDULED for folder in folders):
+        for message in store.list_messages(SCHEDULED):
+            try:
+                paused = paused_if_overdue(store.read(message.ref), now)
+            except ChronoMailError:
+                continue  # an unreadable scheduled message is never sent (the minute check tells it)
+            if paused is not None:
+                store.replace(message.ref, paused)
+                report.paused += 1
 
 
 def _complete_layout(account: Path) -> None:
@@ -602,7 +663,11 @@ def _fill_mail(
                 report.skipped += 1
                 continue
             store_id, info = parsed
-            raw = _read(archive, name)
+            try:
+                raw = _read(archive, name)
+            except DamagedEntry:
+                report.damaged.append(name)
+                continue
             match = store_id if store_id in local_ids else known.get((folder[0], _message_id(raw)))
             properties_name = f"{prefix}store/properties/{store_id}.json"
             if match is not None:
@@ -614,8 +679,19 @@ def _fill_mail(
                 report.skipped += 1
                 continue
             flags: frozenset[MessageFlag] = split_info(info)[0] if info else frozenset()
-            mailbox.ensure_folder(folder[0], folder[1])
-            mailbox.restore_here(folder[0], raw, flags, store_id)
+            target, role = folder
+            if target == OUTBOX:  # never sent by itself (D-245): the person sends it from Drafts
+                try:
+                    target = mailbox.role_folder(FolderRole.DRAFTS)
+                except StorageError:
+                    target = DRAFTS
+                role = FolderRole.DRAFTS
+                report.to_drafts += 1
+            elif target == SCHEDULED and (paused := paused_if_overdue(raw, engine.clock())) is not None:
+                raw = paused
+                report.paused += 1
+            mailbox.ensure_folder(target, role)
+            mailbox.restore_here(target, raw, flags, store_id)
             if properties_name in names:
                 mailbox.store.properties.put_text(store_id, _read(archive, properties_name).decode("utf-8"), replace_existing=True)
             report.messages += 1
@@ -672,7 +748,11 @@ def _fill_items(
                 local.append(target)
             for name, item_id in items.get(collection_id, []):
                 progress.step(DOING_ITEMS)
-                text = _read(archive, name).decode("utf-8", "replace")
+                try:
+                    text = _read(archive, name).decode("utf-8", "replace")
+                except DamagedEntry:
+                    report.damaged.append(name)
+                    continue
                 uid = extract(kind, text).uid
                 existing = store.index.find_uid(target.collection_id, uid) if uid else None
                 if existing is not None:
@@ -720,10 +800,34 @@ def _linked_items(archive: _Reading, names: list[str], prefix: str) -> dict[str,
 # --- rules, settings and passwords ----------------------------------------------------------------------------------
 
 
-def _restore_rules(engine: Engine, archive: _Reading, names: list[str], replace_existing: bool) -> None:
+def _ids_here(config: AppConfig, chosen: list[AccountSettings]) -> dict[str, str]:
+    """The id each chosen account of the backup has here now (its own, or that of the same account that was here already)."""
+    found: dict[str, str] = {}
+    for settings in chosen:
+        here = _same_here(config, settings)
+        if here is not None:
+            found[settings.account.account_id] = here.account.account_id
+    return found
+
+
+def _rules_for(rules: RuleSet, ids_here: dict[str, str]) -> RuleSet:
+    """The rules of the accounts that came back, naming them by their ids here; a rule for every account stays; a rule only for accounts
+    that were not chosen stays out (it would name accounts that are not here)."""
+    kept: list[Rule] = []
+    for rule in rules.rules:
+        if not rule.accounts:
+            kept.append(rule)
+            continue
+        accounts = tuple(dict.fromkeys(ids_here[account] for account in rule.accounts if account in ids_here))
+        if accounts:
+            kept.append(dataclasses.replace(rule, accounts=accounts))
+    return RuleSet(tuple(kept))
+
+
+def _restore_rules(engine: Engine, archive: _Reading, names: list[str], replace_existing: bool, ids_here: dict[str, str]) -> None:
     if "config/rules.json" not in names:
         return
-    backup = parse_rules(_read(archive, "config/rules.json").decode("utf-8"))
+    backup = _rules_for(parse_rules(_read(archive, "config/rules.json").decode("utf-8")), ids_here)
     path = engine.directories.rules_file
     here = load_rules(path) if path.exists() else RuleSet()
     by_id = {rule.rule_id: rule for rule in backup.rules}

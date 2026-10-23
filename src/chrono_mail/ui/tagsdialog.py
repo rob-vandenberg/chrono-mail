@@ -41,11 +41,13 @@ from chrono_mail.ui.backend import AnyStep, Backend, Step
 from chrono_mail.ui.colours import red_style
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagging import tag_icon
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 1.9.275"
+__version__ = "tagsdialog.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.271: R-19: commands gives typed steps; tag.list typed
 # v1.1.193: Both column widths are set here (a stretched last column never shrank below 100 px: a drag past the edge gave a scroll range)
@@ -327,7 +329,7 @@ class TagsPanel(QWidget):
         if row is None:
             return
         if row.carried_by and QMessageBox.question(
-            self, "Delete tag", f"Delete the tag “{row.name}”? It is taken away from the {row.carried_by} messages and items that carry it. They stay."
+            self, "Delete tag", f"Delete the tag “{row.name}”? It is taken away from the {row.carried_by:,} messages and items that carry it. They stay."
         ) != QMessageBox.StandardButton.Yes:
             return
         self.rows.remove(row)

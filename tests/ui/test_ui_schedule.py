@@ -16,9 +16,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, gone, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 2.0.298"
+__version__ = "test_ui_schedule.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
 # v2.0.298: Scheduled in the owner's new order of the standard folders (D-232)
 # v2.0.292: Scheduled in the owner's order of the standard folders (D-232)
 # v2.0.280: the Snoozed folder starts with its own columns, sorted by Snoozed until soonest first; switched off, its sort falls back to Subject (B-16)
@@ -116,7 +117,7 @@ def test_the_window_sends_what_is_due_and_wakes_snoozed_mail(world: World, qtbot
     world.call("mail.send", account=world.account_id, to="you@example.com", subject="Due soon", body="x", send_at=in_hours(1))
     world.engine.clock = lambda: datetime.now().timestamp() + 2 * 3600
     world.window.checking.run_due()
-    wait(qtbot, lambda: "1 scheduled message(s) sent, 1 snoozed message(s) back" in world.window.status_label.text())
+    wait(qtbot, lambda: "1 scheduled message sent, 1 snoozed message back" in world.window.status_label.text())
     assert len(world.smtp.received) == 1
 
 
@@ -128,7 +129,7 @@ def test_snoozing_from_the_window(world: World, qtbot: QtBot, monkeypatch: pytes
     choose_time(monkeypatch, in_hours(5))
     world.window.act_snooze.trigger()
     # The row leaves at the engine's fact, the status line comes with its answer a moment later: wait for both (R-45).
-    wait(qtbot, lambda: world.window.list_model.rowCount() == 2 and "Snoozed 1 message(s)" in world.window.status_label.text())
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 2 and "Snoozed 1 message" in world.window.status_label.text())
     assert len(world.call("message.snoozed")) == 1
 
 
@@ -226,7 +227,7 @@ def test_the_snooze_button_offers_ready_made_times(world: World, qtbot: QtBot) -
     assert texts[0].startswith("Tomorrow (") and texts[0].endswith(" 09:00)") and "Next week" in texts[-3] and texts[-2:] == ["", "Custom date and time…"]
     world.window.snooze_menu.actions()[0].trigger()
     # The row leaves at the engine's fact, the status line comes with its answer a moment later: wait for both (R-45).
-    wait(qtbot, lambda: world.window.list_model.rowCount() == 2 and "Snoozed 1 message(s)" in world.window.status_label.text())
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 2 and "Snoozed 1 message" in world.window.status_label.text())
     assert len(world.call("message.snoozed")) == 1
 
 

@@ -36,11 +36,13 @@ from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import green, red_style
 from chrono_mail.ui.foundfolders import FolderTicks
 from chrono_mail.ui.serverfields import ServerFields, kind_of, mail_server_kind, policy_of, security_of, start_values_of, test_result_text
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 2.1.308"
+__version__ = "accountedit.py 2.4.333"
 
 # --- Version history ----------------------------------------------------
+# v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.1.308: General: Filter junk mail (D-238)
 # v1.9.272: Look at the calendar server's certificate asks with kind https (it pretended to be IMAP)
 # v1.9.271: R-19: every engine call typed; the account is an AccountSummary; the changes are typed (AccountEditParameters with only what differs, SetFolders, SetDavParameters)
@@ -277,7 +279,7 @@ class AccountEditDialog(QDialog):
             self._dav_found = result
             self.dav_folders.show_folders(result.folders)
             self.dav_url.setText(result.url)
-            self.dav_result.setText("" if loading else f"<span style='color:{green()}'><b>✓</b> {len(result.folders)} folder(s) found. The ticks take effect with Save.</span>")
+            self.dav_result.setText("" if loading else f"<span style='color:{green()}'><b>✓</b> {counted(len(result.folders), 'folder')} found. The ticks take effect with Save.</span>")
 
         def failed(error: ChronoMailError) -> None:
             self.dav_check_button.setEnabled(True)

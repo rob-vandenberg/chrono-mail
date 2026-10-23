@@ -14,9 +14,11 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 2.0.285"
+__version__ = "imap_sync.py 2.4.330"
 
 # --- Version history ----------------------------------------------------
+# v2.4.330: a standard folder the server marks (special-use) or has under its standard name is used whether or not it is subscribed:
+#           a Junk folder not subscribed made every move to Junk fail with "Mailbox already exists" (D-202, the Windows computer's W7)
 # v2.0.285: After sending a message's marks the check knows the server's marks as they are now (as read, plus what it added, minus what it
 #           removed), so a mark the server changed on that message meanwhile is shown in the same check, not the next (the Windows computer's F2)
 # v1.1.249: A message removed here because the server no longer has it leaves the folder's list of this check too, so it is not taken for mail
@@ -183,8 +185,8 @@ def plan_folders(
     notes: list[str] = []
     used: set[tuple[str, ...]] = set()
     choices = [entry for entry in entries if "\\noselect" not in entry.attributes and "\\nonexistent" not in entry.attributes]
-    if subscribed:
-        choices = [entry for entry in choices if entry.name in subscribed or entry.name in forced or entry.name.upper() == "INBOX"]
+    if subscribed:  # the server's own claim of a standard folder (special-use) counts whether or not it is on the list to show (D-202, W7)
+        choices = [entry for entry in choices if entry.name in subscribed or entry.name in forced or _role_of(entry, 0) is not None]
     claimed: set[FolderRole] = set()
     for entry in choices:  # the person's own choices first
         wanted = (roles or {}).get(entry.name, "")
@@ -458,6 +460,10 @@ def _create_on_server(
         if path in planned or path[0] in LOCAL_ONLY or path == ("Inbox",) or state.validity.get(path) is not None or held_under(held_folders, path):
             continue
         name = delimiter.join(("INBOX" if path[0] == "Inbox" else path[0], *path[1:]))
+        if name in taken and STANDARD_PATH.get(folder.role) == path and name not in state.hidden:
+            created.append(FolderPlan(name, path, folder.role))  # a standard folder the server has but does not show: used, never made twice (W7)
+            state.set_server_name(path, name)
+            continue
         if name in taken or name in state.hidden or delimiter in "".join(path):
             continue  # the server has it already (not shown) or the name cannot be written on the server
         try:
