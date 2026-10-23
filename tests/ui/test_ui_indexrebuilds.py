@@ -9,9 +9,10 @@ from tests.test_engine_rebuilds import as_format_11
 from tests.ui.world import World, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_indexrebuilds.py 2.0.303"
+__version__ = "test_ui_indexrebuilds.py 2.1.310"
 
 # --- Version history ----------------------------------------------------
+# v2.1.310: "The index is ready." is read when the rebuild ends: the junk filter's first learning may say more after it (D-238)
 # v2.0.303: a click on the busy bar brings the window back after Run in background; afterwards it opens the Operations window
 # v2.0.281: Initial version: the rebuild window at start, Run in background only while the old index is usable, Abort after its
 #           question (closes the program only when nothing usable is left), the status line, the paused mail checks (D-229)
@@ -22,6 +23,8 @@ def test_an_unusable_index_is_rebuilt_before_the_mail_is_shown(world: World, qtb
     world.engine.directories.index_file(world.account_id).write_bytes(b"not a database")
     shown: list[tuple[str, str, bool]] = []
     window.rebuilds.running_changed.connect(lambda running: shown.append(("running", str(running), window.list_model.rowCount() > 0)))
+    said_when_done: list[str] = []
+    window.rebuilds.running_changed.connect(lambda running: None if running else said_when_done.append(window.report.label.text()))
     window.start()
     wait(qtbot, lambda: window.list_model.rowCount() == 3 and not window.rebuilds.running and world.backend._pending == {})  # noqa: SLF001
     assert shown[0] == ("running", "True", False) and shown[-1][:2] == ("running", "False")  # rebuilt first, the mail shown after
@@ -29,7 +32,7 @@ def test_an_unusable_index_is_rebuilt_before_the_mail_is_shown(world: World, qtb
     assert rebuild is not None and not rebuild.isVisible() and rebuild.windowTitle() == "Rebuilding the index"
     assert rebuild.account_label.text().startswith("Account 1 of 1: ") and rebuild.count_label.text() == "3 of 3"
     assert not rebuild.background_button.isEnabled() and not rebuild.background_button.isHidden()  # nothing usable meanwhile: greyed, not hidden
-    assert window.report.label.text() == "The index is ready."
+    assert said_when_done == ["The index is ready."]  # what starts after it (the junk filter's first learning) may say more later
 
 
 def test_an_upgraded_index_is_used_at_once_and_its_sent_dates_are_filled_in_meanwhile(world: World, qtbot: QtBot) -> None:

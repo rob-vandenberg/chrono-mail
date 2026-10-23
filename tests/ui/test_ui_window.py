@@ -19,9 +19,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 2.0.306"
+__version__ = "test_ui_window.py 2.1.310"
 
 # --- Version history ----------------------------------------------------
+# v2.1.310: a group's account starts with Inbox, then Unread (the order of D-232 since 2.0.298)
 # v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left (the owner's search of all folders, D-101)
 # v2.0.302: an attachment is saved through its right-click menu's Save as… (a click only selects it, D-236)
 # v2.0.300: the Favorites menu lists Snoozed, Scheduled and Archive only once a mailbox has that folder (D-234)
@@ -1148,7 +1149,7 @@ def test_a_pinned_folder_and_a_group_show_in_the_folder_list(world: World, qtbot
     wait(qtbot, lambda: "Work" in tree_labels(world.window))
     labels = tree_labels(world.window)
     assert labels[0] == "Favorites" and labels[10] == "  Sent"  # the pinned folder follows the standard favorites
-    assert labels[11:15] == ["Work", "  All Inboxes  (3)", "  me@example.com", "    Unread"]
+    assert labels[11:15] == ["Work", "  All Inboxes  (3)", "  me@example.com", "    Inbox  (3)"]  # Inbox first, then Unread (D-232)
     inbox = next(world.window.tree_model.index(row, 0, world.window.tree_model.index(1, 0)) for row in range(2) if world.window.tree_model.index(row, 0, world.window.tree_model.index(1, 0)).data(KIND_ROLE) == "groupinbox")
     world.window.tree.setCurrentIndex(inbox)
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)

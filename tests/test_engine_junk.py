@@ -20,9 +20,10 @@ from tests.test_engine_imap import World, world  # noqa: F401 - world is a fixtu
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_junk.py 2.1.308"
+__version__ = "test_engine_junk.py 2.1.310"
 
 # --- Version history ----------------------------------------------------
+# v2.1.310: the first learning tells how far it is
 # v2.1.308: Initial junk filter tests (D-238)
 
 JUNK_WORDS: tuple[str, ...] = ("casino", "jackpot", "viagra", "lottery", "winner", "prize", "bitcoin", "unclaimed", "inheritance", "pharmacy")
@@ -232,6 +233,15 @@ def test_the_mail_kept_is_learned_once_junk_folders_as_junk_read_mail_as_good(se
     assert fingerprint(good_mail(1)) in learned(setup.engine).verdicts
     second = call(setup.engine, "junk.learn-existing")
     assert (second.places, second.junk, second.good) == (0, 0, 0)  # once per place where mail is kept
+
+
+def test_the_first_learning_tells_how_far_it_is_every_100_messages(setup: Setup) -> None:
+    for number in range(150):
+        deliver(setup, junk_mail(number), folder="Junk")
+    told: list[tuple[str, int, object]] = []
+    setup.engine.progress = lambda what, done, total: told.append((what, done, total))
+    call(setup.engine, "junk.learn-existing")
+    assert told == [("Junk filter: learning from your mail, mailbox 1 of 1", 0, 150), ("Junk filter: learning from your mail, mailbox 1 of 1", 100, 150)]
 
 
 # --- IMAP: the move to Junk goes to the server first ------------------------------------------------------------------------------------------

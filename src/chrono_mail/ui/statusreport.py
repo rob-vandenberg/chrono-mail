@@ -8,9 +8,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 2.0.303"
+__version__ = "statusreport.py 2.1.310"
 
 # --- Version history ----------------------------------------------------
+# v2.1.310: learning_junk: the bar's hover text says the junk filter is learning from the mail kept (D-238)
 # v2.0.303: bar_clicked: what a click on the bar does is decided by the window (the index window while an index is updated, D-229); bar_hint
 # v2.0.281: rebuild_progress: Rebuilding the index of an account… 18,000 of 140,567 (D-229)
 # v1.9.264: R-17: the status line of the main window as a part of its own (out of ui/mainwindow.py): what is said, an error in red,
@@ -38,6 +39,8 @@ class StatusReport(QObject):
         self.progress_bar.hide()
         self.line: StatusLine = StatusLine(self.label, parent)  # while the pointer is on a link in the reading pane: where it leads (D-215)
         self._is_error: bool = False
+        self._index_running: bool = False
+        self._learning_junk: bool = False
         self._missing_timer: QTimer = QTimer(self)  # the answers of an action come one message at a time: one warning for all of them
         self._missing_timer.setSingleShot(True)
         self._missing_timer.setInterval(300)
@@ -76,7 +79,21 @@ class StatusReport(QObject):
 
     def bar_hint(self, index_running: bool) -> None:
         """The hover text says what a click on the bar does."""
-        self.progress_bar.setToolTip("Show the index progress" if index_running else "Show the Operations window")
+        self._index_running = index_running
+        self._bar_tip()
+
+    def learning_junk(self, learning: bool) -> None:
+        """The junk filter learns from the mail kept (D-238): the hover text says so while it does."""
+        self._learning_junk = learning
+        self._bar_tip()
+
+    def _bar_tip(self) -> None:
+        if self._index_running:
+            self.progress_bar.setToolTip("Show the index progress")
+        elif self._learning_junk:
+            self.progress_bar.setToolTip("Junk filter: learning from your mail")
+        else:
+            self.progress_bar.setToolTip("Show the Operations window")
 
     def busy_changed(self, count: int) -> None:
         self.progress_bar.setVisible(count > 0)
