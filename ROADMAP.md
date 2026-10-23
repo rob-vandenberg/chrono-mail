@@ -33,7 +33,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12b | Message actions: Archive, mark all as read, empty Trash and Junk, drag and drop to folders (0.0.17). | done |
 | 1.12c | Junk filter: the server's spam verdict and a learning filter on new mail, before the rules (2.1.308, D-238). The $Junk/$NotJunk marks on the server: B-19. | done |
 | 1.12d | Undo and Redo of the actions on mail: Ctrl+Z, Ctrl+Y (B-18 step 1, 2.2.313, D-240). Steps 2 (folders) and 3 (calendar, contacts, tasks) open. | done |
-| 1.12e | Delayed sending (a countdown with Send now and Cancel, or until the next refresh), the scheduled refresh sends and receives, the question on Quit with mail in the Outbox (B-21, B-20, 2.2.314, D-241). | done |
+| 1.12e | Delayed sending (a countdown with Send now and Cancel, or until the next refresh), the scheduled refresh sends and receives, the question on Quit with mail in the Outbox (B-21, B-20, 2.2.314, D-241); one Automatically row with Send only (2.3.315). | done |
 | 1.12c | Conversations: size in the list, grouped list, conversation bar (0.0.18). | done |
 | 1.12d | Advanced search: OR, NOT, dates, sizes, dialog (0.0.19). | done |
 | 1.12e | Settings window, account editing and removal, signatures (0.0.20). | done |
