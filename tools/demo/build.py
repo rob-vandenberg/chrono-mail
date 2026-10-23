@@ -1,9 +1,13 @@
 import argparse
+import random
 import secrets
 import shutil
 import sys
+import time
 import zlib
+from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
@@ -20,11 +24,15 @@ from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.ui.app import WINDOW_SETTINGS_FILE
 from chrono_mail.ui.prefs import read_preferences, save_preferences
 from tools.demo.cast import ACCOUNTS, PERSON, DemoAccount
+from tools.demo.mail import TOTAL_MESSAGES, build_mail
+from tools.demo.people import make_people
+from tools.demo.pim import PimMaker
 
 # --- Version ------------------------------------------------------------
-__version__ = "build.py 2.3.320"
+__version__ = "build.py 2.3.321"
 
 # --- Version history ----------------------------------------------------
+# v2.3.321: The mail (100,000 messages by default, --messages for fewer), the calendars, tasks and contacts, with progress in the terminal
 # v2.3.320: Initial: builds the demo profile of the documentation: its 14 accounts, their folders, Local Folders and the rules (D-243)
 
 # The demo profile: a Chrono Mail of a made-up person, for the screenshots of the documentation, in a folder of its own
@@ -44,6 +52,19 @@ SPAM_RULES: tuple[tuple[str, tuple[Condition, ...], str], ...] = (  # name, cond
 class BuiltDemo:
     folder: Path
     account_ids: dict[str, str]  # DemoAccount.key -> account id
+    messages: int = 0
+    events: int = 0
+    tasks: int = 0
+    contacts: int = 0
+
+
+def _quiet(what: str, done: int, total: int) -> None:
+    del what, done, total
+
+
+def show_progress(what: str, done: int, total: int) -> None:
+    """One line in the terminal that keeps changing: what is being made and how far it is."""
+    print(f"\r{what}: {done:,} of {total:,}   ", end="" if done < total else "\n", flush=True)
 
 
 def remove_demo(folder: Path, passwords: PasswordStore, keys: KeyStore) -> None:
@@ -115,8 +136,10 @@ def _window_settings(directories: AppDirectories) -> None:
     settings.sync()
 
 
-def build_demo(folder: Path, passwords: PasswordStore, keys: KeyStore) -> BuiltDemo:
-    """Build the demo profile in an empty or missing folder."""
+def build_demo(folder: Path, passwords: PasswordStore, keys: KeyStore, messages: int = TOTAL_MESSAGES, progress: Callable[[str, int, int], None] = _quiet,
+               today: datetime | None = None) -> BuiltDemo:
+    """Build the demo profile in an empty or missing folder: its accounts, its mail over five years up to today, its calendars, tasks and
+    contacts. The same demo every time, with its dates counted back from today."""
     if folder.exists() and any(folder.iterdir()):
         raise SystemExit(f"{folder} is not empty: build the demo again with --fresh.")
     folder.mkdir(parents=True, exist_ok=True)
@@ -136,13 +159,19 @@ def build_demo(folder: Path, passwords: PasswordStore, keys: KeyStore) -> BuiltD
             folder_create(engine, FolderParameters(LOCAL_ACCOUNT_ID, account.local_folder))
     _rules(directories, account_ids)
     _window_settings(directories)
-    return BuiltDemo(folder, account_ids)
+    now = (today or datetime.now().astimezone()).replace(second=0, microsecond=0)
+    people = make_people(random.Random(2025))
+    filling = Engine(directories, passwords, keys, durable=False)  # a demo is built again rather than repaired: no wait for the disk per message
+    stored = build_mail(filling, account_ids, people, now, messages, progress) if messages else 0
+    events, tasks, contacts = PimMaker(filling, account_ids, people, now).build(progress)
+    return BuiltDemo(folder, account_ids, stored, events, tasks, contacts)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build the Chrono Mail demo profile for the screenshots of the documentation.")
     parser.add_argument("--folder", type=Path, default=DEFAULT_FOLDER, help=f"where the demo profile goes (default {DEFAULT_FOLDER})")
     parser.add_argument("--fresh", action="store_true", help="remove the demo profile first, with its key and passwords in the wallet")
+    parser.add_argument("--messages", type=int, default=TOTAL_MESSAGES, help=f"how many messages (default {TOTAL_MESSAGES:,})")
     arguments = parser.parse_args(argv)
     folder: Path = arguments.folder.expanduser().absolute()
     passwords, keys = KeyringPasswordStore(), KeyringKeyStore()
@@ -151,8 +180,12 @@ def main(argv: list[str] | None = None) -> int:
     if (folder / MARKER).is_file():
         print(f"The demo profile is ready in {folder}.")
         return 0
-    built = build_demo(folder, passwords, keys)
-    print(f"The demo profile is built in {built.folder}: {len(built.account_ids)} accounts.")
+    print(f"Building the demo profile in {folder} (about a quarter of an hour for 100,000 messages)...")
+    began = time.monotonic()
+    built = build_demo(folder, passwords, keys, arguments.messages, show_progress)
+    minutes = (time.monotonic() - began) / 60
+    print(f"The demo profile is built in {built.folder} in {minutes:.0f} minutes: {len(built.account_ids)} accounts, {built.messages:,} messages, "
+          f"{built.events} calendar entries, {built.tasks} tasks, {built.contacts} contacts.")
     return 0
 
 
