@@ -11,12 +11,14 @@ from chrono_mail.ui.backupdialog import may_quit
 from chrono_mail.ui.recoverydialog import RESTORING_TEXT, RecoveryDialog
 from chrono_mail.ui.restoredialog import RestoreDialog
 from tests.enginefactory import make_engine
-from tests.ui.world import Dialogs, World, answer_input, answer_open_file, build_world, menu_named, wait
+from chrono_mail.ui.windowsettings import window_settings_text
+from tests.ui.world import Dialogs, World, answer_input, answer_open_file, build_world, menu_named, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_restore.py 2.4.324"
+__version__ = "test_ui_restore.py 2.4.325"
 
 # --- Version history ----------------------------------------------------
+# v2.4.325: the window's settings of a backup are in use at once, and a Quit keeps them
 # v2.4.324: Initial: File > Restore… (D-244): the key first on a fresh installation, then the file, then its password (asked again when
 #           wrong); the Restore window's report with the test of every account it made; the recovery code window during a restore;
 #           Quit while a backup runs asks first
@@ -125,3 +127,30 @@ def test_quit_while_a_backup_runs_asks_first(world: World) -> None:
     world.dialogs.answer = QMessageBox.StandardButton.No
     assert may_quit(world.window, False, False)
     assert not may_quit(world.window, True, False) and any("A backup is being made" in text for _, _, text in world.dialogs.shown)
+
+
+def test_the_window_settings_of_a_backup_are_in_use_at_once(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    assert "size" in window.columns.columns and window.reading.place == "right"
+    window.columns.toggle_column("size")  # the Inbox without its Size column, and the reading pane below: as they are in the backup
+    window.settings.setValue("reading_pane", "bottom")
+    window.apply_preferences()
+    BACKUP_MAKE.answer(REGISTRY.run(world.engine, BACKUP_MAKE.id, {
+        "path": str(tmp_path / "look.cmz"), "accounts": (world.account_id,), "window_settings": window_settings_text(window.settings),
+    }))
+    window.columns.toggle_column("size")  # changed since the backup
+    window.settings.setValue("reading_pane", "right")
+    window.apply_preferences()
+    assert "size" in window.columns.columns and window.reading.place == "right"
+    answer_open_file(monkeypatch, tmp_path / "look.cmz")
+    restore = restore_window(world, qtbot)
+    restore.replace_existing.setChecked(True)
+    restore.restore_button.click()
+    wait(qtbot, lambda: not restore.running and window.reading.place == "bottom")
+    settle(qtbot, world, 3)
+    assert "size" not in window.columns.columns  # the folder the window opened shows its restored columns, no restart
+    restore.close()
+    window.quit_program()  # Quit saves what is in use now: the restored settings
+    assert window.settings.value("reading_pane") == "bottom" and '"size"' not in str(window.settings.value("folder_columns"))
