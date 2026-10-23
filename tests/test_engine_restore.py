@@ -31,9 +31,10 @@ from tests.enginefactory import make_engine
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 2.4.324"
+__version__ = "test_engine_restore.py 2.4.326"
 
 # --- Version history ----------------------------------------------------
+# v2.4.326: only the chosen accounts, parts and passwords come back; the contents per account with their counts
 # v2.4.324: Initial: Restore (D-244): a backup put back on an empty computer looks the same; the backup password; not a backup; an
 #           account that is here gets only what it lacks, never twice and never what its server holds; Remove all data first and a
 #           cancel put everything back; the connection test of a restored account
@@ -75,8 +76,8 @@ def _backup(engine: Engine, target: Path, protected: bool = True) -> str:
     return password
 
 
-def _restore(engine: Engine, target: Path, password: str, **choices: bool) -> RestoreResult:
-    return REGISTRY.ask(engine, BACKUP_RESTORE, RestoreParameters(str(target), password or None, **choices))
+def _restore(engine: Engine, target: Path, password: str, remove_first: bool = False, replace_existing: bool = False) -> RestoreResult:
+    return REGISTRY.ask(engine, BACKUP_RESTORE, RestoreParameters(str(target), password or None, remove_first, replace_existing))
 
 
 def _mail(engine: Engine, account_id: str = LOCAL_ACCOUNT_ID) -> dict[str, tuple[str, str, tuple[str, ...]]]:
@@ -125,7 +126,7 @@ def test_the_backup_password_is_asked_and_checked(tmp_path: Path) -> None:
         REGISTRY.ask(second, BACKUP_CONTENTS, ReadParameters(str(tmp_path / "all.cmz"), "A" * 24))
     contents: ContentsResult = REGISTRY.ask(second, BACKUP_CONTENTS, ReadParameters(str(tmp_path / "all.cmz"), password))
     assert contents.protected and contents.passwords and contents.messages == 3 and contents.items == 1
-    assert [(row.name, row.here) for row in contents.accounts] == [("Local Folders", False), ("anna@example.com", False)]
+    assert [(row.name, row.here) for row in contents.accounts] == [("anna@example.com", False), ("Local Folders", False), ("On this computer", False)]
 
 
 def test_a_file_that_is_not_a_backup_is_told_so(tmp_path: Path) -> None:
@@ -248,3 +249,21 @@ def test_the_contents_name_the_accounts_already_here(tmp_path: Path) -> None:
     contents = REGISTRY.ask(engine, BACKUP_CONTENTS, ReadParameters(str(tmp_path / "all.cmz"), password))
     assert all(row.here for row in contents.accounts) and json.loads(json.dumps(contents.parts)) == ["messages", "rules", "calendars", "contacts", "tasks", "settings"]
     assert REGISTRY.ask(engine, KEY_ENSURE, NoParameters()).made is False
+
+
+def test_only_the_chosen_accounts_parts_and_passwords_come_back(tmp_path: Path) -> None:
+    first = _computer(tmp_path / "first")
+    password = _backup(first, tmp_path / "all.cmz")
+    second = make_engine(tmp_path / "second")
+    contents = REGISTRY.ask(second, BACKUP_CONTENTS, ReadParameters(str(tmp_path / "all.cmz"), password))
+    assert [(row.entry_id, row.parts, row.messages, row.items) for row in contents.accounts][1:] == [
+        ("local-folders", ("messages",), 3, 0), ("this-computer", ("calendars", "contacts", "tasks"), 0, 1),
+    ]
+    result = REGISTRY.ask(second, BACKUP_RESTORE, RestoreParameters(
+        str(tmp_path / "all.cmz"), password, accounts=("local-folders", contents.accounts[0].entry_id), rules=False, settings=False, passwords=False,
+    ))
+    assert result.messages == 3 and result.items == 0  # this computer's calendars were not ticked
+    anna = contents.accounts[0].entry_id
+    assert {settings.account.account_id for settings in second.config().accounts} == {LOCAL_ACCOUNT_ID, anna}
+    assert second.passwords.get(anna, ServerRole.INCOMING) is None and not second.directories.rules_file.exists()
+    assert len(_mail(second)) == 3 and not (second.directories.pim_directory(LOCAL_ACCOUNT_ID) / "pim.json").exists()

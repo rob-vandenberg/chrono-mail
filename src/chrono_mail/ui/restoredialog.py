@@ -12,6 +12,8 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -33,6 +35,7 @@ from chrono_mail.engine.commands_backup import (
     CheckAccountParameters,
     CheckAccountResult,
     ContentsResult,
+    ContentsRow,
     KeyEnsured,
     ReadParameters,
     RestoreParameters,
@@ -44,9 +47,11 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.windowsettings import apply_window_settings
 
 # --- Version ------------------------------------------------------------
-__version__ = "restoredialog.py 2.4.325"
+__version__ = "restoredialog.py 2.4.326"
 
 # --- Version history ----------------------------------------------------
+# v2.4.326: ticks for what to restore (only the parts the backup holds), the accounts with Select all and their counts, and the
+#           account passwords when the backup holds them; greyed, never hidden (D-244)
 # v2.4.325: restored tells whether the window's settings came back: the window takes them in at once (D-244)
 # v2.4.324: Initial: Menu > File > Restore…: this computer's key first (its recovery code in its own window), then the backup, then its
 #           password, then the Restore window with what the backup holds, "Remove all data on this computer first" and "Replace items
@@ -58,8 +63,12 @@ TESTING: str = "testing the connection…"
 SHOWN_DOING: dict[str, str] = {DOING_MESSAGES: "Messages", DOING_ITEMS: "Calendar items, contacts and tasks"}
 REMOVE_QUESTION: str = (
     "Remove all mail, calendars, contacts, tasks, rules and settings on this computer, and put the backup in their place?\n\n"
-    "Nothing on your mail or calendar servers is touched. If the restore does not finish, everything is put back as it was."
+    "Everything on this computer is removed, also what you did not tick. Nothing on your mail or calendar servers is touched. "
+    "If the restore does not finish, everything is put back as it was."
 )
+EVERY_ACCOUNT: frozenset[str] = frozenset({RULES, SETTINGS})  # parts of the program, not of an account: never greyed
+ENTRY_ROLE: int = int(Qt.ItemDataRole.UserRole)
+PARTS_ROLE: int = int(Qt.ItemDataRole.UserRole) + 1
 
 
 def contents_text(contents: ContentsResult) -> str:
@@ -69,12 +78,19 @@ def contents_text(contents: ContentsResult) -> str:
     except ValueError:
         made = contents.created or "an unknown date"
     lines = [f"This backup was made on {made}" + (f" by Chrono Mail {contents.version}." if contents.version else ".")]
-    names = [row.name + (" (already here: what it lacks is added)" if row.here else "") for row in contents.accounts]
-    lines.append("Accounts: " + ("; ".join(names) if names else "none") + ".")
-    lines.append("What it holds: " + ", ".join(PART_NAMES.get(part, part) for part in contents.parts) + ".")
-    lines.append(f"Messages: {contents.messages:,}. Calendar items, contacts and tasks: {contents.items:,}.")
-    lines.append("The account passwords are in it." if contents.passwords else "The account passwords are not in it: you type them after the restore.")
+    if not contents.passwords:
+        lines.append("The account passwords are not in it: you type them after the restore.")
     return "\n".join(lines)
+
+
+def entry_text(row: ContentsRow) -> str:
+    """An account's line in the list: its name, how many messages and items, and whether it is here already."""
+    counts: list[str] = []
+    if MESSAGES in row.parts:
+        counts.append(f"{row.messages:,} messages")
+    if any(part in row.parts for part in (CALENDARS, CONTACTS, TASKS)):
+        counts.append(f"{row.items:,} calendar items, contacts and tasks")
+    return row.name + (": " + ", ".join(counts) if counts else "") + (" (already here: what it lacks is added)" if row.here else "")
 
 
 class RestoreDialog(QDialog):
@@ -89,7 +105,8 @@ class RestoreDialog(QDialog):
         self._settings: QSettings = settings
         self._path: Path = path
         self._password: str | None = password
-        self._names: dict[str, str] = {row.account_id: row.name for row in contents.accounts}
+        self._names: dict[str, str] = {row.entry_id: row.name for row in contents.accounts}
+        self._finished: bool = False  # after a restore that finished, the choices are what was done
         self._lines: list[str] = []  # the report after the restore
         self._tested: dict[str, str] = {}  # per account the restore made: what its test said (until then: testing)
         self.running: bool = False
@@ -101,6 +118,37 @@ class RestoreDialog(QDialog):
         self.summary.setWordWrap(True)
         self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.summary)
+        layout.addSpacing(8)
+        layout.addWidget(QLabel("<b>What to restore</b>", self))
+        self.part_boxes: dict[str, QCheckBox] = {}
+        for part in (MESSAGES, RULES, CALENDARS, CONTACTS, TASKS, SETTINGS):
+            if part in contents.parts:  # only what the backup holds
+                box = QCheckBox(PART_NAMES[part], self)
+                box.setChecked(True)
+                box.toggled.connect(self._update)
+                self.part_boxes[part] = box
+                layout.addWidget(box)
+        layout.addSpacing(8)
+        layout.addWidget(QLabel("<b>Accounts</b>", self))
+        self.select_all = QCheckBox("Select all", self)
+        self.select_all.setChecked(True)
+        self.select_all.clicked.connect(self._select_all_clicked)
+        layout.addWidget(self.select_all)
+        self.accounts = QListWidget(self)
+        self.accounts.setMinimumHeight(100)
+        for row in contents.accounts:
+            item = QListWidgetItem(entry_text(row), self.accounts)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setData(ENTRY_ROLE, row.entry_id)
+            item.setData(PARTS_ROLE, list(row.parts))
+        self.accounts.itemChanged.connect(self._item_changed)
+        layout.addWidget(self.accounts)
+        self.passwords = QCheckBox("Account passwords", self)
+        self.passwords.setChecked(contents.passwords)
+        self.passwords.setVisible(contents.passwords)  # only when the backup holds them: nothing to choose otherwise
+        self.passwords.toggled.connect(self._update)
+        layout.addWidget(self.passwords)
         layout.addSpacing(8)
         self.remove_first = QCheckBox("Remove all data on this computer first", self)
         self.replace_existing = QCheckBox("Replace items that already exist", self)
@@ -132,25 +180,64 @@ class RestoreDialog(QDialog):
         backend.progress.connect(self._progress)
         self._update()
 
+    def _items(self) -> list[QListWidgetItem]:
+        return [item for number in range(self.accounts.count()) if (item := self.accounts.item(number)) is not None]
+
+    def chosen_accounts(self) -> tuple[str, ...]:
+        return tuple(str(item.data(ENTRY_ROLE)) for item in self._items() if item.checkState() == Qt.CheckState.Checked)
+
+    def chosen_parts(self) -> frozenset[str]:
+        """The parts ticked that a chosen account has (a greyed part is not restored)."""
+        return frozenset(part for part, box in self.part_boxes.items() if box.isChecked() and box.isEnabled())
+
+    def _item_changed(self, item: QListWidgetItem) -> None:
+        del item  # a tick of an account: what can be chosen follows
+        self._update()
+
+    def _select_all_clicked(self, checked: bool) -> None:
+        self.accounts.blockSignals(True)
+        for item in self._items():
+            item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        self.accounts.blockSignals(False)
+        self._update()
+
     def _update(self) -> None:
-        before = not self.running and self.restore_button.isEnabled()  # after a restore that finished, the choices are what was done
-        self.remove_first.setEnabled(before)
+        """Grey what cannot be used now (never hidden): parts no chosen account has, Replace when everything is removed first, Restore…
+        until a part and an account are chosen, and every choice while the restore runs and after it finished."""
+        before = not self.running and not self._finished
+        items = self._items()
+        ticked = [item for item in items if item.checkState() == Qt.CheckState.Checked]
+        self.select_all.setChecked(bool(items) and len(ticked) == len(items))
+        available: set[str] = set(EVERY_ACCOUNT)
+        for item in ticked:
+            parts = item.data(PARTS_ROLE)
+            if isinstance(parts, list):
+                available.update(str(part) for part in parts)
+        for part, box in self.part_boxes.items():
+            box.setEnabled(before and part in available)
+        for widget in (self.select_all, self.accounts, self.passwords, self.remove_first):
+            widget.setEnabled(before)
         self.replace_existing.setEnabled(before and not self.remove_first.isChecked())  # nothing exists after removing it all
+        self.restore_button.setEnabled(before and bool(self.chosen_accounts()) and bool(self.chosen_parts()))
         self.close_button.setText("Cancel" if self.running else "Close")
 
     def start(self) -> None:
-        if self.running:
+        if self.running or not self.restore_button.isEnabled():
             return
         if self.remove_first.isChecked() and QMessageBox.question(self, "Restore", REMOVE_QUESTION) != QMessageBox.StandardButton.Yes:
             return
+        parts = self.chosen_parts()  # the choices as they are now: the run greys them
+        parameters = RestoreParameters(
+            str(self._path), self._password, self.remove_first.isChecked(), self.replace_existing.isChecked() and not self.remove_first.isChecked(),
+            self.chosen_accounts(), messages=MESSAGES in parts, rules=RULES in parts, calendars=CALENDARS in parts, contacts=CONTACTS in parts,
+            tasks=TASKS in parts, settings=SETTINGS in parts, passwords=self.passwords.isChecked(),
+        )
         self.running = True
-        self.restore_button.setEnabled(False)
         self.running_changed.emit(True)
         self._update()
         self.progress.setRange(0, 0)
         self.progress.setVisible(True)
         self.status.setText("Restoring…")
-        parameters = RestoreParameters(str(self._path), self._password, self.remove_first.isChecked(), self.replace_existing.isChecked() and not self.remove_first.isChecked())
         self._backend.ask(BACKUP_RESTORE, parameters, self._done, self._failed, owner=self)
 
     def _progress(self, what: str, done: int, total: object) -> None:
@@ -170,6 +257,7 @@ class RestoreDialog(QDialog):
         self._update()
 
     def _done(self, result: RestoreResult) -> None:
+        self._finished = True
         self._finish()
         lines = [f"The backup is restored: {result.messages:,} messages and {result.items:,} calendar items, contacts and tasks came back."]
         if result.skipped:
@@ -201,7 +289,6 @@ class RestoreDialog(QDialog):
 
     def _failed(self, error: ChronoMailError) -> None:
         self._finish()
-        self.restore_button.setEnabled(True)
         put_back = " Everything on this computer is as it was." if self.remove_first.isChecked() else " What came back whole stays."
         if isinstance(error, RestoreCancelled):
             self.status.setText("The restore was cancelled." + put_back)
