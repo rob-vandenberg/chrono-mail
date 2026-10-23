@@ -2,7 +2,7 @@
 
 The inventory of every problem the Windows computer's full test of 2.0.296 to 2.4.326 found (its private report `REPORT-2.4.326.md` and log `TESTLOG-2.4.326.md`, W-numbers and log sections kept), each cause checked in the code on 2026-10-23, and the plan to fix them all. Read after STATUS.md while this work is open. Each phase is one version with its own changelist and Proceed; update the Status lines and the Done log as phases land.
 
-**Now:** the Windows computer's check of 2.4.333 (its REPORT-2.4.333.md) found four fixes partial; all four done in 2.4.334, with the speed of very large folders and the names of damaged messages; next: the Windows computer checks 2.4.334. Still open: S1, S2 (later).
+**Closed (the owner, 2026-10-24):** the full review and its fixes up to and including 2.4 are done; the Windows computer's check of 2.4.334 found every fix working, its two new findings done in 2.5.335 (section 7). Left outside: W13's slowness on Windows (the owner's own work); S1, S2 (later, measured first).
 
 ## 1. The inventory, by category
 
@@ -122,4 +122,15 @@ The Windows computer's REPORT-2.4.333.md: W6, W6b, W1, W5, W4, R2, W13, W7 (live
 | big | 15,927 messages: rows left about 78 per second, the window slow | every fact removed one row (the list laid out and painted again) and recounted the folder list | Done 2.4.334: facts that take messages out right after another go together, ten times a second, per run of neighbouring rows; the folder numbers likewise; the first of a quiet moment at once. Measured here: 16,000 deleted 81 s, longest pause 1.7 s -> 23 s, 0.55 s; 4,000: 6.8 s, 1.7 s -> 5.2-6.9 s, 0.19 s. Ctrl+A here 0.18 s for 16,000 (the 4 s on Windows to measure again there) |
 | note 3 | the damaged message was only counted | | Done 2.4.334: "1 message in Inbox of Work" (folder or calendar and account) |
 | note 1 | `mail_account_ids` defined twice | not so: one definition | No change |
+
+## 7. The check of 2.4.334
+
+The Windows computer's REPORT-2.4.334.md: W12b, W9b, W11c, F1b, note 3, W1 on the owner's real store and Undo fixed as checked; note 1 withdrawn by it.
+
+| # | What was found | Cause | Status |
+|---|---|---|---|
+| T1 | test_ui_sync_conflicts failed once in a combined run: "The index is damaged", then WinError 32 on pim.sqlite | two openers of a new calendar index both saw it empty; the second's make failed, was called damaged, and the file was removed while the first used it (the mail index likewise for an upgrade in place) | Done 2.5.335 (D-247) |
+| T2 | index.prepare answered 0 messages after 21.5 minutes; the index window said "0 messages indexed" | it opened the index through the general way, which drops the rebuild's report | Done 2.5.335 |
+| T3 | rebuilding the restored 140,402 messages took 21.5 minutes, no mail shown meanwhile | 15.3 GB read and decrypted once, about 12 MB/s | Not a fault; dropped (the owner, 2026-10-24). Measured here: understanding each message (Python's mail reader) is about 85% of the index time; skipping attachment contents would save only about 30% |
+| W13 | the large delete about 75 per second on Windows | the engine 160 per second there (700 here) | The owner's own work |
 

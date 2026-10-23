@@ -6,9 +6,10 @@ from pathlib import Path
 from chrono_mail.core import StorageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "database.py 1.8.263"
+__version__ = "database.py 2.5.335"
 
 # --- Version history ----------------------------------------------------
+# v2.5.335: _format: the format a file holds, read again under the write lock before anything is made or upgraded (D-247)
 # v1.8.263: R-16: the one copy of opening an index file and of its transactions (was in index/index.py and pimstore/index.py)
 
 MINIMUM_SQLITE_VERSION: tuple[int, int, int] = (3, 43, 0)  # contentless FTS5 tables that allow deletes
@@ -39,7 +40,15 @@ class IndexDatabase:
             raise
 
     def _prepare(self) -> None:
-        """Make the layout of a new file, or check (and upgrade) the format of an existing one. StorageError when it cannot be used."""
+        """Make the layout of a new file, or check (and upgrade) the format of an existing one. StorageError when it cannot be used.
+        Anything it writes is decided under the write lock: another connection may make or upgrade the same file at the same moment (D-247)."""
+
+    def _format(self) -> str | None:
+        """The format the file holds: None for a new, empty file; "" when it has tables but no format number."""
+        if self._connection.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0:
+            return None
+        version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
+        return "" if version is None else str(version[0])
 
     def close(self) -> None:
         self._connection.close()

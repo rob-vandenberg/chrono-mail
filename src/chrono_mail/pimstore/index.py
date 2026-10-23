@@ -9,9 +9,11 @@ from chrono_mail.pimstore.extract import Extract, tag_text
 from chrono_mail.pimstore.schema import SCHEMA_VERSION, STATEMENTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 1.10.277"
+__version__ = "index.py 2.5.335"
 
 # --- Version history ----------------------------------------------------
+# v2.5.335: a new file is made only after it is found empty again under the write lock: a second connection opening it at that
+#           moment took it for damaged, and the file was removed while the first still used it (D-247)
 # v1.10.277: Contact groups: an item says whether it is a group and holds its members; a query asks for groups, or for everything but them (R-39)
 # v1.8.263: R-16: opening the file and the transactions come from IndexDatabase (index/database.py), shared with the mail index
 # v1.1.205: A query can ask for given items only (the rows of a page of a list as it scrolls into view)
@@ -98,14 +100,15 @@ class PimIndex(IndexDatabase):
 
     @override
     def _prepare(self) -> None:
-        if self._connection.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0:
-            with self._transaction():
+        if self._format() == str(SCHEMA_VERSION):
+            return  # the usual case: nothing to make, no lock taken
+        with self._transaction():  # looked at again under the write lock: another connection may have made it meanwhile (D-247)
+            found = self._format()
+            if found is None:
                 for statement in STATEMENTS:
                     self._connection.execute(statement)
                 self._connection.execute("INSERT INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
-        else:
-            version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
-            if version is None or str(version[0]) != str(SCHEMA_VERSION):
+            elif found != str(SCHEMA_VERSION):
                 raise StorageError("The index has an unknown format; rebuild it")
 
     # --- changing ------------------------------------------------------------------------------

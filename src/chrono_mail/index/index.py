@@ -33,9 +33,11 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 2.1.308"
+__version__ = "index.py 2.5.335"
 
 # --- Version history ----------------------------------------------------
+# v2.5.335: a new file is made, and an old format upgraded, only after the format is read again under the write lock: a second
+#           connection opening the same file at that moment took it for damaged (D-247)
 # v2.1.308: wrote_to: whether a message of a folder (Sent) names an address among its recipients (the junk filter's trusted senders, D-238)
 # v2.0.301: format 12 is upgraded in place too (format 13, D-235): the filling in reads has_attachments with sent (fill_sent)
 # v2.0.281: format 11 is upgraded in place (sent added, filled in afterwards: sent_filling, sent_to_fill, fill_sent); when_closed: what an index
@@ -210,25 +212,25 @@ class Index(IndexDatabase):
     @override
     def _prepare(self) -> None:
         self._connection.execute("PRAGMA temp_store = MEMORY")
-        if self._connection.execute("SELECT count(*) FROM sqlite_master").fetchone()[0] == 0:
-            self._create_schema()
-        else:
-            version = self._connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
-            if version is not None and str(version[0]) in ("11", "12"):
-                self._upgrade_in_place(str(version[0]))
-                return
-            # An older format is rebuilt from the messages (format 11 changed what date holds for every message, D-226), a newer one too
-            if version is None or str(version[0]) != str(SCHEMA_VERSION):
+        if self._format() == str(SCHEMA_VERSION):
+            return  # the usual case: nothing to make, no lock taken
+        with self._transaction():  # looked at again under the write lock: another connection may have made or upgraded it meanwhile (D-247)
+            found = self._format()
+            if found is None:
+                self._create_schema()
+            elif found in ("11", "12"):
+                self._upgrade_in_place(found)
+            elif found != str(SCHEMA_VERSION):
+                # An older format is rebuilt from the messages (format 11 changed what date holds for every message, D-226), a newer one too
                 raise StorageError("The index has an unknown format; rebuild it")
 
     def _upgrade_in_place(self, version: str) -> None:
         """Format 12 added the moment each message carries (sent), format 13 the attachments by what the text shows (D-235): the index
-        stays usable at once, both are filled in afterwards (sent_to_fill, fill_sent), from where it stopped (D-229)."""
-        with self._transaction():
-            for statement in UPGRADE_FROM_11 if version == "11" else ():
-                self._connection.execute(statement)
-            self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
-            self._connection.execute("INSERT INTO meta VALUES (?, '0')", (SENT_FILL_KEY,))
+        stays usable at once, both are filled in afterwards (sent_to_fill, fill_sent), from where it stopped (D-229). Inside _prepare's transaction."""
+        for statement in UPGRADE_FROM_11 if version == "11" else ():
+            self._connection.execute(statement)
+        self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
+        self._connection.execute("INSERT INTO meta VALUES (?, '0')", (SENT_FILL_KEY,))
 
     def when_closed(self, released: Callable[[], None]) -> None:
         """Something to let go of when this index is closed (the engine's hold on the file, so it is never replaced while open)."""
@@ -273,10 +275,10 @@ class Index(IndexDatabase):
                 self._connection.execute("UPDATE meta SET value = ? WHERE key = ?", (str(filled_to), SENT_FILL_KEY))
 
     def _create_schema(self) -> None:
-        with self._transaction():
-            for statement in STATEMENTS:
-                self._connection.execute(statement)
-            self._connection.execute("INSERT INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
+        """Inside _prepare's transaction."""
+        for statement in STATEMENTS:
+            self._connection.execute(statement)
+        self._connection.execute("INSERT INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION),))
 
     # --- changing the index ----------------------------------------------------------------
 
