@@ -19,9 +19,10 @@ from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.mime import ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "junkfilter.py 2.1.311"
+__version__ = "junkfilter.py 2.1.312"
 
 # --- Version history ----------------------------------------------------
+# v2.1.312: the busy bar names junk.learn-existing "Junk filter: checking mail for spam" (the owner: calm, not alarming)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.310: junk.learn-existing tells how far it is (mailbox n of m, messages read of all), every 100 messages
 # v2.1.308: Initial junk filter: new mail, learning from the person and the server, the first learning of the mail kept (D-238)
@@ -293,4 +294,4 @@ JUNK_LEARN_EXISTING: TypedCommand[NoParameters, JunkLearnResult] = TypedCommand(
 
 
 def register(registry: CommandRegistry) -> None:
-    registry.register(JUNK_LEARN_EXISTING.id, "Let the junk filter learn once from the mail already kept", NoParameters, junk_learn_existing, doing="Junk filter: learning from your mail")
+    registry.register(JUNK_LEARN_EXISTING.id, "Let the junk filter learn once from the mail already kept", NoParameters, junk_learn_existing, doing="Junk filter: checking mail for spam")
