@@ -12,9 +12,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 1.1.233"
+__version__ = "test_ui_sync_conflicts.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the counts in the texts are written one way (F1b)
 # v1.1.233: the table fills the width (fixed columns, Name and Where shared); no triangle in the rows; the Why icons drawn in the text colour
 # v1.1.232: the legend one under the other; Close lines up with the rest
 # v1.1.231: "Why" and its icon centred in the column
@@ -163,7 +164,7 @@ def test_the_marks_the_sidebar_entry_and_the_waiting_count(world: World, qtbot: 
         wait(qtbot, lambda: entry.isHidden() and page.month.mark_of(item) == "")
         server.writes_failing = True
         world.call("event.edit", item=item, summary="Offline")
-        wait(qtbot, lambda: window.waiting_label.isVisible() and window.waiting_label.text() == "1 change(s) wait for the server")
+        wait(qtbot, lambda: window.waiting_label.isVisible() and window.waiting_label.text() == "Waiting for the server: 1 change")
         assert page.month.mark_of(item) == WAITING
         server.writes_failing = False
         world.call("dav.sync", account=account)

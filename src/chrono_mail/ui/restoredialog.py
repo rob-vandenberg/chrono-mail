@@ -48,9 +48,10 @@ from chrono_mail.ui.windowsettings import apply_window_settings
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restoredialog.py 2.4.333"
+__version__ = "restoredialog.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the report names where the damaged messages and items were
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.4.328: the report says how many damaged messages and items were left out (W5)
 # v2.4.327: the report says what of the Outbox went to Drafts and which scheduled messages were paused (D-245)
@@ -275,7 +276,8 @@ class RestoreDialog(QDialog):
         if held:
             lines.append("; ".join(held) + ". Nothing is sent until you send it.")  # D-245
         if result.damaged:
-            lines.append(f"{result.damaged:,} {'message or item was' if result.damaged == 1 else 'messages and items were'} damaged in the backup and left out; everything else came back.")
+            places = "; ".join(result.damaged_places)
+            lines.append(f"Damaged in the backup and left out: {places or counted(result.damaged, 'message or item', 'messages and items')}. Everything else came back.")
         lines.extend(result.notes)
         self._lines = lines
         self._tested = {account_id: TESTING for account_id in result.made if account_id != LOCAL_ACCOUNT_ID}

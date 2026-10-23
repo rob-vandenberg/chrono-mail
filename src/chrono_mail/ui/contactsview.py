@@ -56,11 +56,13 @@ from chrono_mail.ui.pimlist import MarkDelegate, PimItemModel, PimListPage
 from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import tag_icon
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactsview.py 1.10.277"
+__version__ = "contactsview.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the last "(s)" texts counted one way (F1b)
 # v1.10.277: Contact groups (R-39): the groups under each address book, a group's members as the list, New group…, Rename…, Delete… and Write an
 #            e-mail in a group's menu, Add to group (ticks) and Remove from group, contacts dragged onto a group; every change in place (D-146)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -488,7 +490,7 @@ class ContactsPage(PimListPage):
             self.model.load(rows, result.total)
             self._listed_view = (collection, parameters.group)
             self._counted()
-            self.status(f"{self.model.total} contact(s)")
+            self.status(counted(self.model.total, "contact"))
             positions = [position for position in (self.model.position_of(item) for item in selected) if position >= 0]
             if collection == self._show_collection:
                 self._show_item = self._show_collection = ""
@@ -709,7 +711,7 @@ class ContactsPage(PimListPage):
                 return
             self.compose_requested.emit(", ".join(result.addresses))
             if result.without_address:
-                self.status(f"{result.without_address} member(s) of “{result.name}” have no e-mail address and were left out")
+                self.status(f"Left out, without an e-mail address: {counted(result.without_address, 'member')} of “{result.name}”")
 
         self._backend.ask(CONTACT_GROUP_ADDRESSES, GroupItem(group.item), got, self._failed, owner=self)
 
@@ -838,7 +840,7 @@ class ContactsPage(PimListPage):
             return
 
         def done(result: ContactImportResult) -> None:
-            self.status(f"Imported {result.imported} contact(s), updated {result.updated}, skipped {result.skipped}")  # its fact fetches the list again
+            self.status(f"Imported {counted(result.imported, 'contact')}, updated {result.updated:,}, skipped {result.skipped:,}")  # its fact fetches the list again
 
         self._backend.ask(CONTACT_IMPORT, ContactImport(collection, text), done, self._failed, owner=self)
 
@@ -853,7 +855,7 @@ class ContactsPage(PimListPage):
         def done(result: ContactExportResult) -> None:
             try:
                 Path(path).write_text(result.text, "utf-8")
-                self.status(f"Exported {result.contacts} contact(s)")
+                self.status(f"Exported {counted(result.contacts, 'contact')}")
             except OSError as error:
                 self.status(f"The file could not be written: {error.strerror}")
 

@@ -33,9 +33,10 @@ from chrono_mail.mime import with_extra_headers
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 2.4.328"
+__version__ = "test_engine_restore.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the report says where the damaged message was
 # v2.4.328: an account without files comes back (W1); a damaged message is left out and the rest comes back (W5); a cut-off backup is
 #           damaged or incomplete (W4); only the rules of the accounts that came back (R2)
 # v2.4.327: a restore sends nothing by itself: the Outbox's mail comes back in Drafts, an overdue scheduled message paused (D-245)
@@ -354,6 +355,7 @@ def test_a_damaged_message_is_left_out_and_everything_else_comes_back(tmp_path: 
     REGISTRY.run(second, KEY_ENSURE.id, {})
     result = _restore(second, tmp_path / "all.cmz", "")
     assert result.damaged == 1 and result.messages == 2 and result.items == 1
+    assert result.damaged_places == ("1 message in Inbox of Local Folders",)  # where it was: the person can tell what is missing
     assert {settings.account.account_id for settings in second.config().accounts} == {settings.account.account_id for settings in first.config().accounts}
     assert load_rules(second.directories.rules_file) == load_rules(first.directories.rules_file)
     before = _mail(first)

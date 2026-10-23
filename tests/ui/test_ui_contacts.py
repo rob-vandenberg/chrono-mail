@@ -16,9 +16,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_contacts.py 1.10.277"
+__version__ = "test_ui_contacts.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the counts in the texts are written one way (F1b)
 # v1.10.277: Contact groups (R-39): under their address book, a group's members, New group…, Rename…, Delete…, Write an e-mail, Add to group,
 #            Remove from group, contacts dropped on a group; every change in place
 # v1.9.273: Contacts' tag changes are typed (R-19)
@@ -224,7 +225,7 @@ def test_contacts_are_imported_from_and_exported_to_files(world: World, qtbot: Q
     monkeypatch.setattr(QFileDialog, "getOpenFileName", chosen_file(source))
     page.import_file()
     wait(qtbot, lambda: page.model.rowCount() == 2)
-    assert "Imported 2 contact(s)" in world.window.status_label.text() or page.model.rowCount() == 2
+    assert "Imported 2 contacts" in world.window.status_label.text() or page.model.rowCount() == 2
     target = tmp_path / "out.vcf"
     monkeypatch.setattr(QFileDialog, "getSaveFileName", chosen_file(target))
     page.export_file()

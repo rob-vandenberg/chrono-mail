@@ -15,6 +15,7 @@ from chrono_mail.engine.commands_mail import MESSAGE_PLACES, ListSort, PlacesPar
 from chrono_mail.engine.commands_view import MESSAGE_COMBINED_ORDER, MESSAGE_ORDER, MESSAGE_ROWS, CombinedOrderParameters, OrderParameters, RowsAnswer, RowsParameters, ViewOrder
 from chrono_mail.index.model import GroupCount
 from chrono_mail.ui.backend import Backend, carried
+from chrono_mail.ui.burst import Burst
 from chrono_mail.ui.columns import BY_ID, CARD, SEND_AT_FOLDERS, SEND_AT_LABEL, SNOOZED_COLUMN, SYMBOLS, cell_text, display_name, person_address
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import grey_icon
@@ -23,9 +24,12 @@ from chrono_mail.ui.models import LOCAL_PLACES
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 2.4.329"
+__version__ = "messagelist.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: _take_out_runs: the rows that leave together go per run of neighbouring rows (Qt keeps the others' selection cheaply)
+# v2.4.334: the messages that leave the view in one moment go in one layout change (16,000 deleted: one row at a time took minutes)
+# v2.4.334: placed: the whole order is in; complete tells whether it is (W12b)
 # v2.4.329: place_at gives every message's key and folder, loaded or not, and load_rows asks the rows a decision needs (W12); a redraw
 #           of many messages is one per run of rows (W13)
 # v2.2.314: the column of the Outbox is called Send at too (a delayed send, B-21)
@@ -127,6 +131,7 @@ class MessageListModel(QAbstractTableModel):
     load_failed = Signal(str)
     loaded = Signal()
     rearranged = Signal()  # the same messages were put in another order; Qt's selection moved with them
+    placed = Signal()  # the whole order of the view is in: every message has its place (a large view comes start first, W12b)
 
     def __init__(self, backend: Backend, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -164,6 +169,8 @@ class MessageListModel(QAbstractTableModel):
         self._display_rows: int = 0
         self.pending: set[str] = set()  # message ids with an action under way: greyed, and no second action (D-146)
         self._stay: set[str] = set()  # keys of messages read, unflagged or untagged while this view showed them: they stay until it is left
+        self._leaving: list[Change] = []  # messages that left the view in this moment: their rows go together (16,000 one by one took minutes)
+        self._leave_soon: Burst = Burst(self._flush_leaving, self)  # those that leave right after another go together, ten times a second
         self._arriving: dict[str, MessageRow] = {}  # messages that came in, by key -> their row (kept current by later facts), placed together
         self._arrival_planned: bool = False
         self._placing: dict[str, MessageRow] | None = None  # the messages whose places are being asked (one question at a time)
@@ -260,8 +267,14 @@ class MessageListModel(QAbstractTableModel):
         self._unread.clear()
         self._rows.clear()
         self._ids.clear()
+        self._leaving.clear()
         self._asked.clear()
         self._wanted_pages.clear()
+
+    @property
+    def complete(self) -> bool:
+        """Whether every message of the view has its place yet (the rest of a large view's order may still be on its way)."""
+        return self._complete
 
     @property
     def spec(self) -> ViewSpec | None:
@@ -363,6 +376,10 @@ class MessageListModel(QAbstractTableModel):
         return self._next_question
 
     def _answered(self, question: int) -> list[Change]:
+        self._flush_leaving()  # the list as it has heard every fact before the answer is laid over it
+        return self._facts_since(question)
+
+    def _facts_since(self, question: int) -> list[Change]:
         """A question was answered (or failed): the facts heard since it was asked. The engine read its answer after it told
         every change the answer counts, and Qt delivers the facts and the answer in the order they were sent, so every change
         the answer counts was heard before it; applying again the facts heard since the question was asked brings the answer
@@ -453,6 +470,7 @@ class MessageListModel(QAbstractTableModel):
         if not self._complete:
             self._ask_order(spec, whole=True, rows_of=[], purpose="complete")
             return
+        self.placed.emit()
         wanted, self._wanted_pages = sorted(self._wanted_pages), set()
         for page in wanted:
             self._fetch(page * PAGE_SIZE)
@@ -833,7 +851,39 @@ class MessageListModel(QAbstractTableModel):
             return
         if self._open:
             self._log.append(change)  # applied again to the answers on their way
+        if str(change.kind) == "removed" or (str(change.kind) == "moved" and not self._may_hold(change)):  # it only leaves this view
+            if self._leave_soon.busy:
+                self._leaving.append(change)  # more leave in the same moment (a large delete): they go together when it ends
+                self._leave_soon.wait_for_end()
+                return
+            self._leave_soon.ask()  # nothing gathered: the first of a quiet moment goes at once, below
+        self._flush_leaving()  # every fact in the order it came
         self._follow(change)
+
+    def _flush_leaving(self) -> None:
+        """The messages that left the view in this moment go together: one change of the list's layout instead of one removal each, so a
+        delete of 16,000 messages no longer lays the list out and paints it 16,000 times. A move that brings the message back into the view
+        (a combined view) is followed after."""
+        changes, self._leaving = self._leaving, list[Change]()
+        if not changes:
+            return
+        keys: list[str] = []
+        coming: list[Change] = []
+        for change in changes:
+            key = self._key(change.mailbox, change.message_id)
+            if str(change.kind) == "moved" and self._key(change.mailbox, change.new_message_id or change.message_id) == key and key in self._order and self._order.folder_of(key) == change.to_folder:
+                self._follow(change)  # the order counted the move already
+                continue
+            self._arriving.pop(key, None)
+            if self._placing is not None:
+                self._placing.pop(key, None)
+            if key in self._order and key not in keys:
+                keys.append(key)
+            if str(change.kind) == "moved":
+                coming.append(change)
+        self._take_out_runs(keys)
+        for change in coming:
+            self._bring_in(change)
 
     def _concerns(self, spec: ViewSpec, mailbox: str) -> bool:
         """Whether the view may show mail of this mailbox (a Favorites view shows every mailbox, or those of a group)."""
@@ -1207,6 +1257,63 @@ class MessageListModel(QAbstractTableModel):
             self._counts_changed()
             return
         self._take_out_many(self._order.keys_in(folder, mailbox if self._combined() else ""))
+
+    def _take_out_runs(self, keys: list[str]) -> None:
+        """Many messages left the view at once: every run of rows next to each other goes in one removal, bottom up (a group whose
+        messages all leave goes with its heading), so Qt moves the selection of the others by itself, cheaply, and the list is laid out
+        once per run. (One layout change for all of them made Qt check every selected row again: slower than removing them one by one.)"""
+        places = sorted(((position, key) for key in keys if (position := self._order.position(key)) >= 0), reverse=True)
+        leaving: dict[int, int] = {}
+        if self._group_counts is not None:
+            for position, _ in places:
+                number = self._group_index(position)
+                leaving[number] = leaving.get(number, 0) + 1
+        spans: list[tuple[int, int, int, str]] = []  # first and last row that go (-1: none, a folded group), position, key
+        for position, key in places:
+            if self._group_counts is None:
+                spans.append((position, position, position, key))
+                continue
+            group = next((found for found in self._groups if found.message_start <= position < found.message_start + found.count), None)
+            number = self._group_index(position)
+            if group is not None and leaving[number] >= self._group_counts[number][2]:
+                spans.append((group.display_start, group.display_start + group.shown, position, key))  # the whole group, heading too
+            elif group is None or group.folded:
+                spans.append((-1, -1, position, key))
+            else:
+                row = group.display_start + 1 + position - group.message_start
+                spans.append((row, row, position, key))
+        run: list[tuple[int, str]] = []
+        first = last = -1
+        headings_changed = False
+
+        def remove_run() -> None:
+            if not run:
+                return
+            self.beginRemoveRows(QModelIndex(), first, last)
+            for position, key in run:
+                self._drop(position, key, key in self._unread)
+            self._layout_groups()
+            self.endRemoveRows()
+            run.clear()
+
+        for start, end, position, key in spans:
+            if start < 0:  # in a folded group: no row goes, its heading's count changes
+                remove_run()
+                self._drop(position, key, key in self._unread)
+                self._layout_groups()
+                headings_changed = True
+            elif run and end >= first - 1:
+                first, last = min(first, start), max(last, end)
+                run.append((position, key))
+            else:
+                remove_run()
+                first, last = start, end
+                run.append((position, key))
+        remove_run()
+        if headings_changed:
+            for row in self.header_rows():
+                self.dataChanged.emit(self.index(row, 0), self.index(row, max(0, self.columnCount() - 1)))
+        self._counts_changed()
 
     def _take_out_many(self, keys: list[str]) -> None:
         """Many messages left the view at once: one layout change instead of one removal each (Qt's selection of the others stays)."""

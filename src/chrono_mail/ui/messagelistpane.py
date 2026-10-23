@@ -1,5 +1,5 @@
 import bisect
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from dataclasses import replace as changed
 
@@ -25,9 +25,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 2.4.329"
+__version__ = "messagelistpane.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: each_selected: the selected messages one by one, so a yes-or-no question stops at the first answer
+# v2.4.334: deferred: an action on a selection whose places are still on their way runs once they are in (W12b)
 # v2.4.329: selected_rows gives every selected message, loaded or not (Ctrl+A acted on 100 of 1,142, W12), read from the selection's
 #           ranges (W13); with_rows asks the rows a choice of marks or tags needs; rows_changed once per moment of changed rows (W13)
 # v2.2.314: Sorted by Send at in the Outbox too (a delayed send, B-21)
@@ -110,6 +112,10 @@ class MessageListPane(QObject):
         self._rows_check.setSingleShot(True)
         self._rows_check.timeout.connect(self.rows_changed)
         self.model.dataChanged.connect(self._rows_check.start)
+        self._after_placed: list[Callable[[], None]] = []  # actions waiting for the rest of a large view's order (W12b)
+        self.model.placed.connect(self._placed)
+        self.model.placed.connect(self._rows_check.start)  # the Archive or Unarchive label counts every selected message then
+        self.model.modelReset.connect(self._after_placed.clear)  # another view: what was selected is gone, and its actions with it
         self.model.rearranged.connect(self._show_current_row)
         self._to_select: list[str] = []  # messages Undo brought back, selected as they take their place in the list
         for placed in (self.model.rowsInserted, self.model.rearranged, self.model.loaded):
@@ -346,7 +352,10 @@ class MessageListPane(QObject):
     def selected_rows(self) -> list[SelectedMessage]:
         """The messages selected now, every one of them, also those whose rows have not come into view yet (Ctrl+A on a large folder; W12),
         without those that have an action under way (they get no second one)."""
-        chosen: list[SelectedMessage] = []
+        return list(self.each_selected())
+
+    def each_selected(self) -> Iterator[SelectedMessage]:
+        """The selected messages one by one, for a question that may stop at the first answer (is every one archived?)."""
         for list_row in self._selected_list_rows():
             place = self.model.place_at(list_row)
             if place is None:
@@ -354,8 +363,21 @@ class MessageListPane(QObject):
             key, folder, row = place
             mailbox, message_id = split_key(key)
             if message_id not in self.model.pending:
-                chosen.append(SelectedMessage(key, mailbox, folder, message_id, row))
-        return chosen
+                yield SelectedMessage(key, mailbox, folder, message_id, row)
+
+    def deferred(self, again: Callable[[], None]) -> bool:
+        """True when the selection holds messages whose places are still on their way (Ctrl+A just after a large folder opened: the list
+        knows its first 100 for a moment): the action runs again, on every selected message, once they are in (W12b). Qt keeps the
+        selection meanwhile."""
+        if self.model.complete or all(self.model.place_at(row) is not None or self.model.is_header(row) for row in self._selected_list_rows()):
+            return False
+        self._after_placed.append(again)
+        return True
+
+    def _placed(self) -> None:
+        waiting, self._after_placed = self._after_placed, list[Callable[[], None]]()
+        for again in waiting:
+            again()
 
     def with_rows(self, chosen: list[SelectedMessage], act: Callable[[list[MessageRow]], None]) -> None:
         """Act on the rows of these messages, for a choice that needs their marks or tags: the rows not loaded yet are asked first, so the

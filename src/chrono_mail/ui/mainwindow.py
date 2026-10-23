@@ -58,11 +58,14 @@ from chrono_mail.ui.sendnotices import SendNotices
 from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.4.332"
+__version__ = "mainwindow.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the Archive or Unarchive label stops at the first selected message that is not archived
+# v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.332: Exit asks about a running backup or restore last, so its promise holds (W3); Restore a backup… from the first-account window (W2)
 # v2.4.329: the Archive or Unarchive label follows rows_changed: once per moment, not once per changed row (W13)
 # v2.4.325: after a restore that brought the window's settings: taken in at once as Settings OK does, every folder's columns read again,
@@ -898,7 +901,7 @@ class MainWindow(QMainWindow):
         """The changes that wait for the servers, counted on the right of the status line while there are any (D-194); the Mail entry of the
         sync conflicts; the waiting mark in the message list."""
         count = self.sync_marks.waiting_count
-        self.waiting_label.setText(f"{count} change(s) wait for the server")
+        self.waiting_label.setText(f"Waiting for the server: {counted(count, 'change')}")
         self.waiting_label.setVisible(count > 0)
         self._show_mail_conflicts()
         self.list_view.viewport().update()
@@ -1261,7 +1264,7 @@ class MainWindow(QMainWindow):
 
     def _show_archive_action(self, *_: object) -> None:
         """The Archive button, key and menu item are Unarchive when every selected message is archived, wherever they are shown (D-101)."""
-        archived = self.mail_state.all_archived(self.messages.selected_rows())
+        archived = self.mail_state.all_archived(self.messages.each_selected())  # stops at the first that is not archived
         self.act_archive.setText("Unarchive" if archived else "Archive")
         self.act_archive.setIconText("Unarchive" if archived else "Archive")
         self.act_archive.setIcon(theme_icon("archive-extract" if archived else "archive-insert"))

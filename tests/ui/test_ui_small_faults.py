@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait, world  # noqa: F401 - world is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_small_faults.py 2.4.332"
+__version__ = "test_ui_small_faults.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: New works while the indexes are rebuilt after a restore (W9b)
 # v2.4.332: Initial (the Windows computer's W9, W3, W2): New while no folder is selected; Exit asks about a running backup last; Restore a
 #           backup… in the first-account window
 
@@ -25,6 +26,24 @@ def test_new_opens_a_message_window_while_no_folder_is_selected(world: World, qt
     world.window.composing.new_message()
     assert len(world.window.composing.composers) == 1
     world.window.composing.composers[0].close()
+
+
+def test_new_works_while_the_indexes_are_rebuilt_after_a_restore(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """W9b: after a restore on a new computer the window learned its accounts only after the index rebuild, so New did nothing for 9 s."""
+    window = world.window
+    window.mail_state.set_accounts([])  # a new computer: the window knows no account yet
+    window.mail_state.view = CurrentView()
+    rebuilding: list[Callable[[], None]] = []
+
+    def rebuild(then: Callable[[], None]) -> None:
+        rebuilding.append(then)  # the rebuild runs and has not ended
+
+    monkeypatch.setattr(window.rebuilds, "start", rebuild)
+    window._after_restore(False)  # noqa: SLF001 - what the Restore window's end calls
+    wait(qtbot, lambda: bool(rebuilding))
+    window.composing.new_message()
+    wait(qtbot, lambda: len(window.composing.composers) == 1)  # the engine is asked for the accounts the window does not know yet
+    window.composing.composers[0].close()
 
 
 @pytest.mark.parametrize("outbox_answer", [False, True])

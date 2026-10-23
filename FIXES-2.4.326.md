@@ -2,7 +2,7 @@
 
 The inventory of every problem the Windows computer's full test of 2.0.296 to 2.4.326 found (its private report `REPORT-2.4.326.md` and log `TESTLOG-2.4.326.md`, W-numbers and log sections kept), each cause checked in the code on 2026-10-23, and the plan to fix them all. Read after STATUS.md while this work is open. Each phase is one version with its own changelist and Proceed; update the Status lines and the Done log as phases land.
 
-**Now:** all seven phases done (2.4.327 to 2.4.333, the owner's one Proceed for all phases); next: the Windows computer pulls and checks every fix. Still open: S1, S2 (later), and a live check of W7 on the real servers.
+**Now:** the Windows computer's check of 2.4.333 (its REPORT-2.4.333.md) found four fixes partial; all four done in 2.4.334, with the speed of very large folders and the names of damaged messages; next: the Windows computer checks 2.4.334. Still open: S1, S2 (later).
 
 ## 1. The inventory, by category
 
@@ -108,4 +108,18 @@ Each phase: changelist, Proceed, the related tests (found by grep) plus a new te
 - 2.4.331 phase 5 (W10, W11, W11b): 14 Windows types asked about first; device names and direction marks made safe.
 - 2.4.332 phase 6 (W9, W3, W2; R1 checked): New without a selected folder; the backup question last at Exit; Restore a backup… in the first-account window.
 - 2.4.333 phase 7 (F1 to F3, D-246): every count written one way; the demo builder's texts.
+
+## 6. The check of 2.4.333 and 2.4.334
+
+The Windows computer's REPORT-2.4.333.md: W6, W6b, W1, W5, W4, R2, W13, W7 (live, both servers), W10, W11b, W3, W2, F2 and W9 at start fixed as checked; four partial, all done in 2.4.334:
+
+| # | What was left | Cause | Status |
+|---|---|---|---|
+| W12b | Ctrl+A in the first 0.4-1.6 s after a large folder opened acted on 100 | the list knows its first 100 messages until the rest of the order arrives; the actions took only what had a place | Done 2.4.334: an action whose selection holds messages not placed yet waits for the rest of the order (Qt keeps the selection), then takes them all |
+| W9b | New did nothing during the index rebuild after a restore | the window learns its accounts only after the rebuild | Done 2.4.334: New asks the engine for the accounts while the window does not know them (reading them earlier for the whole window made the check after the rebuild a second check at start: rejected) |
+| W11c | CONIN$, CONOUT$, COM/LPT with ¹ ² ³ still devices | missing from the list | Done 2.4.334 |
+| F1b | ten "(s)" texts | only message, item, folder and account were searched | Done 2.4.334 |
+| big | 15,927 messages: rows left about 78 per second, the window slow | every fact removed one row (the list laid out and painted again) and recounted the folder list | Done 2.4.334: facts that take messages out right after another go together, ten times a second, per run of neighbouring rows; the folder numbers likewise; the first of a quiet moment at once. Measured here: 16,000 deleted 81 s, longest pause 1.7 s -> 23 s, 0.55 s; 4,000: 6.8 s, 1.7 s -> 5.2-6.9 s, 0.19 s. Ctrl+A here 0.18 s for 16,000 (the 4 s on Windows to measure again there) |
+| note 3 | the damaged message was only counted | | Done 2.4.334: "1 message in Inbox of Work" (folder or calendar and account) |
+| note 1 | `mail_account_ids` defined twice | not so: one definition | No change |
 

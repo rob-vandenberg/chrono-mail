@@ -40,11 +40,13 @@ from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.toolbar import view_button
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 1.9.275"
+__version__ = "calendarview.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the last "(s)" texts counted one way (F1b)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: every engine call typed
 # v1.1.245: The error line is the shared one of the sections (PimPage._failed, R-07)
@@ -363,7 +365,7 @@ class CalendarPage(PimPage):
                 return
             self.entries = self._coloured(layout.entries_from(list(result.events), self.zone))
             self._show_data()
-            self.status(f"{len(self.entries)} event(s)" + (f"; {CUT_WARNING}" if result.cut else ""))
+            self.status(counted(len(self.entries), "event") + (f"; {CUT_WARNING}" if result.cut else ""))
             self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
 
         parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), calendars=tuple(sorted(visible)), text=self.search.text().strip())

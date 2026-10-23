@@ -13,12 +13,12 @@ from chrono_mail.engine.commands_sidebar import (
     GroupParameters, GroupRenameParameters, PinnedParameters, PinParameters, RenamePinParameters, ReorderParameters, VisibleParameters,
 )
 from chrono_mail.engine.registry import TypedCommand
-from chrono_mail.ui.backend import AnyStep
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
 from chrono_mail.engine.commands_folders import FOLDER_LIST, FolderInfo
 from chrono_mail.engine.commands_sidebar import EMPTY_SIDEBAR, SIDEBAR_SHOW, SidebarInfo
-from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.backend import AnyStep, Backend
+from chrono_mail.ui.burst import Burst
 from chrono_mail.ui.currentview import EntryKind
 from chrono_mail.ui.deletekey import DeleteKey
 from chrono_mail.ui.foldertree import FolderTree
@@ -37,9 +37,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 2.0.300"
+__version__ = "folderpane.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the folder numbers of the facts of one moment are shown once (they laid the list out once per message)
 # v2.0.300: the Favorites menu lists only the favorites that can appear (Snoozed, Scheduled, Archive once a mailbox has them, D-234)
 # v2.0.299: a right-click in Favorites lists every standard favorite with a tick; a click shows or hides it (D-234); Show again and
 #           Hide from Favorites gone
@@ -85,6 +86,7 @@ class FolderPane(QObject):
         self._tags: MailTags = tags
         self._messages: MessageListPane = messages
         self._parent: QWidget = parent
+        self._numbers: Burst = Burst(self._show_numbers, self)  # the numbers of a large delete go on the list ten times a second, not per message
         self._round: Callable[[], None] | None = None  # while the folder lists load: what a tags answer calls instead of a lay-out
         self.recounting: set[str] = set()  # mailboxes whose folders are being counted again after a change from outside
         self.recount_again: set[str] = set()
@@ -496,6 +498,9 @@ class FolderPane(QObject):
             for number, info in enumerate(infos):
                 if info.path == found.folder:
                     infos[number] = FolderInfo(info.path, info.role, found.messages, found.unread)
+        self._numbers.ask()
+
+    def _show_numbers(self) -> None:
         self.model.recount(self._state.folders)
         self.numbers_changed.emit()
 

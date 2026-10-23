@@ -16,9 +16,10 @@ from chrono_mail.sync.davitems import CONFLICT, WAITING, ItemGateway, Outcome, S
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim_server.py 2.4.333"
+__version__ = "pim_server.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.1.225: Initial: items of a server's collections saved, deleted and moved on the server first (R-23, D-194)
 
@@ -87,7 +88,7 @@ class ItemWriter:
     def tell(self) -> None:
         """What the person should know after the command: changes waiting for the server, conflicts (told once each, as facts too)."""
         if self.waiting:
-            self.engine.notice(f"The server of {account_name(self.engine, self.account)} could not be reached: {self.waiting} change(s) go there at the next synchronisation")
+            self.engine.notice(f"The server of {account_name(self.engine, self.account)} could not be reached: {counted(self.waiting, 'change')} waiting, sent at the next synchronisation")
             self.engine.report(Change("waiting_changed", self.account))
         if self.conflicts:
             self.engine.notice(f"{counted(self.conflicts, 'item')} of {account_name(self.engine, self.account)} were changed on the server meanwhile: see Settings > Sync conflicts")
