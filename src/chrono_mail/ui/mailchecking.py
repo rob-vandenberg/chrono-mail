@@ -23,9 +23,10 @@ from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 2.3.315"
+__version__ = "mailchecking.py 2.3.316"
 
 # --- Version history ----------------------------------------------------
+# v2.3.316: start_refresh: the refresh at start does its own choice of Settings > General (the owner)
 # v2.3.315: Send only: a scheduled refresh only sends the Outbox (the calendars stay in step), and the server's "new mail" fetches nothing (the owner)
 # v2.2.314: a refresh the person did not click (the timers, the check at start and after a rebuild) sends the Outbox first, as Refresh does,
 #           unless Settings > General says Receive only; the server's "new mail" only fetches; send_outbox can send one message (B-21)
@@ -222,14 +223,18 @@ class MailChecking(QObject):
     # --- send and receive ----------------------------------------------------------------------------------------------
 
     def check_mail(self) -> None:
-        """The check at start and after an index rebuild: a refresh the person did not click."""
+        """The check after an index rebuild, an import or a first account: an automatic refresh the person did not click."""
         self.scheduled_refresh(None)
 
-    def scheduled_refresh(self, only: set[str] | None, also_calendars: set[str] | None = None) -> None:
+    def start_refresh(self) -> None:
+        """The refresh when the program starts: what Settings > General chose for it."""
+        self.scheduled_refresh(None, how=self._prefs.read().start_refresh)
+
+    def scheduled_refresh(self, only: set[str] | None, also_calendars: set[str] | None = None, how: str | None = None) -> None:
         """A refresh the person did not click: Send and Receive, exactly as Refresh (the Outbox of these accounts first, then their mail),
         or only receive, or only send, as Settings > General says (B-21; Send only keeps the calendars in step, they are no mail). It never brings
         the Operations window forward."""
-        how = self._prefs.read().scheduled_refresh
+        how = how or self._prefs.read().scheduled_refresh
         if how == "send":
             self.sync_calendars(None if only is None else only | (also_calendars or set()))
             if not (self.importing or self.sending):

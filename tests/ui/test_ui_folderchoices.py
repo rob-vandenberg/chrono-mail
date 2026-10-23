@@ -10,9 +10,10 @@ from tests.ui.test_ui_push import Imap, build
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_folderchoices.py 1.9.271"
+__version__ = "test_ui_folderchoices.py 2.3.316"
 
 # --- Version history ----------------------------------------------------
+# v2.3.316: the own-interval timer test lets the timers only receive (since 2.2.314 they send first by default)
 # v1.9.271: The account editor's changes are typed (R-19)
 # v1.9.265: the general timer also passes the accounts of calendars only (since 1.1.217): the stand-in takes it (R-44)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
@@ -83,6 +84,7 @@ def test_unchanged_folders_save_nothing_and_a_check_interval_is_saved(world: Wor
 
 
 def test_an_account_with_its_own_interval_has_its_own_timer(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    world.window.settings.setValue("scheduled_refresh", "receive")  # which accounts each timer checks; sending first is tested in test_ui_delayed_send
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
     assert world.window.checking.account_timers == {}  # noqa: SLF001

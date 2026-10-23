@@ -19,9 +19,10 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 1.9.271"
+__version__ = "test_ui_import.py 2.3.316"
 
 # --- Version history ----------------------------------------------------
+# v2.3.316: the one refresh after an import sends the Outbox first, as the automatic refresh does (D-030, since 2.2.314)
 # v1.9.271: The import window's sources are typed (R-19)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v0.5.151: While an import runs no mail is checked and Refresh is off; one check when it is done
@@ -273,6 +274,6 @@ def test_no_mail_is_checked_while_an_import_runs_and_once_when_it_is_done(world:
     window.checking.import_running(False)
     assert window.act_refresh.isEnabled()
     window._after_import()  # what the Import window calls when it is done
-    wait(qtbot, lambda: asked == ["mail.fetch"])
+    wait(qtbot, lambda: asked == ["mail.send-outbox", "mail.fetch"])  # one refresh after it, Send and Receive as the automatic refresh says (D-030)
     wait(qtbot, lambda: not window.checking.checking and world.backend._pending == {})
     assert window.act_refresh.isEnabled()

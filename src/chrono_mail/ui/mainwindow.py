@@ -58,9 +58,10 @@ from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.3.315"
+__version__ = "mainwindow.py 2.3.316"
 
 # --- Version history ----------------------------------------------------
+# v2.3.316: the refresh at start does its own choice (start_refresh, the owner)
 # v2.3.315: the menu item is "Refresh automatically" (it may only send, the owner)
 # v2.2.314: the notices of delayed sends (SendNotices, B-21); quitting with messages in the Outbox asks first, a countdown under way ends first (B-20)
 # v2.2.313: Undo (Ctrl+Z) and Redo (Ctrl+Y, Ctrl+Shift+Z) of the actions on mail, at the top of Menu > Message, saying what they would do (B-18)
@@ -1085,7 +1086,7 @@ class MainWindow(QMainWindow):
     def start(self) -> None:
         """Called once the window is shown: make sure the key is there, load the accounts (or ask for the
         first one), then check for mail."""
-        check = self.checking.check_mail if self.prefs.read().check_on_start else None
+        check = self.checking.start_refresh if self.prefs.read().check_on_start else None
         self.messages.load_contact_addresses()
         self.reading.forget_opened_copies()  # the copies of attachments opened in an earlier run go (D-236)
 
