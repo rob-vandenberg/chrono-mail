@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-236 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-237 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-237**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-238**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -39,7 +39,8 @@ The design rules as they stand now, by topic, one short entry each. Every number
 
 - **D-018** Layer check with import-linter (`tests/test_layers.py`); siblings in a layer do not import each other; only `ui` imports PySide6.
 - **D-019** setuptools, src layout; a test proves the strict preset is active.
-- **D-205** No checks on GitHub; Pyrefly (Linux and win32), the layer check and the related tests run here before every push.
+- **D-205** No checks on GitHub; Pyrefly (Linux and win32), the layer check and the related tests run here before every push. SonarQube Cloud reads the code after a push: D-237.
+- **D-237** (the owner) **SonarQube Cloud's automatic analysis is an outside review**, read now and then; never a gate, a push never waits for it. Only real findings are fixed (through a changelist); deliberate or wrong ones are marked Accepted or False positive on its site. Settings in `.sonarcloud.properties`. Why: it sees security and bug patterns Pyrefly does not. Rejected: GitHub Actions (D-123), Gitar.
 - **D-223** (R-45, the owner) **Every test is unambiguous**: its result never depends on order or timing (AGENTS.md 4.5.5). Windows are deleted and look settings restored after each window test; an unanswered message box fails the test; a test waits for what it checks; fixed parametrized names; 20 s limit per test. Proof: `tests/run_isolated.py`, `tests/runorder.py`.
 - **D-020** No mail server on the development machine: protocol tests run live (`-m live`) against the DirectAdmin and Kerio test servers; the default run is offline.
 

@@ -4,9 +4,10 @@ from chrono_mail.index import MAXIMUM_BODY_CHARACTERS, html_to_text, searchable_
 from chrono_mail.index.text import clean_preview
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_text.py 0.0.14"
+__version__ = "test_index_text.py 2.0.307"
 
 # --- Version history ----------------------------------------------------
+# v2.0.307: A long run of spaces after a bracket is cleaned at once (D-237)
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Changes for the user interface (see DEVLOG.md)
 # v0.0.8: Initial index text tests
@@ -71,3 +72,10 @@ def test_clean_preview_is_cut_after_cleaning_and_never_raises() -> None:
     assert clean_preview("https://a.b/" + "x" * 100000 + " visible") == "visible"  # a huge address is removed, the text after it stays
     for hostile in ["\x00" * 50, "-" * 100000, "[" * 100000, "http://" * 5000, "\ud800", "<<<<>>>>" * 1000]:
         assert isinstance(clean_preview(hostile), str)
+
+
+def test_clean_preview_takes_no_longer_for_a_long_run_of_spaces_after_a_bracket() -> None:
+    # The pattern for link leftovers backtracked over the spaces: a million took minutes (the 20 s limit stops it, D-237)
+    assert clean_preview("[" + " " * 1_000_000 + "text") == "text"
+    assert clean_preview("<" + " " * 1_000_000 + "text") == "text"
+    assert clean_preview("[ < > ] one [<> ] two [ ] three") == "one two three"
