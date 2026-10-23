@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- chrono-mail.metainfo.xml 2.3.318
+     v2.3.318: Initial: the app information software centres (Discover, GNOME Software) need to list Chrono Mail as an
+     installed program, with Uninstall. Installed in /usr/share/metainfo by packaging/nfpm.yaml. -->
+<component type="desktop-application">
+  <id>io.github.rob_vandenberg.chrono_mail</id>
+  <name>Chrono Mail</name>
+  <summary>Your e-mail, calendar, contacts and tasks together</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <developer id="io.github.rob_vandenberg">
+    <name>Rob Vandenberg</name>
+  </developer>
+  <description>
+    <p>
+      Chrono Mail is a free e-mail program for your computer. It keeps your mail, your calendar, your contacts and
+      your tasks together in one window, and works with the mail account you already have.
+    </p>
+    <p>
+      Your mail is stored safely on your computer, locked so that only you can read it, and Chrono Mail stays quick
+      even with hundreds of thousands of messages. You can keep working without an internet connection: what you do is
+      sent as soon as you are back online.
+    </p>
+  </description>
+  <launchable type="desktop-id">chrono-mail.desktop</launchable>
+  <icon type="stock">chrono-mail</icon>
+  <categories>
+    <category>Network</category>
+    <category>Email</category>
+  </categories>
+  <keywords>
+    <keyword>mail</keyword>
+    <keyword>e-mail</keyword>
+    <keyword>calendar</keyword>
+    <keyword>contacts</keyword>
+  </keywords>
+  <url type="homepage">https://github.com/rob-vandenberg/chrono-mail</url>
+  <url type="bugtracker">https://github.com/rob-vandenberg/chrono-mail/issues</url>
+  <content_rating type="oars-1.1"/>
+  <provides>
+    <binary>chrono-mail</binary>
+  </provides>
+</component>

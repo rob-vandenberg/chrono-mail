@@ -39,6 +39,15 @@ packs that folder into the .deb and the .rpm; on Windows **Inno Setup** makes th
 5. **Linux: build on an old system.** A program built on a new Linux does not run on an older one. The Linux build runs
    in an Ubuntu 22.04 container (podman). PySide6 6.12 itself needs glibc 2.34, so 22.04 (glibc 2.35) is about the oldest
    possible; the packages run on Ubuntu 22.04+, Debian 12+, Fedora 36+, Linux Mint 21+, openSUSE with glibc 2.35+.
+   **The old system brings old libraries, and the package always uses the copies it carries, never the system's.**
+   SQLite is one of them: Ubuntu 22.04 has 3.37.2, the index needs 3.43 (D-025), so every installed program up to
+   2.3.317 failed to open a mailbox ("SQLite 3.37.2 is too old"). Since 2.3.318 `build_in_container.sh` builds the
+   official SQLite source of a fixed version (its SHA3-256 from sqlite.org/download.html checked), and the build stops
+   when the program folder carries an SQLite older than the program needs. A newer SQLite: change its address and
+   checksum there.
+   **The app information** (`packaging/chrono-mail.metainfo.xml`, AppStream, installed in `/usr/share/metainfo`):
+   without it Discover and GNOME Software do not list Chrono Mail under Installed, so it cannot be uninstalled there
+   (the owner on Fedora, 2.3.317). Check it with `appstreamcli validate --no-net packaging/chrono-mail.metainfo.xml`.
 6. **The program's own version.** The packaged program has no `pyproject.toml` next to it, so it learns its version
    from its package information; Nuitka includes that only when told: `--include-distribution-metadata=chrono-mail`
    (both build scripts). Without it the About window says "version unknown" (seen on Windows in 0.5.130).

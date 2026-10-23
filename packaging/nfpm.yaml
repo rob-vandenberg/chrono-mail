@@ -1,6 +1,7 @@
 # --- Version ------------------------------------------------------------
-# nfpm.yaml 0.5.127
+# nfpm.yaml 2.3.318
 # --- Version history ----------------------------------------------------
+# v2.3.318: The app information (chrono-mail.metainfo.xml), so that software centres list Chrono Mail as installed, with Uninstall
 # v0.5.127: Initial: the .deb and .rpm of Chrono Mail, made by packaging/package_linux.sh
 #
 # The program folder (build/linux/chrono-mail.dist, made by packaging/build_linux.sh) carries its own Python and Qt; the
@@ -29,6 +30,8 @@ contents:
     type: symlink
   - src: packaging/chrono-mail.desktop
     dst: /usr/share/applications/chrono-mail.desktop
+  - src: packaging/chrono-mail.metainfo.xml
+    dst: /usr/share/metainfo/io.github.rob_vandenberg.chrono_mail.metainfo.xml
   - src: src/chrono_mail/ui/resources/chrono-mail.svg
     dst: /usr/share/icons/hicolor/scalable/apps/chrono-mail.svg
   - src: LICENSE

@@ -294,4 +294,4 @@ The design rules as they stand now, by topic, one short entry each. Every number
 
 ## 14. Packaging
 
-- **D-123** Nuitka 4.2.2 standalone (4.3 crashes PySide6). Linux .deb and .rpm by nFPM in an Ubuntu 22.04 container; Windows an Inno Setup installer built on the Windows computer. Installers only for milestones, after the owner tested them (`./build-release.sh`). Rejected: Flatpak, Snap, PyInstaller, GitHub Actions. See `packaging/PACKAGING.md`.
+- **D-123** Nuitka 4.2.2 standalone (4.3 crashes PySide6). Linux .deb and .rpm by nFPM in an Ubuntu 22.04 container; Windows an Inno Setup installer built on the Windows computer. Installers only for milestones, after the owner tested them (`./build-release.sh`). The installers carry their own SQLite, built from the official source (fixed version, checksum checked); the build stops when it is older than the index needs. They carry the AppStream app information, so software centres list Chrono Mail as installed, with Uninstall. Rejected: Flatpak, Snap, PyInstaller, GitHub Actions. See `packaging/PACKAGING.md`.
