@@ -9,7 +9,7 @@ from chrono_mail.engine.changes import Change, MessageRow
 from chrono_mail.engine.commands_addressbook import CONTACT_ADDRESSES, AddressesParameters, ContactAddress
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columnfit import MINIMUM_ICON
-from chrono_mail.ui.columns import SAVED_LABEL, SCHEDULED_FOLDER_PATH
+from chrono_mail.ui.columns import SAVED_LABEL, SEND_AT_FOLDERS
 from chrono_mail.ui.columnsetup import STARTING, folder_type
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.delegate import ColumnDelegate, MessageDelegate
@@ -23,9 +23,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 2.2.313"
+__version__ = "messagelistpane.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: Sorted by Send at in the Outbox too (a delayed send, B-21)
 # v2.2.313: select_messages: the messages Undo brought back are selected where the list shows them, also those placed after the answer (B-18)
 # v2.0.280: the sort is the open folder's (use_sort, given by its setup, B-16); Sent (Saved in Drafts) in the Sorted by menu
 # v1.9.276: the count line says "1 message" (it said "1 messages")
@@ -237,7 +238,7 @@ class MessageListPane(QObject):
     def _sort_label(self, value: str, label: str) -> str:
         if value == "sent" and folder_type(self._state.view) == "drafts":
             return SAVED_LABEL
-        return "Send at" if value == "snoozed" and self._state.view.folder == SCHEDULED_FOLDER_PATH and self._state.in_timed() else label
+        return "Send at" if value == "snoozed" and self._state.view.folder in SEND_AT_FOLDERS and self._state.in_timed() else label
 
     def effective_sort(self) -> str:
         """The chosen sort order; sorting by Snoozed until (Send at) is sorting by Received outside Snoozed and Scheduled."""

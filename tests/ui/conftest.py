@@ -8,15 +8,16 @@ from PySide6.QtCore import QCoreApplication, QEvent, Qt
 from PySide6.QtGui import QFont, QPalette
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
-from chrono_mail.ui import appearance, colours, scale
+from chrono_mail.ui import appearance, colours, scale, sendnotices
 from tests.ui.world import dialogs, world
 
 __all__ = ["dialogs", "world"]  # fixtures, found by pytest in this directory
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 2.0.293"
+__version__ = "conftest.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: the question on Quit while messages wait in the Outbox (a box of its own, B-20) is never shown for real either
 # v2.0.293: the window tests on Windows use Segoe UI 9 pt, the real program's font there, not Qt's "Sans Serif" (the Windows computer's report of 2.0.287)
 # v1.9.266: R-45: every window test starts as the first test of a run does: the colours, sizes and style of the program are put
 #           back, every window a test left is deleted (an old message window's autosave fired in a later test), and a message
@@ -94,9 +95,18 @@ def no_box_waits_for_a_click() -> Generator[None]:
     real = {name: QMessageBox.__dict__[name] for name in ("question", "warning", "information", "critical")}
     for name in real:
         setattr(QMessageBox, name, _unanswered_box(name))
+    real_quit_question = sendnotices.quit_question
+    sendnotices.quit_question = _unanswered_quit_question
     yield
     for name, function in real.items():
         setattr(QMessageBox, name, function)
+    sendnotices.quit_question = real_quit_question
+
+
+def _unanswered_quit_question(parent: object, count: int) -> tuple[str, bool]:
+    """The question on Quit (B-20) that no test answers: noted, and answered Quit anyway (nothing is sent)."""
+    _unanswered.shown.append(f"quit question: {count} message(s) wait in the Outbox")
+    return "quit", False
 
 
 @pytest.fixture(autouse=True)

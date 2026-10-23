@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-240 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-241 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-241**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-242**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -87,9 +87,10 @@ The design rules as they stand now, by topic, one short entry each. Every number
 
 - **D-027** Own POP3 client with caps (line 1 MiB, message 256 MiB, 1,000,000 messages, timeouts); STLS never skipped. Order: retrieve, store and verify, log with fsync, only then DELE (committed by QUIT). Deletion is blocked when the store looks damaged or empty, or more than half of at least 10 are missing.
 - **D-036** "Leave all mail on the server" is the default.
-- **D-028** SMTP on `smtplib` with a capped reply reader; STARTTLS never falls back. Order: build, store a verified Outbox copy, send, move to Sent. A failure stays in the Outbox and is never resent by itself.
+- **D-028** SMTP on `smtplib` with a capped reply reader; STARTTLS never falls back. Order: build, store a verified Outbox copy, send, move to Sent. A failure stays in the Outbox and is tried again at every refresh that sends (the owner, 2.2.314).
 - **D-088** Our Outbox and Sent copies keep Bcc; it is stripped just before SMTP. Refresh = Send and Receive All, with a menu. Forward as attachment attaches the original unchanged.
 - **D-037** A draft is a message in Drafts. Saving stores the new version before removing the old; autosave every 30 s; the window stops autosaving the moment the engine has the message. A failed autosave shows in red on the window's bottom line, never in a box (a failed Save asked for also shows the box).
+- **D-241** (B-21, B-20, the owner) **Delaying a send**, two independent ticks in Settings > General: a delay of N seconds (the message waits in the Outbox with a "not before" time in its properties file, a notice at the bottom left offers Send now and Cancel; Cancel opens it again as a message not saved yet), and "until the next refresh". Every send of the Outbox keeps the "not before" time; one message at a time is sent, never twice. Quitting with mail in the Outbox asks first, with Do not warn again.
 - **D-055** Send later keeps the message in Scheduled (D-172); at its time it is rebuilt, a verified copy stored, the original removed, then sent. Snooze writes the record in the properties file before the move to Snoozed. The program must be running.
 - **D-169** (R-01) The index copies each scheduled message's send time, so the minute check opens only due messages. An unreadable scheduled message is never sent and told once per run; a series ends only when its message is gone or done, never because a read failed. Rejected: a separate schedule file (a second truth).
 - **D-080** Repeating sends at start + k × interval (no drift); missed sends are not made up; the timetable moves on before sending (never two sends); three tries.
@@ -157,7 +158,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 
 - **D-221** (R-17) **The main window is made of parts with one job each; every piece of data has one owner** (folder pane, message list pane, columns, filters and search, actions, tags, reading pane, composing, mail checking, status line; shared data in `MailState`). Parts talk by signals and never reach into the window. Guard: `tests/ui/test_ui_parts.py`. Rejected: mixins.
 - **D-222** (R-44) Laying out a list or following a fact never asks for more than what changed (Tasks fetch only rows in view; collection facts carry palette and read-only). The count line is cut with "…" so the window can reach 768 px.
-- **D-030** Three panes; the list fetches 100 rows at a time; Delete moves to Trash (in Trash it asks); mail checked at start and every 5 min.
+- **D-030** Three panes; the list fetches 100 rows at a time; Delete moves to Trash (in Trash it asks). Every refresh is Send and Receive, the scheduled ones (start, timers) too, unless Settings > General says Receive only for them (the owner, 2.2.314); the server's "new mail" only fetches.
 - **D-032** Text from mail is always valid Unicode (invalid bytes become U+FFFD). The composer splits addresses itself.
 - **D-033** The preview strips URLs and link leftovers. Avatars: 72 hues, white initials at 4.7:1 or better. Icon: envelope with a clock.
 - **D-039** A conversation = the same thread key (References, In-Reply-To), no subject fallback; off by default, plain folder views only.

@@ -10,9 +10,11 @@ from chrono_mail.core import StorageError
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "properties.py 1.1.248"
+__version__ = "properties.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: send_not_before (a message in the Outbox may not be sent before this moment) and replies_to (the message a reply answers,
+#           marked as replied once it is really sent)
 # v1.1.248: readable and tags take the listing of the properties folder made earlier (present), so a check lists it once (R-09)
 # v1.1.206: Initial version: a message's properties that cannot be kept in the message itself (its tags, when a snoozed message comes
 #           back and from where, where an archived message came from) in one small file per message, properties/<store id>.json in its
@@ -56,9 +58,14 @@ class Properties:
     snoozed_until: int | None = None  # a snoozed message comes back at this moment (seconds since 1970)
     snoozed_from: str | None = None  # ... to this folder ("Inbox", "Projects/2026")
     archived_from: str | None = None  # an archived message came from this folder
+    send_not_before: int | None = None  # a message in the Outbox is not sent before this moment (seconds since 1970): its countdown runs
+    replies_to: str | None = None  # a reply waiting in the Outbox: the message it answers ("Inbox/<store id>"), marked as replied once it is sent
 
     def empty(self) -> bool:
-        return not self.tags and self.snoozed_until is None and self.snoozed_from is None and self.archived_from is None
+        return (
+            not self.tags and self.snoozed_until is None and self.snoozed_from is None and self.archived_from is None and self.send_not_before is None
+            and self.replies_to is None
+        )
 
 
 def _folder_text(value: object) -> str | None:
@@ -76,19 +83,25 @@ def _from_data(data: object) -> tuple[Properties, dict[str, object]]:
     whole: dict[str, object] = {str(key): value for key, value in data.items()}
     tags = whole.get("tags", [])
     until = whole.get("snoozed_until")
-    if not isinstance(tags, list) or (until is not None and (not isinstance(until, int) or isinstance(until, bool))):
+    not_before = whole.get("send_not_before")
+    if not isinstance(tags, list) or not all(moment is None or (isinstance(moment, int) and not isinstance(moment, bool)) for moment in (until, not_before)):
         raise ValueError("not a properties file")
     properties = Properties(
-        clean_tags([tag for tag in tags if isinstance(tag, str)]), until, _folder_text(whole.get("snoozed_from")), _folder_text(whole.get("archived_from")),
+        clean_tags([tag for tag in tags if isinstance(tag, str)]), until if isinstance(until, int) else None, _folder_text(whole.get("snoozed_from")),
+        _folder_text(whole.get("archived_from")), not_before if isinstance(not_before, int) else None, _folder_text(whole.get("replies_to")),
     )
     return properties, whole
 
 
 def _to_data(properties: Properties, whole: dict[str, object]) -> dict[str, object]:
-    data = {key: value for key, value in whole.items() if key not in ("tags", "snoozed_until", "snoozed_from", "archived_from")}
+    known = ("tags", "snoozed_until", "snoozed_from", "archived_from", "send_not_before", "replies_to")
+    data = {key: value for key, value in whole.items() if key not in known}
     if properties.tags:
         data["tags"] = list(properties.tags)
-    for key, value in (("snoozed_until", properties.snoozed_until), ("snoozed_from", properties.snoozed_from), ("archived_from", properties.archived_from)):
+    for key, value in (
+        ("snoozed_until", properties.snoozed_until), ("snoozed_from", properties.snoozed_from), ("archived_from", properties.archived_from),
+        ("send_not_before", properties.send_not_before), ("replies_to", properties.replies_to),
+    ):
         if value is not None:
             data[key] = value
     return data

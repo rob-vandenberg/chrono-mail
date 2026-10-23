@@ -33,9 +33,11 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 2.1.311"
+__version__ = "commands_mail.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: mail.send with delay_seconds or hold puts the message in the Outbox and sends nothing (B-21); a reply waiting in the Outbox
+#           notes the message it answers, marked as replied once it is really sent (also after a failed send)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: the junk filter: new Inbox mail goes through it before the rules (FetchResult.junked); a move into or out of Junk and a
 #           sent reply teach it (D-238)
@@ -387,6 +389,8 @@ class SendParameters:
     repeat_weeks: int = field(default=0, metadata=option("With send_at: send the message again every this many weeks"))
     repeat_days: int = field(default=0, metadata=option("With send_at: send the message again every this many days"))
     repeat_until: str | None = field(default=None, metadata=option("With a repeat: the local time after which nothing is sent any more (default: never)"))
+    delay_seconds: int = field(default=0, metadata=option("Wait in the Outbox this many seconds before it may be sent (Send now, or mail.send-outbox afterwards, sends it)"))
+    hold: bool = field(default=False, metadata=option("Keep it in the Outbox until the Outbox is sent next (Send and Receive, Send All)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,6 +402,7 @@ class SendResult:
     error: str | None
     warning: str | None
     scheduled: str | None = None  # when it will be sent, if it was not sent now
+    waiting: bool = False  # it waits in the Outbox (a delayed send): nothing was sent yet
 
 
 def kept_attachments(raw: bytes | None, positions: tuple[str, ...]) -> tuple[Attachment, ...]:
@@ -456,6 +461,44 @@ def outgoing_message(mailbox: Mailbox, parameters: SendParameters) -> OutgoingMe
     )
 
 
+MAXIMUM_DELAY_SECONDS: int = 999
+
+
+def _replies_to(parameters: SendParameters) -> str | None:
+    """A reply: the message it answers ("Inbox/<id>"), to be marked as replied once the reply is sent."""
+    if parameters.mark_replied and parameters.source_folder and parameters.source_message:
+        return f"{parameters.source_folder}/{_check_id(parameters.source_message)}"
+    return None
+
+
+def _note_replies_to(mailbox: Mailbox, reference: MessageRef, source: str | None) -> None:
+    try:
+        mailbox.store.properties.change(reference.store_id, lambda current: replace(current, replies_to=source))
+    except ChronoMailError:
+        pass  # the message is safe in the Outbox; only the replied mark of its original would be missed
+
+
+def _put_in_outbox(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, parameters: SendParameters) -> SendResult:
+    """A delayed send (B-21): a verified copy waits in the Outbox, with the moment before which it is not sent; nothing is sent here.
+    Send now or the end of its countdown sends it (mail.send-outbox with the message), else the next send of the Outbox does."""
+    if not 0 <= parameters.delay_seconds <= MAXIMUM_DELAY_SECONDS:
+        raise UsageError(f"A delay is 0 to {MAXIMUM_DELAY_SECONDS} seconds")
+    not_before = int(engine.clock()) + parameters.delay_seconds if parameters.delay_seconds else None
+    source = _replies_to(parameters)
+    with engine.outbox_lock:  # no send of the Outbox sees the message before its waiting time is written
+        reference = mailbox.deliver(OUTBOX, build_message(outgoing, draft=True), frozenset({MessageFlag.SEEN}))
+        if not_before is not None or source is not None:
+            mailbox.store.properties.change(reference.store_id, lambda current: replace(current, send_not_before=not_before, replies_to=source))
+    if not_before is not None:
+        mailbox.tell_changed(reference)  # the row shows when it may go
+    if parameters.replaces_folder and parameters.replaces_message:
+        try:
+            mailbox.delete(mailbox.reference(mailbox.folder(parameters.replaces_folder), _check_id(parameters.replaces_message)), permanent=True)
+        except ChronoMailError:
+            pass  # the Outbox copy holds the content now
+    return SendResult(False, reference.store_id, "/".join(OUTBOX), (), None, None, waiting=True)
+
+
 def _schedule(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, parameters: SendParameters) -> SendResult:
     """Keep the message in the Scheduled folder, marked with the time it is to be sent (mail.send-due sends it then)."""
     when = parse_when(str(parameters.send_at), engine.clock())
@@ -497,10 +540,14 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
             raise UsageError("Repeating needs the time of the first send (send_at)")
         if parameters.send_at:
             return _schedule(engine, mailbox, outgoing, parameters)
+        if parameters.delay_seconds or parameters.hold:
+            return _put_in_outbox(engine, mailbox, outgoing, parameters)
         outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings, outgoing=True))
         mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
         if outcome.sent:
             mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
+        elif _replies_to(parameters) is not None:  # sent again later from the Outbox: the original is marked then
+            _note_replies_to(mailbox, outcome.reference, _replies_to(parameters))
         if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
             try:
                 source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))

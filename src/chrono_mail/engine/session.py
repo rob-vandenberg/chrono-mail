@@ -28,9 +28,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 2.2.313"
+__version__ = "session.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: outbox_lock: a message is put in the Outbox with its waiting time, and checked and sent, one at a time (never sent twice, B-21)
 # v2.2.313: undo: the person's last actions on mail, for Undo and Redo while the program runs (B-18)
 # v2.1.308: junk: the junk filter's words, loaded once per session (D-238)
 # v2.0.281: IndexGate: commands hold the index they read, a new index replaces it only when none does (so the old one stays usable while
@@ -239,6 +240,7 @@ class Engine:
     _told_once_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     junk: JunkHolder = field(default_factory=JunkHolder, init=False, repr=False)  # the junk filter's words, loaded once (D-238)
     undo: UndoHistory = field(default_factory=UndoHistory, init=False, repr=False)  # what Undo and Redo can do, while the program runs (B-18)
+    outbox_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # one message at a time is put in, taken out or sent (B-21)
 
     def first_time(self, problem: str) -> bool:
         """True the first time this problem is named in this run of the program, False after that: a problem that is met

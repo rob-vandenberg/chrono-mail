@@ -9,9 +9,10 @@ from chrono_mail.protocols.smtp import Refusal, SmtpLimits, send_message
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "send.py 0.0.86"
+__version__ = "send.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: a failed send is tried again at the next send of the Outbox (the owner: every refresh sends and receives, D-028)
 # v0.0.86: The copy in the Outbox and in Sent keeps the Bcc recipients (only what goes to the server is without them); send_stored sends a message that waits in the Outbox
 # v0.0.35: Send later and snooze
 # v0.0.34: before_send hook
@@ -49,9 +50,9 @@ def send_and_file(
     """Build the message, keep a verified copy in the Outbox, send it, then move it to Sent. The stored copy keeps
     the Bcc recipients; what goes to the server is the same message without them.
 
-    A message that fails to send stays in the Outbox: it is never lost and never sent again by
-    itself (a crash after the server accepted it would otherwise send it twice). MessageFormatError
-    is raised, before anything is stored, for a message that cannot be built.
+    A message that fails to send stays in the Outbox: it is never lost, and it is tried again at the
+    next send of the Outbox (Send and Receive, D-028). MessageFormatError is raised, before anything
+    is stored, for a message that cannot be built.
     """
     raw = build_message(outgoing, draft=True)  # the Bcc header stays in our copy (Outbox, then Sent)
     recipients = envelope_recipients(outgoing)

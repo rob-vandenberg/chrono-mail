@@ -6,9 +6,10 @@ from chrono_mail.ui.columns import BY_ID, SCHEDULED_FOLDER_PATH, SNOOZED_COLUMN,
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 2.0.280"
+__version__ = "columnsetup.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: an Outbox starts with the Send at column (a delayed send shows when it goes, B-21)
 # v2.0.280: Columns per folder (B-16): the six kinds of folder, the columns and sort each kind starts with, which setup a view
 #           uses, the sort a folder falls back to when its sorted column goes, the setups kept as text
 
@@ -34,7 +35,7 @@ STARTING: dict[FolderType, ColumnSetup] = {
     "incoming": ColumnSetup(("flag", "status", "attachment", "from", "subject", "date", "size", "contact", "trash"), "date"),
     "sent": ColumnSetup(("flag", "attachment", "to", "subject", "sent", "size", "contact", "trash"), "sent"),
     "drafts": ColumnSetup(("attachment", "to", "subject", "sent", "size", "trash"), "sent"),
-    "outbox": ColumnSetup(("attachment", "to", "subject", "sent", "size", "trash"), "sent"),
+    "outbox": ColumnSetup(("attachment", "to", "subject", SNOOZED_COLUMN, "sent", "size", "trash"), "sent"),  # Send at: a delayed send (B-21)
     "scheduled": ColumnSetup(("attachment", "to", "subject", SNOOZED_COLUMN, "size", "trash"), "snoozed", oldest_first=True),  # the next to go first
     "snoozed": ColumnSetup(("flag", "attachment", "from_to", "subject", SNOOZED_COLUMN, "size", "trash"), "snoozed", oldest_first=True),
 }

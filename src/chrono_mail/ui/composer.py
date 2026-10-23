@@ -37,14 +37,17 @@ from chrono_mail.ui import scale, theme
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red_style
 from chrono_mail.ui.icons import application_icon
+from chrono_mail.ui.prefs import read_preferences
 from chrono_mail.ui.richeditor import RichEditor
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 1.9.274"
+__version__ = "composer.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: Send follows Settings > General: a delay with a notice in the main window (waiting), or the Outbox until the next refresh; a message
+#           taken back from the Outbox (Cancel) opens as one not saved yet, so Discard removes it (B-21); a failed send is tried again at the next refresh
 # v1.9.274: R-19 round 4: the accounts and the draft or reply it starts from (a reply's and a draft's own fields told apart) are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: saving, opening, sending and deleting are typed calls, their parameters built as the engine's dataclasses
 # v1.9.267: A failed automatic save is told in red on the bottom line, without a box (only Save shows the box too; the owner)
@@ -161,6 +164,7 @@ class ComposeWindow(QMainWindow):
     draft_saved = Signal(str)  # account id
     scheduled = Signal(str)  # the id of the message that now waits in the Outbox to be sent at its time
     scheduled_changed = Signal(object)  # edit mode: the ScheduledInfo of the message as it waits now (the same id)
+    waiting = Signal(str, str, str, int)  # a delayed send waits in the Outbox: account, message id, subject, seconds of its countdown (0: none, B-21)
 
     def __init__(
         self,
@@ -176,6 +180,7 @@ class ComposeWindow(QMainWindow):
         settings: QSettings | None = None,
         schedule_only: bool = False,
         editing: ScheduledInfo | None = None,
+        taken_back: bool = False,
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
@@ -190,6 +195,7 @@ class ComposeWindow(QMainWindow):
         self._stored: tuple[str, str] | None = resume  # the saved version of this message (folder, id), if there is one
         self._created_here: bool = resume is None  # a draft this window made itself is removed again on "Discard"
         self._sending: bool = False
+        self._delay: int = 0  # the countdown of the send under way (Settings > General, B-21)
         self._saving: bool = False
         self._finished: bool = False
         self._account_id: str = account_id
@@ -329,6 +335,9 @@ class ComposeWindow(QMainWindow):
             self._grey_edit_buttons()
             self.setWindowTitle("Edit scheduled message")
         self._saved_snapshot: tuple[object, ...] = self._snapshot()
+        if taken_back:  # a send cancelled (B-21): as a message not saved yet, closing asks, and Discard removes its draft
+            self._created_here = True
+            self._saved_snapshot = ()
 
         for text, shortcut, handler in (
             ("Send", "Ctrl+Return", self._send_clicked), ("Send", "Ctrl+Enter", self._send_clicked), ("Save draft", "Ctrl+S", self._save_clicked), ("Close", "Esc", self.close),
@@ -638,12 +647,14 @@ class ComposeWindow(QMainWindow):
             answer = QMessageBox.question(self, "Send", "This message has no subject. Send it anyway?")
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        chosen = repeat or {} if send_at else {}
-        until = chosen.get("repeat_until")
+        repeat_choice = repeat or {} if send_at else {}
+        until = repeat_choice.get("repeat_until")
         answering = self._source is not None and self._kind in ("reply", "reply_all", "forward", "forward_attachment")
         source_folder, source_message = self._source if self._source is not None and answering else (None, None)
         stored_folder, stored_message = self._stored if self._stored is not None else (None, None)  # the draft (or Outbox message) becomes the sent message
         keeping = self._stored is not None and bool(self.kept_positions())
+        chosen = read_preferences(self._settings) if self._settings is not None and not send_at else None  # Settings > General: send at once, or wait (B-21)
+        delay = chosen.send_delay_seconds if chosen is not None and chosen.send_delay else 0
         parameters = SendParameters(
             account=str(self.from_box.currentData()), to=tuple(to), subject=self.subject.text(), body=self._text(), cc=tuple(cc), bcc=tuple(bcc),
             html=self.rich.outgoing_html() if self.is_rich() else None, attach=tuple(self.attached_paths()), in_reply_to=self._in_reply_to or None,
@@ -653,9 +664,11 @@ class ComposeWindow(QMainWindow):
             mark_replied=answering and self._kind in ("reply", "reply_all"),
             keep_folder=stored_folder if keeping else None, keep_message=stored_message if keeping else None,
             keep_attachments=tuple(self.kept_positions()) if keeping else (), replaces_folder=stored_folder, replaces_message=stored_message,
-            send_at=send_at or None, repeat_months=int(str(chosen.get("repeat_months", 0))), repeat_weeks=int(str(chosen.get("repeat_weeks", 0))),
-            repeat_days=int(str(chosen.get("repeat_days", 0))), repeat_until=str(until) if until else None,
+            send_at=send_at or None, repeat_months=int(str(repeat_choice.get("repeat_months", 0))), repeat_weeks=int(str(repeat_choice.get("repeat_weeks", 0))),
+            repeat_days=int(str(repeat_choice.get("repeat_days", 0))), repeat_until=str(until) if until else None,
+            delay_seconds=delay, hold=chosen is not None and chosen.send_on_refresh,
         )
+        self._delay = delay
         self._set_sending(True)
         self._backend.ask(MAIL_SEND, parameters, self._sent, self._failed, owner=self)
 
@@ -688,12 +701,18 @@ class ComposeWindow(QMainWindow):
             QMessageBox.information(self, "Scheduled", f"The message will be sent at {result.scheduled}. It waits in your Scheduled folder until then; the program has to be running at that time.")
             self.close()
             return
+        if result.waiting:  # a delayed send: it waits in the Outbox (B-21)
+            self._handed_over()
+            self.sent.emit(str(self.from_box.currentData()))
+            self.waiting.emit(str(self.from_box.currentData()), result.message_id, self.subject.text(), self._delay)
+            self.close()
+            return
         if not result.sent:
             QMessageBox.warning(
                 self,
                 "The message was not sent",
                 f"{result.error}\n\nThe message has been kept in your Outbox folder, so nothing is lost. "
-                "It will not be sent again by itself.",
+                "It is sent again with the next Send and Receive.",
             )
             self.sent.emit(str(self.from_box.currentData()))  # the Outbox changed
             return

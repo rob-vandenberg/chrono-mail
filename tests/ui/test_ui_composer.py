@@ -11,9 +11,10 @@ from chrono_mail.ui.composer import ComposeWindow, parse_recipients, signature_b
 from tests.ui.world import World, add_window, gone, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_composer.py 1.9.267"
+__version__ = "test_ui_composer.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: a failed send says it is sent again with the next Send and Receive (D-028)
 # v1.9.267: a failed automatic save in red on the bottom line without a box; a failed Save with the box
 # v1.1.208: A message window deletes itself when it closes: gone and add_window
 # v1.1.180: the account to send from is the From row, above To
@@ -154,7 +155,7 @@ def test_a_failed_send_keeps_the_message_in_the_outbox_and_the_window_open(world
     window.send_button.click()
     wait(qtbot, lambda: "The message was not sent" in box_titles(world, "warning"))
     text = next(text for _, title, text in world.dialogs.shown if title == "The message was not sent")
-    assert "Outbox" in text and "will not be sent again by itself" in text
+    assert "Outbox" in text and "sent again with the next Send and Receive" in text  # D-028: tried again at every refresh (2.2.314)
     assert window.isVisible() and window.send_button.isEnabled() and window.to.isEnabled()  # the person can correct and retry
     assert world.call("message.list", account=world.account_id, folder="Outbox").total == 1 and world.smtp.received == []
     assert signals == [world.account_id]  # the Outbox changed
