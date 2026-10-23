@@ -56,9 +56,10 @@ from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.0.306"
+__version__ = "mainwindow.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: at start, once the indexes are usable, the junk filter learns from the mail already kept (D-238)
 # v2.0.306: Archive or Unarchive follows the selected messages, not the folder on the left (D-101)
 # v2.0.305: Menu > Message: Next and Previous message, Next and Previous unread message and Go to folder… in a Go to submenu (the owner)
 # v2.0.303: a click on the busy bar brings the index window back while an index is updated, else the Operations window (D-229)
@@ -1053,7 +1054,12 @@ class MainWindow(QMainWindow):
         check = self.checking.check_mail if self.prefs.read().check_on_start else None
         self.messages.load_contact_addresses()
         self.reading.forget_opened_copies()  # the copies of attachments opened in an earlier run go (D-236)
-        self._with_key(lambda: self.rebuilds.start(lambda: self.reload_accounts(select_saved=True, then=check)))  # every index usable first (D-229)
+
+        def ready() -> None:
+            self.reload_accounts(select_saved=True, then=check)
+            self.checking.learn_existing_junk()  # once per place where mail is kept (D-238)
+
+        self._with_key(lambda: self.rebuilds.start(ready))  # every index usable first (D-229)
 
     def _with_key(self, then: Callable[[], None]) -> None:
         """Continue when the encryption key can be read; otherwise ask for it first."""

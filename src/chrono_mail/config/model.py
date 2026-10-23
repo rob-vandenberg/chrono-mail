@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, Account, AccountKind, CollectionLook, ConfigurationError, PaletteColour, is_colour, palette_problem
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 1.1.221"
+__version__ = "model.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: junk_filter: new mail of the account goes through the junk filter (D-238)
 # v1.1.221: calendar_palette and calendar_own_colour_name: the account's appointment colours (D-191); collection_looks: the name and colour
 #           of its server's collections as Chrono Mail holds them (D-192)
 # v1.1.213: outgoing_same_login: the outgoing server uses the login of the incoming one (D-186)
@@ -92,6 +93,7 @@ class AccountSettings:
     calendar_palette: tuple[PaletteColour, ...] | None = None  # the account's appointment colours after each calendar's own; None: never changed (the suggestions, D-191)
     calendar_own_colour_name: str = ""  # the name of a calendar's own colour in that palette; empty: "Calendar colour"
     collection_looks: tuple[CollectionLook, ...] = ()  # the name and colour of its server's collections as Chrono Mail holds them, by their place (D-192)
+    junk_filter: bool = True  # new mail goes through the junk filter: junk to the Junk folder before the rules run (D-238)
 
     def look(self, key: str) -> CollectionLook | None:
         return next((item for item in self.collection_looks if item.key == key), None)

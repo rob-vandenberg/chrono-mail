@@ -2,6 +2,7 @@ import os
 import re
 import sqlite3
 from dataclasses import dataclass
+from email.utils import getaddresses
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,9 +33,10 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 2.0.301"
+__version__ = "index.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: wrote_to: whether a message of a folder (Sent) names an address among its recipients (the junk filter's trusted senders, D-238)
 # v2.0.301: format 12 is upgraded in place too (format 13, D-235): the filling in reads has_attachments with sent (fill_sent)
 # v2.0.281: format 11 is upgraded in place (sent added, filled in afterwards: sent_filling, sent_to_fill, fill_sent); when_closed: what an index
 #           opened by the engine lets go when it closes (D-229)
@@ -505,6 +507,20 @@ class Index(IndexDatabase):
             (f"%{needle}%", f"%{needle}%", f"{needle}%", f"{needle}%", f"% {needle}%", max(0, limit)),
         ).fetchall()
         return [KnownAddress(str(name), str(address), int(sender), int(recipient)) for name, address, sender, recipient in rows]
+
+    def wrote_to(self, folder: tuple[str, ...], address: str) -> bool:
+        """Whether a message of this folder (the Sent folder) names this address among its recipients, exactly."""
+        wanted = address.strip().casefold()
+        if not wanted:
+            return False
+        needle = wanted.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        try:
+            rows = self._connection.execute(
+                "SELECT recipients FROM messages WHERE folder = ? AND recipients LIKE ? ESCAPE '\\' LIMIT 50", (_folder_key(folder), f"%{needle}%"),
+            ).fetchall()
+        except sqlite3.Error as error:
+            raise StorageError(f"The index could not be read: {error}") from None
+        return any(found.casefold() == wanted for (text,) in rows for _, found in getaddresses([str(text)]))
 
     def thread_sizes(self, thread_keys: Collection[str]) -> dict[str, int]:
         """How many messages (in all folders) each of these conversations has."""

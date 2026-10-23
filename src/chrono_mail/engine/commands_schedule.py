@@ -6,6 +6,7 @@ from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, DraftSaveResult, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, SendParameters, _check_id, outgoing_message
+from chrono_mail.engine.junkfilter import learn
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.recurring import MAXIMUM_ATTEMPTS, Repeat, advance, describe_repeat, index_after, next_due, repeat_from_text, repeat_text
@@ -16,9 +17,10 @@ from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 1.9.270"
+__version__ = "commands_schedule.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: a scheduled reply, once sent, teaches the junk filter that its source is good mail (D-238)
 # v1.9.270: R-19: typed mail.unschedule (its answer is the draft it became)
 # v1.9.268: R-21: Send now, Pause and Resume answer with the message's line as it is now (None: it no longer waits), so the Scheduled page
 #           changes only that line; mail.scheduled, mail.send-due, mail.repeat-pause, mail.repeat-resume, message.snoozed and message.wake typed
@@ -445,6 +447,7 @@ def _mark_replied(mailbox: Mailbox, parsed: ParsedMessage) -> None:
     try:
         reference = mailbox.reference(mailbox.folder(folder), _check_id(message_id))
         mailbox.set_flags(reference, frozenset({*mailbox.current_flags(reference), MessageFlag.REPLIED}))
+        learn(mailbox, [reference], junk=False)  # mail one replies to is good mail (D-238)
     except ChronoMailError:
         pass
 

@@ -19,6 +19,7 @@ from chrono_mail.config import (
 from chrono_mail.core import AccountKind, ConfigurationError, CryptoError, FolderRole, StorageError
 from chrono_mail.crypto import DataKey, KeyStore
 from chrono_mail.engine.changes import Change, RebuildStep
+from chrono_mail.engine.junkwords import JunkHolder
 from chrono_mail.index import Index
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.tls import context_for
@@ -26,9 +27,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 2.0.281"
+__version__ = "session.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: junk: the junk filter's words, loaded once per session (D-238)
 # v2.0.281: IndexGate: commands hold the index they read, a new index replaces it only when none does (so the old one stays usable while
 #           a new one is built); a rebuild reports how far it is (rebuilding, RebuildStep) and can be aborted (abort_rebuild) (D-229)
 # v1.9.276: open_index: no send times to fill in after an upgrade any more (every older index is rebuilt, D-226)
@@ -233,6 +235,7 @@ class Engine:
     _config_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # held while config.json is read or written
     _told_once: set[str] = field(default_factory=set, init=False, repr=False)  # problems already told in this run (first_time)
     _told_once_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    junk: JunkHolder = field(default_factory=JunkHolder, init=False, repr=False)  # the junk filter's words, loaded once (D-238)
 
     def first_time(self, problem: str) -> bool:
         """True the first time this problem is named in this run of the program, False after that: a problem that is met

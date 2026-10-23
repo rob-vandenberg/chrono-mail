@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-237 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-238 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-238**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-239**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -168,7 +168,8 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-130** Rule condition Tag is / is not; actions Add / Remove tag.
 - **D-157** Rule actions can be moved up and down; Stop keeps its place and the actions below it are not done. Rejected: Stop meaning "after all actions".
 - **D-160** Actions below the first Stop are greyed but editable. "Change…" is "Edit…".
-- **D-054** Junk is a place, no learning filter. Next unread goes on into the next folder.
+- **D-054** Junk is a folder; the junk filter (D-238) fills it. Next unread goes on into the next folder.
+- **D-238** (the owner) **A junk filter runs on new Inbox mail before the rules**: mail the server marked as spam (X-Spam lines), or that the learned words make very likely junk, goes to Junk through the normal move (IMAP: server first). Never junk: contacts, people written to, senders a rule names (one's own address is no pass). It learns from the person (Junk, Not junk, moves into or out of Junk, replies), from the server's verdict and once from the mail kept; never from its own guess. The words stay on this computer, encrypted. A switch per account. Not junk runs the rules on the message. Rejected: rules first (rules that sort all mail left nothing to filter); SpamAssassin or rspamd on the desktop.
 - **D-056** Columns by default, cards an option; the reading pane right, below or off (off: nothing is opened or marked read). Enter or double click opens a message window (Drafts and Outbox: the editor).
 - **D-091** The columns always fill the width (text columns as shares, icon columns in pixels; minimum 50 / 24 px). Rows 22/29/36 px. Contact and Delete columns.
 - **D-179** The order of the columns has one record, the list model's; a header drag is done in the model.

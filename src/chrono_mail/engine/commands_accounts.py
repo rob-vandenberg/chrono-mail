@@ -45,9 +45,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 1.9.272"
+__version__ = "commands_accounts.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: junk_filter in the summary and in account.edit (D-238)
 # v1.9.272: certificate.inspect takes kind https (a calendar and contacts server, tls only): Look at the server's certificate in the sections' Add account… always failed (since 1.1.212)
 # v1.9.271: R-19: typed account.add, -check, -edit, -list, -remove, -trust-certificate, -forget-certificates, certificate.inspect, key.status, -export-file, -recovery-code, -restore-file, -restore-code
 # v1.1.252: removing an account changes the sidebar file under the engine's sidebar lock (R-41)
@@ -341,6 +342,7 @@ class AccountSummary:
     shown_name: str = ""  # the account name, else the address; with server and protocol when another account would show the same
     account_name: str = ""  # how Chrono Mail names the account (empty: the address); display_name is "Your name"
     outgoing_same_login: bool = True  # the outgoing server uses the login of the incoming one
+    junk_filter: bool = True  # new mail goes through the junk filter (D-238)
 
 
 def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> AccountSummary:
@@ -373,6 +375,7 @@ def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) 
         shown_name(item, accounts),
         item.account_name,
         item.outgoing_same_login,
+        item.junk_filter,
     )
 
 
@@ -454,6 +457,7 @@ class AccountEditParameters:
     delete_days: int | None = field(default=None, metadata=option("Days before deleting, for delete_after_days"))
     check_minutes: int | None = field(default=None, metadata=option("Minutes between automatic checks of this account (0: as set in the general settings)"))
     outgoing_same_login: bool | None = field(default=None, metadata=option("The outgoing server uses the user name and password of the incoming one"))
+    junk_filter: bool | None = field(default=None, metadata=option("New mail goes through the junk filter: junk to the Junk folder before the rules run"))
 
 
 def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSummary:
@@ -493,6 +497,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     signature = settings.signature if parameters.signature is None else parameters.signature.replace("\r\n", "\n").rstrip()
     check_minutes = settings.check_minutes if parameters.check_minutes is None else parameters.check_minutes
     account_name = settings.account_name if parameters.account_name is None else parameters.account_name.strip()
+    junk_filter = settings.junk_filter if parameters.junk_filter is None else parameters.junk_filter
 
     def edit(fresh: AppConfig) -> AppConfig:  # the edited parts on the account as it is now: what other commands changed meanwhile stays
         _refuse_same_account(fresh.accounts, account.kind, incoming.username, incoming.host, account.account_id)
@@ -505,6 +510,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
             check_minutes=check_minutes,
             account_name=account_name,
             outgoing_same_login=same_login,
+            junk_filter=junk_filter,
         ))
     # Passwords first: a new password that cannot be stored must not leave settings behind that expect it
     if parameters.password:

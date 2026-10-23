@@ -7,12 +7,13 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.engine.commands_accounts import AccountParameters
+from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
 from chrono_mail.engine.commands_dav import DAV_SYNC, DavSyncSummary, SyncParameters
 from chrono_mail.engine.commands_mail import MAIL_FETCH, MAIL_SETTLE, BlockedFolder, FetchResult, SettleParameters
 from chrono_mail.engine.commands_outbox import MAIL_SEND_OUTBOX, SendOutboxParameters, SendOutboxResult
 from chrono_mail.engine.commands_schedule import MAIL_SEND_DUE, MESSAGE_WAKE, SendDueParameters, SendDueResult, WakeParameters, WakeResult
 from chrono_mail.engine.commands_watch import MAIL_WAIT, WaitParameters, WaitResult
+from chrono_mail.engine.junkfilter import JUNK_LEARN_EXISTING
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelistpane import MessageListPane
@@ -22,9 +23,10 @@ from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 2.0.281"
+__version__ = "mailchecking.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: the status line says how many new messages went to Junk; learn_existing_junk at start (D-238)
 # v2.0.281: no automatic mail check while an index is rebuilt or filled in; one when it ends (D-229)
 # v1.9.274: R-19 round 4: the accounts and change notices are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: every engine call typed; the answers read by their fields
@@ -292,7 +294,7 @@ class MailChecking(QObject):
         self.checking = True
         self._refresh.setEnabled(False)
         remaining = set(wanted)
-        totals = {"new": 0}
+        totals = {"new": 0, "junk": 0}
         new_by_account: dict[str, int] = {}
         problems: list[str] = []
         blocked: list[tuple[str, BlockedFolder]] = []  # (account, folder held back by a safety rule)
@@ -303,7 +305,8 @@ class MailChecking(QObject):
             if problems:
                 self._status.show("Mail check: " + "; ".join(problems), error=True)
             else:
-                self._status.show(f"Mail checked: {totals['new']} new message(s)" if totals["new"] else "Mail checked: nothing new")
+                junk = f", {totals['junk']} moved to Junk" if totals["junk"] else ""
+                self._status.show(f"Mail checked: {totals['new']} new message(s){junk}" if totals["new"] else "Mail checked: nothing new")
             self.new_mail.emit(new_by_account)
             if not self._asking_blocked:  # a check during an open question (the timer) does not ask a second time
                 self._asking_blocked = True
@@ -317,6 +320,7 @@ class MailChecking(QObject):
         def make_done(account_id: str) -> Callable[[FetchResult], None]:
             def done(result: FetchResult) -> None:
                 totals["new"] += result.downloaded
+                totals["junk"] += result.junked
                 new_by_account[account_id] = result.downloaded
                 own = list(result.failed)
                 blocked.extend((account_id, item) for item in result.blocked)
@@ -343,6 +347,10 @@ class MailChecking(QObject):
         self._status.show("Checking for mail…")
         for account_id in list(remaining):
             self._backend.ask(MAIL_FETCH, AccountParameters(account_id), make_done(account_id), make_failed(account_id), owner=self, checking=True)
+
+    def learn_existing_junk(self) -> None:
+        """At start: the junk filter learns once from the mail already kept in each place (D-238). Quiet unless it fails."""
+        self._backend.ask(JUNK_LEARN_EXISTING, NoParameters(), lambda result: None, lambda error: self._status.report("Learning junk mail", error), owner=self)
 
     def ask_about_blocked(self, account_id: str, item: BlockedFolder) -> None:
         """A safety rule held an IMAP folder back: the person decides, and the account is synchronised with that answer."""

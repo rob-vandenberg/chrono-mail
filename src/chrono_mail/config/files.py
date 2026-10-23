@@ -17,9 +17,10 @@ from chrono_mail.core import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 1.1.221"
+__version__ = "files.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: junk_filter per account (D-238)
 # v1.1.221: calendar_palette, calendar_own_colour_name, collection_looks
 # v1.1.213: outgoing_same_login (missing: the same user name on both servers)
 # v1.1.211: account_name
@@ -114,6 +115,9 @@ def _account(data: object, position: int) -> AccountSettings:
         skip_known = data.get("skip_known_mail", False)
         if not isinstance(skip_known, bool):
             raise ConfigurationError(f"Setting '{where}.skip_known_mail' is not true or false")
+        junk_filter = data.get("junk_filter", True)
+        if not isinstance(junk_filter, bool):
+            raise ConfigurationError(f"Setting '{where}.junk_filter' is not true or false")
         own_colour_name = data.get("calendar_own_colour_name", "")
         if not isinstance(own_colour_name, str):
             raise ConfigurationError(f"Setting '{where}.calendar_own_colour_name' is not text")
@@ -121,7 +125,7 @@ def _account(data: object, position: int) -> AccountSettings:
             account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check, storage=storage, dav_url=dav_url, dav_username=dav_username,
             dav_left_out=tuple(left_out), outgoing_same_login=same_login, account_name=account_name, skip_known_mail=skip_known,
             calendar_palette=_palette(data.get("calendar_palette"), where), calendar_own_colour_name=own_colour_name,
-            collection_looks=_looks(data.get("collection_looks", []), where),
+            collection_looks=_looks(data.get("collection_looks", []), where), junk_filter=junk_filter,
         )
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
@@ -196,6 +200,7 @@ def config_to_text(config: AppConfig) -> str:
                     "calendar_palette": None if settings.calendar_palette is None else [[entry.colour_id, entry.name, entry.colour] for entry in settings.calendar_palette],
                     "calendar_own_colour_name": settings.calendar_own_colour_name,
                     "collection_looks": [{name: getattr(look, name) for name in LOOK_FIELDS} for look in settings.collection_looks],
+                    "junk_filter": settings.junk_filter,
                 }
                 for settings in config.accounts
             ],
