@@ -58,9 +58,10 @@ from chrono_mail.core.colours import DARK, LIGHT, text_on_accent
 from chrono_mail.ui.colours import is_dark, red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 2.2.314"
+__version__ = "settingsdialog.py 2.3.315"
 
 # --- Version history ----------------------------------------------------
+# v2.3.315: General: one row "Automatically [Send and Receive / Receive only / Send only] every [n minutes]"; "Refresh when the program starts" (the owner)
 # v2.2.314: General: Scheduled refresh (Send and Receive, or Receive only), the two delays of sending, the warning on Quit (B-21, B-20)
 # v2.0.281: Rebuild the search index goes to the main window (rebuild_requested): one place after the other with the rebuild window, while the
 #           old indexes stay in use (D-229)
@@ -361,9 +362,9 @@ class SettingsDialog(QDialog):
         if not self.startup_box.choose_value(self._chosen.startup.text):
             self.startup_box.choose_value("")  # a folder that is gone: the last selected one
         form.addRow("Show on startup:", self.startup_box)
-        self.check_on_start = QCheckBox("Check for new mail when the program starts", page)
+        self.check_on_start = QCheckBox("Refresh when the program starts", page)
         self.check_on_start.setChecked(self._chosen.check_on_start)
-        self.auto_check = QCheckBox("Check for new mail automatically", page)
+        self.auto_check = QCheckBox("Automatically", page)
         self.auto_check.setChecked(self._chosen.auto_check)
         self.interval = QSpinBox(page)
         self.interval.setRange(1, 240)
@@ -371,9 +372,10 @@ class SettingsDialog(QDialog):
         self.interval.setValue(self._chosen.auto_check_minutes)
         self.interval.setEnabled(self.auto_check.isChecked())
         self.scheduled_refresh = QComboBox(page)  # what a refresh the person did not click does; the Refresh button always sends and receives
-        for text, value in (("Send and Receive", "send_receive"), ("Receive only", "receive")):
+        for text, value in (("Send and Receive", "send_receive"), ("Receive only", "receive"), ("Send only", "send")):
             self.scheduled_refresh.addItem(text, value)
         self.scheduled_refresh.setCurrentIndex(max(0, self.scheduled_refresh.findData(self._chosen.scheduled_refresh)))
+        self.scheduled_refresh.setEnabled(self.auto_check.isChecked())
         self.send_delay = QCheckBox("Delay sending a message by", page)
         self.send_delay.setChecked(self._chosen.send_delay)
         self.send_delay_seconds = QSpinBox(page)
@@ -391,10 +393,14 @@ class SettingsDialog(QDialog):
         self.tray.setChecked(self._chosen.tray and tray_available)
         self.close_to_tray = QCheckBox("Closing the window keeps Chrono Mail running in the notification area", page)
         self.close_to_tray.setChecked(self._chosen.close_to_tray and tray_available)
-        for widget in (self.check_on_start, self.auto_check):
-            form.addRow(widget)
-        form.addRow("Check every", self.interval)
-        form.addRow("Scheduled refresh:", self.scheduled_refresh)
+        form.addRow(self.check_on_start)
+        automatic_row = QHBoxLayout()  # the owner: one row, "Automatically [Send and Receive] every [20 minutes]"
+        automatic_row.addWidget(self.auto_check)
+        automatic_row.addWidget(self.scheduled_refresh)
+        automatic_row.addWidget(QLabel("every", page))
+        automatic_row.addWidget(self.interval)
+        automatic_row.addStretch(1)
+        form.addRow(automatic_row)
         delay_row = QHBoxLayout()
         delay_row.addWidget(self.send_delay)
         delay_row.addWidget(self.send_delay_seconds)
@@ -412,6 +418,7 @@ class SettingsDialog(QDialog):
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())
         self.auto_check.toggled.connect(self.interval.setEnabled)
+        self.auto_check.toggled.connect(self.scheduled_refresh.setEnabled)
         self.send_delay.toggled.connect(self.send_delay_seconds.setEnabled)
         return page
 

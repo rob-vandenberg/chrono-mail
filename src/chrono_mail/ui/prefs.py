@@ -8,9 +8,10 @@ from chrono_mail.ui.columns import valid_columns
 from chrono_mail.ui.scale import STANDARD, clamp
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 2.2.314"
+__version__ = "prefs.py 2.3.315"
 
 # --- Version history ----------------------------------------------------
+# v2.3.315: scheduled_refresh may also be send (only sends, the owner)
 # v2.2.314: scheduled_refresh (Send and Receive, or Receive only), send_delay with its seconds, send_on_refresh, warn_outbox_on_quit (B-21, B-20)
 # v2.0.280: Columns per folder (B-16): the columns are no longer one setting of the Settings window; Remembered keeps the setup of each folder
 #           and of each kind of folder (folder_columns, type_columns) and hands the one setup of earlier versions over once (earlier_setup)
@@ -39,7 +40,7 @@ DEFAULTS: dict[str, object] = {
     "check_on_start": True,
     "auto_check": True,
     "auto_check_minutes": 5,
-    "scheduled_refresh": "send_receive",  # what a refresh the person did not click does: send_receive, or receive (only fetches)
+    "scheduled_refresh": "send_receive",  # what a refresh the person did not click does: send_receive, receive (only fetches) or send (only sends)
     "send_delay": False,  # Send puts the message in the Outbox for send_delay_seconds, with a notice to send it now or cancel (B-21)
     "send_delay_seconds": 10,
     "send_on_refresh": False,  # Send leaves the message in the Outbox until the next refresh (B-21)
@@ -90,7 +91,7 @@ READING_PANES: tuple[str, ...] = ("right", "bottom", "off")
 DATE_STYLES: tuple[str, ...] = ("short", "full", "iso")
 MARK_READ: tuple[str, ...] = ("delay", "never", "window")
 REPLY_QUOTES: tuple[str, ...] = ("above", "below", "none")
-SCHEDULED_REFRESHES: tuple[str, ...] = ("send_receive", "receive")
+SCHEDULED_REFRESHES: tuple[str, ...] = ("send_receive", "receive", "send")
 DENSITIES: tuple[str, ...] = ("compact", "normal", "roomy")
 
 

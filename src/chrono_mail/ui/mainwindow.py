@@ -58,9 +58,10 @@ from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.2.314"
+__version__ = "mainwindow.py 2.3.315"
 
 # --- Version history ----------------------------------------------------
+# v2.3.315: the menu item is "Refresh automatically" (it may only send, the owner)
 # v2.2.314: the notices of delayed sends (SendNotices, B-21); quitting with messages in the Outbox asks first, a countdown under way ends first (B-20)
 # v2.2.313: Undo (Ctrl+Z) and Redo (Ctrl+Y, Ctrl+Shift+Z) of the actions on mail, at the top of Menu > Message, saying what they would do (B-18)
 # v2.1.311: the status part knows the accounts' names and hears which commands run (the busy bar's hover text names them)
@@ -469,7 +470,7 @@ class MainWindow(QMainWindow):
         self.act_open_menu = self._action("Open the menu", self.open_menu, "Alt+M")
         self.act_search = self._action("Search", lambda: self._in_section("search"), "Ctrl+E")
         self.act_advanced = self._action("Advanced search…", lambda: self.search.advanced(), "Ctrl+Shift+F")
-        self.act_auto = QAction("Check for mail automatically", self)
+        self.act_auto = QAction("Refresh automatically", self)
         self.act_auto.setCheckable(True)
         self.act_auto.setChecked(self.prefs.read().auto_check)
         self.act_conversations = QAction("Show conversations", self)

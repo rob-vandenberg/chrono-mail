@@ -23,9 +23,10 @@ from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 2.2.314"
+__version__ = "mailchecking.py 2.3.315"
 
 # --- Version history ----------------------------------------------------
+# v2.3.315: Send only: a scheduled refresh only sends the Outbox (the calendars stay in step), and the server's "new mail" fetches nothing (the owner)
 # v2.2.314: a refresh the person did not click (the timers, the check at start and after a rebuild) sends the Outbox first, as Refresh does,
 #           unless Settings > General says Receive only; the server's "new mail" only fetches; send_outbox can send one message (B-21)
 # v2.1.311: the busy bar names the learning by itself (the general rule): no hint of its own
@@ -80,7 +81,7 @@ class MailChecking(QObject):
         self._prefs: InUse = prefs_in_use
         self._messages: MessageListPane = messages
         self._refresh: QAction = refresh  # greyed while a check runs
-        self._auto: QAction = auto  # Check for mail automatically
+        self._auto: QAction = auto  # Refresh automatically
         self._pages: dict[str, PimPage] = pages
         self._section: Callable[[], str] = section
         self._parent: QWidget = parent
@@ -159,8 +160,8 @@ class MailChecking(QObject):
                 self.no_push.add(account_id)  # this server cannot tell: the timer checks
                 return
             if self._auto.isChecked() and not self.quitting:
-                if result.changed:
-                    self.check_accounts(None)  # news of incoming mail: only fetched
+                if result.changed and self._prefs.read().scheduled_refresh != "send":
+                    self.check_accounts(None)  # news of incoming mail: only fetched (never when the person chose to send only)
                 self._watch(account_id)
 
         def failed(error: ChronoMailError) -> None:
@@ -226,8 +227,15 @@ class MailChecking(QObject):
 
     def scheduled_refresh(self, only: set[str] | None, also_calendars: set[str] | None = None) -> None:
         """A refresh the person did not click: Send and Receive, exactly as Refresh (the Outbox of these accounts first, then their mail),
-        or only receive when Settings > General says so (B-21). It never brings the Operations window forward."""
-        if self._prefs.read().scheduled_refresh != "send_receive" or self.importing or (self.rebuilding or self.checking or self.sending):
+        or only receive, or only send, as Settings > General says (B-21; Send only keeps the calendars in step, they are no mail). It never brings
+        the Operations window forward."""
+        how = self._prefs.read().scheduled_refresh
+        if how == "send":
+            self.sync_calendars(None if only is None else only | (also_calendars or set()))
+            if not (self.importing or self.sending):
+                self.send_outbox(account=next(iter(only)) if only is not None and len(only) == 1 else None)
+            return
+        if how != "send_receive" or self.importing or (self.rebuilding or self.checking or self.sending):
             self.check_accounts(only, also_calendars=also_calendars)
             return
 
