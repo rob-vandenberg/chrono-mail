@@ -21,6 +21,7 @@ from chrono_mail.engine.recurring import Repeat, repeat_text
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZE_GROUPS, TIMED_FOLDERS, describe_when, parse_when, snooze_group
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.imap_online import waiting_marker
+from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
@@ -32,9 +33,11 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 2.0.302"
+__version__ = "commands_mail.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: the junk filter: new Inbox mail goes through it before the rules (FetchResult.junked); a move into or out of Junk and a
+#           sent reply teach it (D-238)
 # v2.0.302: InlineImage.position: the picture's place among the attachments, to open or save it from a right-click (D-236)
 # v2.0.301: message.show gives the pictures the text does not show (pictures), to be shown below it (B-11, D-235)
 # v2.0.280: the sort order sent (the message's own Date, with the date groups) and each row's sent moment (B-16)
@@ -172,6 +175,7 @@ class FetchResult:
     aborted: str | None
     rule_actions: int = 0  # what the rules did to the new messages
     blocked: tuple[BlockedFolder, ...] = ()  # IMAP folders a safety rule held back: the person decides (mail.settle)
+    junked: int = 0  # new messages the junk filter moved to the Junk folder (D-238)
 
 
 def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
@@ -209,7 +213,8 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
         engine.activity(account_id, "receive", "Disconnected", None, None)
         if report.new_references:
             engine.activity(account_id, "receive", "Applying rules", None, None)
-        ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
+        kept, junked = filter_new(mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])  # junk first (D-238)
+        ruled = apply_to_new(engine, mailbox, kept)
         flag_failed: tuple[str, ...] = ()
         if settings.skip_known_mail and report.aborted is None:  # one complete check: from now on every new message is new
             try:
@@ -219,12 +224,13 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
     return FetchResult(
         report.downloaded,
         report.already_known,
-        (*(f"{item.unique_id}: {item.reason}" for item in report.failed), *ruled.failed, *flag_failed),
+        (*(f"{item.unique_id}: {item.reason}" for item in report.failed), *junked.failed, *ruled.failed, *flag_failed),
         report.deleted_on_server,
         report.deletion_blocked,
         report.index_problems,
         report.aborted,
         ruled.actions,
+        junked=junked.moved,
     )
 
 
@@ -260,11 +266,12 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
     inbox = mailbox.role_folder(FolderRole.INBOX)
     if report.new_references:
         engine.activity(account_id, "receive", "Applying rules", None, None)
-    ruled = apply_to_new(engine, mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])
+    kept, junked = filter_new(mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])  # junk first (D-238)
+    ruled = apply_to_new(engine, mailbox, kept)
     notes = (f"{item.folder}: {item.note}" for item in report.folders if item.note and item.blocked is None)  # a blocked folder is a question, not an error
-    remarks = (*report.failed, *report.notes, *notes, *ruled.failed)
+    remarks = (*report.failed, *report.notes, *notes, *junked.failed, *ruled.failed)
     blocked = tuple(BlockedFolder(item.folder, item.blocked, item.blocked_count) for item in report.folders if item.blocked is not None)
-    return FetchResult(report.downloaded, 0, tuple(remarks), 0, None, 0, report.aborted, ruled.actions, blocked)
+    return FetchResult(report.downloaded, 0, tuple(remarks), 0, None, 0, report.aborted, ruled.actions, blocked, junked.moved)
 
 
 class MailboxAnnouncer:
@@ -497,6 +504,7 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
             try:
                 source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
                 mailbox.set_flags(source, frozenset({*mailbox.current_flags(source), MessageFlag.REPLIED}))
+                learn(mailbox, [source], junk=False)  # mail one replies to is good mail (D-238)
             except ChronoMailError:
                 pass  # the reply was sent; failing to mark the original is not worth an error
         if outcome.sent and parameters.replaces_folder and parameters.replaces_message:
@@ -996,6 +1004,7 @@ def message_move(engine: Engine, parameters: TransferParameters) -> TransferResu
     with open_mailbox(engine, parameters.account) as mailbox:
         reference = mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message))
         moved = mailbox.move(reference, mailbox.folder(parameters.target))
+        learn_from_move(mailbox, reference.folder_path, [moved])  # into or out of Junk teaches the junk filter (D-238)
         return TransferResult(moved.store_id, "/".join(moved.folder_path))
 
 

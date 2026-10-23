@@ -7,9 +7,10 @@ from dataclasses import dataclass, field
 
 from chrono_mail.core import ChronoMailError, Folder, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine.changes import flag_names
-from chrono_mail.engine.commands_actions import archive_folder, archive_one, junk_one, not_junk_one, unarchive_one, unarchive_target
+from chrono_mail.engine.commands_actions import JunkResult, archive_folder, archive_one, junk_one, junk_places, not_junk_one, unarchive_one, unarchive_target
 from chrono_mail.engine.commands_mail import _check_id, flags_wanted
 from chrono_mail.engine.commands_schedule import snooze_one
+from chrono_mail.engine.junkfilter import learn, learn_from_move
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.schedule import SNOOZED_FOLDER, parse_when
@@ -17,9 +18,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_many.py 1.9.265"
+__version__ = "commands_many.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: Junk, Not junk and moves into or out of Junk teach the junk filter, once for the whole group (D-238)
 # v1.9.265: NotDone.missing: the message was not done because its file is gone here, so the window warns about it (D-109; lost in 1.1.247)
 # v1.1.247: Initial: many messages of a folder in one command, on the server in groups (R-08)
 
@@ -88,9 +90,10 @@ class ManyResult:
 
 def _each(
     engine: Engine, account: str, folder: str, messages: tuple[str, ...], prepare: Callable[[Mailbox, list[MessageRef]], None],
-    act: Callable[[Mailbox, MessageRef], object],
+    act: Callable[[Mailbox, MessageRef], object], after: Callable[[Mailbox, list[tuple[MessageRef, object]]], None] | None = None,
 ) -> tuple[ManyResult, list[tuple[MessageRef, object]]]:
-    """The group: the messages named, prepared on the server together, then each one's own step; a failure is that message's alone."""
+    """The group: the messages named, prepared on the server together, then each one's own step; a failure is that message's alone.
+    after: what follows for the ones done, once for the group (the junk filter learns them)."""
     if len(messages) > MAXIMUM_MESSAGES:
         raise UsageError(f"At most {MAXIMUM_MESSAGES:,} messages at once")
     failed: list[NotDone] = []
@@ -113,6 +116,8 @@ def _each(
                     answers.append((ref, act(mailbox, ref)))
                 except ChronoMailError as error:
                     failed.append(_not_done(ref.store_id, error))
+        if after is not None and answers:
+            after(mailbox, answers)
     return ManyResult(tuple(ref.store_id for ref, _ in answers), tuple(failed)), answers
 
 
@@ -133,7 +138,10 @@ def message_move_many(engine: Engine, parameters: ManyTargetParameters) -> ManyR
         target = mailbox.folder(parameters.target)
         mailbox.prepare_moves(refs, target)
 
-    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: mailbox.move(ref, target))[0]
+    def taught(mailbox: Mailbox, answers: list[tuple[MessageRef, object]]) -> None:  # into or out of Junk (D-238)
+        learn_from_move(mailbox, answers[0][0].folder_path, [moved for _, moved in answers if isinstance(moved, MessageRef)])
+
+    return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, lambda mailbox, ref: mailbox.move(ref, target), taught)[0]
 
 
 def message_copy_many(engine: Engine, parameters: ManyTargetParameters) -> ManyResult:
@@ -204,11 +212,16 @@ def message_unarchive_many(engine: Engine, parameters: ManyParameters) -> ManyRe
     return _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act)[0]
 
 
+def _junk_results(answers: list[tuple[MessageRef, object]]) -> list[JunkResult]:
+    return [answer for _, answer in answers if isinstance(answer, JunkResult)]
+
+
 def message_junk_many(engine: Engine, parameters: ManyParameters) -> ManyResult:
     result, answers = _each(
         engine, parameters.account, parameters.folder, parameters.messages,
         lambda mailbox, refs: mailbox.prepare_moves(refs, mailbox.role_folder(FolderRole.JUNK)),
         lambda mailbox, ref: junk_one(mailbox, ref, mailbox.role_folder(FolderRole.JUNK)),
+        lambda mailbox, answers: learn(mailbox, junk_places(mailbox, _junk_results(answers)), junk=True),
     )
     return ManyResult(result.done, result.failed, tuple(ref.store_id for ref, answer in answers if getattr(answer, "gone", False)))
 
@@ -217,6 +230,7 @@ def message_not_junk_many(engine: Engine, parameters: ManyParameters) -> ManyRes
     return _each(
         engine, parameters.account, parameters.folder, parameters.messages,
         lambda mailbox, refs: mailbox.prepare_moves(refs, mailbox.role_folder(FolderRole.INBOX)), not_junk_one,
+        lambda mailbox, answers: learn(mailbox, junk_places(mailbox, _junk_results(answers)), junk=False),
     )[0]
 
 

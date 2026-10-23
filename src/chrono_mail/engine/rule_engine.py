@@ -9,9 +9,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "rule_engine.py 0.5.136"
+__version__ = "rule_engine.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: RuleReport.placed: where each message is after the rules (Not junk tells where it went, D-238)
 # v0.5.136: Tags: the condition tag is / is not, the actions add_tag and remove_tag; a later rule sees the tags an earlier one gave
 # v0.5.123: The folder of a rule is made on the server first in an IMAP account (D-118)
 # v0.2.101: The folder of a rule is made safely (one folder when rules run at the same time)
@@ -117,6 +118,7 @@ class RuleReport:
     matched: int = 0
     actions: int = 0
     failed: list[str] = field(default_factory=list)
+    placed: dict[str, MessageRef] = field(default_factory=dict)  # store id before the rules -> where the message is after them
 
 
 def _folder_for(mailbox: Mailbox, path: str) -> tuple[str, ...]:
@@ -198,4 +200,5 @@ def apply_rules(mailbox: Mailbox, rules: tuple[Rule, ...], references: list[Mess
             if stop:
                 break
         outcome.matched += 1 if matched else 0
+        outcome.placed[original.store_id] = reference
     return outcome

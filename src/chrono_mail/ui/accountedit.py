@@ -3,6 +3,7 @@ from typing import Literal
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -37,9 +38,10 @@ from chrono_mail.ui.foundfolders import FolderTicks
 from chrono_mail.ui.serverfields import ServerFields, kind_of, mail_server_kind, policy_of, security_of, start_values_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 1.9.272"
+__version__ = "accountedit.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: General: Filter junk mail (D-238)
 # v1.9.272: Look at the calendar server's certificate asks with kind https (it pretended to be IMAP)
 # v1.9.271: R-19: every engine call typed; the account is an AccountSummary; the changes are typed (AccountEditParameters with only what differs, SetFolders, SetDavParameters)
 # v1.1.243: The Servers tab is the shared ServerFields (the same as Add account): the port follows Security as there, a typed port stays; Test
@@ -111,6 +113,10 @@ class AccountEditDialog(QDialog):
         self.check_minutes.setSuffix(" minutes")
         self.check_minutes.setValue(account.check_minutes)
         mail_form.addRow("Check this account every", self.check_minutes)
+        self.junk_filter = QCheckBox("Filter junk mail", general)
+        self.junk_filter.setChecked(account.junk_filter)
+        self.junk_filter.setToolTip("New mail that the server marked as spam, or that looks very much like junk, goes to the Junk folder before your rules run")
+        mail_form.addRow("", self.junk_filter)
         self.storage: QComboBox | None = None
         if kind is AccountKind.POP3:  # an IMAP account always has the folders of its server
             self.storage = QComboBox(general)
@@ -336,6 +342,7 @@ class AccountEditDialog(QDialog):
             delete_days=differing(self.days.value(), account.delete_days),
             check_minutes=differing(self.check_minutes.value(), account.check_minutes),
             outgoing_same_login=differing(self.same_login.isChecked(), account.outgoing_same_login),
+            junk_filter=differing(self.junk_filter.isChecked(), account.junk_filter),
         )
         return None if parameters == AccountEditParameters(account.account_id) else parameters
 

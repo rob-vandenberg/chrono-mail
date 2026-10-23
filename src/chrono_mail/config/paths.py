@@ -7,9 +7,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 2.0.302"
+__version__ = "paths.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: junk_filter_file: what the junk filter learned (D-238)
 # v2.0.302: opened_directory: copies of attachments opened in another program (D-236)
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
 # v0.0.47: Pinned favorites, account groups and search in combined views
@@ -60,6 +61,11 @@ class AppDirectories:
 
     def pop3_state_file(self, account_id: str) -> Path:
         return self.account_directory(account_id) / "pop3-state.log"
+
+    @property
+    def junk_filter_file(self) -> Path:
+        """What the junk filter learned, for every account together (D-238)."""
+        return self.data_directory / "junk-filter.bin"
 
     @property
     def opened_directory(self) -> Path:

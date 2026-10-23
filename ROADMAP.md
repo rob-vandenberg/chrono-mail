@@ -31,6 +31,7 @@ Tasks are deliberately small. Each one is planned, approved ("proceed"), built, 
 | 1.12 | Key backup and recovery procedure, tested end to end. Done in the interface: backup at account creation, restore dialog when the key is missing (11 scenarios tested). | done |
 | 1.12a | Drafts: save, autosave, resume, attachments kept, Outbox messages editable (0.0.16). | done |
 | 1.12b | Message actions: Archive, mark all as read, empty Trash and Junk, drag and drop to folders (0.0.17). | done |
+| 1.12c | Junk filter: the server's spam verdict and a learning filter on new mail, before the rules (2.1.308, D-238). The $Junk/$NotJunk marks on the server: B-19. | done |
 | 1.12c | Conversations: size in the list, grouped list, conversation bar (0.0.18). | done |
 | 1.12d | Advanced search: OR, NOT, dates, sizes, dialog (0.0.19). | done |
 | 1.12e | Settings window, account editing and removal, signatures (0.0.20). | done |

@@ -1,16 +1,21 @@
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 
-from chrono_mail.core import Folder, FolderRole, MessageRef, StorageError
-from chrono_mail.engine.commands_mail import MessageParameters, _check_id
+from chrono_mail.core import AccountKind, ChronoMailError, Folder, FolderRole, MessageRef, StorageError
+from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
+from chrono_mail.engine.commands_rules import apply_to_new
+from chrono_mail.engine.junkfilter import learn
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
+from chrono_mail.mime import parse_message
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_actions.py 1.9.270"
+__version__ = "commands_actions.py 2.1.308"
 
 # --- Version history ----------------------------------------------------
+# v2.1.308: Junk and Not junk teach the junk filter; Not junk runs the rules on the message, so it goes where they would have put it (D-238)
 # v1.9.270: R-19: typed folder.mark-read, folder.empty
 # v1.1.247: archive_one, unarchive_target, unarchive_one, junk_one, not_junk_one: one message's step, also for many at once (R-08)
 # v1.1.206: The folder an archived message came from is kept in its properties file (archived.log is gone), whichever account archived it (D-176)
@@ -100,10 +105,17 @@ class JunkResult:
 
 
 def message_junk(engine: Engine, parameters: MessageParameters) -> JunkResult:
-    """Move a message to the Junk folder."""
+    """Move a message to the Junk folder; the junk filter learns it as junk."""
     with open_mailbox(engine, parameters.account) as mailbox:
         reference = mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message))
-        return junk_one(mailbox, reference, mailbox.role_folder(FolderRole.JUNK))
+        result = junk_one(mailbox, reference, mailbox.role_folder(FolderRole.JUNK))
+        learn(mailbox, junk_places(mailbox, [result]), junk=True)
+        return result
+
+
+def junk_places(mailbox: Mailbox, results: Iterable[JunkResult]) -> list[MessageRef]:
+    """Where the messages of these answers are now (the ones whose file was gone are not anywhere)."""
+    return [mailbox.reference(parse_folder(result.folder), result.message_id) for result in results if not result.gone]
 
 
 def junk_one(mailbox: Mailbox, reference: MessageRef, junk: tuple[str, ...]) -> JunkResult:
@@ -118,18 +130,42 @@ def junk_one(mailbox: Mailbox, reference: MessageRef, junk: tuple[str, ...]) -> 
 
 
 def message_not_junk(engine: Engine, parameters: MessageParameters) -> JunkResult:
-    """Take a message out of the Junk folder: back to the Inbox."""
+    """Take a message out of the Junk folder: to the Inbox, then the rules, as if it had just come in. The junk filter learns it as good."""
     with open_mailbox(engine, parameters.account) as mailbox:
         reference = mailbox.reference(mailbox.folder(parameters.folder), _check_id(parameters.message))
-        return not_junk_one(mailbox, reference)
+        result = not_junk_one(mailbox, reference)
+        learn(mailbox, junk_places(mailbox, [result]), junk=False)
+        return result
+
+
+def _arrived_for(mailbox: Mailbox, reference: MessageRef) -> Mailbox:
+    """The mailbox as the account the message came to: in Local Folders, the POP3 account it was addressed to (D-060), so the rules
+    limited to that account apply as they did when it arrived."""
+    if mailbox.settings.account.kind is not AccountKind.LOCAL:
+        return mailbox
+    try:
+        raw = mailbox.store.read(reference, hint=mailbox.hint(reference.store_id))
+        account = reply_account(mailbox.engine, mailbox.settings, parse_message(raw), raw)
+        settings = mailbox.engine.resolve_account(account) if account else None
+    except ChronoMailError:
+        return mailbox
+    return replace(mailbox, settings=settings) if settings is not None and settings.storage == "local" else mailbox
 
 
 def not_junk_one(mailbox: Mailbox, reference: MessageRef) -> JunkResult:
     if reference.folder_path != mailbox.role_folder(FolderRole.JUNK):
         raise UsageError("The message is not in the Junk folder")
-    inbox = mailbox.role_folder(FolderRole.INBOX)
-    moved = mailbox.move(reference, inbox)
-    return JunkResult(moved.store_id, "/".join(inbox))
+    moved = mailbox.move(reference, mailbox.role_folder(FolderRole.INBOX))
+    arrived = _arrived_for(mailbox, moved)
+    try:
+        ruled = apply_to_new(mailbox.engine, arrived, [moved])  # where the rules would have put it when it came in (D-238)
+    finally:
+        if arrived is not mailbox:
+            arrived.let_go()  # open_mailbox lets go of its own mailbox only
+    for problem in ruled.failed:
+        mailbox.engine.notice(problem)
+    placed = ruled.placed.get(moved.store_id, moved)
+    return JunkResult(placed.store_id, "/".join(placed.folder_path))
 
 
 @dataclass(frozen=True, slots=True)
