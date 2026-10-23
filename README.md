@@ -106,7 +106,7 @@ If you want to remove everything, delete those two folders. Mail that exists onl
 
 Chrono Mail locks your stored mail with a key, and keeps that key in your computer's password store. If that password store is ever lost (for example after reinstalling your computer), the recovery code is the only way to unlock your mail again.
 
-You can make a new backup of the key at any time: **Menu > File > Back up the encryption key…**.
+You can see the recovery code again at any time: **Menu > File > Show the recovery code…**.
 
 ## Help and feedback
 

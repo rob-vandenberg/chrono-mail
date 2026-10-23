@@ -73,7 +73,7 @@ Your stored mail is locked with a key, and that key is kept in your computer's p
 
 Treat the recovery code like a password: anyone who has it can unlock your mail.
 
-You can make a new backup at any time: **Menu > File > Back up the encryption key…**.
+You can see the recovery code again at any time: **Menu > File > Show the recovery code…**.
 
 ## Finding your way around
 

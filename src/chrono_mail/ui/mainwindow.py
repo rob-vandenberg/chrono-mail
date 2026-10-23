@@ -25,6 +25,8 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.folderpane import FolderMenu, FolderPane
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
 from chrono_mail.ui.icons import application_icon, theme_icon
+from chrono_mail.ui.backupdialog import MENU_TEXT as BACKUP_MENU_TEXT
+from chrono_mail.ui.backupdialog import BackupWindow
 from chrono_mail.ui.importdialog import MENU_TEXT as IMPORT_MENU_TEXT
 from chrono_mail.ui.importdialog import ImportDialog
 from chrono_mail.ui.indexrebuilds import IndexRebuilds
@@ -58,9 +60,11 @@ from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.3.316"
+__version__ = "mainwindow.py 2.4.322"
 
 # --- Version history ----------------------------------------------------
+# v2.4.322: File > Back up… (the Back up window; a click on the busy bar brings it back while it runs) and Restore… (greyed until the
+#           restore is built); the key items are "Show the recovery code…" and "Use a recovery code…" (D-244)
 # v2.3.316: the refresh at start does its own choice (start_refresh, the owner)
 # v2.3.315: the menu item is "Refresh automatically" (it may only send, the owner)
 # v2.2.314: the notices of delayed sends (SendNotices, B-21); quitting with messages in the Outbox asks first, a countdown under way ends first (B-20)
@@ -291,6 +295,7 @@ class MainWindow(QMainWindow):
         self.notices = SendNotices(backend, self.mail_state, self.checking, self.composing, self.report, self.prefs, self)  # delayed sends (B-21), Quit (B-20)
         self.composing.send_waiting.connect(self.notices.add)
         self.rebuilds: IndexRebuilds = IndexRebuilds(backend, self.report, self.mail_state.account_name, self)  # D-229
+        self.backups: BackupWindow = BackupWindow(backend, settings, self.report, self)  # File > Back up… (D-244)
         self.rebuilds.running_changed.connect(self.checking.rebuild_running)
         self.rebuilds.quit_requested.connect(self.quit_program)
         self._build_toolbar()
@@ -456,9 +461,13 @@ class MainWindow(QMainWindow):
         self.act_flag = self._action("Flag", lambda: actions.mark_selected(flagged=True), icon="mail-mark-important")
         self.act_unflag = self._action("Remove flag", lambda: actions.mark_selected(flagged=False))
         self.act_add_account = self._action("Add an account…", lambda: self.add_account(), icon="list-add")
-        self.act_recovery = self._action("Back up the encryption key…", lambda: RecoveryDialog(self.backend, self).exec())
+        self.act_recovery = self._action("Show the recovery code…", lambda: RecoveryDialog(self.backend, self).exec())
+        self.act_backup = self._action(BACKUP_MENU_TEXT, lambda: self.backups.show())
+        self.act_restore = self._action("Restore…", lambda: self.backups.show())  # greyed until the restore is built (D-244)
+        self.act_restore.setEnabled(False)
         self.act_import = self._action(IMPORT_MENU_TEXT, self.show_import)
-        self.act_restore_key = self._action("Restore the encryption key…", self.restore_key)
+        self.act_restore_key = self._action("Use a recovery code…", self.restore_key)
+        self.act_restore_key.setToolTip("Get the encryption key back with its recovery code or a recovery file")
         self.act_settings = self._action("Settings…", lambda: self.open_settings(), "Ctrl+,", "configure")
         self.act_scheduled = self._action("Scheduled and snoozed messages…", lambda: self.open_settings("Scheduled messages"))
         self.act_snooze = self._action("Snooze…", actions.snooze_selected, "S", "clock")
@@ -588,6 +597,10 @@ class MainWindow(QMainWindow):
         file_menu = root.addMenu("&File")
         file_menu.addAction(self.act_new)
         file_menu.addAction(self.act_refresh)
+        file_menu.setToolTipsVisible(True)
+        file_menu.addSeparator()
+        file_menu.addAction(self.act_backup)
+        file_menu.addAction(self.act_restore)
         file_menu.addSeparator()
         file_menu.addAction(self.act_import)
         file_menu.addSeparator()
@@ -677,6 +690,8 @@ class MainWindow(QMainWindow):
         """The busy bar: while an index is updated its window comes back (after Run in background), else the Operations window (D-229)."""
         if self.rebuilds.running:
             self.rebuilds.show_window()
+        elif self.backups.running:
+            self.backups.show()
         else:
             self.checking.show_operations()
 
