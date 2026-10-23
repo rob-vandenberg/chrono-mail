@@ -35,11 +35,13 @@ from chrono_mail.store import Store
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 from chrono_mail.store.layout import parse_name, split_info
 from chrono_mail.sync.imap_state import ImapState
+from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 2.4.328"
+__version__ = "restore.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the report names where each damaged message or item was: its folder or calendar and its account (the Windows computer's note)
 # v2.4.328: every backup restores (FIXES-2.4.326.md phase 2): an account without files comes back (its folder is made first, W1); a damaged
 #           message or item is left out and told, the restore goes on, and the data set aside is kept then (W5); a damaged entry is named,
 #           never its bytes, and a cut-off backup is "damaged or incomplete" (W4); only the rules of the accounts that came back (R2)
@@ -141,6 +143,7 @@ class RestoreReport:
     to_drafts: int = 0  # messages that waited in the Outbox: in Drafts now, never sent by themselves (D-245)
     paused: int = 0  # scheduled messages whose time had passed: paused (D-245)
     damaged: list[str] = field(default_factory=list[str])  # messages and items of the backup that could not be read: left out (W5)
+    damaged_places: list[str] = field(default_factory=list[str])  # where they were, for the person: "1 message in Inbox of Work"
     window_settings: str = ""  # the window's own settings from the backup (the window puts them in place)
     notes: list[str] = field(default_factory=list[str])
 
@@ -397,7 +400,36 @@ def _restore(engine: Engine, archive: _Reading, manifest: dict[str, object], key
         _restore_settings(engine, archive, names, sealed, key, choice.replace_existing, report)
     restored = {settings.account.account_id for settings, _, _ in chosen}
     _restore_passwords(engine, {account_id: kept for account_id, kept in passwords.items() if account_id in restored}, report, choice.replace_existing)
+    report.damaged_places = _damaged_places(archive, names, report.damaged, backup_config)
     return report
+
+
+def _damaged_places(archive: _Reading, names: list[str], damaged: list[str], backup_config: AppConfig) -> list[str]:
+    """Where the damaged messages and items were, so the person can tell what is missing: "2 messages in Inbox of Work", "1 item in
+    Birthdays of On this computer" (a damaged file's own subject cannot be read)."""
+    accounts = {settings.account.account_id: settings for settings in backup_config.accounts}
+    counts: dict[str, int] = {}
+    for name in damaged:
+        relative = name.split("/")
+        if len(relative) < 8 or relative[:2] != ["data", "accounts"]:
+            continue
+        account_id, kind, folder = relative[2], relative[4], relative[5]
+        settings = accounts.get(account_id)
+        is_mail = relative[3:5] == ["store", "folders"]
+        owner = ("Local Folders" if is_mail else "On this computer") if settings is not None and settings.account.kind is AccountKind.LOCAL else (
+            _plain_name(settings) if settings is not None else "an account")
+        description = f"data/accounts/{account_id}/{relative[3]}/{kind}/{folder}/{'folder.json' if is_mail else 'collection.json'}"
+        place = folder
+        if description in names:
+            try:
+                found = _json_object(_read(archive, description))
+                path, title = found.get("path"), found.get("name")
+                place = "/".join(str(part) for part in cast(list[object], path)) if is_mail and isinstance(path, list) else title if isinstance(title, str) else folder
+            except DamagedEntry:
+                pass
+        key = f"{'message' if is_mail else 'item'}\t{place} of {owner}"
+        counts[key] = counts.get(key, 0) + 1
+    return [f"{counted(count, word)} in {where}" for key, count in counts.items() for word, where in [key.split("\t", 1)]]
 
 
 def _chosen(entries: tuple[str, ...] | None, settings: AccountSettings) -> tuple[bool, bool]:

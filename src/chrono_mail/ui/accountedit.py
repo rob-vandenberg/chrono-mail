@@ -39,9 +39,10 @@ from chrono_mail.ui.serverfields import ServerFields, kind_of, mail_server_kind,
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 2.4.333"
+__version__ = "accountedit.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.1.308: General: Filter junk mail (D-238)
 # v1.9.272: Look at the calendar server's certificate asks with kind https (it pretended to be IMAP)
@@ -422,7 +423,7 @@ class AccountEditDialog(QDialog):
     def _show_certificates(self) -> None:
         count = len(self.trusted)
         self.certificates_label.setText(
-            f"{count} server certificate(s) accepted for this account. Each is trusted only for the server it was accepted for, and only exactly that certificate; a different one from that server is refused until you look at it again."
+            f"{counted(count, 'server certificate')} accepted for this account. Each is trusted only for the server it was accepted for, and only exactly that certificate; a different one from that server is refused until you look at it again."
             if count else "No server certificate was accepted for this account: the usual checks apply."
         )
         self.forget_certificates_button.setEnabled(count > 0)

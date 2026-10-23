@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Protocol
 
 from chrono_mail.config import LOCAL_FOLDER_KINDS
@@ -11,9 +11,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.models import FAVORITES, LOCAL_PLACES, USED_ONLY, favorite_in_use, local_folder_kind
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailstate.py 2.4.329"
+__version__ = "mailstate.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: all_archived stops at the first message that is not archived
 # v2.4.329: account_of, targets and archived take any message by its place (a row, or a selected message not loaded yet, W12)
 # v2.2.314: in_timed: the Outbox too (a delayed send shows when it goes, B-21); outbox_count: the messages waiting in the Outbox, each place where mail is kept counted once (the warning on Quit, B-20)
 # v2.0.306: all_archived: whether every selected message is in an archive folder (Archive or Unarchive follows the messages, D-101)
@@ -156,9 +157,15 @@ class MailState:
         """The message is in an archive folder of its account (by the folder's role, not its name)."""
         return self.folder_role_of(self.account_of(row), row.folder) == "archive"
 
-    def all_archived(self, rows: Sequence[Placed]) -> bool:
-        """Every one of these messages is in an archive folder: Archive is Unarchive for them, wherever they are shown (D-101)."""
-        return bool(rows) and all(self.archived(row) for row in rows)
+    def all_archived(self, rows: Iterable[Placed]) -> bool:
+        """Every one of these messages is in an archive folder: Archive is Unarchive for them, wherever they are shown (D-101). It stops at
+        the first that is not (16,000 selected were all read again after every change of the list)."""
+        found = False
+        for row in rows:
+            if not self.archived(row):
+                return False
+            found = True
+        return found
 
     def can_make_folder(self) -> bool:
         """New folder needs one account: an account row, one of its folders (also its Unread and Flagged, a pinned folder)."""

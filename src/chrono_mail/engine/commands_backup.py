@@ -23,9 +23,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_backup.py 2.4.328"
+__version__ = "commands_backup.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: backup.restore says where the damaged messages and items were
 # v2.4.328: backup.restore says how many damaged messages and items it left out (W5)
 # v2.4.327: backup.restore says how many messages of the Outbox went to Drafts and how many scheduled ones were paused (D-245)
 # v2.4.326: backup.contents per account with its parts and counts; backup.restore of the chosen accounts, parts and passwords (D-244)
@@ -144,6 +145,7 @@ class RestoreResult:
     to_drafts: int = 0  # messages of the Outbox put in Drafts (D-245)
     paused: int = 0  # scheduled messages paused because their time had passed (D-245)
     damaged: int = 0  # messages and items of the backup that could not be read and were left out (W5)
+    damaged_places: tuple[str, ...] = ()  # where they were: "1 message in Inbox of Work"
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +189,7 @@ def backup_restore(engine: Engine, parameters: RestoreParameters) -> RestoreResu
         Path(parameters.path).expanduser(), parameters.password, parameters.remove_first, parameters.replace_existing, parameters.accounts or None,
         frozenset(part for part, chosen in wanted.items() if chosen), parameters.passwords,
     ))
-    return RestoreResult(tuple(report.made), tuple(report.filled), report.messages, report.items, report.skipped, report.window_settings, tuple(report.notes), report.to_drafts, report.paused, len(report.damaged))
+    return RestoreResult(tuple(report.made), tuple(report.filled), report.messages, report.items, report.skipped, report.window_settings, tuple(report.notes), report.to_drafts, report.paused, len(report.damaged), tuple(report.damaged_places))
 
 
 def backup_check_account(engine: Engine, parameters: CheckAccountParameters) -> CheckAccountResult:

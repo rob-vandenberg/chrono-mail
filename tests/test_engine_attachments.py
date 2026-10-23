@@ -9,9 +9,10 @@ from chrono_mail.engine.mailbox import open_mailbox
 from tests.test_engine_commands import Setup, call, first_id, rich, setup  # noqa: F401 - rich and setup are fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_attachments.py 2.4.331"
+__version__ = "test_engine_attachments.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: CONIN$, CONOUT$ and COM or LPT with a superscript digit are made safe too (W11c)
 # v2.4.331: the Windows types that install or run are programs (W10); device names and marks that turn text around are made safe (W11)
 # v2.0.302: Initial tests: Open attachment writes a private copy, tells a program apart, and the copies go at the next start (D-236)
 
@@ -65,9 +66,10 @@ def test_windows_types_that_install_or_run_are_asked_about_first() -> None:
 def test_device_names_and_turned_text_never_reach_the_file_system() -> None:
     """The Windows computer's W11: an attachment named CON or nul.pdf was written to the device and its data was gone."""
     for name, safe in (("CON", "_CON"), ("con.txt", "_con.txt"), ("NUL", "_NUL"), ("nul.pdf", "_nul.pdf"), ("aux.txt", "_aux.txt"),
-                       ("COM1.txt", "_COM1.txt"), ("LPT1", "_LPT1"), ("prn.docx", "_prn.docx"), ("CON .txt", "_CON .txt")):
+                       ("COM1.txt", "_COM1.txt"), ("LPT1", "_LPT1"), ("prn.docx", "_prn.docx"), ("CON .txt", "_CON .txt"),
+                       ("CONIN$", "_CONIN$"), ("conin$.txt", "_conin$.txt"), ("CONOUT$", "_CONOUT$"), ("COM¹.txt", "_COM¹.txt"), ("LPT²", "_LPT²"), ("COM³", "_COM³")):
         assert suggest_filename(name, "application/octet-stream", 0) == safe
-    for kept in ("console.txt", "com10.txt", "nullable.pdf", "contract.pdf"):
+    for kept in ("console.txt", "com10.txt", "nullable.pdf", "contract.pdf", "CLOCK$", "COM0", "LPT0"):
         assert suggest_filename(kept, "application/octet-stream", 0) == kept
     assert suggest_filename("invoice\u202egpj.exe", "application/octet-stream", 0) == "invoicegpj.exe"  # it reads as what it is
     assert is_program(suggest_filename("invoice\u202egpj.exe", "application/octet-stream", 0))

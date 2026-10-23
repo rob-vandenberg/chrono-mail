@@ -11,9 +11,10 @@ from chrono_mail.ui.messagelist import MessageListModel, ViewSpec
 from tests.ui.world import World, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_list_changes.py 1.6.260"
+__version__ = "test_ui_list_changes.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: a delete right after another comes within a tenth of a second: the test waits for it (D-223)
 # v1.6.260: One way of holding rows (R-15): a row asked before a change shows the change and is never asked again; a message gone from a part
 #           not loaded asks nothing; rows asked before a message came in go to their own messages
 # v0.5.166: messages of one name from several addresses share one heading
@@ -219,7 +220,8 @@ def test_a_message_gone_from_a_part_not_loaded_under_headings_takes_its_heading_
     message_ids = ids(world)
     world.call("message.delete", account=world.account_id, folder="Inbox", message=message_ids["Message 3"])
     world.call("message.delete", account=world.account_id, folder="Inbox", message=message_ids["Message 2"])
-    assert watched.model.message_count() == 1 and watched.resets == 0 and watched.asked == []  # the list knows where it was: nothing asked
+    wait(qtbot, lambda: watched.model.message_count() == 1)  # the second right after the first: within a tenth of a second
+    assert watched.resets == 0 and watched.asked == []  # the list knows where it was: nothing asked
     assert watched.headers() == ["Message 1"]
 
 

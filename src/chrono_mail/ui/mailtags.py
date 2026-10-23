@@ -18,9 +18,10 @@ from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail
 from chrono_mail.ui.undoing import Undoing
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailtags.py 2.4.329"
+__version__ = "mailtags.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: a tag waits for the places of messages still on their way, then goes to all of them (W12b)
 # v2.4.329: a tag goes to every selected message, also those not loaded yet; the shortcut and the menu's ticks count them all (W12)
 # v2.2.313: a tag given or taken away is one action of Undo (B-18)
 # v1.9.274: R-19 round 4: the tags and rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -101,6 +102,8 @@ class MailTags(QObject):
     def toggle_tag_by_key(self, name: str) -> None:
         """A tag's shortcut: give the tag to the selected messages, or take it away when all of them have it (all of them counted, also
         those not loaded yet, W12)."""
+        if self._messages.deferred(lambda: self.toggle_tag_by_key(name)):
+            return
         chosen = self._messages.selected_rows()
 
         def decide(rows: list[MessageRow]) -> None:
@@ -125,6 +128,8 @@ class MailTags(QObject):
 
     def toggle_tag(self, name: str, add: bool, chosen: Sequence[Placed] | None = None) -> None:
         """Give a tag to the selected messages (add) or take it away; the rows show the new tags at once."""
+        if chosen is None and self._messages.deferred(lambda: self.toggle_tag(name, add)):
+            return
         rows = self._messages.selected_rows() if chosen is None else chosen
         groups: dict[tuple[str, str], list[str]] = {}
         for row in rows:

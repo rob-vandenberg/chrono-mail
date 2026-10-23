@@ -1,19 +1,25 @@
-from collections.abc import Generator
+from collections.abc import Callable, Generator, Iterable
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QModelIndex, QPersistentModelIndex
+from PySide6.QtCore import QModelIndex, QObject, QPersistentModelIndex
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.changes import Change
+from chrono_mail.engine.registry import TypedCommand
 from chrono_mail.engine.commands_mail import ListParameters, message_list
+from chrono_mail.engine.commands_view import MESSAGE_ORDER, OrderParameters
+from chrono_mail.ui.backend import Failure
 from chrono_mail.ui.mailstate import MailState, Placed
 from tests.ui.test_ui_rapid_actions import fill
 from tests.ui.world import Dialogs, World, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_large_selection.py 2.4.329"
+__version__ = "test_ui_large_selection.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the messages that leave in one moment go in a few removals, not one each
+# v2.4.334: an action right after a large folder opened waits for the rest of the order and takes every selected message (W12b)
 # v2.4.329: Initial (the Windows computer's W12 and W13): an action on a selection larger than what came into view takes every selected
 #           message; Toggle read counts them all; the key press does its work once, not once per selected message
 
@@ -35,7 +41,7 @@ def opened(qtbot: QtBot, world: World, size: int) -> None:
     window.list_view.selectAll()
 
 
-def held(world: World, folder: str) -> int:
+def held_in(world: World, folder: str) -> int:
     return message_list(world.engine, ListParameters(world.account_id, folder)).total
 
 
@@ -44,8 +50,62 @@ def test_delete_takes_every_selected_message_also_those_not_loaded(empty: World,
     opened(qtbot, empty, 250)
     assert len(empty.window.messages.selected_rows()) == 250
     empty.window.mail_actions.delete_selected()
-    wait(qtbot, lambda: held(empty, "Trash") == 250 and empty.backend._pending == {})  # noqa: SLF001
-    assert held(empty, "Inbox") == 0 and empty.window.list_model.rowCount() == 0
+    wait(qtbot, lambda: held_in(empty, "Trash") == 250 and empty.backend._pending == {})  # noqa: SLF001
+    assert held_in(empty, "Inbox") == 0 and empty.window.list_model.rowCount() == 0
+
+
+def test_an_action_right_after_opening_waits_for_the_rest_of_the_order(empty: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """W12b: for a moment after a large folder opens the list knows only its first 100 messages; Ctrl+A and Delete then acted on 100."""
+    held: list[Callable[[], None]] = []
+    real_ask = empty.backend.ask
+
+    def ask[P, R](
+        command: TypedCommand[P, R], parameters: P, on_success: Callable[[R], None], on_error: Failure | None = None, owner: QObject | None = None,
+        in_order: bool = False, waiting: bool = False, checking: bool = False,
+    ) -> int:
+        if command is MESSAGE_ORDER and isinstance(parameters, OrderParameters) and parameters.whole and not held:
+
+            def later() -> None:
+                real_ask(command, parameters, on_success, on_error, owner, in_order, waiting, checking)
+
+            held.append(later)  # the rest of the order is held back until the test lets it through
+            return 0
+        return real_ask(command, parameters, on_success, on_error, owner, in_order, waiting, checking)
+
+    monkeypatch.setattr(empty.backend, "ask", ask)
+    fill(empty, 250)
+    window = empty.window
+    window.start()
+    model = window.list_model
+    wait(qtbot, lambda: model.rowCount() == 250 and bool(held))
+    assert not model.complete
+    window.list_view.setFocus()
+    window.list_view.selectAll()
+    window.mail_actions.delete_selected()
+    assert held_in(empty, "Trash") == 0  # it waits: nothing done yet on 100 of them
+    held[0]()  # the rest of the order arrives
+    wait(qtbot, lambda: held_in(empty, "Trash") == 250 and empty.backend._pending == {})  # noqa: SLF001
+    assert held_in(empty, "Inbox") == 0
+
+
+def test_messages_that_leave_in_one_moment_go_in_one_step(empty: World, qtbot: QtBot) -> None:
+    """The Windows computer's note at 15,927 messages: the rows left one by one, each laying the list out and painting it again, and the
+    window answered slowly for minutes. The facts of one moment now go together: one removal for a run of neighbouring rows."""
+    opened(qtbot, empty, 300)
+    model = empty.window.list_model
+    wait(qtbot, lambda: model.complete)
+    keys = [place[0] for place in (model.place_at(row) for row in range(model.rowCount())) if place is not None]
+    removals: list[int] = []
+
+    def removed(parent: QModelIndex, first: int, last: int) -> None:
+        removals.append(last - first + 1)
+
+    model.rowsRemoved.connect(removed)
+    for number, key in enumerate(keys):
+        model.apply(Change("removed", empty.account_id, "Inbox", key, sequence=1_000_000 + number))
+    assert model.rowCount() > 0  # nothing went one by one
+    wait(qtbot, lambda: model.rowCount() == 0)
+    assert len(removals) <= 3 and sum(removals) >= 300  # the rows and their group headings, in a few runs
 
 
 def test_toggle_read_counts_every_selected_message(empty: World, qtbot: QtBot) -> None:
@@ -72,8 +132,8 @@ def test_the_key_press_works_once_not_once_per_selected_message(empty: World, qt
     redraws: list[int] = []
     real_all_archived = MailState.all_archived
 
-    def all_archived(state: MailState, rows: list[Placed]) -> bool:
-        looked.append(len(rows))
+    def all_archived(state: MailState, rows: Iterable[Placed]) -> bool:
+        looked.append(1)
         return real_all_archived(state, rows)
 
     def redrawn(first: QModelIndex | QPersistentModelIndex, last: QModelIndex | QPersistentModelIndex) -> None:
@@ -84,5 +144,5 @@ def test_the_key_press_works_once_not_once_per_selected_message(empty: World, qt
     window.mail_actions.delete_selected()
     assert redraws == [300]  # the greyed rows: one redraw for the run of rows, not 300
     assert len(looked) <= 1  # the selection is looked at once at most
-    wait(qtbot, lambda: held(empty, "Trash") == 300 and empty.backend._pending == {})  # noqa: SLF001
+    wait(qtbot, lambda: held_in(empty, "Trash") == 300 and empty.backend._pending == {})  # noqa: SLF001
     model.dataChanged.disconnect(redrawn)

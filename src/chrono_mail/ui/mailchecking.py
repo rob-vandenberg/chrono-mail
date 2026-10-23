@@ -24,9 +24,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 2.4.333"
+__version__ = "mailchecking.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.4.327: check_mail (after a rebuild, an import, a restore, a first account) only receives; a refresh a rebuild held back runs after it
 #           with its own choice (D-245, the Windows computer's W6)
@@ -529,7 +530,7 @@ class MailChecking(QObject):
             gone = sum(row.removed for row in rows)  # whole collections the server confirmed deleted (R-25)
             changed_here = pulled + removed + gone + sum(row.created for row in rows)
             parts = [text for count, text in (
-                (pulled, f"{pulled} added or changed here"), (removed, f"{removed} removed here"), (gone, f"{gone} calendar(s) or list(s) gone from the server, removed here"),
+                (pulled, f"{pulled} added or changed here"), (removed, f"{removed} removed here"), (gone, f"{counted(gone, 'calendar or list', 'calendars or lists')} gone from the server, removed here"),
                 (sent, f"{sent} sent to the server"),
             ) if count]
             summary = f"{CALENDARS_WORDS}: " + ", ".join(parts) if parts else f"{CALENDARS_WORDS} are up to date"

@@ -8,9 +8,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "compose.py 2.4.331"
+__version__ = "compose.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: CONIN$, CONOUT$ and COM or LPT with ¹ ² ³ are Windows devices too (W11c)
 # v2.4.331: suggest_filename takes out the marks that turn text around and puts "_" before a Windows device name (W11)
 # v0.0.86: Forward as attachment: the original goes along as an .eml file
 # v0.0.42: Settings window with pages for everything
@@ -21,7 +22,7 @@ _REPLY_PREFIX: re.Pattern[str] = re.compile(r"^\s*(?:re|aw|antw|sv|vs)\s*:\s*", 
 _FORWARD_PREFIX: re.Pattern[str] = re.compile(r"^\s*(?:fwd?|wg|tr|vs)\s*:\s*", re.IGNORECASE)
 _UNSAFE_NAME: re.Pattern[str] = re.compile(r'[\x00-\x1f\x7f/\\:*?"<>|]')
 _DIRECTION_MARKS: re.Pattern[str] = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")  # they turn "gpj.exe" into what reads "exe.jpg"
-_DEVICE_NAME: re.Pattern[str] = re.compile(r"con|prn|aux|nul|com[1-9]|lpt[1-9]", re.IGNORECASE)  # Windows devices, whatever the extension
+_DEVICE_NAME: re.Pattern[str] = re.compile(r"con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³]", re.IGNORECASE)  # ¹²³ count as 1 2 3 there (W11c)  # Windows devices, whatever the extension
 
 
 def suggest_filename(filename: str | None, content_type: str, position: int) -> str:

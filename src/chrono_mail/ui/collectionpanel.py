@@ -39,9 +39,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 2.4.333"
+__version__ = "collectionpanel.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.10.277: Contact groups under their address book (R-39): kept in step in place (set_groups), their menu and Delete key given by the Contacts
 #            page, contacts dropped on a group; the chosen group's address book is the one chosen (current_id)
@@ -217,7 +218,7 @@ class CollectionPanel(QWidget):
             text = f"{row.name}  ({row.members})"
             if child.text(0) != text:
                 child.setText(0, text)
-            child.setToolTip(0, f"{row.others} more member(s) without a contact in this address book" if row.others else "")
+            child.setToolTip(0, f"{counted(row.others, 'more member')} without a contact in this address book" if row.others else "")
         if had_none and rows:
             entry.setExpanded(True)
         kept = self._group_entry(chosen.item) if chosen is not None else None

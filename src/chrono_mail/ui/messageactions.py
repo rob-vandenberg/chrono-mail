@@ -28,9 +28,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 2.4.333"
+__version__ = "messageactions.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: every action on the selection waits for the places of messages still on their way, then takes them all (W12b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.4.329: every action takes every selected message, also those not loaded yet (W12); Toggle read and Toggle flag count them all
 # v2.2.313: every action of the person has its number for Undo (one key press, however many commands); Undo waits for the commands under way (B-18)
@@ -79,6 +80,8 @@ class MessageActions(QObject):
         )
 
     def mark_selected(self, seen: bool | None = None, flagged: bool | None = None) -> None:
+        if self._messages.deferred(lambda: self.mark_selected(seen, flagged)):
+            return
         self.mark_messages(self._messages.selected_rows(), seen, flagged)
 
     def mark_messages(self, rows: Sequence[Placed], seen: bool | None = None, flagged: bool | None = None) -> None:
@@ -94,11 +97,15 @@ class MessageActions(QObject):
 
     def toggle_read(self) -> None:
         """All read: unread, else read; counted over every selected message (their rows are asked first when they are not loaded)."""
+        if self._messages.deferred(lambda: self.toggle_read()):
+            return
         chosen = self._messages.selected_rows()
         if chosen:
             self._messages.with_rows(chosen, lambda rows: self.mark_messages(chosen, seen=any("seen" not in row.flags for row in rows)))
 
     def toggle_flag(self) -> None:
+        if self._messages.deferred(lambda: self.toggle_flag()):
+            return
         chosen = self._messages.selected_rows()
         if chosen:
             self._messages.with_rows(chosen, lambda rows: self.mark_messages(chosen, flagged=any("flagged" not in row.flags for row in rows)))
@@ -106,6 +113,8 @@ class MessageActions(QObject):
     # --- delete, archive, junk ---------------------------------------------------------------------------------------
 
     def delete_selected(self) -> None:
+        if self._messages.deferred(lambda: self.delete_selected()):
+            return
         self.delete_rows(self._messages.selected_rows())
 
     def delete_rows(self, rows: Sequence[Placed]) -> None:
@@ -122,6 +131,8 @@ class MessageActions(QObject):
 
     def delete_permanently(self) -> None:
         """Shift+Delete: remove the selected messages for good, without a stop in Trash, after asking."""
+        if self._messages.deferred(lambda: self.delete_permanently()):
+            return
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
@@ -134,6 +145,8 @@ class MessageActions(QObject):
 
     def unarchive_selected(self) -> None:
         """Back to the folder each message was archived from (the Inbox when that is not known)."""
+        if self._messages.deferred(lambda: self.unarchive_selected()):
+            return
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
@@ -146,6 +159,8 @@ class MessageActions(QObject):
     def archive_selected(self) -> None:
         """Archive, or Unarchive when every selected message is archived: it follows the messages, never the folder on the left (a
         search of all folders shows messages of every folder, D-101)."""
+        if self._messages.deferred(lambda: self.archive_selected()):
+            return
         selected = self._messages.selected_rows()
         if self._state.all_archived(selected):
             self.unarchive_selected()
@@ -164,6 +179,8 @@ class MessageActions(QObject):
 
     def junk_selected(self, junk: bool) -> None:
         """Move the selected messages to the Junk folder, or (in Junk) back to the Inbox."""
+        if self._messages.deferred(lambda: self.junk_selected(junk)):
+            return
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
@@ -203,6 +220,8 @@ class MessageActions(QObject):
 
     def snooze_until(self, until: str) -> None:
         """Put the selected messages away until this local time (2026-10-13T09:00)."""
+        if self._messages.deferred(lambda: self.snooze_until(until)):
+            return
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
@@ -214,6 +233,8 @@ class MessageActions(QObject):
 
     def cancel_snooze_selected(self) -> None:
         """In the Snoozed folder: the selected messages go back now to the folder they came from (unread, as when their time comes)."""
+        if self._messages.deferred(lambda: self.cancel_snooze_selected()):
+            return
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None or not self._state.in_snoozed():
             return
@@ -257,6 +278,8 @@ class MessageActions(QObject):
         menu.popup(QCursor.pos())
 
     def copy_selected(self, target: str) -> None:
+        if self._messages.deferred(lambda: self.copy_selected(target)):
+            return
         rows = self._messages.selected_rows()
         if not rows:
             return
@@ -279,6 +302,8 @@ class MessageActions(QObject):
             self.move_menu.addAction(path).triggered.connect(lambda checked=False, target=path: self.move_selected(target))
 
     def move_selected(self, target: str) -> None:
+        if self._messages.deferred(lambda: self.move_selected(target)):
+            return
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return

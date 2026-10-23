@@ -12,9 +12,10 @@ from chrono_mail.ui.models import COUNT_ROLE
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_rapid_actions.py 1.9.264"
+__version__ = "test_ui_rapid_actions.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the folder list's number of quick deletes comes within a tenth of a second: the test waits for it (D-223)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.1.247: a delete goes as message.delete-many (R-08)
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
@@ -99,7 +100,8 @@ def test_four_quick_deletes_act_on_what_is_selected_at_each_press(empty: World, 
     unread_favorite = window.tree_model.find_item("", "favorite", "unread")
     wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001 - the message shown now may have been marked read
     truth = world.call("message.list", account=world.account_id, folder="Inbox", limit=1).unread
-    assert unread_favorite is not None and int(unread_favorite.data(COUNT_ROLE) or 0) == truth  # the folder list's number followed the facts
+    assert unread_favorite is not None
+    wait(qtbot, lambda: (unread_favorite.data(COUNT_ROLE) or 0) == truth)  # the folder list's number followed the facts (within a tenth of a second)
     assert resets == []  # the list was never reset: no blank, no jump
     assert not any("Missing" in title or "missing" in text for _, title, text in world.dialogs.shown)
     current = window.list_view.currentIndex()

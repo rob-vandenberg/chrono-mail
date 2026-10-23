@@ -12,9 +12,10 @@ from chrono_mail.ui.models import COUNT_ROLE, UNREAD_ROLE
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_folder_counts.py 1.9.269"
+__version__ = "test_ui_folder_counts.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: the numbers of quick changes after each other come within a tenth of a second (they follow ten times a second): the test waits for them (D-223)
 # v1.9.269: Drafts, Outbox, Scheduled and Snoozed show how many messages they hold, the other folders their unread messages (D-225)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.6.260: A refetch asks the order of the view (message.order, R-15)
@@ -60,13 +61,13 @@ def test_the_numbers_follow_each_change_without_counting_again(world: World, qtb
     assert (count(window, account, "folder", "Inbox"), count(window, "", "favorite", "unread"), count(window, "", "favorite", "inboxes")) == (3, 3, 3)
     commands = asked(world, monkeypatch)
     world.call("message.flag", account=account, folder="Inbox", message=ids(world)["Message 1"], seen=True)
-    assert (count(window, account, "folder", "Inbox"), count(window, "", "favorite", "unread"), count(window, "", "favorite", "inboxes")) == (2, 2, 2)
+    wait(qtbot, lambda: (count(window, account, "folder", "Inbox"), count(window, "", "favorite", "unread"), count(window, "", "favorite", "inboxes")) == (2, 2, 2))
     world.call("message.delete", account=account, folder="Inbox", message=ids(world)["Message 2"])
-    assert (count(window, account, "folder", "Inbox"), count(window, account, "folder", "Trash"), count(window, "", "favorite", "unread")) == (1, 1, 1)
+    wait(qtbot, lambda: (count(window, account, "folder", "Inbox"), count(window, account, "folder", "Trash"), count(window, "", "favorite", "unread")) == (1, 1, 1))
     world.call("folder.mark-read", account=account, folder="Inbox")
-    assert (count(window, account, "folder", "Inbox"), count(window, "", "favorite", "inboxes")) == (0, 0)
+    wait(qtbot, lambda: (count(window, account, "folder", "Inbox"), count(window, "", "favorite", "inboxes")) == (0, 0))
     world.call("folder.empty", account=account, folder="Trash")
-    assert count(window, account, "folder", "Trash") == 0
+    wait(qtbot, lambda: count(window, account, "folder", "Trash") == 0)
     assert "folder.list" not in commands and "sidebar.show" not in commands  # nothing was counted again
 
 
@@ -163,7 +164,7 @@ def test_folders_of_outgoing_messages_show_how_many_wait_and_the_others_their_un
     for hour in ("08", "09"):
         world.call("mail.send", account=account, to="you@example.com", subject=f"At {hour}", body="x", send_at=f"2030-01-01T{hour}:00")
     world.call("message.snooze", account=account, folder="Inbox", message=ids(world)["Message 1"], until="2030-01-01T10:00")
-    wait(qtbot, lambda: window.tree_model.find_item(account, "folder", "Snoozed") is not None)
+    wait(qtbot, lambda: window.tree_model.find_item(account, "folder", "Snoozed") is not None and outgoing_numbers(window, account) == (1, 1, 2, 1, 1, 1, 2, 1))
     assert outgoing_numbers(window, account) == (1, 1, 2, 1, 1, 1, 2, 1)  # every message not sent or delivered yet, read or not (D-225)
     assert (count(window, account, "folder", "Inbox"), count(window, "", "favorite", "unread")) == (2, 3)  # the others: unread (Unread counts the snoozed one too, D-061)
     scheduled = window.tree_model.find_item(account, "folder", "Scheduled")
@@ -178,5 +179,5 @@ def test_the_number_of_waiting_messages_follows_each_change(world: World, qtbot:
     wait(qtbot, lambda: window.tree_model.find_item(account, "folder", "Scheduled") is not None and count(window, account, "folder", "Scheduled") == 2)
     commands = asked(world, monkeypatch)
     world.call("mail.send-due", account=account, message=first)  # sent now: one fewer waits
-    assert (count(window, account, "folder", "Scheduled"), count(window, "", "favorite", "scheduled")) == (1, 1)
+    wait(qtbot, lambda: (count(window, account, "folder", "Scheduled"), count(window, "", "favorite", "scheduled")) == (1, 1))
     assert "folder.list" not in commands  # the engine's numbers came with the fact; nothing was counted again

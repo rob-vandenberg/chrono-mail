@@ -3,6 +3,7 @@ from typing import Literal
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QWidget
 
+from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, AccountSummary, NoParameters
 from chrono_mail.engine.commands_drafts import DRAFT_OPEN, DraftOpenParameters, DraftOpenResult
 from chrono_mail.engine.commands_mail import MESSAGE_COMPOSE, ComposeParameters, ComposeResult
 from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional, ScheduledInfo
@@ -18,9 +19,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 2.4.332"
+__version__ = "composing.py 2.4.334"
 
 # --- Version history ----------------------------------------------------
+# v2.4.334: New asks the engine for the accounts while the window does not know them yet (the index rebuild after a restore, W9b)
 # v2.4.332: New works while no folder is selected: the default account, else the open one, else the first (W9)
 # v2.2.314: send_waiting: a delayed send of a message window waits in the Outbox; open_taken_back: a cancelled send opens again (B-21)
 # v1.9.274: R-19 round 4: the rows and the draft or reply it opens are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -49,12 +51,23 @@ class Composing(QObject):
 
     def new_message(self) -> None:
         """New: from the default account, else the open folder's, else the first account; also while no folder is selected (just after the
-        start or a restore, W9). Without a mail account there is nothing to send from."""
+        start or a restore, W9) and while the window does not know its accounts yet (the index rebuild at start or after a restore: the
+        engine is asked for them, W9b). Without a mail account there is nothing to send from."""
+        if self._state.mail_accounts():
+            self._new_from(self._state.mail_accounts())
+            return
+
+        def listed(found: tuple[AccountSummary, ...]) -> None:
+            self._new_from([account for account in found if account.kind not in ("local", "dav")])
+
+        self._backend.ask(ACCOUNT_LIST, NoParameters(), listed, lambda error: self._status.report("New message", error), owner=self)
+
+    def _new_from(self, accounts: list[AccountSummary]) -> None:
         wanted = self._prefs.read().default_account
-        known = self._state.mail_account_ids()
+        known = [account.account_id for account in accounts]
         account = wanted if wanted in known else self._state.view.account or (known[0] if known else None)
         if account is not None:
-            self.open_composer(account, None, None)
+            self.open_composer(account, None, None, accounts=accounts)
 
     def compose_to(self, address: str) -> None:
         """A new message to this address (from a contact)."""
@@ -93,14 +106,15 @@ class Composing(QObject):
 
     def open_composer(
         self, account_id: str, draft: DraftOpenResult | ComposeResult | None, source: tuple[str, str] | None, to: str = "", resume: tuple[str, str] | None = None, schedule_only: bool = False, modal: bool = False,
-        editing: ScheduledInfo | None = None, taken_back: bool = False,
+        editing: ScheduledInfo | None = None, taken_back: bool = False, accounts: list[AccountSummary] | None = None,
     ) -> ComposeWindow:
-        mail_ids = self._state.mail_account_ids()
+        accounts = self._state.mail_accounts() if accounts is None else accounts  # given: the engine's, while the window does not know them yet
+        mail_ids = [account.account_id for account in accounts]
         if account_id not in mail_ids:  # Local Folders has no server: the answer comes from the account chosen in the settings, or the first
             wanted = self._prefs.read().default_account
             account_id = wanted if wanted in mail_ids else (mail_ids[0] if mail_ids else account_id)
         window = ComposeWindow(
-            self._backend, self._state.mail_accounts(), account_id, draft, source, resume, self._prefs.read().compose_html, self.compose_options(),
+            self._backend, accounts, account_id, draft, source, resume, self._prefs.read().compose_html, self.compose_options(),
             settings=self._prefs.settings, schedule_only=schedule_only, editing=editing, taken_back=taken_back,
         )
         window.waiting.connect(self.send_waiting)
