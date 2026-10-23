@@ -17,9 +17,10 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.prefs import InUse, Remembered
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagecolumns.py 2.2.314"
+__version__ = "messagecolumns.py 2.4.325"
 
 # --- Version history ----------------------------------------------------
+# v2.4.325: take_in_setups: every folder's setup read again from the settings, the open folder's in use at once (after a restore, D-244)
 # v2.2.314: Send at in the Outbox too (B-21)
 # v2.0.280: Columns per folder (B-16): every folder and view keeps its own columns, order, widths and sort, starting from the setup of its
 #           kind of folder; Apply to all folders (header menu, Menu > Folder) gives the open setup to every folder of its kind and to those
@@ -47,8 +48,9 @@ class MessageColumns(QObject):
         self._parent: QWidget = parent
         chosen = prefs_in_use.read()
         self.layout: str = chosen.list_layout if chosen.list_layout in ("columns", "cards") else "columns"
-        self._folder_setups: dict[str, tuple[ColumnSetup, FolderType]] = read_setups(memory.folder_columns)
-        self._type_setups: dict[FolderType, ColumnSetup] = {kind: setup for name, (setup, kind) in read_setups(memory.type_columns).items() if name == kind}
+        self._folder_setups: dict[str, tuple[ColumnSetup, FolderType]] = {}
+        self._type_setups: dict[FolderType, ColumnSetup] = {}
+        self._read_setups()
         self._take_over_earlier_setup()
         self._key: str | None = None  # the setup in use: the open folder's (None before a folder is open)
         self.folder_type: FolderType = "incoming"
@@ -69,6 +71,17 @@ class MessageColumns(QObject):
         view.header().customContextMenuRequested.connect(self.header_menu)
         messages.sort_changed.connect(self._sort_changed)
         messages.view_changed.connect(self.follow_view)  # a search in all folders has a setup of its own
+
+    def _read_setups(self) -> None:
+        self._folder_setups = read_setups(self._memory.folder_columns)
+        self._type_setups = {kind: setup for name, (setup, kind) in read_setups(self._memory.type_columns).items() if name == kind}
+
+    def take_in_setups(self) -> None:
+        """Every folder's and every kind's setup as the settings hold them now (a restore wrote the backup's): the open folder shows its
+        own at once, as does every folder opened next."""
+        self._read_setups()
+        self._key = None  # the open folder's setup is taken in again, not kept from before
+        self.follow_view()
 
     def fill_layout_menu(self, menu: QMenu) -> None:
         """View > Message list: Columns or Cards."""

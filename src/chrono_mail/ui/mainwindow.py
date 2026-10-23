@@ -25,12 +25,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.folderpane import FolderMenu, FolderPane
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
 from chrono_mail.ui.icons import application_icon, theme_icon
-from chrono_mail.ui.backupdialog import MENU_TEXT as BACKUP_MENU_TEXT
-from chrono_mail.ui.backupdialog import BackupWindow, may_quit
+from chrono_mail.ui.backupdialog import MENU_TEXT as BACKUP_MENU_TEXT, BackupWindow, may_quit
 from chrono_mail.ui.importdialog import MENU_TEXT as IMPORT_MENU_TEXT
 from chrono_mail.ui.importdialog import ImportDialog
-from chrono_mail.ui.restoredialog import MENU_TEXT as RESTORE_MENU_TEXT
-from chrono_mail.ui.restoredialog import RestoreWindow
+from chrono_mail.ui.restoredialog import MENU_TEXT as RESTORE_MENU_TEXT, RestoreWindow
 from chrono_mail.ui.indexrebuilds import IndexRebuilds
 from chrono_mail.ui.mailchecking import MailChecking
 from chrono_mail.ui.mailstate import MailState
@@ -62,9 +60,11 @@ from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.4.324"
+__version__ = "mainwindow.py 2.4.325"
 
 # --- Version history ----------------------------------------------------
+# v2.4.325: after a restore that brought the window's settings: taken in at once as Settings OK does, every folder's columns read again,
+#           the size and the panes as at start; then the startup folder opens (D-244)
 # v2.4.324: File > Restore… (the mail checks wait meanwhile; afterwards every index usable, the accounts loaded again and one check);
 #           Quit while a backup is made or restored asks first; the key's status line names "Use a recovery code" (D-244)
 # v2.4.322: File > Back up… (the Back up window; a click on the busy bar brings it back while it runs) and Restore… (greyed until the
@@ -302,7 +302,7 @@ class MainWindow(QMainWindow):
         self.backups: BackupWindow = BackupWindow(backend, settings, self.report, self)  # File > Backup… (D-244)
         self.restores: RestoreWindow = RestoreWindow(backend, settings, self)  # File > Restore…: the mail checks wait while it runs
         self.restores.running_changed.connect(self.checking.import_running)
-        self.restores.restored.connect(lambda: self.rebuilds.start(lambda: self.reload_accounts(select_saved=True, then=self.checking.check_mail)))
+        self.restores.restored.connect(self._after_restore)
         self.rebuilds.running_changed.connect(self.checking.rebuild_running)
         self.rebuilds.quit_requested.connect(self.quit_program)
         self._build_toolbar()
@@ -751,6 +751,14 @@ class MainWindow(QMainWindow):
             self.backend.changed.connect(page.apply_fact)  # ... and to the calendars, task lists and address books
 
     # --- state ------------------------------------------------------------------------------------------
+
+    def _after_restore(self, settings_back: bool) -> None:
+        """After a restore: its window settings in use at once, every index usable, the accounts and the startup folder, one check (D-244)."""
+        if settings_back:
+            self.apply_preferences()
+            self.columns.take_in_setups()
+            self._restore_state()
+        self.rebuilds.start(lambda: self.reload_accounts(select_saved=True, then=self.checking.check_mail))
 
     def _restore_state(self) -> None:
         restore_geometry(self, self.settings, "geometry")

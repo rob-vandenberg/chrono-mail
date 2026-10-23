@@ -44,9 +44,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.windowsettings import apply_window_settings
 
 # --- Version ------------------------------------------------------------
-__version__ = "restoredialog.py 2.4.324"
+__version__ = "restoredialog.py 2.4.325"
 
 # --- Version history ----------------------------------------------------
+# v2.4.325: restored tells whether the window's settings came back: the window takes them in at once (D-244)
 # v2.4.324: Initial: Menu > File > Restore…: this computer's key first (its recovery code in its own window), then the backup, then its
 #           password, then the Restore window with what the backup holds, "Remove all data on this computer first" and "Replace items
 #           that already exist", progress and Cancel, and afterwards a test of every account it made (D-244)
@@ -79,7 +80,7 @@ def contents_text(contents: ContentsResult) -> str:
 class RestoreDialog(QDialog):
     """The Restore window: what the backup holds, the two choices, the restore with its progress, and the test of the accounts it made."""
 
-    restored = Signal()  # the data on this computer changed: the window loads the accounts again
+    restored = Signal(bool)  # the data on this computer changed (and whether the window's settings came back): the window takes them in
     running_changed = Signal(bool)
 
     def __init__(self, backend: Backend, settings: QSettings, path: Path, password: str | None, contents: ContentsResult, parent: QWidget | None = None) -> None:
@@ -173,13 +174,12 @@ class RestoreDialog(QDialog):
         lines = [f"The backup is restored: {result.messages:,} messages and {result.items:,} calendar items, contacts and tasks came back."]
         if result.skipped:
             lines.append(f"{result.skipped:,} were here already, or are on their server, and were left as they are.")
-        if result.window_settings and apply_window_settings(self._settings, result.window_settings, self.remove_first.isChecked() or self.replace_existing.isChecked()):
-            lines.append("The window's sizes, columns and look from the backup are used from the next start of Chrono Mail.")
+        settings_back = bool(result.window_settings) and apply_window_settings(self._settings, result.window_settings, self.remove_first.isChecked() or self.replace_existing.isChecked()) > 0
         lines.extend(result.notes)
         self._lines = lines
         self._tested = {account_id: TESTING for account_id in result.made if account_id != LOCAL_ACCOUNT_ID}
         self._show_report()
-        self.restored.emit()
+        self.restored.emit(settings_back)
         for account_id in self._tested:
             self._backend.ask(
                 BACKUP_CHECK_ACCOUNT, CheckAccountParameters(account_id), self._checked, lambda error, account=account_id: self._tell_test(account, str(error)), owner=self,
@@ -207,7 +207,7 @@ class RestoreDialog(QDialog):
             self.status.setText("The restore was cancelled." + put_back)
         else:
             self.status.setText(f"The restore did not finish: {error}." + put_back)
-        self.restored.emit()  # what came back is shown
+        self.restored.emit(False)  # what came back is shown
 
     def _close_or_cancel(self) -> None:
         if self.running:
@@ -238,7 +238,7 @@ class RestoreWindow(QObject):
     """The main window's part for File > Restore…: this computer's key first (its recovery code shown in its own window when it is new),
     then the backup, then its password when it is protected, then the Restore window. One secret at a time, each named for what it is."""
 
-    restored = Signal()
+    restored = Signal(bool)
     running_changed = Signal(bool)
 
     def __init__(self, backend: Backend, settings: QSettings, parent: QWidget) -> None:
