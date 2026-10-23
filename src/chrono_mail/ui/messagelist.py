@@ -15,7 +15,7 @@ from chrono_mail.engine.commands_mail import MESSAGE_PLACES, ListSort, PlacesPar
 from chrono_mail.engine.commands_view import MESSAGE_COMBINED_ORDER, MESSAGE_ORDER, MESSAGE_ROWS, CombinedOrderParameters, OrderParameters, RowsAnswer, RowsParameters, ViewOrder
 from chrono_mail.index.model import GroupCount
 from chrono_mail.ui.backend import Backend, carried
-from chrono_mail.ui.columns import BY_ID, CARD, SCHEDULED_FOLDER_PATH, SEND_AT_LABEL, SNOOZED_COLUMN, SYMBOLS, cell_text, display_name, person_address
+from chrono_mail.ui.columns import BY_ID, CARD, SEND_AT_FOLDERS, SEND_AT_LABEL, SNOOZED_COLUMN, SYMBOLS, cell_text, display_name, person_address
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import grey_icon
 from chrono_mail.ui.messageorder import MessageOrder, message_key, split_key
@@ -23,9 +23,10 @@ from chrono_mail.ui.models import LOCAL_PLACES
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 2.2.313"
+__version__ = "messagelist.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: the column of the Outbox is called Send at too (a delayed send, B-21)
 # v2.2.313: arriving: a message that came into the view and waits for its place (Undo selects it once it is placed, B-18)
 # v2.0.280: set_column_labels: a column called otherwise in the open kind of folder (Sent is Saved in Drafts, B-16)
 # v1.9.274: R-19 round 4: the rows and the facts heard are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -571,7 +572,7 @@ class MessageListModel(QAbstractTableModel):
         if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(self._columns) or self._columns[section] not in BY_ID:
             return None
         column = BY_ID[self._columns[section]]
-        label = SEND_AT_LABEL if column.column_id == SNOOZED_COLUMN and self._spec is not None and self._spec.folder == SCHEDULED_FOLDER_PATH else self._column_labels.get(column.column_id, column.label)
+        label = SEND_AT_LABEL if column.column_id == SNOOZED_COLUMN and self._spec is not None and self._spec.folder in SEND_AT_FOLDERS else self._column_labels.get(column.column_id, column.label)
         if role == Qt.ItemDataRole.DisplayRole:
             return SYMBOLS.get(column.column_id, label)
         if role == Qt.ItemDataRole.ToolTipRole:

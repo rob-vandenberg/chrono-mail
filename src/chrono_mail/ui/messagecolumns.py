@@ -17,9 +17,10 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.prefs import InUse, Remembered
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagecolumns.py 2.0.280"
+__version__ = "messagecolumns.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: Send at in the Outbox too (B-21)
 # v2.0.280: Columns per folder (B-16): every folder and view keeps its own columns, order, widths and sort, starting from the setup of its
 #           kind of folder; Apply to all folders (header menu, Menu > Folder) gives the open setup to every folder of its kind and to those
 #           made later; the sort falls back when its column goes; a renamed folder keeps its setup, a deleted one loses it; Sent is Saved in Drafts
@@ -206,7 +207,7 @@ class MessageColumns(QObject):
         model.refresh_cells()
 
     def list_columns(self) -> tuple[str, ...]:
-        """The columns of the list: Snoozed until (Send at) only in the Snoozed and the Scheduled folder."""
+        """The columns of the list: Snoozed until (Send at) only in the Snoozed and the Scheduled folder and the Outbox."""
         return self.columns if self._state.in_timed() else without_snoozed_column(self.columns)
 
     def _show_columns(self, columns: tuple[str, ...]) -> None:

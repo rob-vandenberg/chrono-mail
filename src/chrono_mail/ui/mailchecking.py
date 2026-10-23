@@ -23,9 +23,11 @@ from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 2.1.311"
+__version__ = "mailchecking.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: a refresh the person did not click (the timers, the check at start and after a rebuild) sends the Outbox first, as Refresh does,
+#           unless Settings > General says Receive only; the server's "new mail" only fetches; send_outbox can send one message (B-21)
 # v2.1.311: the busy bar names the learning by itself (the general rule): no hint of its own
 # v2.1.310: learn_existing_junk tells when it is done (and the bar's hover text says what it does meanwhile)
 # v2.1.308: the status line says how many new messages went to Junk; learn_existing_junk at start (D-238)
@@ -133,7 +135,7 @@ class MailChecking(QObject):
             timer = self.account_timers.get(account_id)
             if timer is None:
                 timer = QTimer(self)
-                timer.timeout.connect(lambda chosen=account_id: self.check_accounts({chosen}))
+                timer.timeout.connect(lambda chosen=account_id: self.scheduled_refresh({chosen}))
                 self.account_timers[account_id] = timer
             if timer.interval() != minutes * 60_000 or not timer.isActive():
                 timer.start(minutes * 60_000)
@@ -158,7 +160,7 @@ class MailChecking(QObject):
                 return
             if self._auto.isChecked() and not self.quitting:
                 if result.changed:
-                    self.check_mail()
+                    self.check_accounts(None)  # news of incoming mail: only fetched
                 self._watch(account_id)
 
         def failed(error: ChronoMailError) -> None:
@@ -219,7 +221,21 @@ class MailChecking(QObject):
     # --- send and receive ----------------------------------------------------------------------------------------------
 
     def check_mail(self) -> None:
-        self.check_accounts(None)
+        """The check at start and after an index rebuild: a refresh the person did not click."""
+        self.scheduled_refresh(None)
+
+    def scheduled_refresh(self, only: set[str] | None, also_calendars: set[str] | None = None) -> None:
+        """A refresh the person did not click: Send and Receive, exactly as Refresh (the Outbox of these accounts first, then their mail),
+        or only receive when Settings > General says so (B-21). It never brings the Operations window forward."""
+        if self._prefs.read().scheduled_refresh != "send_receive" or self.importing or (self.rebuilding or self.checking or self.sending):
+            self.check_accounts(only, also_calendars=also_calendars)
+            return
+
+        def receive() -> None:
+            self.check_accounts(only, new_round=False, also_calendars=also_calendars)
+            self._settle_operations()  # nothing to check: the round ends with the send
+
+        self.send_outbox(then=receive, account=next(iter(only)) if only is not None and len(only) == 1 else None)
 
     def send_and_receive(self) -> None:
         """Refresh: first send what waits in the Outbox, then check every account. Refresh stays greyed out meanwhile."""
@@ -236,10 +252,15 @@ class MailChecking(QObject):
 
         self.send_outbox(then=receive, manual=True)
 
-    def send_outbox(self, then: Callable[[], None] | None = None, manual: bool = False) -> None:
-        """Send All: the messages that wait in the Outbox (scheduled ones wait for their time). Manual: the person asked
-        for it (the Operations window may open). Nothing is sent while an import runs."""
+    def send_outbox(
+        self, then: Callable[[], None] | None = None, manual: bool = False, account: str | None = None, message: str | None = None, now: bool = False,
+    ) -> None:
+        """Send All: the messages that wait in the Outbox (scheduled ones, and delayed ones whose countdown runs, wait for their time). Manual:
+        the person asked for it (the Operations window may open). account: only its Outbox; message: only that one, now (B-21). Nothing is
+        sent while an import runs (then still follows). now: also the delayed ones whose countdown runs (Quit)."""
         if self.importing:
+            if then is not None:
+                then()
             return
         self._begin_operations(manual)
         self.sending = True
@@ -269,13 +290,13 @@ class MailChecking(QObject):
             else:
                 self._settle_operations()
 
-        self._backend.ask(MAIL_SEND_OUTBOX, SendOutboxParameters(), done, failed, owner=self)
+        self._backend.ask(MAIL_SEND_OUTBOX, SendOutboxParameters(account, message, now), done, failed, owner=self)
 
     def check_on_general_interval(self) -> None:
         """The general timer: the accounts that have no interval of their own."""
         calendars_only = {account.account_id for account in self._state.all_accounts if account.kind == "dav"}
         due = {account.account_id for account in self._state.mail_accounts() if account.check_minutes == 0}
-        self.check_accounts(due, also_calendars=calendars_only)
+        self.scheduled_refresh(due, also_calendars=calendars_only)
 
     def check_accounts(self, only: set[str] | None, manual: bool = False, new_round: bool = True, also_calendars: set[str] | None = None) -> None:
         """Check these accounts (all when None) for new mail, and bring their calendars, task lists and address books in step (also_calendars: the

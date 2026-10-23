@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag, PaletteColour
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 2.0.281"
+__version__ = "changes.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: "changed" also for a message in the Outbox whose waiting time changed (B-21)
 # v2.0.281: RebuildStep: how far the index of one place where mail is kept is rebuilt or filled in (D-229)
 # v2.0.280: MessageRow.sent: the message's own Date, for the Sent column (B-16)
 # v1.9.265: A fact about a collection carries its palette and whether it is read only (palette, read_only): the sidebar takes them from the fact and
@@ -73,7 +74,7 @@ ChangeKind = Literal[
     "moved",  # a message went from one folder to another (Trash, Archive, Junk, Snoozed, a folder chosen)
     "flags",  # the marks of a message changed (read, flagged, replied)
     "tags",  # the tags of a message changed
-    "changed",  # a message waiting in the Scheduled folder was changed in place (edited, or a repeat moved on): row is what a list shows of it now
+    "changed",  # a message waiting in the Scheduled folder was changed in place (edited, or a repeat moved on), or one in the Outbox may now be sent: row is what a list shows of it now
     "folder_read",  # every message of a folder was marked read
     "folder_emptied",  # every message of a folder was deleted for good
     "folder_made",

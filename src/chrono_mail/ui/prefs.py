@@ -8,9 +8,10 @@ from chrono_mail.ui.columns import valid_columns
 from chrono_mail.ui.scale import STANDARD, clamp
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 2.0.280"
+__version__ = "prefs.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: scheduled_refresh (Send and Receive, or Receive only), send_delay with its seconds, send_on_refresh, warn_outbox_on_quit (B-21, B-20)
 # v2.0.280: Columns per folder (B-16): the columns are no longer one setting of the Settings window; Remembered keeps the setup of each folder
 #           and of each kind of folder (folder_columns, type_columns) and hands the one setup of earlier versions over once (earlier_setup)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -38,6 +39,11 @@ DEFAULTS: dict[str, object] = {
     "check_on_start": True,
     "auto_check": True,
     "auto_check_minutes": 5,
+    "scheduled_refresh": "send_receive",  # what a refresh the person did not click does: send_receive, or receive (only fetches)
+    "send_delay": False,  # Send puts the message in the Outbox for send_delay_seconds, with a notice to send it now or cancel (B-21)
+    "send_delay_seconds": 10,
+    "send_on_refresh": False,  # Send leaves the message in the Outbox until the next refresh (B-21)
+    "warn_outbox_on_quit": True,  # quitting with messages in the Outbox asks first (B-20)
     "notifications": True,
     "tray": True,
     "close_to_tray": False,
@@ -84,6 +90,7 @@ READING_PANES: tuple[str, ...] = ("right", "bottom", "off")
 DATE_STYLES: tuple[str, ...] = ("short", "full", "iso")
 MARK_READ: tuple[str, ...] = ("delay", "never", "window")
 REPLY_QUOTES: tuple[str, ...] = ("above", "below", "none")
+SCHEDULED_REFRESHES: tuple[str, ...] = ("send_receive", "receive")
 DENSITIES: tuple[str, ...] = ("compact", "normal", "roomy")
 
 
@@ -233,6 +240,11 @@ class Preferences:
     check_on_start: bool = True
     auto_check: bool = True
     auto_check_minutes: int = 5
+    scheduled_refresh: str = "send_receive"
+    send_delay: bool = False
+    send_delay_seconds: int = 10
+    send_on_refresh: bool = False
+    warn_outbox_on_quit: bool = True
     notifications: bool = True
     tray: bool = True
     close_to_tray: bool = False
@@ -270,10 +282,10 @@ class Preferences:
     shortcuts: dict[str, str] = field(default_factory=dict[str, str])  # action name -> key sequence text ("" for none)
 
 
-_LIMITS: dict[str, tuple[int, int]] = {"auto_check_minutes": (1, 240), "mark_read_delay_ms": (0, 10_000), "autosave_seconds": (0, 600)}
+_LIMITS: dict[str, tuple[int, int]] = {"auto_check_minutes": (1, 240), "mark_read_delay_ms": (0, 10_000), "autosave_seconds": (0, 600), "send_delay_seconds": (1, 999)}
 _CHOICES: dict[str, tuple[str, ...]] = {
     "color_scheme": COLOR_SCHEMES, "list_layout": LIST_LAYOUTS, "reading_pane": READING_PANES, "date_style": DATE_STYLES, "list_density": DENSITIES,
-    "mark_read": MARK_READ, "reply_quote": REPLY_QUOTES,
+    "mark_read": MARK_READ, "reply_quote": REPLY_QUOTES, "scheduled_refresh": SCHEDULED_REFRESHES,
 }
 _KEY_OF: dict[str, str] = {"startup": "startup_view"}  # the field and its name in the settings file, where they differ
 
@@ -290,6 +302,11 @@ def read_preferences(settings: QSettings) -> Preferences:
         check_on_start=get_bool(settings, "check_on_start"),
         auto_check=get_bool(settings, "auto_check"),
         auto_check_minutes=number("auto_check_minutes"),
+        scheduled_refresh=choice("scheduled_refresh"),
+        send_delay=get_bool(settings, "send_delay"),
+        send_delay_seconds=number("send_delay_seconds"),
+        send_on_refresh=get_bool(settings, "send_on_refresh"),
+        warn_outbox_on_quit=get_bool(settings, "warn_outbox_on_quit"),
         notifications=get_bool(settings, "notifications"),
         tray=get_bool(settings, "tray"),
         close_to_tray=get_bool(settings, "close_to_tray"),

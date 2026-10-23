@@ -1,6 +1,6 @@
 from typing import Literal
 
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QWidget
 
 from chrono_mail.engine.commands_drafts import DRAFT_OPEN, DraftOpenParameters, DraftOpenResult
@@ -18,9 +18,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 1.9.274"
+__version__ = "composing.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: send_waiting: a delayed send of a message window waits in the Outbox; open_taken_back: a cancelled send opens again (B-21)
 # v1.9.274: R-19 round 4: the rows and the draft or reply it opens are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: every engine call typed
 # v1.9.264: R-17: writing mail as a part of its own (out of ui/mainwindow.py): New, Reply, Reply all, Forward, a draft or a scheduled
@@ -33,6 +34,8 @@ QUOTES: dict[str, Literal["above", "below", "none"]] = {"above": "above", "below
 
 class Composing(QObject):
     """The message windows that write mail: the one owner of the list of open ones."""
+
+    send_waiting = Signal(str, str, str, int)  # a delayed send waits in the Outbox: account, message id, subject, seconds of its countdown (B-21)
 
     def __init__(self, backend: Backend, state: MailState, status: StatusReport, prefs_in_use: InUse, messages: MessageListPane, parent: QWidget) -> None:
         super().__init__(parent)
@@ -87,7 +90,7 @@ class Composing(QObject):
 
     def open_composer(
         self, account_id: str, draft: DraftOpenResult | ComposeResult | None, source: tuple[str, str] | None, to: str = "", resume: tuple[str, str] | None = None, schedule_only: bool = False, modal: bool = False,
-        editing: ScheduledInfo | None = None,
+        editing: ScheduledInfo | None = None, taken_back: bool = False,
     ) -> ComposeWindow:
         mail_ids = self._state.mail_account_ids()
         if account_id not in mail_ids:  # Local Folders has no server: the answer comes from the account chosen in the settings, or the first
@@ -95,8 +98,9 @@ class Composing(QObject):
             account_id = wanted if wanted in mail_ids else (mail_ids[0] if mail_ids else account_id)
         window = ComposeWindow(
             self._backend, self._state.mail_accounts(), account_id, draft, source, resume, self._prefs.read().compose_html, self.compose_options(),
-            settings=self._prefs.settings, schedule_only=schedule_only, editing=editing,
+            settings=self._prefs.settings, schedule_only=schedule_only, editing=editing, taken_back=taken_back,
         )
+        window.waiting.connect(self.send_waiting)
         if to:
             window.to.setText(to)
         window.destroyed.connect(lambda: self.composers.remove(window) if window in self.composers else None)
@@ -152,6 +156,14 @@ class Composing(QObject):
             self.open_composer(account, result, None, resume=(result.folder, result.message_id))
 
         self._backend.ask(DRAFT_OPEN, DraftOpenParameters(account, message_id, folder), opened, lambda error: self._status.report("Could not open the draft", error), owner=self)
+
+    def open_taken_back(self, account: str, folder: str, message_id: str) -> None:
+        """A cancelled send (B-21): the message, a draft again, opens in a message window as one not saved yet (closing asks first)."""
+
+        def opened(result: DraftOpenResult) -> None:
+            self.open_composer(account, result, None, resume=(result.folder, result.message_id), taken_back=True)
+
+        self._backend.ask(DRAFT_OPEN, DraftOpenParameters(account, message_id, folder), opened, lambda error: self._status.report("Could not open the message", error), owner=self)
 
     # --- the size of the text and the look ---------------------------------------------------------------------------
 

@@ -52,14 +52,16 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.tasksview import TasksPage
 from chrono_mail.ui.toolbar import ToolbarRow, WindowToolbar
+from chrono_mail.ui.sendnotices import SendNotices
 from chrono_mail.ui.tray import TrayController
 from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.2.313"
+__version__ = "mainwindow.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: the notices of delayed sends (SendNotices, B-21); quitting with messages in the Outbox asks first, a countdown under way ends first (B-20)
 # v2.2.313: Undo (Ctrl+Z) and Redo (Ctrl+Y, Ctrl+Shift+Z) of the actions on mail, at the top of Menu > Message, saying what they would do (B-18)
 # v2.1.311: the status part knows the accounts' names and hears which commands run (the busy bar's hover text names them)
 # v2.1.308: at start, once the indexes are usable, the junk filter learns from the mail already kept (D-238)
@@ -284,6 +286,8 @@ class MainWindow(QMainWindow):
             backend, self.mail_state, self.report, self.prefs, self.messages, self.act_refresh, self.act_auto, self.pages, lambda: self._section, self,
         )
         self.operations = self.checking.operations
+        self.notices = SendNotices(backend, self.mail_state, self.checking, self.composing, self.report, self.prefs, self)  # delayed sends (B-21), Quit (B-20)
+        self.composing.send_waiting.connect(self.notices.add)
         self.rebuilds: IndexRebuilds = IndexRebuilds(backend, self.report, self.mail_state.account_name, self)  # D-229
         self.rebuilds.running_changed.connect(self.checking.rebuild_running)
         self.rebuilds.quit_requested.connect(self.quit_program)
@@ -744,7 +748,7 @@ class MainWindow(QMainWindow):
             self.hide()  # the program keeps running in the notification area
             event.ignore()
             return
-        if not self.composing.close_all():
+        if not self.composing.close_all() or not self.notices.before_quit(self.quit_program):
             event.ignore()
             return
         save_geometry(self, self.settings, "geometry")

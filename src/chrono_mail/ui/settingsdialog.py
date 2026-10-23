@@ -58,9 +58,10 @@ from chrono_mail.core.colours import DARK, LIGHT, text_on_accent
 from chrono_mail.ui.colours import is_dark, red
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 2.0.281"
+__version__ = "settingsdialog.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: General: Scheduled refresh (Send and Receive, or Receive only), the two delays of sending, the warning on Quit (B-21, B-20)
 # v2.0.281: Rebuild the search index goes to the main window (rebuild_requested): one place after the other with the rebuild window, while the
 #           old indexes stay in use (D-229)
 # v2.0.280: Message list page: the columns are those of the folder open in the main window (SettingsContext.columns, chosen_columns, B-16)
@@ -369,6 +370,21 @@ class SettingsDialog(QDialog):
         self.interval.setSuffix(" minutes")
         self.interval.setValue(self._chosen.auto_check_minutes)
         self.interval.setEnabled(self.auto_check.isChecked())
+        self.scheduled_refresh = QComboBox(page)  # what a refresh the person did not click does; the Refresh button always sends and receives
+        for text, value in (("Send and Receive", "send_receive"), ("Receive only", "receive")):
+            self.scheduled_refresh.addItem(text, value)
+        self.scheduled_refresh.setCurrentIndex(max(0, self.scheduled_refresh.findData(self._chosen.scheduled_refresh)))
+        self.send_delay = QCheckBox("Delay sending a message by", page)
+        self.send_delay.setChecked(self._chosen.send_delay)
+        self.send_delay_seconds = QSpinBox(page)
+        self.send_delay_seconds.setRange(1, 999)
+        self.send_delay_seconds.setSuffix(" seconds")
+        self.send_delay_seconds.setValue(self._chosen.send_delay_seconds)
+        self.send_delay_seconds.setEnabled(self.send_delay.isChecked())
+        self.send_on_refresh = QCheckBox("Delay sending messages until the next refresh", page)
+        self.send_on_refresh.setChecked(self._chosen.send_on_refresh)
+        self.warn_outbox_on_quit = QCheckBox("Warn when quitting with messages in the Outbox", page)
+        self.warn_outbox_on_quit.setChecked(self._chosen.warn_outbox_on_quit)
         self.notifications = QCheckBox("Show a notification when new mail arrives (only the number, never the content)", page)
         self.notifications.setChecked(self._chosen.notifications)
         self.tray = QCheckBox("Show an icon in the notification area", page)
@@ -378,6 +394,14 @@ class SettingsDialog(QDialog):
         for widget in (self.check_on_start, self.auto_check):
             form.addRow(widget)
         form.addRow("Check every", self.interval)
+        form.addRow("Scheduled refresh:", self.scheduled_refresh)
+        delay_row = QHBoxLayout()
+        delay_row.addWidget(self.send_delay)
+        delay_row.addWidget(self.send_delay_seconds)
+        delay_row.addStretch(1)
+        form.addRow(delay_row)
+        for widget in (self.send_on_refresh, self.warn_outbox_on_quit):
+            form.addRow(widget)
         for widget in (self.notifications, self.tray, self.close_to_tray):
             form.addRow(widget)
         if not tray_available:
@@ -388,6 +412,7 @@ class SettingsDialog(QDialog):
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())
         self.auto_check.toggled.connect(self.interval.setEnabled)
+        self.send_delay.toggled.connect(self.send_delay_seconds.setEnabled)
         return page
 
     def _operations_page(self) -> QWidget:
@@ -925,6 +950,8 @@ class SettingsDialog(QDialog):
         accent_dark, accent_light = self._accents()
         return Preferences(
             check_on_start=self.check_on_start.isChecked(), auto_check=self.auto_check.isChecked(), auto_check_minutes=self.interval.value(),
+            scheduled_refresh=str(self.scheduled_refresh.currentData()), send_delay=self.send_delay.isChecked(), send_delay_seconds=self.send_delay_seconds.value(),
+            send_on_refresh=self.send_on_refresh.isChecked(), warn_outbox_on_quit=self.warn_outbox_on_quit.isChecked(),
             notifications=self.notifications.isChecked(), tray=self.tray.isChecked(), close_to_tray=self.close_to_tray.isChecked(),
             operations_show_on_send_receive=self.operations_show.isChecked(), operations_hide_when_done=self.operations_hide.isChecked(),
             operations_show_on_error=self.operations_error.isChecked(),

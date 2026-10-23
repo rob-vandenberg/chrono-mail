@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyledIt
 from chrono_mail.engine.changes import MessageRow
 from chrono_mail.ui.colours import group_header_colour, selection_grey, theme
 
-from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
+from chrono_mail.ui.columns import SEND_AT_FOLDERS
 from chrono_mail.ui.formatting import avatar_colour, coming_date, display_name, initials, short_date
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.messagelist import CONTACT_ROLE, GROUP_HEADER_ROLE, PENDING_ROLE, ROW_ROLE
@@ -18,9 +18,10 @@ from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import paint_tag_marks
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 1.9.275"
+__version__ = "delegate.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: a card in the Outbox says Send and its time, as in the Scheduled folder (a delayed send, B-21)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.6.260: The roles of the message list from messagelist.py (R-15)
 # v1.1.229: The waiting mark 20% smaller, and hovering it says what it is (the owner)
@@ -193,7 +194,7 @@ class MessageDelegate(QStyledItemDelegate):
         strong.setBold(unread)
         # first line: who, and the date at the right
         until = row.snoozed_until
-        word = "Send" if row.folder == SCHEDULED_FOLDER_PATH else "Until"  # it is sent then, or it comes back then
+        word = "Send" if row.folder in SEND_AT_FOLDERS else "Until"  # it is sent then, or it comes back then
         date_text = f"{word} {coming_date(until)}" if until is not None else short_date(row.date)
         small = QFont(base)
         small.setPointSizeF(base.pointSizeF() * 0.9)

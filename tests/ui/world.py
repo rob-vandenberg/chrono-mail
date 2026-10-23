@@ -21,9 +21,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 1.1.208"
+__version__ = "world.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: the window of a test does not ask about the Outbox when it closes (warn_outbox_on_quit off; its own tests switch it on, B-20)
 # v1.1.208: gone and add_window: for message windows, which delete themselves when they close
 # v0.2.94: The tests start without group headers; the tests of the groups switch them on
 # v0.0.78: The tests start new messages in plain text
@@ -199,6 +200,7 @@ def build_world(tmp_path: Path, qtbot: QtBot, dialogs: Dialogs, messages: dict[s
         settings.setValue("check_on_start", False)  # tests decide for themselves when mail is checked
         settings.setValue("compose_html", False)  # the tests that write a message start in plain text; rich text is the default of the program
         settings.setValue("show_groups", False)  # the tests of the list count rows without headers; the tests of the groups switch them on
+        settings.setValue("warn_outbox_on_quit", False)  # a window closed at the end of a test with mail in the Outbox; the tests of the question switch it on
         window = MainWindow(backend, settings)
         qtbot.addWidget(window)
         window.show()

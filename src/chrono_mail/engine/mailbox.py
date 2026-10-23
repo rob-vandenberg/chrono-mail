@@ -18,7 +18,7 @@ from chrono_mail.engine.imap_online import LOCAL_ONLY, GoneFromServer, ServerSes
 from chrono_mail.engine.old_files import settle_old_files
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.store import MessageNotFoundError, Store, clean_tags
 from chrono_mail.sync.imap_state import ImapState
@@ -30,9 +30,10 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 2.0.280"
+__version__ = "mailbox.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: the Outbox is timed too (a message there may wait for its moment, B-21); tell_changed: a row shows its new Send at
 # v2.0.280: row_of: the row's sent moment (the Sent column, B-16)
 # v1.1.252: A renamed folder takes its pins in Favorites along (and those of the folders inside it), before the rename is told (R-41)
 # v1.1.250: Every fact about mail carries the new numbers of the folders it touched, read from the index under the same lock as the change (R-10)
@@ -201,7 +202,21 @@ class Mailbox:
             found.update({store_id: until for store_id, until in self.snoozed().items()})
         if folder in (None, (SCHEDULED_FOLDER,)):  # a repeating message carries its next send like any scheduled one
             found.update({store_id: moment for store_id, place, moment in self.index.scheduled() if place == (SCHEDULED_FOLDER,)})
-        return found if folder is None or folder in ((SNOOZED_FOLDER,), (SCHEDULED_FOLDER,)) else None
+        if folder in (None, OUTBOX):
+            found.update(self.held_back())
+        return found if folder is None or folder in ((SNOOZED_FOLDER,), (SCHEDULED_FOLDER,), OUTBOX) else None
+
+    def held_back(self) -> dict[str, int]:
+        """The messages in the Outbox that may not be sent before a moment (store id -> seconds): a delayed send counts down (B-21)."""
+        try:
+            here = [message.ref.store_id for message in self.store.list_messages(OUTBOX)]
+        except StorageError:
+            return {}
+        return {store_id: found.send_not_before for store_id, found in self.store.properties.readable(here).items() if found.send_not_before is not None}
+
+    def tell_changed(self, ref: MessageRef) -> None:
+        """A message changed where it is, the message itself unchanged (its waiting time in the Outbox): the fact carries the row as a list shows it now."""
+        self._tell(Change("changed", self._place, "/".join(ref.folder_path), ref.store_id, row=self.row_of(ref.store_id), role=self._role_of(ref.folder_path)))
 
     def snoozed(self) -> dict[str, int]:
         """The messages in the Snoozed folder that know when they come back (store id -> seconds), from their properties files."""

@@ -6,9 +6,10 @@ from chrono_mail.engine.changes import MessageRow
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 2.0.280"
+__version__ = "columns.py 2.2.314"
 
 # --- Version history ----------------------------------------------------
+# v2.2.314: SEND_AT_FOLDERS: the Scheduled folder and the Outbox (a delayed send, B-21)
 # v2.0.280: the Sent column (the moment the message carries itself, sorts by sent; "Saved" in Drafts); the standard columns are those of incoming mail, with From (B-16); the pixel widths of versions before 0.1.89 are no longer taken over
 # v1.9.274: R-19 round 4: the rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.1.200: SCHEDULED_FOLDER_PATH: the Snoozed until column is Send at there
@@ -60,6 +61,7 @@ SNOOZED_COLUMN: str = "snoozed"  # shown in the Snoozed folder only; not in the 
 SNOOZED_FOLDER_PATH: str = "Snoozed"
 SCHEDULED_FOLDER_PATH: str = "Scheduled"  # its messages carry when they are sent in the same field: the column is called Send at there
 SEND_AT_LABEL: str = "Send at"
+SEND_AT_FOLDERS: tuple[str, ...] = (SCHEDULED_FOLDER_PATH, "Outbox")  # the column says when each message is sent (the Outbox: a delayed send, B-21)
 SAVED_LABEL: str = "Saved"  # the Sent column in Drafts: a draft carries when it was last saved
 BY_ID: dict[str, Column] = {column.column_id: column for column in COLUMNS}
 SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎", "replied": "↩", "contact": "", "trash": "", "tag": ""}  # Contact and Delete draw icons, their headers stay empty
