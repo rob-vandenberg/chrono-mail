@@ -6,6 +6,7 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_mail import ListParameters, SendParameters, mail_send, message_list
 from chrono_mail.ui import sendnotices
+from chrono_mail.ui.colours import theme
 from chrono_mail.ui.composer import ComposeWindow
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.prefs import read_preferences
@@ -15,13 +16,27 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_delayed_send.py 2.3.316"
+__version__ = "test_ui_delayed_send.py 2.3.317"
 
 # --- Version history ----------------------------------------------------
+# v2.3.317: the status line's texts are recorded, never read at one moment; Cancel waits for the window it opens (not the one that sent, which may exist until Qt deletes it); the notice as the owner's mockup: the buttons below the text at the right, the outline from the colour file
 # v2.3.316: the refresh at start does its own choice; the two rows of Settings, each greyed with its tick
 # v2.3.315: Send only (the timer sends and fetches nothing, the server's "new mail" fetches nothing); the one Automatically row of Settings
 # v2.2.314: Initial (B-21, B-20): the notice of a delayed send (Send now, Cancel, its end), until the next refresh, the scheduled refresh
 #           (Send and Receive, or Receive only), the question on Quit, the settings
+
+
+def said(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every text the status line is given from now on (another part may write the line again a moment later, so it is never read at one moment)."""
+    texts: list[str] = []
+    real_show = window.report.show
+
+    def show(text: str, error: bool = False) -> None:
+        texts.append(text)
+        real_show(text, error)
+
+    monkeypatch.setattr(window.report, "show", show)
+    return texts
 
 
 def held(world: World, folder: str) -> int:
@@ -53,6 +68,9 @@ def test_send_shows_a_notice_and_send_now_sends_at_once(world: World, qtbot: QtB
     wait(qtbot, lambda: notices.counting() == 1 and held(world, "Outbox") == 1)
     notice = notices.notices()[0]
     assert notice.label.text() == "Sending “Hello” in 60 s" and notice.isVisible() and world.smtp.received == []
+    label, send_now, cancel = notice.label.geometry(), notice.send_button.geometry(), notice.cancel_button.geometry()
+    assert send_now.top() >= label.bottom() and cancel.left() > send_now.right() and notice.width() - cancel.right() < notice.width() // 4  # below, at the right
+    assert f"solid {theme().notice_border}" in notice.styleSheet() and "border-radius" in notice.styleSheet()
     notice.send_button.click()
     wait(qtbot, lambda: len(world.smtp.received) == 1 and held(world, "Outbox") == 0 and held(world, "Sent") == 1)
     assert notices.counting() == 0
@@ -70,10 +88,11 @@ def test_cancel_opens_the_message_again_and_discard_leaves_nothing(world: World,
     written(qtbot, world, "Oops").send_button.click()
     notices = world.window.notices
     wait(qtbot, lambda: notices.counting() == 1)
-    notices.notices()[0].cancel_button.click()
     composing = world.window.composing
-    wait(qtbot, lambda: any(window.subject.text() == "Oops" for window in composing.composers))
-    reopened = next(window for window in composing.composers if window.subject.text() == "Oops")
+    before = list(composing.composers)  # the window that sent it may still exist, closed, until Qt deletes it
+    notices.notices()[0].cancel_button.click()
+    wait(qtbot, lambda: any(window not in before and window.subject.text() == "Oops" for window in composing.composers))
+    reopened = next(window for window in composing.composers if window not in before and window.subject.text() == "Oops")
     assert held(world, "Outbox") == 0 and world.smtp.received == [] and reopened.is_modified()
     world.dialogs.answer = QMessageBox.StandardButton.Discard
     reopened.close()
@@ -81,20 +100,22 @@ def test_cancel_opens_the_message_again_and_discard_leaves_nothing(world: World,
     assert ("question", "Save this message?") in [(kind, title) for kind, title, _ in world.dialogs.shown]
 
 
-def test_with_both_delays_the_end_of_the_countdown_leaves_it_for_the_next_refresh(world: World, qtbot: QtBot) -> None:
+def test_with_both_delays_the_end_of_the_countdown_leaves_it_for_the_next_refresh(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     delays(world, 1, on_refresh=True)
+    texts = said(world.window, monkeypatch)
     written(qtbot, world).send_button.click()
     wait(qtbot, lambda: world.window.notices.counting() == 1)
-    wait(qtbot, lambda: world.window.notices.counting() == 0 and world.window.report.label.text() == "In the Outbox: the message goes with the next refresh")
+    wait(qtbot, lambda: world.window.notices.counting() == 0 and "In the Outbox: the message goes with the next refresh" in texts)
     assert world.smtp.received == [] and held(world, "Outbox") == 1
     world.window.checking.send_and_receive()  # Refresh
     wait(qtbot, lambda: len(world.smtp.received) == 1 and held(world, "Outbox") == 0)
 
 
-def test_until_the_next_refresh_alone_has_no_notice(world: World, qtbot: QtBot) -> None:
+def test_until_the_next_refresh_alone_has_no_notice(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     delays(world, 0, on_refresh=True)
+    texts = said(world.window, monkeypatch)
     written(qtbot, world).send_button.click()
-    wait(qtbot, lambda: held(world, "Outbox") == 1 and world.window.report.label.text() == "In the Outbox: “Hello” goes with the next refresh")
+    wait(qtbot, lambda: held(world, "Outbox") == 1 and "In the Outbox: “Hello” goes with the next refresh" in texts)
     assert world.window.notices.counting() == 0 and world.smtp.received == []
 
 

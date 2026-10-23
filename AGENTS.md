@@ -108,7 +108,7 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 ## 5. Code conventions
 
 1. Version number and version history per file, exactly as PY-DEVELOPMENT-RULES.md Rule 4 describes for Python (directly after the imports).
-2. The project version lives in one place: `pyproject.toml`. When any file changes, the project version changes too.
+2. The project version lives in one place: `pyproject.toml`. When any code file changes, the project version changes too. A change of only documents keeps the version and is pushed with `./gitpush.sh` without a message.
 3. Small modules with a single clear responsibility. A module that grows beyond roughly 500 lines is a signal to split it (a guideline, not a hard limit).
 4. Standard library first (`email`, `poplib`, `smtplib`, `ssl`, `sqlite3`), well-maintained packages second, own code last.
 5. Names are descriptive and spelled out in full.
