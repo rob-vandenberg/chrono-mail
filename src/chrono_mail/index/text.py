@@ -3,9 +3,10 @@ from html.parser import HTMLParser
 from typing import override
 
 # --- Version ------------------------------------------------------------
-__version__ = "text.py 0.0.14"
+__version__ = "text.py 2.0.307"
 
 # --- Version history ----------------------------------------------------
+# v2.0.307: The link leftovers pattern can no longer backtrack over a long run of spaces (SonarQube Cloud, D-237)
 # v0.0.14: clean_preview
 # v0.0.13: html_to_text can keep lines
 # v0.0.8: Initial text extraction for the index
@@ -14,7 +15,7 @@ MAXIMUM_BODY_CHARACTERS: int = 100_000  # per message, for full-text search (D-0
 _WHITESPACE: re.Pattern[str] = re.compile(r"\s+")
 _SPACES: re.Pattern[str] = re.compile(r"[ \t\r\f\v]+")
 _WEB_ADDRESS: re.Pattern[str] = re.compile(r"(?:https?|ftp)://\S+|www\.\S+", re.IGNORECASE)
-_LINK_LEFTOVERS: re.Pattern[str] = re.compile(r"\[\s*(?:<\s*>)?\s*\]|<\s*>|\[\s*\]|\(\s*\)")
+_LINK_LEFTOVERS: re.Pattern[str] = re.compile(r"\[\s*(?:<\s*>\s*)?\]|<\s*>|\(\s*\)")
 _DECORATION: re.Pattern[str] = re.compile(r"[-_=*#~+.|:]{3,}")
 _BRACKETS: re.Pattern[str] = re.compile(r"[\[\]<>]+")
 _SKIPPED_TAGS: frozenset[str] = frozenset({"script", "style", "head", "title"})

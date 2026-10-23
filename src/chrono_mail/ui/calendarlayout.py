@@ -4,9 +4,10 @@ from datetime import date, datetime, timedelta, tzinfo
 from chrono_mail.engine.commands_calendar import OccurrenceInfo
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarlayout.py 1.9.275"
+__version__ = "calendarlayout.py 2.0.307"
 
 # --- Version history ----------------------------------------------------
+# v2.0.307: A condition that gave the same last day either way removed (SonarQube Cloud, D-237)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v0.0.64: Initial layout of events in days, weeks, months and lists (no drawing, no Qt)
 
@@ -229,7 +230,7 @@ def bars(entries: list[Entry], days: list[date], include_timed_spanning: bool = 
     for entry in entries:
         if not entry.all_day and not (include_timed_spanning and entry.last_day > entry.first_day):
             continue
-        first_day, last_day = entry.first_day, entry.last_day if entry.all_day else entry.last_day
+        first_day, last_day = entry.first_day, entry.last_day
         if last_day < days[0] or first_day > days[-1]:
             continue
         first = max(0, (first_day - days[0]).days)
