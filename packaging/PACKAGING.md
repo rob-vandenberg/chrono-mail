@@ -47,7 +47,8 @@ packs that folder into the .deb and the .rpm; on Windows **Inno Setup** makes th
    checksum there.
    **The app information** (`packaging/chrono-mail.metainfo.xml`, AppStream, installed in `/usr/share/metainfo`):
    without it Discover and GNOME Software do not list Chrono Mail under Installed, so it cannot be uninstalled there
-   (the owner on Fedora, 2.3.317). Check it with `appstreamcli validate --no-net packaging/chrono-mail.metainfo.xml`.
+   (the owner on Fedora, 2.3.317). It must name the package (`<pkgname>chrono-mail</pkgname>`): Discover skips every
+   program whose app information does not (seen in Discover's code, 2.3.319; without it 2.3.318 was still not listed). Check it with `appstreamcli validate --no-net packaging/chrono-mail.metainfo.xml`.
 6. **The program's own version.** The packaged program has no `pyproject.toml` next to it, so it learns its version
    from its package information; Nuitka includes that only when told: `--include-distribution-metadata=chrono-mail`
    (both build scripts). Without it the About window says "version unknown" (seen on Windows in 0.5.130).

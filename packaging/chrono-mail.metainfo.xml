@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- chrono-mail.metainfo.xml 2.3.318
+<!-- chrono-mail.metainfo.xml 2.3.319
+     v2.3.319: The package name (pkgname): Discover skips every program whose app information does not name its package
      v2.3.318: Initial: the app information software centres (Discover, GNOME Software) need to list Chrono Mail as an
      installed program, with Uninstall. Installed in /usr/share/metainfo by packaging/nfpm.yaml. -->
 <component type="desktop-application">
@@ -22,6 +23,7 @@
       sent as soon as you are back online.
     </p>
   </description>
+  <pkgname>chrono-mail</pkgname>
   <launchable type="desktop-id">chrono-mail.desktop</launchable>
   <icon type="stock">chrono-mail</icon>
   <categories>
