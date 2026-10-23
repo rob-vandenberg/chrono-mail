@@ -12,9 +12,11 @@ from chrono_mail.ui.statusreport import CLICK_BACKUP
 from tests.ui.world import World, answer_save_file, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_backup.py 2.4.322"
+__version__ = "test_ui_backup.py 2.4.324"
 
 # --- Version history ----------------------------------------------------
+# v2.4.324: Restore… is no longer greyed
+# v2.4.323: the menu item is Backup… (one word, the owner)
 # v2.4.322: Initial: the Back up window (D-244): greyed, never hidden; the passwords force the protection; Copy; a whole backup;
 #           Run in background and the busy bar bringing the window back
 
@@ -32,9 +34,9 @@ def checked(window: BackupDialog) -> list[str]:
     return [window.accounts.item(number).text() for number in range(window.accounts.count()) if window.accounts.item(number).checkState() == Qt.CheckState.Checked]
 
 
-def test_the_file_menu_has_back_up_and_a_greyed_restore(world: World) -> None:
+def test_the_file_menu_has_backup_and_restore(world: World) -> None:
     texts = [action.text() for action in menu_named(world.window, "File").actions()]
-    assert texts[2:5] == ["", "Back up…", "Restore…"] and world.window.act_backup.isEnabled() and not world.window.act_restore.isEnabled()
+    assert texts[2:5] == ["", "Backup…", "Restore…"] and world.window.act_backup.isEnabled() and world.window.act_restore.isEnabled()
 
 
 def test_back_up_waits_for_the_saved_password_and_the_passwords_force_the_protection(world: World, qtbot: QtBot) -> None:

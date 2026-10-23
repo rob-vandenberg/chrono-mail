@@ -14,14 +14,19 @@ from chrono_mail.engine.backup import (
     new_backup_password,
     write_backup,
 )
-from chrono_mail.engine.commands_accounts import NoParameters
+from chrono_mail.config import ServerRole
+from chrono_mail.core import AccountKind, ChronoMailError, ConnectionSecurity
+from chrono_mail.engine.commands_accounts import AccountCheckParameters, NoParameters, Security, account_check
+from chrono_mail.engine.commands_dav import DiscoverParameters, dav_discover
+from chrono_mail.engine.restore import RestoreChoice, ensure_key, read_contents, restore_backup
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_backup.py 2.4.322"
+__version__ = "commands_backup.py 2.4.324"
 
 # --- Version history ----------------------------------------------------
+# v2.4.324: Restore: key.ensure, backup.contents, backup.restore, backup.check-account; backup.cancel stops a restore too (D-244)
 # v2.4.322: Initial: backup.choices, backup.new-password, backup.make, backup.cancel (Menu > File > Back up…, D-244)
 
 
@@ -75,6 +80,119 @@ class CancelResult:
     cancelled: bool
 
 
+@dataclass(frozen=True, slots=True)
+class KeyEnsured:
+    made: bool  # a new key: the window shows its recovery code before anything else happens
+
+
+@dataclass(frozen=True, slots=True)
+class ReadParameters:
+    path: str = field(metadata=option("The backup file (.cmz)"))
+    password: str | None = field(default=None, metadata=option("The backup password, when the backup is protected", secret=True))
+
+
+@dataclass(frozen=True, slots=True)
+class ContentsRow:
+    account_id: str
+    name: str
+    mail: bool
+    items: bool
+    here: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ContentsResult:
+    created: str
+    version: str
+    parts: tuple[str, ...]
+    accounts: tuple[ContentsRow, ...]
+    messages: int
+    items: int
+    passwords: bool
+    protected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreParameters:
+    path: str = field(metadata=option("The backup file (.cmz)"))
+    password: str | None = field(default=None, metadata=option("The backup password, when the backup is protected", secret=True))
+    remove_first: bool = field(default=False, metadata=option("Remove all data on this computer first (never on a server; put back when the restore fails)"))
+    replace_existing: bool = field(default=False, metadata=option("Replace items that already exist (otherwise they are skipped)"))
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreResult:
+    made: tuple[str, ...]
+    filled: tuple[str, ...]
+    messages: int
+    items: int
+    skipped: int
+    window_settings: str
+    notes: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CheckAccountParameters:
+    account: str = field(metadata=option("The account"))
+
+
+@dataclass(frozen=True, slots=True)
+class CheckAccountResult:
+    account_id: str
+    connected: bool
+    text: str
+
+
+SECURITY_WORDS: dict[ConnectionSecurity, Security] = {ConnectionSecurity.NONE: "none", ConnectionSecurity.STARTTLS: "starttls", ConnectionSecurity.TLS: "tls"}
+
+
+def key_ensure(engine: Engine, parameters: NoParameters) -> KeyEnsured:
+    """Make this computer's encryption key when it has none yet."""
+    return KeyEnsured(ensure_key(engine))
+
+
+def backup_contents(engine: Engine, parameters: ReadParameters) -> ContentsResult:
+    """What a backup holds: its date, its accounts, its parts and its counts."""
+    contents = read_contents(engine, Path(parameters.path).expanduser(), parameters.password)
+    return ContentsResult(
+        contents.created, contents.version, contents.parts,
+        tuple(ContentsRow(row.account_id, row.name, row.mail, row.items, row.here) for row in contents.accounts),
+        contents.messages, contents.items, contents.passwords, contents.protected,
+    )
+
+
+def backup_restore(engine: Engine, parameters: RestoreParameters) -> RestoreResult:
+    """Put a backup back on this computer: an account that is not here whole, one that is here with what it lacks (the server's data stays
+    the server's to bring)."""
+    report = restore_backup(engine, RestoreChoice(Path(parameters.path).expanduser(), parameters.password, parameters.remove_first, parameters.replace_existing))
+    return RestoreResult(tuple(report.made), tuple(report.filled), report.messages, report.items, report.skipped, report.window_settings, tuple(report.notes))
+
+
+def backup_check_account(engine: Engine, parameters: CheckAccountParameters) -> CheckAccountResult:
+    """Test an account the restore made, as Settings > Accounts > Edit > Test connection does, with its stored passwords and accepted
+    certificates. Nothing is changed."""
+    settings = engine.resolve_account(parameters.account)
+    account = settings.account
+    try:
+        if account.kind is AccountKind.DAV:
+            dav_discover(engine, DiscoverParameters(account.account_id))
+            return CheckAccountResult(account.account_id, True, "Connected")
+        if engine.passwords.get(account.account_id, ServerRole.INCOMING) is None:
+            return CheckAccountResult(account.account_id, False, "No password: the backup did not hold it. Type it in Settings > Accounts > Edit")
+        result = account_check(engine, AccountCheckParameters(
+            account.incoming.username, account.incoming.host, account.outgoing.host, incoming_port=account.incoming.port,
+            incoming_security=SECURITY_WORDS[account.incoming.security], outgoing_port=account.outgoing.port, outgoing_security=SECURITY_WORDS[account.outgoing.security],
+            outgoing_username=None if settings.outgoing_same_login else account.outgoing.username, kind="imap" if account.kind is AccountKind.IMAP else "pop3",
+            trusted_certificate=settings.trusted_certificates, account=account.account_id,
+        ))
+    except ChronoMailError as error:
+        return CheckAccountResult(account.account_id, False, str(error))
+    if result.incoming_ok and result.outgoing_ok:
+        return CheckAccountResult(account.account_id, True, "Connected")
+    problems = ([f"Incoming: {result.incoming_message}"] if not result.incoming_ok else []) + ([f"Outgoing: {result.outgoing_message}"] if not result.outgoing_ok else [])
+    return CheckAccountResult(account.account_id, False, " ".join(problems))
+
+
 def backup_choices(engine: Engine, parameters: NoParameters) -> BackupChoices:
     """The accounts a backup can hold and what each one has."""
     return BackupChoices(tuple(BackupChoiceRow(entry.entry_id, entry.name, entry.parts) for entry in backup_entries(engine)))
@@ -112,8 +230,18 @@ BACKUP_MAKE: TypedCommand[BackupParameters, BackupResult] = TypedCommand("backup
 BACKUP_CANCEL: TypedCommand[NoParameters, CancelResult] = TypedCommand("backup.cancel", NoParameters, CancelResult)
 
 
+KEY_ENSURE: TypedCommand[NoParameters, KeyEnsured] = TypedCommand("key.ensure", NoParameters, KeyEnsured)
+BACKUP_CONTENTS: TypedCommand[ReadParameters, ContentsResult] = TypedCommand("backup.contents", ReadParameters, ContentsResult)
+BACKUP_RESTORE: TypedCommand[RestoreParameters, RestoreResult] = TypedCommand("backup.restore", RestoreParameters, RestoreResult)
+BACKUP_CHECK_ACCOUNT: TypedCommand[CheckAccountParameters, CheckAccountResult] = TypedCommand("backup.check-account", CheckAccountParameters, CheckAccountResult)
+
+
 def register(registry: CommandRegistry) -> None:
+    registry.register(KEY_ENSURE.id, "Make this computer's encryption key when it has none yet", NoParameters, key_ensure, doing="Making the encryption key")
+    registry.register(BACKUP_CONTENTS.id, "What a backup holds", ReadParameters, backup_contents, doing="Reading a backup")
+    registry.register(BACKUP_RESTORE.id, "Put a backup back on this computer", RestoreParameters, backup_restore, doing="Restoring a backup")
+    registry.register(BACKUP_CHECK_ACCOUNT.id, "Test the connection of an account a restore made", CheckAccountParameters, backup_check_account, doing="Testing a restored account")
     registry.register(BACKUP_CHOICES.id, "The accounts a backup can hold and what each one has", NoParameters, backup_choices, doing="Reading what can be backed up")
     registry.register(BACKUP_NEW_PASSWORD.id, "Make a new backup password", NoParameters, backup_new_password, doing="Making a backup password")
     registry.register(BACKUP_MAKE.id, "Back up mail, rules, calendars, contacts, tasks and settings to a .cmz file", BackupParameters, backup_make, doing="Backing up")
-    registry.register(BACKUP_CANCEL.id, "Stop the backup that is being made", NoParameters, backup_cancel, doing="Stopping the backup")
+    registry.register(BACKUP_CANCEL.id, "Stop the backup or restore that runs", NoParameters, backup_cancel, doing="Stopping the backup")
