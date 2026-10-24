@@ -14,9 +14,11 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 3.2.342"
+__version__ = "imap_sync.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: a group of messages the server refuses to send is fetched one by one: only the refused one waits for the next check, new mail
+#           and uploads go on (RV-49)
 # v3.2.342: a message whose tags cannot be read here keeps its keywords on the server (they were all removed, RV-48)
 # v2.5.336: new and recovered messages take their place from the store instead of a look through the whole folder (D-248)
 # v2.4.330: a standard folder the server marks (special-use) or has under its standard name is used whether or not it is subscribed:
@@ -826,16 +828,36 @@ def _download(
             eligible.append(uid)
     done = 0
     for batch in _batches(eligible, view.on_server, options):
-        fetched = {item.uid: item for item in client.uid_fetch(",".join(str(uid) for uid in batch), "(UID FLAGS BODY.PEEK[])")}
+        fetched, refused = _fetch_bodies(client, batch)
         for uid in batch:
             done += 1
             if progress is not None:
                 progress("/".join(local), done, len(eligible))
             item = fetched.get(uid)
+            if uid in refused:
+                counts.failed.append(f"UID {uid}: the server refuses to send this message; it is tried again at the next check")
+                continue
             if item is None or item.data is None:
-                counts.failed.append(f"UID {uid}: the server did not send the message")
+                counts.failed.append(f"UID {uid}: the server did not send the message; it is tried again at the next check")
                 continue
             _store_one(store, index, state, view, uid, item, pool, counts)
+
+
+def _fetch_bodies(client: ImapClient, batch: list[int]) -> tuple[dict[int, FetchedItem], set[int]]:
+    """The messages of a group, and the ones the server refuses to send. A refusal of the group is asked again one message at a time, so
+    one message the server will not send never holds back the others (passing: it is tried again at the next check, RV-49)."""
+    try:
+        return {item.uid: item for item in client.uid_fetch(",".join(str(uid) for uid in batch), "(UID FLAGS BODY.PEEK[])")}, set()
+    except ImapRefused:
+        if len(batch) == 1:
+            return {}, set(batch)
+    fetched: dict[int, FetchedItem] = {}
+    refused: set[int] = set()
+    for uid in batch:
+        found, no = _fetch_bodies(client, [uid])
+        fetched.update(found)
+        refused |= no
+    return fetched, refused
 
 
 def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folder, uid: int, item: FetchedItem, pool: dict[str, str | None], counts: _Counts) -> None:

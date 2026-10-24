@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import QLabel, QMessageBox, QStatusBar, QToolTip, QWidget
 
@@ -12,9 +12,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 2.4.322"
+__version__ = "statusreport.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: the status line shows plain text: folder names, subjects and server replies are never markup (RV-167)
 # v2.4.322: backup_hint: while a backup runs in the background, a click on the busy bar brings the Back up window back (D-244)
 # v2.1.311: the busy bar's hover text always names what runs (every command's doing, with its accounts), then what a click does; it follows
 #           while shown; learning_junk is gone (the general rule covers it)
@@ -42,6 +43,7 @@ class StatusReport(QObject):
         self._account_name: Callable[[str], str] = account_name  # how an account is named in the busy bar's hover text
         self._jobs: tuple[RunningJob, ...] = ()
         self.label: QLabel = QLabel("", parent)
+        self.label.setTextFormat(Qt.TextFormat.PlainText)  # it shows folder names, subjects and server replies: never markup (RV-167)
         self.progress_bar: ClickableBar = ClickableBar(parent)
         self.progress_bar.clicked.connect(self.bar_clicked)
         self.progress_bar.setToolTip(CLICK_OPERATIONS)

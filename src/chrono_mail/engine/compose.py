@@ -8,9 +8,11 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "compose.py 2.4.334"
+__version__ = "compose.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: a long name is cut before its extension and never ends in a space or a dot after the cut ("x.exe " opened x.exe on Windows
+#           without the question for programs, RV-110)
 # v2.4.334: CONIN$, CONOUT$ and COM or LPT with ¹ ² ³ are Windows devices too (W11c)
 # v2.4.331: suggest_filename takes out the marks that turn text around and puts "_" before a Windows device name (W11)
 # v0.0.86: Forward as attachment: the original goes along as an .eml file
@@ -29,13 +31,27 @@ def suggest_filename(filename: str | None, content_type: str, position: int) -> 
     """A safe file name for saving an attachment: no path, no control or reserved characters, no marks that turn the text around (the
     name reads as it is), never a Windows device name (CON, NUL, COM1…: the data went to the device, W11), not too long."""
     bare = _DIRECTION_MARKS.sub("", (filename or "").replace("\\", "/").rsplit("/", 1)[-1])
-    cleaned = _UNSAFE_NAME.sub("_", bare).strip(" .")[:150]
+    cleaned = _shortened(_UNSAFE_NAME.sub("_", bare).strip(" ."))
     if _DEVICE_NAME.fullmatch(cleaned.split(".", 1)[0].rstrip(" ")):  # the part before the first dot decides, spaces after it ignored
         cleaned = f"_{cleaned}"
     if cleaned:
         return cleaned
     extension = mimetypes.guess_extension(content_type) or ".bin"
     return f"attachment-{position + 1}{extension}"
+
+
+MAXIMUM_NAME_CHARACTERS: int = 150
+
+
+def _shortened(name: str) -> str:
+    """At most 150 characters, cut before the extension so it stays; never ending in a space or a dot, which Windows drops: "x.exe "
+    would pass as no program and open as x.exe (RV-110)."""
+    if len(name) <= MAXIMUM_NAME_CHARACTERS:
+        return name
+    stem, dot, extension = name.rpartition(".")
+    if dot and stem and 0 < len(extension) <= 20:
+        return f"{stem[: MAXIMUM_NAME_CHARACTERS - len(extension) - 1].rstrip(' .')}.{extension}".strip(" .")
+    return name[:MAXIMUM_NAME_CHARACTERS].rstrip(" .")
 
 
 @dataclass(frozen=True, slots=True)

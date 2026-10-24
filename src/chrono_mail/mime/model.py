@@ -1,10 +1,12 @@
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 1.9.276"
+__version__ = "model.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: send_time takes only the digits 0 to 9, up to the end of 9998 ("²" passed isdigit and stopped the check, RV-35)
 # v1.9.276: received: when the mail server received the message (D-226)
 # v1.1.206: REPEAT_HEADER: a repeating message carries its timetable in itself (D-176)
 # v1.1.203: send_time's comment names the Scheduled folder
@@ -73,4 +75,11 @@ REPEAT_HEADER: str = "x-chrono-mail-repeat"  # a repeating message: its whole ti
 def send_time(message: ParsedMessage) -> int | None:
     """The moment a scheduled message (in the Scheduled folder) is to be sent, or None when it is not scheduled (or the value is not a number)."""
     text = dict(message.chrono_headers).get(SEND_AT_HEADER, "")
-    return int(text) if text.isdigit() else None
+    if not _SECONDS.fullmatch(text):
+        return None
+    moment = int(text)
+    return moment if moment <= LATEST_SEND_TIME else None
+
+
+_SECONDS: re.Pattern[str] = re.compile(r"[0-9]{1,12}")  # only these digits: isdigit also takes "²", which int() refuses
+LATEST_SEND_TIME: int = 253_370_592_000  # 30 December 9998 (UTC): every time zone can show it

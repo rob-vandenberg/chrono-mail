@@ -16,12 +16,14 @@ from chrono_mail.ui import appearance
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.mainwindow import MainWindow
+from chrono_mail.ui.plainboxes import plain_message_boxes
 from chrono_mail.ui.singleinstance import ShowRequests, ask_to_show
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 2.3.320"
+__version__ = "app.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: every message box shows plain text unless it says otherwise (plainboxes, RV-167)
 # v2.3.320: --profile <folder>: mail, settings and the window's own settings all in that folder, the person's own never touched (the demo for screenshots, D-243)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.172: The colour theme is started without the command line (the style is always Fusion, D-158)
@@ -99,6 +101,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     app.setDesktopFileName(DESKTOP_FILE_NAME)
     app.setQuitOnLastWindowClosed(False)  # the window may be hidden in the tray; closing it for good quits explicitly
     app.setWindowIcon(application_icon())
+    plain_message_boxes(app)  # text from mail and servers in a message box is never markup (RV-167)
     if program_is_running():  # two copies would change the same mail at once
         return second_start()
     directories, settings = directories_and_settings(profile)

@@ -1,14 +1,22 @@
 import dataclasses
+import re
 from datetime import datetime
 from enum import Enum
 
 # --- Version ------------------------------------------------------------
-__version__ = "render.py 0.0.12"
+__version__ = "render.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: control characters from mail and servers are printed as "?": a terminal never runs their escape codes (RV-129)
 # v0.0.12: Initial text output
 
 _INDENT = "  "
+_CONTROL: re.Pattern[str] = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # every control character but tab and line break
+
+
+def _printable(text: str) -> str:
+    """Text from a mail or a server is hostile input: its escape codes could change the terminal or what it shows (RV-129)."""
+    return _CONTROL.sub("?", text)
 
 
 def _scalar(value: object) -> str:
@@ -19,8 +27,8 @@ def _scalar(value: object) -> str:
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M")
     if isinstance(value, Enum):
-        return str(value.value)
-    return str(value)
+        return _printable(str(value.value))
+    return _printable(str(value))
 
 
 def _lines(value: object, depth: int) -> list[str]:
@@ -40,7 +48,7 @@ def _lines(value: object, depth: int) -> list[str]:
                 lines.extend(_lines(item, depth + 1))
             elif isinstance(item, str) and "\n" in item:
                 lines.append(f"{pad}{label}:")
-                lines.extend(f"{pad}{_INDENT}{line}" for line in item.splitlines())
+                lines.extend(f"{pad}{_INDENT}{_printable(line)}" for line in item.splitlines())
             else:
                 lines.append(f"{pad}{label}: {_scalar(item)}")
         return lines

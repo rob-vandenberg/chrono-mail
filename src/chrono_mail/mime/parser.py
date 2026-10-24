@@ -18,9 +18,10 @@ from chrono_mail.mime.limits import (
 from chrono_mail.mime.model import Address, Attachment, ParsedMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "parser.py 2.0.301"
+__version__ = "parser.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: a date outside 2 January of year 2 to 30 December 9998 is unreadable: it could not be turned into another time zone (RV-34, RV-118)
 # v2.0.301: inline means shown in the text: only a part the HTML text refers to by cid:; every other part is an attachment, whatever its
 #           Content-Disposition says (an inline picture of a plain-text message was shown nowhere, D-235)
 # v1.9.276: received: the topmost Received line's moment, else Delivery-date (D-226); never raises
@@ -169,11 +170,24 @@ def _date(part: MIMEPart, collector: _Collector) -> datetime | None:
         if not isinstance(value, DateHeader) or value.datetime is None:
             collector.add("invalid-date")
             return None
-        moment = value.datetime
-        return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+        moment = _usable(value.datetime)
+        if moment is None:
+            collector.add("invalid-date")
+        return moment
     except Exception:
         collector.add("invalid-date")
         return None
+
+
+EARLIEST: datetime = datetime(2, 1, 2, tzinfo=UTC)  # the moments every time zone can show: a day of room at both ends
+LATEST: datetime = datetime(9998, 12, 30, tzinfo=UTC)
+
+
+def _usable(moment: datetime) -> datetime | None:
+    """A moment from a mail, with a time zone, or None when it lies where some time zone cannot show it (year 9999 at -1200 could not
+    even be turned into UTC: the check and every rebuild of the index stopped there, RV-34)."""
+    found = moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+    return found if EARLIEST <= found <= LATEST else None
 
 
 def _stamp(text: str) -> datetime | None:
@@ -182,7 +196,7 @@ def _stamp(text: str) -> datetime | None:
         moment = parsedate_to_datetime(text.rsplit(";", 1)[-1].strip())
     except (TypeError, ValueError, IndexError, OverflowError):
         return None
-    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
+    return _usable(moment)
 
 
 def _received(part: MIMEPart, collector: _Collector) -> datetime | None:

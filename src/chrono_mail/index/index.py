@@ -4,7 +4,7 @@ import sqlite3
 from dataclasses import dataclass
 from email.utils import getaddresses
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import override
 
@@ -33,9 +33,11 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 2.5.335"
+__version__ = "index.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: a stored moment before 1970 is read by adding seconds (Windows refused a negative time, so its folder could not be listed, RV-36);
+#           moments are counted without converting them (RV-34)
 # v2.5.335: a new file is made, and an old format upgraded, only after the format is read again under the write lock: a second
 #           connection opening the same file at that moment took it for damaged (D-247)
 # v2.1.308: wrote_to: whether a message of a folder (Sent) names an address among its recipients (the junk filter's trusted senders, D-238)
@@ -123,12 +125,21 @@ def _folder_path(key: str) -> tuple[str, ...]:
     return tuple(key.split(FOLDER_SEPARATOR))
 
 
+_EPOCH: datetime = datetime(1970, 1, 1, tzinfo=UTC)
+
+
 def _epoch(moment: datetime | None) -> int | None:
-    return None if moment is None else int(moment.astimezone(UTC).timestamp())
+    return None if moment is None else (moment - _EPOCH) // timedelta(seconds=1)
 
 
 def _moment(epoch: int | None) -> datetime | None:
-    return None if epoch is None else datetime.fromtimestamp(epoch, UTC)
+    """A stored moment; before 1970 too (fromtimestamp refuses negative values on Windows, RV-36); None when out of reach."""
+    if epoch is None:
+        return None
+    try:
+        return _EPOCH + timedelta(seconds=epoch)
+    except OverflowError:
+        return None
 
 
 def _row(values: tuple[object, ...]) -> IndexedMessage:

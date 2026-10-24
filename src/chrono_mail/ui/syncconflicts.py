@@ -2,6 +2,7 @@
 Use Server data (every clashing field of each ticked item from that side), or per field in the popup a double click opens. Nothing here asks
 questions during the work: a conflict waits on this page until the person settles it, or leaves it."""
 
+import html
 import time
 from typing import Literal, override
 
@@ -39,9 +40,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 1.9.275"
+__version__ = "syncconflicts.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: the problems of Settle are escaped: they hold server replies (RV-167)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.237: A mail folder deleted on the server can be the conflict (What: Folder, R-30)
 # v1.1.234: A whole calendar, task list or address book can be the conflict (What: Calendar, Task list, Address book; R-25)
@@ -427,7 +429,7 @@ class SyncConflictsPanel(QWidget):
 
         def settled(result: SettleResult) -> None:
             if result.problems:
-                self.problems.setText(f"<span style='color:{red()}'>" + "<br>".join(result.problems) + "</span>")
+                self.problems.setText(f"<span style='color:{red()}'>" + "<br>".join(html.escape(problem) for problem in result.problems) + "</span>")
             self._marks.refresh()  # the rows that were settled leave (the fact also asks; one question at a time)
             if result.retried:
                 self.sync_requested.emit(list(result.retried))

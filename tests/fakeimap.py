@@ -9,9 +9,10 @@ from chrono_mail.protocols.imap import decode_folder_name, encode_folder_name
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeimap.py 1.1.248"
+__version__ = "fakeimap.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: refuse_fetch: a FETCH of the body of one of these UIDs answers NO; nil_bodies: their body is sent as NIL (RV-49, RV-51)
 # v1.1.248: CONDSTORE and QRESYNC on request (ENABLE, HIGHESTMODSEQ, CHANGEDSINCE, VANISHED): every change of a message counts up the folder's
 #           change counter; set_flags changes marks as another program would (R-09)
 # v1.1.237: LIST of one name lists only that folder; refuse_single_list: a LIST of one name answers NO (no confirmation either way)
@@ -139,6 +140,8 @@ class FakeImapServer(ScriptedServer):
         self.refuse_moves: bool = False  # UID MOVE and UID COPY answer NO
         self.refuse_creates: bool = False  # CREATE answers NO
         self.refuse_single_list: bool = False  # a LIST of one name answers NO
+        self.refuse_fetch: set[int] = set()  # a FETCH of the body that includes one of these UIDs answers NO
+        self.nil_bodies: set[int] = set()  # the body of these UIDs is sent as NIL
         self.stale_subscriptions: set[str] = set()  # subscribed names of folders that no longer exist
         self.idle_pushes: list[str] = []
         self._idle = idle
@@ -446,6 +449,9 @@ class FakeImapServer(ScriptedServer):
                 gone = sorted(uid for uid, modseq in folder.vanished.items() if modseq > since and (parts[0] == "1:*" or uid in wanted))
                 if gone:
                     conversation.send_line("* VANISHED (EARLIER) " + ",".join(str(uid) for uid in gone))
+            if ("BODY.PEEK[]" in items or "BODY[]" in items) and wanted & self.refuse_fetch:
+                conversation.send_line(f"{tag} NO the message cannot be read")
+                return
             for number, message in enumerate(folder.messages, 1):
                 if message.uid not in wanted or (since is not None and message.modseq <= since):
                     continue
@@ -456,7 +462,9 @@ class FakeImapServer(ScriptedServer):
                     pieces.append(f"RFC822.SIZE {len(message.raw)}")
                 if since is not None:
                     pieces.append(f"MODSEQ ({message.modseq})")
-                if "BODY.PEEK[]" in items or "BODY[]" in items:
+                if ("BODY.PEEK[]" in items or "BODY[]" in items) and message.uid in self.nil_bodies:
+                    conversation.send_line(f"* {number} FETCH ({' '.join(pieces)} BODY[] NIL)")
+                elif "BODY.PEEK[]" in items or "BODY[]" in items:
                     conversation.send(f"* {number} FETCH ({' '.join(pieces)} BODY[] {{{len(message.raw)}}}\r\n".encode() + message.raw + b")\r\n")
                 else:
                     conversation.send_line(f"* {number} FETCH ({' '.join(pieces)})")

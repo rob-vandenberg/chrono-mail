@@ -11,9 +11,10 @@ from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolEr
 from chrono_mail.protocols.lineconnection import LineConnection
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 1.8.263"
+__version__ = "imap.py 3.4.344"
 
 # --- Version history ----------------------------------------------------
+# v3.4.344: a body the server sends as NIL is not sent, never an empty message (RV-51)
 # v1.8.263: R-16: sending and reading lines go through LineConnection (protocols/lineconnection.py), shared with POP3
 # v1.1.248: What changed in a folder (RFC 7162): enable_changes switches on QRESYNC or CONDSTORE where the server has them, uid_changes asks for the
 #           messages changed since a change counter and, with QRESYNC, the UIDs removed since then (VANISHED) (R-09)
@@ -629,9 +630,7 @@ class ImapClient:
                 elif name == "MODSEQ" and isinstance(value, tuple) and value:
                     modseq = self._number(value[0])
                 elif name.startswith("BODY[") and isinstance(value, bytes):
-                    data = value
-                elif name.startswith("BODY[") and value is None:
-                    data = b""
+                    data = value  # NIL stays None: not sent (stored as an empty message it was never fetched again, RV-51)
             if uid:
                 fetched.append(FetchedItem(uid, flags, size, data, modseq))
         return tuple(fetched)
