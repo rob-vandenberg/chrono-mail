@@ -26,9 +26,11 @@ from chrono_mail.ui.colours import red
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, mail_server_kind, policy_of, security_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 2.4.332"
+__version__ = "accountdialog.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: While the account is being added the window cannot close: Cancel greyed, Escape and the close button wait (half-way the account
+#           and its key were made, but its recovery code was never shown and the list not updated; RV-02)
 # v2.4.332: the first-account window offers Restore a backup… (the Windows computer's W2)
 # v1.9.272: the certificate look gets typed security and kind
 # v1.9.271: R-19: Test connection and Add are typed calls
@@ -71,6 +73,8 @@ class AccountDialog(QDialog):
         self._cert_servers: list[str] = []
         self.created_account_id: str | None = None
         self.key_created: bool = False
+        self.show_recovery_code: bool = False  # this computer's recovery code was never confirmed as stored: shown after the add (RV-03)
+        self._adding: bool = False  # Add account is running: the window stays until the engine answered (RV-02)
         self._restore: Callable[[], None] | None = restore  # the first-account window's Restore a backup…: the main window's restore
         self.setWindowTitle("Add an account")
         self.setMinimumWidth(520)
@@ -137,7 +141,7 @@ class AccountDialog(QDialog):
         self.add_button.setDefault(True)
         buttons.addButton(self.test_button, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.addButton(self.add_button, QDialogButtonBox.ButtonRole.AcceptRole)
-        buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        self.cancel_button: QPushButton | None = buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
@@ -212,9 +216,12 @@ class AccountDialog(QDialog):
     def _values(self) -> AccountCheckParameters:
         return self.servers.check_parameters(trusted=tuple(self.trusted))
 
-    def _busy(self, busy: bool) -> None:
+    def _busy(self, busy: bool, adding: bool = False) -> None:
         for widget in (self.test_button, self.add_button):
             widget.setEnabled(not busy)
+        self._adding = adding
+        if self.cancel_button is not None:
+            self.cancel_button.setEnabled(not adding)  # a test may be left; an account half added may not
 
     def _complete(self) -> bool:
         if not (self.email.text().strip() and self.username.text().strip() and self.password.text() and self.incoming_host.text().strip() and self.outgoing_host.text().strip()):
@@ -245,7 +252,7 @@ class AccountDialog(QDialog):
     def _add(self) -> None:
         if not self._complete():
             return
-        self._busy(True)
+        self._busy(True, adding=True)
         self.result_label.setText("Adding the account…")
         servers = self._values()
         storage: Literal["own", "local"] = "local" if not self._is_imap() and str(self.storage.currentData()) == "local" else "own"
@@ -259,8 +266,10 @@ class AccountDialog(QDialog):
         )
 
         def done(result: AccountAddResult) -> None:
+            self._adding = False
             self.created_account_id = result.account_id
             self.key_created = result.key_created
+            self.show_recovery_code = result.show_recovery_code
             self.accept()
 
         def failed(error: ChronoMailError) -> None:
@@ -272,7 +281,9 @@ class AccountDialog(QDialog):
 
     @override
     def reject(self) -> None:
-        super().reject()
+        """Cancel, Escape or the close button: not while the account is being added (it is then added, and its recovery code is shown)."""
+        if not self._adding:
+            super().reject()
 
 
 

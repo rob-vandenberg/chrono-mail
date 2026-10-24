@@ -48,9 +48,10 @@ from chrono_mail.ui.windowsettings import apply_window_settings
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restoredialog.py 2.4.334"
+__version__ = "restoredialog.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: The recovery code is shown before every restore until it was confirmed as stored, not only when the key was just made (RV-03)
 # v2.4.334: the report names where the damaged messages and items were
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.4.328: the report says how many damaged messages and items were left out (W5)
@@ -362,8 +363,8 @@ class RestoreWindow(QObject):
         self._backend.ask(KEY_ENSURE, NoParameters(), self._key_ready, self._failed, owner=self)
 
     def _key_ready(self, ensured: KeyEnsured) -> None:
-        if ensured.made and RecoveryDialog(self._backend, self._parent, restoring=True).exec() != QDialog.DialogCode.Accepted:
-            return  # the recovery code is not stored yet: the restore does not go on
+        if ensured.show_code and RecoveryDialog(self._backend, self._parent, restoring=True).exec() != QDialog.DialogCode.Accepted:
+            return  # the recovery code is not stored yet: the restore does not go on (the next Restore… shows it again, RV-03)
         path, _ = QFileDialog.getOpenFileName(self._parent, "Restore", str(Path.home()), f"Chrono Mail backup (*{EXTENSION})")
         if path:
             self._read(Path(path), None)

@@ -1,5 +1,7 @@
 import urllib.parse
 
+from typing import override
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
 
@@ -15,9 +17,10 @@ from chrono_mail.ui.foundfolders import FoundFoldersDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 2.4.333"
+__version__ = "calendaraccount.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: While the account is being added or linked the window cannot close: Cancel greyed, Escape and the close button wait (RV-02)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.274: R-19 round 4: the mail accounts offered are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.271: R-19: accepting a certificate is a typed call
@@ -36,6 +39,8 @@ class CalendarAccountDialog(QDialog):
         super().__init__(parent)
         self._backend: Backend = backend
         self.key_created: bool = False
+        self.show_recovery_code: bool = False  # this computer's recovery code was never confirmed as stored: shown after the add (RV-03)
+        self._adding: bool = False  # Add is running: the window stays until the engine answered (RV-02)
         self._found: FoundServer | None = None
         self._fingerprint: str = ""  # a certificate the person accepted in this window, for a new account
         self.setWindowTitle("Add account")
@@ -73,7 +78,7 @@ class CalendarAccountDialog(QDialog):
         layout.addStretch(1)
         box = QDialogButtonBox(self)
         self.add_button = box.addButton("Add", QDialogButtonBox.ButtonRole.AcceptRole)
-        box.addButton(QDialogButtonBox.StandardButton.Cancel)
+        self.cancel_button: QPushButton | None = box.addButton(QDialogButtonBox.StandardButton.Cancel)
         box.accepted.connect(self._add)
         box.rejected.connect(self.reject)
         layout.addWidget(box)
@@ -158,19 +163,22 @@ class CalendarAccountDialog(QDialog):
         dialog = FoundFoldersDialog(found, self)
         if dialog.exec() != FoundFoldersDialog.DialogCode.Accepted:
             return
-        self.add_button.setEnabled(False)
+        self._set_adding(True)
         self.result_label.setText("Adding…")
         username, password = self.username.text().strip(), self.password.text()
 
         def failed(error: ChronoMailError) -> None:
-            self.add_button.setEnabled(True)
+            self._set_adding(False)
             self._show_problem(str(error))
 
         def added(result: AccountAddResult) -> None:
+            self._adding = False
             self.key_created = result.key_created
+            self.show_recovery_code = result.show_recovery_code
             self.accept()
 
         def linked(_result: AccountSummary) -> None:
+            self._adding = False
             self.accept()
 
         if self._new():
@@ -179,3 +187,15 @@ class CalendarAccountDialog(QDialog):
         else:
             link = LinkParameters(str(self.target.currentData()), found.url, dialog.left_out(), found.pin, username, password or None)
             self._backend.ask(DAV_LINK, link, linked, failed, owner=self)
+
+    def _set_adding(self, adding: bool) -> None:
+        self._adding = adding
+        self.add_button.setEnabled(not adding)
+        if self.cancel_button is not None:
+            self.cancel_button.setEnabled(not adding)
+
+    @override
+    def reject(self) -> None:
+        """Cancel, Escape or the close button: not while the account is being added (it is then added, and its recovery code is shown)."""
+        if not self._adding:
+            super().reject()

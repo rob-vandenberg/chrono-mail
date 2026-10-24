@@ -26,7 +26,7 @@ from chrono_mail.engine.commands_backup import (
     RestoreParameters,
     RestoreResult,
 )
-from chrono_mail.engine.commands_accounts import NoParameters
+from chrono_mail.engine.commands_accounts import KEY_CODE_STORED, NoParameters
 from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
@@ -40,9 +40,10 @@ from chrono_mail.mime import with_extra_headers
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 3.3.343"
+__version__ = "test_engine_restore.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: the recovery code is shown before every restore until it was confirmed as stored (RV-03)
 # v3.3.343: the code review's batch 3: what was downloaded names only messages that came back (RV-61); size limits (RV-63); damaged
 #           descriptions and settings are left out (RV-64, RV-65); Replace keeps storage and encryption (RV-67); a failed restore leaves
 #           nothing it wrote (RV-68); a deleted message searches the mailbox once (RV-69); a Calendars-and-contacts account by its
@@ -642,3 +643,16 @@ def test_a_calendars_and_contacts_account_is_found_by_its_server_and_login(tmp_p
     config = AppConfig((here,))
     assert restore._same_here(config, dav("Ann", "https://DAV.example.com")) is here  # noqa: SLF001
     assert restore._same_here(config, dav("bob", "https://dav.example.com/")) is None  # noqa: SLF001
+
+
+def test_the_recovery_code_is_shown_before_every_restore_until_it_was_stored(tmp_path: Path) -> None:
+    """RV-03: stopping the first restore at the recovery code made the key; the second restore went on without ever showing the code."""
+    engine = make_engine(tmp_path)
+    first = REGISTRY.ask(engine, KEY_ENSURE, NoParameters())
+    assert first.made and first.show_code
+    second = REGISTRY.ask(engine, KEY_ENSURE, NoParameters())  # the person closed the code window and stopped the restore; Restore… again
+    assert not second.made and second.show_code
+    REGISTRY.ask(engine, KEY_CODE_STORED, NoParameters())  # Done, with the tick
+    assert not REGISTRY.ask(engine, KEY_ENSURE, NoParameters()).show_code
+    assert not REGISTRY.ask(make_engine(tmp_path), KEY_ENSURE, NoParameters()).show_code  # also after a restart
+

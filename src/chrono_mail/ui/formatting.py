@@ -1,5 +1,5 @@
 import hashlib
-from datetime import UTC, datetime, timedelta, tzinfo
+from datetime import UTC, datetime, timedelta
 
 from PySide6.QtGui import QColor
 
@@ -7,9 +7,10 @@ from chrono_mail.core import shown_name
 from chrono_mail.core.colours import AVATAR_HUES, AVATAR_LIGHTNESS, AVATAR_SATURATION
 
 # --- Version ------------------------------------------------------------
-__version__ = "formatting.py 1.1.172"
+__version__ = "formatting.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: local_zone_now removed: a fixed offset of today; the calendar uses the named zone (RV-15)
 # v1.1.172: The avatar colours' hues, saturation and lightness are in the colour file (D-158)
 # v0.5.166: display_name uses the one rule of core (shown_name), the same as the index
 # v0.2.100: coming_date: a time still to come (time today, weekday and time this week, else the date and time)
@@ -84,8 +85,3 @@ def file_size(size: int) -> str:
             return f"{int(value)} B" if unit == "B" else f"{value:.1f} {unit}"
         value /= 1024
     return f"{size} B"
-
-
-def local_zone_now() -> tzinfo:
-    """The time zone of this computer as it is now (for views that place events on a clock)."""
-    return datetime.now().astimezone().tzinfo or UTC

@@ -20,13 +20,16 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.engine.commands_accounts import KEY_EXPORT_FILE, KEY_RECOVERY_CODE, KeyExportParameters, KeyExportResult, NoParameters, RecoveryCode
+from chrono_mail.engine.commands_accounts import (
+    KEY_CODE_STORED, KEY_EXPORT_FILE, KEY_RECOVERY_CODE, KeyExportParameters, KeyExportResult, KeyStatus, NoParameters, RecoveryCode,
+)
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "recoverydialog.py 2.4.324"
+__version__ = "recoverydialog.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: Done tells the engine the code is stored (key.code-stored); until then it is shown again before a restore and after an account is added (RV-03)
 # v2.4.324: "Your recovery code"; "this computer's password store"; Copy says "Copied" for 2 s; closing without the tick asks first;
 #           restoring: one line that the backup's password comes next, and no recovery file (one secret at a time, D-244)
 # v1.9.271: R-19: the recovery code and file are typed calls
@@ -89,10 +92,23 @@ class RecoveryDialog(QDialog):
         done_row.addWidget(self.done_button)
         layout.addLayout(done_row)
         self.confirm.toggled.connect(self.done_button.setEnabled)
-        self.done_button.clicked.connect(self.accept)
+        self.done_button.clicked.connect(self._stored)
         self.copy_button.clicked.connect(self._copy)
         self.file_button.clicked.connect(self._save_file)
         backend.ask(KEY_RECOVERY_CODE, NoParameters(), self._show_code, self._failed, owner=self)
+
+    def _stored(self) -> None:
+        """Done with the tick: the engine notes that the code is stored, so it is not shown again before a restore (RV-03)."""
+        self.done_button.setEnabled(False)
+
+        def noted(_status: KeyStatus) -> None:
+            self.accept()
+
+        def failed(error: ChronoMailError) -> None:
+            self.done_button.setEnabled(self.confirm.isChecked())
+            QMessageBox.warning(self, "Recovery code", str(error))
+
+        self._backend.ask(KEY_CODE_STORED, NoParameters(), noted, failed, owner=self)
 
     def _show_code(self, result: RecoveryCode) -> None:
         self.code.setPlainText(result.code)

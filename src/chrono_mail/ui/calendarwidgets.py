@@ -16,9 +16,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 1.9.275"
+__version__ = "calendarwidgets.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: Every view takes the keyboard focus from its first click (it did only after a turn of the wheel), so Delete deletes the event, not the calendar (RV-22)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.230: The mark where the text would start, with the same small gap after it as after the dot (the owner)
 # v1.1.229: The marks 20% smaller; a click on an event's triangle opens its conflict (conflict_clicked); hovering a mark says what it is (the owner)
@@ -102,6 +103,7 @@ class EntryHits(QWidget):
         self.mark_of: Callable[[str], str] = no_mark  # an event's sync mark: a conflict, waiting for the server, or none (D-194)
         self.mark_hits: list[tuple[QRectF, Entry]] = []  # where the marks were drawn: a click on a triangle opens its conflict, a hover explains
         self.setMouseTracking(False)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # a click on an event gives the view the keyboard, so Delete acts on the event (D-217, RV-22)
 
     def step_by_wheel(self, event: QWheelEvent) -> None:
         """One period per notch: up is back in time, down is forward. Small movements are added up until they make a notch."""
@@ -112,7 +114,6 @@ class EntryHits(QWidget):
             self._wheel += WHEEL_NOTCH * direction
             self.period_step.emit(direction)
         event.accept()
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     def entry_at(self, position: QPointF) -> Entry | None:
         for rect, entry in reversed(self.hits):  # what was drawn last is on top

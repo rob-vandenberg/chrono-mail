@@ -9,9 +9,10 @@ from tests.ui.world import account_node, World, row_of, wait
 from tests.ui.test_ui_window import started
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dragdrop.py 0.5.164"
+__version__ = "test_ui_dragdrop.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: a drag of messages of several accounts goes to no folder (RV-77)
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.2.105: The badge starts past the cursor, by the desktop's cursor size
 # v0.2.104: The drag is offered as the copy kind (the desktop's arrow with a plus) and the drop still moves
@@ -120,3 +121,23 @@ def test_dragging_shows_a_small_badge_and_not_the_selected_rows(world: World, qt
     view.startDrag(Qt.DropAction.MoveAction)
     assert started == [(drag_badge(3).width(), drag_badge(3).height())]
     assert kinds and all(kind == Qt.DropAction.CopyAction for kind in kinds)  # the copy kind: the desktop's arrow with a plus, not its hand
+
+
+def test_a_drag_of_messages_of_several_accounts_goes_to_no_folder(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-77: a folder belongs to one account. A drag that holds messages of two accounts (a Favorites view) is refused everywhere: nothing
+    moves halfway without a word, and the badge counts every message dragged."""
+    from chrono_mail.ui.messageorder import message_key
+
+    started(qtbot, world)
+    model = world.window.list_model
+    places = {0: (message_key(world.account_id, "a"), "Inbox", None), 1: (message_key("f" * 32, "b"), "Inbox", None)}
+    def place_at(row: int) -> tuple[str, str, None] | None:
+        return places.get(row)
+
+    monkeypatch.setattr(model, "place_at", place_at)
+    data, count = model.drag_data([0, 1])
+    dragged = read_messages_mime_data(data)
+    assert count == 2 and dragged is not None and dragged[0] == "" and len(dragged[1]) == 2
+    assert not move_probe(world, folder_point(world, "Junk"), data)
+    assert not drop(world, folder_point(world, "Junk"), data)
+

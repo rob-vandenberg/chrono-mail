@@ -21,9 +21,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 2.2.314"
+__version__ = "world.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: the recovery code of the world's key counts as stored, as after Done at the first account (D-260: else every restore shows it first)
 # v2.2.314: the window of a test does not ask about the Outbox when it closes (warn_outbox_on_quit off; its own tests switch it on, B-20)
 # v1.1.208: gone and add_window: for message windows, which delete themselves when they close
 # v0.2.94: The tests start without group headers; the tests of the groups switch them on
@@ -192,6 +193,7 @@ def build_world(tmp_path: Path, qtbot: QtBot, dialogs: Dialogs, messages: dict[s
                 outgoing_host="127.0.0.1", outgoing_port=smtp.port, outgoing_security="none",
             ))
             account_id = str(getattr(added, "account_id"))
+            REGISTRY.run(engine, "key.code-stored", {})  # as the person did with Done when this first account showed its code (D-260)
             if fetch:
                 REGISTRY.run(engine, "mail.fetch", {"account": account_id})
         backend = Backend(engine)

@@ -61,9 +61,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 2.4.334"
+__version__ = "mainwindow.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: After Add account the recovery code is shown whenever it was never confirmed as stored (RV-03)
 # v2.4.334: the Archive or Unarchive label stops at the first selected message that is not archived
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.332: Exit asks about a running backup or restore last, so its promise holds (W3); Restore a backup… from the first-account window (W2)
@@ -1175,12 +1176,12 @@ class MainWindow(QMainWindow):
         dialog = AccountDialog(self.backend, first_account=first, parent=self, restore=self.restores.start)  # Restore a backup… (W2)
         if dialog.exec() != AccountDialog.DialogCode.Accepted:
             return
-        key_created = dialog.key_created
+        show_code = dialog.show_recovery_code
         if dialog.created_account_id:
             self._find_calendars(dialog.created_account_id)
 
         def loaded() -> None:
-            if key_created:
+            if show_code:
                 RecoveryDialog(self.backend, self).exec()
             if after is not None:
                 after()
@@ -1195,10 +1196,10 @@ class MainWindow(QMainWindow):
         dialog = CalendarAccountDialog(self.backend, without_server, QApplication.activeModalWidget() or self)
         if dialog.exec() != CalendarAccountDialog.DialogCode.Accepted:
             return
-        key_created = dialog.key_created
+        show_code = dialog.show_recovery_code
 
         def loaded() -> None:
-            if key_created:
+            if show_code:
                 RecoveryDialog(self.backend, self).exec()
             self.checking.sync_calendars()
 

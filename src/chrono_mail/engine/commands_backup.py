@@ -18,14 +18,16 @@ from chrono_mail.config import ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConnectionSecurity
 from chrono_mail.engine.commands_accounts import AccountCheckParameters, NoParameters, Security, account_check
 from chrono_mail.engine.commands_dav import DiscoverParameters, dav_discover
+from chrono_mail.engine.newkey import recovery_code_not_stored
 from chrono_mail.engine.restore import RestoreChoice, ensure_key, read_contents, restore_backup
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_backup.py 2.4.334"
+__version__ = "commands_backup.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: key.ensure also says whether the recovery code was never confirmed as stored, also for a key made before (RV-03)
 # v2.4.334: backup.restore says where the damaged messages and items were
 # v2.4.328: backup.restore says how many damaged messages and items it left out (W5)
 # v2.4.327: backup.restore says how many messages of the Outbox went to Drafts and how many scheduled ones were paused (D-245)
@@ -86,7 +88,8 @@ class CancelResult:
 
 @dataclass(frozen=True, slots=True)
 class KeyEnsured:
-    made: bool  # a new key: the window shows its recovery code before anything else happens
+    made: bool  # a new key was made now
+    show_code: bool = False  # the key's recovery code was never confirmed as stored (made now or before): shown before anything else happens (RV-03)
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,7 +168,8 @@ SECURITY_WORDS: dict[ConnectionSecurity, Security] = {ConnectionSecurity.NONE: "
 
 def key_ensure(engine: Engine, parameters: NoParameters) -> KeyEnsured:
     """Make this computer's encryption key when it has none yet."""
-    return KeyEnsured(ensure_key(engine))
+    made = ensure_key(engine)
+    return KeyEnsured(made, recovery_code_not_stored(engine))
 
 
 def backup_contents(engine: Engine, parameters: ReadParameters) -> ContentsResult:

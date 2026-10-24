@@ -29,13 +29,13 @@ from chrono_mail.core import (
 from chrono_mail.crypto import (
     CredentialStoreError,
     DataKey,
-    generate_data_key,
     key_from_recovery_code,
     recovery_code_for,
     seal_key_with_passphrase,
     unseal_key_with_passphrase,
 )
 from chrono_mail.engine.local import ensure_local_folders
+from chrono_mail.engine.newkey import make_data_key, recovery_code_not_stored, recovery_code_stored
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
@@ -45,9 +45,11 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 3.0.340"
+__version__ = "commands_accounts.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: key.code-stored: the person confirmed the recovery code is stored; account.add says whether the code still has to be shown
+#           (the key is made in one place, which remembers it until then; RV-03)
 # v3.0.340: Local Folders can never be removed, only hidden (the owner, D-255)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: junk_filter in the summary and in account.edit (D-238)
@@ -106,6 +108,7 @@ class AccountAddResult:
     account_id: str
     key_created: bool
     folders: tuple[str, ...]
+    show_recovery_code: bool = False  # the recovery code of this computer's key was never confirmed as stored: the window shows it (RV-03)
 
 
 def _fingerprints(values: tuple[str, ...]) -> tuple[str, ...]:
@@ -171,10 +174,7 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
     new_config = config
     if parameters.encrypted:
         if config.key_id is None:
-            key = generate_data_key()
-            engine.keys.save(key)
-            if engine.keys.load(key.key_id) != key:  # never create an encrypted store whose key cannot be read back
-                raise CryptoError("The credential store did not return the key that was just saved")
+            key = make_data_key(engine)  # never an encrypted store whose key cannot be read back
             key_created = True
             new_config = config.with_key_id(key.key_id.hex())
         else:
@@ -199,7 +199,7 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
         engine.passwords.delete(account_id, ServerRole.OUTGOING)
         shutil.rmtree(engine.directories.account_directory(account_id), ignore_errors=True)
         raise
-    return AccountAddResult(account_id, key_created or local_key_created, tuple("/".join(path) for path, _ in STANDARD_FOLDERS))
+    return AccountAddResult(account_id, key_created or local_key_created, tuple("/".join(path) for path, _ in STANDARD_FOLDERS), recovery_code_not_stored(engine))
 
 
 @dataclass(frozen=True, slots=True)
@@ -597,6 +597,12 @@ def key_recovery_code(engine: Engine, parameters: NoParameters) -> RecoveryCode:
     return RecoveryCode(key.key_id.hex(), recovery_code_for(key))
 
 
+def key_code_stored(engine: Engine, parameters: NoParameters) -> KeyStatus:
+    """The person confirmed that the recovery code (or a recovery file) of this computer's key is stored in a safe place."""
+    recovery_code_stored(engine)
+    return key_status(engine, parameters)
+
+
 @dataclass(frozen=True, slots=True)
 class KeyRestoreFileParameters:
     path: str = field(metadata=option("The recovery file"))
@@ -708,6 +714,7 @@ ACCOUNT_REMOVE: TypedCommand[AccountParameters, AccountRemoveResult] = TypedComm
 KEY_STATUS: TypedCommand[NoParameters, KeyStatus] = TypedCommand("key.status", NoParameters, KeyStatus)
 KEY_EXPORT_FILE: TypedCommand[KeyExportParameters, KeyExportResult] = TypedCommand("key.export-file", KeyExportParameters, KeyExportResult)
 KEY_RECOVERY_CODE: TypedCommand[NoParameters, RecoveryCode] = TypedCommand("key.recovery-code", NoParameters, RecoveryCode)
+KEY_CODE_STORED: TypedCommand[NoParameters, KeyStatus] = TypedCommand("key.code-stored", NoParameters, KeyStatus)
 KEY_RESTORE_FILE: TypedCommand[KeyRestoreFileParameters, KeyStatus] = TypedCommand("key.restore-file", KeyRestoreFileParameters, KeyStatus)
 KEY_RESTORE_CODE: TypedCommand[KeyRestoreCodeParameters, KeyStatus] = TypedCommand("key.restore-code", KeyRestoreCodeParameters, KeyStatus)
 
@@ -725,5 +732,6 @@ def register(registry: CommandRegistry) -> None:
     registry.register(KEY_STATUS.id, "Show the data key id and whether the credential store has it", NoParameters, key_status, doing="Checking the encryption key")
     registry.register(KEY_EXPORT_FILE.id, "Write the data key, protected by a passphrase, to a recovery file", KeyExportParameters, key_export_file, doing="Writing the recovery file")
     registry.register(KEY_RECOVERY_CODE.id, "Show the data key as a printable recovery code", NoParameters, key_recovery_code, doing="Reading the recovery code")
+    registry.register(KEY_CODE_STORED.id, "Note that the recovery code of the data key is stored in a safe place", NoParameters, key_code_stored, doing="Noting the recovery code as stored")
     registry.register(KEY_RESTORE_FILE.id, "Put the data key back into the credential store from a recovery file", KeyRestoreFileParameters, key_restore_file, doing="Restoring the key from the recovery file")
     registry.register(KEY_RESTORE_CODE.id, "Put the data key back into the credential store from a recovery code", KeyRestoreCodeParameters, key_restore_code, doing="Restoring the key from the recovery code")

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.engine.changes import Change
+from chrono_mail.pim.times import local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_calendar import EVENT_DELETE, EVENT_LIST, EVENT_SHOW, EventInfo, EventList
@@ -34,7 +35,6 @@ from chrono_mail.ui.syncmarks import SyncMarks, mark_icon
 from chrono_mail.ui.calendarlayout import Entry
 from chrono_mail.ui.calendarwidgets import GUTTER, AgendaView, DayHeader, GridCanvas, MonthView, item_of
 from chrono_mail.ui.eventeditor import EventEditor
-from chrono_mail.ui.formatting import local_zone_now
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.searchfield import SearchField
@@ -43,9 +43,10 @@ from chrono_mail.ui.toolbar import view_button
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 3.2.342"
+__version__ = "calendarview.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: The computer's named time zone, as the engine uses (today's fixed offset put every event past a daylight-saving change an hour off; RV-15)
 # v3.2.342: This occurrence of an all-day event opens as an all-day event (RV-21)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -169,7 +170,7 @@ class CalendarPage(PimPage):
         self.entries: list[Entry] = []
         self.selected: Entry | None = None
         self.first_weekday: int = QLocale().firstDayOfWeek().value - 1
-        self.zone = datetime.now().astimezone().tzinfo or local_zone_now()
+        self.zone = local_zone()  # the named zone (Europe/Amsterdam): events past a daylight-saving change keep their hour (RV-15)
         self.hide_past: bool = str(settings.value("calendar_hide_past", "false")).lower() == "true"
         self._generation: int = 0
         self._tags_known: list[str] = []

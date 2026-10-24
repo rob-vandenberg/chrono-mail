@@ -14,9 +14,10 @@ from chrono_mail.ui.theme import show_focus
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 2.4.333"
+__version__ = "messagelistview.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: The drag is made from the selected rows by their ranges and its badge counts exactly the messages that go along (RV-77)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.6.260: The header icon role from messagelist.py (R-15)
@@ -228,13 +229,19 @@ class MessageListView(QTreeView):
         """The drag of the selected messages: their ids and a small badge. The cursors are the desktop's own: offered as
         the copy kind, the drag shows the arrow with a plus over a folder that takes it (the move kind shows a hand) and
         the arrow with a no-entry sign elsewhere."""
-        indexes = [index for index in self.selectedIndexes() if index.column() == 0]
         model = self.model()
-        data = model.mimeData(indexes) if indexes else None
-        if data is None:
+        if not isinstance(model, MessageListModel):
+            return None
+        rows: set[int] = set()
+        selection = self.selectionModel().selection()
+        for number in range(selection.count()):  # the selected rows by their ranges: Ctrl+A on 500,000 messages makes no index per cell
+            chosen = selection.at(number)
+            rows.update(range(chosen.top(), chosen.bottom() + 1))
+        data, count = model.drag_data(sorted(rows))
+        if count == 0:
             return None
         drag = QDrag(self)
         drag.setMimeData(data)
-        drag.setPixmap(drag_badge(len(indexes)))
+        drag.setPixmap(drag_badge(count))  # exactly the messages that go along
         drag.setHotSpot(QPoint(0, 0))
         return drag

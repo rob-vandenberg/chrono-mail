@@ -5,7 +5,7 @@ from functools import partial
 from email.utils import parseaddr
 from typing import override
 
-from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, QUrl, Signal
+from PySide6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QObject, QPoint, QPointF, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPalette, QResizeEvent, QTextCursor
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
@@ -13,6 +13,9 @@ from PySide6.QtWebEngineCore import (
     QWebEngineSettings,
     QWebEngineUrlRequestInfo,
     QWebEngineUrlRequestInterceptor,
+    QWebEngineUrlRequestJob,
+    QWebEngineUrlScheme,
+    QWebEngineUrlSchemeHandler,
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
@@ -35,9 +38,11 @@ from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 2.2.313"
+__version__ = "reader.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: An HTML message and its pictures are handed to the page from memory through Chrono Mail's own address (chrono-message:), not
+#           inside one data: address, which Qt refuses above 2 MB: a large message showed an empty page (RV-158)
 # v2.2.313: the plain-text view, read only, leaves Ctrl+Z and Redo to the window's Undo and Redo (it claimed them with nothing to undo, B-18)
 # v2.0.302: the attachment row: a click selects, a double click opens, a right-click offers Open attachment and Save as…; a right-click
 #           on a picture of the message offers the same (attachment_open_requested, D-236)
@@ -56,7 +61,74 @@ __version__ = "reader.py 2.2.313"
 # itself, remembers nothing, and fetches nothing from the internet until the person allows it for
 # that message (AGENTS.md section 4.6).
 
-_LOCAL_SCHEMES: tuple[str, ...] = ("data", "about", "blob")
+MESSAGE_SCHEME: str = "chrono-message"  # the shown message and its pictures, served from memory by the page's own MessageContent
+_LOCAL_SCHEMES: tuple[str, ...] = ("data", "about", "blob", MESSAGE_SCHEME)
+
+
+_CONTENT_TYPE_PATTERN: re.Pattern[str] = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*/[A-Za-z0-9][A-Za-z0-9.+-]*")
+
+
+def _safe_type(content_type: str) -> bytes:
+    """A picture's content type as the mail named it, only when it is one plain type/subtype (mail is hostile input)."""
+    cleaned = content_type.strip().lower()
+    return cleaned.encode("ascii") if _CONTENT_TYPE_PATTERN.fullmatch(cleaned) else b"application/octet-stream"
+
+
+def _register_message_scheme() -> None:
+    """The web engine must know the scheme before it starts (before the application object): done when this module is imported."""
+    if QWebEngineUrlScheme.schemeByName(QByteArray(MESSAGE_SCHEME.encode())).name().isEmpty():
+        scheme = QWebEngineUrlScheme(QByteArray(MESSAGE_SCHEME.encode()))
+        scheme.setSyntax(QWebEngineUrlScheme.Syntax.Path)  # no flags: not a local scheme, so allowed remote content still loads (D-030)
+        QWebEngineUrlScheme.registerScheme(scheme)
+
+
+_register_message_scheme()
+
+
+class MessageContent(QWebEngineUrlSchemeHandler):
+    """What the page of one reader shows: the HTML text of the message and its pictures, handed over from memory. setHtml would put it all
+    into one data: address, and Qt shows nothing above 2 MB (RV-158). Every message gets a new number, so a late request of the message
+    before gets nothing of this one."""
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._number: int = 0
+        self._page: bytes = b""
+        self._parts: list[tuple[bytes, bytes]] = []  # content type, data
+
+    def show(self, parts: list[tuple[str, bytes]]) -> list[str]:
+        """A new message: its pictures (content type, data) get their addresses, in order; the page itself follows with set_page."""
+        self._number += 1
+        self._page = b""
+        self._parts = [(_safe_type(content_type), data) for content_type, data in parts]
+        return [f"{MESSAGE_SCHEME}:/{self._number}/part/{place}" for place in range(len(parts))]
+
+    def set_page(self, document: str) -> QUrl:
+        self._page = document.encode("utf-8", "replace")
+        return QUrl(f"{MESSAGE_SCHEME}:/{self._number}/page")
+
+    def clear(self) -> None:
+        self.show([])
+
+    @override
+    def requestStarted(self, job: QWebEngineUrlRequestJob, /) -> None:
+        pieces = job.requestUrl().path().strip("/").split("/")
+        if not pieces or pieces[0] != str(self._number):
+            job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound)
+        elif pieces[1:] == ["page"]:
+            self._reply(job, b"text/html;charset=utf-8", self._page)
+        elif len(pieces) == 3 and pieces[1] == "part" and pieces[2].isascii() and pieces[2].isdigit() and int(pieces[2]) < len(self._parts):
+            content_type, data = self._parts[int(pieces[2])]
+            self._reply(job, content_type, data)
+        else:
+            job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound)
+
+    @staticmethod
+    def _reply(job: QWebEngineUrlRequestJob, content_type: bytes, data: bytes) -> None:
+        buffer = QBuffer(job)  # lives as long as the request reads it
+        buffer.setData(QByteArray(data))
+        buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+        job.reply(QByteArray(content_type), buffer)
 _URL_PATTERN: re.Pattern[str] = re.compile(r"(https?://[^\s<>\"']+|mailto:[^\s<>\"']+)")
 _CID_PATTERN: re.Pattern[str] = re.compile(r"cid:([^\s\"'()<>]+)", re.IGNORECASE)
 
@@ -111,12 +183,14 @@ class SafePage(QWebEnginePage):
         return _LinkCatcher(self)  # no pop-up window: a link that wants one is only reported
 
 
-def make_safe_view(parent: QWidget | None = None) -> tuple[QWebEngineView, SafePage, RemoteContentBlocker]:
+def make_safe_view(parent: QWidget | None = None) -> tuple[QWebEngineView, SafePage, RemoteContentBlocker, MessageContent]:
     profile = QWebEngineProfile()  # no name: an off-the-record profile that keeps nothing on disk
     profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
     profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.NoPersistentCookies)
     blocker = RemoteContentBlocker()
     profile.setUrlRequestInterceptor(blocker)
+    content = MessageContent(profile)
+    profile.installUrlSchemeHandler(QByteArray(MESSAGE_SCHEME.encode()), content)
     page = SafePage(profile, parent)
     profile.setParent(page)  # the profile must outlive its page, so the page owns it
     settings = page.settings()
@@ -141,7 +215,7 @@ def make_safe_view(parent: QWidget | None = None) -> tuple[QWebEngineView, SafeP
     view = QWebEngineView(parent)
     view.setPage(page)
     view.setContextMenuPolicy(view.contextMenuPolicy().NoContextMenu)
-    return view, page, blocker
+    return view, page, blocker, content
 
 
 def linkify(text: str) -> str:
@@ -150,32 +224,33 @@ def linkify(text: str) -> str:
     return _URL_PATTERN.sub(lambda match: f'<a href="{match.group(0)}">{match.group(0)}</a>', escaped)
 
 
-def embed_inline_images(document: str, images: dict[str, tuple[str, str]]) -> str:
-    """Replace cid: references with data: URLs of the images that came with the message."""
+def embed_inline_images(document: str, addresses: dict[str, str]) -> str:
+    """Replace cid: references with the addresses of the images that came with the message (content id in lower case -> address)."""
 
     def replace(match: re.Match[str]) -> str:
-        found = images.get(match.group(1).strip("<>").lower())
-        return f"data:{found[0]};base64,{found[1]}" if found is not None else match.group(0)
+        return addresses.get(match.group(1).strip("<>").lower(), match.group(0))
 
     return _CID_PATTERN.sub(replace, document)
 
 
-def picture_url(picture: InlineImage) -> str:
-    """The address a picture of the message is shown by (its data), also how a right-click on it is known."""
-    return f"data:{html.escape(picture.content_type)};base64,{picture.data_base64}"
-
-
-def pictures_below(document: str, pictures: tuple[InlineImage, ...]) -> str:
-    """The HTML text with the attached pictures it does not show below it, each as wide as the page at most (B-11)."""
-    if not pictures:
+def pictures_below(document: str, addresses: list[str]) -> str:
+    """The HTML text with the attached pictures it does not show below it (by their addresses), each as wide as the page at most (B-11)."""
+    if not addresses:
         return document
     shown = "".join(
-        f'<img src="{picture_url(picture)}" alt="" '
+        f'<img src="{html.escape(address)}" alt="" '
         'style="display:block; max-width:100%; height:auto; margin-top:12px">'
-        for picture in pictures
+        for address in addresses
     )
     end = document.lower().rfind("</body>")
     return f"{document[:end]}{shown}{document[end:]}" if end >= 0 else document + shown
+
+
+def _decoded(data_base64: str) -> bytes:
+    try:
+        return base64.b64decode(data_base64)
+    except ValueError:
+        return b""  # a picture whose data cannot be read shows as a broken picture, never as a failure of the message
 
 
 class PlainTextView(QTextBrowser):
@@ -358,7 +433,7 @@ class ReaderWidget(QWidget):
         self._text.anchorClicked.connect(self.link_activated)
         self._text.highlighted.connect(self._text_hovered)
         self._text.picture_menu_requested.connect(self._picture_menu)
-        self._web, self._page, self._blocker = make_safe_view(self._stack)
+        self._web, self._page, self._blocker, self._content = make_safe_view(self._stack)
         self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)  # only a picture of the message has a menu (D-236)
         self._web.customContextMenuRequested.connect(self._page_menu)
         self._picture_positions: dict[str, int] = {}  # the address a picture is shown by -> its place among the attachments
@@ -374,7 +449,7 @@ class ReaderWidget(QWidget):
         self._load_remote.clicked.connect(self._show_remote_content)
         self._page.loadFinished.connect(self._after_load)
         self._current_html: str = ""
-        self._images: dict[str, tuple[str, str]] = {}
+        self._page_url: QUrl = QUrl()  # where the page of the shown HTML message is served (MessageContent)
         self.always_remote: bool = False  # show remote content without asking (a setting)
         self.allowed_senders: set[str] = set()  # addresses (lower case) whose remote content is shown without asking
         self.prefer_plain: bool = False  # show the text part of a message that has both
@@ -402,6 +477,7 @@ class ReaderWidget(QWidget):
         self._attachments.hide()
         self._banner.hide()
         self._stack.setCurrentWidget(self._placeholder)
+        self._content.clear()
         self._page.setHtml("")
 
     def apply_scale(self) -> None:
@@ -433,7 +509,6 @@ class ReaderWidget(QWidget):
         self._avatar.setAlignment(self._avatar.alignment().AlignCenter)
         self._avatar.setStyleSheet(f"background-color: {avatar_colour(who).name()}; border-radius: {px_for(self, 40) // 2}px;")
         self._fill_attachments(shown.attachments)
-        self._images = {image.content_id.lower(): (image.content_type, image.data_base64) for image in shown.inline_images}
         html_body = shown.html_body
         text_body = shown.text_body
         self._banner.hide()
@@ -444,14 +519,21 @@ class ReaderWidget(QWidget):
         pictures = shown.pictures
         if not html_body and shown.html_body:  # the HTML text is not shown: neither are the pictures it showed (B-11)
             pictures = (*shown.inline_images, *pictures)
-        self._picture_positions = {picture_url(image): image.position for image in (*shown.inline_images, *shown.pictures) if image.position >= 0}
         if html_body:
-            self._current_html = pictures_below(embed_inline_images(html_body, self._images), pictures)
+            images = list(dict.fromkeys((*shown.inline_images, *pictures)))
+            addresses = self._content.show([(image.content_type, _decoded(image.data_base64)) for image in images])
+            address_of = dict(zip(images, addresses, strict=True))
+            self._picture_positions = {address_of[image]: image.position for image in images if image.position >= 0}
+            cids = {image.content_id.lower(): address_of[image] for image in shown.inline_images if image.content_id}
+            self._current_html = pictures_below(embed_inline_images(html_body, cids), [address_of[image] for image in pictures])
+            self._page_url = self._content.set_page(self._current_html)
             self._blocker.allow_remote = self.always_remote or (bool(self._sender) and self._sender in self.allowed_senders)
             self._blocker.blocked = 0
             self._stack.setCurrentWidget(self._web)
-            self._page.setHtml(self._current_html)
+            self._page.load(self._page_url)
         else:
+            self._picture_positions = {}
+            self._content.clear()
             self._stack.setCurrentWidget(self._text)
             self._text.show_text(text_body or "", pictures)
 
@@ -537,7 +619,7 @@ class ReaderWidget(QWidget):
     def _show_remote_content(self) -> None:
         self._blocker.allow_remote = True
         self._banner.hide()
-        self._page.setHtml(self._current_html)
+        self._page.load(self._page_url)  # the same message again, now with what comes from the internet
 
     # --- for tests and for the window ----------------------------------------------------------
 

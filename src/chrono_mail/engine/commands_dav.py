@@ -10,6 +10,7 @@ from chrono_mail.core.account import Account, ConnectionSecurity, ServerSettings
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_accounts import AccountAddResult, AccountSummary, _refuse_same_account, _summary
 from chrono_mail.engine.local import ensure_local_folders
+from chrono_mail.engine.newkey import recovery_code_not_stored
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command, talks_to_servers
@@ -18,9 +19,10 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 3.0.339"
+__version__ = "commands_dav.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: account.add-dav says whether the recovery code still has to be shown (RV-03)
 # v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed account.set-dav
@@ -450,7 +452,7 @@ def account_add_dav(engine: Engine, parameters: AddDavParameters) -> AccountAddR
     except ChronoMailError:
         engine.passwords.delete(account_id, ServerRole.INCOMING)
         raise
-    return AccountAddResult(account_id, key_created, ())
+    return AccountAddResult(account_id, key_created, (), recovery_code_not_stored(engine))
 
 
 DAV_FIND_NEW: TypedCommand[FindNewParameters, FoundServer] = TypedCommand("dav.find-new", FindNewParameters, FoundServer)

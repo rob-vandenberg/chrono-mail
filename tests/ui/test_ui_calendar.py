@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 3.2.342"
+__version__ = "test_ui_calendar.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: a click on an event gives its view the keyboard (RV-22); events past a daylight-saving change keep their hour (RV-15)
 # v3.2.342: This occurrence of an all-day event stays all-day (RV-21); reminders the window does not show survive a Save (RV-18)
 # v2.0.291: a margin at the right of the list of colours
 # v2.0.290: the Event colours window has no outline around its list (the owner)
@@ -439,3 +440,55 @@ def test_the_calendars_of_an_account_share_its_palette_and_a_read_only_one_is_gr
     assert (enabled["Rename…"], enabled["Colour…"], enabled["Edit colours…"], enabled["Delete…"]) == (False, False, False, False)
     delete = next(action for action in menu.actions() if action.text() == "Delete…")
     assert "untick it in the account" in delete.toolTip()
+
+
+def test_a_click_on_an_event_in_the_month_or_the_all_day_row_takes_the_keyboard(world: World, qtbot: QtBot) -> None:
+    """RV-22: the click left the focus in the sidebar, so Delete asked to delete the whole calendar instead of the event (D-217)."""
+    page = open_calendar(world, qtbot, layout.MONTH)
+    world.window.show()
+    page.month.resize(900, 600)
+    page.month.grab()
+    page.panel.tree.setFocus()
+    rect, _ = next((r, e) for r, e in page.month.hits if e.summary == "Lunch")
+    qtbot.mouseClick(page.month, Qt.MouseButton.LeftButton, pos=QPoint(int(rect.center().x()), int(rect.center().y())))
+    assert page.selected is not None and page.selected.summary == "Lunch" and QApplication.focusWidget() is page.month
+    page.set_view(layout.WEEK)
+    wait(qtbot, lambda: page.grid.header.bars != [])
+    page.grid.resize(900, 600)
+    page.grid.grab()
+    page.panel.tree.setFocus()
+    rect, _ = next((r, e) for r, e in page.grid.header.hits if e.summary == "Holiday")
+    qtbot.mouseClick(page.grid.header, Qt.MouseButton.LeftButton, pos=QPoint(int(rect.center().x()), int(rect.center().y())))
+    assert page.selected is not None and page.selected.summary == "Holiday" and QApplication.focusWidget() is page.grid.header
+
+
+def test_an_event_past_a_daylight_saving_change_keeps_its_hour(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-15: the calendar used today's fixed offset: an event in summer (or winter) showed an hour off."""
+    import time
+    from zoneinfo import ZoneInfo
+
+    from chrono_mail.pim import times
+
+    monkeypatch.setenv("TZ", "Europe/Amsterdam")
+    time.tzset()
+    monkeypatch.setattr(times, "_local", ZoneInfo("Europe/Amsterdam"))
+    try:
+        seed(world)
+        cal = calendar_id(world)
+        world.call("event.add", calendar=cal, summary="Summer", start="2026-07-15T10:00", end="2026-07-15T11:00", time_zone="Europe/Amsterdam")
+        world.call("event.add", calendar=cal, summary="Winter", start="2027-01-13T10:00", end="2027-01-13T11:00", time_zone="Europe/Amsterdam")
+        started(qtbot, world)
+        world.window.switch_section(CALENDAR)
+        page = world.window.pages[CALENDAR]
+        assert isinstance(page, CalendarPage)
+        wait(qtbot, lambda: page.panel.visible_ids() != [])
+        for anchor, name in ((date(2026, 7, 15), "Summer"), (date(2027, 1, 13), "Winter")):
+            page.anchor = anchor
+            page.set_view(layout.WEEK)
+            wait(qtbot, lambda: name in summaries(page))
+            entry = next(e for e in page.entries if e.summary == name)
+            assert (entry.start.hour, entry.start.minute) == (10, 0), name
+    finally:
+        monkeypatch.undo()
+        time.tzset()  # the process's own zone again (nothing left behind, AGENTS.md 4.5.5)
+

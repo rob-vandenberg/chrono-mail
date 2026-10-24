@@ -12,9 +12,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dialogs.py 2.0.287"
+__version__ = "test_ui_dialogs.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: the window cannot close while the account is being added (RV-02); Done of the recovery code notes it as stored (RV-03)
 # v2.0.287: the permission check of the recovery file not on Windows (the Windows computer's report)
 # v1.9.271: The account window's values are typed (R-19)
 # v1.1.243: a typed port stays when Security or the kind changes; the standard one follows (R-05)
@@ -260,3 +261,32 @@ def test_choosing_imap_changes_the_ports_the_title_and_the_copies_option(qtbot: 
     assert dialog._values().kind == "imap"  # noqa: SLF001
     dialog.kind.setCurrentIndex(dialog.kind.findData("pop3"))
     assert dialog.incoming_port.value() == 110 and dialog.policy.isEnabled() and dialog._values().kind == "pop3"  # noqa: SLF001
+
+
+def test_the_window_cannot_close_while_the_account_is_being_added(blank: World, qtbot: QtBot) -> None:
+    """RV-02: Cancel during Add account closed the window: the account and its key were made, the recovery code never shown."""
+    dialog = AccountDialog(blank.backend, first_account=True)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    fill(dialog, blank)
+    closed: list[int] = []
+    dialog.finished.connect(closed.append)
+    with qtbot.waitSignal(dialog.accepted, timeout=8000):
+        dialog.add_button.click()
+        assert dialog.cancel_button is not None and not dialog.cancel_button.isEnabled()  # greyed, not hidden
+        dialog.reject()  # Escape or the window's close button
+        assert closed == []
+    assert closed == [AccountDialog.DialogCode.Accepted] and dialog.show_recovery_code  # the new key's code is shown next
+
+
+def test_done_notes_that_the_recovery_code_is_stored(blank: World, qtbot: QtBot) -> None:
+    """RV-03: until Done with the tick, the code is shown again before a restore and after an account is added."""
+    assert blank.call("key.ensure").show_code
+    dialog = RecoveryDialog(blank.backend)
+    qtbot.addWidget(dialog)
+    wait(qtbot, lambda: dialog.code.toPlainText() not in ("", "Loading…"))
+    dialog.confirm.setChecked(True)
+    with qtbot.waitSignal(dialog.accepted, timeout=8000):
+        dialog.done_button.click()
+    assert not blank.call("key.ensure").show_code
+

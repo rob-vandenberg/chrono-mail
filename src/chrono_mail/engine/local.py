@@ -14,14 +14,16 @@ from chrono_mail.core import (
     ServerSettings,
     StorageError,
 )
-from chrono_mail.crypto import DataKey, generate_data_key
+from chrono_mail.crypto import DataKey
+from chrono_mail.engine.newkey import make_data_key
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "local.py 3.0.339"
+__version__ = "local.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: The data key is made in the one place that remembers its recovery code was not stored yet (RV-03)
 # v3.0.339: Local Folders that is missing from the settings while its mail is still here is taken into use again, never removed;
 #           a failed first setup removes only what it made (RV-62)
 # v0.5.144: Local Folders is entered in a fresh read of the settings, one command at a time (change_config)
@@ -51,10 +53,7 @@ def _ensure_local_folders(engine: Engine, encrypted: bool) -> tuple[AppConfig, b
     key_created = False
     if encrypted:
         if config.key_id is None:
-            key = generate_data_key()
-            engine.keys.save(key)
-            if engine.keys.load(key.key_id) != key:
-                raise CryptoError("The credential store did not return the key that was just saved")
+            key = make_data_key(engine)
             key_created = True
             config = config.with_key_id(key.key_id.hex())
         else:

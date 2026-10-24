@@ -15,9 +15,10 @@ from tests.ui.test_ui_rapid_actions import fill
 from tests.ui.world import Dialogs, World, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_large_selection.py 3.0.339"
+__version__ = "test_ui_large_selection.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: a drag takes every selected message, also those not loaded, and its badge counts them (RV-77)
 # v3.0.339: the Delete test waits for the list to empty (the rows leave in bursts, D-218) instead of reading it at one moment
 # v2.4.334: the messages that leave in one moment go in a few removals, not one each
 # v2.4.334: an action right after a large folder opened waits for the rest of the order and takes every selected message (W12b)
@@ -147,3 +148,27 @@ def test_the_key_press_works_once_not_once_per_selected_message(empty: World, qt
     assert len(looked) <= 1  # the selection is looked at once at most
     wait(qtbot, lambda: held_in(empty, "Trash") == 300 and empty.backend._pending == {})  # noqa: SLF001
     model.dataChanged.disconnect(redrawn)
+
+
+def test_a_drag_takes_every_selected_message_also_those_not_loaded(empty: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-77: Ctrl+A on 250 and a drag to Junk moved the 100 rows loaded so far, while the badge said 250."""
+    from chrono_mail.ui import messagelistview
+    from chrono_mail.ui.dragdata import read_messages_mime_data
+
+    counts: list[int] = []
+    real_badge = messagelistview.drag_badge
+
+    def badge(count: int) -> object:
+        counts.append(count)
+        return real_badge(count)
+
+    monkeypatch.setattr(messagelistview, "drag_badge", badge)
+    opened(qtbot, empty, 250)
+    drag = empty.window.list_view.make_drag()
+    assert drag is not None
+    dragged = read_messages_mime_data(drag.mimeData())
+    assert dragged is not None and dragged[0] == empty.account_id and len(dragged[1]) == 250 and counts == [250]
+    empty.window.mail_actions.messages_dropped(dragged[0], "Junk", dragged[1])
+    wait(qtbot, lambda: held_in(empty, "Junk") == 250 and empty.backend._pending == {})  # noqa: SLF001
+    assert held_in(empty, "Inbox") == 0
+

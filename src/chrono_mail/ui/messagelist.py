@@ -24,9 +24,10 @@ from chrono_mail.ui.models import LOCAL_PLACES
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 2.5.337"
+__version__ = "messagelist.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: A drag takes every selected message, loaded or not, without those under way; messages of several accounts go to no folder (RV-77)
 # v2.5.337: data answers the questions it never answers (icon, tick box, background...) at once, without looking for the row; flags is one of
 #           two ready answers (Qt asks every row after each change of the list: 404,000 times in a delete of 4,000)
 # v2.4.334: _take_out_runs: the rows that leave together go per run of neighbouring rows (Qt keeps the others' selection cheaply)
@@ -703,18 +704,27 @@ class MessageListModel(QAbstractTableModel):
     @override
     def mimeData(self, indexes: Sequence[QModelIndex]) -> QMimeData:
         """The messages being dragged: where they are, never their content."""
+        return self.drag_data(sorted({index.row() for index in indexes}))[0]
+
+    def drag_data(self, list_rows: Iterable[int]) -> tuple[QMimeData, int]:
+        """The drag of the messages at these rows, every one of them, loaded or not (D-218), without those with an action under way, and how
+        many go along (the badge). Messages of several accounts (a Favorites view) are one drag that no folder takes: a folder belongs to one
+        account, and nothing moves halfway without a word (RV-77)."""
+        default = self._spec.account if self._spec is not None else ""
         messages: list[tuple[str, str]] = []
-        account = self._spec.account if self._spec is not None else ""
-        for index in indexes:
-            row = self.row_at(index.row())
-            if row is None:
+        accounts: set[str] = set()
+        for list_row in list_rows:
+            place = self.place_at(list_row)
+            if place is None:
                 continue
-            owner = row.account or account
-            if not messages:
-                account = owner
-            if owner == account:  # in a combined view the rows of other accounts cannot go along: one drag, one account
-                messages.append((row.folder, row.message_id))
-        return messages_mime_data(account, messages)
+            key, folder, _row = place
+            mailbox, message_id = split_key(key)
+            if message_id in self.pending:
+                continue
+            accounts.add(mailbox or default)
+            messages.append((folder, message_id))
+        account = next(iter(accounts)) if len(accounts) == 1 else ""  # "" is no account: the folder list refuses the drop
+        return messages_mime_data(account, messages), len(messages)
 
     # --- the rows -----------------------------------------------------------------------------
 

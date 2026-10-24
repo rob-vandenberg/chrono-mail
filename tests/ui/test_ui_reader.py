@@ -20,9 +20,10 @@ PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_reader.py 2.0.302"
+__version__ = "test_ui_reader.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: HTML mail and its pictures come through chrono-message: addresses; an HTML message over 2 MB is shown (RV-158)
 # v2.0.302: a click on a file selects it, a double click opens it, a right-click on it or on a picture offers Open attachment and Save as… (D-236)
 # v2.0.301: the attached pictures the text does not show are shown below it, fitted to the width, never enlarged (B-11)
 # v0.0.38: CI: the PDF test writes into its own folder
@@ -146,11 +147,11 @@ def test_linkify() -> None:
 
 
 def test_embed_inline_images() -> None:
-    images = {"logo@x": ("image/png", "QUJD")}
-    assert embed_inline_images('<img src="cid:logo@x">', images) == '<img src="data:image/png;base64,QUJD">'
-    assert embed_inline_images('<img src="CID:LOGO@X"> url(cid:logo@x)', images) == '<img src="data:image/png;base64,QUJD"> url(data:image/png;base64,QUJD)'
-    assert embed_inline_images('<img src="cid:unknown">', images) == '<img src="cid:unknown">'
-    assert embed_inline_images("no pictures here", images) == "no pictures here"
+    addresses = {"logo@x": "chrono-message:/1/part/0"}
+    assert embed_inline_images('<img src="cid:logo@x">', addresses) == '<img src="chrono-message:/1/part/0">'
+    assert embed_inline_images('<img src="CID:LOGO@X"> url(cid:logo@x)', addresses) == '<img src="chrono-message:/1/part/0"> url(chrono-message:/1/part/0)'
+    assert embed_inline_images('<img src="cid:unknown">', addresses) == '<img src="cid:unknown">'
+    assert embed_inline_images("no pictures here", addresses) == "no pictures here"
 
 
 # --- HTML: what it can and cannot do -----------------------------------------------------------------------------------------
@@ -255,7 +256,8 @@ def test_inline_pictures_of_the_message_are_shown_without_the_network(reader: Re
     message = shown(html="<html><body><p>Look</p><img src='cid:logo@example.com'></body></html>", images=(InlineImage("logo@example.com", "image/png", encoded),))
     load(qtbot, reader, message)
     qtbot.wait(500)
-    assert "data:image/png;base64," in reader._current_html and "cid:" not in reader._current_html  # noqa: SLF001
+    assert "chrono-message:/" in reader._current_html and "cid:" not in reader._current_html  # noqa: SLF001
+    qtbot.waitUntil(lambda: reader.web_page.contentsSize().height() > 0)
     assert reader.blocker.blocked == 0 and not reader.banner_visible() and probe.requests == []
 
 
@@ -358,10 +360,10 @@ def test_the_pictures_of_a_plain_text_message_are_shown_below_it_as_wide_as_the_
 
 
 def test_the_pictures_of_an_html_message_come_below_its_text_as_wide_as_the_page_at_most() -> None:
-    page = pictures_below("<html><body><p>Hello</p></body></html>", (InlineImage("", "image/png", "iVBORw=="),))
-    assert page.index("Hello") < page.index('src="data:image/png;base64,iVBORw=="') < page.index("</body>") and "max-width:100%" in page
-    assert pictures_below("<p>No body tag</p>", (InlineImage("", "image/gif", "R0lG"),)).endswith('margin-top:12px">')
-    assert pictures_below("<p>Nothing</p>", ()) == "<p>Nothing</p>"
+    page = pictures_below("<html><body><p>Hello</p></body></html>", ["chrono-message:/1/part/0"])
+    assert page.index("Hello") < page.index('src="chrono-message:/1/part/0"') < page.index("</body>") and "max-width:100%" in page
+    assert pictures_below("<p>No body tag</p>", ["chrono-message:/1/part/0"]).endswith('margin-top:12px">')
+    assert pictures_below("<p>Nothing</p>", []) == "<p>Nothing</p>"
 
 
 def test_a_double_click_opens_a_file_and_a_right_click_offers_open_and_save(reader: ReaderWidget, qtbot: QtBot) -> None:
@@ -419,4 +421,15 @@ def test_a_right_click_on_a_picture_offers_open_and_save_and_on_the_text_the_tex
     assert view.picture_at(QPoint(int(view.document().documentMargin()) + 5, 5)) == -1  # the text: its own menu (Copy, Select All)
     html_message = replace(shown(html="<p>Hi</p>", text=None, attachments=attachments), pictures=(InlineImage("", "image/png", "iVBORw==", 0),))
     reader.show_message(html_message)
-    assert reader._picture_positions == {"data:image/png;base64,iVBORw==": 0}  # noqa: SLF001 - how a right-click on it is known
+    (address, position), = reader._picture_positions.items()  # noqa: SLF001 - how a right-click on it is known
+    assert position == 0 and address.startswith("chrono-message:/") and QUrl(address).toString() == address  # the right-click's address is this one
+
+
+def test_an_html_message_over_two_megabytes_is_shown(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """RV-158: a newsletter with large inlined pictures showed an empty page (setHtml takes at most 2 MB)."""
+    filler = "<p>" + "x" * 1000 + "</p>"
+    message = shown(html=f"<html><body><p>The start</p>{filler * 3000}<p>The end</p></body></html>")
+    load(qtbot, reader, message)
+    text = page_text(qtbot, reader)
+    assert "The start" in text and "The end" in text
+

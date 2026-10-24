@@ -22,11 +22,12 @@ from chrono_mail.config.rules import load_rules
 from chrono_mail.config.sidebar import save_sidebar
 from chrono_mail.config.tags import load_tags
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionInfo, CollectionKind, ConfigurationError, CryptoError, FolderRole, MessageFlag, StorageError
-from chrono_mail.crypto import DataKey, encrypt_message, generate_data_key
+from chrono_mail.crypto import DataKey, encrypt_message
 from chrono_mail.engine.backup import CANCEL, FORMAT_VERSION, JOB_LOCK, LOCAL_ITEMS, LOCAL_MAIL, MANIFEST_ENTRY
 from chrono_mail.engine.commands_schedule import SCHEDULED, paused_if_overdue
 from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders
 from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.engine.newkey import make_data_key
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import OUTBOX, STANDARD_FOLDERS, Engine
@@ -39,9 +40,10 @@ from chrono_mail.sync.pop3_state import Pop3State
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 3.3.343"
+__version__ = "restore.py 3.5.346"
 
 # --- Version history ----------------------------------------------------
+# v3.5.346: The data key is made in the one place that remembers its recovery code was not stored yet (RV-03)
 # v3.3.343: what was downloaded (POP3) never names a message that did not come back, so it is never deleted on the server (RV-61); every
 #           file of a backup has a size limit (RV-63); a damaged description of a calendar, a folder, a message's details or a setting is
 #           left out and told, the restore goes on (RV-64, RV-65); Replace keeps where an account's mail is kept and its encryption
@@ -187,10 +189,7 @@ def ensure_key(engine: Engine) -> bool:
         config = engine.config()
         if config.key_id is not None:
             return False
-        key = generate_data_key()
-        engine.keys.save(key)
-        if engine.keys.load(key.key_id) != key:
-            raise CryptoError("The credential store did not return the key that was just saved")
+        key = make_data_key(engine)
         engine.change_config(lambda fresh: fresh.with_key_id(key.key_id.hex()) if fresh.key_id is None else fresh)
         return True
 
