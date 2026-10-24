@@ -12,12 +12,14 @@ backup/
 backups/
 *.bat
 
+
 # hand-over notes between sessions (private)
 TRANSFER.md
 PROMPT-NEW-SESSION.md
 
 # old text of STATUS.md, ARCHITECTURE.md and DECISIONS.md (private, search only)
 STATUS-ARCHIVE.md
+STARTUP-TIMES.md
 ARCHITECTURE-ARCHIVE.md
 DECISIONS-ARCHIVE.md
 
@@ -37,3 +39,5 @@ AGENT-CHANNEL-RULES.md
 scratchpad/
 IDIOT-AI.md
 DEVELOPMENT/
+demo.sh
+enforce_gitignore.sh

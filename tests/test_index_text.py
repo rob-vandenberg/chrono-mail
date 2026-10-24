@@ -52,8 +52,8 @@ def test_html_to_text_can_keep_the_lines() -> None:
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
-        ("[<https://e37f53d8ce464359a9c1a684d6023df8.104.eu.prod.marketinguser.com/track?x=1> Ontdek de nieuwe collectie", "Ontdek de nieuwe collectie"),
-        ("------------------------- HELLO Rob This is the final email in our onboarding series", "HELLO Rob This is the final email in our onboarding series"),
+        ("[<https://0123456789abcdef0123456789abcdef.104.eu.prod.tracker.example.com/track?x=1> Discover the new collection", "Discover the new collection"),
+        ("------------------------- HELLO Ann This is the final email in our welcome series", "HELLO Ann This is the final email in our welcome series"),
         ("Visit www.example.com/pricing now", "Visit now"),
         ("=====  ***** #### Sale! 50% off see http://x.y/z (details) [image] <https://a.b>", "Sale! 50% off see (details) image"),
         ("Normal text, e-mail a@b.com or 3.14 - fine; costs 5-6 euro.", "Normal text, e-mail a@b.com or 3.14 - fine; costs 5-6 euro."),

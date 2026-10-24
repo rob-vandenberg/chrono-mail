@@ -22,7 +22,7 @@ def _suffixes() -> PublicSuffixList:
 
 
 def main_domain(host: str) -> str | None:
-    """The main domain of a host name, the part someone registers ("alianz.nl" for "business.alianz.nl", "example.co.uk" for
+    """The main domain of a host name, the part someone registers ("example.nl" for "business.example.nl", "example.co.uk" for
     "www.example.co.uk"), in plain letters (ASCII) and lower case; None when it has none (a bare ending such as "co.uk", a
     single name such as "localhost", a name that is not valid)."""
     name = host.strip().rstrip(".").lower()

@@ -10,15 +10,15 @@ __version__ = "test_mime_linkdomain.py 1.5.257"
 
 
 def test_the_main_domain_is_the_part_someone_registers() -> None:
-    assert main_domain("business.alianz.nl") == main_domain("alianz.nl") == "alianz.nl"  # the owner's example
+    assert main_domain("business.example.nl") == main_domain("example.nl") == "example.nl"
     assert main_domain("www.Example.CO.UK.") == "example.co.uk"
     assert main_domain("co.uk") is None and main_domain("localhost") is None and main_domain("") is None
     assert main_domain("a" * 300 + ".com") is None  # longer than DNS allows
 
 
 @pytest.mark.parametrize(("link", "sender"), [
-    ("https://business.alianz.nl/policy", "service@alianz.nl"),
-    ("https://alianz.nl", "Info@Mail.Alianz.NL"),
+    ("https://business.example.nl/policy", "service@example.nl"),
+    ("https://example.nl", "Info@Mail.Example.NL"),
     ("https://www.example.co.uk/invoice?id=1", "billing@mail.example.co.uk"),
     ("mailto:help@support.example.com?subject=hi", "news@example.com"),
 ])
