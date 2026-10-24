@@ -39,9 +39,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.windowsettings import window_settings_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "backupdialog.py 2.4.324"
+__version__ = "backupdialog.py 2.5.338"
 
 # --- Version history ----------------------------------------------------
+# v2.5.338: Copy stays usable while the backup is made (the owner)
 # v2.4.324: may_quit: Quit while a backup is made or restored asks first (D-244)
 # v2.4.323: "Backup" is one word (the owner): the menu item and the button Backup…, the window and its save window Backup
 # v2.4.322: Initial: Menu > File > Back up…: what to back up, which accounts, the passwords only in a protected backup, the backup
@@ -231,8 +232,9 @@ class BackupDialog(QDialog):
         self.include_passwords.setEnabled(idle)
         self.protect.setEnabled(idle and not self.include_passwords.isChecked())
         protected = self.protect.isChecked()
-        for widget in (self.password, self.copy_button, self.password_note, self.saved):
+        for widget in (self.password, self.password_note, self.saved):
             widget.setEnabled(idle and protected)
+        self.copy_button.setEnabled(protected)  # only reads the password: it can still be copied while the backup is made
         ready = bool(self.chosen_accounts()) and bool(self.chosen_parts()) and (not protected or (self.saved.isChecked() and bool(self.password.text())))
         self.back_up_button.setEnabled(idle and ready)
         self.background_button.setEnabled(self.running)

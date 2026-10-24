@@ -12,9 +12,10 @@ from chrono_mail.ui.statusreport import CLICK_BACKUP
 from tests.ui.world import World, answer_save_file, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_backup.py 2.4.324"
+__version__ = "test_ui_backup.py 2.5.338"
 
 # --- Version history ----------------------------------------------------
+# v2.5.338: Copy works while the backup is made
 # v2.4.324: Restore… is no longer greyed
 # v2.4.323: the menu item is Backup… (one word, the owner)
 # v2.4.322: Initial: the Back up window (D-244): greyed, never hidden; the passwords force the protection; Copy; a whole backup;
@@ -71,6 +72,17 @@ def test_copy_puts_the_password_on_the_clipboard_and_says_so(world: World, qtbot
     assert QGuiApplication.clipboard().text() == window.password.text() and window.copy_button.text() == "Copied"
     wait(qtbot, lambda: window.copy_button.text() == "Copy", timeout=4000)
 
+
+def test_copy_still_works_while_the_backup_is_made(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    window = open_backup(world, qtbot)
+    window.saved.setChecked(True)
+    answer_save_file(monkeypatch, tmp_path / "protected.cmz")
+    window.back_up_button.click()  # its answer comes through the event loop: until then it runs
+    assert window.running and window.copy_button.isEnabled() and not window.password.isEnabled() and not window.saved.isEnabled()
+    window.copy_button.click()
+    assert QGuiApplication.clipboard().text() == window.password.text() and window.copy_button.text() == "Copied"
+    wait(qtbot, lambda: not window.running)
+    assert (tmp_path / "protected.cmz").exists() and window.copy_button.isEnabled()
 
 def test_a_backup_is_written_and_the_window_says_where(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     window = open_backup(world, qtbot)
