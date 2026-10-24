@@ -14,9 +14,10 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 2.4.330"
+__version__ = "imap_sync.py 2.5.336"
 
 # --- Version history ----------------------------------------------------
+# v2.5.336: new and recovered messages take their place from the store instead of a look through the whole folder (D-248)
 # v2.4.330: a standard folder the server marks (special-use) or has under its standard name is used whether or not it is subscribed:
 #           a Junk folder not subscribed made every move to Junk fail with "Mailbox already exists" (D-202, the Windows computer's W7)
 # v2.0.285: After sending a message's marks the check knows the server's marks as they are now (as read, plus what it added, minus what it
@@ -847,10 +848,11 @@ def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folde
             counts.adopted += 1
             return
     try:
-        reference = store.deliver(local, raw, flags=message_flags(server_now), verify=True)
+        placed = store.deliver_placed(local, raw, flags=message_flags(server_now), verify=True)
     except ChronoMailError as error:
         counts.failed.append(f"UID {uid}: it could not be stored safely: {error}")
         return
+    reference, place = placed.ref, placed.place
     tags = server_tags(item.flags) if view.keywords else ()
     if tags:
         try:
@@ -862,7 +864,6 @@ def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folde
     state.map(local, uid, reference.store_id, server_now if tags or not view.keywords else system_flags(server_now))
     counts.downloaded += 1
     counts.new.append(reference)
-    place = store.locate(reference)
     view.locations[reference.store_id] = (local, place)
     with counts.announcer.changing():
         if index is not None:
@@ -890,8 +891,8 @@ def _recover(
         try:
             before = MessageRef(store.account_id, where[0], store_id)
             with counts.announcer.changing():
-                moved = store.move(before, target, hint=where[1])
-                place = store.locate(moved)
+                placed = store.move_placed(before, target, hint=where[1])
+                moved, place = placed.ref, placed.place
                 locations[store_id] = (target, place)
                 if index is not None:
                     index.move(store_id, target, place)

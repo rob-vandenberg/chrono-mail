@@ -9,9 +9,10 @@ from chrono_mail.protocols.smtp import Refusal, SmtpLimits, send_message
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "send.py 2.2.314"
+__version__ = "send.py 2.5.336"
 
 # --- Version history ----------------------------------------------------
+# v2.5.336: the move to Sent takes the message's place from the store (D-248)
 # v2.2.314: a failed send is tried again at the next send of the Outbox (the owner: every refresh sends and receives, D-028)
 # v0.0.86: The copy in the Outbox and in Sent keeps the Bcc recipients (only what goes to the server is without them); send_stored sends a message that waits in the Outbox
 # v0.0.35: Send later and snooze
@@ -97,13 +98,13 @@ def send_stored(
 def _file_as_sent(store: Store, index: Index | None, reference: MessageRef, path: str | None, sent: tuple[str, ...], refused: tuple[Refusal, ...], checkpoint: Checkpoint) -> SendOutcome:
     """Move a message the server accepted from the Outbox to Sent; if that fails it was still sent, and stays in the Outbox."""
     try:
-        moved = store.move(reference, sent, hint=path)
+        placed = store.move_placed(reference, sent, hint=path)
         if index is not None:
-            index.move(moved.store_id, sent, path if path is not None else store.locate(moved))
+            index.move(placed.ref.store_id, sent, placed.place)
     except ChronoMailError as error:
         return SendOutcome(True, reference, refused, warning=f"it was sent but could not be moved to Sent: {error}")
     checkpoint("send:after-move")
-    return SendOutcome(True, moved, refused)
+    return SendOutcome(True, placed.ref, refused)
 
 
 def _index(index: Index | None, reference: MessageRef, path: str, raw: bytes) -> None:
