@@ -10,9 +10,10 @@ from chrono_mail.core import StorageError
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "properties.py 3.1.341"
+__version__ = "properties.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: tags_and_unreadable: the messages whose tags cannot be read are told apart from those without tags (RV-48)
 # v3.1.341: sent_at: a message of the Outbox the server accepted, whose move to Sent failed; it is never sent again (RV-50)
 # v2.4.324: put_text: the properties of a message from a backup (D-244)
 # v2.2.314: send_not_before (a message in the Outbox may not be sent before this moment) and replies_to (the message a reply answers,
@@ -256,6 +257,21 @@ class MessageProperties:
     def tags(self, store_ids: Collection[str] | None = None, present: set[str] | None = None) -> dict[str, tuple[str, ...]]:
         """store id -> its tags, for these messages (None: every message) that have tags (present: as for readable)."""
         return {store_id: found.tags for store_id, found in self.readable(store_ids, present).items() if found.tags}
+
+    def tags_and_unreadable(self, store_ids: Collection[str], present: set[str]) -> tuple[dict[str, tuple[str, ...]], set[str]]:
+        """The tags of these messages (as tags gives them) and the messages whose properties file cannot be read: their tags are not
+        known, which is not the same as having none (RV-48)."""
+        found: dict[str, tuple[str, ...]] = {}
+        unreadable: set[str] = set()
+        for store_id in present.intersection(store_ids):
+            try:
+                properties = self.of(store_id)
+            except StorageError:
+                unreadable.add(store_id)
+                continue
+            if properties.tags:
+                found[store_id] = properties.tags
+        return found, unreadable
 
     def tags_of(self, store_id: str) -> tuple[str, ...]:
         return self.of(store_id).tags

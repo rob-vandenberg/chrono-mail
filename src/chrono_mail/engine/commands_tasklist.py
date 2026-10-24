@@ -14,9 +14,10 @@ from chrono_mail.pim.times import format_moment, local_zone, parse_moment, zone_
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 2.1.311"
+__version__ = "commands_tasklist.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a task's reminder in minutes counts back from its due time (RELATED=END), as the window says (RV-99)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.273: R-19: typed task.show, -add, -edit, -complete, -reopen, -delete, -move
 # v1.1.225: Every change of an item goes through item_writer: on its server first when it has one (R-23, D-194)
@@ -327,8 +328,9 @@ def _apply(task: Task, values: TaskFields) -> Task:
         if rule and "FREQ=" not in rule.upper():
             raise UsageError("A rule starts with FREQ=, like FREQ=WEEKLY")
         result = replace(result, rrule=rule)
-    if values.reminder:
-        result = replace(result, reminders=tuple(_reminder(text, zone_name) for text in values.reminder))
+    if values.reminder:  # minutes before the due time: RELATED=END, or other programs ring them before the start (RV-99)
+        reminders = (_reminder(text, zone_name) for text in values.reminder)
+        result = replace(result, reminders=tuple(replace(item, relative_to_end=item.minutes_before is not None and result.due is not None) for item in reminders))
     if values.tag:
         result = replace(result, categories=tuple(dict.fromkeys(" ".join(tag.split()) for tag in values.tag if tag.strip())))
     if values.parent is not None:

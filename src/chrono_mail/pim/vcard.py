@@ -6,9 +6,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 # --- Version ------------------------------------------------------------
-__version__ = "vcard.py 0.0.57"
+__version__ = "vcard.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a quoted-printable value keeps its line breaks escaped (\\n), so a line kept as it was is written back whole (RV-144)
 # v0.0.57: Initial vCard content lines: parsing (2.1, 3.0, 4.0), escaping, folding
 
 MAXIMUM_TEXT_BYTES: int = 32 * 1024 * 1024  # more than this is refused: a vCard with a photo is a few megabytes at most
@@ -143,7 +144,10 @@ def parse_line(line: str) -> ContentLine | None:
     if any(key in ("ENCODING", "TYPE") and any(item.upper() == "QUOTED-PRINTABLE" for item in values) for key, values in params):  # also the bare 2.1 form
         charset = next((item for key, values in params if key == "CHARSET" for item in values), "utf-8")
         try:
-            line_value = quopri.decodestring(value.encode("ascii", "replace")).decode(charset, "replace")
+            decoded = quopri.decodestring(value.encode("ascii", "replace")).decode(charset, "replace")
+            # a value is kept as written, its escapes not undone: a line break becomes \n again, or a line kept as it was would be cut in
+            # two when it is written back (the rest a property of its own on the server, RV-144)
+            line_value = decoded.replace("\r\n", "\\n").replace("\n", "\\n").replace("\r", "\\n")
         except (LookupError, ValueError):
             line_value = value
         cleaned = [(key, tuple(item for item in values if item.upper() != "QUOTED-PRINTABLE")) for key, values in params if key not in ("ENCODING", "CHARSET")]

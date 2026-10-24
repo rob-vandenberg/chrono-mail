@@ -12,9 +12,10 @@ from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, bare
 from chrono_mail.pimstore import IndexedItem, ItemQuery, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 2.1.311"
+__version__ = "commands_addressbook.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: an entry given again with the same value and first kind keeps its other kinds, preferred mark and details (RV-20)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.10.277: Contact groups (R-39): the list leaves groups out and gives one group's members (group); a contact shows its groups; a contact deleted
 #            or moved away is taken out of the groups of its address book; a card keeps its own vCard version
@@ -249,6 +250,36 @@ def _address(entry: str) -> Address:
     return Address(parts[1], parts[2], parts[3], parts[4], parts[5], types=tuple(part for part in types if part != "pref"), preferred="pref" in types)
 
 
+def _first_kind(types: tuple[str, ...]) -> str:
+    return next((kind for kind in types if kind not in ("internet", "pref")), "")
+
+
+def _labeled_kept(before: tuple[Labeled, ...], entries: tuple[str, ...]) -> tuple[Labeled, ...]:
+    """The entries as given; one that was there with the same value and the same first kind keeps everything else it had (more kinds, the
+    preferred mark, parameters, its group): the window shows only the value and the first kind (RV-20)."""
+    result: list[Labeled] = []
+    for entry in entries:
+        if not entry.strip():
+            continue
+        given = _labeled(entry)
+        earlier = next((item for item in before if item.value == given.value and _first_kind(item.types) == _first_kind(given.types)), None)
+        result.append(earlier if earlier is not None and not given.preferred else given)
+    return tuple(result)
+
+
+def _addresses_kept(before: tuple[Address, ...], entries: tuple[str, ...]) -> tuple[Address, ...]:
+    """As _labeled_kept, for postal addresses: an address whose shown parts are all the same keeps its P.O. box, extended part, kinds and the rest."""
+    result: list[Address] = []
+    for entry in entries:
+        if not entry.strip():
+            continue
+        given = _address(entry)
+        shown = (given.street, given.locality, given.region, given.postal_code, given.country, _first_kind(given.types))
+        earlier = next((item for item in before if (item.street, item.locality, item.region, item.postal_code, item.country, _first_kind(item.types)) == shown), None)
+        result.append(earlier if earlier is not None and not given.preferred else given)
+    return tuple(result)
+
+
 def _date(text: str, name: str) -> PartialDate | None:
     cleaned = text.strip()
     if not cleaned:
@@ -314,13 +345,13 @@ def _apply(contact: Contact, values: FieldParameters) -> Contact:
     if values.nickname:
         result = replace(result, nicknames=tuple(item.strip() for item in values.nickname if item.strip()))
     if values.email:
-        result = replace(result, emails=tuple(_labeled(entry) for entry in values.email if entry.strip()))
+        result = replace(result, emails=_labeled_kept(result.emails, values.email))
     if values.phone:
-        result = replace(result, phones=tuple(_labeled(entry) for entry in values.phone if entry.strip()))
+        result = replace(result, phones=_labeled_kept(result.phones, values.phone))
     if values.url:
-        result = replace(result, urls=tuple(_labeled(entry) for entry in values.url if entry.strip()))
+        result = replace(result, urls=_labeled_kept(result.urls, values.url))
     if values.address:
-        result = replace(result, addresses=tuple(_address(entry) for entry in values.address if entry.strip()))
+        result = replace(result, addresses=_addresses_kept(result.addresses, values.address))
     if values.tag:
         result = replace(result, categories=tuple(dict.fromkeys(" ".join(tag.split()) for tag in values.tag if tag.strip())))
     if values.birthday is not None:

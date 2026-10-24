@@ -28,9 +28,10 @@ from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "contacteditor.py 3.0.339"
+__version__ = "contacteditor.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a list of e-mail addresses, phone numbers, web or postal addresses is sent only when it changed; an entry without a kind keeps none (RV-20)
 # v3.0.339: a birthday without a year is shown (month and day) and kept; the birthday is sent only when it was changed (RV-16)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: parameters gives the typed edit (EditParameters); add and edit are typed calls; the contact is a ContactInfo
@@ -62,6 +63,9 @@ class LabeledRow(QWidget):
 
     def set_entry(self, types: tuple[str, ...], value: str) -> None:
         first = next((kind for kind in types if kind != "internet"), "")
+        if not first and value:  # a kept entry without a kind stays without one (it became Work or Mobile, RV-20)
+            self.kind.setCurrentIndex(-1)
+            self.kind.setEditText("")
         if first:
             index = self.kind.findText(first, Qt.MatchFlag.MatchFixedString)
             if index >= 0:
@@ -211,6 +215,7 @@ class ContactEditor(QDialog):
         self.has_birthday.toggled.connect(self.birthday.setEnabled)
         self._birthday_without_year = False  # a birthday kept without a year (--0415): shown and saved as month and day
         self._birthday_before = ""  # the birthday as it was: it is sent only when the person changed it (RV-16)
+        self._lists_before: dict[str, tuple[str, ...]] = {}  # the lists as the contact had them: a list is sent only when it changed (RV-20)
         dates.addWidget(self.has_birthday)
         dates.addWidget(self.birthday)
         dates.addStretch(1)
@@ -250,6 +255,9 @@ class ContactEditor(QDialog):
             kind = next(iter(values.types), "")
             if kind:
                 row.kind.setEditText(kind.capitalize())
+            else:  # an address without a kind stays without one (RV-20)
+                row.kind.setCurrentIndex(-1)
+                row.kind.setEditText("")
             row.street.setText(values.street)
             row.locality.setText(values.locality)
             row.region.setText(values.region)
@@ -291,17 +299,25 @@ class ContactEditor(QDialog):
             self.birthday.setDate(QDate(2000, int(birthday[2:4]), int(birthday[4:6])))  # 2000 is a leap year: 29 February fits
             self.has_birthday.setChecked(True)
         self._birthday_before = self._birthday_text()
+        self._lists_before = self._lists()
         self.note.setPlainText(contact.note)
         self.tags.setText(", ".join(contact.tags))
 
     # --- the command --------------------------------------------------------------------------
 
+    def _lists(self) -> dict[str, tuple[str, ...]]:
+        return {
+            "email": tuple(self.emails.entries()), "phone": tuple(self.phones.entries()), "url": tuple(self.urls.entries()),
+            "address": tuple(entry for entry in (row.entry() for row in self.address_rows) if entry),
+        }
+
     def parameters(self) -> ContactEdit:
-        """What is in the editor, as contact.add and contact.edit take it: the fields, and the lists emptied here (clear)."""
+        """What is in the editor, as contact.add and contact.edit take it: the fields, and the lists emptied here (clear). A list the person did
+        not change is not sent: what the window does not show of its entries (more kinds, the preferred mark, a P.O. box) stays (RV-20)."""
         original = self._original
         nicknames = tuple(part.strip() for part in self.nickname.text().split(",") if part.strip())
-        emails, phones, urls = tuple(self.emails.entries()), tuple(self.phones.entries()), tuple(self.urls.entries())
-        addresses = tuple(entry for entry in (row.entry() for row in self.address_rows) if entry)
+        lists = {name: entries if original is None or entries != self._lists_before.get(name) else None for name, entries in self._lists().items()}
+        emails, phones, urls, addresses = (lists[name] or () for name in ("email", "phone", "url", "address"))
         tags = tuple(part.strip() for part in self.tags.text().split(",") if part.strip())
         had = {
             "nickname": original is not None and bool(original.nicknames), "email": original is not None and bool(original.emails),
@@ -315,7 +331,7 @@ class ContactEditor(QDialog):
             department=self.department.text().strip(), title=self.title.text().strip(), note=self.note.toPlainText().strip(),
             birthday=None if self._birthday_text() == self._birthday_before else self._birthday_text(),  # unchanged: left as it is
             nickname=nicknames, email=emails, phone=phones, url=urls, address=addresses, tag=tags,
-            item=self._item or "", clear=tuple(name for name, entries in given.items() if not entries and had[name]),
+            item=self._item or "", clear=tuple(name for name, entries in given.items() if not entries and had[name] and lists.get(name, ()) is not None),
         )
 
     def _birthday_text(self) -> str:

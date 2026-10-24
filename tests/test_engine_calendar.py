@@ -2,14 +2,18 @@ from pathlib import Path
 
 import pytest
 
+from chrono_mail.core import LOCAL_ACCOUNT_ID
 from chrono_mail.engine import Engine, UsageError
+from chrono_mail.engine.pimaccess import open_pim
 from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 3.0.339"
+__version__ = "test_engine_calendar.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a series moved to a new time keeps its exceptions (RV-93); an invitation to one occurrence gets no main event (RV-146); a task
+#           reminder counts back from the due time (RV-99)
 # v3.0.339: attendees given again keep their names, roles and answers (RV-17)
 # v1.9.265: the fact of a calendar changed carries its palette; a change of the palette tells every calendar of the account (R-44)
 # v1.1.221: the palette belongs to the account: its calendars share it, another account has its own; palettes calendars kept are taken over
@@ -346,3 +350,47 @@ def test_attendees_given_again_keep_their_names_roles_and_answers(engine: Engine
         ("ann@example.com", "Ann Lee", "CHAIR", "ACCEPTED", True), ("bob@example.com", "Bob", "REQ-PARTICIPANT", "DECLINED", False),
         ("cy@example.com", "Cy", "REQ-PARTICIPANT", "NEEDS-ACTION", False),
     ]
+
+
+def test_a_series_moved_to_a_new_time_keeps_its_skipped_and_changed_occurrences(engine: Engine) -> None:
+    """RV-93: the skipped (EXDATE) and changed (RECURRENCE-ID) occurrences named the old time: after "All occurrences" moved to 10:00 a
+    deleted occurrence came back and a moved one showed twice."""
+    weekly = call(engine, "event.add", calendar=collection(engine, "events"), summary="Team", start="2026-11-02T09:00", end="2026-11-02T10:00", time_zone="UTC", rrule="FREQ=WEEKLY;COUNT=4")
+
+    def listed() -> list[tuple[str, str]]:
+        return [(o.summary, o.start) for o in call(engine, "event.list", from_date="2026-11-01", to_date="2026-11-30").events if o.item == weekly.item]
+
+    second, third = [o.occurrence for o in call(engine, "event.list", from_date="2026-11-01", to_date="2026-11-30").events if o.item == weekly.item][1:3]
+    call(engine, "event.delete", item=weekly.item, occurrence=second)
+    call(engine, "event.edit", item=weekly.item, occurrence=third, summary="Team (moved)", start="2026-11-17T15:00", end="2026-11-17T16:00", time_zone="UTC")
+    call(engine, "event.edit", item=weekly.item, start="2026-11-02T10:00", end="2026-11-02T11:00", time_zone="UTC")
+    assert listed() == [("Team", "2026-11-02T10:00:00+00:00"), ("Team (moved)", "2026-11-17T15:00:00+00:00"), ("Team", "2026-11-23T10:00:00+00:00")]
+    call(engine, "event.edit", item=weekly.item, rrule="")
+    assert listed() == [("Team", "2026-11-02T10:00:00+00:00")]  # no longer repeating: its exceptions go with the rule
+
+
+ONE_OCCURRENCE: str = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:series@example.com\r\nDTSTAMP:20261020T100000Z\r\n"
+    "RECURRENCE-ID:20261104T090000Z\r\nDTSTART:20261104T130000Z\r\nDTEND:20261104T140000Z\r\nSUMMARY:Board (moved)\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+
+
+def test_an_invitation_to_one_occurrence_gets_no_made_up_main_event(engine: Engine) -> None:
+    """RV-146: an object holding only one changed occurrence of someone else's series got a main event of its own at the first save, so
+    every program showed the appointment twice."""
+    item = call(engine, "event.import", calendar=collection(engine, "events"), text=ONE_OCCURRENCE).items[0]
+    call(engine, "event.edit", item=item, location="Room 1")
+    shown = [(o.summary, o.start) for o in call(engine, "event.list", from_date="2026-11-01", to_date="2026-11-30").events if o.item == item]
+    assert shown == [("Board (moved)", "2026-11-04T13:00:00+00:00")] and call(engine, "event.show", item=item).location == "Room 1"
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        text = store.get(collection(engine, "events"), item)
+    assert text.count("BEGIN:VEVENT") == 1 and "RECURRENCE-ID" in text
+
+
+def test_a_task_reminder_counts_back_from_the_due_time(engine: Engine) -> None:
+    """RV-99: "15 minutes before" was written relative to the start (no RELATED=END), so phones rang at the wrong moment or never."""
+    tasks = collection(engine, "tasks")
+    added = call(engine, "task.add", list=tasks, summary="Call the bank", due="2099-01-01T17:00", time_zone="UTC", reminder=("15",))
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        text = store.get(tasks, added.item)
+    assert "TRIGGER;RELATED=END:-PT15M" in text.replace("\r\n ", "")

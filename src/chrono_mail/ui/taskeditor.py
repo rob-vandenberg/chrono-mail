@@ -25,13 +25,16 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_tasklist import TASK_ADD, TASK_EDIT, TaskInfo
 from chrono_mail.engine.commands_tasklist import AddParameters as TaskAdd
 from chrono_mail.engine.commands_tasklist import EditParameters as TaskEdit
+from chrono_mail.core.words import counted
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 1.9.275"
+__version__ = "taskeditor.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a repeat or reminder the lists do not offer is shown as it is and kept; both are sent only when changed (RV-19); due and start
+#           times are shown on this computer's clock (RV-23)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: parameters gives the typed edit (EditParameters); add and edit are typed calls; the task is a TaskInfo
 # v0.0.63: Initial editor for a task
@@ -87,6 +90,8 @@ class DateField(QWidget):
             return
         self.all_day.setChecked(False)
         moment = datetime.fromisoformat(text)
+        if moment.tzinfo is not None:  # shown on this computer's clock, as the list shows it and as value() gives it back (RV-23)
+            moment = moment.astimezone()
         self.stamp.setDateTime(QDateTime(QDate(moment.year, moment.month, moment.day), self.stamp.time().fromString(f"{moment.hour:02d}:{moment.minute:02d}", "HH:mm")))
 
     def value(self) -> str:
@@ -105,6 +110,8 @@ class TaskEditor(QDialog):
         super().__init__(parent)
         self._backend: Backend = backend
         self._original: TaskInfo | None = task
+        self._repeat_before: str = ""  # the repeat and reminder choices as the task had them: sent only when changed (RV-19)
+        self._reminder_before: str = ""
         self._item: str | None = None if task is None else task.item
         self.setWindowTitle("New task" if task is None else f"Task: {task.summary}")
         self.setMinimumWidth(520)
@@ -175,9 +182,15 @@ class TaskEditor(QDialog):
         self.priority.setCurrentIndex(max(0, self.priority.findData(priority if priority in (0, 1, 5, 9) else (1 if priority < 5 else (5 if priority == 5 else 9)))))
         self.status.setCurrentIndex(max(0, self.status.findData(task.status.lower())))
         self.percent.setValue(task.percent)
+        if task.rrule and self.repeat.findData(task.rrule) < 0:  # a rule from another program: shown and kept as it is (RV-19)
+            self.repeat.addItem(f"Custom: {task.rrule}", task.rrule)
         self.repeat.setCurrentIndex(max(0, self.repeat.findData(task.rrule)))
         reminders = tuple(task.reminders)
-        self.reminder.setCurrentIndex(max(0, self.reminder.findData(str(reminders[0]) if reminders and reminders[0] is not None else "")))
+        first = ("at" if reminders[0] is None else str(reminders[0])) if reminders else ""
+        if first and self.reminder.findData(first) < 0:  # a time the list does not offer, or a fixed moment: shown and kept (RV-19)
+            self.reminder.addItem("At a set time" if first == "at" else f"{counted(int(first), 'minute')} before", first)
+        self.reminder.setCurrentIndex(max(0, self.reminder.findData(first)))
+        self._repeat_before, self._reminder_before = str(self.repeat.currentData()), str(self.reminder.currentData())
         self.note.setPlainText(task.description)
         self.location.setText(task.location)
         self.tags.setText(", ".join(task.tags))
@@ -185,14 +198,17 @@ class TaskEditor(QDialog):
     def parameters(self) -> TaskEdit:
         """What is in the editor, as task.add and task.edit take it: the fields, and the lists emptied here (clear)."""
         tags = tuple(part.strip() for part in self.tags.text().split(",") if part.strip())
-        reminder = (str(self.reminder.currentData()),) if self.reminder.currentData() != "" else ()
         original = self._original
-        clear = tuple(name for name, entries, had in (("tag", tags, original is not None and bool(original.tags)), ("reminder", reminder, original is not None and bool(original.reminders)))
+        reminder_changed = original is None or str(self.reminder.currentData()) != self._reminder_before  # sent only when changed (RV-19)
+        reminder = (str(self.reminder.currentData()),) if self.reminder.currentData() != "" and reminder_changed else ()
+        repeat = str(self.repeat.currentData())
+        clear = tuple(name for name, entries, had in (("tag", tags, original is not None and bool(original.tags)),
+                                                      ("reminder", reminder, original is not None and bool(original.reminders) and reminder_changed))
                       if not entries and had)
         return TaskEdit(
             summary=self.summary.text().strip(), description=self.note.toPlainText().strip(), location=self.location.text().strip(), start=self.start.value(),
             due=self.due.value(), priority=int(self.priority.currentData()), percent=self.percent.value(), status=TASK_STATUSES.get(str(self.status.currentData()), "needs-action"),
-            rrule=str(self.repeat.currentData()), tag=tags, reminder=reminder, item=self._item or "", clear=clear,
+            rrule=repeat if original is None or repeat != self._repeat_before else None, tag=tags, reminder=reminder, item=self._item or "", clear=clear,
         )
 
     def _save(self) -> None:

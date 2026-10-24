@@ -43,9 +43,10 @@ from chrono_mail.ui.toolbar import view_button
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 2.4.334"
+__version__ = "calendarview.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: This occurrence of an all-day event opens as an all-day event (RV-21)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: every engine call typed
@@ -74,6 +75,14 @@ WORK_DAYS: tuple[int, ...] = (0, 1, 2, 3, 4)
 FIRST_HOUR: int = 7  # the hour the grid is scrolled to
 DAY_MARGIN: int = 6  # room around a day's number in the small month calendar
 
+
+
+def _moments(entry: Entry) -> tuple[str, str]:
+    """The start and end of one occurrence as the event window takes them: days for an all-day event (it opened as a timed 00:00 event,
+    and Save made it a 24-hour one, RV-21), moments otherwise."""
+    if entry.all_day:
+        return entry.start.date().isoformat(), entry.end.date().isoformat()
+    return entry.start.isoformat(), entry.end.isoformat()
 
 class RangeCalendar(QCalendarWidget):
     """The small calendar of the sidebar: the days that are shown in the main area are tinted."""
@@ -490,7 +499,7 @@ class CalendarPage(PimPage):
         occurrence = row.occurrence if scope == "occurrence" else ""
 
         def opened(result: EventInfo) -> None:
-            self._editor(result, result.collection, occurrence, entry.start.isoformat() if scope == "occurrence" else "", entry.end.isoformat() if scope == "occurrence" else "")
+            self._editor(result, result.collection, occurrence, *(_moments(entry) if scope == "occurrence" else ("", "")))
 
         self._backend.ask(EVENT_SHOW, EventItem(row.item), opened, self._failed, owner=self)
 

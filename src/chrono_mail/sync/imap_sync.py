@@ -14,9 +14,10 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 2.5.336"
+__version__ = "imap_sync.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a message whose tags cannot be read here keeps its keywords on the server (they were all removed, RV-48)
 # v2.5.336: new and recovered messages take their place from the store instead of a look through the whole folder (D-248)
 # v2.4.330: a standard folder the server marks (special-use) or has under its standard name is used whether or not it is subscribed:
 #           a Junk folder not subscribed made every move to Junk fail with "Mailbox already exists" (D-202, the Windows computer's W7)
@@ -351,6 +352,7 @@ class _Folder:
     locations: dict[str, tuple[tuple[str, ...], str]]  # where every stored message is, in all folders
     tags: dict[str, tuple[str, ...]] = field(default_factory=dict)  # store id -> its tags here
     keywords: bool = True  # the folder keeps keywords on the server (PERMANENTFLAGS with \\*): tags go there too
+    tags_unknown: set[str] | None = field(default_factory=set)  # messages whose tags cannot be read here (None: all of them, RV-48)
     held: set[str] = field(default_factory=set)  # messages with an open sync conflict: not sent again while it is open (D-195)
     told: set[int] | None = None  # the UIDs whose marks the server told in this check (None: all); the others hold the agreed marks (R-09)
     unsettled: bool = False  # something of the server's was left for later: the next check asks for everything again
@@ -539,13 +541,15 @@ def _sync_folder(
     on_server, told = _read_server(client, state, local, info)
     stored = dict(here.folders.get(local, {}))
     tags: dict[str, tuple[str, ...]] = {}  # the properties could not be listed: the flags still go on; the tags wait
+    unknown: set[str] | None = None  # whose tags cannot be read here (None: of none of them): their keywords stay on the server as they are (RV-48)
     if here.with_properties is not None:
         try:
-            tags = store.properties.tags(stored, here.with_properties)  # only the messages of this folder; a damaged file leaves out that one message
+            tags, unknown = store.properties.tags_and_unreadable(stored, here.with_properties)  # only this folder; a damaged file: that one message
         except ChronoMailError:
             pass
     view = _Folder(
         plan, stored, on_server, here.locations, tags=tags, keywords=info.keeps_keywords, held=held_messages if held_messages is not None else set(), told=told,
+        tags_unknown=unknown,
     )
     if not view.keywords and any(store_id in tags for store_id in view.stored) and counts.note is None:
         counts.note = "the server keeps no tags for this folder; its tags stay on this computer"
@@ -693,6 +697,8 @@ def _push_flags(client: ImapClient, store: Store, index: Index | None, state: Im
             continue
         tags = view.tags.get(entry.store_id, ())
         mine = local_names(message.flags, tags, view.keywords)
+        if view.keywords and (view.tags_unknown is None or entry.store_id in view.tags_unknown):  # its tags are not known here, which is not
+            mine = local_names(message.flags, (), False) | (entry.flags - system_flags(entry.flags))  # "none": they stay on the server (RV-48)
         known = entry.flags if view.keywords else system_flags(entry.flags)
         if mine != known:
             sending.append((uid, entry, message, tags, mine, known))

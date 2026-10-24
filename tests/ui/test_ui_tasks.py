@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QPersistentModelIndex, QPoint, Qt
@@ -17,9 +17,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tasks.py 1.9.265"
+__version__ = "test_ui_tasks.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a task from another program keeps its repeat, reminder and due time through a Save, shown on this computer's clock (RV-19, RV-23)
 # v1.9.265: laying the list out fetches no row: only the rows that come into view (R-44)
 # v1.1.244: a change of one task moves, adds or removes only its row and heading, never a reset; the selection stays by itself (R-06)
 # v1.1.205: the list holds places in the engine's order (grouped, not sorted again); every task of a large list has a place and its rows come in as they come into view; a hidden list takes no room (R-02)
@@ -337,3 +338,33 @@ def test_completing_a_task_keeps_the_selection_and_never_resets_the_list(world: 
     wait(qtbot, lambda: "Overdue" not in headers(page) and len(page.model.rows()) == 4)
     assert [getattr(page.model.loaded.get(item), "summary", "") for item in page._selected_items()] == ["Pay rent"]  # noqa: SLF001
     assert resets == []
+
+
+FROM_ELSEWHERE: str = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VTODO\r\nUID:weekly@example.com\r\nDTSTAMP:20261020T100000Z\r\n"
+    "SUMMARY:Water the plants\r\nDUE:20991104T150000Z\r\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:x\r\n"
+    "TRIGGER;RELATED=END:-PT30M\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+)
+
+
+def test_a_task_from_another_program_keeps_its_repeat_reminder_and_due_time(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-19 and RV-23: a repeat or reminder the window does not offer showed as none and Save removed it; the due time showed on the
+    task's own clock (UTC here), so Save moved it by the difference with this computer's zone."""
+    world.call("pim.enable")
+    item = world.call("task.import", list=lists(world), text=FROM_ELSEWHERE).items[0]
+    page = open_tasks(world, qtbot, 1)
+    shown: list[tuple[str, str, str]] = []
+
+    def note(editor: TaskEditor) -> None:
+        shown.append((editor.repeat.currentText(), editor.reminder.currentText(), editor.due.stamp.dateTime().toString("HH:mm")))
+        editor.note.setPlainText("Also the ones on the balcony")
+
+    monkeypatch.setattr(TaskEditor, "exec", fake_exec(note))
+    select(page, "Water the plants")
+    page.act_edit.trigger()
+    wait(qtbot, lambda: world.call("task.show", item=item).description == "Also the ones on the balcony")
+    local = datetime(2099, 11, 4, 15, 0, tzinfo=UTC).astimezone()
+    assert shown == [("Custom: FREQ=WEEKLY;BYDAY=MO,WE", "30 minutes before", local.strftime("%H:%M"))]
+    after = world.call("task.show", item=item)
+    assert (after.rrule, after.reminders) == ("FREQ=WEEKLY;BYDAY=MO,WE", (30,))
+    assert datetime.fromisoformat(after.due) == datetime(2099, 11, 4, 15, 0, tzinfo=UTC)

@@ -31,9 +31,10 @@ from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circl
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 2.4.333"
+__version__ = "eventeditor.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: the reminders are sent only when the reminder choice was changed: a second alarm or one at a fixed time stays (RV-18)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: parameters gives the typed edit (EditParameters); add and edit are typed calls; the event is an EventInfo
@@ -72,6 +73,7 @@ class EventEditor(QDialog):
         super().__init__(parent)
         self._backend: Backend = backend
         self._original: EventInfo | None = event
+        self._reminder_before: str = ""  # the reminder choice as the event had it: the reminders are sent only when it changed (RV-18)
         self._item: str | None = None if event is None else event.item
         self._occurrence: str = occurrence
         self.setWindowTitle("New event" if event is None else (f"Occurrence: {event.summary}" if occurrence else f"Event: {event.summary}"))
@@ -186,6 +188,7 @@ class EventEditor(QDialog):
             self.reminder.addItem(f"{counted(int(minutes), 'minute')} before" if minutes.isdigit() else f"{minutes} minutes before", minutes)
             index = self.reminder.count() - 1
         self.reminder.setCurrentIndex(max(0, index))
+        self._reminder_before = str(self.reminder.currentData())
         self.busy.setCurrentIndex(0 if event.busy else 1)
         self.attendees.setText(", ".join(person.address for person in event.attendees))
         self.tags.setText(", ".join(event.tags))
@@ -264,9 +267,12 @@ class EventEditor(QDialog):
         tags = tuple(part.strip() for part in self.tags.text().split(",") if part.strip())
         reminder = (str(self.reminder.currentData()),) if self.reminder.currentData() != "" else ()
         original = self._original
+        reminder_changed = original is None or str(self.reminder.currentData()) != self._reminder_before
+        if not reminder_changed:  # the window shows one reminder: the others (a second alarm, one at a fixed time) stay as they are (RV-18)
+            reminder = ()
         clear: list[str] = []
         for parameter, entries, had in (("attendee", attendees, original is not None and bool(original.attendees)), ("tag", tags, original is not None and bool(original.tags)),
-                                        ("reminder", reminder, original is not None and bool(original.reminders))):
+                                        ("reminder", reminder, original is not None and bool(original.reminders) and reminder_changed)):
             if not entries and had:
                 clear.append(parameter)
         chosen = "" if self.colour_id == OWN_COLOUR_ID else self.colour_id

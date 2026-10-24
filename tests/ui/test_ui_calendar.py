@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 2.0.291"
+__version__ = "test_ui_calendar.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: This occurrence of an all-day event stays all-day (RV-21); reminders the window does not show survive a Save (RV-18)
 # v2.0.291: a margin at the right of the list of colours
 # v2.0.290: the Event colours window has no outline around its list (the owner)
 # v1.9.273: The event editor's parameters are typed (R-19)
@@ -202,6 +203,41 @@ def test_one_occurrence_of_a_repeating_event_is_changed_or_deleted_or_the_whole_
     monkeypatch.setattr(page, "_ask_scope", series_scope)
     page.delete_selected()
     wait(qtbot, lambda: "Standup" not in summaries(page) and "Standup (late)" not in summaries(page))
+
+
+def test_one_occurrence_of_an_all_day_series_opens_and_stays_all_day(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-21: This occurrence of an all-day event opened as a timed 00:00 event, and Save made that day a 24-hour timed event."""
+    page = open_calendar(world, qtbot)
+    world.call("event.add", calendar=calendar_id(world), summary="Course", start="2026-10-12", end="2026-10-13", rrule="FREQ=DAILY;COUNT=3")
+    wait(qtbot, lambda: summaries(page).count("Course") == 3)
+    page._entry_clicked(next(e for e in page.entries if e.summary == "Course" and e.first_day == date(2026, 10, 13)))  # noqa: SLF001
+    def one_occurrence(verb: str) -> str:
+        return "occurrence"
+
+    monkeypatch.setattr(page, "_ask_scope", one_occurrence)
+    shown: list[bool] = []
+
+    def rename(editor: EventEditor) -> None:
+        shown.append(editor.all_day.isChecked())
+        editor.summary.setText("Course (room 2)")
+
+    monkeypatch.setattr(EventEditor, "exec", fake_editor(rename))
+    page.edit_selected()
+    wait(qtbot, lambda: "Course (room 2)" in summaries(page))
+    changed = next(e for e in page.entries if e.summary == "Course (room 2)")
+    assert shown == [True] and changed.all_day and changed.first_day == changed.last_day == date(2026, 10, 13)
+
+
+def test_reminders_the_window_does_not_show_survive_a_save(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-18: the window shows one reminder; any Save replaced every alarm with it, so a second alarm was lost."""
+    page = open_calendar(world, qtbot)
+    added = world.call("event.add", calendar=calendar_id(world), summary="Flight", start="2026-10-15T09:00", end="2026-10-15T11:00", time_zone="UTC", reminder=("1440", "60"))
+    wait(qtbot, lambda: "Flight" in summaries(page))
+    page._entry_clicked(next(e for e in page.entries if e.summary == "Flight"))  # noqa: SLF001
+    monkeypatch.setattr(EventEditor, "exec", fake_editor(lambda editor: editor.location.setText("Gate 4")))
+    page.edit_selected()
+    wait(qtbot, lambda: world.call("event.show", item=added.item).location == "Gate 4")
+    assert [reminder.minutes_before for reminder in world.call("event.show", item=added.item).reminders] == [1440, 60]
 
 
 def test_a_single_event_is_deleted_after_asking(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
