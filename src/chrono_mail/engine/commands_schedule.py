@@ -18,9 +18,11 @@ from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 3.0.339"
+__version__ = "commands_schedule.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: a scheduled send holds the repeat and Outbox locks and reads the message again (sent once, RV-126); a repeating send that
+#           failed leaves no copy in the Outbox (RV-123); the failure text says it is tried again at the next refresh that sends (RV-132)
 # v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
 # v2.4.327: a one-off scheduled message can be paused and resumed too (mail.repeat-pause and mail.repeat-resume, X-Chrono-Mail-Paused);
 #           paused_if_overdue: a restore pauses the scheduled messages whose time passed (D-245)
@@ -361,21 +363,26 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                 if sender is None or password is None:
                     failed.append(f"{parsed.subject}: no password is stored for the account it is sent from")
                     continue
-                try:
-                    outcome = send_and_file(
-                        mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX,
-                        mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference), ssl_context=engine.tls_context(sender, outgoing=True),
-                    )
-                except ChronoMailError as error:
-                    failed.append(f"{parsed.subject}: {error}")
-                    continue
+                with _REPEAT_LOCK, engine.outbox_lock:  # one send of it at a time: the minute check and Send now never both send it (RV-126)
+                    try:
+                        _read(mailbox, reference)  # again, under the locks: another send (or an edit) may have taken it meanwhile
+                    except ChronoMailError:
+                        continue
+                    try:
+                        outcome = send_and_file(
+                            mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX,
+                            mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference), ssl_context=engine.tls_context(sender, outgoing=True),
+                        )
+                    except ChronoMailError as error:
+                        failed.append(f"{parsed.subject}: {error}")
+                        continue
                 mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
                 if outcome.sent:
                     sent += 1
                     mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
                     _mark_replied(mailbox, parsed)
                 else:
-                    failed.append(f"{parsed.subject}: {outcome.error} (it stays in the Outbox and is not sent again by itself)")
+                    failed.append(f"{parsed.subject}: {outcome.error} (it stays in the Outbox and is tried again at the next refresh that sends)")
             if named and parameters.message:
                 line = _line(members, mailbox, parameters.message)
     return SendDueResult(sent, tuple(failed), waiting, line)
@@ -418,17 +425,19 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
                 return 0, 0
         error = ""
         try:
-            outcome = send_and_file(
-                mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX, mailbox.role_folder(FolderRole.SENT),
-                ssl_context=engine.tls_context(sender, outgoing=True),
-            )
-            mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
-            if not outcome.sent:
-                error = outcome.error or "the server refused the message"
-            else:
+            with engine.outbox_lock:  # its copy in the Outbox is sent by this send only (RV-109)
+                outcome = send_and_file(
+                    mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX, mailbox.role_folder(FolderRole.SENT),
+                    ssl_context=engine.tls_context(sender, outgoing=True),
+                )
+                if not outcome.sent:  # the series tries this send again itself: its copy must not wait in the Outbox to be sent as well (RV-123)
+                    error = outcome.error or "the server refused the message"
+                    mailbox.delete(outcome.reference, permanent=True)
+            if not error:
+                mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent
                 mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
         except ChronoMailError as problem:
-            error = str(problem)
+            error = error or str(problem)
         if not error:
             after = replace(moved, sent=moved.sent + 1, last_sent=int(now), last_error="")
         else:

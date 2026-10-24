@@ -1,13 +1,15 @@
 import base64
 import ssl
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakesmtp.py 0.0.10"
+__version__ = "fakesmtp.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: before_queued (a test can hold a send between the message and the server's answer) and drop_on_quit (no answer to QUIT)
 # v0.0.10: Initial fake SMTP server
 
 
@@ -38,6 +40,8 @@ class FakeSmtpServer(ScriptedServer):
         self._user, self._password, self._starttls = user, password, starttls_context
         self._size_limit, self._refuse, self._eight_bit, self._offer_auth = size_limit, refuse, eight_bit, offer_auth
         self._implicit = implicit_tls is not None
+        self.before_queued: Callable[[], None] = lambda: None  # runs when the whole message is in, before the server says it took it
+        self.drop_on_quit: bool = False  # the server takes the message, then drops the connection at QUIT without an answer
 
     def _session(self, conversation: Conversation) -> None:
         conversation.send_line("220 fake.example ESMTP ready")
@@ -99,11 +103,13 @@ class FakeSmtpServer(ScriptedServer):
                 while (line := conversation.read_line()) is not None and line != b".":
                     lines.append(line[1:] if line.startswith(b"..") else line)
                 self.received.append(Received(sender, tuple(recipients), b"\r\n".join(lines) + b"\r\n"))
+                self.before_queued()
                 conversation.send_line("250 2.0.0 Queued")
             elif verb == "RSET":
                 conversation.send_line("250 OK")
             elif verb == "QUIT":
-                conversation.send_line("221 Bye")
+                if not self.drop_on_quit:
+                    conversation.send_line("221 Bye")
                 return
             else:
                 conversation.send_line("502 5.5.2 Command not implemented")

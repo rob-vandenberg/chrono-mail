@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, first_id, setup  # noqa: F40
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_drafts.py 2.5.336"
+__version__ = "test_engine_drafts.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: a failed send replaces its draft too: the message waits in the Outbox, no second copy beside it (RV-155)
 # v2.5.336: the failed save breaks Store.deliver_placed, which a save uses now (D-248)
 # v0.0.86: A forward as attachment can be saved as a draft and taken up again
 # v0.0.24: Rich text composing
@@ -124,15 +125,18 @@ def test_invalid_addresses_and_unknown_drafts(setup: Setup) -> None:
         call(setup.engine, "draft.open", account=setup.account_id, message="0" * 32, folder="Nowhere")
 
 
-def test_sending_removes_the_draft_it_came_from_but_a_failed_send_keeps_it(setup: Setup) -> None:
+def test_sending_removes_the_draft_it_came_from_also_when_it_waits_in_the_outbox(setup: Setup) -> None:
+    """A failed send keeps the message in the Outbox, sent from there; a draft left beside it could be sent as a second copy (RV-155)."""
     saved = call(setup.engine, "draft.save", account=setup.account_id, to="you@example.com", subject="Final", body="done")
     setup.engine.passwords.set(setup.account_id, ServerRole.OUTGOING, "wrong")
     failed = call(setup.engine, "mail.send", account=setup.account_id, to="you@example.com", subject="Final", body="done", replaces_folder="Drafts", replaces_message=saved.message_id)
-    assert failed.sent is False and [row.message_id for row in drafts(setup)] == [saved.message_id]
+    assert failed.sent is False and drafts(setup) == [] and call(setup.engine, "message.list", account=setup.account_id, folder="Outbox").total == 1
     setup.engine.passwords.set(setup.account_id, ServerRole.OUTGOING, "secret")
-    sent = call(setup.engine, "mail.send", account=setup.account_id, to="you@example.com", subject="Final", body="done", replaces_folder="Drafts", replaces_message=saved.message_id)
+    assert call(setup.engine, "mail.send-outbox").sent == 1 and call(setup.engine, "message.list", account=setup.account_id, folder="Sent").total == 1
+    second = call(setup.engine, "draft.save", account=setup.account_id, to="you@example.com", subject="Next", body="done")
+    sent = call(setup.engine, "mail.send", account=setup.account_id, to="you@example.com", subject="Next", body="done", replaces_folder="Drafts", replaces_message=second.message_id)
     assert sent.sent is True and drafts(setup) == []
-    assert call(setup.engine, "message.list", account=setup.account_id, folder="Sent").total == 1
+    assert call(setup.engine, "message.list", account=setup.account_id, folder="Sent").total == 2
     ok_again = call(setup.engine, "mail.send", account=setup.account_id, to="you@example.com", subject="Again", replaces_folder="Drafts", replaces_message="0" * 32)
     assert ok_again.sent is True  # a draft that is already gone does not make a sent message an error
 

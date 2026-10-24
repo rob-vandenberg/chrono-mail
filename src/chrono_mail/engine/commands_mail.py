@@ -33,9 +33,11 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 3.0.339"
+__version__ = "commands_mail.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: Send puts its copy in the Outbox and sends it under the Outbox lock (a refresh never sends it too, RV-109); a failed send
+#           replaces its draft too: the message waits in the Outbox (RV-155)
 # v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
 # v2.2.314: mail.send with delay_seconds or hold puts the message in the Outbox and sends nothing (B-21); a reply waiting in the Outbox
 #           notes the message it answers, marked as replied once it is really sent (also after a failed send)
@@ -545,12 +547,13 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
             return _schedule(engine, mailbox, outgoing, parameters)
         if parameters.delay_seconds or parameters.hold:
             return _put_in_outbox(engine, mailbox, outgoing, parameters)
-        outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings, outgoing=True))
+        with engine.outbox_lock:  # its copy in the Outbox is sent by this send only: a refresh meanwhile waits, never sends it too (RV-109)
+            outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings, outgoing=True))
+            if not outcome.sent and _replies_to(parameters) is not None:  # sent again later from the Outbox: the original is marked then
+                _note_replies_to(mailbox, outcome.reference, _replies_to(parameters))
         mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
         if outcome.sent:
             mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
-        elif _replies_to(parameters) is not None:  # sent again later from the Outbox: the original is marked then
-            _note_replies_to(mailbox, outcome.reference, _replies_to(parameters))
         if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
             try:
                 source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
@@ -558,10 +561,10 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
                 learn(mailbox, [source], junk=False)  # mail one replies to is good mail (D-238)
             except ChronoMailError:
                 pass  # the reply was sent; failing to mark the original is not worth an error
-        if outcome.sent and parameters.replaces_folder and parameters.replaces_message:
+        if parameters.replaces_folder and parameters.replaces_message:  # sent, or kept in the Outbox to be sent later: the draft became that message
             try:
                 old = mailbox.reference(mailbox.folder(parameters.replaces_folder), _check_id(parameters.replaces_message))
-                mailbox.delete(old, permanent=True)  # the draft has become the sent message
+                mailbox.delete(old, permanent=True)
             except ChronoMailError:
                 pass
         return SendResult(

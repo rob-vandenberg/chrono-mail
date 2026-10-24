@@ -8,9 +8,10 @@ from typing import override
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 
 # --- Version ------------------------------------------------------------
-__version__ = "smtp.py 0.0.13"
+__version__ = "smtp.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: once the server accepted the message, a failed QUIT no longer makes the send fail (it was sent again, RV-140)
 # v0.0.13: check_login; shared connection and error mapping
 # v0.0.10: Initial SMTP client
 
@@ -191,7 +192,10 @@ def send_message(
                     raise ProtocolError("The message contains 8-bit data and the server does not accept it")
                 options.append("BODY=8BITMIME")
             refused = connection.sendmail(sender, list(recipients), raw, mail_options=options)
-            connection.quit()
+            try:
+                connection.quit()
+            except (smtplib.SMTPException, OSError):
+                pass  # the server accepted the message already: a lost goodbye does not make it unsent (it would be sent again, RV-140)
             return SendResult(
                 tuple(recipient for recipient in recipients if recipient not in refused),
                 tuple(Refusal(address, code, _printable(text)) for address, (code, text) in refused.items()),

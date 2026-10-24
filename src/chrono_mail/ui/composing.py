@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication, QWidget
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, AccountSummary, NoParameters
 from chrono_mail.engine.commands_drafts import DRAFT_OPEN, DraftOpenParameters, DraftOpenResult
 from chrono_mail.engine.commands_mail import MESSAGE_COMPOSE, ComposeParameters, ComposeResult
+from chrono_mail.engine.commands_outbox import MAIL_CANCEL_SEND, CancelSendResult, OutboxMessageParameters
 from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional, ScheduledInfo
 from chrono_mail.engine.compose import ComposeKind
 from chrono_mail.ui import appearance, prefs, scale, theme
@@ -19,9 +20,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 2.4.334"
+__version__ = "composing.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: a message of the Outbox opened to be changed is taken out of the Outbox into Drafts first (left_outbox; RV-156)
 # v2.4.334: New asks the engine for the accounts while the window does not know them yet (the index rebuild after a restore, W9b)
 # v2.4.332: New works while no folder is selected: the default account, else the open one, else the first (W9)
 # v2.2.314: send_waiting: a delayed send of a message window waits in the Outbox; open_taken_back: a cancelled send opens again (B-21)
@@ -39,6 +41,7 @@ class Composing(QObject):
     """The message windows that write mail: the one owner of the list of open ones."""
 
     send_waiting = Signal(str, str, str, int)  # a delayed send waits in the Outbox: account, message id, subject, seconds of its countdown (B-21)
+    left_outbox = Signal(str)  # a message was taken out of the Outbox to be changed: its message id (a countdown for it goes, RV-156)
 
     def __init__(self, backend: Backend, state: MailState, status: StatusReport, prefs_in_use: InUse, messages: MessageListPane, parent: QWidget) -> None:
         super().__init__(parent)
@@ -166,6 +169,9 @@ class Composing(QObject):
 
             self._backend.ask(MAIL_SCHEDULED, AccountOptional(account), listed, lambda error: self._status.report("Could not open the message", error), owner=self)
             return
+        if folder == "Outbox":  # never changed while it waits to be sent: a refresh would send it, then Send a second copy (RV-156)
+            self._take_out_of_outbox(account, message_id)
+            return
         if self._bring_forward(folder, message_id):
             return
 
@@ -173,6 +179,26 @@ class Composing(QObject):
             self.open_composer(account, result, None, resume=(result.folder, result.message_id))
 
         self._backend.ask(DRAFT_OPEN, DraftOpenParameters(account, message_id, folder), opened, lambda error: self._status.report("Could not open the draft", error), owner=self)
+
+    def _take_out_of_outbox(self, account: str, message_id: str) -> None:
+        """A message of the Outbox opened to be changed goes to Drafts first, as Cancel of a delayed send does, and opens from there."""
+
+        def taken_out(result: CancelSendResult) -> None:
+            self.left_outbox.emit(message_id)
+            self._status.show("Taken out of the Outbox to be changed: it waits in Drafts until you send it")
+
+            def opened(draft: DraftOpenResult) -> None:
+                self.open_composer(result.account, draft, None, resume=(draft.folder, draft.message_id))
+
+            self._backend.ask(
+                DRAFT_OPEN, DraftOpenParameters(result.account, result.message_id, result.folder), opened,
+                lambda error: self._status.report("Could not open the draft", error), owner=self,
+            )
+
+        self._backend.ask(
+            MAIL_CANCEL_SEND, OutboxMessageParameters(account, message_id), taken_out, lambda error: self._status.report("Could not open the message", error),
+            owner=self,
+        )
 
     def open_taken_back(self, account: str, folder: str, message_id: str) -> None:
         """A cancelled send (B-21): the message, a draft again, opens in a message window as one not saved yet (closing asks first)."""

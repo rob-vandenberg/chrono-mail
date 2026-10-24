@@ -11,9 +11,10 @@ from chrono_mail.ui.composer import ComposeWindow, parse_recipients, signature_b
 from tests.ui.world import World, add_window, gone, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_composer.py 2.2.314"
+__version__ = "test_ui_composer.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: a failed send closes the window: the message waits in the Outbox, no draft beside it (RV-155)
 # v2.2.314: a failed send says it is sent again with the next Send and Receive (D-028)
 # v1.9.267: a failed automatic save in red on the bottom line without a box; a failed Save with the box
 # v1.1.208: A message window deletes itself when it closes: gone and add_window
@@ -147,7 +148,8 @@ def test_attachments_are_listed_removed_and_sent(world: World, qtbot: QtBot, tmp
     assert b"keep.txt" in world.smtp.received[0].data and b"drop.txt" not in world.smtp.received[0].data
 
 
-def test_a_failed_send_keeps_the_message_in_the_outbox_and_the_window_open(world: World, qtbot: QtBot) -> None:
+def test_a_failed_send_keeps_the_message_in_the_outbox_and_closes_the_window(world: World, qtbot: QtBot) -> None:
+    """RV-155: the window stayed open with Send active while the message waited in the Outbox; a second Send sent it twice."""
     world.engine.passwords.set(world.account_id, ServerRole.OUTGOING, "wrong")
     window = new_composer(world, qtbot)
     signals = sent_signals(window)
@@ -155,13 +157,14 @@ def test_a_failed_send_keeps_the_message_in_the_outbox_and_the_window_open(world
     window.send_button.click()
     wait(qtbot, lambda: "The message was not sent" in box_titles(world, "warning"))
     text = next(text for _, title, text in world.dialogs.shown if title == "The message was not sent")
-    assert "Outbox" in text and "sent again with the next Send and Receive" in text  # D-028: tried again at every refresh (2.2.314)
-    assert window.isVisible() and window.send_button.isEnabled() and window.to.isEnabled()  # the person can correct and retry
+    assert "Outbox" in text and "sent again with the next Send and Receive" in text and "open it from the Outbox" in text  # D-028
+    wait(qtbot, lambda: gone(window))  # the Outbox has it now: this window no longer holds it
     assert world.call("message.list", account=world.account_id, folder="Outbox").total == 1 and world.smtp.received == []
+    assert world.call("message.list", account=world.account_id, folder="Drafts").total == 0  # no draft beside it
     assert signals == [world.account_id]  # the Outbox changed
     world.engine.passwords.set(world.account_id, ServerRole.OUTGOING, "secret")
-    window.send_button.click()
-    wait(qtbot, lambda: len(world.smtp.received) == 1)
+    world.call("mail.send-outbox")
+    assert len(world.smtp.received) == 1
 
 
 def test_an_engine_error_before_anything_is_stored_says_so(world: World, qtbot: QtBot) -> None:

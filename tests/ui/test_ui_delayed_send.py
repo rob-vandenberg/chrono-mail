@@ -12,13 +12,14 @@ from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.prefs import read_preferences
 from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.test_ui_push import build, mail
-from tests.ui.test_ui_window import started
+from tests.ui.test_ui_window import open_folder, started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_delayed_send.py 2.4.327"
+__version__ = "test_ui_delayed_send.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: a message opened from the Outbox leaves it first, with its countdown (RV-156)
 # v2.4.327: the check after a restore, a rebuild, an import or a first account never sends; a refresh a rebuild held back runs after it (D-245)
 # v2.3.317: the status line's texts are recorded, never read at one moment; Cancel waits for the window it opens (not the one that sent, which may exist until Qt deletes it); the notice as the owner's mockup: the buttons below the text at the right, the outline from the colour file
 # v2.3.316: the refresh at start does its own choice; the two rows of Settings, each greyed with its tick
@@ -99,6 +100,21 @@ def test_cancel_opens_the_message_again_and_discard_leaves_nothing(world: World,
     reopened.close()
     wait(qtbot, lambda: held(world, "Drafts") == 0)
     assert ("question", "Save this message?") in [(kind, title) for kind, title, _ in world.dialogs.shown]
+
+
+def test_a_message_opened_from_the_outbox_leaves_it_before_it_can_be_changed(world: World, qtbot: QtBot) -> None:
+    """RV-156: a message opened from the Outbox stayed there while it was changed; a refresh sent it, then Send sent the changed copy too."""
+    delays(world, 60)
+    written(qtbot, world, "Typo").send_button.click()
+    notices = world.window.notices
+    wait(qtbot, lambda: notices.counting() == 1)
+    open_folder(world, qtbot, "Outbox", 1)
+    world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
+    composing = world.window.composing
+    before = list(composing.composers)
+    composing.edit_draft()
+    wait(qtbot, lambda: any(window not in before and window.subject.text() == "Typo" for window in composing.composers))
+    assert held(world, "Outbox") == 0 and held(world, "Drafts") == 1 and notices.counting() == 0 and world.smtp.received == []
 
 
 def test_with_both_delays_the_end_of_the_countdown_leaves_it_for_the_next_refresh(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

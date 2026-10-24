@@ -10,9 +10,10 @@ from chrono_mail.core import StorageError
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "properties.py 2.4.324"
+__version__ = "properties.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: sent_at: a message of the Outbox the server accepted, whose move to Sent failed; it is never sent again (RV-50)
 # v2.4.324: put_text: the properties of a message from a backup (D-244)
 # v2.2.314: send_not_before (a message in the Outbox may not be sent before this moment) and replies_to (the message a reply answers,
 #           marked as replied once it is really sent)
@@ -61,11 +62,12 @@ class Properties:
     archived_from: str | None = None  # an archived message came from this folder
     send_not_before: int | None = None  # a message in the Outbox is not sent before this moment (seconds since 1970): its countdown runs
     replies_to: str | None = None  # a reply waiting in the Outbox: the message it answers ("Inbox/<store id>"), marked as replied once it is sent
+    sent_at: int | None = None  # the server accepted this message of the Outbox at this moment; only its move to Sent is left: never sent again (RV-50)
 
     def empty(self) -> bool:
         return (
             not self.tags and self.snoozed_until is None and self.snoozed_from is None and self.archived_from is None and self.send_not_before is None
-            and self.replies_to is None
+            and self.replies_to is None and self.sent_at is None
         )
 
 
@@ -85,23 +87,25 @@ def _from_data(data: object) -> tuple[Properties, dict[str, object]]:
     tags = whole.get("tags", [])
     until = whole.get("snoozed_until")
     not_before = whole.get("send_not_before")
-    if not isinstance(tags, list) or not all(moment is None or (isinstance(moment, int) and not isinstance(moment, bool)) for moment in (until, not_before)):
+    sent_at = whole.get("sent_at")
+    if not isinstance(tags, list) or not all(moment is None or (isinstance(moment, int) and not isinstance(moment, bool)) for moment in (until, not_before, sent_at)):
         raise ValueError("not a properties file")
     properties = Properties(
         clean_tags([tag for tag in tags if isinstance(tag, str)]), until if isinstance(until, int) else None, _folder_text(whole.get("snoozed_from")),
         _folder_text(whole.get("archived_from")), not_before if isinstance(not_before, int) else None, _folder_text(whole.get("replies_to")),
+        sent_at if isinstance(sent_at, int) else None,
     )
     return properties, whole
 
 
 def _to_data(properties: Properties, whole: dict[str, object]) -> dict[str, object]:
-    known = ("tags", "snoozed_until", "snoozed_from", "archived_from", "send_not_before", "replies_to")
+    known = ("tags", "snoozed_until", "snoozed_from", "archived_from", "send_not_before", "replies_to", "sent_at")
     data = {key: value for key, value in whole.items() if key not in known}
     if properties.tags:
         data["tags"] = list(properties.tags)
     for key, value in (
         ("snoozed_until", properties.snoozed_until), ("snoozed_from", properties.snoozed_from), ("archived_from", properties.archived_from),
-        ("send_not_before", properties.send_not_before), ("replies_to", properties.replies_to),
+        ("send_not_before", properties.send_not_before), ("replies_to", properties.replies_to), ("sent_at", properties.sent_at),
     ):
         if value is not None:
             data[key] = value

@@ -16,9 +16,10 @@ from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "sendnotices.py 2.3.317"
+__version__ = "sendnotices.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: forget: the notice of a message taken out of the Outbox to be changed goes (RV-156)
 # v2.3.317: the notice as the owner's mockup: the text above, Send now and Cancel below it at the right, a rounded outline, more room
 # v2.2.314: Initial: the notice of a delayed send at the bottom left (Send now, Cancel, its countdown) and the question on Quit while
 #           messages wait in the Outbox (B-21, B-20)
@@ -119,6 +120,7 @@ class SendNotices(QObject):
         self._window: QMainWindow = window
         self._notices: list[tuple[SendNotice, Waiting]] = []
         window.installEventFilter(self)  # the notices follow the size of the window
+        composing.left_outbox.connect(self.forget)  # a message taken out of the Outbox to be changed takes its notice along (RV-156)
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent, /) -> bool:
@@ -241,6 +243,12 @@ class SendNotices(QObject):
             self.end_all_now(settled)
             return False
         return True
+
+    def forget(self, message_id: str) -> None:
+        """The message left the Outbox another way (opened to be changed, RV-156): its notice goes, nothing is sent or cancelled."""
+        for notice, waiting in list(self._notices):
+            if waiting.message_id == message_id:
+                self._take(notice)
 
     def drop_all(self) -> None:
         """Quit anyway, or everything sent: the notices go; what waits stays in the Outbox."""
