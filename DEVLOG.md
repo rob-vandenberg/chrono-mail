@@ -2951,3 +2951,7 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - RV-110 `engine/compose.py` `_shortened`: a long name is cut before its extension and stripped of spaces and dots after the cut. RV-129 `cli/render.py` `_printable`: control characters but tab and line break print as "?".
 - RV-167 `ui/plainboxes.py` (new): an application event filter makes every QMessageBox that guesses (AutoText) plain text at Polish, installed in `ui/app.py`; `ui/statusreport.py` label PlainText; `ui/syncconflicts.py` escapes Settle's problems.
 - Tests (each fails on 3.3.343): tests/test_hostile_input.py (7) and tests/ui/test_ui_plain_text.py (2; the box test needs the new module). tests/fakeimap.py: refuse_fetch, nil_bodies. Ran (grep for every changed function, the fake server and dates): 64 files, 1,447 passed. tests/test_demo_mail.py fails on 3.3.343 too (its fixed TODAY of 2026-10-23 lies in the past). Pyrefly 0 on src (Linux and win32); the new tests are clean; layer check kept. The full suite was not run.
+
+## 2026-10-24 3.4.345: the demo test's fixed date
+- tests/test_demo_mail.py: TODAY is the hour the test runs, no longer 2026-10-23 12:00. The engine checks scheduled and snoozed times against the real clock, so from 2026-10-24 on the demo's scheduled message lay in the past and every version failed ("That time has passed already").
+- Ran: tests/test_demo_mail.py, 8 passed. Pyrefly 0 on the file. The full suite was not run.

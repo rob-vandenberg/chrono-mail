@@ -20,13 +20,15 @@ from tools.demo.mail import SPAM_SHARE
 from tools.demo.pim import TOTAL_CONTACTS, TOTAL_EVENTS, TOTAL_TASKS
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_demo_mail.py 2.3.321"
+__version__ = "test_demo_mail.py 3.4.345"
 
 # --- Version history ----------------------------------------------------
+# v3.4.345: TODAY is the hour the test runs: the engine checks scheduled and snoozed times against the real clock, so a fixed day
+#           made the demo's scheduled message lie in the past from the next day on
 # v2.3.321: Initial: the demo's mail, calendars, tasks and contacts, built small (D-243)
 
 MESSAGES: int = 800
-TODAY: datetime = datetime(2026, 10, 23, 12, 0).astimezone()
+TODAY: datetime = datetime.now().astimezone().replace(minute=0, second=0, microsecond=0)  # the same for every test of a run
 FAKE_WORDS: re.Pattern[str] = re.compile(r"\b(dummy|test|sample|lorem|ipsum|placeholder|foo|bar)\b", re.IGNORECASE)
 EXAMPLE_DOMAIN: re.Pattern[str] = re.compile(r"(^|\.)example\.(com|org|net)$")
 
