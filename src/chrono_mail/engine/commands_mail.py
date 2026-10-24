@@ -24,7 +24,7 @@ from chrono_mail.engine.imap_online import waiting_marker
 from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
-from chrono_mail.engine.session import OUTBOX, Engine
+from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.index.model import DateBounds, GroupCount
 from chrono_mail.mime import Address, Attachment, OutgoingMessage, ParsedMessage, build_message, parse_message
@@ -33,9 +33,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 2.2.314"
+__version__ = "commands_mail.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
 # v2.2.314: mail.send with delay_seconds or hold puts the message in the Outbox and sends nothing (B-21); a reply waiting in the Outbox
 #           notes the message it answers, marked as replied once it is really sent (also after a failed send)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -181,6 +182,7 @@ class FetchResult:
     junked: int = 0  # new messages the junk filter moved to the Junk folder (D-238)
 
 
+@talks_to_servers  # a restore waits for it and holds it back meanwhile (RV-60)
 def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
     with open_mailbox(engine, parameters.account) as mailbox:
         settings = mailbox.settings
@@ -527,6 +529,7 @@ def _schedule(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, param
     return SendResult(False, reference.store_id, SCHEDULED_FOLDER, (), None, None, describe_when(when))
 
 
+@talks_to_servers  # a restore waits for it and holds it back meanwhile (RV-60)
 def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
     if not (parameters.to or parameters.cc or parameters.bcc):
         raise UsageError("There is no recipient")

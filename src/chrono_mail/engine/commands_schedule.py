@@ -11,16 +11,17 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.recurring import MAXIMUM_ATTEMPTS, Repeat, advance, describe_repeat, index_after, next_due, repeat_from_text, repeat_text
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER, SNOOZED_LOCK, describe_when, parse_when
-from chrono_mail.engine.session import OUTBOX, Engine
+from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
 from chrono_mail.engine.undorecord import UndoRecorder
 from chrono_mail.mime import REPEAT_HEADER, SEND_AT_HEADER, Address, OutgoingMessage, ParsedMessage, build_message, parse_message, send_time, with_extra_headers
 from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 2.4.327"
+__version__ = "commands_schedule.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
 # v2.4.327: a one-off scheduled message can be paused and resumed too (mail.repeat-pause and mail.repeat-resume, X-Chrono-Mail-Paused);
 #           paused_if_overdue: a restore pauses the scheduled messages whose time passed (D-245)
 # v2.2.313: Cancel snooze of one message (message.wake with a message and undo) can be undone: back to Snoozed with its record (B-18)
@@ -323,6 +324,7 @@ def _outgoing(sender: AccountSettings, parsed: ParsedMessage) -> OutgoingMessage
     )
 
 
+@talks_to_servers  # a restore waits for it and holds it back meanwhile (RV-60)
 def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResult:
     """Send the scheduled messages whose time has come (they wait in the Scheduled folder). The scheduled copy is removed once
     a verified copy is in the Outbox and before the server is asked, so a crash can leave a message unsent in the Outbox but

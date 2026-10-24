@@ -12,15 +12,16 @@ from chrono_mail.engine.commands_accounts import AccountAddResult, AccountSummar
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
-from chrono_mail.engine.session import Engine, quiet_command
+from chrono_mail.engine.session import Engine, quiet_command, talks_to_servers
 from chrono_mail.protocols.dav import DavCertificateError, DavClient, DavError, RemoteCollection, canonical_key, folder_key
 from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 2.1.311"
+__version__ = "commands_dav.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed account.set-dav
 # v1.9.270: R-19: typed dav.sync
@@ -192,6 +193,7 @@ def _state_path(engine: Engine, account_id: str) -> Path:
     return engine.directories.pim_directory(account_id) / "dav-state.json"
 
 
+@talks_to_servers  # a restore waits for it and holds it back meanwhile (RV-60)
 def dav_sync(engine: Engine, parameters: SyncParameters) -> tuple[DavSyncSummary, ...]:
     """Bring the calendars, task lists and address books of an account in line with its server, both ways."""
     config = engine.config()

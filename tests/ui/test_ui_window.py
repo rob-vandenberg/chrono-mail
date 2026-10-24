@@ -1,4 +1,5 @@
 import base64
+from dataclasses import dataclass
 from collections.abc import Generator, Mapping
 from pathlib import Path
 
@@ -20,9 +21,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 2.4.333"
+__version__ = "test_ui_window.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: Delete asks for a message in Trash shown outside the Trash folder (RV-76)
 # v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
 # v2.2.313: the commands of a move counted without the question what Undo would do (mail.undo-labels, B-18)
 # v2.1.310: a group's account starts with Inbox, then Unread (the order of D-232 since 2.0.298)
@@ -900,6 +902,33 @@ def open_folder(world: World, qtbot: QtBot, name: str, rows: int) -> None:
         if index.data(FOLDER_PATH_ROLE) == name:
             world.window.tree.setCurrentIndex(index)
     wait(qtbot, lambda: world.window.list_model.rowCount() == rows and world.window.mail_state.view.folder == name)  # noqa: SLF001
+
+
+@dataclass(frozen=True)
+class PlacedMessage:
+    account: str
+    folder: str
+    message_id: str
+
+
+def test_delete_asks_for_a_message_in_trash_whatever_folder_is_on_the_left(world: World, qtbot: QtBot) -> None:
+    """RV-76: a search of all folders shows messages of Trash while another folder is on the left; Delete removes those for good,
+    so it asks first, as it does in the Trash folder."""
+    started(qtbot, world)
+    window = world.window
+    select(window, 0)
+    window.act_delete.trigger()
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Trash").total == 1)
+    assert window.mail_state.view.folder == "Inbox"
+    in_trash = PlacedMessage(world.account_id, "Trash", world.call("message.list", account=world.account_id, folder="Trash").messages[0].message_id)
+    world.dialogs.answer = QMessageBox.StandardButton.No
+    window.mail_actions.delete_rows([in_trash])
+    qtbot.wait(300)
+    assert any("for good" in text for _, _, text in world.dialogs.shown)
+    assert world.call("message.list", account=world.account_id, folder="Trash").total == 1  # No: nothing happened
+    world.dialogs.answer = QMessageBox.StandardButton.Yes
+    window.mail_actions.delete_rows([in_trash])
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Trash").total == 0)
 
 
 def test_archive_or_unarchive_follows_the_selected_messages_not_the_folder_on_the_left(world: World, qtbot: QtBot) -> None:

@@ -8,15 +8,16 @@ from chrono_mail.engine.commands_schedule import KIND, _due_time, _mark_replied,
 from chrono_mail.engine.junkfilter import learn
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
-from chrono_mail.engine.session import OUTBOX, Engine
+from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
 from chrono_mail.mime import ParsedMessage, parse_message
 from chrono_mail.store import MessageNotFoundError, Properties, StoredMessage
 from chrono_mail.sync import send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 2.2.314"
+__version__ = "commands_outbox.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
 # v2.2.314: a message whose waiting time has not come is left in the Outbox; message: only that one, now (Send now, the end of a countdown);
 #           one message at a time is checked and sent (never twice); a reply marks its original once sent; mail.cancel-send, mail.end-countdown (B-21)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -52,6 +53,7 @@ def _recipients(parsed_to: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(unique)
 
 
+@talks_to_servers  # a restore waits for it and holds it back meanwhile (RV-60)
 def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOutboxResult:
     """Send the messages that wait in the Outbox (an earlier send failed, or a delayed send waits for it, B-21): as they are stored, to
     their To, Cc and Bcc, without the Bcc header. Scheduled and repeating messages wait for their time and are left alone, and so does a

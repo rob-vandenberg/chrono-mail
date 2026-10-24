@@ -1,11 +1,13 @@
 import ssl
 import threading
 import time
+import functools
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Concatenate
 
 from chrono_mail.config import (
     AccountSettings,
@@ -16,7 +18,7 @@ from chrono_mail.config import (
     load_config,
     save_config,
 )
-from chrono_mail.core import AccountKind, ConfigurationError, CryptoError, FolderRole, StorageError
+from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, CryptoError, FolderRole, StorageError
 from chrono_mail.crypto import DataKey, KeyStore
 from chrono_mail.engine.changes import Change, RebuildStep
 from chrono_mail.engine.junkwords import JunkHolder
@@ -28,9 +30,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 2.2.314"
+__version__ = "session.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: server_work: a restore waits until the checks, sends and calendar syncs that run have ended and holds new ones back (RV-60)
 # v2.2.314: outbox_lock: a message is put in the Outbox with its waiting time, and checked and sent, one at a time (never sent twice, B-21)
 # v2.2.313: undo: the person's last actions on mail, for Undo and Redo while the program runs (B-18)
 # v2.1.308: junk: the junk filter's words, loaded once per session (D-238)
@@ -134,6 +137,67 @@ class ImapLink:
 
 
 _INDEX_LOCKS: dict[str, threading.Lock] = {}  # index file -> held while it is rebuilt
+class ServerWorkPaused(ChronoMailError):
+    """A check, a send or a calendar sync asked for while a backup is restored."""
+
+
+class ServerWork:
+    """The work that talks to the servers and changes the mail here (checks, sends, calendar syncs), against a restore that sets this
+    computer's data aside: the restore waits until the work that runs has ended and holds new work back until it is done. A check that
+    deleted mail on a POP3 server while its only copy was set aside lost that mail (RV-60)."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._running = 0
+        self._paused = False
+        self._depth = threading.local()  # work inside work (a check that sends) counts once
+
+    @contextmanager
+    def running(self) -> Generator[None]:
+        depth: int = getattr(self._depth, "value", 0)  # getattr: a thread-local is empty in a new thread
+        if depth == 0:
+            with self._condition:
+                if self._paused:
+                    raise ServerWorkPaused("A backup is being restored: mail is checked and sent again when the restore is done")
+                self._running += 1
+        self._depth.value = depth + 1
+        try:
+            yield
+        finally:
+            self._depth.value = depth
+            if depth == 0:
+                with self._condition:
+                    self._running -= 1
+                    self._condition.notify_all()
+
+    @contextmanager
+    def paused(self, cancelled: Callable[[], bool]) -> Generator[None]:
+        """Hold new work back, wait for the work that runs to end (or the restore to be cancelled), then give the restore its turn."""
+        with self._condition:
+            self._paused = True
+            while self._running and not cancelled():
+                self._condition.wait(0.2)
+            if self._running:
+                self._paused = False
+                raise ServerWorkPaused("The restore was cancelled")
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._paused = False
+
+
+def talks_to_servers[**P, R](handler: Callable[Concatenate["Engine", P], R]) -> Callable[Concatenate["Engine", P], R]:
+    """A command that talks to the servers and changes the mail here: it runs only while no restore holds such work back (RV-60)."""
+
+    @functools.wraps(handler)
+    def run(engine: "Engine", *args: P.args, **kwargs: P.kwargs) -> R:
+        with engine.server_work.running():
+            return handler(engine, *args, **kwargs)
+
+    return run
+
+
 _INDEX_LOCKS_GUARD: threading.Lock = threading.Lock()
 
 
@@ -241,6 +305,7 @@ class Engine:
     junk: JunkHolder = field(default_factory=JunkHolder, init=False, repr=False)  # the junk filter's words, loaded once (D-238)
     undo: UndoHistory = field(default_factory=UndoHistory, init=False, repr=False)  # what Undo and Redo can do, while the program runs (B-18)
     outbox_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # one message at a time is put in, taken out or sent (B-21)
+    server_work: ServerWork = field(default_factory=ServerWork, init=False, repr=False)  # checks and sends against a restore (RV-60)
 
     def first_time(self, problem: str) -> bool:
         """True the first time this problem is named in this run of the program, False after that: a problem that is met

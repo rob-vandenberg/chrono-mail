@@ -1,12 +1,14 @@
 import hashlib
 import json
+import threading
+import time
 import zipfile
 from pathlib import Path
 
 import pytest
 
 from chrono_mail.config import Action, Condition, Rule, RuleSet, ServerRole, load_rules, save_rules
-from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind, MessageFlag
+from chrono_mail.core import LOCAL_ACCOUNT_ID, ChronoMailError, CollectionKind, MessageFlag
 from chrono_mail.engine import Engine, build_registry
 from chrono_mail.engine.backup import cancel_backup
 from chrono_mail.engine.commands_backup import (
@@ -27,15 +29,18 @@ from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.restore import BackupPasswordNeeded, NotABackup, RestoreCancelled, WrongBackupPassword
+from chrono_mail.engine.session import ServerWorkPaused
 from chrono_mail.sync.imap_state import ImapState
 from tests.enginefactory import make_engine
 from chrono_mail.mime import with_extra_headers
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 2.4.334"
+__version__ = "test_engine_restore.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a name in a backup that leads out of its folder is never written (RV-59); a restore waits for a check that runs and holds new
+#           ones back (RV-60)
 # v2.4.334: the report says where the damaged message was
 # v2.4.328: an account without files comes back (W1); a damaged message is left out and the rest comes back (W5); a cut-off backup is
 #           damaged or incomplete (W4); only the rules of the accounts that came back (R2)
@@ -383,3 +388,57 @@ def test_only_the_rules_of_the_accounts_that_come_back_are_restored(tmp_path: Pa
     REGISTRY.run(second, KEY_ENSURE.id, {})
     REGISTRY.ask(second, BACKUP_RESTORE, RestoreParameters(str(tmp_path / "all.cmz"), password, accounts=("local-folders",), settings=False, passwords=False))
     assert load_rules(second.directories.rules_file) == RULES  # the rule of Anna, not ticked, stays out
+
+
+def test_a_name_in_a_backup_that_leads_out_of_its_folder_is_never_written(tmp_path: Path) -> None:
+    """RV-59: a crafted backup could write files anywhere the person may write, for example a program that starts with the desktop."""
+    first = _computer(tmp_path / "first")
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    with zipfile.ZipFile(tmp_path / "all.cmz") as archive:
+        message = next(name for name in archive.namelist() if "/cur/" in name)
+    prefix = message[: message.index("/store/") + 1]
+    with zipfile.ZipFile(tmp_path / "all.cmz", "a") as archive:
+        archive.writestr(f"{prefix}store/../../../escaped.txt", b"written outside")
+        archive.writestr(f"{prefix}store/../../../../escaped-too.txt", b"written outside")
+    second = make_engine(tmp_path / "second")
+    REGISTRY.run(second, KEY_ENSURE.id, {})
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert not [path for path in tmp_path.rglob("escaped*")]
+    assert result.messages == 3 and _mail(second) == _mail(first)  # the rest of the backup came back
+
+
+def test_a_restore_waits_for_a_check_that_runs_and_holds_new_ones_back(tmp_path: Path) -> None:
+    """RV-60: Remove all data first set this computer's mail aside while a POP3 check was still running; the check then deleted the mail
+    on the server, and the copy set aside was removed after the restore."""
+    engine = _computer(tmp_path / "first")
+    password = _backup(engine, tmp_path / "all.cmz")
+    anna = next(settings.account.account_id for settings in engine.config().accounts if settings.account.email_address == "anna@example.com")
+    checking, release = threading.Event(), threading.Event()
+
+    def a_check_that_runs() -> None:
+        with engine.server_work.running():
+            checking.set()
+            release.wait(10)
+
+    check = threading.Thread(target=a_check_that_runs)
+    check.start()
+    assert checking.wait(5)
+    restored: list[RestoreResult] = []
+    restore = threading.Thread(target=lambda: restored.append(_restore(engine, tmp_path / "all.cmz", password, remove_first=True)))
+    restore.start()
+    time.sleep(0.5)
+    try:
+        assert not restored and not list(engine.directories.data_directory.glob("restore-aside-*"))  # waiting: nothing set aside yet
+        with pytest.raises(ServerWorkPaused):
+            REGISTRY.run(engine, "mail.fetch", {"account": anna})  # a new check waits for the restore
+    finally:
+        release.set()
+        check.join(5)
+        restore.join(10)
+    assert restored and restored[0].messages == 3
+    try:
+        REGISTRY.run(engine, "mail.fetch", {"account": anna})  # the restore is done: checks run again
+    except ServerWorkPaused:
+        pytest.fail("a check is still held back after the restore")
+    except ChronoMailError:
+        pass  # this account has no server to reach

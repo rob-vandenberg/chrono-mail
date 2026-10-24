@@ -28,9 +28,10 @@ from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "contacteditor.py 1.9.275"
+__version__ = "contacteditor.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a birthday without a year is shown (month and day) and kept; the birthday is sent only when it was changed (RV-16)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: parameters gives the typed edit (EditParameters); add and edit are typed calls; the contact is a ContactInfo
 # v0.0.62: Initial editor for a contact
@@ -208,6 +209,8 @@ class ContactEditor(QDialog):
         self.birthday.setDate(QDate(1980, 1, 1))
         self.birthday.setEnabled(False)
         self.has_birthday.toggled.connect(self.birthday.setEnabled)
+        self._birthday_without_year = False  # a birthday kept without a year (--0415): shown and saved as month and day
+        self._birthday_before = ""  # the birthday as it was: it is sent only when the person changed it (RV-16)
         dates.addWidget(self.has_birthday)
         dates.addWidget(self.birthday)
         dates.addStretch(1)
@@ -282,6 +285,12 @@ class ContactEditor(QDialog):
         if len(birthday) == 10:
             self.has_birthday.setChecked(True)
             self.birthday.setDate(QDate.fromString(birthday, "yyyy-MM-dd"))
+        elif len(birthday) == 6 and birthday.startswith("--") and birthday[2:].isascii() and birthday[2:].isdecimal():
+            self._birthday_without_year = True  # a phone keeps birthdays without a year: shown as month and day, never lost (RV-16)
+            self.birthday.setDisplayFormat("MM-dd")
+            self.birthday.setDate(QDate(2000, int(birthday[2:4]), int(birthday[4:6])))  # 2000 is a leap year: 29 February fits
+            self.has_birthday.setChecked(True)
+        self._birthday_before = self._birthday_text()
         self.note.setPlainText(contact.note)
         self.tags.setText(", ".join(contact.tags))
 
@@ -304,10 +313,15 @@ class ContactEditor(QDialog):
             prefix=self.prefix.text().strip(), given=self.given.text().strip(), additional=self.additional.text().strip(), family=self.family.text().strip(),
             suffix=self.suffix.text().strip(), name=self.display_name.text().strip(), organization=self.organization.text().strip(),
             department=self.department.text().strip(), title=self.title.text().strip(), note=self.note.toPlainText().strip(),
-            birthday=self.birthday.date().toString("yyyy-MM-dd") if self.has_birthday.isChecked() else "",
+            birthday=None if self._birthday_text() == self._birthday_before else self._birthday_text(),  # unchanged: left as it is
             nickname=nicknames, email=emails, phone=phones, url=urls, address=addresses, tag=tags,
             item=self._item or "", clear=tuple(name for name, entries in given.items() if not entries and had[name]),
         )
+
+    def _birthday_text(self) -> str:
+        if not self.has_birthday.isChecked():
+            return ""
+        return f"--{self.birthday.date().toString('MMdd')}" if self._birthday_without_year else self.birthday.date().toString("yyyy-MM-dd")
 
     def _save(self) -> None:
         values = self.parameters()

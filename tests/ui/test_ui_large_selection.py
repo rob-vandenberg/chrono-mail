@@ -15,9 +15,10 @@ from tests.ui.test_ui_rapid_actions import fill
 from tests.ui.world import Dialogs, World, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_large_selection.py 2.4.334"
+__version__ = "test_ui_large_selection.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: the Delete test waits for the list to empty (the rows leave in bursts, D-218) instead of reading it at one moment
 # v2.4.334: the messages that leave in one moment go in a few removals, not one each
 # v2.4.334: an action right after a large folder opened waits for the rest of the order and takes every selected message (W12b)
 # v2.4.329: Initial (the Windows computer's W12 and W13): an action on a selection larger than what came into view takes every selected
@@ -50,8 +51,8 @@ def test_delete_takes_every_selected_message_also_those_not_loaded(empty: World,
     opened(qtbot, empty, 250)
     assert len(empty.window.messages.selected_rows()) == 250
     empty.window.mail_actions.delete_selected()
-    wait(qtbot, lambda: held_in(empty, "Trash") == 250 and empty.backend._pending == {})  # noqa: SLF001
-    assert held_in(empty, "Inbox") == 0 and empty.window.list_model.rowCount() == 0
+    wait(qtbot, lambda: held_in(empty, "Trash") == 250 and empty.backend._pending == {} and empty.window.list_model.rowCount() == 0)  # noqa: SLF001 - the rows leave in bursts (D-218): waited for, not assumed
+    assert held_in(empty, "Inbox") == 0
 
 
 def test_an_action_right_after_opening_waits_for_the_rest_of_the_order(empty: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

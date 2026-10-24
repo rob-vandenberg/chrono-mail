@@ -6,15 +6,17 @@ from pathlib import Path
 from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, AuthenticationError, ConfigurationError, FolderRole, MessageFlag, ProtocolError
 from chrono_mail.engine.changes import Change
+from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine, ImapLink
 from chrono_mail.protocols.imap import ImapClient, ImapRefused, keyword_to_tag, tag_to_keyword
 from chrono_mail.sync import ImapState, plan_folders, planned_anyway
 from chrono_mail.sync.imap_sync import LOCAL_ONLY  # first parts of the local folders that never exist on a server
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_online.py 2.4.330"
+__version__ = "imap_online.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a folder is deleted on the server only when it holds no mail this computer never had (the server deletes it with its mail; RV-108)
 # v2.4.330: a folder that is on the server but not subscribed is used, never created again ("Mailbox already exists", W7)
 # v2.0.284: A folder made on the server is known to the sync at once (its server name and how the server numbers it), so a rename or delete
 #           before the next check, on the server or here offline, is followed and never makes it again (the Windows computer's F1)
@@ -626,6 +628,11 @@ class ServerSession:
             server = self._folders(client, fresh=True).get(local)
             if server is None:
                 return _nothing  # not on the server: only here
+            if self._has_unseen_mail(client, local, server):
+                raise UsageError(
+                    f"The folder '{'/'.join(local)}' has new mail on the server that is not here yet. Nothing was deleted: check for mail first, "
+                    "then look at the folder again."
+                )
             self._leave(client, server)
             client.delete_folder(server)
         except ImapRefused:
@@ -634,6 +641,17 @@ class ServerSession:
             return self._later(lambda: self.state.delete_later(local))
         self.link.folders = None
         return lambda: self.state.forget_folder(local, server)
+
+    def _has_unseen_mail(self, client: ImapClient, local: tuple[str, ...], server: str) -> bool:
+        """Does the server folder hold mail this computer never had? A server deletes a folder with all its mail, so mail that arrived
+        after the last check would be gone unseen (RV-108; the same rule as a delete made offline, D-200)."""
+        info = client.select(server, read_only=True)
+        known = set(self.state.entries.get(local, {}))
+        on_server = set(client.uid_search("ALL")) if info.exists else set[int]()
+        self._leave(client, server)  # opened read-only to look: never left open for the person's next action there
+        if info.uid_validity != self.state.validity.get(local, 0):
+            return bool(on_server)  # numbered differently than the sync knows: any message there may be unseen
+        return bool(on_server - known)
 
     def empty_folder(self, local: tuple[str, ...]) -> Commit | None:
         """Delete every message of a server folder for good, also those not downloaded yet. None when that cannot be done

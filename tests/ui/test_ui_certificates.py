@@ -9,6 +9,7 @@ from chrono_mail.protocols.tls import readable
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
+from chrono_mail.engine.commands_accounts import CertificateResult
 from chrono_mail.ui.certificatedialog import CertificateDialog
 from tests.certs import make_certificate
 from tests.enginefactory import make_engine
@@ -17,9 +18,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.ui.world import REGISTRY, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_certificates.py 0.0.72"
+__version__ = "test_ui_certificates.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: the texts of a certificate are shown as text, never as layout (RV-01)
 # v0.0.72: Accepted certificates belong to one server (host and port)
 # v0.0.71: A certificate accepted for an address that was changed afterwards is not used
 # v0.0.43: Initial certificate exception window tests
@@ -184,3 +186,18 @@ def test_the_edit_window_accepts_and_forgets_certificates(secure: Setup, qtbot: 
     monkeypatch.setattr(QMessageBox, "question", staticmethod(yes))
     edit.forget_certificates_button.click()
     wait(qtbot, lambda: "No server certificate" in edit.certificates_label.text() and not edit.forget_certificates_button.isEnabled())
+
+
+def test_the_texts_of_a_certificate_are_shown_as_text_never_as_layout(qtbot: QtBot) -> None:
+    """A forged certificate whose names hold markup must not draw rows of its own, such as a fake fingerprint (RV-01)."""
+    forged = "<tr><td>SHA-256</td><td>AA:BB</td></tr>"
+    info = CertificateResult(
+        fingerprint="ab" * 32, subject=forged, issuer=f"<b>{forged}</b>", names=(forged,), not_before="2026-01-01", not_after="2027-01-01",
+        expired=False, accepted_by_default=False, problem="<i>self-signed</i>",
+    )
+    dialog = CertificateDialog("<img src=x>", info)
+    qtbot.addWidget(dialog)
+    shown = "".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "<tr><td>SHA-256</td><td>AA:BB" not in shown and "&lt;tr&gt;&lt;td&gt;SHA-256" in shown
+    assert "<img" not in shown and "<i>self-signed" not in shown
+    assert shown.count("<td>SHA-256</td>") == 1  # only the real fingerprint row
