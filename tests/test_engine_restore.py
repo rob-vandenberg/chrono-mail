@@ -1,15 +1,17 @@
+import dataclasses
 import hashlib
 import json
 import threading
 import time
 import zipfile
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 
-from chrono_mail.config import Action, Condition, Rule, RuleSet, ServerRole, load_rules, save_rules
-from chrono_mail.core import LOCAL_ACCOUNT_ID, ChronoMailError, CollectionKind, MessageFlag
-from chrono_mail.engine import Engine, build_registry
+from chrono_mail.config import AccountSettings, Action, AppConfig, Condition, Rule, RuleSet, ServerRole, load_rules, save_rules
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, MessageFlag
+from chrono_mail.engine import Engine, backup, build_registry, restore
 from chrono_mail.engine.backup import cancel_backup
 from chrono_mail.engine.commands_backup import (
     BACKUP_CHECK_ACCOUNT,
@@ -31,14 +33,20 @@ from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.restore import BackupPasswordNeeded, NotABackup, RestoreCancelled, WrongBackupPassword
 from chrono_mail.engine.session import ServerWorkPaused
 from chrono_mail.sync.imap_state import ImapState
+from chrono_mail.sync.pop3_state import Pop3State
 from tests.enginefactory import make_engine
+from tests.test_config import make_account
 from chrono_mail.mime import with_extra_headers
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 3.0.339"
+__version__ = "test_engine_restore.py 3.3.343"
 
 # --- Version history ----------------------------------------------------
+# v3.3.343: the code review's batch 3: what was downloaded names only messages that came back (RV-61); size limits (RV-63); damaged
+#           descriptions and settings are left out (RV-64, RV-65); Replace keeps storage and encryption (RV-67); a failed restore leaves
+#           nothing it wrote (RV-68); a deleted message searches the mailbox once (RV-69); a Calendars-and-contacts account by its
+#           login (RV-73)
 # v3.0.339: a name in a backup that leads out of its folder is never written (RV-59); a restore waits for a check that runs and holds new
 #           ones back (RV-60)
 # v2.4.334: the report says where the damaged message was
@@ -339,13 +347,18 @@ def test_an_account_without_any_files_comes_back(tmp_path: Path) -> None:
 
 def _damage_one_message(backup: Path) -> str:
     """Flip bytes in the middle of one message's data in the backup (its contents page and directory stay intact); its name."""
+    return _damage(backup, lambda name: "/cur/" in name or "/new/" in name)
+
+
+def _damage(backup: Path, chosen: Callable[[str], bool]) -> str:
+    """Flip bytes in the middle of the data of the first entry chosen; its name."""
     with zipfile.ZipFile(backup) as archive:
-        entry = next(info for info in archive.infolist() if "/cur/" in info.filename or "/new/" in info.filename)
+        entry = next(info for info in archive.infolist() if chosen(info.filename))
         local = entry.header_offset
     data = bytearray(backup.read_bytes())
     name_length, extra_length = int.from_bytes(data[local + 26:local + 28], "little"), int.from_bytes(data[local + 28:local + 30], "little")
-    middle = local + 30 + name_length + extra_length + entry.compress_size // 2
-    for offset in range(middle, middle + 8):
+    middle = local + 30 + name_length + extra_length + max(0, entry.compress_size // 2 - 4)
+    for offset in range(middle, middle + min(8, entry.compress_size)):
         data[offset] ^= 0xFF
     backup.write_bytes(bytes(data))
     return entry.filename
@@ -442,3 +455,190 @@ def test_a_restore_waits_for_a_check_that_runs_and_holds_new_ones_back(tmp_path:
         pytest.fail("a check is still held back after the restore")
     except ChronoMailError:
         pass  # this account has no server to reach
+
+
+def _anna(engine: Engine) -> str:
+    return next(settings.account.account_id for settings in engine.config().accounts if settings.account.email_address == "anna@example.com")
+
+
+def _downloaded(engine: Engine, account_id: str, count: int, local: bool = False) -> list[str]:
+    """Messages the POP3 account downloaded (into its own folders, or into Local Folders), as its download list names them."""
+    state = Pop3State(engine.directories.pop3_state_file(account_id), durable=False)
+    store_ids: list[str] = []
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID if local else account_id) as mailbox:
+        for number in range(count):
+            raw = raw_message(subject=f"Fetched {number}", body="x\r\n", message_id=f"<f{number}@example.com>")
+            reference = mailbox.deliver(mailbox.folder("Inbox"), raw, frozenset())
+            state.record_download(f"uid-{number}", reference.store_id, 1_000_000)
+            store_ids.append(reference.store_id)
+    return store_ids
+
+
+def _named(engine: Engine, account_id: str) -> set[str]:
+    return {record.store_id for record in Pop3State(engine.directories.pop3_state_file(account_id), durable=False).records.values()}
+
+
+def _fresh(root: Path) -> Engine:
+    engine = make_engine(root)
+    REGISTRY.run(engine, KEY_ENSURE.id, {})
+    return engine
+
+
+def test_a_damaged_message_is_left_out_of_what_was_downloaded(tmp_path: Path) -> None:
+    """RV-61: the download list named the damaged message that did not come back; with "delete from the server when deleted here" the
+    next check deleted it on the server."""
+    first = _computer(tmp_path / "first")
+    anna = _anna(first)
+    fetched = _downloaded(first, anna, 2)
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    damaged = _damage(tmp_path / "all.cmz", lambda name: f"/{anna}/" in name and ("/cur/" in name or "/new/" in name))
+    second = _fresh(tmp_path / "second")
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert result.damaged == 1 and _named(second, anna) == set(fetched) - {Path(damaged).name[:32]}
+
+
+def test_mail_kept_in_local_folders_that_does_not_come_back_is_left_out_of_what_was_downloaded(tmp_path: Path) -> None:
+    """RV-61: a POP3 account that keeps its mail in Local Folders, backed up without Local Folders: its download list named every message."""
+    first = _computer(tmp_path / "first")
+    shop = _add_local_pop3(first)
+    fetched = _downloaded(first, shop, 2, local=True)
+    BACKUP_MAKE.answer(REGISTRY.run(first, BACKUP_MAKE.id, {"path": str(tmp_path / "shop.cmz"), "accounts": (shop,), "passwords": False}))
+    BACKUP_MAKE.answer(REGISTRY.run(first, BACKUP_MAKE.id, {"path": str(tmp_path / "both.cmz"), "accounts": (shop, "local-folders"), "passwords": False}))
+    alone = _fresh(tmp_path / "alone")
+    assert shop in _restore(alone, tmp_path / "shop.cmz", "").made and _named(alone, shop) == set()
+    together = _fresh(tmp_path / "together")
+    assert shop in _restore(together, tmp_path / "both.cmz", "").made and _named(together, shop) == set(fetched)
+
+
+def test_what_is_downloaded_while_the_backup_lists_the_mail_is_not_in_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-61: the download list was read when it was written, after the mail was listed: it named messages the backup lacked."""
+    first = _computer(tmp_path / "first")
+    anna = _anna(first)
+    before = _downloaded(first, anna, 1)
+    real_walk = backup._walk  # noqa: SLF001
+    later: list[str] = []
+
+    def walk_while_mail_arrives(root: Path) -> Iterator[Path]:
+        if not later:
+            later.append("arrived")
+            Pop3State(first.directories.pop3_state_file(anna), durable=False).record_download("uid-later", "f" * 32, 1_000_001)
+        return real_walk(root)
+
+    monkeypatch.setattr(backup, "_walk", walk_while_mail_arrives)
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    with zipfile.ZipFile(tmp_path / "all.cmz") as archive:
+        text = archive.read(f"data/accounts/{anna}/pop3-state.log").decode("utf-8")
+    assert later and before[0] in text and "uid-later" not in text
+
+
+def test_a_message_deleted_while_the_backup_runs_searches_the_mailbox_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-69: every deleted message searched the whole mailbox again; with many deleted in a large mailbox the backup seemed to hang."""
+    engine = _computer(tmp_path / "first", messages=5)
+    root = engine.directories.store_directory(LOCAL_ACCOUNT_ID)
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        gone = [message.ref.store_id for message in mailbox.store.list_messages(mailbox.folder("Inbox"))]
+        for store_id in gone:
+            mailbox.delete(mailbox.reference(mailbox.folder("Inbox"), store_id), permanent=True)
+    real_walk = backup._walk  # noqa: SLF001
+    walks: list[Path] = []
+
+    def counted(found: Path) -> Iterator[Path]:
+        walks.append(found)
+        return real_walk(found)
+
+    monkeypatch.setattr(backup, "_walk", counted)
+    messages = backup._Messages()  # noqa: SLF001
+    assert [backup._find_again(messages, root, store_id) for store_id in gone] == [None] * len(gone)  # noqa: SLF001
+    assert len(walks) == 1
+
+
+def test_a_file_in_a_backup_larger_than_its_limit_is_never_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-63: a small crafted file can unpack to far more than memory holds; it is left out as damaged, the rest comes back."""
+    first = _computer(tmp_path / "first")
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    monkeypatch.setattr(restore, "MAXIMUM_MESSAGE_BYTES", 10)
+    result = _restore(_fresh(tmp_path / "second"), tmp_path / "all.cmz", "")
+    assert result.damaged == 3 and result.messages == 0 and result.items == 1
+
+
+def test_a_damaged_calendar_description_leaves_only_that_calendar_out(tmp_path: Path) -> None:
+    """RV-64: one damaged collection.json made the whole backup unopenable."""
+    first = _computer(tmp_path / "first")
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    _damage(tmp_path / "all.cmz", lambda name: name.endswith("/collection.json") and f"/{LOCAL_ACCOUNT_ID}/" in name and _holds_items(tmp_path / "all.cmz", name))
+    second = _fresh(tmp_path / "second")
+    contents = REGISTRY.ask(second, BACKUP_CONTENTS, ReadParameters(str(tmp_path / "all.cmz")))
+    assert isinstance(contents, ContentsResult)
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert result.damaged == 1 and result.items == 0 and result.messages == 3 and _mail(second) == _mail(first)
+
+
+def _holds_items(backup_file: Path, description: str) -> bool:
+    with zipfile.ZipFile(backup_file) as archive:
+        return any(name.startswith(description.rsplit("/", 1)[0] + "/items/") for name in archive.namelist())
+
+
+def _inbox_description(backup_file: Path) -> str:
+    with zipfile.ZipFile(backup_file) as archive:
+        return next(
+            name for name in archive.namelist()
+            if name.endswith("/folder.json") and f"/{LOCAL_ACCOUNT_ID}/" in name and json.loads(archive.read(name)).get("path") == ["Inbox"]
+        )
+
+
+def test_a_damaged_folder_description_or_setting_leaves_only_that_out(tmp_path: Path) -> None:
+    """RV-65: a damaged folder.json, details file or settings file stopped the whole restore."""
+    first = _computer(tmp_path / "first")
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    inbox = _inbox_description(tmp_path / "all.cmz")
+    _damage(tmp_path / "all.cmz", lambda name: name == inbox)
+    _damage(tmp_path / "all.cmz", lambda name: name == "config/rules.json")
+    second = _fresh(tmp_path / "second")
+    result = _restore(second, tmp_path / "all.cmz", "")  # back whole: the account was not here
+    assert result.damaged == 4 and result.messages == 0 and result.items == 1 and any("the rules" in note for note in result.notes)
+    assert _anna(first) in {settings.account.account_id for settings in second.config().accounts}
+    result = _restore(first, tmp_path / "all.cmz", "")  # filled in: the account was here
+    assert result.damaged == 4 and len(_mail(first)) == 3
+
+
+def test_replace_keeps_where_the_mail_is_kept_and_its_encryption(tmp_path: Path) -> None:
+    """RV-67: Replace items that already exist put back the account's storage and encryption from the backup."""
+    first = _computer(tmp_path / "first")
+    anna = _anna(first)
+    password = _backup(first, tmp_path / "all.cmz")
+    here = next(settings for settings in first.config().accounts if settings.account.account_id == anna)
+    first.change_config(lambda fresh: fresh.with_account(dataclasses.replace(here, encrypted=False, signature="Changed")))
+    _restore(first, tmp_path / "all.cmz", password, replace_existing=True)
+    after = next(settings for settings in first.config().accounts if settings.account.account_id == anna)
+    assert after.encrypted is False and after.signature == here.signature
+
+
+def test_a_failed_restore_leaves_nothing_it_wrote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-68: when there was no data before, what the failed restore wrote stayed while the accounts were put back as none."""
+    first = _computer(tmp_path / "first")
+    password = _backup(first, tmp_path / "all.cmz")
+    second = _fresh(tmp_path / "second")
+    accounts = second.directories.data_directory / "accounts"
+    before = sorted(path.name for path in accounts.iterdir()) if accounts.exists() else list[str]()
+
+    def fails(*_: object) -> None:
+        raise ChronoMailError("The disk is full")
+
+    monkeypatch.setattr(restore, "_restore_rules", fails)
+    with pytest.raises(ChronoMailError, match="disk is full"):
+        _restore(second, tmp_path / "all.cmz", password, remove_first=True)
+    assert (sorted(path.name for path in accounts.iterdir()) if accounts.exists() else list[str]()) == before
+    assert not list(second.directories.data_directory.glob("restore-aside-*"))
+
+
+def test_a_calendars_and_contacts_account_is_found_by_its_server_and_login(tmp_path: Path) -> None:
+    """RV-73: such an account was found only by its id: a restore brought the same login in twice."""
+
+    def dav(username: str, url: str) -> AccountSettings:
+        account = dataclasses.replace(make_account(), kind=AccountKind.DAV, email_address="")
+        return AccountSettings(dataclasses.replace(account, incoming=dataclasses.replace(account.incoming, username=username)), dav_url=url)
+
+    here = dav("ann", "https://dav.example.com/")
+    config = AppConfig((here,))
+    assert restore._same_here(config, dav("Ann", "https://DAV.example.com")) is here  # noqa: SLF001
+    assert restore._same_here(config, dav("bob", "https://dav.example.com/")) is None  # noqa: SLF001

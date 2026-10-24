@@ -21,7 +21,7 @@ from chrono_mail.config.files import load_config
 from chrono_mail.config.rules import load_rules
 from chrono_mail.config.sidebar import save_sidebar
 from chrono_mail.config.tags import load_tags
-from chrono_mail.core import AccountKind, ChronoMailError, CollectionInfo, CollectionKind, CryptoError, FolderRole, MessageFlag, StorageError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionInfo, CollectionKind, ConfigurationError, CryptoError, FolderRole, MessageFlag, StorageError
 from chrono_mail.crypto import DataKey, encrypt_message, generate_data_key
 from chrono_mail.engine.backup import CANCEL, FORMAT_VERSION, JOB_LOCK, LOCAL_ITEMS, LOCAL_MAIL, MANIFEST_ENTRY
 from chrono_mail.engine.commands_schedule import SCHEDULED, paused_if_overdue
@@ -35,12 +35,18 @@ from chrono_mail.store import Store
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 from chrono_mail.store.layout import parse_name, split_info
 from chrono_mail.sync.imap_state import ImapState
+from chrono_mail.sync.pop3_state import Pop3State
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 3.0.339"
+__version__ = "restore.py 3.3.343"
 
 # --- Version history ----------------------------------------------------
+# v3.3.343: what was downloaded (POP3) never names a message that did not come back, so it is never deleted on the server (RV-61); every
+#           file of a backup has a size limit (RV-63); a damaged description of a calendar, a folder, a message's details or a setting is
+#           left out and told, the restore goes on (RV-64, RV-65); Replace keeps where an account's mail is kept and its encryption
+#           (RV-67); a failed restore puts the data back whole or not at all (RV-68); a Calendars-and-contacts account is found by its server
+#           and login (RV-73); the items of a collection are read once (RV-75)
 # v3.0.339: a name in a backup that leads out of its account's folder is never written (RV-59); the restore waits until the checks and sends
 #           that run have ended and holds new ones back (RV-60)
 # v2.4.334: the report names where each damaged message or item was: its folder or calendar and its account (the Windows computer's note)
@@ -59,6 +65,12 @@ __version__ = "restore.py 3.0.339"
 DOING_MESSAGES: str = "Restoring messages"  # the progress reports (the status line and the Restore window)
 DOING_ITEMS: str = "Restoring calendars, contacts and tasks"
 MAXIMUM_MANIFEST_BYTES: int = 200_000_000
+MAXIMUM_MESSAGE_BYTES: int = 256 * 1024 * 1024  # a message in a backup: the same limit as a download
+MAXIMUM_ENTRY_BYTES: int = 200_000_000  # any other file in a backup (a crafted small file can unpack to far more: RV-63)
+_SETTING_WORDS: dict[str, str] = {  # the settings files of a backup, as the report names one that could not be read
+    "config/rules.json": "the rules", "config/tags.json": "the tag colours", "config/sidebar.json": "the order of the folder list",
+    "data/junk-filter.bin": "what the junk filter learned", "config/window.json": "the window settings", "config/passwords.json": "the passwords",
+}
 DRAFTS: tuple[str, ...] = ("Drafts",)  # where the Outbox's messages go when the store has no folder for drafts yet
 _ITEM_KINDS: dict[str, CollectionKind] = {"calendars": CollectionKind.EVENTS, "contacts": CollectionKind.CONTACTS, "tasks": CollectionKind.TASKS}
 
@@ -228,8 +240,11 @@ def _unreadable_words(path: Path) -> str:
 
 def _read(archive: _Reading, name: str) -> bytes:
     try:
-        if archive.getinfo(name).file_size > MAXIMUM_MANIFEST_BYTES and name == MANIFEST_ENTRY:
+        size = archive.getinfo(name).file_size
+        if name == MANIFEST_ENTRY and size > MAXIMUM_MANIFEST_BYTES:
             raise NotABackup("This file is not a backup of Chrono Mail")
+        if size > (MAXIMUM_MESSAGE_BYTES if "/cur/" in name or "/new/" in name else MAXIMUM_ENTRY_BYTES):
+            raise DamagedEntry(f"The backup is damaged: {name} is too large")  # never read: a crafted file can unpack to far more (RV-63)
         return archive.read(name)
     except RuntimeError:  # pyzipper: a wrong password
         raise WrongBackupPassword("This password does not open the backup") from None
@@ -290,7 +305,7 @@ def _collection_kinds(archive: _Reading, names: list[str], prefix: str) -> dict[
         if len(relative) == 4 and relative[:2] == ["pim", "collections"] and relative[3] == "collection.json":
             try:
                 kinds[relative[2]] = CollectionKind(_json_object(_read(archive, name)).get("kind"))
-            except ValueError:
+            except (ValueError, DamagedEntry):  # a damaged description: that collection is left out and told, the rest opens (RV-64)
                 continue
     return kinds
 
@@ -333,8 +348,11 @@ def _same_here(config: AppConfig, settings: AccountSettings) -> AccountSettings 
     for item in config.accounts:
         if item.account.account_id == account.account_id:
             return item
-    if account.kind in (AccountKind.LOCAL, AccountKind.DAV):
+    if account.kind is AccountKind.LOCAL:
         return None
+    if account.kind is AccountKind.DAV:  # the same calendar server and login (RV-73)
+        login = _dav_login(settings)
+        return next((item for item in config.accounts if item.account.kind is AccountKind.DAV and login[0] and _dav_login(item) == login), None)
     for item in config.accounts:
         if (
             item.account.kind is account.kind and item.account.incoming.username.strip().lower() == account.incoming.username.strip().lower()
@@ -342,6 +360,11 @@ def _same_here(config: AppConfig, settings: AccountSettings) -> AccountSettings 
         ):
             return item
     return None
+
+
+def _dav_login(settings: AccountSettings) -> tuple[str, str]:
+    """A Calendars-and-contacts account's server and login, written the same way whatever the spelling."""
+    return settings.dav_url.strip().rstrip("/").lower(), (settings.dav_username or settings.account.incoming.username).strip().lower()
 
 
 # --- the restore ----------------------------------------------------------------------------------------
@@ -393,19 +416,51 @@ def _restore(engine: Engine, archive: _Reading, manifest: dict[str, object], key
     backup_config = _backup_config(archive)
     chosen = [(settings, *_chosen(choice.entries, settings)) for settings in backup_config.accounts]
     chosen = [(settings, "messages" in parts and mail, bool(kinds) and items) for settings, mail, items in chosen if mail or items]
-    passwords = _passwords(archive, names) if choice.passwords else dict[str, dict[str, str]]()
     report = RestoreReport()
+    passwords = dict[str, dict[str, str]]()
+    if choice.passwords:
+        with _left_out_when_damaged("config/passwords.json", report):
+            passwords = _passwords(archive, names)
     progress = _Progress(engine, _totals(archive, names, [(settings.account.account_id, mail, items) for settings, mail, items in chosen], kinds))
+    local_mail = any(mail and settings.account.kind is AccountKind.LOCAL for settings, mail, _ in chosen)  # Local Folders' mail comes back too
+    for settings, mail, items in chosen:
+        if items:
+            report.damaged.extend(_damaged_collections(archive, names, f"data/accounts/{settings.account.account_id}/"))
     for settings, mail, items in sorted(chosen, key=lambda row: row[0].account.kind is not AccountKind.LOCAL):  # Local Folders first: accounts may keep their mail in it
-        _one_account(engine, archive, names, sealed, kinds if items else set[CollectionKind](), mail, key, settings, choice, report, progress)
+        _one_account(engine, archive, names, sealed, kinds if items else set[CollectionKind](), mail, local_mail, key, settings, choice, report, progress)
     if "rules" in parts:
-        _restore_rules(engine, archive, names, choice.replace_existing, _ids_here(engine.config(), [settings for settings, _, _ in chosen]))
+        with _left_out_when_damaged("config/rules.json", report):
+            _restore_rules(engine, archive, names, choice.replace_existing, _ids_here(engine.config(), [settings for settings, _, _ in chosen]))
     if "settings" in parts:
         _restore_settings(engine, archive, names, sealed, key, choice.replace_existing, report)
     restored = {settings.account.account_id for settings, _, _ in chosen}
     _restore_passwords(engine, {account_id: kept for account_id, kept in passwords.items() if account_id in restored}, report, choice.replace_existing)
     report.damaged_places = _damaged_places(archive, names, report.damaged, backup_config)
     return report
+
+
+def _damaged_collections(archive: _Reading, names: list[str], prefix: str) -> list[str]:
+    """The items of the calendars, task lists and address books whose description cannot be read: they are left out and told (RV-64)."""
+    damaged: list[str] = []
+    for name in names:
+        relative = name[len(prefix):].split("/") if name.startswith(prefix) else list[str]()
+        if len(relative) == 4 and relative[:2] == ["pim", "collections"] and relative[3] == "collection.json":
+            try:
+                _read(archive, name)
+            except DamagedEntry:
+                inside = f"{prefix}pim/collections/{relative[2]}/items/"
+                damaged.extend([item for item in names if item.startswith(inside)] or [name])
+    return damaged
+
+
+@contextmanager
+def _left_out_when_damaged(name: str, report: RestoreReport) -> Generator[None]:
+    """A settings file of the backup that cannot be read is left out and told; the restore goes on (RV-65)."""
+    try:
+        yield
+    except (DamagedEntry, ConfigurationError, UnicodeDecodeError, ValueError):
+        report.damaged.append(name)
+        report.notes.append(f"Part of the backup could not be read and was left out: {_SETTING_WORDS.get(name, name)}")
 
 
 def _damaged_places(archive: _Reading, names: list[str], damaged: list[str], backup_config: AppConfig) -> list[str]:
@@ -485,19 +540,23 @@ def _passwords(archive: _Reading, names: list[str]) -> dict[str, dict[str, str]]
 
 
 def _one_account(
-    engine: Engine, archive: _Reading, names: list[str], sealed: set[str], kinds: set[CollectionKind], mail: bool, key: DataKey, settings: AccountSettings,
-    choice: RestoreChoice, report: RestoreReport, progress: _Progress,
+    engine: Engine, archive: _Reading, names: list[str], sealed: set[str], kinds: set[CollectionKind], mail: bool, local_mail: bool, key: DataKey,
+    settings: AccountSettings, choice: RestoreChoice, report: RestoreReport, progress: _Progress,
 ) -> None:
     """One account of the backup: its mail when mail, its calendars, contacts and tasks of these kinds; its definition always."""
     here = _same_here(engine.config(), settings)
     prefix = f"data/accounts/{settings.account.account_id}/"
     if here is None:
-        _restore_whole(engine, archive, [name for name in names if name.startswith(prefix)], prefix, sealed, kinds, mail, key, settings, report, progress)
+        _restore_whole(
+            engine, archive, [name for name in names if name.startswith(prefix)], prefix, sealed, kinds, mail, local_mail, key, settings, report, progress,
+        )
         report.made.append(settings.account.account_id)
         return
     account_id = here.account.account_id
     if choice.replace_existing and account_id == settings.account.account_id and settings.account.kind is not AccountKind.LOCAL:
-        engine.change_config(lambda fresh: fresh.with_account(settings))  # the account's own settings as they were in the backup
+        # the account's own settings as they were in the backup; where its mail is kept and its encryption stay as here (RV-67)
+        kept = dataclasses.replace(settings, storage=here.storage, encrypted=here.encrypted)
+        engine.change_config(lambda fresh: fresh.with_account(kept))
     if mail:
         _fill_mail(engine, archive, names, prefix, here, choice.replace_existing, report, progress)
     if kinds:
@@ -509,8 +568,8 @@ def _one_account(
 
 
 def _restore_whole(
-    engine: Engine, archive: _Reading, names: list[str], prefix: str, sealed: set[str], kinds: set[CollectionKind], mail: bool, key: DataKey,
-    settings: AccountSettings, report: RestoreReport, progress: _Progress,
+    engine: Engine, archive: _Reading, names: list[str], prefix: str, sealed: set[str], kinds: set[CollectionKind], mail: bool, local_mail: bool,
+    key: DataKey, settings: AccountSettings, report: RestoreReport, progress: _Progress,
 ) -> None:
     """The account's files are written in a folder of their own and that folder is renamed into place in one step, so the account comes
     back whole or not at all; only then is it added to the accounts."""
@@ -521,6 +580,7 @@ def _restore_whole(
     shutil.rmtree(building, ignore_errors=True)
     building.mkdir(parents=True)  # made here, not by the first file written: an account may have no files at all (a POP3 account not fetched yet, W1)
     collections_kept = _kept_collections(archive, names, prefix, kinds)
+    lost_folders = _damaged_folders(archive, names, prefix) if mail else set[str]()
     try:
         for name in names:
             relative = name[len(prefix):].split("/")
@@ -532,11 +592,19 @@ def _restore_whole(
             doing = DOING_MESSAGES if _is_message(relative) else DOING_ITEMS if _is_item(relative) else ""
             if doing:
                 progress.step(doing)
+            if len(relative) > 3 and relative[:2] == ["store", "folders"] and relative[2] in lost_folders:
+                if doing:  # a folder whose description cannot be read: its messages are left out and told (RV-65)
+                    report.damaged.append(name)
+                continue
             try:
                 data = _read(archive, name)
             except DamagedEntry:
+                if relative[:2] == ["store", "properties"]:  # a message's tags and notes: it comes back without them (RV-65)
+                    report.damaged.append(name)
+                    _note_without_details(report)
+                    continue
                 if not doing:
-                    raise  # the account's own files (its folders, its state): without them it cannot come back whole
+                    raise  # the account's own files (its store, its state): without them it cannot come back whole
                 report.damaged.append(name)
                 continue
             if name in sealed:
@@ -561,6 +629,8 @@ def _restore_whole(
         if mail and description.exists():
             sealed_store = _json_object(description.read_bytes()).get("encrypted") is True
             _hold_back(Store.open(building / "store", key if sealed_store else None, durable=engine.durable), engine.clock(), report)
+        if (building / "pop3-state.log").exists():
+            _downloaded_that_came_back(engine, building, settings, local_mail, key, report)
         if target.exists():  # the files of an account removed earlier (its mail is kept on removal): kept beside it, never written over
             kept = target.with_name(f"{account_id}-kept-{time.strftime('%Y%m%d-%H%M%S')}")
             os.replace(target, kept)
@@ -575,6 +645,46 @@ def _restore_whole(
     if settings.storage == "local":
         ensure_local_folders(engine)
     engine.change_config(lambda fresh: fresh.with_account(settings))
+
+
+def _downloaded_that_came_back(engine: Engine, building: Path, settings: AccountSettings, local_mail: bool, key: DataKey, report: RestoreReport) -> None:
+    """What was downloaded (POP3) names only messages that came back, or that the person deleted here before the backup: a message it
+    names that is not here would be deleted on the server ("delete from the server when deleted here"), or never downloaded again (RV-61).
+    Left out: the messages of the backup that were damaged, and, for an account that keeps its mail in Local Folders while their mail
+    does not come back with it, every message that is not in Local Folders here. A message left out is downloaded again: twice at worst,
+    never lost."""
+    path = building / "pop3-state.log"
+    state = Pop3State(path, durable=False)
+    damaged = {parsed[0] for name in report.damaged if (parsed := parse_name(name.rsplit("/", 1)[-1])) is not None}
+    present: set[str] | None = None
+    if settings.storage == "local" and not local_mail:
+        try:
+            with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+                present = mailbox.store.all_store_ids()
+        except ChronoMailError:
+            present = set()
+    kept = [
+        record for record in state.records.values()
+        if record.deleted_on_server or (record.store_id not in damaged and (present is None or record.store_id in present))
+    ]
+    if len(kept) == len(state.records):
+        return
+    lines = [f"D\t{record.unique_id}\t{record.store_id}\t{record.downloaded_at}" for record in kept]
+    lines += [f"X\t{record.unique_id}\t{record.downloaded_at}" for record in kept if record.deleted_on_server]
+    replace_file_atomically(path, "".join(f"{line}\n" for line in lines).encode("utf-8"), engine.durable)
+
+
+def _damaged_folders(archive: _Reading, names: list[str], prefix: str) -> set[str]:
+    """The mail folders of an account in the backup whose description cannot be read, by their folder name (RV-65)."""
+    damaged: set[str] = set()
+    for name in names:
+        relative = name[len(prefix):].split("/") if name.startswith(prefix) else list[str]()
+        if len(relative) == 4 and relative[:2] == ["store", "folders"] and relative[3] == "folder.json":
+            try:
+                _read(archive, name)
+            except DamagedEntry:
+                damaged.add(relative[2])
+    return damaged
 
 
 def _hold_back(store: Store, now: float, report: RestoreReport) -> None:
@@ -678,13 +788,18 @@ def _fill_mail(
     """The messages of the backup that are not here. In an account on an IMAP server only the ones that were never on the server (made or
     moved offline): the rest is the server's to bring, or to have deleted since (D-193)."""
     folders: dict[str, tuple[tuple[str, ...], FolderRole]] = {}
+    damaged_folders: set[str] = set()
     messages: list[tuple[str, list[str]]] = []
     for name in names:
         if not name.startswith(prefix):
             continue
         relative = name[len(prefix):].split("/")
         if len(relative) == 4 and relative[:2] == ["store", "folders"] and relative[3] == "folder.json":
-            description = _json_object(_read(archive, name))
+            try:
+                description = _json_object(_read(archive, name))
+            except DamagedEntry:  # its messages are left out and told; the rest comes back (RV-65)
+                damaged_folders.add(relative[2])
+                continue
             path = description.get("path")
             if isinstance(path, list):
                 try:
@@ -706,6 +821,9 @@ def _fill_mail(
             progress.step(DOING_MESSAGES)
             folder = folders.get(relative[2])
             parsed = parse_name(relative[4])
+            if relative[2] in damaged_folders:
+                report.damaged.append(name)
+                continue
             if folder is None or parsed is None:
                 report.skipped += 1
                 continue
@@ -719,7 +837,7 @@ def _fill_mail(
             properties_name = f"{prefix}store/properties/{store_id}.json"
             if match is not None:
                 if replace_existing and properties_name in names:
-                    mailbox.store.properties.put_text(match, _read(archive, properties_name).decode("utf-8"), replace_existing=True)
+                    _put_properties(mailbox.store, match, archive, properties_name, report)
                 report.skipped += 1
                 continue
             if store_id in on_server:
@@ -740,8 +858,25 @@ def _fill_mail(
             mailbox.ensure_folder(target, role)
             mailbox.restore_here(target, raw, flags, store_id)
             if properties_name in names:
-                mailbox.store.properties.put_text(store_id, _read(archive, properties_name).decode("utf-8"), replace_existing=True)
+                _put_properties(mailbox.store, store_id, archive, properties_name, report)
             report.messages += 1
+
+
+def _put_properties(store: Store, store_id: str, archive: _Reading, name: str, report: RestoreReport) -> None:
+    """A message's tags and notes from the backup; damaged ones are left out, the message comes back without them (RV-65)."""
+    try:
+        text = _read(archive, name).decode("utf-8")
+    except (DamagedEntry, UnicodeDecodeError):
+        report.damaged.append(name)
+        _note_without_details(report)
+        return
+    store.properties.put_text(store_id, text, replace_existing=True)
+
+
+def _note_without_details(report: RestoreReport) -> None:
+    words = "Some messages came back without their tags and notes: their details in the backup could not be read"
+    if words not in report.notes:
+        report.notes.append(words)
 
 
 def _on_server(archive: _Reading, names: list[str], prefix: str) -> set[str]:
@@ -769,7 +904,10 @@ def _fill_items(
             continue
         relative = name[len(prefix):].split("/")
         if len(relative) == 4 and relative[:2] == ["pim", "collections"] and relative[3] == "collection.json":
-            collections[relative[2]] = _json_object(_read(archive, name))
+            try:
+                collections[relative[2]] = _json_object(_read(archive, name))
+            except DamagedEntry:
+                continue  # its items are told as damaged (RV-64)
         elif _is_item(relative):
             items.setdefault(relative[2], []).append((name, relative[4]))
     if not collections:
@@ -793,6 +931,7 @@ def _fill_items(
                     continue
                 target = store.create_collection(kind, str(description.get("name", "Calendar")) or "Calendar", str(description.get("colour", "")), collection_id=collection_id)
                 local.append(target)
+            taken = set(store.item_ids(target.collection_id))  # read once per collection, not once per item (RV-75)
             for name, item_id in items.get(collection_id, []):
                 progress.step(DOING_ITEMS)
                 try:
@@ -810,7 +949,7 @@ def _fill_items(
                 if on_server and item_id in linked.get(collection_id, set()):
                     report.skipped += 1  # it was on the server: the server's to bring
                     continue
-                store.put(target.collection_id, text, item_id=None if item_id in set(store.item_ids(target.collection_id)) else item_id)
+                taken.add(store.put(target.collection_id, text, item_id=None if item_id in taken else item_id))
                 report.items += 1
 
 
@@ -885,25 +1024,31 @@ def _restore_rules(engine: Engine, archive: _Reading, names: list[str], replace_
 
 def _restore_settings(engine: Engine, archive: _Reading, names: list[str], sealed: set[str], key: DataKey, replace_existing: bool, report: RestoreReport) -> None:
     directories = engine.directories
+    backup: TagColours | None = None
     if "config/tags.json" in names:
-        backup = parse_tags(_read(archive, "config/tags.json").decode("utf-8"))
+        with _left_out_when_damaged("config/tags.json", report):
+            backup = parse_tags(_read(archive, "config/tags.json").decode("utf-8"))
+    if backup is not None:
         here = load_tags(directories.tags_file) if directories.tags_file.exists() else TagColours()
         by_key = {entry.key: entry for entry in backup.entries}
         kept = tuple(by_key.pop(entry.key) if replace_existing and entry.key in by_key else entry for entry in here.entries)
         known = {entry.key for entry in kept}
         save_tags(directories.tags_file, TagColours(kept + tuple(entry for entry in backup.entries if entry.key not in known)))
     if "config/sidebar.json" in names and (replace_existing or not directories.sidebar_file.exists()):
-        sidebar = parse_sidebar(_read(archive, "config/sidebar.json").decode("utf-8"))
-        with engine.sidebar_lock:
-            save_sidebar(directories.sidebar_file, sidebar)
+        with _left_out_when_damaged("config/sidebar.json", report):
+            sidebar = parse_sidebar(_read(archive, "config/sidebar.json").decode("utf-8"))
+            with engine.sidebar_lock:
+                save_sidebar(directories.sidebar_file, sidebar)
     junk = "data/junk-filter.bin"
     if junk in names and (replace_existing or not directories.junk_filter_file.exists()):
-        data = _read(archive, junk)
-        with engine.junk.lock:
-            replace_file_atomically(directories.junk_filter_file, encrypt_message(data, key) if junk in sealed else data, engine.durable)
-            engine.junk.words = None  # read again from the file that came back
+        with _left_out_when_damaged(junk, report):
+            data = _read(archive, junk)
+            with engine.junk.lock:
+                replace_file_atomically(directories.junk_filter_file, encrypt_message(data, key) if junk in sealed else data, engine.durable)
+                engine.junk.words = None  # read again from the file that came back
     if "config/window.json" in names:
-        report.window_settings = _read(archive, "config/window.json").decode("utf-8")
+        with _left_out_when_damaged("config/window.json", report):
+            report.window_settings = _read(archive, "config/window.json").decode("utf-8")
 
 
 def _restore_passwords(engine: Engine, passwords: dict[str, dict[str, str]], report: RestoreReport, replace_existing: bool) -> None:
@@ -965,8 +1110,9 @@ def _put_back(engine: Engine, aside: Path) -> None:
     accounts = directories.data_directory / "accounts"
     restored = {settings.account.account_id for settings in engine.config().accounts}
     try:
+        if accounts.exists():  # what the restore wrote goes aside in one step (removed with the rest below): never half of it (RV-68)
+            os.replace(accounts, aside / "restored")
         if (aside / "accounts").exists():
-            shutil.rmtree(accounts, ignore_errors=True)
             os.replace(aside / "accounts", accounts)
         with engine.junk.lock:
             directories.junk_filter_file.unlink(missing_ok=True)
