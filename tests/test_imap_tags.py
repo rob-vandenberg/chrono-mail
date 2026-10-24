@@ -15,9 +15,10 @@ from tests.test_engine_commands import call
 from tests.test_engine_imap import World, mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_imap_tags.py 0.5.138"
+__version__ = "test_imap_tags.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: tags that cannot be read here stay on the server (RV-48)
 # v0.5.138: Initial tests: tags as IMAP keywords (server first, both ways, a server without keywords)
 
 
@@ -124,6 +125,19 @@ def test_a_flag_change_keeps_the_tags_on_the_server(world: World) -> None:
     call(world.engine, "message.flag", account=world.account, folder="Inbox", message=message, seen=True)
     world.fetch()
     assert server_flags(world) == {"\\Seen", "Work"} and tags_here(world) == {"Message 1": ("Work",)}
+
+
+def test_tags_that_cannot_be_read_here_stay_on_the_server(world: World) -> None:
+    """RV-48: a properties file that could not be read counted as "no tags": the check removed every tag on the server, and every other
+    computer followed."""
+    world.imap.add("INBOX", mail(1))
+    world.fetch()
+    tag(world, "Message 1", add=("Work",))
+    message = world.rows("Inbox")[0].message_id
+    with open_mailbox(world.engine, world.account) as mailbox:
+        (mailbox.store.properties.directory / f"{message}.json").write_text("{ damaged")
+    assert world.fetch().failed == ()
+    assert server_flags(world) == {"Work"}  # left alone: not known here is not the same as none
 
 
 def test_renaming_a_tag_renames_its_keyword_on_the_server(world: World) -> None:

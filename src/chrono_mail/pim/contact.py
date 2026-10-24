@@ -16,9 +16,11 @@ from chrono_mail.pim.vcard import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "contact.py 1.10.277"
+__version__ = "contact.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a birthday or anniversary that cannot be read is kept as it was; N, FN, ORG, TITLE, ROLE, BDAY, ANNIVERSARY and NOTE keep their
+#           parameters and group while their meaning is unchanged (as_written, RV-145)
 # v1.10.277: Contact groups (R-39): a group card in either form (vCard 4 KIND:group with MEMBER, Apple's X-ADDRESSBOOKSERVER-KIND and -MEMBER),
 #            written back in its own form; a card keeps its own version (a vCard 4 card was written back as 3.0)
 # v0.0.57: Initial contact model: from and to vCard, keeping what is not understood
@@ -143,6 +145,7 @@ class Contact:
     photo: Photo | None = None
     revision: str = ""
     extra: tuple[ContentLine, ...] = field(default=(), repr=False)  # properties we do not understand, kept as they were
+    as_written: tuple[ContentLine, ...] = field(default=(), repr=False, compare=False)  # N, FN, ORG, … as they came: written back so while unchanged (RV-145)
     version: str = ""  # as the card said ("" for a new one)
     group_form: GroupForm | None = None  # a group card, and the form it says so in
     members: tuple[str, ...] = ()  # a group's members as written: urn:uuid:<uid>, mailto:<address>, or another reference
@@ -202,8 +205,11 @@ def contact_from_lines(lines: list[ContentLine]) -> Contact:
     extra: list[ContentLine] = []
     group_form: GroupForm | None = None
     member_lines: dict[str, list[ContentLine]] = {"MEMBER": [], "X-ADDRESSBOOKSERVER-MEMBER": []}
+    written: list[ContentLine] = []
     for line in lines:
         name = line.name
+        if name in _KEPT_AS_WRITTEN:
+            written.append(line)
         if name == "VERSION":
             c = replace(c, version=line.value.strip())
             continue
@@ -243,10 +249,12 @@ def contact_from_lines(lines: list[ContentLine]) -> Contact:
             c = replace(c, title=unescape(line.value).strip())
         elif name == "ROLE":
             c = replace(c, role=unescape(line.value).strip())
-        elif name == "BDAY":
-            c = replace(c, birthday=_partial_date(line.value))
-        elif name == "ANNIVERSARY":
-            c = replace(c, anniversary=_partial_date(line.value))
+        elif name in ("BDAY", "ANNIVERSARY"):
+            moment = _partial_date(line.value)
+            if moment is None:
+                extra.append(line)  # a form this program does not read (a year only, a text): kept as it was, never dropped (RV-145)
+            else:
+                c = replace(c, birthday=moment) if name == "BDAY" else replace(c, anniversary=moment)
         elif name == "NOTE":
             c = replace(c, note=unescape(line.value))
         elif name == "CATEGORIES":
@@ -270,6 +278,7 @@ def contact_from_lines(lines: list[ContentLine]) -> Contact:
     return replace(
         c, nicknames=tuple(nicknames), emails=tuple(emails), phones=tuple(phones), urls=tuple(urls), addresses=tuple(addresses),
         categories=tuple(dict.fromkeys(categories)), extra=tuple(extra), group_form=group_form, members=tuple(dict.fromkeys(members)),
+        as_written=tuple(written),
     )
 
 
@@ -288,6 +297,20 @@ def _params(item: Labeled | Address) -> tuple[tuple[str, tuple[str, ...]], ...]:
         result.append(("TYPE", tuple(value.upper() if value.islower() and len(value) <= 5 else value for value in types)))
     result.extend(item.params)
     return tuple(result)
+
+
+_KEPT_AS_WRITTEN: frozenset[str] = frozenset({"N", "FN", "ORG", "TITLE", "ROLE", "BDAY", "ANNIVERSARY", "NOTE"})
+
+
+def _as_before(contact: Contact, line: ContentLine) -> ContentLine:
+    """The line as the card had it when its meaning did not change: with its parameters (Apple's X-APPLE-OMIT-YEAR on a birthday, SORT-AS,
+    LANGUAGE) and its group, which a line written afresh would lose (RV-145)."""
+    for earlier in contact.as_written:
+        if earlier.name != line.name:
+            continue
+        same = _partial_date(earlier.value) == _partial_date(line.value) if line.name in ("BDAY", "ANNIVERSARY") else earlier.value == line.value
+        return earlier if same else line
+    return line
 
 
 def contact_to_lines(contact: Contact, version: str = "3.0") -> list[ContentLine]:
@@ -331,7 +354,9 @@ def contact_to_lines(contact: Contact, version: str = "3.0") -> list[ContentLine
             lines.append(ContentLine("PHOTO", encoded, (("ENCODING", ("b",)), ("TYPE", (contact.photo.media_type.split("/", 1)[-1].upper(),)))))
     if contact.revision:
         lines.append(ContentLine("REV", contact.revision))
-    lines.extend(contact.extra)
+    lines = [_as_before(contact, line) if line.name in _KEPT_AS_WRITTEN else line for line in lines]
+    given = {name for name, value in (("BDAY", contact.birthday), ("ANNIVERSARY", contact.anniversary)) if value is not None}
+    lines.extend(line for line in contact.extra if line.name not in given)  # a date given here replaces one kept unread
     return lines
 
 

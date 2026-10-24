@@ -8,9 +8,10 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 1.1.219"
+__version__ = "ical.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: an object with only changed occurrences gets no made-up main event when it is written (RV-146)
 # v1.1.219: An event's colour: the id of a colour of its calendar's palette (X-CHRONO-MAIL-COLOR-ID) and the CSS name of RFC 7986 COLOR (D-191)
 # v1.1.218: occurrences stops expanding at the end of the range or the cap (an event every second no longer freezes a view); limit (the Windows computer's report)
 # v0.0.60: Commands for collections, tags, contacts, events and tasks
@@ -95,6 +96,8 @@ class EventSeries:
 
     master: Event
     overrides: tuple[Event, ...] = ()
+    own_master: bool = True  # False: the object holds only changed occurrences (an invitation to one occurrence of someone else's series);
+    # its master is then a stand-in made from the first of them and is never written as an event of its own (RV-146)
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,7 +316,7 @@ def parse_events(text: str | bytes) -> list[EventSeries]:
         changed = overrides.get(uid, [])
         master = masters.get(uid) or (replace(changed[0], recurrence_id=None) if changed else None)
         if master is not None:
-            series.append(EventSeries(master, tuple(changed)))
+            series.append(EventSeries(master, tuple(changed), own_master=uid in masters))
     return series
 
 
@@ -497,10 +500,17 @@ def events_to_text(series: EventSeries, original: str | None = None) -> str:
     components = [part for part in calendar.walk("VEVENT")]
     old_master_component = next((part for part in components if part.get("RECURRENCE-ID") is None), None)
     old_master = _event_from(old_master_component) if old_master_component is not None else None
-    if old_master_component is None:
-        old_master_component = icalendar.Event()
-        calendar.add_component(old_master_component)
-    _write_event(old_master_component, series.master, old_master)
+    if not series.own_master and series.overrides:
+        # only changed occurrences and no event of its own: a change of "the event" is a change of that occurrence; a made-up main event beside
+        # it showed it twice everywhere (RV-146)
+        first = series.overrides[0]
+        if series.master != replace(first, recurrence_id=None):
+            series = replace(series, overrides=(replace(series.master, recurrence_id=first.recurrence_id, rrule=first.rrule), *series.overrides[1:]))
+    else:
+        if old_master_component is None:
+            old_master_component = icalendar.Event()
+            calendar.add_component(old_master_component)
+        _write_event(old_master_component, series.master, old_master)
     old_overrides = {event.recurrence_id: (event, part) for part in components if part.get("RECURRENCE-ID") is not None for event in [_event_from(part)] if event is not None}
     wanted = {event.recurrence_id for event in series.overrides}
     for part in components:  # occurrences that are no longer changed

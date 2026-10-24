@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-256 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-257 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-257**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-258**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -292,6 +292,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-174** (R-02) A list of contacts, tasks or events is never cut without a word; only lists shown are asked for; caps against hostile calendars say so when they cut. Rejected: paging contacts.
 - **D-227** (R-39) **Contact groups are cards of their address book**, in vCard 4's or Apple's form, written back in their own form and version; changed on the server first like every card; the composer offers a group by name.
 - **D-254** (RV-16, RV-17) **An edit of a contact or an event never loses what the window does not show**: a birthday without a year is shown and kept, and the birthday is sent only when it was changed; attendees given again keep their names, roles and answers. Why: any Save removed such birthdays and reset every attendee's acceptance, on the server too.
+- **D-257** (batch 2) **An edit changes only what the person changed; what the window does not show stays as it is**: reminders, repeats, lists of addresses and numbers are sent only when changed; an entry given again keeps its other kinds and details; a card's lines keep their parameters while their meaning is unchanged, and a value this program cannot read is kept, never dropped; a series moved takes its exceptions along; an object of only changed occurrences gets no made-up main event; tags not readable here are left alone on the server. Why: every Save damaged what the window does not show, on the server too.
 
 ## 12. Tags for mail
 

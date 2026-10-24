@@ -1,4 +1,5 @@
 import base64
+from dataclasses import replace
 
 import pytest
 
@@ -20,9 +21,10 @@ from chrono_mail.pim.vcard import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_contact.py 1.10.277"
+__version__ = "test_pim_contact.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a birthday keeps Apple's mark and an unreadable one is kept (RV-145); a quoted-printable line is written back whole (RV-144)
 # v1.10.277: Contact groups in both forms, written back in their own form; a card keeps its own version (R-39)
 # v0.0.57: Initial vCard and contact tests
 
@@ -187,3 +189,31 @@ def test_members_are_named_by_uid_or_by_address() -> None:
     assert member_uid("urn:uuid:abc") == "abc" and member_uid("URN:UUID:abc") == "abc" and member_uid("mailto:a@b.c") == ""
     assert member_address("mailto:a@b.c") == "a@b.c" and member_address("urn:uuid:abc") == ""
     assert bare_uid("urn:uuid:abc") == bare_uid("abc") == "abc"
+
+
+def test_a_birthday_from_apple_keeps_its_mark_and_an_unreadable_one_is_kept() -> None:
+    """RV-145: Apple writes a birthday without a year as 1604 with a mark; the mark was dropped at the next save, so every Apple device
+    showed the person as born in 1604. A birthday this program cannot read (a year only) was dropped altogether."""
+    card = (
+        "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:a\r\nN:Lee;Ann;;;\r\nFN:Ann Lee\r\nBDAY;X-APPLE-OMIT-YEAR=1604:1604-04-15\r\n"
+        "ANNIVERSARY:1985\r\nNOTE;LANGUAGE=en:Met at the fair\r\nEND:VCARD\r\n"
+    )
+    (contact,) = parse_contacts(card)
+    written = contact_to_text(replace(contact, title="Chair"))
+    assert "BDAY;X-APPLE-OMIT-YEAR=1604:1604-04-15" in written and "ANNIVERSARY:1985" in written and "NOTE;LANGUAGE=en:Met at the fair" in written
+    assert "TITLE:Chair" in written
+
+
+def test_a_quoted_printable_line_of_an_old_card_is_written_back_whole() -> None:
+    """RV-144: a vCard 2.1 line in quoted-printable was decoded into real line breaks and written back raw, so the card was cut: the rest of
+    the line became a property of its own (or was lost) on the server."""
+    card = (
+        "BEGIN:VCARD\r\nVERSION:2.1\r\nN:Lee;Ann\r\nFN:Ann Lee\r\nLABEL;HOME;ENCODING=QUOTED-PRINTABLE:Main Street 1=0D=0AUtrecht\r\n"
+        "NOTE;ENCODING=QUOTED-PRINTABLE:First line=0D=0ASecond line\r\nEND:VCARD\r\n"
+    )
+    (contact,) = parse_contacts(card)
+    assert contact.note == "First line\nSecond line"
+    (again,) = parse_contacts(contact_to_text(contact))
+    labels = [line for line in again.extra if line.name == "LABEL"]
+    assert len(labels) == 1 and unescape(labels[0].value) == "Main Street 1\nUtrecht" and again.note == "First line\nSecond line"
+    assert not any(line.name.startswith("UTRECHT") for line in again.extra)

@@ -8,6 +8,8 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.core import LOCAL_ACCOUNT_ID
+from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.ui.contacteditor import ContactEditor
 from chrono_mail.ui.contactsview import ContactsPage
 from chrono_mail.ui.sections import CONTACTS
@@ -16,9 +18,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_contacts.py 3.0.339"
+__version__ = "test_ui_contacts.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: what the window does not show of e-mail addresses, phone numbers and postal addresses survives a Save (RV-20)
 # v3.0.339: a birthday without a year is shown and survives a Save that changed something else (RV-16)
 # v2.4.334: the counts in the texts are written one way (F1b)
 # v1.10.277: Contact groups (R-39): under their address book, a group's members, New group…, Rename…, Delete…, Write an e-mail, Add to group,
@@ -128,6 +131,46 @@ def test_a_birthday_without_a_year_is_shown_and_kept_when_something_else_is_chan
     page.act_edit.trigger()
     wait(qtbot, lambda: world.call("contact.show", item=item).title == "Chair")
     assert seen == [(True, "04-15")] and world.call("contact.show", item=item).birthday == "--0415"
+
+
+FROM_A_PHONE: str = (
+    "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:phone-1\r\nN:Lee;Ann;;;\r\nFN:Ann Lee\r\nEMAIL;TYPE=HOME,PREF:ann@example.com\r\n"
+    "EMAIL:ann.lee@example.org\r\nTEL;TYPE=CELL,VOICE:+31 6 1234\r\nTEL:+31 30 5678\r\nADR;TYPE=HOME:PO Box 12;;Main Street 1;Utrecht;;3511 AA;Netherlands\r\n"
+    "END:VCARD\r\n"
+)
+
+
+def test_what_the_window_does_not_show_of_a_contact_survives_a_save(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-20: the window shows one kind per entry and five parts of an address; any Save dropped the other kinds, the preferred mark and
+    the P.O. box, and gave entries without a kind the kind Work or Mobile, here and on the server."""
+    world.call("pim.enable")
+    world.call("contact.import", collection=book(world), text=FROM_A_PHONE)
+    page = open_contacts(world, qtbot, 1)
+    item = str(getattr(page.model.rows[0], "item"))
+
+    def card() -> str:
+        with open_pim(world.engine, LOCAL_ACCOUNT_ID) as store:
+            return store.get(book(world), item).replace("\r\n ", "")
+
+    def retitle(editor: ContactEditor) -> None:
+        editor.title.setText("Chair")
+
+    monkeypatch.setattr(ContactEditor, "exec", fake_exec(retitle))
+    select_rows(page, 0)
+    wait(qtbot, lambda: page.detail.name.text() == "Ann Lee")
+    page.act_edit.trigger()
+    wait(qtbot, lambda: "TITLE:Chair" in card())
+    text = card()
+    assert "EMAIL;TYPE=HOME,PREF:ann@example.com" in text and "EMAIL:ann.lee@example.org" in text
+    assert "TEL;TYPE=CELL,VOICE:+31 6 1234" in text and "TEL:+31 30 5678" in text and "PO Box 12" in text
+
+    def one_more(editor: ContactEditor) -> None:  # a list that is changed still keeps what the window does not show of the other entries
+        editor.emails.add_row(("work",), "ann@work.example.com")
+
+    monkeypatch.setattr(ContactEditor, "exec", fake_exec(one_more))
+    page.act_edit.trigger()
+    wait(qtbot, lambda: "ann@work.example.com" in card())
+    assert "EMAIL;TYPE=HOME,PREF:ann@example.com" in card() and "EMAIL:ann.lee@example.org" in card()
 
 
 def test_a_contact_is_made_in_the_editor_and_changed_again(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

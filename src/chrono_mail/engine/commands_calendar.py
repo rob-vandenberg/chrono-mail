@@ -15,9 +15,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, parse_m
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 3.0.339"
+__version__ = "commands_calendar.py 3.2.342"
 
 # --- Version history ----------------------------------------------------
+# v3.2.342: a whole series changed to a new start takes its skipped and changed occurrences along; they go when it no longer repeats (RV-93)
 # v3.0.339: an attendee who stays keeps their name, role and answer when the attendees are given again (RV-17)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.273: R-19: typed event.show, -add, -edit, -delete
@@ -285,6 +286,35 @@ def _attendee(text: str) -> Attendee:
     return Attendee(address, name)
 
 
+def _shifted(moment: Moment, before: Moment, after: Moment) -> Moment | None:
+    """moment moved as far as before moved to after; None when they cannot be compared (a day and a moment, a floating and a zoned time)."""
+    if isinstance(before, datetime) and isinstance(after, datetime) and isinstance(moment, datetime):
+        if (before.tzinfo is None) != (after.tzinfo is None) or (before.tzinfo is None) != (moment.tzinfo is None):
+            return None
+        return moment + (after - before)
+    if not isinstance(before, datetime) and not isinstance(after, datetime) and not isinstance(moment, datetime):
+        return moment + (after - before)
+    return None
+
+
+def _following_the_start(series: EventSeries, master: Event) -> EventSeries:
+    """The whole series changed: its skipped occurrences (EXDATE) and changed ones (RECURRENCE-ID) move along with a new start, and go
+    when it no longer repeats. They named the old moments: a deleted occurrence came back, a moved one showed twice (RV-93)."""
+    before = series.master
+    if not series.own_master or master.start == before.start and (master.rrule or not before.rrule):
+        return replace(series, master=master)  # (a stand-in master names no occurrences of its own)
+    if not master.rrule:
+        return replace(series, master=replace(master, exdates=()), overrides=())
+    exdates = [_shifted(moment, before.start, master.start) for moment in master.exdates]
+    overrides = [(override, _shifted(override.recurrence_id, before.start, master.start)) for override in series.overrides if override.recurrence_id is not None]
+    if any(moment is None for moment in exdates) or any(moment is None for _, moment in overrides):
+        return replace(series, master=master)  # all-day became timed or the other way: nothing can be moved as it was
+    return replace(
+        series, master=replace(master, exdates=tuple(moment for moment in exdates if moment is not None)),
+        overrides=tuple(replace(override, recurrence_id=moment) for override, moment in overrides),
+    )
+
+
 def _attendees_kept(before: tuple[Attendee, ...], texts: tuple[str, ...]) -> tuple[Attendee, ...]:
     """The attendees as given, each one who was there already with everything known of them: name, role and answer (accepted,
     declined). The editor shows only the addresses; a Save that resent them reset every answer, on the server too (RV-17)."""
@@ -469,14 +499,14 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 if parameters.colour is not None:
                     changed = _with_colour(changed, palette_for(engine.config().find(found.account), found.collection), parameters.colour.strip())
                 others = tuple(o for o in series.overrides if o.recurrence_id != moment)
-                series = EventSeries(series.master, (*others, changed))
+                series = replace(series, overrides=(*others, changed))
             else:
                 master = _apply(_clear(series.master, parameters.clear), parameters, creating=False)
                 if parameters.add_tag or parameters.remove_tag:
                     master = replace(master, categories=changed_tags(master.categories, parameters.add_tag, parameters.remove_tag))
                 if parameters.colour is not None:
                     master = _with_colour(master, palette_for(engine.config().find(found.account), found.collection), parameters.colour.strip())
-                series = EventSeries(master, series.overrides)
+                series = _following_the_start(series, master)
             with item_writer(engine, found.account, found.store) as writer:
                 writer.put(found.collection, events_to_text(series, original), parameters.item)
             return _info(parameters.item, found.account, found.item.collection, series)
@@ -517,7 +547,7 @@ def event_delete(engine: Engine, parameters: DeleteParameters) -> DeleteResult:
             master = replace(series.master, exdates=tuple(dict.fromkeys((*series.master.exdates, moment))))
             overrides = tuple(o for o in series.overrides if o.recurrence_id != moment)
             with item_writer(engine, found.account, found.store) as writer:
-                writer.put(found.collection, events_to_text(EventSeries(master, overrides), original), parameters.item)
+                writer.put(found.collection, events_to_text(replace(series, master=master, overrides=overrides), original), parameters.item)
             return DeleteResult(parameters.item, False)
     except StorageError as error:
         raise UsageError(str(error)) from None
