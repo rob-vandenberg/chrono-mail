@@ -10,9 +10,10 @@ from tests.test_engine_imap_online import filled, in_step
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap_folder_actions.py 2.0.284"
+__version__ = "test_engine_imap_folder_actions.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a folder with mail on the server that never came here is not deleted (RV-108)
 # v2.0.284: a new folder renamed, deleted or unsubscribed before the next check, on the server or here offline, is followed (F1)
 # v1.1.240: offline a rename or delete is done here at once, kept through a restart and done on the server at the next check; refused or
 #           changed on the server meanwhile: a sync conflict (R-31)
@@ -143,6 +144,20 @@ def test_offline_a_rename_is_done_here_at_once_and_on_the_server_at_the_next_che
     assert "Work" not in local_folders(world) and world.imap.folders["Projects/Sub"].subscribed
     in_step(world, ("Projects", "Projects"), ("Projects/Sub", "Projects/Sub"))
     assert state(world).pending == {}
+
+
+@pytest.mark.parametrize("with_messages", [False, True], ids=["empty here", "with its messages"])
+def test_a_folder_with_mail_on_the_server_that_never_came_here_is_not_deleted(world: World, with_messages: bool) -> None:
+    """RV-108: the server deletes a folder with all its mail; mail that arrived after the last check would be gone unseen."""
+    call(world.engine, "folder.create", account=world.account, folder="Projects")
+    in_step(world, ("Projects", "Projects"))
+    world.imap.add("Projects", mail(9))  # filed there by another device after the last check
+    with pytest.raises(ChronoMailError, match="new mail on the server"):
+        call(world.engine, "folder.delete", account=world.account, folder="Projects", with_messages=with_messages)
+    assert len(world.imap.uids("Projects")) == 1 and "Projects" in local_folders(world)  # nothing deleted, there or here
+    world.fetch()
+    call(world.engine, "folder.delete", account=world.account, folder="Projects", with_messages=True)  # seen now: the person may delete it
+    assert "Projects" not in world.imap.folders and "Projects" not in local_folders(world)
 
 
 def test_offline_a_delete_is_done_here_at_once_and_on_the_server_at_the_next_check(world: World, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -41,3 +41,6 @@ IDIOT-AI.md
 DEVELOPMENT/
 demo.sh
 enforce_gitignore.sh
+
+# the whole-program code review: progress and findings (private)
+CODE-REVIEW.md

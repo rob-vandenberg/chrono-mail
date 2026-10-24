@@ -38,9 +38,11 @@ from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 2.4.334"
+__version__ = "restore.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a name in a backup that leads out of its account's folder is never written (RV-59); the restore waits until the checks and sends
+#           that run have ended and holds new ones back (RV-60)
 # v2.4.334: the report names where each damaged message or item was: its folder or calendar and its account (the Windows computer's note)
 # v2.4.328: every backup restores (FIXES-2.4.326.md phase 2): an account without files comes back (its folder is made first, W1); a damaged
 #           message or item is left out and told, the restore goes on, and the data set aside is kept then (W5); a damaged entry is named,
@@ -355,22 +357,24 @@ def restore_backup(engine: Engine, choice: RestoreChoice) -> RestoreReport:
     try:
         archive, manifest, _ = _open(choice.path, choice.password)
         try:
-            ensure_key(engine)
-            key = engine.data_key(engine.config())
-            engine.close_imap_links()
-            aside: Path | None = _set_aside(engine) if choice.remove_first else None
-            try:
-                with engine.quietly():
-                    report = _restore(engine, archive, manifest, key, choice)
-            except BaseException:
-                if aside is not None:
-                    _put_back(engine, aside)
-                raise
-            if aside is not None and report.damaged:  # never lose mail: what was here stays until the person removes it
-                report.notes.append(f"Because part of the backup was damaged, the data that was on this computer before is kept in {aside}")
-            elif aside is not None:
-                _let_go(engine, aside, report)
-            return report
+            with engine.server_work.paused(CANCEL.is_set):  # the checks and sends that run end first, new ones wait: never a POP3 delete
+                # while this computer's mail is set aside (RV-60)
+                ensure_key(engine)
+                key = engine.data_key(engine.config())
+                engine.close_imap_links()
+                aside: Path | None = _set_aside(engine) if choice.remove_first else None
+                try:
+                    with engine.quietly():
+                        report = _restore(engine, archive, manifest, key, choice)
+                except BaseException:
+                    if aside is not None:
+                        _put_back(engine, aside)
+                    raise
+                if aside is not None and report.damaged:  # never lose mail: what was here stays until the person removes it
+                    report.notes.append(f"Because part of the backup was damaged, the data that was on this computer before is kept in {aside}")
+                elif aside is not None:
+                    _let_go(engine, aside, report)
+                return report
         finally:
             archive.close()
     finally:
@@ -522,6 +526,9 @@ def _restore_whole(
             relative = name[len(prefix):].split("/")
             if not relative[-1] or not _wanted(relative, collections_kept, mail):
                 continue
+            if not _inside(building, relative):  # a name that leads out of the account's folder ("..", a drive): never written (RV-59)
+                report.damaged.append(name)
+                continue
             doing = DOING_MESSAGES if _is_message(relative) else DOING_ITEMS if _is_item(relative) else ""
             if doing:
                 progress.step(doing)
@@ -604,6 +611,14 @@ def _complete_layout(account: Path) -> None:
             if directory.is_dir():
                 for name in ("tmp", "new", "cur") if inner == "folders" else ("items", "tmp"):
                     (directory / name).mkdir(exist_ok=True)
+
+
+def _inside(folder: Path, relative: list[str]) -> bool:
+    """Does this name from a backup stay inside the folder it is written to? A crafted backup could otherwise write files anywhere the
+    person may write (".." parts, a drive or a backslash on Windows), for example a program that starts with the desktop (RV-59)."""
+    if any(part in ("", ".", "..") or "\\" in part or ":" in part or "\0" in part for part in relative):
+        return False
+    return folder.resolve().joinpath(*relative).resolve().is_relative_to(folder.resolve())
 
 
 def _kept_collections(archive: _Reading, names: list[str], prefix: str, kinds: set[CollectionKind]) -> set[str]:

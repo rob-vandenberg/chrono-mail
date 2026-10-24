@@ -15,9 +15,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, parse_m
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 2.1.311"
+__version__ = "commands_calendar.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: an attendee who stays keeps their name, role and answer when the attendees are given again (RV-17)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.273: R-19: typed event.show, -add, -edit, -delete
 # v1.1.225: Every change of an item goes through item_writer: on its server first when it has one (R-23, D-194)
@@ -284,6 +285,18 @@ def _attendee(text: str) -> Attendee:
     return Attendee(address, name)
 
 
+def _attendees_kept(before: tuple[Attendee, ...], texts: tuple[str, ...]) -> tuple[Attendee, ...]:
+    """The attendees as given, each one who was there already with everything known of them: name, role and answer (accepted,
+    declined). The editor shows only the addresses; a Save that resent them reset every answer, on the server too (RV-17)."""
+    known = {person.address.lower(): person for person in before}
+    result: list[Attendee] = []
+    for text in texts:
+        given = _attendee(text)
+        earlier = known.get(given.address.lower())
+        result.append(given if earlier is None else replace(earlier, name=given.name or earlier.name))
+    return tuple(result)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class EventFields:
     """The fields of an event (for event.add and event.edit). A list given here replaces the list the event has."""
@@ -347,7 +360,7 @@ def _apply(event: Event, values: EventFields, creating: bool) -> Event:
     if values.reminder:
         result = replace(result, reminders=tuple(_reminder(text, zone_name) for text in values.reminder))
     if values.attendee:
-        result = replace(result, attendees=tuple(_attendee(text) for text in values.attendee))
+        result = replace(result, attendees=_attendees_kept(result.attendees, values.attendee))
     if values.organizer is not None:
         result = replace(result, organizer=_attendee(values.organizer) if values.organizer.strip() else None)
     if values.tag:

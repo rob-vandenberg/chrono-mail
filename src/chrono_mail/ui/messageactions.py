@@ -28,9 +28,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 2.4.334"
+__version__ = "messageactions.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: Delete asks whenever a selected message is in Trash already (it is deleted for good), in every view, not only in the Trash folder (RV-76)
 # v2.4.334: every action on the selection waits for the places of messages still on their way, then takes them all (W12b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.4.329: every action takes every selected message, also those not loaded yet (W12); Toggle read and Toggle flag count them all
@@ -120,13 +121,23 @@ class MessageActions(QObject):
     def delete_rows(self, rows: Sequence[Placed]) -> None:
         if not rows or self._state.view.account is None:
             return
-        in_trash = self._state.view.folder_role == "trash"
-        if in_trash and QMessageBox.question(self._parent, "Delete", f"Delete {counted(len(rows), 'message')} for good? This cannot be undone.") != QMessageBox.StandardButton.Yes:
+        targets = self._state.targets(rows)
+        # a message already in Trash is deleted for good, whatever view shows it (a search of all folders too): the question follows the
+        # messages, never the folder on the left (RV-76)
+        in_trash = sum(1 for account, folder, _ in targets if self._state.folder_role_of(account, folder) == "trash")
+        if in_trash == len(rows):
+            question, done = f"Delete {counted(len(rows), 'message')} for good? This cannot be undone.", f"Deleted {counted(len(rows), 'message')}"
+        elif in_trash:
+            question = (f"{counted(in_trash, 'message')} of the {len(rows):,} {'is' if in_trash == 1 else 'are'} in Trash already and will be deleted for good; "
+                        "the others go to Trash. This cannot be undone.")
+            done = f"Moved {counted(len(rows) - in_trash, 'message')} to Trash and deleted {counted(in_trash, 'message')}"
+        else:
+            question, done = "", f"Moved {counted(len(rows), 'message')} to Trash"
+        if question and QMessageBox.question(self._parent, "Delete", question) != QMessageBox.StandardButton.Yes:
             return
         number = self._undoing.new_action()
         self.act_many(
-            MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages, undo=number), self._state.targets(rows),
-            f"Deleted {counted(len(rows), 'message')}" if in_trash else f"Moved {counted(len(rows), 'message')} to Trash", "Could not delete",
+            MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages, undo=number), targets, done, "Could not delete",
         )
 
     def delete_permanently(self) -> None:

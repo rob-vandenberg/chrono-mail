@@ -154,6 +154,16 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | K.2 | Menu > File > Restore… (the agreed design): 1. no key on this computer yet: it is made first and its recovery code shown in its own window (the recovery code window during a restore: Escape and close ask first, one line "This code is for this computer. The password of your backup is asked for in the next step.", Copy says "Copied" for 2 s, "this computer's password store", no "Save a recovery file…"); 2. then the .cmz is chosen; 3. its backup password asked only when it is protected. Options, both off: "Remove all data on this computer first" (this computer's copy only, never the server; set aside and removed only after the restore finished and checked, put back on a failure or cancel) and "Replace items that already exist" (off: skipped). Everything comes back with its account ids, the sealed files encrypted again with this computer's key (store.json and pim.json get its key id); the indexes rebuilt; the server wins at the first check (dav-state and imap-state only for what was restored). Afterwards every account made is tested like Add account and a short list says per account: connected, or why not (no connection, certificate, login); an accepted certificate is carried over without asking. | done (2.4.324; the window settings in use at once in 2.4.325) |
 | K.3 | Restore… chooses what comes back: ticks for the parts the backup holds, the accounts with Select all and their counts (Local Folders and On this computer apart), Account passwords when the backup holds them; greyed, never hidden; an unticked account brings nothing, a ticked one always its definition. | done (2.4.326) |
 
+## Code review (the owner, 2026-10-24; everything in the private CODE-REVIEW.md)
+
+| # | Task | Status |
+|---|---|---|
+| CR.1 | The whole program reviewed by Claude: 169 findings, each checked (127 real). | done (2026-10-24, documents only) |
+| CR.2 | The 8 critical findings fixed: certificate texts, Delete in Trash, IMAP folder delete, Local Folders reused, restore waits for checks, restore stays in its folder, birthday without a year, attendees kept. | done (3.0.339) |
+| CR.3 | Local Folders can never be removed (hidden yes). | done (3.0.340) |
+| CR.4 | The other batches of the fix plan (mail sent twice; lost or damaged; backup and restore; hostile input; the window's high ones; medium and low). | open |
+| CR.5 | CodeRabbit once, to compare with the register. | open |
+
 ## Documentation (B-07, from 2.3.317, D-242)
 
 | # | Task | Status |

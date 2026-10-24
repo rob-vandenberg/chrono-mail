@@ -45,9 +45,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 2.1.311"
+__version__ = "commands_accounts.py 3.0.340"
 
 # --- Version history ----------------------------------------------------
+# v3.0.340: Local Folders can never be removed, only hidden (the owner, D-255)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: junk_filter in the summary and in account.edit (D-238)
 # v1.9.272: certificate.inspect takes kind https (a calendar and contacts server, tls only): Look at the server's certificate in the sections' Add account… always failed (since 1.1.212)
@@ -401,10 +402,10 @@ def account_remove(engine: Engine, parameters: AccountParameters) -> AccountRemo
     config = engine.config()
     settings = engine.resolve_account(parameters.account, config)
     account_id = settings.account.account_id
+    if settings.account.kind is AccountKind.LOCAL:  # the mail, calendars, contacts and tasks of this computer: it can be hidden, never removed (D-255)
+        raise UsageError("Local Folders cannot be removed. It can be hidden in Settings > Sidebar.")
 
     def remove(fresh: AppConfig) -> AppConfig:
-        if settings.account.kind is AccountKind.LOCAL and any(item.storage == "local" for item in fresh.accounts):
-            raise UsageError("Accounts still keep their mail in Local Folders: give them folders of their own first")
         return fresh.without_account(account_id)
 
     engine.change_config(remove)

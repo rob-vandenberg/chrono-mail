@@ -7,9 +7,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 1.9.265"
+__version__ = "test_engine_calendar.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: attendees given again keep their names, roles and answers (RV-17)
 # v1.9.265: the fact of a calendar changed carries its palette; a change of the palette tells every calendar of the account (R-44)
 # v1.1.221: the palette belongs to the account: its calendars share it, another account has its own; palettes calendars kept are taken over
 # v1.1.219: a calendar's palette and an appointment's colour
@@ -326,3 +327,22 @@ def test_the_fact_of_a_calendar_carries_its_palette_and_a_palette_change_tells_e
     palettes = {change.folder: change.palette for change in told if change.kind == "collection_edited"}
     assert palettes[cal] == calendar_summary(engine, cal).palette and palettes[other] == calendar_summary(engine, other).palette  # every calendar of the account
     assert [(entry.name, entry.colour) for entry in palettes[other][1:]] == [("Rood", "#ff0000")]
+
+
+MEETING: str = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:meeting@example.com\r\nDTSTAMP:20261020T100000Z\r\n"
+    "DTSTART:20261103T090000Z\r\nDTEND:20261103T100000Z\r\nSUMMARY:Planning\r\nORGANIZER:mailto:me@example.com\r\n"
+    "ATTENDEE;CN=Ann Lee;ROLE=CHAIR;PARTSTAT=ACCEPTED;RSVP=TRUE:mailto:ann@example.com\r\n"
+    "ATTENDEE;CN=Bob;PARTSTAT=DECLINED:mailto:bob@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+
+
+def test_attendees_given_again_keep_their_names_roles_and_answers(engine: Engine) -> None:
+    """RV-17: the event window shows only the attendees' addresses and sends them again at every Save; that reset every name, role and
+    answer (accepted, declined), on the server too."""
+    item = call(engine, "event.import", calendar=collection(engine, "events"), text=MEETING).items[0]
+    changed = call(engine, "event.edit", item=item, location="Room 2", attendee=("ann@example.com", "BOB@example.com", "Cy <cy@example.com>"))
+    assert [(a.address.lower(), a.name, a.role, a.status, a.rsvp) for a in changed.attendees] == [
+        ("ann@example.com", "Ann Lee", "CHAIR", "ACCEPTED", True), ("bob@example.com", "Bob", "REQ-PARTICIPANT", "DECLINED", False),
+        ("cy@example.com", "Cy", "REQ-PARTICIPANT", "NEEDS-ACTION", False),
+    ]

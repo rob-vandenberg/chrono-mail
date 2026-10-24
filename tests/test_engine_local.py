@@ -19,9 +19,11 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 1.1.242"
+__version__ = "test_engine_local.py 3.0.340"
 
 # --- Version history ----------------------------------------------------
+# v3.0.340: Local Folders can never be removed, also when no account keeps its mail there (D-255)
+# v3.0.339: Local Folders missing from the settings while its mail is here is taken into use again, never removed (RV-62)
 # v1.1.242: the filters narrow Favorites and Tags views: unread, flagged, attachments, a second tag, days and sizes; groups and places agree (R-03)
 # v1.1.202: The view scheduled lists the waiting messages of every account
 # v1.1.191: the combined views snoozed, unreplied and archive
@@ -78,6 +80,23 @@ def test_local_folders_is_made_once_and_has_the_standard_folders(tmp_path: Path)
     assert {info.path for info in call(engine, "folder.list", account=LOCAL_ACCOUNT_ID)} == {"Inbox", "Sent", "Drafts", "Trash", "Junk", "Outbox"}
     with pytest.raises(UsageError, match="no server"):
         call(engine, "mail.fetch", account=LOCAL_ACCOUNT_ID)
+
+
+def test_local_folders_missing_from_the_settings_is_taken_back_with_its_mail_never_removed(tmp_path: Path) -> None:
+    """RV-62: settings lost or reset while the mail of Local Folders stayed on this computer; the next setup (here local.enable, also
+    reached by adding an account, opening the Calendar or a restore) erased that mail and the calendars of this computer."""
+    engine = make_engine(tmp_path)
+    call(engine, "local.enable")
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        mailbox.deliver(("Inbox",), mail(1), frozenset())
+    calendars = engine.directories.account_directory(LOCAL_ACCOUNT_ID) / "pim"
+    calendars.mkdir()
+    (calendars / "kept.txt").write_text("the calendars of this computer")
+    engine.change_config(lambda config: config.without_account(LOCAL_ACCOUNT_ID))  # the settings lost Local Folders
+    call(engine, "local.enable")
+    assert engine.config().local_folders() is not None
+    assert [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages] == ["Message 1"]
+    assert (calendars / "kept.txt").read_text() == "the calendars of this computer"
 
 
 def test_the_default_is_a_mailbox_of_its_own(two: Two) -> None:
@@ -281,15 +300,20 @@ def test_contacts_of_shared_mail_are_counted_once(tmp_path: Path) -> None:
         assert len(found) == 1 and found[0].times_received_from == 1
 
 
-def test_local_folders_cannot_be_removed_while_accounts_use_it_and_the_settings_stay_valid(tmp_path: Path) -> None:
+def test_local_folders_can_never_be_removed_and_the_settings_stay_valid(tmp_path: Path) -> None:
+    """The owner (D-255): Local Folders holds the mail, calendars, contacts and tasks of this computer; it can be hidden, never removed."""
     engine = make_engine(tmp_path)
     with FakePop3Server({}) as pop, FakeSmtpServer() as smtp:
         a = add_account(engine, pop, smtp, email="a@example.com", storage="local")
-        with pytest.raises(UsageError, match="still keep their mail"):
+        with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+            mailbox.deliver(("Inbox",), mail(1), frozenset())
+        with pytest.raises(UsageError, match="cannot be removed. It can be hidden in Settings > Sidebar"):
             call(engine, "account.remove", account=LOCAL_ACCOUNT_ID)
-        call(engine, "account.set-storage", account=a, storage="own")
-        call(engine, "account.remove", account=LOCAL_ACCOUNT_ID)
-        assert local_accounts(engine) == []
+        call(engine, "account.set-storage", account=a, storage="own")  # no account keeps its mail there any more: still never removed
+        with pytest.raises(UsageError, match="cannot be removed"):
+            call(engine, "account.remove", account=LOCAL_ACCOUNT_ID)
+        assert len(local_accounts(engine)) == 1
+        assert [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages] == ["Message 1"]
     from dataclasses import replace
 
     base = make_config()

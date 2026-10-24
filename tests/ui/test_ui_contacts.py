@@ -16,9 +16,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_contacts.py 2.4.334"
+__version__ = "test_ui_contacts.py 3.0.339"
 
 # --- Version history ----------------------------------------------------
+# v3.0.339: a birthday without a year is shown and survives a Save that changed something else (RV-16)
 # v2.4.334: the counts in the texts are written one way (F1b)
 # v1.10.277: Contact groups (R-39): under their address book, a group's members, New group…, Rename…, Delete…, Write an e-mail, Add to group,
 #            Remove from group, contacts dropped on a group; every change in place
@@ -106,6 +107,27 @@ def fake_exec(fill: Callable[[ContactEditor], None]) -> Callable[[ContactEditor]
         return 0
 
     return run
+
+
+def test_a_birthday_without_a_year_is_shown_and_kept_when_something_else_is_changed(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-16: phones keep birthdays without a year (--0415); the editor showed none, so any Save of the contact removed it, here and on
+    the server."""
+    world.call("pim.enable")
+    world.call("contact.add", collection=book(world), given="Ann", family="Lee", birthday="--0415")
+    page = open_contacts(world, qtbot, 1)
+    seen: list[tuple[bool, str]] = []
+
+    def retitle(editor: ContactEditor) -> None:
+        seen.append((editor.has_birthday.isChecked(), editor.birthday.text()))
+        editor.title.setText("Chair")
+
+    monkeypatch.setattr(ContactEditor, "exec", fake_exec(retitle))
+    select_rows(page, 0)
+    wait(qtbot, lambda: page.detail.name.text() == "Ann Lee")
+    item = str(getattr(page.model.rows[0], "item"))
+    page.act_edit.trigger()
+    wait(qtbot, lambda: world.call("contact.show", item=item).title == "Chair")
+    assert seen == [(True, "04-15")] and world.call("contact.show", item=item).birthday == "--0415"
 
 
 def test_a_contact_is_made_in_the_editor_and_changed_again(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
