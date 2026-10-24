@@ -2,9 +2,10 @@ import re
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mailbox_guard.py 1.1.206"
+__version__ = "test_mailbox_guard.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: file_sent_again may take the store and index: only the move to Sent of a message the server took (RV-50)
 # v1.1.206: tags are changed through the messages' properties files (D-176)
 # v0.5.134: changes of tags count as changes too
 # v0.5.123: Initial guard: no command changes mail or folders past the mailbox, which does IMAP on the server first (D-118)
@@ -28,6 +29,7 @@ ALLOWED_HAND_OVER: dict[tuple[str, str], str] = {
     ("commands_mail.py", "client, mailbox.store, mailbox.index, state, inbox, settings.pop3,"): "the POP3 download",
     ("commands_mail.py", "client, mailbox.store, mailbox.index, state, ImapSyncOptions("): "the IMAP sync itself, under the account's lock",
     ("commands_outbox.py", "mailbox.store, mailbox.index, sender.account.outgoing, password, message.ref,"): "sending the Outbox; the Sent copy goes to the server at once",
+    ("commands_outbox.py", "file_sent_again(mailbox.store, mailbox.index,"): "a message the server took before, only moved to Sent; the Sent copy goes to the server at once",
     ("commands_schedule.py", "mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX"): "scheduled and repeating mail; the Sent copy goes to the server at once",
 }
 

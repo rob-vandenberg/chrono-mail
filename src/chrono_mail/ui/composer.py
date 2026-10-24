@@ -43,9 +43,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 2.2.314"
+__version__ = "composer.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: a send that failed hands the message to the Outbox and closes the window (Send again sent a second copy, RV-155)
 # v2.2.314: Send follows Settings > General: a delay with a notice in the main window (waiting), or the Outbox until the next refresh; a message
 #           taken back from the Outbox (Cancel) opens as one not saved yet, so Discard removes it (B-21); a failed send is tried again at the next refresh
 # v1.9.274: R-19 round 4: the accounts and the draft or reply it starts from (a reply's and a draft's own fields told apart) are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -707,14 +708,16 @@ class ComposeWindow(QMainWindow):
             self.waiting.emit(str(self.from_box.currentData()), result.message_id, self.subject.text(), self._delay)
             self.close()
             return
-        if not result.sent:
+        if not result.sent:  # the message is in the Outbox now, sent from there: this window no longer holds it (a second Send sent it twice, RV-155)
+            self._handed_over()
+            self.sent.emit(str(self.from_box.currentData()))  # the Outbox changed
             QMessageBox.warning(
                 self,
                 "The message was not sent",
-                f"{result.error}\n\nThe message has been kept in your Outbox folder, so nothing is lost. "
-                "It is sent again with the next Send and Receive.",
+                f"{result.error}\n\nIt was kept in your Outbox, so nothing is lost, and is sent again with the next Send and Receive. "
+                "To change it, open it from the Outbox.",
             )
-            self.sent.emit(str(self.from_box.currentData()))  # the Outbox changed
+            self.close()
             return
         self._handed_over()
         self.sent.emit(str(self.from_box.currentData()))

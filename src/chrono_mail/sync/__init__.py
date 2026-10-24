@@ -6,12 +6,13 @@ from chrono_mail.sync.imap_sync import FolderPlan, FolderReport, ImapReport, Ima
 from chrono_mail.sync.pop3_fetch import FailedMessage, FetchReport, fetch_pop3
 from chrono_mail.sync.pop3_state import DownloadRecord, Pop3State
 from chrono_mail.sync.rebuild import RebuildReport, ReconcileReport, rebuild_index, reconcile_index
-from chrono_mail.sync.send import SendOutcome, send_and_file, send_stored
+from chrono_mail.sync.send import SendOutcome, file_sent_again, send_and_file, send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 1.9.276"
+__version__ = "__init__.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: Export file_sent_again (RV-50)
 # v1.9.276: fill_send_times is gone (every older index is rebuilt, D-226)
 # v1.1.241: planned_anyway: the server folders synchronised whether or not they are on the server's list of folders to show (R-34)
 # v1.1.196: Export fill_send_times
@@ -45,6 +46,7 @@ __all__ = [
     "fetch_pop3",
     "rebuild_index",
     "reconcile_index",
+    "file_sent_again",
     "send_and_file",
     "send_stored",
 ]

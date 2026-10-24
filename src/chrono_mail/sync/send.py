@@ -1,6 +1,7 @@
 import ssl
+import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from chrono_mail.core import ChronoMailError, MessageFlag, MessageRef, ProtocolError, ServerSettings
 from chrono_mail.index import Index, entry_from_raw
@@ -9,9 +10,11 @@ from chrono_mail.protocols.smtp import Refusal, SmtpLimits, send_message
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "send.py 2.5.336"
+__version__ = "send.py 3.1.341"
 
 # --- Version history ----------------------------------------------------
+# v3.1.341: sent but not moved to Sent: marked as sent, never sent again (file_sent_again, RV-50); when the message it replaces cannot be
+#           removed, the new copy in the Outbox is removed again and nothing is sent (RV-127)
 # v2.5.336: the move to Sent takes the message's place from the store (D-248)
 # v2.2.314: a failed send is tried again at the next send of the Outbox (the owner: every refresh sends and receives, D-028)
 # v0.0.86: The copy in the Outbox and in Sent keeps the Bcc recipients (only what goes to the server is without them); send_stored sends a message that waits in the Outbox
@@ -61,7 +64,13 @@ def send_and_file(
     path = f"cur/{reference.store_id}!2,S"
     _index(index, reference, path, raw)
     checkpoint("send:after-outbox")
-    before_send()  # for example: remove the scheduled message this one replaces, now that a safe copy is in the Outbox
+    try:
+        before_send()  # for example: remove the scheduled message this one replaces, now that a safe copy is in the Outbox
+    except ChronoMailError:  # the message it replaces stays and is sent from there: this copy must not be sent as well (RV-127)
+        store.delete(reference, hint=path)
+        if index is not None:
+            index.remove(reference.store_id)
+        raise
     try:
         result = send_message(settings, password, outgoing.from_address.address, recipients, without_bcc(raw), limits, ssl_context)
     except ProtocolError as error:
@@ -96,15 +105,25 @@ def send_stored(
 
 
 def _file_as_sent(store: Store, index: Index | None, reference: MessageRef, path: str | None, sent: tuple[str, ...], refused: tuple[Refusal, ...], checkpoint: Checkpoint) -> SendOutcome:
-    """Move a message the server accepted from the Outbox to Sent; if that fails it was still sent, and stays in the Outbox."""
+    """Move a message the server accepted from the Outbox to Sent; if that fails it was still sent, and stays in the Outbox marked as sent
+    (sent_at), so no later send of the Outbox sends it again: they only try the move again (RV-50)."""
     try:
         placed = store.move_placed(reference, sent, hint=path)
         if index is not None:
             index.move(placed.ref.store_id, sent, placed.place)
     except ChronoMailError as error:
-        return SendOutcome(True, reference, refused, warning=f"it was sent but could not be moved to Sent: {error}")
+        try:
+            store.properties.change(reference.store_id, lambda current: replace(current, sent_at=int(time.time())))
+        except ChronoMailError as also:
+            return SendOutcome(True, reference, refused, warning=f"it was sent but could not be moved to Sent ({error}) or marked as sent ({also})")
+        return SendOutcome(True, reference, refused, warning=f"it was sent but could not be moved to Sent: {error}; it waits in the Outbox as sent")
     checkpoint("send:after-move")
     return SendOutcome(True, placed.ref, refused)
+
+
+def file_sent_again(store: Store, index: Index | None, reference: MessageRef, path: str | None, sent: tuple[str, ...]) -> SendOutcome:
+    """A message of the Outbox the server accepted before, whose move to Sent failed then (sent_at): only the move is tried again."""
+    return _file_as_sent(store, index, reference, path, sent, (), _no_checkpoint)
 
 
 def _index(index: Index | None, reference: MessageRef, path: str, raw: bytes) -> None:
