@@ -161,7 +161,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | CR.1 | The whole program reviewed by Claude: 169 findings, each checked (127 real). | done (2026-10-24, documents only) |
 | CR.2 | The 8 critical findings fixed: certificate texts, Delete in Trash, IMAP folder delete, Local Folders reused, restore waits for checks, restore stays in its folder, birthday without a year, attendees kept. | done (3.0.339) |
 | CR.3 | Local Folders can never be removed (hidden yes). | done (3.0.340) |
-| CR.4 | The other batches of the fix plan (mail sent twice; lost or damaged; backup and restore; hostile input; the window's high ones; medium and low). | batch 1 done (3.1.341); batch 2 done (3.2.342); batch 3 next |
+| CR.4 | The other batches of the fix plan (mail sent twice; lost or damaged; backup and restore; hostile input; the window's high ones; medium and low). | batch 1 done (3.1.341); batch 2 done (3.2.342); batch 3 done (3.3.343); batch 4 next |
 | CR.5 | CodeRabbit once, to compare with the register. | open |
 
 ## Documentation (B-07, from 2.3.317, D-242)

@@ -22,9 +22,11 @@ from chrono_mail.store.atomic import fsync_directory
 from chrono_mail.store.layout import parse_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "backup.py 2.4.324"
+__version__ = "backup.py 3.3.343"
 
 # --- Version history ----------------------------------------------------
+# v3.3.343: what was downloaded (POP3) is taken before the messages are listed, so it never names a message the backup lacks (RV-61); a
+#           message deleted while the backup runs no longer searches the whole mailbox again (RV-69)
 # v2.4.324: one backup or restore at a time (JOB_LOCK); backup.cancel stops either (CANCEL); backup_running
 # v2.4.322: Initial: Menu > File > Back up…: a .cmz file (a ZIP, AES-256 with a generated password when protected) with
 #           the chosen parts of the chosen accounts, exactly as kept here but readable without this computer's key (D-244)
@@ -136,6 +138,7 @@ class _File:
     doing: str
     counted: bool = False  # a message, an item or a setting: what the counts and the progress tell
     store_root: Path | None = None
+    data: bytes | None = None  # taken when the files were listed (what was downloaded, RV-61); None: read when it is written
 
 
 @dataclass
@@ -311,6 +314,14 @@ def _files(engine: Engine, choice: BackupChoice, chosen: list[_Chosen]) -> Itera
     """Every file to back up, listed before the first is written (so the counts are known). Messages that arrive later wait for the
     next backup; messages that move meanwhile are found again by their id."""
     kinds = {kind for kind, part in ITEM_PARTS.items() if part in choice.parts}
+    # what each account downloaded (POP3), taken before any mailbox is listed: it never names a message downloaded later, which the backup
+    # lacks (a restore would then never download it again, or have it deleted on the server, RV-61)
+    downloaded: dict[Path, bytes | None] = {}
+    if MESSAGES in choice.parts:
+        for item in chosen:
+            if item.mail:
+                path = engine.directories.pop3_state_file(item.settings.account.account_id)
+                downloaded[path] = _read(path)
     for item in chosen:
         account_id = item.settings.account.account_id
         account_directory = engine.directories.account_directory(account_id)
@@ -321,8 +332,12 @@ def _files(engine: Engine, choice: BackupChoice, chosen: list[_Chosen]) -> Itera
                     is_message = path.parent.name in ("cur", "new") and parse_name(path.name) is not None
                     yield _File(path, DOING_MESSAGES, is_message, store_root if is_message else None)
                 for path in sorted(account_directory.iterdir()) if account_directory.is_dir() else ():
-                    if path.is_file() and not path.name.endswith(_INDEX_SUFFIXES):
-                        yield _File(path, DOING_MESSAGES)  # what was downloaded (POP3) and what the server holds (IMAP)
+                    if path in downloaded:
+                        taken = downloaded[path]
+                        if taken is not None:  # none yet when it was taken: left out (what came later is downloaded again, never lost)
+                            yield _File(path, DOING_MESSAGES, data=taken)
+                    elif path.is_file() and not path.name.endswith(_INDEX_SUFFIXES):
+                        yield _File(path, DOING_MESSAGES)  # what the server holds (IMAP)
         if item.items and kinds:
             pim_root = engine.directories.pim_directory(account_id)
             collections = _collection_kinds(pim_root)
@@ -356,7 +371,7 @@ def _add_file(engine: Engine, archive: _Archive, item: _File, key: DataKey | Non
         done = messages.done.setdefault(item.store_root, set())
         if store_id in done:
             return False
-    data: bytes | None = _read(path)
+    data: bytes | None = item.data if item.data is not None else _read(path)
     if data is None and item.store_root is not None and store_id is not None:
         path = _find_again(messages, item.store_root, store_id) or path
         data = _read(path)
@@ -385,11 +400,14 @@ def _read(path: Path) -> bytes | None:
 
 
 def _find_again(messages: _Messages, store_root: Path, store_id: str) -> Path | None:
-    """Where a message is now that it is no longer where it was listed (moved, or a mark changed its name)."""
+    """Where a message is now that it is no longer where it was listed (moved, or a mark changed its name). The mailbox is searched again
+    only when the message moved since the last search: one that search did not find was deleted (searching again for each deleted
+    message could make a backup of a large mailbox hang, RV-69)."""
     places = messages.places.get(store_root)
-    found = places.get(store_id) if places is not None else None
-    if found is not None and found.exists():
-        return found
+    if places is not None:
+        found = places.get(store_id)
+        if found is None or found.exists():
+            return found
     places = {}
     for path in _walk(store_root / "folders"):
         parsed = parse_name(path.name)
