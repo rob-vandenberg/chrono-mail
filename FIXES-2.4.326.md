@@ -132,5 +132,5 @@ The Windows computer's REPORT-2.4.334.md: W12b, W9b, W11c, F1b, note 3, W1 on th
 | T1 | test_ui_sync_conflicts failed once in a combined run: "The index is damaged", then WinError 32 on pim.sqlite | two openers of a new calendar index both saw it empty; the second's make failed, was called damaged, and the file was removed while the first used it (the mail index likewise for an upgrade in place) | Done 2.5.335 (D-247) |
 | T2 | index.prepare answered 0 messages after 21.5 minutes; the index window said "0 messages indexed" | it opened the index through the general way, which drops the rebuild's report | Done 2.5.335 |
 | T3 | rebuilding the restored 140,402 messages took 21.5 minutes, no mail shown meanwhile | 15.3 GB read and decrypted once, about 12 MB/s | Not a fault; dropped (the owner, 2026-10-24). Measured here: understanding each message (Python's mail reader) is about 85% of the index time; skipping attachment contents would save only about 30% |
-| W13 | the large delete about 75 per second on Windows | the engine 160 per second there (700 here) | The owner's own work |
+| W13 | the large delete about 75 per second on Windows | each move looked through the whole of Trash again (mailbox.py 383); the same on Linux | Done 2.5.336 (D-248); measured again on both computers next |
 

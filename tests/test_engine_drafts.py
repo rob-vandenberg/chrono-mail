@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, first_id, setup  # noqa: F40
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_drafts.py 0.0.86"
+__version__ = "test_engine_drafts.py 2.5.336"
 
 # --- Version history ----------------------------------------------------
+# v2.5.336: the failed save breaks Store.deliver_placed, which a save uses now (D-248)
 # v0.0.86: A forward as attachment can be saved as a draft and taken up again
 # v0.0.24: Rich text composing
 # v0.0.16: Initial draft command tests
@@ -50,15 +51,15 @@ def test_a_failed_save_never_loses_the_earlier_version(setup: Setup, monkeypatch
     first = call(setup.engine, "draft.save", account=setup.account_id, subject="precious", body="keep me")
     with pytest.raises(MessageFormatError):  # cannot be built: header injection
         call(setup.engine, "draft.save", account=setup.account_id, subject="x\r\nBcc: evil@example.com", replace_message=first.message_id)
-    original = Store.deliver
+    original = Store.deliver_placed  # where a message is written (deliver gives only its reference)
 
     def failing(self: Store, *args: object, **kwargs: object) -> object:
         raise StorageError("disk full")
 
-    monkeypatch.setattr(Store, "deliver", failing)
+    monkeypatch.setattr(Store, "deliver_placed", failing)
     with pytest.raises(StorageError):
         call(setup.engine, "draft.save", account=setup.account_id, subject="newer", replace_message=first.message_id)
-    monkeypatch.setattr(Store, "deliver", original)
+    monkeypatch.setattr(Store, "deliver_placed", original)
     (row,) = drafts(setup)
     assert row.message_id == first.message_id and row.subject == "precious"
 

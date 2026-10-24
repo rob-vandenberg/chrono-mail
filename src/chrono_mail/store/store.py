@@ -17,9 +17,10 @@ from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_
 from chrono_mail.store.properties import MessageProperties
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 1.9.276"
+__version__ = "store.py 2.5.336"
 
 # --- Version history ----------------------------------------------------
+# v2.5.336: deliver_placed, copy_placed and move_placed give back where they put the message (Placed): nothing reads a whole folder to find it again (D-248, W13)
 # v1.9.276: stored_at: when a message's file was written here, the last resort of the Received column (D-226)
 # v1.1.227: Private files: encrypted texts the synchronisation keeps beside the mail (its sync conflicts, D-195)
 # v1.1.206: properties: one small file per message for what cannot be kept in the message (tags, snooze, archive origin; tags.json taken over
@@ -85,6 +86,18 @@ class StoredMessage:
     extra_letters: str  # flag letters we do not model; preserved on every rename
     relative_path: str  # "new/<name>" or "cur/<name>" inside the folder directory
     size: int  # size of the raw message in bytes
+
+
+@dataclass(frozen=True, slots=True)
+class Placed:
+    """A message just stored, copied or moved, and where its file is now: "new/<name>" or "cur/<name>" inside its folder (D-248)."""
+
+    ref: MessageRef
+    place: str
+
+
+def _place(path: Path) -> str:
+    return f"{path.parent.name}/{path.name}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,6 +388,11 @@ class Store:
     def deliver(
         self, folder_path: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag] = frozenset(), verify: bool = True, store_id: str | None = None
     ) -> MessageRef:
+        return self.deliver_placed(folder_path, raw, flags, verify, store_id).ref
+
+    def deliver_placed(
+        self, folder_path: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag] = frozenset(), verify: bool = True, store_id: str | None = None
+    ) -> Placed:
         """Store a complete raw message. With verify, it is read back and compared before this returns.
         A store_id is given when a message is moved here from another store and keeps its identity."""
         directory = self._folder_directory(folder_path)
@@ -393,7 +411,7 @@ class Store:
                 destination.unlink(missing_ok=True)
                 raise StorageError("The stored message differs from the original")
         self._checkpoint("deliver:done")
-        return MessageRef(self.account_id, folder_path, store_id)
+        return Placed(MessageRef(self.account_id, folder_path, store_id), _place(destination))
 
     @contextmanager
     def written_together(self) -> Generator[None]:
@@ -447,8 +465,7 @@ class Store:
 
     def locate(self, ref: MessageRef, hint: str | None = None) -> str:
         """The current relative path ("new/..." or "cur/...") of a message inside its folder."""
-        path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
-        return f"{path.parent.name}/{path.name}"
+        return _place(self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint))
 
     def stored_at(self, ref: MessageRef, hint: str | None = None) -> datetime | None:
         """When a message's file was written here (its modification time: a rename for a flag or a move keeps it); None when it cannot be told."""
@@ -544,6 +561,9 @@ class Store:
             raise StorageError("The message kept changing while its flags were being set")
 
     def move(self, ref: MessageRef, target_folder: tuple[str, ...], hint: str | None = None) -> MessageRef:
+        return self.move_placed(ref, target_folder, hint).ref
+
+    def move_placed(self, ref: MessageRef, target_folder: tuple[str, ...], hint: str | None = None) -> Placed:
         """Move a message to another folder in one atomic rename. The store id stays the same."""
         source_directory = self._folder_directory(ref.folder_path)
         target_directory = self._folder_directory(target_folder)
@@ -561,9 +581,12 @@ class Store:
                     fsync_directory(path.parent)
             except OSError as error:
                 raise StorageError(f"The message could not be moved: {error.strerror}") from None
-            return MessageRef(self.account_id, target_folder, ref.store_id)
+            return Placed(MessageRef(self.account_id, target_folder, ref.store_id), _place(destination))
 
     def copy(self, ref: MessageRef, target_folder: tuple[str, ...], hint: str | None = None) -> MessageRef:
+        return self.copy_placed(ref, target_folder, hint).ref
+
+    def copy_placed(self, ref: MessageRef, target_folder: tuple[str, ...], hint: str | None = None) -> Placed:
         """Copy a message (same flags, new identity). The copy is verified before this returns."""
         with self._message_lock(ref.store_id):
             path = self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint)
@@ -586,7 +609,7 @@ class Store:
             self.properties.copy(ref.store_id, store_id)
         except StorageError:
             pass  # damaged properties never stop a copy; the file keeps its .bad copy for repair
-        return MessageRef(self.account_id, target_folder, store_id)
+        return Placed(MessageRef(self.account_id, target_folder, store_id), _place(destination))
 
     def replace(self, ref: MessageRef, raw: bytes, hint: str | None = None) -> None:
         """Replace a message's content, keeping its id, its folder and its flags. Only for the program's own messages that wait to
