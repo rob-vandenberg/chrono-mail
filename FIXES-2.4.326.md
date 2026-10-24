@@ -59,8 +59,8 @@ The inventory of every problem the Windows computer's full test of 2.0.296 to 2.
 
 | # | What | Status |
 |---|---|---|
-| S1 | Restoring messages into an account that is already here takes 9 ms per message, three times the whole-account path (about 21 minutes for 140,000). | Later, measured first |
-| S2 | A backup of the owner's store spends about 1.5 minutes listing files before writing anything. | Later, measured first |
+| S1 | Restoring messages into an account that is already here takes 9 ms per message, three times the whole-account path (about 21 minutes for 140,000). | Measured 2026-10-24 (measure_restore.py in the Windows computer's report folder, 3,000 into a folder of 3,000): 7.6 ms per message on 2.5.335, 5.6 ms on 2.5.336, about what storing any message costs here; closed, nothing more to do |
+| S2 | A backup of the owner's store spends about 1.5 minutes listing files before writing anything. | Open, low value (about 10 % of a rare backup); measured first if ever |
 
 ### H. Not faults, or already covered
 
@@ -97,7 +97,7 @@ Each phase: changelist, Proceed, the related tests (found by grep) plus a new te
 | 5 | **Attachment names and programs on Windows.** W10 (the 14 types added), W11 (device names get "_" on every system), W11b (direction characters taken out of names). | Small | Done 2.4.331 |
 | 6 | **The small window faults.** W9 (New uses the default account, else the open one, else the first; greyed only without a mail account), R1 (the startup folder opens after a restore), W3 (the backup and restore question asked last, right before quitting), W2 (Restore a backup… in the first-account window). | Medium | Done 2.4.332 |
 | 7 | **Wording.** One way to write a count ("1 message", "2 messages", "1,041") used everywhere, the "message(s)" texts included (F1, F2); the demo builder's texts (F3). Numbers stay in the English form until B-04-1. | Small | Done 2.4.333 |
-| later | S1, S2: measured first, then a changelist. | — | Later |
+| later | S1 measured and closed (2.5.336); S2 open, low value. | — | — |
 
 ## 5. Done log
 
@@ -133,4 +133,18 @@ The Windows computer's REPORT-2.4.334.md: W12b, W9b, W11c, F1b, note 3, W1 on th
 | T2 | index.prepare answered 0 messages after 21.5 minutes; the index window said "0 messages indexed" | it opened the index through the general way, which drops the rebuild's report | Done 2.5.335 |
 | T3 | rebuilding the restored 140,402 messages took 21.5 minutes, no mail shown meanwhile | 15.3 GB read and decrypted once, about 12 MB/s | Not a fault; dropped (the owner, 2026-10-24). Measured here: understanding each message (Python's mail reader) is about 85% of the index time; skipping attachment contents would save only about 30% |
 | W13 | the large delete about 75 per second on Windows | each move looked through the whole of Trash again (mailbox.py 383); the same on Linux | Done 2.5.336 (D-248); measured again on both computers next |
+
+## 8. After W13 (the owner, 2026-10-24)
+
+The Windows computer's list of further chances after W13, decided by the owner: only the window's share is built.
+
+| # | What the person sees | Status |
+|---|---|---|
+| 1 | The index saves once per message (most of what is left of a large delete) | Not now (the owner) |
+| 2 | During a large delete the window kept up with about half of what the engine did | Done 2.5.337: Qt asks every cell about eight things and every row its flags after each change; the questions the list never answers are answered at once, the flags are ready made. 4,000 deleted through the window: about 490 → 608 per second here, a redraw 22 → 17 ms |
+| 3 | S1 | Measured and closed (section 1 G) |
+| 4 | S2 | Open, low value |
+| 5 | The window test that failed once on Windows | Fixed in 2.5.335 (T1, D-247) |
+| 6 | The window test on the owner's full folder again | Not needed: the worst case was measured (222 per second, longest pause 0.42 s) |
+| 7 | The disks of the two computers | The Linux computer has one virtual disk for everything; nothing to compare |
 

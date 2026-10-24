@@ -24,9 +24,11 @@ from chrono_mail.ui.models import LOCAL_PLACES
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 2.4.334"
+__version__ = "messagelist.py 2.5.337"
 
 # --- Version history ----------------------------------------------------
+# v2.5.337: data answers the questions it never answers (icon, tick box, background...) at once, without looking for the row; flags is one of
+#           two ready answers (Qt asks every row after each change of the list: 404,000 times in a delete of 4,000)
 # v2.4.334: _take_out_runs: the rows that leave together go per run of neighbouring rows (Qt keeps the others' selection cheaply)
 # v2.4.334: the messages that leave the view in one moment go in one layout change (16,000 deleted: one row at a time took minutes)
 # v2.4.334: placed: the whole order is in; complete tells whether it is (W12b)
@@ -53,6 +55,12 @@ HEADER_ICON_ROLE: int = Qt.ItemDataRole.UserRole + 12  # a header icon that the 
 HEADER_ICONS: dict[str, str] = {"contact": "user", "trash": "edit-delete"}  # columns whose header is a grey icon
 GROUP_HEADER_ROLE: int = Qt.ItemDataRole.UserRole + 13  # (name, folded) on a group header row, None on a message row
 PENDING_ROLE: int = Qt.ItemDataRole.UserRole + 14  # true on a message with an action under way (drawn greyed)
+ANSWERED_ROLES: frozenset[int] = frozenset({
+    int(Qt.ItemDataRole.DisplayRole), int(Qt.ItemDataRole.ToolTipRole), int(Qt.ItemDataRole.TextAlignmentRole), int(Qt.ItemDataRole.ForegroundRole),
+    int(Qt.ItemDataRole.FontRole), ROW_ROLE, CONTACT_ROLE, GROUP_HEADER_ROLE, PENDING_ROLE,
+})  # what data answers; Qt asks more of every cell it draws (icon, tick box, background, size...), and those are None without looking
+HEADER_FLAGS: Qt.ItemFlag = Qt.ItemFlag.ItemNeverHasChildren  # not enabled: the arrow keys pass it, it cannot be selected
+MESSAGE_FLAGS: Qt.ItemFlag = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemNeverHasChildren | Qt.ItemFlag.ItemIsDragEnabled  # the list is flat
 YES_NO_SORTS: frozenset[str] = frozenset({"unread", "flagged", "attachment", "replied", "contact"})  # the icon columns: no group headers
 
 
@@ -640,7 +648,7 @@ class MessageListModel(QAbstractTableModel):
 
     @override
     def data(self, index: QModelIndex | QPersistentModelIndex, role: int = Qt.ItemDataRole.DisplayRole) -> object:
-        if not index.isValid():
+        if not index.isValid() or role not in ANSWERED_ROLES:
             return None
         group = self._group_at(index.row())
         if group is not None and group.display_start == index.row():
@@ -686,10 +694,7 @@ class MessageListModel(QAbstractTableModel):
 
     @override
     def flags(self, index: QModelIndex | QPersistentModelIndex) -> Qt.ItemFlag:
-        if index.isValid() and self.is_header(index.row()):
-            return Qt.ItemFlag.ItemNeverHasChildren  # not enabled: the arrow keys pass it, it cannot be selected
-        base = super().flags(index) | Qt.ItemFlag.ItemNeverHasChildren  # the list is flat: Qt never asks a row for children
-        return base | Qt.ItemFlag.ItemIsDragEnabled if index.isValid() else base
+        return MESSAGE_FLAGS if index.isValid() and not self.is_header(index.row()) else HEADER_FLAGS
 
     @override
     def mimeTypes(self) -> list[str]:
