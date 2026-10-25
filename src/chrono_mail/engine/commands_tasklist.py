@@ -14,9 +14,10 @@ from chrono_mail.pim.times import moment_at, format_moment, local_zone, parse_mo
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 3.6.349"
+__version__ = "commands_tasklist.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a task's floating start or due time stays floating on an edit without a zone
 # v3.6.349: a due date without the platform's conversion (RV-201); a task whose due time goes keeps its reminders, counted from the start (RELATED=END needs a due time, RV-189)
 # v3.2.342: a task's reminder in minutes counts back from its due time (RELATED=END), as the window says (RV-99)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -291,13 +292,18 @@ class TaskFields:
     url: str | None = field(default=None, metadata=option("A web address"))
 
 
-def _moment(text: str, zone_name: str, name: str) -> Moment | None:
+def _moment(text: str, zone_name: str, name: str, floating: bool = False) -> Moment | None:
     if not text.strip():
         return None
     try:
-        return parse_moment(text, zone_named(zone_name) if zone_name else None)
+        return parse_moment(text, zone_named(zone_name) if zone_name else None, floating=floating)
     except ValueError as error:
         raise UsageError(f"{name}: {error}") from None
+
+
+def _floating(moment: Moment | None) -> bool:
+    """A time without a zone: an edit without a zone keeps it so (RV-23's neighbour)."""
+    return isinstance(moment, datetime) and moment.tzinfo is None
 
 
 def _apply(task: Task, values: TaskFields) -> Task:
@@ -310,9 +316,9 @@ def _apply(task: Task, values: TaskFields) -> Task:
     if values.location is not None:
         result = replace(result, location=values.location.strip())
     if values.start is not None:
-        result = replace(result, start=_moment(values.start, zone_name, "start"))
+        result = replace(result, start=_moment(values.start, zone_name, "start", _floating(task.start)))
     if values.due is not None:
-        result = replace(result, due=_moment(values.due, zone_name, "due"))
+        result = replace(result, due=_moment(values.due, zone_name, "due", _floating(task.due)))
     if values.priority is not None:
         if not 0 <= values.priority <= 9:
             raise UsageError("The priority is 0 (none) or 1 (highest) to 9 (lowest)")

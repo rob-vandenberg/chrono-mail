@@ -15,9 +15,11 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, parse_m
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 3.6.349"
+__version__ = "commands_calendar.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: an event with floating times keeps them floating on an edit without a zone (it got this computer's zone, its skipped dates not);
+#           an occurrence of a floating series is named floating too (its changed or deleted occurrence got a zone and never matched)
 # v3.6.349: a series whose time of day moves moves its skipped and changed dates by as much on their own day; when its first date or
 #           its rule changes they stay as they were (RV-185); dates the series names itself (RDATE) stay (RV-187); a changed occurrence
 #           never moved in time moves with the series (RV-188); an edit of one date of an object of only changed occurrences changes
@@ -437,9 +439,10 @@ def _apply(event: Event, values: EventFields, creating: bool) -> Event:
     except ValueError as error:
         raise UsageError(str(error)) from None
     result = event
+    floating = not creating and isinstance(event.start, datetime) and event.start.tzinfo is None  # a time without a zone stays one (RV-93)
     try:
         if values.start is not None:
-            start = parse_moment(values.start, zone)
+            start = parse_moment(values.start, zone, floating=floating)
             old_length = (event.end - event.start) if isinstance(event.start, datetime) and isinstance(event.end, datetime) else None
             result = replace(result, start=start)
             if values.end is None:
@@ -448,7 +451,7 @@ def _apply(event: Event, values: EventFields, creating: bool) -> Event:
                 else:
                     result = replace(result, end=start + timedelta(days=1))
         if values.end is not None:
-            end = parse_moment(values.end, zone, all_day=result.all_day)
+            end = parse_moment(values.end, zone, all_day=result.all_day, floating=floating)
             if isinstance(result.start, datetime) != isinstance(end, datetime):
                 raise UsageError("The start and the end must both be dates or both be times")
             result = replace(result, end=end)
@@ -540,6 +543,8 @@ def _in_event_zone(moment: Moment, start: Moment) -> Moment:
         return datetime(moment.year, moment.month, moment.day, tzinfo=start.tzinfo)
     if not isinstance(start, datetime):
         return moment.date() if isinstance(moment, datetime) else moment
+    if isinstance(moment, datetime) and moment.tzinfo is not None:  # a floating series: its occurrences are floating too, on this wall clock
+        return moment.astimezone(local_zone()).replace(tzinfo=None)  # (a zoned one never matches its skipped or changed dates)
     return moment
 
 

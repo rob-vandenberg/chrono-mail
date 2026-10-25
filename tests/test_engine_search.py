@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_search.py 0.5.166"
+__version__ = "test_engine_search.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a search date at the edge of the calendar is a usage error, never a crash; one before 1970 in the named zone
 # v0.5.166: the groups by sender are named and counted by the name the From column shows
 # v0.3.109: Sorting by contact, attachment and preview through the commands; no groups for the yes/no sorts
 # v0.2.94: Search results in any sort order; message.groups; date group boundaries
@@ -120,3 +121,14 @@ def test_the_new_sorts_through_the_commands(setup: Setup) -> None:
         assert call(setup.engine, "message.groups", account=setup.account_id, folder="Inbox", sort=sort) == ()
     groups: list[Any] = list(call(setup.engine, "message.groups", account=setup.account_id, folder="Inbox", sort="conversation"))
     assert [(group.value, group.count) for group in groups] == [("1", 3)]
+
+
+def test_a_search_date_at_the_edge_of_the_calendar_is_a_usage_error_never_a_crash(setup: Setup) -> None:
+    """The three reviewers of 2026-10-26 (RV-34, RV-36 elsewhere): 0001-01-01 or 9999-12-31 raised OverflowError ("Unexpected error"),
+    and on Windows a day before 1970 an OSError, from the platform's conversion. The day is taken in the named zone; the edges are told."""
+    for edge in ({"date_from": "0001-01-01"}, {"date_to": "9999-12-31"}):
+        try:
+            found(setup, **edge)
+        except UsageError as error:
+            assert "must be a date between" in str(error)
+    assert found(setup, date_from="1960-01-01") == found(setup)

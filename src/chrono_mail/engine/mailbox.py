@@ -31,9 +31,10 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 3.6.350"
+__version__ = "mailbox.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: told_after_send: what follows a send never makes it a failed send (a warning instead)
 # v3.6.350: sent_already: the letter in the file name (a full disk cannot stop it), sent_at or this run's memory; never in Sent
 #           a move from a server folder into the Outbox or Scheduled is done here first (one rename: its id, marks and details stay), then its
 #           server copy goes (D-193; never the server first, 4.1); a change told at once is no untold index write (told_at_once, RV-206);
@@ -83,6 +84,10 @@ def parse_folder(text: str) -> tuple[str, ...]:
     if not text.strip() or any(not segment for segment in path):
         raise UsageError("A folder is written like Inbox or Archive/2026")
     return path
+
+
+class GoneMeanwhile(UsageError):
+    """What a send or a draft replaces left the Outbox or Scheduled meanwhile (sent, or taken away): nothing was done."""
 
 
 class SentAlready(UsageError):
@@ -183,7 +188,7 @@ class Mailbox:
             self.store.locate(ref, self.hint(ref.store_id))
         except MessageNotFoundError:
             where = "the Outbox" if ref.folder_path == OUTBOX else "/".join(ref.folder_path)
-            raise UsageError(f"The message this replaces is no longer in {where}: it was sent meanwhile; nothing was done") from None
+            raise GoneMeanwhile(f"The message this replaces is no longer in {where}: it was sent meanwhile; nothing was done") from None
         if self.sent_already(ref):
             raise SentAlready("The message this replaces was sent already: it goes to Sent at the next Send and Receive; nothing was done")
         try:
@@ -207,7 +212,7 @@ class Mailbox:
             self.delete(ref, permanent=True)
         except ChronoMailError as also:
             where = "/".join(ref.folder_path)
-            raise type(error)(f"{error}. The new version may not have been removed again ({also}): look in {where} before the next Send and Receive") from None
+            raise StorageError(f"{error}. The new version may not have been removed again ({also}): look in {where} before the next Send and Receive") from None  # never a refusal: something was stored
 
     def forget_sent_marks(self, ref: MessageRef) -> None:
         """A message filed in Sent: the marks of a send whose move to Sent failed before go (the letter, sent_at and this run's memory), so
@@ -646,6 +651,17 @@ class Mailbox:
         """Sending stored a message past the mailbox's operations (sync/send.py): it is told as added where it is now."""
         self._tell_added(reference)
 
+    def told_after_send(self, reference: MessageRef, sent: bool) -> str:
+        """After a send: the message is told where it is now and, in Sent, put on the IMAP server. It never raises: the server's answer
+        decided the send, and a send told as failed would be sent a second time by the person; what fails here comes back as a warning."""
+        try:
+            self.report_added(reference)
+            if sent and reference.folder_path != OUTBOX:  # in Sent (a failed move leaves it in the Outbox, marked as sent)
+                self.put_on_server(reference)  # IMAP: the Sent copy is in Sent on the server at once
+        except Exception as error:  # noqa: BLE001 - anything, also the index's own errors: the send itself is done
+            return LIST_COULD_NOT_FOLLOW.format(error=str(error) or type(error).__name__)
+        return ""
+
     def report_moved(self, before: MessageRef, now: MessageRef) -> None:
         """Sending moved a stored message past the mailbox's operations (from the Outbox to Sent): it is told as moved."""
         row = self.row_of(now.store_id)
@@ -1024,6 +1040,7 @@ class Mailbox:
 
 
 SENT_MAY_GO: frozenset[str] = frozenset({FolderRole.SENT.value, FolderRole.TRASH.value})  # where a message the server took may move (D-262)
+LIST_COULD_NOT_FOLLOW: str = "the message list could not follow ({error}): go to Settings > Security and storage and click Repair the search index"
 HERE_ONLY: frozenset[str] = frozenset({"Outbox", "Scheduled"})  # folders whose messages are never on a server (Recovered may hold some)
 
 

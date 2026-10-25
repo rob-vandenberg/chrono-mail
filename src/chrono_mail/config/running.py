@@ -1,11 +1,13 @@
 import ctypes
 import os
 import sys
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "running.py 0.5.164"
+__version__ = "running.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v0.5.164: the Linux part is a block for "not Windows" (an early return did not satisfy the type check for Windows)
 # v0.5.161: the Linux part says it is not for Windows, so the type check on Windows reports nothing
 # v0.5.147: Windows: every process above this one (parent, grandparent …) is skipped, not only the parent: a run from source is launcher, redirector, program
@@ -56,7 +58,7 @@ def _running_on_linux(ignored: set[int]) -> list[int]:
         except OSError:
             return []
         for entry in entries:
-            if not entry.name.isdigit() or int(entry.name) in ignored:
+            if not digits(entry.name) or int(entry.name) in ignored:
                 continue
             try:
                 if entry.stat().st_uid != user:

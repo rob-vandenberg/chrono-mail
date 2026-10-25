@@ -8,15 +8,16 @@ from chrono_mail.mime import parse_message
 from chrono_mail.protocols.imap import FetchedItem, FolderChanges, FolderEntry, ImapClient, ImapRefused, SelectInfo, keyword_to_tag, tag_to_keyword
 from chrono_mail.store import Store, StoredMessage
 from chrono_mail.sync.announce import SILENT, Announcer
-from chrono_mail.sync.imap_state import Checkpoint, ImapEntry, ImapState
+from chrono_mail.sync.imap_state import MAXIMUM_WAITING, Checkpoint, ImapEntry, ImapState
 from chrono_mail.sync.imap_folders import Planned, follow_server_folders, leaving_folders, take_away_unlisted
 from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 3.6.350"
+__version__ = "imap_sync.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a message the server will not send (refused, NIL, too large) no longer keeps its folder from a checkpoint: it is asked again from it
 # v3.6.350: the comment on the unknown tags says what None means, as the code does (RV-192)
 # v3.6.349: a refused group keeps what came before the refusal; a server refusing all of a few spread probes is not asked once per message (RV-202)
 # v3.4.344: a group of messages the server refuses to send is fetched one by one: only the refused one waits for the next check, new mail
@@ -333,6 +334,7 @@ class _Counts:
     expunged: int = 0
     uploaded: int = 0
     failed: list[str] = field(default_factory=list)
+    retried: set[int] = field(default_factory=set[int])  # UIDs of failed that are only downloads to try again (the rest of the folder is done)
     note: str | None = None
     new: list[MessageRef] = field(default_factory=list)
     blocked: str | None = None
@@ -569,8 +571,10 @@ def _sync_folder(
     if leftovers:
         _recover(store, index, local, leftovers, counts, view.locations)
     _upload(client, store, index, state, options, view, counts)
-    if not counts.failed and counts.blocked is None and not view.unsettled:  # nothing of the server's left for later (R-09)
-        state.set_checkpoint(local, Checkpoint(info.uid_next, info.highest_modseq if "CONDSTORE" in client.enabled else None))
+    only_downloads_left = len(counts.failed) == len(counts.retried) and len(counts.retried) <= MAXIMUM_WAITING
+    if only_downloads_left and counts.blocked is None and not view.unsettled:  # nothing of the server's left for later but these (R-09)
+        waiting = frozenset(uid for uid in counts.retried if uid < info.uid_next)  # asked again at every check, never the whole folder for them
+        state.set_checkpoint(local, Checkpoint(info.uid_next, info.highest_modseq if "CONDSTORE" in client.enabled else None, waiting))
 
 
 GROUP: int = 500  # UIDs per command when the marks or sizes of single messages are asked
@@ -597,6 +601,7 @@ def _read_server(client: ImapClient, state: ImapState, local: tuple[str, ...], i
             changes = FolderChanges((), frozenset()) if info.highest_modseq == checkpoint.modseq else client.uid_changes(checkpoint.modseq)
             gone = changes.vanished or frozenset()
             on_server = {uid: FetchedItem(uid, entry.flags) for uid, entry in mapped.items() if uid not in gone}
+            on_server.update((uid, FetchedItem(uid)) for uid in checkpoint.waiting if uid not in gone and uid not in on_server)  # asked again
             on_server.update((item.uid, item) for item in changes.items)
             told = {item.uid for item in changes.items}
             if len(on_server) != info.exists:  # removals not told, or the state out of step: everything is asked
@@ -826,6 +831,7 @@ def _download(
         size = view.on_server[uid].size
         if size is not None and size > options.maximum_message_bytes:
             counts.failed.append(f"UID {uid}: the message is larger than the limit")
+            counts.retried.add(uid)
         else:
             eligible.append(uid)
     done = 0
@@ -838,9 +844,11 @@ def _download(
             item = fetched.get(uid)
             if uid in refused:
                 counts.failed.append(f"UID {uid}: the server refuses to send this message; it is tried again at the next check")
+                counts.retried.add(uid)
                 continue
             if item is None or item.data is None:
                 counts.failed.append(f"UID {uid}: the server did not send the message; it is tried again at the next check")
+                counts.retried.add(uid)
                 continue
             _store_one(store, index, state, view, uid, item, pool, counts)
 

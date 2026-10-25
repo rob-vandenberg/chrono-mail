@@ -12,11 +12,13 @@ from dataclasses import dataclass, field
 
 from chrono_mail.core import AuthenticationError, ProtocolError
 from chrono_mail.protocols.tls import context_for
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 1.10.278"
+__version__ = "dav.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v1.10.278: read: one item by the multiget first (Kerio answers a GET of an existing contact with 404); not there only on the server's 404, any
 #            other failure raises (D-196); fetch and read share _multiget
 # v1.1.235: make_collection returns the collection as the server lists it (Kerio lists a new calendar at an address of its own) and says so when
@@ -204,7 +206,7 @@ def parse_multistatus(body: bytes) -> list[DavEntry]:
 
 def _status_of(text: str) -> int:
     parts = text.split()
-    return int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    return int(parts[1]) if len(parts) > 1 and digits(parts[1]) else 0
 
 
 def parse_sync(body: bytes) -> tuple[list[DavEntry], str]:

@@ -41,11 +41,13 @@ from chrono_mail.ui.searchfield import SearchField
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.toolbar import view_button
 from chrono_mail.core.words import counted
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 3.5.348"
+__version__ = "calendarview.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.5.348: The question "this occurrence or all" shows plain text (RV-167, without a filter on the whole program)
 # v3.5.346: The computer's named time zone, as the engine uses (today's fixed offset put every event past a daylight-saving change an hour off; RV-15)
 # v3.2.342: This occurrence of an all-day event opens as an all-day event (RV-21)
@@ -279,7 +281,7 @@ class CalendarPage(PimPage):
         self.agenda.entry_activated.connect(self._entry_activated)
         self.grid.canvas.hour_height_changed.connect(self._zoomed)
         height = str(self._settings.value("calendar_hour_height", ""))
-        if height.isdigit():
+        if digits(height):
             self.grid.canvas.set_hour_height(int(height))
         self._apply_view()
 

@@ -17,11 +17,13 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import ParsedMessage
 from chrono_mail.store.atomic import replace_file_atomically
 from chrono_mail.core.jsontext import load_json
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "junkwords.py 3.6.350"
+__version__ = "junkwords.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.2.313: set_verdict: a message's verdict set to junk, good or none at all (Undo puts back what was learned before, B-18)
 # v2.1.308: Initial junk filter words: tokens, learning, scoring, the encrypted file (D-238)
@@ -47,7 +49,7 @@ def fingerprint(raw: bytes) -> str:
 def _words(text: str, prefix: str, into: set[str]) -> None:
     for match in WORD.finditer(text[:MAXIMUM_TEXT_CHARACTERS]):
         word = match.group().casefold()
-        if not word.isdigit():
+        if not digits(word):
             into.add(prefix + word)
         if len(into) >= MAXIMUM_TOKENS_PER_MESSAGE:
             return

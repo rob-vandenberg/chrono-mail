@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from chrono_mail.config import AccountSettings, Action, AppConfig, Condition, Pop3DeletePolicy, Rule, RuleSet, ServerRole, load_rules, save_rules
-from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, FolderRole, MessageFlag
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine import Engine, backup, build_registry, restore
 from chrono_mail.engine.backup import cancel_backup
 from chrono_mail.engine.commands_backup import (
@@ -41,9 +41,12 @@ from chrono_mail.mime import with_extra_headers
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 3.6.350"
+__version__ = "test_engine_restore.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a message that moves during the backup's search is found, never left out; this computer's damaged tags file never
+#           stops the restore; a damaged record of the server or file of an account leaves out
+#           only that account's part
 # v3.6.350: an Outbox message the server took before comes back in Sent, never as a draft (D-262); a folder description the store could
 #           not use leaves its messages out of what was downloaded (RV-196); this computer's damaged rules file is told as such (RV-198); a
 #           restore after the settings were lost adds to the Local Folders kept here, never replaces it (D-251)
@@ -601,7 +604,42 @@ def test_a_message_deleted_while_the_backup_runs_searches_the_mailbox_once(tmp_p
     monkeypatch.setattr(backup, "_walk", counted)
     messages = backup._Messages()  # noqa: SLF001
     assert [backup._find_again(messages, root, store_id) for store_id in gone] == [None] * len(gone)  # noqa: SLF001
-    assert len(walks) == 1
+    assert len(walks) == len(set(walks))  # each folder searched once (since 3.6.351 per folder), never again for each deleted message
+
+
+def test_a_message_that_moves_during_the_search_is_found_never_left_out_as_deleted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The three reviewers of 2026-10-26 (RV-69): a message that moved during the one search, from a folder not searched yet into one
+    already searched, was taken as deleted and left out of the backup, though it still existed."""
+    engine = _computer(tmp_path / "first", messages=2)
+    root = engine.directories.store_directory(LOCAL_ACCOUNT_ID)
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        first, second = [message.ref for message in mailbox.store.list_messages(mailbox.folder("Inbox"))]
+        archive = mailbox.ensure_folder(("Archive",), FolderRole.ARCHIVE)[0].path
+        inbox_directory = mailbox.store._folders[("Inbox",)].directory  # noqa: SLF001
+        archive_directory = mailbox.store._folders[archive].directory  # noqa: SLF001
+    real_stamp, real_walk = backup._stamp, backup._walk  # noqa: SLF001
+    moved: list[bool] = []
+
+    def inbox_last(store_root: Path) -> dict[str, tuple[int, int]]:
+        stamps = real_stamp(store_root)
+        return {name: stamps[name] for name in sorted(stamps, key=lambda name: name == inbox_directory)}
+
+    def moving_during(found: Path) -> Iterator[Path]:
+        if found.name == archive_directory and not moved:  # Archive is searched; then the message moves there from the Inbox
+            listed = list(real_walk(found))
+            with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+                mailbox.move(second, archive)
+            moved.append(True)
+            return iter(listed)
+        return real_walk(found)
+
+    monkeypatch.setattr(backup, "_stamp", inbox_last)
+    monkeypatch.setattr(backup, "_walk", moving_during)
+    messages = backup._Messages()  # noqa: SLF001
+    assert backup._find_again(messages, root, first.store_id) is not None  # noqa: SLF001 - the search that missed the moving one
+    assert moved and second.store_id not in messages.places[root]  # it moved from a folder not searched into one searched
+    found = backup._find_again(messages, root, second.store_id)  # noqa: SLF001
+    assert found is not None and found.exists()
 
 
 def test_a_file_in_a_backup_larger_than_its_limit_is_never_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -973,3 +1011,214 @@ def test_a_restore_after_the_settings_were_lost_adds_to_the_local_folders_kept_h
     _restore(engine, tmp_path / "b.cmz", password)
     assert _mail(engine) == before
     assert not any(path.name.startswith(f"{LOCAL_ACCOUNT_ID}-kept-") for path in (engine.directories.data_directory / "accounts").iterdir())
+
+
+def test_this_computers_damaged_tags_file_never_stops_the_restore(tmp_path: Path) -> None:
+    """The three reviewers of 2026-10-26: this computer's own tags file could not be read; the restore stopped at its end, after the
+    accounts, without the passwords and without a report. It is handled as its rules file: kept as .bad, told, the backup's tags used."""
+    first = _computer(tmp_path / "first")
+    REGISTRY.run(first, "tag.create", {"name": "Later", "colour": "#00FF00"})
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    second = _fresh(tmp_path / "second")
+    second.directories.tags_file.parent.mkdir(parents=True, exist_ok=True)
+    second.directories.tags_file.write_text("not tags", "utf-8")
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert any("This computer's tags could not be read" in note for note in result.notes)
+    assert second.directories.tags_file.with_name("tags.json.bad").read_text("utf-8") == "not tags"
+    assert "Later" in second.directories.tags_file.read_text("utf-8")
+
+
+def test_a_damaged_record_of_the_server_leaves_out_only_that_accounts_mail(tmp_path: Path) -> None:
+    """The three reviewers of 2026-10-26 (RV-65): a damaged imap-state.log in the backup stopped the whole restore part-way. Now that
+    account's messages are left out (the server keeps them, never uploaded as new) and told, and the rest comes back."""
+    def imap_computer(root: Path) -> tuple[Engine, str]:
+        engine = make_engine(root)
+        added = REGISTRY.run(engine, "account.add", {
+            "display_name": "Anna", "email_address": "anna@example.com", "username": "anna", "password": "letmein", "incoming_host": "imap.example.com",
+            "incoming_port": 993, "incoming_security": "tls", "outgoing_host": "smtp.example.com", "outgoing_port": 587, "outgoing_security": "starttls",
+            "kind": "imap",
+        })
+        return engine, str(getattr(added, "account_id"))  # getattr: the answer of account.add, by name
+
+    first, account = imap_computer(tmp_path / "first")
+    with open_mailbox(first, account) as mailbox:
+        on_server = mailbox.restore_here(("Inbox",), raw_message(subject="On the server", message_id="<s@example.com>", body="x" * 4000), frozenset(), "a" * 32)
+    state = ImapState(first.directories.imap_state_file(account), durable=False)
+    for uid in range(1, 400):  # a state long enough to be stored compressed, so damage is seen
+        state.map(("Inbox",), uid, on_server.store_id if uid == 1 else f"{uid:032x}", frozenset())
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    _damage(tmp_path / "all.cmz", lambda name: name.endswith("imap-state.log"))
+    second, _ = imap_computer(tmp_path / "second")
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert any("record of the server's messages could not be read" in note for note in result.notes)
+    assert [folder for folder, _, _ in _mail(second, second.config().accounts[0].account.account_id).values()] == ["Recovered/Inbox"]  # kept, never uploaded
+
+
+def test_an_account_that_cannot_come_back_whole_is_left_out_and_the_rest_comes_back(tmp_path: Path) -> None:
+    """The three reviewers of 2026-10-26 (RV-65): one damaged file an account needs (its store's description) stopped every account."""
+    first = _computer(tmp_path / "first")
+    anna = next(settings.account.account_id for settings in first.config().accounts if settings.account.email_address == "anna@example.com")
+    with open_mailbox(first, anna) as mailbox:
+        mailbox.deliver(mailbox.folder("Inbox"), raw_message(subject="Anna's", message_id="<anna@example.com>"), frozenset())
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    _damage(tmp_path / "all.cmz", lambda name: name == f"data/accounts/{anna}/store/store.json")
+    second = make_engine(tmp_path / "second")
+    REGISTRY.run(second, KEY_ENSURE.id, {})
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert any("could not come back" in note for note in result.notes) and anna not in result.made
+    assert len(_mail(second)) == 3  # Local Folders came back
+
+
+def test_local_folders_that_cannot_come_back_whole_still_stops_the_restore(tmp_path: Path) -> None:
+    """The review of 3.6.351: with only Local Folders left out, a POP3 account keeping its mail there kept its whole download list, which
+    named messages that never came back ("delete from the server when deleted here" would delete them). Local Folders still stops it."""
+    first = _computer(tmp_path / "first")
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    _damage(tmp_path / "all.cmz", lambda name: name == f"data/accounts/{LOCAL_ACCOUNT_ID}/store/store.json")
+    second = make_engine(tmp_path / "second")
+    REGISTRY.run(second, KEY_ENSURE.id, {})
+    with pytest.raises(ChronoMailError):
+        _restore(second, tmp_path / "all.cmz", "")
+    assert second.config().accounts == ()
+
+
+def test_a_damaged_record_of_the_server_still_brings_back_the_outbox_and_scheduled(tmp_path: Path) -> None:
+    """The review of 3.6.351: a damaged imap-state.log left out the account's scheduled messages too, which exist only here, and a message
+    written offline in a server folder (never on the server) was lost: those come back in Recovered, on this computer only."""
+    def imap_computer(root: Path) -> tuple[Engine, str]:
+        engine = make_engine(root)
+        added = REGISTRY.run(engine, "account.add", {
+            "display_name": "Anna", "email_address": "anna@example.com", "username": "anna", "password": "letmein", "incoming_host": "imap.example.com",
+            "incoming_port": 993, "incoming_security": "tls", "outgoing_host": "smtp.example.com", "outgoing_port": 587, "outgoing_security": "starttls",
+            "kind": "imap",
+        })
+        return engine, str(getattr(added, "account_id"))  # getattr: the answer of account.add, by name
+
+    first, account = imap_computer(tmp_path / "first")
+    with open_mailbox(first, account) as mailbox:
+        on_server = mailbox.restore_here(("Inbox",), raw_message(subject="On the server", message_id="<s@example.com>", body="x" * 4000), frozenset(), "a" * 32)
+        raw = with_extra_headers(raw_message(subject="Friday", message_id="<friday@example.com>"), {
+            "X-Chrono-Mail-Kind": "scheduled", "X-Chrono-Mail-Send-At": str(int(first.clock()) + 3 * 86_400),
+        })
+        mailbox.ensure_folder(("Scheduled",))
+        mailbox.restore_here(("Scheduled",), raw, frozenset(), "b" * 32)
+        mailbox.ensure_folder(("Recovered", "Old"))
+        mailbox.restore_here(("Recovered", "Old"), raw_message(subject="Recovered before", message_id="<old@example.com>"), frozenset(), "c" * 32)
+    state = ImapState(first.directories.imap_state_file(account), durable=False)
+    for uid in range(1, 400):
+        state.map(("Inbox",), uid, on_server.store_id if uid == 1 else f"{uid:032x}", frozenset())
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    _damage(tmp_path / "all.cmz", lambda name: name.endswith("imap-state.log"))
+    second, _ = imap_computer(tmp_path / "second")
+    result = _restore(second, tmp_path / "all.cmz", "")
+    kept = sorted(folder for folder, _, _ in _mail(second, second.config().accounts[0].account.account_id).values())
+    assert result.messages == 3 and kept == ["Recovered/Inbox", "Recovered/Old", "Scheduled"]  # never lost: kept in Recovered, never nested
+
+
+
+def test_a_damaged_record_of_the_servers_items_still_brings_back_the_calendars_on_no_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.351: a damaged dav-state.json left out every calendar, contact and task of the account, also those on no server,
+    which exist only in the backup and here."""
+    engine = _computer(tmp_path / "first")
+    _backup(engine, tmp_path / "all.cmz", protected=False)
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:  # the appointment of this computer is gone; the restore fills it in again
+        collection = store.collections(CollectionKind.EVENTS)[0].collection_id
+        for item_id in store.item_ids(collection):
+            store.delete(collection, item_id)
+    assert _items(engine) == []
+
+    def damaged(*_: object) -> dict[str, set[str]]:
+        raise restore.DamagedEntry("pim/dav-state.json")
+
+    monkeypatch.setattr(restore, "_linked_items", damaged)
+    _restore(engine, tmp_path / "all.cmz", "")
+    assert len(_items(engine)) == 1
+
+
+def test_a_deleted_message_searches_only_a_folder_that_changed_and_once_per_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reviews of 3.6.351: with mail arriving during a large backup, every deleted message searched the whole mailbox again (RV-69).
+    Only a folder that changed since its last search is searched again, once per change, never once per deleted message."""
+    engine = _computer(tmp_path / "first", messages=4)
+    root = engine.directories.store_directory(LOCAL_ACCOUNT_ID)
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        inbox = mailbox.folder("Inbox")
+        gone = [message.ref.store_id for message in mailbox.store.list_messages(inbox)]
+        for store_id in gone:
+            mailbox.delete(mailbox.reference(inbox, store_id), permanent=True)
+    real_walk = backup._walk  # noqa: SLF001
+    walks: list[Path] = []
+
+    def counted(found: Path) -> Iterator[Path]:
+        walks.append(found)
+        return real_walk(found)
+
+    monkeypatch.setattr(backup, "_walk", counted)
+    messages = backup._Messages()  # noqa: SLF001
+    assert backup._find_again(messages, root, gone[0]) is None  # noqa: SLF001 - the first search, of every folder
+    first_round = len(walks)
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:  # one change: mail arrives in the Inbox
+        mailbox.deliver(inbox, raw_message(subject="New", message_id="<new-once@example.com>"), frozenset())
+    assert [backup._find_again(messages, root, store_id) for store_id in gone[1:]] == [None] * 3  # noqa: SLF001
+    again = walks[first_round:]
+    assert len(again) == 1 and len(set(walks[:first_round])) == first_round  # only the Inbox, once
+
+
+
+def test_messages_deleted_after_the_search_never_search_the_mailbox_each(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.351: a folder searched again kept the entries of its messages that were gone, so each later deleted message found
+    a stale entry with nothing changed and searched every folder again (RV-69)."""
+    engine = _computer(tmp_path / "first", messages=5)
+    root = engine.directories.store_directory(LOCAL_ACCOUNT_ID)
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        inbox = mailbox.folder("Inbox")
+        listed = [message.ref.store_id for message in mailbox.store.list_messages(inbox)]
+    real_walk = backup._walk  # noqa: SLF001
+    walks: list[Path] = []
+
+    def counted(found: Path) -> Iterator[Path]:
+        walks.append(found)
+        return real_walk(found)
+
+    monkeypatch.setattr(backup, "_walk", counted)
+    messages = backup._Messages()  # noqa: SLF001
+    assert backup._find_again(messages, root, "f" * 32) is None  # noqa: SLF001 - a first miss: every folder searched, all entries known
+    first_round = len(walks)
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:  # then the person empties part of the Inbox (deleted for good)
+        for store_id in listed:
+            mailbox.delete(mailbox.reference(inbox, store_id), permanent=True)
+    assert [backup._find_again(messages, root, store_id) for store_id in listed] == [None] * len(listed)  # noqa: SLF001
+    assert len(walks) - first_round == 1  # the Inbox once, never every folder for each
+
+
+def test_a_message_renamed_again_right_after_it_was_found_is_still_backed_up(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.351: a mark set during or right after the search renamed the file again before it was read; it was taken as
+    deleted and left out of the backup."""
+    engine = _computer(tmp_path / "first", messages=1)
+    root = engine.directories.store_directory(LOCAL_ACCOUNT_ID)
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        (message,) = mailbox.store.list_messages(mailbox.folder("Inbox"))
+    (now,) = [path for path in (root / "folders").rglob("*") if path.is_file() and path.parent.name in ("cur", "new") and message.ref.store_id in path.name]
+    listed_at = now.with_name(f"{message.ref.store_id}!2,")  # where the listing saw it, before a mark renamed it
+    found_at = now.with_name(f"{message.ref.store_id}!2,F")  # where the search found it a moment before a mark renamed it again
+    real_find = backup._find_again  # noqa: SLF001
+    answers: list[Path] = [found_at]
+
+    def found_then_renamed(messages: backup._Messages, store_root: Path, store_id: str) -> Path | None:  # noqa: SLF001
+        return answers.pop(0) if answers else real_find(messages, store_root, store_id)
+
+    monkeypatch.setattr(backup, "_find_again", found_then_renamed)
+    written: dict[str, bytes] = {}
+
+    class Archive:
+        def writestr(self, zinfo_or_arcname: str, data: bytes) -> None:
+            written[zinfo_or_arcname] = data
+
+        def setpassword(self, pwd: bytes) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    item = backup._File(listed_at, backup.DOING_MESSAGES, True, root)  # noqa: SLF001
+    assert backup._add_file(engine, Archive(), item, None, backup._Messages(), [], [])  # noqa: SLF001
+    assert len(written) == 1

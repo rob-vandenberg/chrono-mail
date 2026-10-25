@@ -4,7 +4,7 @@ from dataclasses import replace
 import pytest
 
 from chrono_mail.pim.contact import (
-    Address, Contact, GroupForm, Labeled, PartialDate, Photo, bare_uid, contact_to_text, member_address, member_reference, member_uid, parse_contacts,
+    Address, Contact, GroupForm, Labeled, PartialDate, Photo, bare_uid, contact_to_lines, contact_to_text, member_address, member_reference, member_uid, parse_contacts,
 )
 from chrono_mail.pim.vcard import (
     MAXIMUM_LINES_PER_CARD,
@@ -21,9 +21,10 @@ from chrono_mail.pim.vcard import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_contact.py 3.6.350"
+__version__ = "test_pim_contact.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a vCard 4 phone number stays a tel: URI
 # v3.6.350: a vCard 2.1's CHARSET and 8BIT encoding never reach the 3.0 card written back (RV-190)
 # v3.2.342: a birthday keeps Apple's mark and an unreadable one is kept (RV-145); a quoted-printable line is written back whole (RV-144)
 # v1.10.277: Contact groups in both forms, written back in their own form; a card keeps its own version (R-39)
@@ -230,3 +231,13 @@ def test_a_quoted_printable_line_of_an_old_card_is_written_back_whole() -> None:
     labels = [line for line in again.extra if line.name == "LABEL"]
     assert len(labels) == 1 and unescape(labels[0].value) == "Main Street 1\nUtrecht" and again.note == "First line\nSecond line"
     assert not any(line.name.startswith("UTRECHT") for line in again.extra)
+
+
+def test_a_vcard_4_phone_number_stays_a_tel_uri() -> None:
+    """The three reviewers of 2026-10-26 (RV-20, RV-145): TEL;VALUE=uri:tel:+31... was written back as VALUE=uri:+31..., which is not a
+    URI: strict servers and programs refuse the card or drop the number."""
+    card = "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:x\r\nFN:Ann\r\nTEL;VALUE=uri;TYPE=cell:tel:+31-6-1234\r\nEND:VCARD\r\n"
+    (contact,) = parse_contacts(card)
+    assert contact.phones[0].value == "+31-6-1234"  # shown without the scheme
+    written = [line for line in contact_to_lines(contact, "4.0") if line.name == "TEL"]
+    assert written[0].value == "tel:+31-6-1234" and any(key == "VALUE" for key, _ in written[0].params)

@@ -11,9 +11,10 @@ from chrono_mail.ui.composer import ComposeWindow, parse_recipients, signature_b
 from tests.ui.world import World, add_window, gone, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_composer.py 3.1.341"
+__version__ = "test_ui_composer.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a send that failed after its copy may be stored never says nothing was stored
 # v3.1.341: a failed send closes the window: the message waits in the Outbox, no draft beside it (RV-155)
 # v2.2.314: a failed send says it is sent again with the next Send and Receive (D-028)
 # v1.9.267: a failed automatic save in red on the bottom line without a box; a failed Save with the box
@@ -406,3 +407,25 @@ def test_a_failed_save_asked_for_shows_the_box_too_and_the_red_goes_with_the_nex
     assert window.status.styleSheet() == ""
     window._finished = True  # noqa: SLF001
     window.close()
+
+
+def test_a_send_that_failed_after_its_copy_may_be_stored_never_says_nothing_was_stored(world: World, qtbot: QtBot) -> None:
+    """The three reviewers of 2026-10-26 (RV-155): any error said "Nothing was stored or sent. You can correct this and try again", also
+    one that came after the copy was stored or the server took it; a second Send sent it twice."""
+    from chrono_mail.core import ConfigurationError, StorageError
+
+    window = new_composer(world, qtbot)
+    window._failed(StorageError("The index could not be read"))  # noqa: SLF001
+    window._failed(ConfigurationError("No password is stored for this account"))  # noqa: SLF001
+    shown = [(title, text) for kind, title, text in world.dialogs.shown if kind == "warning"]
+    assert shown[0][0] == "The message may not have been sent" and "Look in the Outbox and in Sent" in shown[0][1]
+    assert shown[1][0] == "The message was not sent" and "Nothing was stored or sent" in shown[1][1]
+    from chrono_mail.engine.mailbox import SentAlready
+
+    window._failed(SentAlready("The message this replaces was sent already: nothing was done"))  # noqa: SLF001 - never "try again"
+    assert [title for kind, title, _ in world.dialogs.shown if kind == "warning"][2] == "The message was not sent again"
+    from chrono_mail.engine.mailbox import GoneMeanwhile
+
+    window._failed(GoneMeanwhile("The message this replaces is no longer in the Outbox: it was sent meanwhile; nothing was done"))  # noqa: SLF001
+    last = [(title, text) for kind, title, text in world.dialogs.shown if kind == "warning"][3]
+    assert last[0] == "The message was not sent" and "try again" not in last[1]

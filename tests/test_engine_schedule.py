@@ -20,9 +20,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_schedule.py 2.4.327"
+__version__ = "test_engine_schedule.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a scheduled reply whose send fails marks its original when the Outbox sends it
 # v2.4.327: a one-off scheduled message can be paused and resumed; a restore pauses the overdue ones, one-off and repeating (D-245)
 # v1.9.276: The send times filled in after the upgrade from format 8 are gone: every older index is rebuilt (D-226)
 # v1.1.207: mail.edit-scheduled: in place, the same id, time and repeat kept or changed (D-177)
@@ -139,6 +140,24 @@ def test_scheduling_a_draft_replaces_it_and_a_reply_is_marked_when_sent(setup: S
     assert rows(setup, "Drafts") == []
     at(setup, 3 * 3600)
     call(setup.engine, "mail.send-due")
+    assert "replied" in next(row for row in rows(setup, "Inbox") if row.message_id == original.message_id).flags
+
+
+def test_a_scheduled_reply_whose_send_fails_marks_its_original_when_the_outbox_sends_it(setup: Setup) -> None:
+    """The three reviewers of 2026-10-26 (RV-121 elsewhere): a scheduled reply that failed at its time waited in the Outbox without the
+    message it answers, so the Outbox's send never marked the original as replied."""
+    from chrono_mail.config import ServerRole
+
+    at(setup, 0)
+    call(setup.engine, "mail.fetch", account=setup.account_id)
+    original = rows(setup, "Inbox")[0]
+    schedule(setup, source_folder="Inbox", source_message=original.message_id, mark_replied=True)
+    setup.engine.passwords.set(setup.account_id, ServerRole.OUTGOING, "wrong")
+    at(setup, 3 * 3600)
+    call(setup.engine, "mail.send-due")
+    assert [row.subject for row in rows(setup, "Outbox")] == ["Later"]
+    setup.engine.passwords.set(setup.account_id, ServerRole.OUTGOING, "secret")
+    assert call(setup.engine, "mail.send-outbox").sent == 1
     assert "replied" in next(row for row in rows(setup, "Inbox") if row.message_id == original.message_id).flags
 
 

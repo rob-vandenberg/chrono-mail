@@ -10,11 +10,13 @@ from typing import Any  # json.load returns untyped data; every value is checked
 from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
 from chrono_mail.core.jsontext import load_json
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "rules.py 3.6.350"
+__version__ = "rules.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v0.5.136: Tags: the condition tag is / is not, the actions add_tag and remove_tag
 # v0.0.49: Rules without conditions for one account
@@ -63,7 +65,7 @@ class Condition:
             raise ConfigurationError("A header condition needs a header name such as List-Id")
         if self.field != "header" and self.name:
             raise ConfigurationError("Only a header condition has a name")
-        if self.field == "size" and not (self.value.isdigit() and 0 < len(self.value) <= 9):
+        if self.field == "size" and not (digits(self.value) and 0 < len(self.value) <= 9):
             raise ConfigurationError("A size condition needs a number of kilobytes")
         if self.field == "attachment" and self.value not in ("yes", "no"):
             raise ConfigurationError("An attachment condition needs yes or no")

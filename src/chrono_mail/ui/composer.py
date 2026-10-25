@@ -27,9 +27,11 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.pim.times import moment_at
+from chrono_mail.engine.mailbox import GoneMeanwhile, SentAlready
+from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.commands_mail import ComposeResult
 from chrono_mail.engine.commands_accounts import AccountSummary
-from chrono_mail.core import ChronoMailError
+from chrono_mail.core import ChronoMailError, ConfigurationError, MessageFormatError
 from chrono_mail.engine.commands_drafts import DRAFT_OPEN, DRAFT_SAVE, DraftKind, DraftOpenParameters, DraftOpenResult, DraftSaveParameters, DraftSaveResult
 from chrono_mail.engine.commands_mail import MAIL_SEND, MESSAGE_DELETE, DeleteParameters, SendParameters, SendResult
 from chrono_mail.engine.commands_schedule import MAIL_EDIT_SCHEDULED, ScheduledEdit, ScheduledInfo
@@ -44,9 +46,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 3.6.349"
+__version__ = "composer.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a send that failed after its copy may have been stored says to look in the Outbox and Sent first, never "nothing was stored"
 # v3.6.349: the Schedule window opens on the message's time without the platform's conversion (Windows refuses past 3000, RV-204)
 # v3.1.341: a send that failed hands the message to the Outbox and closes the window (Send again sent a second copy, RV-155)
 # v2.2.314: Send follows Settings > General: a delay with a notice in the main window (waiting), or the Outbox until the next refresh; a message
@@ -730,7 +733,14 @@ class ComposeWindow(QMainWindow):
 
     def _failed(self, error: ChronoMailError) -> None:
         self._set_sending(False)
-        QMessageBox.warning(self, "The message was not sent", f"{error}\n\nNothing was stored or sent. You can correct this and try again.")
+        if isinstance(error, SentAlready):  # what it replaces was sent meanwhile: nothing more is sent
+            QMessageBox.warning(self, "The message was not sent again", str(error))
+        elif isinstance(error, GoneMeanwhile):  # what it replaces left the Outbox meanwhile: nothing was done, never "try again"
+            QMessageBox.warning(self, "The message was not sent", str(error))
+        elif isinstance(error, (UsageError, ConfigurationError, MessageFormatError)):  # refused before anything was stored (or built)
+            QMessageBox.warning(self, "The message was not sent", f"{error}\n\nNothing was stored or sent. You can correct this and try again.")
+        else:  # it may have got further: never invite a second Send without a look
+            QMessageBox.warning(self, "The message may not have been sent", f"{error}\n\nLook in the Outbox and in Sent before you send it again.")
 
     # --- closing ------------------------------------------------------------------------------------
 

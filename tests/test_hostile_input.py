@@ -18,9 +18,11 @@ from tests.test_sync_imap import INBOX, World, mail, world  # noqa: F401 - world
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_hostile_input.py 3.6.349"
+__version__ = "test_hostile_input.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a number from a server is only the digits 0 to 9 (IMAP UID sets, DAV status); a refused message never keeps its folder
+#           from a checkpoint; the --json output never carries a C1 control character
 # v3.6.349: a server that refuses to send every message is not asked once per message (RV-202); the command line's error lines print
 #           server text safely too (RV-203)
 # v3.4.344: Initial: hostile input never stops the program (the code review's batch 4: RV-34, RV-35, RV-36, RV-118, RV-49, RV-51, RV-110,
@@ -158,3 +160,74 @@ def test_the_command_line_error_lines_never_print_escape_codes(tmp_path: Path) -
     main(["account.list"], engine_factory=made_up_lines, stdout=io.StringIO(), stderr=err, program_running=lambda: False)
     assert err.getvalue().count("\n") == 1 and "\u202e" not in err.getvalue()  # one line: a server cannot make up a line of its own
 
+
+
+def test_a_number_from_a_server_is_only_the_digits_0_to_9() -> None:
+    """The three reviewers of 2026-10-26 (RV-35 elsewhere): "²" passed isdigit() and int() refused it with a ValueError, which got past
+    the handlers of a server's errors: one VANISHED or COPYUID set stopped every check of the account, a DAV status the calendar sync."""
+    from chrono_mail.core.errors import ProtocolError
+    from chrono_mail.core.words import digits
+    from chrono_mail.protocols import dav
+    from chrono_mail.protocols.imap import uid_set
+
+    assert digits("123") and not digits("²") and not digits("1²") and not digits("") and not digits("٣")
+    for text in ("1:²", "²", "4,²:6"):
+        with pytest.raises(ProtocolError):
+            uid_set(text)
+    assert dav._status_of("HTTP/1.1 ²00 OK") == 0 and dav._status_of("HTTP/1.1 207 Multi-Status") == 207  # noqa: SLF001
+
+
+def test_a_message_the_server_refuses_never_keeps_its_folder_from_a_checkpoint(world: World) -> None:
+    """The three reviewers of 2026-10-26 (RV-49): one message the server always refused kept its folder from ever getting a checkpoint, so
+    every check asked the server for the marks and sizes of the whole folder. The checkpoint keeps it, and asks only it again."""
+    from chrono_mail.sync.imap_state import ImapState
+
+    world.server.add("INBOX", mail(1))
+    refused = world.server.add("INBOX", mail(2))
+    world.server.refuse_fetch = {refused}
+    world.sync()
+    checkpoint = world.state.checkpoints.get(INBOX)
+    assert checkpoint is not None and checkpoint.waiting == frozenset({refused})
+    again = ImapState(world.path / "state.log", durable=False)  # read back from the file
+    assert again.checkpoints[INBOX].waiting == frozenset({refused})
+    world.server.refuse_fetch = set()
+    assert world.sync().downloaded == 1 and sorted(world.subjects(INBOX)) == ["Message 1", "Message 2"]
+    after = world.state.checkpoints.get(INBOX)
+    assert after is not None and after.waiting == frozenset()
+
+
+def test_the_json_output_never_prints_c1_control_characters(tmp_path: Path) -> None:
+    """The three reviewers of 2026-10-26 (RV-129): the results were written with ensure_ascii=False, which escapes only U+0000 to U+001F,
+    so an 8-bit CSI (U+009B) in a folder name reached the terminal raw with --json. It is written as \\u009b; a program reading the JSON
+    gets the same text."""
+    import io
+    import json
+
+    from chrono_mail.cli.main import main
+    from chrono_mail.engine import Engine
+    from tests.enginefactory import make_engine
+
+    engine = make_engine(tmp_path)
+    main(["local.enable"], engine_factory=lambda directories: engine, stdout=io.StringIO(), stderr=io.StringIO(), program_running=lambda: False)
+    main(["folder.create", "--account", "0" * 31 + "1", "--folder", "Offers\x9b2J"], engine_factory=lambda directories: engine,
+         stdout=io.StringIO(), stderr=io.StringIO(), program_running=lambda: False)
+
+    def same(directories: object) -> Engine:
+        return engine
+
+    out = io.StringIO()
+    main(["--json", "folder.list", "--account", "0" * 31 + "1"], engine_factory=same, stdout=out, stderr=io.StringIO(), program_running=lambda: False)
+    assert "\x9b" not in out.getvalue() and "Offers\x9b2J" in json.dumps(json.loads(out.getvalue()), ensure_ascii=False)
+
+
+def test_a_number_given_on_the_command_line_has_one_minus_at_most(tmp_path: Path) -> None:
+    """The review of 3.6.351: "--5" passed the check and int() refused it with a ValueError instead of a plain refusal."""
+    from chrono_mail.engine.registry import UsageError
+
+    from tests.test_engine_registry import run
+
+    with pytest.raises(UsageError, match="whole number"):
+        run(tmp_path, {"name": "x", "count": "--5"})
+    assert run(tmp_path, {"name": "x", "count": "-5"}).count == -5
+    with pytest.raises(UsageError, match="whole number"):
+        run(tmp_path, {"name": "x", "count": "9" * 5000})  # int() refuses over 4,300 digits with a ValueError

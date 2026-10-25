@@ -19,9 +19,11 @@ from tests.test_engine_schedule import at, iso, rows, schedule
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_send_once.py 3.6.350"
+__version__ = "test_engine_send_once.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a send the server took is never told as failed when the list cannot follow (also a repeating one, never sent again, and in
+#           Send and Receive); a replacement that cannot be removed again is a storage error
 # v3.6.350: on a full disk (the move to Sent and the details file both fail) a message the server took is never sent again, also after a
 #           restart (the letter in its file name), and in the run when not even that could be written; a message leaves Sent only without
 #           the marks left on it there (moved or copied out it is ordinary; when they cannot be cleared it stays); a delayed send whose
@@ -382,7 +384,7 @@ def test_a_draft_left_beside_a_sent_outbox_message_is_told(setup: Setup, monkeyp
 
     monkeypatch.setattr(Mailbox, "take_out_of_outbox", take_out_sent)
     monkeypatch.setattr(Mailbox, "delete", cannot_delete_drafts)
-    with pytest.raises(UsageError, match="look in Drafts"):
+    with pytest.raises(StorageError, match="look in Drafts"):  # since 3.6.351 never a refusal: something was stored (the window says to look)
         call(setup.engine, "draft.save", account=setup.account_id, to="you@example.com", subject="Old", body="x", replace_folder="Outbox", replace_message=waiting.message_id)
 
 
@@ -859,3 +861,68 @@ def test_a_draft_of_a_sent_message_in_trash_is_refused_with_where_it_can_go(setu
     trashed = call(setup.engine, "message.move", account=setup.account_id, folder="Outbox", message=message, target="Trash")
     with pytest.raises(UsageError, match="only to Sent, or back to the Outbox"):
         call(setup.engine, "draft.save", account=setup.account_id, to="you@example.com", subject="Once", body="x", replace_folder="Trash", replace_message=trashed.message_id)
+
+
+def test_a_send_the_server_took_is_never_told_as_failed_when_the_list_cannot_follow(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The three reviewers of 2026-10-26 (RV-155): the server took the message, then the index refused a read (a raw database error); the
+    send came back as an error, the window said "Nothing was stored or sent", and a second Send sent it twice."""
+    import sqlite3
+
+    def locked(*_: object, **__: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Mailbox, "report_added", locked)
+    result = call(setup.engine, "mail.send", account=setup.account_id, to="you@example.com", subject="Once", body="x")
+    assert result.sent and "Repair the search index" in result.warning and len(setup.smtp.received) == 1
+
+
+def test_a_repeating_send_the_server_took_is_never_sent_again_when_the_list_cannot_follow(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The three reviewers of 2026-10-26 (RV-123): an error after a repeating send the server took counted it as failed, and the series
+    sent the same occurrence again at the next minute."""
+    import sqlite3
+
+    at(setup, 0)
+    repeating(setup)
+    at(setup, 2 * 3600)
+
+    def locked(*_: object, **__: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Mailbox, "report_added", locked)
+    assert call(setup.engine, "mail.send-due").sent == 1
+    monkeypatch.undo()
+    at(setup, 2 * 3600 + 60)
+    assert call(setup.engine, "mail.send-due").sent == 0 and len(setup.smtp.received) == 1
+
+
+def test_send_and_receive_goes_on_when_the_list_cannot_follow_a_sent_message(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.351: in Send and Receive, an error after the server took a message (the list following it to Sent) stopped the
+    rest of the Outbox and was told as a failed send."""
+    import sqlite3
+
+    for subject in ("One", "Two"):
+        call(setup.engine, "mail.send", account=setup.account_id, to="you@example.com", subject=subject, body="x", hold=True)
+
+    def locked(*_: object, **__: object) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(Mailbox, "report_moved", locked)
+    result = call(setup.engine, "mail.send-outbox")
+    assert result.sent == 2 and len(setup.smtp.received) == 2 and all("it was sent" in line for line in result.failed)
+
+
+def test_a_replacement_that_cannot_be_removed_again_is_a_storage_error(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.351: when removing a new version failed, the error kept its kind (a refusal), so the window said "Nothing was
+    stored or sent" while the new version waited in the Outbox beside the one already sent."""
+    from chrono_mail.core import StorageError as Storage
+    from chrono_mail.engine.mailbox import SentAlready, open_mailbox
+
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        stored = mailbox.deliver(("Outbox",), b"Subject: x\r\n\r\nx\r\n", frozenset())
+
+        def stuck(self: Mailbox, ref: MessageRef, permanent: bool = False) -> str:
+            raise Storage("Permission denied")
+
+        monkeypatch.setattr(Mailbox, "delete", stuck)
+        with pytest.raises(Storage, match="may not have been removed"):
+            mailbox.drop_replacement(stored, SentAlready("The message this replaces was sent already"))

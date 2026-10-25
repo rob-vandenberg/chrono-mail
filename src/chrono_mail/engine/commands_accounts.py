@@ -46,11 +46,13 @@ from chrono_mail.protocols.tls import context_for, inspect_certificate, valid_fi
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 3.6.350"
+__version__ = "commands_accounts.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.6.350: key.status names the key of Local Folders kept here when the settings name none (kept), so the start asks for it;
 #           key.start-without-kept-mail sets that mail aside (never deleted) when its key is gone for good, so a new key can be made
 # v3.6.349: a recovery code or file brings back the key of Local Folders kept on this computer when the settings are gone (RV-177)
@@ -137,7 +139,7 @@ def _pins(values: tuple[str, ...]) -> tuple[str, ...]:
         (checked,) = _fingerprints((fingerprint if separator else value,))
         if separator:
             host, _, port = server.rpartition(":")
-            if not host.strip() or not port.isdigit() or not 1 <= int(port) <= 65535:
+            if not host.strip() or not digits(port) or not 1 <= int(port) <= 65535:
                 raise UsageError("An accepted certificate for one server is written host:port=fingerprint")
             checked = server_pin(host, int(port), checked)
         if checked not in found:

@@ -3,11 +3,13 @@ from dataclasses import dataclass
 from enum import Enum
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, Account, AccountKind, CollectionLook, ConfigurationError, PaletteColour, is_colour, palette_problem
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 2.1.308"
+__version__ = "model.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v2.1.308: junk_filter: new mail of the account goes through the junk filter (D-238)
 # v1.1.221: calendar_palette and calendar_own_colour_name: the account's appointment colours (D-191); collection_looks: the name and colour
 #           of its server's collections as Chrono Mail holds them (D-192)
@@ -41,7 +43,7 @@ def valid_pin(text: str) -> bool:
         return len(text) == 64 and all(character in _HEXADECIMAL for character in text)
     server, _, fingerprint = text.rpartition("=")
     host, _, port = server.rpartition(":")
-    return bool(host) and port.isdigit() and 1 <= int(port) <= 65535 and valid_pin(fingerprint) and "=" not in fingerprint and text == server_pin(host, int(port), fingerprint)
+    return bool(host) and digits(port) and 1 <= int(port) <= 65535 and valid_pin(fingerprint) and "=" not in fingerprint and text == server_pin(host, int(port), fingerprint)
 
 
 def fingerprints_for(pins: tuple[str, ...], host: str, port: int) -> frozenset[str]:

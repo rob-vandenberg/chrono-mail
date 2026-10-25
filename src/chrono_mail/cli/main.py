@@ -21,12 +21,13 @@ from chrono_mail.core import (
 from chrono_mail.crypto import KeyringKeyStore
 from chrono_mail.engine import Command, CommandRegistry, Engine, ParameterSpec, UsageError, build_registry, to_data
 from chrono_mail.engine.changes import RebuildStep
-from chrono_mail.cli.render import printable, render_text
+from chrono_mail.cli.render import json_safe, printable, render_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "main.py 3.6.349"
+__version__ = "main.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: the --json output never carries a raw C1 control character from mail (RV-129)
 # v3.6.349: the progress and error lines print text from servers safely, as the results do (RV-203)
 # v2.0.281: a rebuild of an index shows how far it is (how many of how many)
 # v0.5.144: A command is refused while the Chrono Mail program runs (program_running; the tests give their own)
@@ -161,12 +162,12 @@ def main(
     except ChronoMailError as error:
         code = exit_code(error)
         if wants_json:
-            out.write(json.dumps({"error": str(error), "exit_code": code}) + "\n")
+            out.write(json_safe(json.dumps({"error": str(error), "exit_code": code})) + "\n")
         else:
             err.write(f"Error: {printable(str(error))}\n")  # may hold a server's reply (RV-203)
         return code
     if wants_json:
-        out.write(json.dumps(to_data(result), indent=2, ensure_ascii=False) + "\n")
+        out.write(json_safe(json.dumps(to_data(result), indent=2, ensure_ascii=False)) + "\n")  # never a raw C1 control character (RV-129)
     else:
         out.write(render_text(result) + "\n")
     return EXIT_OK

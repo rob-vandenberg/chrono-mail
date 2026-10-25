@@ -23,9 +23,12 @@ from chrono_mail.store.layout import parse_name
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "backup.py 3.6.350"
+__version__ = "backup.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a message that moved while the backup ran is found: each folder that changed since its last search is searched again (a
+#           few calls per folder tell it; what it held is searched afresh), never the whole mailbox for each deleted message (RV-69); a
+#           file renamed again during the search is looked for once more
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v3.3.343: what was downloaded (POP3) is taken before the messages are listed, so it never names a message the backup lacks (RV-61); a
 #           message deleted while the backup runs no longer searches the whole mailbox again (RV-69)
@@ -149,6 +152,8 @@ class _Messages:
     the backup runs is backed up exactly once."""
 
     places: dict[Path, dict[str, Path]] = field(default_factory=dict)
+    stamps: dict[Path, dict[str, tuple[int, int]]] = field(default_factory=dict)  # per folder: when it last changed, at its last search
+    full: dict[Path, dict[str, tuple[int, int]]] = field(default_factory=dict)  # the folders' state at the last search of every folder
     done: dict[Path, set[str]] = field(default_factory=dict)
 
 
@@ -374,8 +379,13 @@ def _add_file(engine: Engine, archive: _Archive, item: _File, key: DataKey | Non
         if store_id in done:
             return False
     data: bytes | None = item.data if item.data is not None else _read(path)
-    if data is None and item.store_root is not None and store_id is not None:
-        path = _find_again(messages, item.store_root, store_id) or path
+    for _ in range(3):  # a file renamed again during or right after the search (a mark set meanwhile) is looked for once more
+        if data is not None or item.store_root is None or store_id is None:
+            break
+        again = _find_again(messages, item.store_root, store_id)
+        if again is None:
+            break  # in no folder: deleted while the backup ran
+        path = again
         data = _read(path)
     if data is None:
         return False  # deleted while the backup ran
@@ -402,21 +412,57 @@ def _read(path: Path) -> bytes | None:
 
 
 def _find_again(messages: _Messages, store_root: Path, store_id: str) -> Path | None:
-    """Where a message is now that it is no longer where it was listed (moved, or a mark changed its name). The mailbox is searched again
-    only when the message moved since the last search: one that search did not find was deleted (searching again for each deleted
-    message could make a backup of a large mailbox hang, RV-69)."""
-    places = messages.places.get(store_root)
-    if places is not None:
-        found = places.get(store_id)
-        if found is None or found.exists():
-            return found
-    places = {}
-    for path in _walk(store_root / "folders"):
-        parsed = parse_name(path.name)
-        if parsed is not None and path.parent.name in ("cur", "new"):
-            places[parsed[0]] = path
-    messages.places[store_root] = places
-    return places.get(store_id)
+    """Where a message is now that it is no longer where it was listed (moved, or a mark changed its name). Each folder is searched again
+    only when it changed since it was last searched (when it last changed is a few calls per folder): a message that moved is in a folder
+    that changed, so it is found, never left out as deleted; one that is in no changed folder was deleted. The searches follow the changes
+    of the folders during the backup, never the number of deleted messages (searching the whole mailbox for each made a large backup seem
+    to hang, RV-69)."""
+    places = messages.places.setdefault(store_root, {})
+    searched = messages.stamps.setdefault(store_root, {})
+    found = places.get(store_id)
+    if found is not None and found.exists():
+        return found
+    now = _stamp(store_root)
+    changed = [folder for folder, stamp in now.items() if searched.get(folder) != stamp]
+    for gone in [folder for folder in searched if folder not in now]:  # a folder deleted meanwhile: its messages are no longer there
+        del searched[gone]
+        changed.append(gone)
+    if not changed and found is not None and messages.full.get(store_root) != now:  # its file went without a change the folders show (a
+        changed = list(now)  # coarse clock): every folder again, once for this state of the folders, never once per message
+        messages.full[store_root] = now
+    folders_root = store_root / "folders"
+    for folder in changed:
+        inside = folders_root / folder
+        for kept_id in [kept_id for kept_id, path in places.items() if path.parent.parent == inside]:  # what it held: searched afresh
+            del places[kept_id]
+        if folder not in now:
+            continue
+        searched[folder] = now[folder]  # taken before the search: a change during it shows at the next miss
+        for path in _walk(inside):
+            parsed = parse_name(path.name)
+            if parsed is not None and path.parent.name in ("cur", "new"):
+                places[parsed[0]] = path
+    found = places.get(store_id)
+    return found if found is not None and found.exists() else None
+
+
+def _stamp(store_root: Path) -> dict[str, tuple[int, int]]:
+    """When each message folder of a store last changed (a file added, removed or renamed in its cur or new): a few calls per folder,
+    never per message."""
+    found: dict[str, tuple[int, int]] = {}
+    try:
+        folders = sorted(path for path in (store_root / "folders").iterdir() if path.is_dir())
+    except OSError:
+        return found
+    for folder in folders:
+        times: list[int] = []
+        for part in ("cur", "new"):
+            try:
+                times.append((folder / part).stat().st_mtime_ns)
+            except OSError:
+                times.append(-1)
+        found[folder.name] = (times[0], times[1])
+    return found
 
 
 def _config_entries(engine: Engine, config: AppConfig, choice: BackupChoice, chosen: list[_Chosen]) -> Iterator[tuple[str, str]]:

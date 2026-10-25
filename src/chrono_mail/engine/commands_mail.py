@@ -10,7 +10,7 @@ from email.utils import getaddresses, parseaddr
 from pathlib import Path
 from typing import Literal
 
-from chrono_mail.pim.times import moment_at
+from chrono_mail.pim.times import local_zone, moment_at
 from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine.commands_accounts import AccountParameters
@@ -23,7 +23,7 @@ from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER, SNOOZE_GR
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.imap_online import waiting_marker
 from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
-from chrono_mail.engine.mailbox import Mailbox, open_mailbox
+from chrono_mail.engine.mailbox import Mailbox, SentAlready, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
@@ -32,11 +32,13 @@ from chrono_mail.mime import REPEAT_HEADER, Address, Attachment, OutgoingMessage
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 3.6.350"
+__version__ = "commands_mail.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError; what follows a send the server took never makes it fail (told_after_send: a warning)
 # v3.6.350: a send that replaces an Outbox message the server took, or one gone meanwhile, is refused (never sent twice); it goes in the
 #           same locked step that stores or sends what replaces it; a message sent whose move to Sent failed is remembered for the run
 #           (never sent again, also on a full disk); a message of Scheduled it replaces goes in that locked step too; a delayed send writes
@@ -425,7 +427,7 @@ def kept_attachments(raw: bytes | None, positions: tuple[str, ...]) -> tuple[Att
     parsed = parse_message(raw)
     kept: list[Attachment] = []
     for text in positions:
-        if not text.isdigit() or int(text) >= len(parsed.attachments):
+        if not digits(text) or int(text) >= len(parsed.attachments):
             raise UsageError("The stored message has no such attachment")
         attachment = parsed.attachments[int(text)]
         if not attachment.inline:
@@ -439,7 +441,7 @@ def _source_attachments(mailbox: Mailbox, parameters: "SendParameters") -> tuple
     if parameters.keep_attachments:
         if not parameters.keep_folder or not parameters.keep_message:
             raise UsageError("Keeping attachments needs the stored message they are in")
-        if any(not position.isdigit() for position in parameters.keep_attachments):
+        if any(not digits(position) for position in parameters.keep_attachments):
             raise UsageError("An attachment position is a whole number, starting at 0")
         stored = mailbox.reference(mailbox.folder(parameters.keep_folder), _check_id(parameters.keep_message))
         kept = kept_attachments(mailbox.store.read(stored, hint=mailbox.hint(stored.store_id)), parameters.keep_attachments)
@@ -594,7 +596,7 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
     with open_mailbox(engine, parameters.account) as mailbox:
         replaced = _replaced(mailbox, parameters)
         if replaced is not None and mailbox.sent_already(replaced):  # the server took it: what replaces it would be sent a second time
-            raise UsageError("The message this replaces was sent already; nothing was sent")
+            raise SentAlready("The message this replaces was sent already; nothing was sent")  # never "try again" in the window
         return _send(engine, mailbox, parameters, replaced)
 
 
@@ -633,9 +635,7 @@ def _send(engine: Engine, mailbox: Mailbox, parameters: SendParameters, replaced
             engine.sent_unfiled.add(outcome.reference.store_id)  # a failed move to Sent: never sent again in this run, also without a mark on the disk
         if not outcome.sent and _replies_to(parameters) is not None:  # sent again later from the Outbox: the original is marked then
             _note_replies_to(mailbox, outcome.reference, _replies_to(parameters))
-    mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
-    if outcome.sent and outcome.reference.folder_path != OUTBOX:  # in Sent (a failed move leaves it in the Outbox, marked as sent)
-        mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
+    told = mailbox.told_after_send(outcome.reference, outcome.sent)  # never raises: a send the server took is never told as failed
     if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
         try:
             source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
@@ -655,7 +655,7 @@ def _send(engine: Engine, mailbox: Mailbox, parameters: SendParameters, replaced
         "/".join(outcome.reference.folder_path),
         tuple(f"{item.address}: {item.code} {item.text}" for item in outcome.refused),
         outcome.error,
-        outcome.warning,
+        "; ".join(text for text in (outcome.warning, told) if text),
     )
 
 
@@ -893,8 +893,12 @@ def _day(text: str | None, name: str, end: bool) -> datetime | None:
         day = date.fromisoformat(text)
     except ValueError:
         raise UsageError(f"{name} must be a date like 2026-05-31") from None
-    moment = datetime.combine(day, time.max if end else time.min)
-    return moment.astimezone()
+    moment = datetime.combine(day, time.max if end else time.min, tzinfo=local_zone())  # the named zone: never the platform's conversion
+    try:  # (Windows refuses one before 1970); a day at the edge of the calendar has no moment in every zone
+        moment.timestamp()
+    except (OverflowError, ValueError, OSError):
+        raise UsageError(f"{name} must be a date between 0002-01-01 and 9998-12-31") from None
+    return moment
 
 
 def _search_filter(parameters: SearchParameters) -> SearchFilter:
@@ -1032,7 +1036,7 @@ def not_heard(engine: Engine, given: tuple[str, ...], places: set[str]) -> dict[
     heard: dict[str, int] = {}
     for item in given:
         mailbox, _, number = item.rpartition("=")
-        if not mailbox or not number.isdigit():
+        if not mailbox or not digits(number):
             raise UsageError(f"'{item}' is not mailbox=number")
         heard[mailbox] = int(number)
     found: dict[str, set[str]] = {}

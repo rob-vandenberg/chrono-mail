@@ -6,7 +6,7 @@ from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import _check_id
 from chrono_mail.engine.commands_schedule import KIND, _due_time, _mark_replied, _notes, _places, _sender, _shown
 from chrono_mail.engine.junkfilter import learn
-from chrono_mail.engine.mailbox import SentAlready, Mailbox, open_mailbox
+from chrono_mail.engine.mailbox import LIST_COULD_NOT_FOLLOW, SentAlready, Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
 from chrono_mail.mime import ParsedMessage, parse_message
@@ -14,9 +14,10 @@ from chrono_mail.store import MessageNotFoundError, Properties, StoredMessage
 from chrono_mail.sync import file_sent_again, send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 3.6.350"
+__version__ = "commands_outbox.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: what follows a send the server took never makes it fail or stops the rest of the Outbox (a warning)
 # v3.6.350: a message the server took is known by any of its marks (the letter written even on a full disk, sent_at, this run's memory): never sent again
 # v3.6.349: a message of the Outbox the server took whose move to Sent failed keeps its "sent" mark, so it is never sent again (RV-178);
 #           such a message is never made a draft (SentAlready, RV-181), and is filed in Sent without a countdown, recipient or password
@@ -137,13 +138,16 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                             # disk (full); noted before the lock goes, so nothing that waits for it can take it for unsent
                 if outcome is not None and outcome.sent:
                     sent += 0 if sent_before else 1
-                    if outcome.reference.folder_path != message.ref.folder_path:  # in Sent now; the marks it carried in the Outbox go (RV-178:
-                        _forget_waiting(mailbox, outcome.reference)  # not before, or the next refresh sends it again)
-                        engine.sent_unfiled.discard(message.ref.store_id)
-                        mailbox.report_moved(message.ref, outcome.reference)
-                        mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
-                    _mark_replied(mailbox, parsed)
-                    _mark_answered(mailbox, replies_to)
+                    try:  # the server took it: nothing after this makes it a failed send, or stops the rest of the Outbox (D-256)
+                        if outcome.reference.folder_path != message.ref.folder_path:  # in Sent now; the marks it carried in the Outbox go (RV-178:
+                            _forget_waiting(mailbox, outcome.reference)  # not before, or the next refresh sends it again)
+                            engine.sent_unfiled.discard(message.ref.store_id)
+                            mailbox.report_moved(message.ref, outcome.reference)
+                            mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
+                        _mark_replied(mailbox, parsed)
+                        _mark_answered(mailbox, replies_to)
+                    except Exception as error:  # noqa: BLE001 - anything, also the index's own errors: the send itself is done
+                        fail(account_id, f"{parsed.subject}: it was sent; {LIST_COULD_NOT_FOLLOW.format(error=str(error) or type(error).__name__)}")
                     if outcome.warning:
                         fail(account_id, f"{parsed.subject}: {outcome.warning}")
                 elif outcome is not None:

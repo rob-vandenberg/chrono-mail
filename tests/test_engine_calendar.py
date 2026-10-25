@@ -9,9 +9,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 3.6.349"
+__version__ = "test_engine_calendar.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a change of the attendee list keeps what each attendee's line said; floating events and tasks stay floating
 # v3.6.349: a series whose days the rule sets keeps its skipped dates when its first date moves (RV-185); one date of an invitation is
 #           edited exactly (RV-186); an RDATE series keeps its exceptions (RV-187); a changed date never moved in time moves along (RV-188); a task without a due time keeps no RELATED=END (RV-189); a rule change keeps every changed date, a hostile
 #           rule never breaks an edit, a title edit leaves a task's reminders as they are (the review of these fixes)
@@ -355,6 +356,24 @@ def test_attendees_given_again_keep_their_names_roles_and_answers(engine: Engine
     ]
 
 
+def test_a_change_of_the_attendee_list_keeps_what_each_attendee_s_line_said() -> None:
+    """The three reviewers of 2026-10-26 (RV-17): adding one person rewrote every attendee with only name, role, answer and RSVP: a room
+    (CUTYPE=ROOM), a delegation and the server's SCHEDULE-STATUS were lost, on the server too."""
+    import dataclasses
+
+    from chrono_mail.pim.ical import Attendee, events_to_text, parse_events
+
+    meeting = MEETING.replace(
+        "ATTENDEE;CN=Bob;PARTSTAT=DECLINED:mailto:bob@example.com\r\n",
+        "ATTENDEE;CN=Bob;PARTSTAT=DECLINED:mailto:bob@example.com\r\nATTENDEE;CUTYPE=ROOM;CN=Room 1;SCHEDULE-STATUS=2.0:mailto:room1@example.com\r\n"
+        "ATTENDEE;CN=Dee;DELEGATED-TO=\"mailto:eve@example.com\":mailto:dee@example.com\r\n",
+    )
+    (series,) = parse_events(meeting)
+    added = dataclasses.replace(series, master=dataclasses.replace(series.master, attendees=(*series.master.attendees, Attendee("cy@example.com", "Cy"))))
+    text = events_to_text(added, meeting).replace("\r\n ", "")
+    assert "CUTYPE=ROOM" in text and "SCHEDULE-STATUS=2.0" in text and "DELEGATED-TO" in text and "mailto:cy@example.com" in text
+
+
 def test_a_series_moved_to_a_new_time_keeps_its_skipped_and_changed_occurrences(engine: Engine) -> None:
     """RV-93: the skipped (EXDATE) and changed (RECURRENCE-ID) occurrences named the old time: after "All occurrences" moved to 10:00 a
     deleted occurrence came back and a moved one showed twice."""
@@ -546,3 +565,41 @@ def test_a_task_reminder_counts_back_from_the_due_time(engine: Engine) -> None:
     with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
         text = store.get(tasks, added.item)
     assert "TRIGGER;RELATED=END:-PT15M" in text.replace("\r\n ", "")
+
+
+def test_a_floating_event_stays_floating_when_only_its_title_is_saved(engine: Engine) -> None:
+    """The three reviewers of 2026-10-26 (RV-93, RV-23): a series without a zone (floating) got this computer's zone at any Save, while
+    its skipped dates stayed floating: other programs brought the deleted occurrence back, and on a computer elsewhere it moved."""
+    text = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:floating@example.com\r\nDTSTAMP:20261020T100000Z\r\n"
+        "DTSTART:20260105T090000\r\nDTEND:20260105T100000\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEXDATE:20260112T090000\r\nSUMMARY:Yoga\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    item = call(engine, "event.import", calendar=collection(engine, "events"), text=text).items[0]
+    call(engine, "event.edit", item=item, summary="Yoga class", start="2026-01-05T09:00", end="2026-01-05T10:00")
+    written = call(engine, "event.export", item=item).text
+    assert "TZID" not in written and "DTSTART:20260105T090000" in written and "EXDATE:20260112T090000" in written
+
+
+def test_a_floating_task_due_time_stays_floating(engine: Engine) -> None:
+    """The three reviewers of 2026-10-26: the same for a task's due time."""
+    text = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VTODO\r\nUID:floating-task@example.com\r\nDTSTAMP:20261020T100000Z\r\n"
+        "DUE:20260105T090000\r\nSUMMARY:Pay\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+    )
+    item = call(engine, "task.import", list=collection(engine, "tasks"), text=text).items[0]
+    call(engine, "task.edit", item=item, summary="Pay the rent", due="2026-01-05T09:00")
+    assert "DUE:20260105T090000" in call(engine, "task.export", item=item).text
+
+
+def test_an_occurrence_of_a_floating_series_is_deleted_as_a_floating_date(engine: Engine) -> None:
+    """The review of 3.6.351: deleting or changing one occurrence of a floating series wrote a zoned EXDATE or RECURRENCE-ID, which never
+    matches its floating occurrences: the deleted one stayed (and other programs showed it)."""
+    text = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:floating2@example.com\r\nDTSTAMP:20261020T100000Z\r\n"
+        "DTSTART:20260105T090000\r\nDTEND:20260105T100000\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nSUMMARY:Yoga\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    item = call(engine, "event.import", calendar=collection(engine, "events"), text=text).items[0]
+    occurrences = [o.occurrence for o in call(engine, "event.list", from_date="2026-01-01", to_date="2026-01-31").events if o.item == item]
+    call(engine, "event.delete", item=item, occurrence=occurrences[1])
+    assert len([o for o in call(engine, "event.list", from_date="2026-01-01", to_date="2026-01-31").events if o.item == item]) == 2
+    assert "EXDATE:20260112T090000" in call(engine, "event.export", item=item).text

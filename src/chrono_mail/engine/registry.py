@@ -9,14 +9,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 
 from chrono_mail.core import ChronoMailError, ConfigurationError
+from chrono_mail.core.words import digits
 
 if TYPE_CHECKING:
     from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "registry.py 2.1.311"
+__version__ = "registry.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v2.1.311: every command says what it is doing (doing), in plain words: the busy bar names what runs
 # v1.1.205: TypedCommand: a command with the types of its parameters and its answer, so every caller is checked by the type checker (R-02, R-19)
 # v0.0.12: Initial command registry
@@ -157,8 +159,8 @@ def _coerce(spec: ParameterSpec, value: object) -> object:
             raise UsageError(f"Parameter '{name}' must be a whole number")
         if isinstance(value, int):
             return value
-        if isinstance(value, str) and value.strip().lstrip("-").isdigit():
-            return int(value)
+        if isinstance(value, str) and digits(value.strip().removeprefix("-")) and len(value.strip()) <= 18:  # one minus at most ("--5" is no
+            return int(value)  # number); never more digits than a number of this program needs (int() refuses over 4,300)
         raise UsageError(f"Parameter '{name}' must be a whole number")
     if spec.kind == "list":
         if isinstance(value, str):

@@ -36,15 +36,19 @@ from chrono_mail.store import SENT_LETTER, Store
 from chrono_mail.store.store import folder_description
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 from chrono_mail.store.layout import parse_name, split_info
+from chrono_mail.sync.imap_sync import LOCAL_ONLY, RECOVERED
 from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.sync.pop3_state import Pop3State
 from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 3.6.350"
+__version__ = "restore.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: this computer's damaged tags file is handled as its rules file (kept as .bad, told), never stopping the restore; a damaged
+#           record of the server (IMAP, DAV) leaves out only that account's messages or items, a damaged POP3 list only itself, and any
+#           other file an account cannot come back without only that account: the restore goes on
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; an Outbox message the server took
 #           before (marked as sent, or known as sent to this run only) comes back in Sent, never as a draft (D-262); Local Folders kept on
 #           this computer but missing from the settings is taken back first, so the restore adds to it, never replaces it (D-251)
@@ -582,10 +586,17 @@ def _one_account(
     here = _same_here(engine.config(), settings)
     prefix = f"data/accounts/{settings.account.account_id}/"
     if here is None:
-        _restore_whole(
-            engine, archive, [name for name in names if name.startswith(prefix)], prefix, sealed, kinds, mail, local_mail, key, settings, report, progress,
-            state_first,
-        )
+        try:
+            _restore_whole(
+                engine, archive, [name for name in names if name.startswith(prefix)], prefix, sealed, kinds, mail, local_mail, key, settings, report,
+                progress, state_first,
+            )
+        except DamagedEntry as error:  # a file the account cannot come back without: only this account is left out, the rest goes on (RV-65)
+            if settings.account.kind is AccountKind.LOCAL:
+                raise  # the POP3 accounts that keep their mail there name it as come back: without it the restore stops, as before
+            report.damaged.append(prefix)  # the account's own folder: never counted as a message or item of it
+            report.notes.append(f"{_shown(settings)} could not come back: a file it needs could not be read from the backup ({error})")
+            return
         report.made.append(settings.account.account_id)
         return
     account_id = here.account.account_id
@@ -638,6 +649,10 @@ def _restore_whole(
                 if relative[:2] == ["store", "properties"]:  # a message's tags and notes: it comes back without them (RV-65)
                     report.damaged.append(name)
                     _note_without_details(report)
+                    continue
+                if relative == ["pop3-state.log"]:  # what was downloaded: left out, so nothing is named to delete on the server (D-258);
+                    report.damaged.append(name)  # the server's messages are downloaded again (twice at worst, never lost)
+                    report.notes.append(f"{_shown(settings)}: the list of what was downloaded could not be read from the backup; the server's messages are downloaded again")
                     continue
                 if not doing:
                     raise  # the account's own files (its store, its state): without them it cannot come back whole
@@ -905,7 +920,13 @@ def _fill_mail(
             messages.append((name, relative))
     if not messages:
         return
-    on_server = _on_server(archive, names, prefix) if here.account.kind is AccountKind.IMAP else set[str]()
+    server_unknown = False  # the record of the server's messages cannot be read: only the folders that are never on a server come back
+    try:
+        on_server = _on_server(archive, names, prefix) if here.account.kind is AccountKind.IMAP else set[str]()
+    except DamagedEntry:  # its messages of the server's folders are the server's to bring back, never uploaded as new ones
+        report.damaged.append(f"{prefix}imap-state.log")
+        report.notes.append(f"{_shown(here)}: the record of the server's messages could not be read from the backup; its messages of the server's folders were put in Recovered, on this computer only (the server keeps its own copies)")
+        on_server, server_unknown = set[str](), True
     with open_mailbox(engine, here.account.account_id) as mailbox:
         local_ids = mailbox.store.all_store_ids()
         known: dict[tuple[tuple[str, ...], str], str] = {}
@@ -940,6 +961,8 @@ def _fill_mail(
                 continue
             flags: frozenset[MessageFlag] = split_info(info)[0] if info else frozenset()
             target, role = folder
+            if server_unknown and target[0] not in LOCAL_ONLY:  # (Outbox, Scheduled and Recovered are on this computer only)  # it may be one written offline, never on the server: never lost,
+                target, role = (RECOVERED, *target), FolderRole.OTHER  # kept in Recovered, on this computer only (the server keeps its own)
             if target == OUTBOX and (store_id in engine.sent_unfiled or _sent_in_backup(archive, names, properties_name, info)):  # the server took
                 # it: it was sent (D-262; also when only this run knows it)
                 try:
@@ -1038,7 +1061,13 @@ def _fill_items(
             items.setdefault(relative[2], []).append((name, relative[4]))
     if not collections:
         return
-    linked = _linked_items(archive, names, prefix)
+    linked: dict[str, set[str]] | None  # None: the record of the server's items cannot be read; only collections on no server come back
+    try:
+        linked = _linked_items(archive, names, prefix)
+    except DamagedEntry:  # the items of its server's collections are the server's to bring back, never sent as new ones
+        report.damaged.append(f"{prefix}pim/dav-state.json")
+        report.notes.append(f"{_shown(here)}: the record of the server's items could not be read from the backup; its calendars, contacts and tasks on the server were not added (the server keeps them)")
+        linked = None
     with open_pim(engine, here.account.account_id, create=True) as store:
         local = store.collections()
         for collection_id, description in collections.items():
@@ -1051,6 +1080,9 @@ def _fill_items(
             server = description.get("server")
             on_server = isinstance(server, dict) and bool(server)
             target = _matching(local, collection_id, kind, str(description.get("name", "")), cast(dict[str, object], server) if on_server else {})
+            if on_server and linked is None:  # which of its items the server had cannot be told: the server's to bring
+                report.skipped += len(items.get(collection_id, []))
+                continue
             if target is None:
                 if on_server:  # the server brings its collections itself
                     report.skipped += len(items.get(collection_id, []))
@@ -1072,7 +1104,7 @@ def _fill_items(
                         store.put(target.collection_id, text, existing.item_id)
                     report.skipped += 1
                     continue
-                if on_server and item_id in linked.get(collection_id, set()):
+                if on_server and linked is not None and item_id in linked.get(collection_id, set()):
                     report.skipped += 1  # it was on the server: the server's to bring
                     continue
                 taken.add(store.put(target.collection_id, text, item_id=None if item_id in taken else item_id))
@@ -1144,20 +1176,28 @@ def _restore_rules(engine: Engine, archive: _Reading, names: list[str], replace_
     try:
         here = load_rules(path) if path.exists() else RuleSet()
     except ConfigurationError as error:  # this computer's rules file, not the backup's (RV-198)
-        copy = path.with_name(path.name + ".bad")
-        try:
-            kept = copy.read_bytes() == path.read_bytes()
-        except OSError:
-            kept = False
-        if not kept:  # never written over while it is the only copy of this computer's rules
+        if not _kept_as_bad(path):  # never written over while it is the only copy of this computer's rules
             report.notes.append(f"This computer's rules could not be read, so the rules of the backup were not added: {error}")
             return
-        report.notes.append(f"This computer's rules could not be read; they are kept in {copy.name}, and the rules of the backup took their place")
+        report.notes.append(f"This computer's rules could not be read; they are kept in {path.name}.bad, and the rules of the backup took their place")
         here = RuleSet()
     by_id = {rule.rule_id: rule for rule in backup.rules}
     kept = tuple(by_id.pop(rule.rule_id) if replace_existing and rule.rule_id in by_id else rule for rule in here.rules)
     known = {rule.rule_id for rule in kept}
     save_rules(path, RuleSet(kept + tuple(rule for rule in backup.rules if rule.rule_id not in known)))
+
+
+def _shown(settings: AccountSettings) -> str:
+    """How the report names an account."""
+    return settings.account_name or settings.account.email_address or settings.account.display_name or "An account"
+
+
+def _kept_as_bad(path: Path) -> bool:
+    """Whether this computer's settings file that could not be read has its copy beside it (name.bad), so writing over it loses nothing."""
+    try:
+        return path.with_name(path.name + ".bad").read_bytes() == path.read_bytes()
+    except OSError:
+        return False
 
 
 def _restore_settings(engine: Engine, archive: _Reading, names: list[str], sealed: set[str], key: DataKey, replace_existing: bool, report: RestoreReport) -> None:
@@ -1166,8 +1206,18 @@ def _restore_settings(engine: Engine, archive: _Reading, names: list[str], seale
     if "config/tags.json" in names:
         with _left_out_when_damaged("config/tags.json", report):
             backup = parse_tags(_read(archive, "config/tags.json").decode("utf-8"))
+    here = TagColours()
     if backup is not None:
-        here = load_tags(directories.tags_file) if directories.tags_file.exists() else TagColours()
+        try:
+            here = load_tags(directories.tags_file) if directories.tags_file.exists() else TagColours()
+        except ConfigurationError as error:  # this computer's tags file, not the backup's: as its rules (RV-198)
+            if not _kept_as_bad(directories.tags_file):  # never written over while it is the only copy of this computer's tags
+                report.notes.append(f"This computer's tags could not be read, so the tags of the backup were not added: {error}")
+                backup = None
+            else:
+                report.notes.append(f"This computer's tags could not be read; they are kept in {directories.tags_file.name}.bad, and the tags of the backup took their place")
+            here = TagColours()
+    if backup is not None:
         by_key = {entry.key: entry for entry in backup.entries}
         kept = tuple(by_key.pop(entry.key) if replace_existing and entry.key in by_key else entry for entry in here.entries)
         known = {entry.key for entry in kept}

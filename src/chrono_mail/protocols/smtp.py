@@ -6,11 +6,13 @@ from dataclasses import dataclass
 from typing import override
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "smtp.py 3.1.341"
+__version__ = "smtp.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.1.341: once the server accepted the message, a failed QUIT no longer makes the send fail (it was sent again, RV-140)
 # v0.0.13: check_login; shared connection and error mapping
 # v0.0.10: Initial SMTP client
@@ -184,7 +186,7 @@ def send_message(
         try:
             if connection.has_extn("size"):
                 advertised = connection.esmtp_features.get("size", "")
-                if advertised.isdigit() and 0 < int(advertised) < len(raw):
+                if digits(advertised) and 0 < int(advertised) < len(raw):
                     raise ProtocolError("The message is larger than the server accepts")
             options: list[str] = []
             if not raw.isascii():

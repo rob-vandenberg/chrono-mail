@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 3.5.346"
+__version__ = "test_ui_calendar.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a reminder at a set time shows as that, never as "No reminder"
 # v3.5.346: a click on an event gives its view the keyboard (RV-22); events past a daylight-saving change keep their hour (RV-15)
 # v3.2.342: This occurrence of an all-day event stays all-day (RV-21); reminders the window does not show survive a Save (RV-18)
 # v2.0.291: a margin at the right of the list of colours
@@ -492,3 +493,21 @@ def test_an_event_past_a_daylight_saving_change_keeps_its_hour(world: World, qtb
         monkeypatch.undo()
         time.tzset()  # the process's own zone again (nothing left behind, AGENTS.md 4.5.5)
 
+
+
+def test_a_reminder_at_a_set_time_shows_as_that_never_as_no_reminder(world: World, qtbot: QtBot) -> None:
+    """The three reviewers of 2026-10-26 (RV-18): an event whose first reminder is at a set time (TRIGGER;VALUE=DATE-TIME) showed
+    "No reminder", and choosing that kept the alarm."""
+    import dataclasses
+
+    from chrono_mail.engine.commands_calendar import ReminderInfo
+
+    page = open_calendar(world, qtbot)
+    added = world.call("event.add", calendar=calendar_id(world), summary="Flight", start="2026-10-15T09:00", end="2026-10-15T11:00", time_zone="UTC", reminder=("60",))
+    shown = world.call("event.show", item=added.item)
+    at_a_time = dataclasses.replace(shown, reminders=(ReminderInfo(None, "2026-10-15T07:00:00+00:00", "DISPLAY", False),))
+    editor = EventEditor(world.backend, page._calendars(), [], event=at_a_time, collection=calendar_id(world))  # noqa: SLF001
+    qtbot.addWidget(editor)
+    assert editor.reminder.currentText() == "At a set time"
+    editor.reminder.setCurrentIndex(editor.reminder.findData(""))  # No reminder
+    assert "reminder" in editor.parameters().clear

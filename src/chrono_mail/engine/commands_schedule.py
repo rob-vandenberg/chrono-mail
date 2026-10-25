@@ -17,9 +17,11 @@ from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 3.6.350"
+__version__ = "commands_schedule.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: what follows a scheduled or repeating send the server took never makes it fail or be sent again (told_after_send); a
+#           scheduled reply that waits in the Outbox after a failed send keeps the message it answers (replies_to)
 # v3.6.350: a message sent whose move to Sent failed is remembered for the run (never sent again, also on a full disk); the repeat lock is
 #           schedule.REPEAT_LOCK; Unschedule that could not take the original says it stays scheduled; a failed repeating send whose Outbox
 #           copy could not be removed is that send (the Outbox sends it), never tried again by the series
@@ -395,13 +397,14 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                     except ChronoMailError as error:
                         failed.append(f"{parsed.subject}: {error}")
                         continue
-                mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
+                told = mailbox.told_after_send(outcome.reference, outcome.sent)  # never raises: a send the server took is never told as failed
+                if told:
+                    failed.append(f"{parsed.subject}: it was sent; {told}")
                 if outcome.sent:
                     sent += 1
-                    if outcome.reference.folder_path != OUTBOX:  # in Sent (a failed move leaves it in the Outbox, marked as sent)
-                        mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
                     _mark_replied(mailbox, parsed)
                 else:
+                    _keep_reply_link(mailbox, outcome.reference, parsed)
                     failed.append(f"{parsed.subject}: {outcome.error} (it stays in the Outbox and is tried again at the next refresh that sends)")
             if named and parameters.message:
                 line = _line(members, mailbox, parameters.message)
@@ -452,6 +455,7 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
                 failed.append(f"{parsed.subject}: it is not sent now, because its progress could not be written: {problem}")
                 return 0, 0
         error, handed_over = "", False
+        sent_reference: MessageRef | None = None  # where the message the server took is now
         try:
             with engine.outbox_lock:  # its copy in the Outbox is sent by this send only (RV-109)
                 outcome = send_and_file(
@@ -460,6 +464,7 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
                 )
                 if outcome.sent and outcome.reference.folder_path == OUTBOX:
                     engine.sent_unfiled.add(outcome.reference.store_id)  # a failed move to Sent: never sent again in this run, also without a mark on the disk
+                sent_reference = outcome.reference if outcome.sent else None
                 if not outcome.sent:  # the series tries this send again itself: its copy must not wait in the Outbox to be sent as well (RV-123)
                     error = outcome.error or "the server refused the message"
                     try:
@@ -467,18 +472,19 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
                     except ChronoMailError as not_removed:
                         if _still_stored(mailbox, outcome.reference):  # the copy waits in the Outbox: it is this send, never tried again here
                             handed_over = True
+                            _keep_reply_link(mailbox, outcome.reference, parsed)
                             error = f"{error}. Its copy could not be taken out of the Outbox ({not_removed}): it is sent from there at the next Send and Receive"
                         else:  # gone all the same (the error came a step after the file went): its row goes too
                             try:
                                 mailbox.forget(outcome.reference)
                             except ChronoMailError:
                                 pass  # the index is repaired by the next reconcile
-            if not error:
-                mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent
-                if outcome.reference.folder_path != OUTBOX:  # in Sent: a failed move leaves it in the Outbox, marked as sent
-                    mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
         except ChronoMailError as problem:
             error = error or str(problem)
+        if not error and sent_reference is not None:  # sent: what follows never makes it a failed send, tried again by the series
+            told = mailbox.told_after_send(sent_reference, True)
+            if told:
+                failed.append(f"{parsed.subject}: it was sent; {told}")
         if not error:
             after = replace(moved, sent=moved.sent + 1, last_sent=int(now), last_error="")
         else:
@@ -534,10 +540,28 @@ def _remover(mailbox: Mailbox, reference: MessageRef) -> Callable[[], None]:
     return remove
 
 
-def _mark_replied(mailbox: Mailbox, parsed: ParsedMessage) -> None:
+def _reply_source(parsed: ParsedMessage) -> str | None:
+    """A scheduled reply: the message it answers ("Inbox/<id>"), to be marked as replied once the reply is sent."""
     notes = _notes(parsed)
     source = notes.get("x-chrono-mail-source", "")
-    if notes.get("x-chrono-mail-mark-replied") != "1" or "/" not in source:
+    return source if notes.get("x-chrono-mail-mark-replied") == "1" and "/" in source else None
+
+
+def _keep_reply_link(mailbox: Mailbox, reference: MessageRef, parsed: ParsedMessage) -> None:
+    """A scheduled reply that waits in the Outbox after a failed send keeps the message it answers, as a reply sent at once does
+    (replies_to): the Outbox's send marks it as replied then. Its copy drops the notes in the headers."""
+    source = _reply_source(parsed)
+    if source is None:
+        return
+    try:
+        mailbox.store.properties.change(reference.store_id, lambda current: replace(current, replies_to=source))
+    except ChronoMailError:
+        pass  # the message is safe in the Outbox; only the replied mark of its original would be missed
+
+
+def _mark_replied(mailbox: Mailbox, parsed: ParsedMessage) -> None:
+    source = _reply_source(parsed)
+    if source is None:
         return
     folder, _, message_id = source.rpartition("/")
     try:

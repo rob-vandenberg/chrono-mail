@@ -9,11 +9,13 @@ from typing import Self
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 from chrono_mail.protocols.lineconnection import LineConnection
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 3.6.349"
+__version__ = "imap.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.6.349: a refusal keeps what the server sent before it; uid_fetch_what_comes gives it (RV-202); a refused SELECT leaves no folder
 #           open here either
 # v3.4.344: a body the server sends as NIL is not sent, never an empty message (RV-51)
@@ -126,7 +128,7 @@ def uid_set(text: str) -> list[int]:
     found: list[int] = []
     for part in text.split(","):
         first, separator, last = part.partition(":")
-        if not first.isdigit() or (separator and not last.isdigit()):
+        if not digits(first) or (separator and not digits(last)):
             raise ProtocolError("The server sent an invalid set of UIDs")
         start, end = int(first), int(last or first)
         step = 1 if end >= start else -1
@@ -443,7 +445,7 @@ class ImapClient:
                 self._count_token()
             elif character == _LITERAL_MARK:
                 end = text.find(_LITERAL_MARK, position + 1)
-                if end == -1 or not text[position + 1 : end].isdigit() or int(text[position + 1 : end]) >= len(literals):
+                if end == -1 or not digits(text[position + 1 : end]) or int(text[position + 1 : end]) >= len(literals):
                     raise ProtocolError("The server sent an invalid literal")
                 items.append(literals[int(text[position + 1 : end])])
                 position = end + 1

@@ -4,15 +4,25 @@ from datetime import datetime
 from enum import Enum
 
 # --- Version ------------------------------------------------------------
-__version__ = "render.py 3.6.349"
+__version__ = "render.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: json_safe: the --json output writes DEL and the C1 control characters as \\u escapes (RV-129)
 # v3.6.349: printable for the progress and error lines too (RV-203)
 # v3.4.344: control characters from mail and servers are printed as "?": a terminal never runs their escape codes (RV-129)
 # v0.0.12: Initial text output
 
 _INDENT = "  "
 _CONTROL: re.Pattern[str] = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # every control character but tab and line break
+
+
+_JSON_CONTROL: re.Pattern[str] = re.compile("[\x7f-\x9f]")  # what json.dumps leaves as it is among the control characters
+
+
+def json_safe(text: str) -> str:
+    """JSON for a terminal: DEL and the C1 control characters (U+0080 to U+009F, such as the 8-bit CSI) written as \\u escapes, as
+    json.dumps already writes the others; the data stays the same for a program that reads it (RV-129)."""
+    return _JSON_CONTROL.sub(lambda found: f"\\u{ord(found.group()):04x}", text)
 
 
 def printable(text: str) -> str:

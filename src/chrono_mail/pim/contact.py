@@ -16,9 +16,10 @@ from chrono_mail.pim.vcard import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "contact.py 3.2.342"
+__version__ = "contact.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a vCard 4 phone number with VALUE=uri is written back as a tel: URI (it lost "tel:" and became invalid)
 # v3.2.342: a birthday or anniversary that cannot be read is kept as it was; N, FN, ORG, TITLE, ROLE, BDAY, ANNIVERSARY and NOTE keep their
 #           parameters and group while their meaning is unchanged (as_written, RV-145)
 # v1.10.277: Contact groups (R-39): a group card in either form (vCard 4 KIND:group with MEMBER, Apple's X-ADDRESSBOOKSERVER-KIND and -MEMBER),
@@ -313,6 +314,11 @@ def _as_before(contact: Contact, line: ContentLine) -> ContentLine:
     return line
 
 
+def _is_uri(item: Labeled) -> bool:
+    """Whether the line says its value is a URI (VALUE=uri, as vCard 4 writes a phone number)."""
+    return any(key == "VALUE" and any(value.lower() == "uri" for value in values) for key, values in item.params)
+
+
 def contact_to_lines(contact: Contact, version: str = "3.0") -> list[ContentLine]:
     """The content lines of a card for this contact: the properties we know, written afresh, then the ones we did not understand, as they were."""
     lines: list[ContentLine] = []
@@ -328,7 +334,10 @@ def contact_to_lines(contact: Contact, version: str = "3.0") -> list[ContentLine
         lines.append(ContentLine("NICKNAME", ",".join(escape(item) for item in contact.nicknames)))
     for kind, items in (("EMAIL", contact.emails), ("TEL", contact.phones), ("URL", contact.urls)):
         for item in items:
-            lines.append(ContentLine(kind, escape(item.value), _params(item), item.group))
+            value = item.value
+            if kind == "TEL" and _is_uri(item) and not value.lower().startswith("tel:"):  # vCard 4 TEL;VALUE=uri: a tel: URI (RFC 6350 6.4.1)
+                value = f"tel:{value}"
+            lines.append(ContentLine(kind, escape(value), _params(item), item.group))
     for address in contact.addresses:
         value = ";".join(escape(part) for part in (address.post_box, address.extended, address.street, address.locality, address.region, address.postal_code, address.country))
         lines.append(ContentLine("ADR", value, _params(address), address.group))

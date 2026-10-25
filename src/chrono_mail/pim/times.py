@@ -6,9 +6,10 @@ import tzlocal
 from chrono_mail.pim.ical import Moment
 
 # --- Version ------------------------------------------------------------
-__version__ = "times.py 3.6.349"
+__version__ = "times.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: parse_moment floating: a time without a zone stays one, for an item that had none
 # v3.6.349: a zone the system cannot name falls back to its offset of now, never UTC (the review of RV-201); local_time and moment_at: a moment on this computer's clock without the platform's conversion, which Windows refuses before 1970 and after 3000 (RV-201, RV-204)
 # v0.0.60: Initial time input and output for commands
 
@@ -71,7 +72,7 @@ def zone_named(name: str) -> tzinfo:
         raise ValueError(f"Unknown time zone '{name}' (use a name like Europe/Amsterdam)") from None
 
 
-def parse_moment(text: str, zone: tzinfo | None = None, all_day: bool = False) -> Moment:
+def parse_moment(text: str, zone: tzinfo | None = None, all_day: bool = False, floating: bool = False) -> Moment:
     """A date or a time as people write it. '2026-10-12' is a date (an all-day value); '2026-10-12T09:00' or '2026-10-12 09:00' is a time in `zone`
     (the local zone when not given); a trailing Z or an offset (+02:00) makes it exact. Raises ValueError with a readable message."""
     cleaned = text.strip()
@@ -84,7 +85,7 @@ def parse_moment(text: str, zone: tzinfo | None = None, all_day: bool = False) -
     only_date = len(cleaned) <= 10 and "T" not in cleaned.upper() and ":" not in cleaned
     if only_date or all_day:
         return parsed.date()
-    if parsed.tzinfo is None:
+    if parsed.tzinfo is None and not (floating and zone is None):  # floating: a time without a zone stays one (the item had none)
         parsed = parsed.replace(tzinfo=zone or local_zone())
     return parsed
 

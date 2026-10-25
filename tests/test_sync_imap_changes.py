@@ -13,9 +13,10 @@ from tests.fakeimap import FakeImapServer
 from tests.test_sync_imap import INBOX, World, mail, of
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_imap_changes.py 2.0.285"
+__version__ = "test_sync_imap_changes.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: after a message is left (too large), the checkpoint keeps it and the next check asks only it again
 # v2.0.285: a mark made here offline and another set on the server meanwhile both show after one check, on every kind of server (F2)
 # v1.1.249: a message removed on the server gives no error line and is never sent back (R-40)
 # v1.1.248: Initial version: a check asks the server only what changed since the last one (CONDSTORE, QRESYNC), reads this computer's mail once,
@@ -126,13 +127,15 @@ def test_a_server_without_change_counters_asks_sizes_only_for_new_mail(make: Mak
 def test_after_something_left_open_the_next_check_asks_everything(make: Make) -> None:
     world = make(qresync=True)
     world.server.add("INBOX", mail(1))
-    world.server.add("INBOX", b"X" * 2000 + mail(2))  # larger than the limit below: not downloaded, a failure
+    large = world.server.add("INBOX", b"X" * 2000 + mail(2))  # larger than the limit below: not downloaded, a failure
     options = ImapSyncOptions(maximum_message_bytes=1000)
     report = world.sync(options)
-    assert len(report.failed) == 1 and INBOX not in world.state.checkpoints
+    checkpoint = world.state.checkpoints.get(INBOX)  # since 3.6.351 the checkpoint keeps it, to ask only it again (RV-49)
+    assert len(report.failed) == 1 and checkpoint is not None and checkpoint.waiting == frozenset({large})
     world.server.commands.clear()
-    world.sync(options)
-    assert FULL in fetches(world)  # never "nothing changed" while the server holds a message that is not here
+    again = world.sync(options)
+    assert len(again.failed) == 1 and FULL not in fetches(world)  # never "nothing changed" while the server holds a message not here,
+    assert any(str(large) in command and "RFC822.SIZE" in command.upper() for command in world.server.commands)  # and only it is asked
 
 
 def test_a_mark_changed_here_is_sent_with_the_marks_the_server_has_now(make: Make) -> None:

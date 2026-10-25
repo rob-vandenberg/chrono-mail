@@ -31,11 +31,14 @@ from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circle_icon, palette_of_summary
 from chrono_mail.core.words import counted
+from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 3.6.350"
+__version__ = "eventeditor.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError; a first reminder at a set time shows as "At a set time" (it showed "No reminder", and choosing that
+#           kept it)
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v3.6.349: an event's times through the zone the engine reads them back in (also never the platform's conversion, RV-201)
 # v3.2.342: the reminders are sent only when the reminder choice was changed: a second alarm or one at a fixed time stays (RV-18)
@@ -186,10 +189,11 @@ class EventEditor(QDialog):
             index = self.repeat.count() - 1
         self.repeat.setCurrentIndex(max(0, index))
         reminders = tuple(event.reminders)
-        minutes = str(reminders[0].minutes_before) if reminders and reminders[0].minutes_before is not None else ""
+        minutes = (str(reminders[0].minutes_before) if reminders[0].minutes_before is not None else "at") if reminders else ""
         index = self.reminder.findData(minutes)
-        if index < 0 and minutes:
-            self.reminder.addItem(f"{counted(int(minutes), 'minute')} before" if minutes.isdigit() else f"{minutes} minutes before", minutes)
+        if index < 0 and minutes:  # one the list does not have: shown as it is (a reminder at a set time is never "No reminder")
+            label = "At a set time" if minutes == "at" else f"{counted(int(minutes), 'minute')} before" if digits(minutes) else f"{minutes} minutes before"
+            self.reminder.addItem(label, minutes)
             index = self.reminder.count() - 1
         self.reminder.setCurrentIndex(max(0, index))
         self._reminder_before = str(self.reminder.currentData())

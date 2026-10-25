@@ -7,9 +7,10 @@ from chrono_mail.core import StorageError
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_state.py 3.6.350"
+__version__ = "imap_state.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a checkpoint keeps the messages the server would not send yet ("w"), so one such message never keeps its folder from a checkpoint
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v3.6.349: forget_numbering ("z"): a folder synchronised afresh, the person's choices for it kept (RV-195)
 # v1.1.248: Where each folder stood on the server at the end of the last check that left nothing open (checkpoints, event "c": UIDNEXT and the
@@ -32,6 +33,7 @@ __version__ = "imap_state.py 3.6.350"
 #   {"e": "g", "f": [...], "u": UID, "g": [flags]}                       the server flags changed
 #   {"e": "x", "f": [...], "u": UID}                                     the UID is gone from the server (and from the store)
 #   {"e": "c", "f": [...], "u": UIDNEXT, "q": HIGHESTMODSEQ or null}     the folder's sync ended with nothing open: where the server stood (R-09)
+#     (with "w": [UID, ...]: messages the server would not send yet, asked again at every check; 3.6.351)
 #   {"e": "c", "f": [...]}                                               that is no longer known (the next check lists the folder in full)
 #   {"e": "h", "n": server folder name, "f": [local path]}                               the folder is not shown or synchronised here (deleted here; it stays on the server)
 #   {"e": "d", "n": server folder name, "v": true|false}                  the person chose not to synchronise the folder (true) or to synchronise it though it is not subscribed (false)
@@ -70,6 +72,16 @@ class PendingFolder:
     force: bool = False  # a delete the person chose to do although the server changed the folder
 
 
+MAXIMUM_WAITING: int = 10_000  # messages a checkpoint keeps to ask again; more: no checkpoint (the folder is listed in full)
+
+
+def _checkpoint_event(folder: tuple[str, ...], checkpoint: "Checkpoint") -> dict[str, object]:
+    event: dict[str, object] = {"e": "c", "f": list(folder), "u": checkpoint.uid_next, "q": checkpoint.modseq}
+    if checkpoint.waiting:
+        event["w"] = sorted(checkpoint.waiting)
+    return event
+
+
 @dataclass(frozen=True, slots=True)
 class Checkpoint:
     """Where a server folder stood at the start of the last check of it that left nothing open (R-09): the next check asks only for what
@@ -77,6 +89,7 @@ class Checkpoint:
 
     uid_next: int  # UIDNEXT: every message that came later has this UID or a higher one
     modseq: int | None  # HIGHESTMODSEQ (RFC 7162); None: the server keeps no change counter for the folder
+    waiting: frozenset[int] = frozenset()  # messages below uid_next not here yet (the server would not send them): asked again every check
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,7 +258,10 @@ class ImapState:
             raise ValueError("bad uidnext")
         if modseq is not None and (not isinstance(modseq, int) or isinstance(modseq, bool) or modseq <= 0):
             raise ValueError("bad modseq")
-        self.checkpoints[folder] = Checkpoint(uid_next, modseq)
+        waiting = event.get("w", [])
+        if not isinstance(waiting, list) or len(waiting) > MAXIMUM_WAITING or not all(isinstance(uid, int) and not isinstance(uid, bool) and 0 < uid < uid_next for uid in waiting):
+            raise ValueError("bad waiting")
+        self.checkpoints[folder] = Checkpoint(uid_next, modseq, frozenset(waiting))
 
     def _apply_pending(self, kind: str, event: dict[str, object]) -> None:
         where = event["f"]
@@ -449,7 +465,7 @@ class ImapState:
             self._append({"e": "c", "f": list(folder)})
             del self.checkpoints[folder]
             return
-        self._append({"e": "c", "f": list(folder), "u": checkpoint.uid_next, "q": checkpoint.modseq})
+        self._append(_checkpoint_event(folder, checkpoint))
         self.checkpoints[folder] = checkpoint
 
     def map(self, folder: tuple[str, ...], uid: int, store_id: str, flags: frozenset[str]) -> None:
@@ -497,7 +513,7 @@ class ImapState:
             for uid, entry in self.entries.get(folder, {}).items():
                 lines.append(json.dumps({"e": "m", "f": list(folder), "u": uid, "s": entry.store_id, "g": sorted(entry.flags)}, separators=(",", ":"), ensure_ascii=False))
             if (checkpoint := self.checkpoints.get(folder)) is not None:
-                lines.append(json.dumps({"e": "c", "f": list(folder), "u": checkpoint.uid_next, "q": checkpoint.modseq}, separators=(",", ":"), ensure_ascii=False))
+                lines.append(json.dumps(_checkpoint_event(folder, checkpoint), separators=(",", ":"), ensure_ascii=False))
         lines.extend(json.dumps({"e": "d", "n": name, "v": True}, separators=(",", ":"), ensure_ascii=False) for name in sorted(self.hidden))
         lines.extend(json.dumps({"e": "d", "n": name, "v": False}, separators=(",", ":"), ensure_ascii=False) for name in sorted(self.forced))
         lines.extend(json.dumps({"e": "r", "n": name, "r": role}, separators=(",", ":"), ensure_ascii=False) for name, role in sorted(self.roles.items()))

@@ -8,9 +8,11 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 3.2.342"
+__version__ = "ical.py 3.6.351"
 
 # --- Version history ----------------------------------------------------
+# v3.6.351: a change of the attendee list keeps each attendee's own line (CUTYPE, DELEGATED-*, SCHEDULE-*), writing afresh only
+#           the changed fields and the new attendees (RV-17)
 # v3.2.342: an object with only changed occurrences gets no made-up main event when it is written (RV-146)
 # v1.1.219: An event's colour: the id of a colour of its calendar's palette (X-CHRONO-MAIL-COLOR-ID) and the CSS name of RFC 7986 COLOR (D-191)
 # v1.1.218: occurrences stops expanding at the end of the range or the cap (an event every second no longer freezes a view); limit (the Windows computer's report)
@@ -417,15 +419,38 @@ def _person_prop(person: Attendee, organizer: bool) -> icalendar.vCalAddress:
     return prop
 
 
+def _kept_person_prop(person: Attendee, earlier: Any) -> Any:  # noqa: ANN401 - icalendar's property objects are untyped
+    """An attendee's line: the one the item had for this address, with all it says that this program does not show (CUTYPE=ROOM,
+    DELEGATED-TO, SCHEDULE-STATUS, ...), and the name, role, answer and RSVP as now; a new attendee's line written afresh (RV-17)."""
+    if earlier is None:
+        return _person_prop(person, False)
+    if _person(earlier) == person:
+        return earlier  # unchanged: exactly as it was
+    prop = icalendar.vCalAddress(str(earlier))
+    prop.params.update(getattr(earlier, "params", {}))
+    for key, value in (("CN", person.name), ("ROLE", person.role), ("PARTSTAT", person.status)):
+        if value:
+            prop.params[key] = value
+        else:
+            prop.params.pop(key, None)
+    if person.rsvp:
+        prop.params["RSVP"] = "TRUE"
+    else:
+        prop.params.pop("RSVP", None)
+    return prop
+
+
 def _set_people(component: icalendar.Component, event: Event, old: Event | None) -> None:
     if old is None or event.organizer != old.organizer:
         component.pop("ORGANIZER", None)
         if event.organizer is not None:
             component.add("ORGANIZER", _person_prop(event.organizer, True))
     if old is None or event.attendees != old.attendees:
+        props: Any = component.get("ATTENDEE")
+        written = {_address(prop).lower(): prop for prop in (props if isinstance(props, list) else ([props] if props is not None else []))}
         component.pop("ATTENDEE", None)
         for person in event.attendees:
-            component.add("ATTENDEE", _person_prop(person, False))
+            component.add("ATTENDEE", _kept_person_prop(person, written.get(person.address.lower())))
 
 
 def _set_reminders(component: icalendar.Component, reminders: tuple[Reminder, ...], old: tuple[Reminder, ...], summary: str) -> None:
