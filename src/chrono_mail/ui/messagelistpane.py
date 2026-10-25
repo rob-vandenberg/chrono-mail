@@ -3,7 +3,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from dataclasses import replace as changed
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, QModelIndex, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QItemSelection, QItemSelectionModel, QModelIndex, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QMenu, QToolButton, QTreeView, QVBoxLayout, QWidget
 
 from chrono_mail.engine.changes import Change, MessageRow
@@ -25,9 +25,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 3.6.354"
+__version__ = "messagelistpane.py 3.6.360"
 
 # --- Version history ----------------------------------------------------
+# v3.6.360: paused_at_edge: a move whose next message has not come yet loads and paints it first; presses meanwhile are forgotten; after the last message nothing is selected (D-266)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: take_away at_once: the rows of an action that needs no server's word go at the key press and the list is painted before the next key press is read (D-266)
 # v3.6.350: the selected places not known yet held for a drop made then; an action waiting for places that could not be followed is not done, and
@@ -137,6 +138,9 @@ class MessageListPane(QObject):
         self.model.dataChanged.connect(self._rows_check.start)
         self._queue: list[_Waiting] = []  # actions, drops and Undo presses waiting their turn, in the order made (W12b, D-146, B-18)
         self._acting_on: list[SelectedMessage] | None = None  # while a waiting action runs: what was selected when it was made
+        self._paused: bool = False  # the next rows are loaded and painted before a move selects among them; key presses meanwhile are forgotten (D-266)
+        self._unreadable: set[str] = set()  # rows the last pause asked that did not come: the folder ends there, no pause again for them
+        self.model.modelReset.connect(self._forget_unreadable)  # another view, or the list fetched again: they may come now
         self._draining: bool = False  # the queue is being run (an action may ask a question, and more may come inside it: they wait their turn)
         self._holding: int = 0  # what holds the queue until it gave its command: an action fetching its rows (with_rows), an Undo being answered
         self.actions: Callable[[], int] = lambda: 0  # how many actions the person made so far (Undoing gives it): whether one gave a command
@@ -424,15 +428,16 @@ class MessageListPane(QObject):
         ):
             return False
 
-        def run(chosen: list[SelectedMessage]) -> None:
-            self._acting_on = chosen
-            try:
-                again()
-            finally:
-                self._acting_on = None
-
-        self._after_selection(run)
+        self._after_selection(lambda chosen: self._act_on(chosen, again))
         return True
+
+    def _act_on(self, chosen: list[SelectedMessage], again: Callable[[], None]) -> None:
+        """A waiting action in its turn: on what was selected when it was made."""
+        self._acting_on = chosen
+        try:
+            again()
+        finally:
+            self._acting_on = None
 
     def _after_selection(self, act: Callable[[list[SelectedMessage]], None]) -> None:
         """Act on what is selected now: the messages the list knows now, and the places whose messages it does not know yet, which are
@@ -572,6 +577,64 @@ class MessageListPane(QObject):
 
         self.model.load_rows([item.key for item in chosen if item.row is None], loaded)
 
+    def paused_at_edge(self, keyed: bool, rows: list[int] | None = None, again: Callable[[], None] | None = None) -> bool:
+        """Before an action that takes messages out of the list (these rows, else the selected ones) and selects the next message (D-266):
+        when that message has not come yet, the next rows are loaded and painted first, and the list pauses meanwhile. True: not now. A key
+        press (keyed: an action without a question, as a held Delete, Archive or Junk key) is then forgotten, as is every such press until
+        those rows are painted and the keyboard buffer is cleared. An action after a question or a menu (not keyed) waits in turn and is
+        checked again when its turn comes (again: how it is done then). Rows that could not be read, or an order that will not come, end
+        the folder there: the action is done and nothing is selected after it."""
+        if self._paused:
+            return keyed
+        taken = self._selected_list_rows() if rows is None else rows
+        current = self.view.currentIndex()
+        if not current.isValid() or current.row() not in taken:
+            return False  # the selection does not move
+        following = self.model.next_row_after(max(taken))
+        if not isinstance(following, list):
+            return False
+        if (following and following[0] in self._unreadable) or (not following and not self.model.loading):
+            return False  # asked and not come, or the rest of the order could not be read: it ends there
+        self._pause(following)
+        if keyed and self._acting_on is None:
+            return True  # a press now: forgotten
+        if self._acting_on is not None and again is not None:  # its turn came (it was accepted then) and the next rows are not there yet: first in turn again
+            chosen = self._acting_on
+            self._queue.insert(0, _Waiting(self.model.places_epoch, [(item.key, item.folder) for item in chosen], [], lambda now: self._act_on(now, again)))
+            return True
+        return False  # it goes in turn behind the pause (deferred, after_waiting)
+
+    def _pause(self, keys: list[str]) -> None:
+        """The next rows are loaded (keys), or the rest of the order is awaited (no keys), painted, and the keyboard buffer cleared."""
+        self._paused = True
+        release = self.hold()  # an action after a question or a menu waits behind it
+        ended: list[bool] = []
+
+        def painted() -> None:
+            QCoreApplication.processEvents()  # the keyboard buffer: the presses that came meanwhile are read now, and forgotten
+            self._paused = False
+            self._unreadable = {key for key in keys if self.model.loaded_row(key) is None and self.model.holds(key)}
+            release()
+
+        def loaded(*_: object) -> None:
+            if ended:
+                return
+            ended.append(True)
+            if not keys:
+                for signal in (self.model.placed, self.model.load_failed, self.model.modelReset):
+                    signal.disconnect(loaded)
+            self.view.viewport().repaint()
+            QTimer.singleShot(0, self, painted)  # tied to the pane: not run when it is already gone
+
+        if keys:
+            self.model.load_rows(keys, loaded)
+        else:  # the rest of the order comes, cannot come, or the view goes
+            for signal in (self.model.placed, self.model.load_failed, self.model.modelReset):
+                signal.connect(loaded)
+
+    def _forget_unreadable(self) -> None:
+        self._unreadable = set()
+
     def take_away(self, message_ids: list[str], at_once: bool = False) -> None:
         """At the key press of an action that takes messages out of the view: they are greyed until the engine reports the
         change (or the action fails), and the selection and the reading pane move at once to the next message without an
@@ -593,14 +656,8 @@ class MessageListPane(QObject):
                 self.view.viewport().repaint()
             return  # the selected message stays: nothing moves under the person's eyes
 
-        def free(row: int) -> bool:
-            found = model.row_at(row)
-            return not model.is_header(row) and found is not None and found.message_id not in model.pending
-
-        last, first = (max(rows), min(rows)) if rows else (current.row(), current.row())
-        target = next((row for row in range(last + 1, model.rowCount()) if free(row)), None)
-        if target is None:
-            target = next((row for row in range(first - 1, -1, -1) if free(row)), None)
+        following = model.next_row_after(max(rows) if rows else current.row())
+        target = following if isinstance(following, int) else None  # after the last message nothing is selected (D-266)
         if target is None:
             self.view.selectionModel().clearSelection()
             self.view.setCurrentIndex(QModelIndex())

@@ -30,9 +30,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.354"
+__version__ = "messageactions.py 3.6.360"
 
 # --- Version history ----------------------------------------------------
+# v3.6.360: every action that takes messages out of the list first asks paused_at_edge: Delete, Archive, Junk and the Delete icon are forgotten while the next rows load; the others wait for them (D-266)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: act_many: an action that needs no server's word takes its rows out at the key press; a failed one brings its messages back and stops the same actions waiting behind it (D-266)
 # v3.6.350: a drop made while the list did not know every selected message yet moves them all: the rest is read from the view's whole
@@ -129,6 +130,8 @@ class MessageActions(QObject):
     # --- delete, archive, junk ---------------------------------------------------------------------------------------
 
     def delete_selected(self) -> None:
+        if self._messages.paused_at_edge(keyed=True, again=lambda: self.delete_selected()):
+            return
         if self._messages.deferred(lambda: self.delete_selected()):
             return
         self.delete_rows(self._messages.selected_rows())
@@ -159,6 +162,9 @@ class MessageActions(QObject):
         """A click on the Delete icon of one message: in turn with what waits, as a key press, and only while that message (of its own
         mailbox: ids are unique only within one) is still in the list and no action on it is under way (no second action, D-146)."""
 
+        at = self._messages.model.find(clicked.message_id)
+        if self._messages.paused_at_edge(keyed=True, rows=[at] if at >= 0 else []):
+            return
         view = self._messages.model.view_number  # the view it was clicked in (a sort keeps it): ids are unique only within one mailbox
 
         def delete() -> None:
@@ -176,6 +182,8 @@ class MessageActions(QObject):
 
     def delete_permanently(self) -> None:
         """Shift+Delete: remove the selected messages for good, without a stop in Trash, after asking."""
+        if self._messages.paused_at_edge(keyed=False, again=lambda: self.delete_permanently()):
+            return
         if self._messages.deferred(lambda: self.delete_permanently()):
             return
         rows = self._messages.selected_rows()
@@ -191,6 +199,8 @@ class MessageActions(QObject):
 
     def unarchive_selected(self) -> None:
         """Back to the folder each message was archived from (the Inbox when that is not known)."""
+        if self._messages.paused_at_edge(keyed=False, again=lambda: self.unarchive_selected()):
+            return
         if self._messages.deferred(lambda: self.unarchive_selected()):
             return
         rows = self._messages.selected_rows()
@@ -205,6 +215,8 @@ class MessageActions(QObject):
     def archive_selected(self) -> None:
         """Archive, or Unarchive when every selected message is archived: it follows the messages, never the folder on the left (a
         search of all folders shows messages of every folder, D-101)."""
+        if self._messages.paused_at_edge(keyed=True, again=lambda: self.archive_selected()):
+            return
         if self._messages.deferred(lambda: self.archive_selected()):
             return
         selected = self._messages.selected_rows()
@@ -225,6 +237,8 @@ class MessageActions(QObject):
 
     def junk_selected(self, junk: bool) -> None:
         """Move the selected messages to the Junk folder, or (in Junk) back to the Inbox."""
+        if self._messages.paused_at_edge(keyed=True, again=lambda: self.junk_selected(junk)):
+            return
         if self._messages.deferred(lambda: self.junk_selected(junk)):
             return
         rows = self._messages.selected_rows()
@@ -266,6 +280,8 @@ class MessageActions(QObject):
 
     def snooze_until(self, until: str) -> None:
         """Put the selected messages away until this local time (2026-10-13T09:00)."""
+        if self._messages.paused_at_edge(keyed=False, again=lambda: self.snooze_until(until)):
+            return
         if self._messages.deferred(lambda: self.snooze_until(until)):
             return
         rows = self._messages.selected_rows()
@@ -279,6 +295,8 @@ class MessageActions(QObject):
 
     def cancel_snooze_selected(self) -> None:
         """In the Snoozed folder: the selected messages go back now to the folder they came from (unread, as when their time comes)."""
+        if self._messages.paused_at_edge(keyed=False, again=lambda: self.cancel_snooze_selected()):
+            return
         if self._messages.deferred(lambda: self.cancel_snooze_selected()):
             return
         rows = self._messages.selected_rows()
@@ -348,6 +366,8 @@ class MessageActions(QObject):
             self.move_menu.addAction(path.replace("&", "&&")).triggered.connect(lambda checked=False, target=path: self.move_selected(target))  # "R&D", never "RD"
 
     def move_selected(self, target: str) -> None:
+        if self._messages.paused_at_edge(keyed=False, again=lambda: self.move_selected(target)):
+            return
         if self._messages.deferred(lambda: self.move_selected(target)):
             return
         rows = self._messages.selected_rows()
@@ -360,6 +380,7 @@ class MessageActions(QObject):
         selected message yet; what was selected is taken once it does, in turn with the actions that wait for it, and all of it moves
         together (RV-206). When the list could not keep those places since the drag began, which messages they held cannot be told:
         nothing is moved, and that is said."""
+        self._messages.paused_at_edge(keyed=False)  # the next message is loaded and painted before the selection moves to it (D-266)
         if rest < 0:  # in its turn behind anything that waits (in order, D-146)
 
             def known() -> None:  # without those an action made before it has under way by then (no second action, D-146)

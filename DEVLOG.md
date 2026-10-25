@@ -2998,6 +2998,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.360: A held Delete, Archive or Junk key pauses where the loaded rows end and stops after the last message (the owner, D-266)
+
+1. The owner's report: a held Delete past the first 100 rows jumped up and deleted the messages above. Cause: the next message to select had to be loaded, and when none below was, the one above was taken.
+2. `ui/messagelist.py` next_row_after; `ui/messagelistpane.py` paused_at_edge, _pause, _act_on, take_away: nothing selected after the last message; never a row that is not loaded; keyed actions forgotten during the pause, the keyboard buffer cleared after the paint; actions after a question or menu wait in turn and are checked again; unreadable rows or an order that does not come end the folder there (after a fresh review found four gaps).
+3. `ui/messageactions.py`: every action that takes messages out of the list asks paused_at_edge first.
+4. Tests: new tests/ui/test_ui_heldkey.py (5; the held-key ones fail on 3.6.359); test_ui_window.py: after the last message nothing is selected (was: the one before); test_ui_columns.py: the Delete icon test waits for the engine (broken since 3.6.353). The directly related tests (27), Pyrefly src (Linux and win32) and the layer check pass; two fresh reviews, their 7 gaps closed (a queued action checked again in its turn, a pause ends with its view, unreadable rows forgotten with the view).
+
 ## 2026-10-26 3.6.359: A failed import batch reloads the window and runs the check after an import (CodeRabbit CR-07, RV-09, D-143)
 
 1. `ui/importdialog.py` `_failed`: after a failed batch the main window is told the import ended (folder list reloaded, the one receive-only check runs); the summary shows the error, what was imported, and that Import continues where it stopped.

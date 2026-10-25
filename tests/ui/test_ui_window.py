@@ -22,9 +22,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 3.6.357"
+__version__ = "test_ui_window.py 3.6.360"
 
 # --- Version history ----------------------------------------------------
+# v3.6.360: after deleting the last message nothing is selected (was: the one before, D-266)
 # v3.6.357: the tests of actions without a server wait for the engine's work, which follows after the row left at the key press (D-267, AGENTS.md 4.5.5.1)
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v3.6.349: Delete asks first when the account has no Trash folder, where it deletes for good (RV-173)
@@ -574,13 +575,14 @@ def test_a_folder_that_can_take_a_drop_gets_a_bar_across_the_row(world: World, q
     assert window.tree.drop_row is None
 
 
-def test_after_deleting_the_last_message_the_one_before_is_selected(world: World, qtbot: QtBot) -> None:
+def test_after_deleting_the_last_message_nothing_is_selected(world: World, qtbot: QtBot) -> None:
+    """The last message of the folder deleted: no message is selected instead, so a held Delete key stops there (D-266)."""
     started(qtbot, world)
     window = world.window
-    middle = message_id_at(window, 1)
     select(window, 2)
     window.act_delete.trigger()
-    wait(qtbot, lambda: window.list_model.rowCount() == 2 and current_message_id(window) == middle)
+    wait(qtbot, lambda: window.list_model.rowCount() == 2 and world.backend._pending == {})  # noqa: SLF001
+    assert not window.list_view.currentIndex().isValid() and not window.list_view.selectionModel().hasSelection()
 
 
 def test_the_bin_of_another_row_keeps_the_selection(world: World, qtbot: QtBot) -> None:

@@ -15,9 +15,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 2.0.280"
+__version__ = "test_ui_columns.py 3.6.360"
 
 # --- Version history ----------------------------------------------------
+# v3.6.360: the Delete icon test waits for the engine's delete, not only for the row (it leaves at the click since 3.6.353, D-266)
 # v2.0.280: Columns per folder (B-16): the standard columns of incoming mail have From; Sent starts with To and Sent; the widths are kept per folder; the one setup of earlier versions is handed over to incoming mail
 # v1.9.265: the header icons are checked in the program's own grey, with a tolerance for the soft edges (Qt's own grey is black: it passed without testing grey)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
@@ -308,7 +309,7 @@ def test_a_click_on_the_delete_icon_deletes_that_message_only(world: World, qtbo
     view.setCurrentIndex(model.index(0, 4))
     rect = view.visualRect(model.index(1, model.columns.index("trash")))
     qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
-    wait(qtbot, lambda: model.rowCount() == 2)
+    wait(qtbot, lambda: model.rowCount() == 2 and world.backend._pending == {})  # noqa: SLF001 (the row leaves at the click, the engine's delete after it, D-266)
     assert next(info for info in world.call("folder.list", account=world.account_id) if info.path == "Inbox").messages == 2
 
 

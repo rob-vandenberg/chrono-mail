@@ -25,9 +25,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 3.6.354"
+__version__ = "messagelist.py 3.6.360"
 
 # --- Version history ----------------------------------------------------
+# v3.6.360: next_row_after: the row a move selects next, or the rows to load first when it has not come yet (D-266)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: leave_now, done_early, come_back: a message whose action needs no server's word leaves the list at its key press and comes back when the action fails (D-266)
 # v3.6.352: rows that leave the view go together only when they arrive in the same pass of the event loop, never held back for 100 ms (a held Delete key removed at most ten rows a second, D-266)
@@ -372,6 +373,24 @@ class MessageListModel(QAbstractTableModel):
         if position is None or key is None:
             return None
         return key, self._order.folder_at(position), self._rows.get(key)
+
+    def next_row_after(self, last: int) -> int | list[str] | None:
+        """The row a move selects when the rows down to this one leave (D-266): the first message below without an action under way; None at
+        the end of the view; or, when the first message below has not come yet, the keys of its part of the view still to load (empty while
+        its place is not known yet), since a row is never selected before it is drawn."""
+        for row in range(last + 1, self._display_rows):
+            if self.is_header(row):
+                continue
+            place = self.place_at(row)
+            if place is None:
+                return []
+            key, _, found = place
+            if found is None:
+                start = self._order.position(key)  # the next 100 from it (places shift up as messages leave: never a page that is half loaded)
+                return [each for each in self._order.keys(start, start + PAGE_SIZE) if each not in self._rows]
+            if found.message_id not in self.pending:
+                return row
+        return None
 
     def loaded_row(self, key: str) -> MessageRow | None:
         return self._rows.get(key)
