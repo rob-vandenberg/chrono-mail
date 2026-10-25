@@ -2998,6 +2998,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.358: Attachments, Send, Save and Discard during a draft save (CodeRabbit CR-03, RV-159, D-271)
+
+1. After a save the window read the draft back and replaced its attachment list: a file attached or removed during the save was undone and the window counted as unchanged; after typing during a save it kept the places of the replaced draft, so the next save or Send could keep the wrong attachments. Now draft.save returns where each attachment it took is (matched in order by name, kind and contents), and the window marks only those entries, in place; no read-back.
+2. Save, Send and Discard during a save were dropped or left a stray draft; now the newest decision waits for the save (D-271); quitting lets it end first.
+3. Tests: 11 new (test_ui_composer: held_save, while_a_draft, discard, last_word, newest_decision, quitting_while; test_engine_drafts: attachment_positions, places_count, middle), each failing on 3.6.357 or on the version before its fix. Related: 424 passed (engine drafts, schedule, send_once, changes, imap, imap_online, guards; window composer, folder_counts, schedule, window, parts, prefs, appearance, searchfield); composer tests in reverse and random order. Pyrefly 0 (Linux, win32), layer check kept.
+4. Six fresh review rounds, the last finding nothing; their finds in this area fixed (a part the text names, an attached mail, Discard and Send during Save on close, quit during Discard, a part in the middle not read back, a name written otherwise, quit while a second save starts). Unrelated finds put to the owner (STATUS.md Problems).
+
 ## 2026-10-26 3.6.357: A link in plain-text mail stops at its closing bracket or quote (CodeRabbit CR-19)
 
 1. Plain-text mail was made safe for HTML first and searched for links afterwards, so the link search no longer saw `<`, `>` or quotes: `<https://example.com/a>` linked to `https://example.com/a>` (also `mailto:`, the hover address and D-215's domain check). Now the links are found in the text as written and the text around them and each link are made safe apart (ui/reader.py linkify). An apostrophe belongs to the address (O'Brien) unless the address opened with one; a double quote always ends it; a quoted bare scheme stays text.

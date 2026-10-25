@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, first_id, setup  # noqa: F40
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_drafts.py 3.1.341"
+__version__ = "test_engine_drafts.py 3.6.358"
 
 # --- Version history ----------------------------------------------------
+# v3.6.358: draft.save tells where each attachment it was given is in the stored draft (CR-03)
 # v3.1.341: a failed send replaces its draft too: the message waits in the Outbox, no second copy beside it (RV-155)
 # v2.5.336: the failed save breaks Store.deliver_placed, which a save uses now (D-248)
 # v0.0.86: A forward as attachment can be saved as a draft and taken up again
@@ -84,6 +85,51 @@ def test_attachments_can_be_added_kept_and_dropped_across_saves(setup: Setup, tm
     with pytest.raises(UsageError):
         call(setup.engine, "draft.save", account=setup.account_id, attach=str(tmp_path / "missing.txt"))
     assert len(drafts(setup)) == 1
+
+
+def test_a_save_tells_where_each_attachment_it_was_given_is_in_the_stored_draft(setup: Setup, tmp_path: Path) -> None:
+    """CR-03: the window learns from the save itself where its attachments are now, in the order it gave them."""
+    one, two, three = tmp_path / "one.txt", tmp_path / "two.txt", tmp_path / "three.txt"
+    for path in (one, two, three):
+        path.write_text(path.stem)
+    first = call(setup.engine, "draft.save", account=setup.account_id, subject="files", attach=[str(one), str(two)])
+    assert first.attachment_positions == (0, 1)
+    second = call(setup.engine, "draft.save", account=setup.account_id, subject="files", keep_attachments=["1"], attach=[str(three)], replace_message=first.message_id)
+    opened = call(setup.engine, "draft.open", account=setup.account_id, message=second.message_id)
+    assert second.attachment_positions == (0, 1)
+    assert [(item.position, item.name) for item in opened.attachments] == [(0, "two.txt"), (1, "three.txt")]
+    assert call(setup.engine, "draft.save", account=setup.account_id, subject="none").attachment_positions == ()
+
+
+def test_the_places_count_a_part_the_new_text_shows_and_an_attached_message() -> None:
+    """A kept file whose cid the new HTML names, and an attached mail (written again), keep their places in turn."""
+    from chrono_mail.engine.commands_drafts import _positions  # noqa: PLC2701 - the numbering itself
+    from chrono_mail.mime import Address, Attachment, OutgoingMessage, build_message
+
+    given = (
+        Attachment("pic.png", "image/png", "<img1@example.com>", False, b"\x89PNG"),
+        Attachment("note.eml", "message/rfc822", None, False, b"Subject: x\r\n\r\nbody\r\n"),
+        Attachment("a.txt", "text/plain", None, False, b"hello"),
+    )
+    outgoing = OutgoingMessage(
+        from_address=Address("", "me@example.com"), to_addresses=(), cc_addresses=(), bcc_addresses=(), subject="s", text_body="t",
+        html_body='<p><img src="cid:img1@example.com"></p>', attachments=given,
+    )
+    assert _positions(build_message(outgoing, draft=True), (given[0], None, *given[1:])) == (0, -1, 1, 2)
+
+
+def test_a_part_in_the_middle_that_is_not_read_back_leaves_the_others_their_places(monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.engine.commands_drafts import _positions  # noqa: PLC2701 - the numbering itself
+    from chrono_mail.mime import Address, Attachment, OutgoingMessage, build_message
+
+    monkeypatch.setattr("chrono_mail.mime.parser.MAXIMUM_PART_BYTES", 1000)  # a part too large to read back
+    given = (
+        Attachment("a.txt", "text/plain", None, False, b"first"),
+        Attachment("big.bin", "application/octet-stream", None, False, b"\x00" * 5000),
+        Attachment("c.txt", "text/plain", None, False, b"third"),
+    )
+    outgoing = OutgoingMessage(from_address=Address("", "me@example.com"), to_addresses=(), cc_addresses=(), bcc_addresses=(), subject="s", text_body="t", attachments=given)
+    assert _positions(build_message(outgoing, draft=True), given) == (0, -1, 1)
 
 
 def test_a_reply_draft_remembers_what_it_answers(setup: Setup) -> None:

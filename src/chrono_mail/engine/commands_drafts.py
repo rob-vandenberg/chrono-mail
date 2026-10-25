@@ -2,18 +2,19 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from chrono_mail.core import ChronoMailError, FolderRole, MessageFlag
-from chrono_mail.engine.commands_mail import _addresses, _attachment, _check_id, _shown, kept_attachments
+from chrono_mail.engine.commands_mail import _addresses, _attachment, _check_id, _shown, each_kept_attachment
 from chrono_mail.engine.mailbox import SentAlready, open_mailbox
 from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import html_to_text
-from chrono_mail.mime import Address, OutgoingMessage, build_message, parse_message
+from chrono_mail.mime import Address, Attachment, OutgoingMessage, build_message, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_drafts.py 3.6.350"
+__version__ = "commands_drafts.py 3.6.358"
 
 # --- Version history ----------------------------------------------------
+# v3.6.358: draft.save tells where each attachment it was given is in the stored draft (attachment_positions), so the window keeps its list in place (CR-03)
 # v3.6.350: a message the server took is never replaced by a draft (D-262), also from the command line; one of the Outbox goes in one
 #           locked step after the draft is stored, and when a send took it meanwhile the draft goes again (told when it cannot); a message
 #           of Scheduled the same way; one elsewhere never waits for a running send; the refusal for one outside the Outbox says where it can go
@@ -52,6 +53,7 @@ class DraftSaveParameters:
 class DraftSaveResult:
     message_id: str
     folder: str
+    attachment_positions: tuple[int, ...] = ()  # where each attachment given is in the stored draft: the kept ones in the order given, then the files; -1 when not stored or not read back
 
 
 def draft_save(engine: Engine, parameters: DraftSaveParameters) -> DraftSaveResult:
@@ -72,6 +74,8 @@ def draft_save(engine: Engine, parameters: DraftSaveParameters) -> DraftSaveResu
                     else "This message was sent already: it can go only to Sent, or back to the Outbox, never back to Drafts"
                 )
             previous_raw = mailbox.store.read(previous, hint=mailbox.hint(previous.store_id))
+        kept = each_kept_attachment(previous_raw, parameters.keep_attachments)
+        files = tuple(_attachment(path) for path in parameters.attach)
         notes: list[tuple[str, str]] = [("X-Chrono-Mail-Kind", parameters.kind)]
         if parameters.source_folder and parameters.source_message:
             notes.append(("X-Chrono-Mail-Source", f"{parameters.source_folder}/{_check_id(parameters.source_message)}"))
@@ -83,12 +87,13 @@ def draft_save(engine: Engine, parameters: DraftSaveParameters) -> DraftSaveResu
             subject=parameters.subject,
             text_body=parameters.body,
             html_body=parameters.html,
-            attachments=(*kept_attachments(previous_raw, parameters.keep_attachments), *(_attachment(path) for path in parameters.attach)),
+            attachments=(*(attachment for attachment in kept if attachment is not None), *files),
             in_reply_to=parameters.in_reply_to,
             references=parameters.references,
             extra_headers=tuple(notes),
         )
-        saved = mailbox.deliver(drafts, build_message(outgoing, draft=True), DRAFT_FLAGS)
+        raw = build_message(outgoing, draft=True)
+        saved = mailbox.deliver(drafts, raw, DRAFT_FLAGS)
         if previous is not None and previous.folder_path in (OUTBOX, (SCHEDULED_FOLDER,)):  # a send may take it: it goes in this locked step
             try:
                 with REPEAT_LOCK, engine.outbox_lock:  # the mailbox before the locks, as every send takes them (a repeating send holds both)
@@ -106,7 +111,31 @@ def draft_save(engine: Engine, parameters: DraftSaveParameters) -> DraftSaveResu
                 mailbox.delete(previous, permanent=True)
             except ChronoMailError:
                 pass  # two versions are better than none; the older one can be deleted by hand
-        return DraftSaveResult(saved.store_id, "/".join(drafts))
+        return DraftSaveResult(saved.store_id, "/".join(drafts), _positions(raw, (*kept, *files)))
+
+
+def _positions(raw: bytes, given: tuple[Attachment | None, ...]) -> tuple[int, ...]:
+    """Where each attachment given is in the stored draft (as draft.open numbers them), in the order given; -1 for one not stored (a kept
+    part the text shows) or not read back (too large, undecodable, past the parts a message is read with: D-022).
+
+    The draft holds them in the order given, so each is the next stored part of its kind with its contents (, except an attached
+    message, which is written again); one that is not read back is skipped, and the next keeps its own place. A part the new text happens to
+    show (its cid named in the HTML) still counts."""
+    stored = parse_message(raw).attachments
+    positions: list[int] = []
+    cursor = 0
+    for attachment in given:
+        found = -1 if attachment is None else next((place for place in range(cursor, len(stored)) if _same_part(stored[place], attachment)), -1)
+        positions.append(found)
+        if found >= 0:
+            cursor = found + 1
+    return tuple(positions)
+
+
+def _same_part(stored: Attachment, given: Attachment) -> bool:
+    if stored.content_type.lower() != given.content_type.lower():
+        return False  # the name is no guide: it may come back written otherwise (a leading space, an encoded word)
+    return given.content_type.lower().startswith("message/") or stored.data == given.data
 
 
 @dataclass(frozen=True, slots=True)

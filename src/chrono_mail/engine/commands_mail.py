@@ -35,9 +35,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 3.6.354"
+__version__ = "commands_mail.py 3.6.358"
 
 # --- Version history ----------------------------------------------------
+# v3.6.358: each_kept_attachment says per position what is kept, so a draft save can tell where each attachment went (CR-03)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError; what follows a send the server took never makes it fail (told_after_send: a warning)
 # v3.6.350: a send that replaces an Outbox message the server took, or one gone meanwhile, is refused (never sent twice); it goes in the
@@ -421,18 +422,22 @@ class SendResult:
 
 def kept_attachments(raw: bytes | None, positions: tuple[str, ...]) -> tuple[Attachment, ...]:
     """The attachments at these positions (as listed by message.show) of a stored message."""
+    return tuple(attachment for attachment in each_kept_attachment(raw, positions) if attachment is not None)
+
+
+def each_kept_attachment(raw: bytes | None, positions: tuple[str, ...]) -> tuple[Attachment | None, ...]:
+    """For each position, in order, the attachment kept from the stored message; None for a part the text shows (inline), which is not kept."""
     if not positions:
         return ()
     if raw is None:
         raise UsageError("Keeping attachments needs the stored message they are in")
     parsed = parse_message(raw)
-    kept: list[Attachment] = []
+    kept: list[Attachment | None] = []
     for text in positions:
         if not digits(text) or int(text) >= len(parsed.attachments):
             raise UsageError("The stored message has no such attachment")
         attachment = parsed.attachments[int(text)]
-        if not attachment.inline:
-            kept.append(attachment)
+        kept.append(None if attachment.inline else attachment)
     return tuple(kept)
 
 

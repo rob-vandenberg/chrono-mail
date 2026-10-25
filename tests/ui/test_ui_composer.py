@@ -1,4 +1,8 @@
+import threading
+from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any  # Mailbox.deliver's parameters, passed on unchanged in held_save
 
 import pytest
 from PySide6.QtGui import QCloseEvent
@@ -11,9 +15,10 @@ from chrono_mail.ui.composer import ComposeWindow, parse_recipients, signature_b
 from tests.ui.world import World, add_window, gone, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_composer.py 3.6.351"
+__version__ = "test_ui_composer.py 3.6.358"
 
 # --- Version history ----------------------------------------------------
+# v3.6.358: attachments added, removed or kept while a draft is saved stay as they are (CR-03)
 # v3.6.351: a send that failed after its copy may be stored never says nothing was stored
 # v3.1.341: a failed send closes the window: the message waits in the Outbox, no draft beside it (RV-155)
 # v2.2.314: a failed send says it is sent again with the next Send and Receive (D-028)
@@ -247,6 +252,253 @@ def test_a_draft_with_an_attachment_is_resumed_and_sent_with_it(world: World, qt
     resumed.send_button.click()
     wait(qtbot, lambda: len(world.smtp.received) == 1)
     assert b"plan.txt" in world.smtp.received[0].data
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)
+
+
+@dataclass
+class HeldSave:
+    """A draft save held just before it stores the message: release lets it go on, delivered is set once it stored it (or failed, with fail)."""
+
+    release: threading.Event
+    delivered: threading.Event
+    fail: bool = False
+
+
+@pytest.fixture
+def held_save(monkeypatch: pytest.MonkeyPatch) -> Generator[HeldSave]:
+    """Every draft save stops before storing the message until the test lets it go, so the test can act while it runs."""
+    from chrono_mail.core import StorageError
+    from chrono_mail.engine.mailbox import Mailbox
+
+    held = HeldSave(threading.Event(), threading.Event())
+    real_deliver = Mailbox.deliver
+
+    def deliver(self: Mailbox, *args: Any, **kwargs: Any) -> Any:  # Any: Mailbox.deliver's own parameters, passed on unchanged
+        held.release.wait(timeout=10)
+        try:
+            if held.fail:
+                raise StorageError("the disk is full")
+            return real_deliver(self, *args, **kwargs)
+        finally:
+            held.delivered.set()
+
+    monkeypatch.setattr(Mailbox, "deliver", deliver)
+    yield held
+    held.release.set()
+
+
+def stored_attachments(world: World, window: ComposeWindow) -> list[str]:
+    stored = window.stored_as()
+    assert stored is not None
+    return [item.name for item in world.call("draft.open", account=world.account_id, folder=stored[0], message=stored[1]).attachments]
+
+
+def test_a_file_attached_while_a_draft_is_saved_stays_and_is_saved_next(world: World, qtbot: QtBot, tmp_path: Path, held_save: HeldSave) -> None:
+    """CR-03: what is done with the attachments during a save is never undone by its answer."""
+    first, second = tmp_path / "first.txt", tmp_path / "second.txt"
+    first.write_text("one")
+    second.write_text("two")
+    window = new_composer(world, qtbot)
+    fill(window, subject="Files")
+    window.add_attachment(str(first))
+    window.save_button.click()
+    window.add_attachment(str(second))  # while the save runs
+    held_save.release.set()
+    wait(qtbot, lambda: window.status.text().startswith("Draft saved"))
+    qtbot.wait(200)  # anything the answer still does
+    assert window.attachments.count() == 2 and window.attached_paths() == [str(second)] and window.kept_positions() == ["0"]
+    assert window.is_modified()  # the second file is not in the stored draft yet
+    window.save_button.click()
+    wait(qtbot, lambda: not window.is_modified() and window.status.text().startswith("Draft saved"))
+    assert stored_attachments(world, window) == ["first.txt", "second.txt"]
+    window._finished = True  # noqa: SLF001
+    window.close()
+
+
+def test_a_file_removed_while_a_draft_is_saved_stays_removed(world: World, qtbot: QtBot, tmp_path: Path, held_save: HeldSave) -> None:
+    first, second = tmp_path / "first.txt", tmp_path / "second.txt"
+    first.write_text("one")
+    second.write_text("two")
+    window = new_composer(world, qtbot)
+    fill(window, subject="Files")
+    window.add_attachment(str(first))
+    window.add_attachment(str(second))
+    window.save_button.click()
+    window.attachments.item(0).setSelected(True)
+    window._remove_selected()  # noqa: SLF001 - while the save runs
+    held_save.release.set()
+    wait(qtbot, lambda: window.status.text().startswith("Draft saved"))
+    qtbot.wait(200)
+    assert window.attachments.count() == 1 and window.kept_positions() == ["1"] and window.is_modified()
+    window.save_button.click()
+    wait(qtbot, lambda: not window.is_modified() and window.status.text().startswith("Draft saved"))
+    assert stored_attachments(world, window) == ["second.txt"]
+    window._finished = True  # noqa: SLF001
+    window.close()
+
+
+def test_typing_while_a_draft_is_saved_never_loses_or_doubles_an_attachment(world: World, qtbot: QtBot, tmp_path: Path, held_save: HeldSave) -> None:
+    files = [tmp_path / f"{name}.txt" for name in ("a", "b", "c")]
+    for path in files:
+        path.write_text(path.stem)
+    window = new_composer(world, qtbot)
+    fill(window, subject="Files")
+    window.add_attachment(str(files[0]))
+    window.add_attachment(str(files[1]))
+    held_save.release.set()
+    window.save_button.click()
+    wait(qtbot, lambda: not window.is_modified() and window.kept_positions() == ["0", "1"])
+    held_save.release.clear()
+    window.attachments.item(0).setSelected(True)
+    window._remove_selected()  # noqa: SLF001 - a.txt goes, b.txt stays (at place 1 of the stored draft)
+    window.add_attachment(str(files[2]))
+    window.save_button.click()
+    window.subject.setText("Files, typed while saving")
+    held_save.release.set()
+    wait(qtbot, lambda: window.status.text().startswith("Draft saved"))
+    qtbot.wait(200)
+    assert window.kept_positions() == ["0", "1"] and window.attached_paths() == []  # b.txt and c.txt, at their places in the new draft
+    window.save_button.click()
+    wait(qtbot, lambda: not window.is_modified() and window.status.text().startswith("Draft saved"))
+    assert stored_attachments(world, window) == ["b.txt", "c.txt"]
+    window._finished = True  # noqa: SLF001
+    window.close()
+
+
+def test_save_on_close_while_a_draft_is_saved_saves_and_closes(world: World, qtbot: QtBot, held_save: HeldSave) -> None:
+    """Save in the close question while an automatic save runs is never dropped: it follows that save."""
+    window = new_composer(world, qtbot)
+    fill(window, subject="First")
+    window._autosave()  # noqa: SLF001
+    window.subject.setText("Second")  # changed while it runs
+    world.dialogs.answer = QMessageBox.StandardButton.Save
+    window.close()
+    assert window.isVisible()  # it closes once the draft is safely stored
+    held_save.release.set()
+    wait(qtbot, lambda: gone(window))
+    listing = world.call("message.list", account=world.account_id, folder="Drafts")
+    assert listing.total == 1 and listing.messages[0].subject == "Second"
+
+
+def test_discard_while_a_draft_is_saved_leaves_no_draft(world: World, qtbot: QtBot, held_save: HeldSave) -> None:
+    window = new_composer(world, qtbot)
+    fill(window, subject="Gone")
+    window._autosave()  # noqa: SLF001
+    world.dialogs.answer = QMessageBox.StandardButton.Discard
+    window.close()
+    assert not window.isVisible()  # gone from the screen at once
+    held_save.release.set()
+    wait(qtbot, held_save.delivered.is_set)  # the running save stored its draft
+    wait(qtbot, lambda: gone(window))
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)  # and it went with the window
+
+
+@pytest.mark.parametrize("asked_first", ["save", "send"])
+def test_discard_after_a_save_or_send_asked_during_a_save_is_the_last_word(world: World, qtbot: QtBot, held_save: HeldSave, asked_first: str) -> None:
+    """Save or Send waiting behind a running save, then Discard: nothing is sent and no draft stays."""
+    window = new_composer(world, qtbot)
+    fill(window, subject="Changed my mind")
+    window._autosave()  # noqa: SLF001
+    window.subject.setText("Changed my mind again")
+    (window.save_button if asked_first == "save" else window.send_button).click()  # waits for the running save
+    world.dialogs.answer = QMessageBox.StandardButton.Discard
+    window.close()
+    held_save.release.set()
+    wait(qtbot, held_save.delivered.is_set)
+    wait(qtbot, lambda: gone(window))
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)
+    qtbot.wait(300)  # nothing else follows
+    assert world.smtp.received == [] and world.call("message.list", account=world.account_id, folder="Drafts").total == 0
+    assert world.call("message.list", account=world.account_id, folder="Outbox").total == 0
+
+
+def test_discard_while_a_save_on_close_runs_leaves_no_draft(world: World, qtbot: QtBot, held_save: HeldSave) -> None:
+    """Discard is the last word over what the running save was to do afterwards (close the window and keep the draft)."""
+    window = new_composer(world, qtbot)
+    fill(window, subject="Save, then discard")
+    world.dialogs.answer = QMessageBox.StandardButton.Save
+    window.close()  # a save that closes the window once stored
+    world.dialogs.answer = QMessageBox.StandardButton.Discard
+    window.close()  # while it runs
+    held_save.release.set()
+    wait(qtbot, held_save.delivered.is_set)
+    wait(qtbot, lambda: gone(window))
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)
+    qtbot.wait(300)
+    assert world.call("message.list", account=world.account_id, folder="Drafts").total == 0
+
+
+def test_a_save_that_fails_after_discard_shows_no_box(world: World, qtbot: QtBot, held_save: HeldSave) -> None:
+    window = new_composer(world, qtbot)
+    fill(window, subject="Thrown away")
+    held_save.fail = True
+    window.save_button.click()  # a save asked for: its failure would show a box
+    world.dialogs.answer = QMessageBox.StandardButton.Discard
+    window.close()
+    shown = len(world.dialogs.shown)  # the close question
+    held_save.release.set()
+    wait(qtbot, held_save.delivered.is_set)
+    wait(qtbot, lambda: gone(window))
+    qtbot.wait(300)
+    assert len(world.dialogs.shown) == shown and world.call("message.list", account=world.account_id, folder="Drafts").total == 0
+
+
+def test_send_during_a_save_on_close_is_the_newest_decision(world: World, qtbot: QtBot, held_save: HeldSave) -> None:
+    """Save on close, then Send while that save runs: the message is sent, not left as a draft."""
+    window = new_composer(world, qtbot)
+    fill(window, subject="Sent after all")
+    world.dialogs.answer = QMessageBox.StandardButton.Save
+    window.close()
+    window.send_button.click()
+    held_save.release.set()
+    wait(qtbot, lambda: len(world.smtp.received) == 1)
+    wait(qtbot, lambda: gone(window))
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)
+
+
+def test_quitting_while_a_discard_waits_for_the_save_quits_and_leaves_no_draft(world: World, qtbot: QtBot, held_save: HeldSave) -> None:
+    from chrono_mail.engine.commands_accounts import AccountSummary
+
+    summaries = [account for account in accounts(world) if isinstance(account, AccountSummary)]
+    window = world.window.composing.open_composer(world.account_id, None, None, accounts=summaries)  # the program's own, as it keeps them
+    add_window(qtbot, window)
+    fill(window, subject="Thrown away, then quit")
+    held_save.release.set()
+    window._autosave()  # noqa: SLF001 - a first save: the draft is really there
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 1 and not window.busy())
+    held_save.release.clear()
+    window.subject.setText("Thrown away, then quit (changed)")
+    window._autosave()  # noqa: SLF001 - a second save, held
+    world.dialogs.answer = QMessageBox.StandardButton.Discard
+    window.close()
+    shown = len(world.dialogs.shown)
+    held_save.release.set()
+    assert world.window.composing.close_all()  # the program ends: no question again, nothing holds it
+    assert len(world.dialogs.shown) == shown
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)
+
+
+def test_an_attachment_whose_name_comes_back_otherwise_keeps_its_place(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+    spaced = tmp_path / " plan.txt"
+    spaced.write_text("the plan")
+    window = new_composer(world, qtbot)
+    fill(window, subject="Plan")
+    window.add_attachment(str(spaced))
+    window.save_button.click()
+    wait(qtbot, lambda: not window.is_modified() and window.status.text().startswith("Draft saved"))
+    assert window.kept_positions() == ["0"] and window.attachments.count() == 1
+    window._finished = True  # noqa: SLF001
+    window.close()
+
+
+def test_send_while_a_draft_is_saved_sends_right_after_it(world: World, qtbot: QtBot, held_save: HeldSave) -> None:
+    window = new_composer(world, qtbot)
+    fill(window, subject="Sent anyway")
+    window._autosave()  # noqa: SLF001
+    window.send_button.click()  # while the automatic save runs
+    held_save.release.set()
+    wait(qtbot, lambda: len(world.smtp.received) == 1)
+    assert b"Sent anyway" in world.smtp.received[0].data
     wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Drafts").total == 0)
 
 

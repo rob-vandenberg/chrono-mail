@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -32,7 +33,7 @@ from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.commands_mail import ComposeResult
 from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.core import ChronoMailError, ConfigurationError, MessageFormatError
-from chrono_mail.engine.commands_drafts import DRAFT_OPEN, DRAFT_SAVE, DraftKind, DraftOpenParameters, DraftOpenResult, DraftSaveParameters, DraftSaveResult
+from chrono_mail.engine.commands_drafts import DRAFT_SAVE, DraftKind, DraftOpenResult, DraftSaveParameters, DraftSaveResult
 from chrono_mail.engine.commands_mail import MAIL_SEND, MESSAGE_DELETE, DeleteParameters, SendParameters, SendResult
 from chrono_mail.engine.commands_schedule import MAIL_EDIT_SCHEDULED, ScheduledEdit, ScheduledInfo
 from chrono_mail.ui.addresscompleter import AddressCompleter
@@ -46,9 +47,12 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 3.6.351"
+__version__ = "composer.py 3.6.358"
 
 # --- Version history ----------------------------------------------------
+# v3.6.358: after a save only the attachments it took are marked as stored, at the places the save gives, in place; what was added or removed
+#           during the save stays so and still counts as a change; no reading the draft back; Save, Send and Discard asked while a save
+#           runs follow it, never dropped; the newest decision replaces the one waiting (CR-03, D-271)
 # v3.6.351: a send that failed after its copy may have been stored says to look in the Outbox and Sent first, never "nothing was stored"
 # v3.6.349: the Schedule window opens on the message's time without the platform's conversion (Windows refuses past 3000, RV-204)
 # v3.1.341: a send that failed hands the message to the Outbox and closes the window (Send again sent a second copy, RV-155)
@@ -203,6 +207,9 @@ class ComposeWindow(QMainWindow):
         self._sending: bool = False
         self._delay: int = 0  # the countdown of the send under way (Settings > General, B-21)
         self._saving: bool = False
+        self._waiting: Callable[[], None] | None = None  # the decision made while a save ran, done once it ended; a newer one replaces it (CR-03)
+        self._save_failed: bool = False  # the last save failed (its box or red line said why)
+        self._discarding: bool = False  # Discard was chosen while a save ran: the window is gone from the screen and closes once it ended
         self._finished: bool = False
         self._account_id: str = account_id
         self.setWindowTitle("New message")
@@ -518,9 +525,13 @@ class ComposeWindow(QMainWindow):
         else:
             self.send()
 
-    def save_draft(self, then: Callable[[], None] | None = None, quiet: bool = False) -> None:
-        """Save the message as a draft (replacing the version saved before)."""
-        if self._sending or self._saving:
+    def save_draft(self, quiet: bool = False) -> None:
+        """Save the message as a draft (replacing the version saved before). Asked while a save runs, it follows that save."""
+        if self._sending:
+            return
+        if self._saving:
+            if self._waiting is None:  # never over Send, Discard or Save on close: each stores or drops everything itself
+                self._waiting = lambda: self._save_if_changed(quiet)
             return
         recipients = self._recipients()
         if recipients is None:
@@ -531,47 +542,86 @@ class ComposeWindow(QMainWindow):
             return
         values = self._draft_values(*recipients)
         snapshot = self._snapshot()
+        sent = self._sent_items()  # the entries this save takes, in the order it gives them (kept ones, then files)
         self._saving = True
+        self._save_failed = False
         self._say("Saving the draft…")
 
         def saved(result: DraftSaveResult) -> None:
             self._saving = False
             self._stored = (result.folder, result.message_id)
             self._say(f"Draft saved at {datetime.now().strftime('%H:%M')}")
-            self._refresh_kept_attachments(snapshot, then)
+            self._saved_snapshot = self._place_saved(snapshot, sent, result.attachment_positions)
+            self.draft_saved.emit(values.account)
+            self._decide_waiting()
 
         def failed(error: ChronoMailError) -> None:
             self._saving = False
+            self._save_failed = True
             self._say(f"The draft could not be saved: {error}", error=True)
-            if not quiet:  # Save asked for it; an automatic save never interrupts the writing (it tries again by itself)
+            if not quiet and not self._discarding:  # Save asked for it; an automatic save never interrupts the writing (it tries again by itself)
                 QMessageBox.warning(self, "Save draft", f"The draft could not be saved: {error}")
+            self._decide_waiting()
 
         self._backend.ask(DRAFT_SAVE, values, saved, failed, owner=self)
 
-    def _refresh_kept_attachments(self, snapshot: tuple[object, ...], then: Callable[[], None] | None) -> None:
-        """After a save every attachment is inside the stored draft: list them as such, so that the next save keeps them."""
-        stored = self._stored
-        account = str(self.from_box.currentData())
+    def busy(self) -> bool:
+        """A save or a send runs, or a decision waits for one, or the window waits to close."""
+        return self._saving or self._sending or self._discarding or self._waiting is not None
 
-        def opened(result: DraftOpenResult) -> None:
-            if self._fields() == snapshot[0]:  # nothing was typed in the meantime
-                self.attachments.clear()
-                for attachment in result.attachments:
-                    self._add_kept(attachment.position, attachment.name, attachment.size)
-                self._saved_snapshot = self._snapshot()
-            self.draft_saved.emit(account)
-            if then is not None:
-                then()
+    def _after_the_save(self, decision: Callable[[], None]) -> None:
+        """Send, Save on close or Discard: done now, or, while a save runs, once it ended; the newest decision replaces the one waiting."""
+        if self._saving:
+            self._waiting = decision
+        else:
+            decision()
 
-        def failed(error: ChronoMailError) -> None:
-            self._saved_snapshot = snapshot
-            self.draft_saved.emit(account)
-            if then is not None:
-                then()
+    def _decide_waiting(self) -> None:
+        decision = self._waiting
+        self._waiting = None
+        if decision is not None:
+            decision()
 
-        if stored is None:
+    def _save_if_changed(self, quiet: bool) -> None:
+        if self._stored is None or self.is_modified():
+            self.save_draft(quiet)
+
+    def _save_and_close(self) -> None:
+        """Save on close: the window closes once everything is safely stored; a failed save keeps it open (its box said why)."""
+        if self._stored is not None and not self.is_modified():
+            self._close_for_good()
             return
-        self._backend.ask(DRAFT_OPEN, DraftOpenParameters(account, stored[1], stored[0]), opened, failed, owner=self)
+        self.save_draft()
+        if self._saving:
+            self._waiting = self._close_when_saved
+
+    def _close_when_saved(self) -> None:
+        if not self._save_failed:
+            self._save_and_close()  # what was typed during the save is saved first
+
+    def _sent_items(self) -> tuple[list[QListWidgetItem], list[QListWidgetItem]]:
+        """The attachment entries as listed now, and in the order a save gives them to the engine: the kept ones, then the files."""
+        listed = [self.attachments.item(row) for row in range(self.attachments.count())]
+        return listed, [item for item in listed if item.data(ROLE_KEPT) is not None] + [item for item in listed if item.data(ROLE_PATH) is not None]
+
+    def _place_saved(self, snapshot: tuple[object, ...], sent: tuple[list[QListWidgetItem], list[QListWidgetItem]], positions: tuple[int, ...]) -> tuple[object, ...]:
+        """After a save every attachment it took is inside the stored draft, at the place the engine gave: mark exactly those entries so, in place.
+        An entry added during the save stays a file, one removed during it stays removed; the saved state is the list as the save took it, so
+        either still counts as a change (CR-03). Returns that saved state."""
+        listed, given = sent
+        place = {id(item): position for item, position in zip(given, positions, strict=False)}
+        for item in given:
+            position = place.get(id(item), -1)
+            row = self.attachments.row(item)
+            if row < 0:
+                continue  # removed during the save
+            if position < 0:
+                self.attachments.takeItem(row)  # not in the stored draft (a part its text shows): nothing there to keep
+                continue
+            item.setData(ROLE_PATH, None)
+            item.setData(ROLE_KEPT, position)
+        stored = tuple((None, place[id(item)]) for item in listed if place.get(id(item), -1) >= 0)
+        return (snapshot[0], stored, snapshot[2])
 
     def _autosave(self) -> None:
         if self._editing is not None:
@@ -639,7 +689,10 @@ class ComposeWindow(QMainWindow):
         QMessageBox.warning(self, "Not saved", f"{error}\n\nThe scheduled message is as it was. You can correct this and try again.")
 
     def send(self, send_at: str | None = None, repeat: dict[str, object] | None = None) -> None:
-        if self._sending or self._saving:
+        if self._sending:
+            return
+        if self._saving:  # a save runs: the message is sent right after it, from what it stored
+            self._waiting = lambda: self.send(send_at, repeat)
             return
         recipients = self._recipients()
         if recipients is None:
@@ -751,6 +804,9 @@ class ComposeWindow(QMainWindow):
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
         save_geometry(self, self._settings, "composer_geometry")
+        if self._discarding:
+            event.ignore()  # thrown away already: it closes by itself once the running save ended
+            return
         if self._finished or not self.is_modified():
             self.autosave_timer.stop()
             event.accept()
@@ -768,7 +824,13 @@ class ComposeWindow(QMainWindow):
         answer = QMessageBox.question(self, "Save this message?", "The message has not been sent. Save it as a draft?", buttons, QMessageBox.StandardButton.Save)
         if answer == QMessageBox.StandardButton.Save:
             event.ignore()
-            self.save_draft(then=self._close_for_good)  # the window closes when the draft is safely stored
+            self._after_the_save(self._save_and_close)  # the window closes when the draft is safely stored
+        elif answer == QMessageBox.StandardButton.Discard and self._saving and self._created_here:  # the running save would leave a draft behind
+            event.ignore()
+            self.autosave_timer.stop()
+            self.hide()
+            self._discarding = True
+            self._waiting = self._discard  # the newest decision: a Save, Send or Save on close waiting no longer goes
         elif answer == QMessageBox.StandardButton.Discard:
             if self._created_here and self._stored is not None:  # a draft that only this window made (by autosave) goes with it
                 folder, message = self._stored
@@ -777,6 +839,14 @@ class ComposeWindow(QMainWindow):
             event.accept()
         else:
             event.ignore()
+
+    def _discard(self) -> None:
+        """Discard asked while a save ran: the draft only this window made goes, then the window."""
+        if self._created_here and self._stored is not None:
+            folder, message = self._stored
+            self._backend.ask(MESSAGE_DELETE, DeleteParameters(str(self.from_box.currentData()), folder, message, permanent=True), self._ignore, None)
+        self._discarding = False
+        self._close_for_good()
 
     @staticmethod
     def _ignore(result: object) -> None:

@@ -1,3 +1,5 @@
+import time
+
 from typing import Literal
 
 from PySide6.QtCore import QObject, Qt, Signal
@@ -21,9 +23,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 3.6.354"
+__version__ = "composing.py 3.6.358"
 
 # --- Version history ----------------------------------------------------
+# v3.6.358: quitting first lets a running draft save and the decision waiting for it end (CR-03)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.349: an Outbox message that was sent already opens to be read (sent_already), never as a draft (RV-181)
 # v3.1.341: a message of the Outbox opened to be changed is taken out of the Outbox into Drafts first (left_outbox; RV-156)
@@ -242,5 +245,9 @@ class Composing(QObject):
             window.setStyleSheet(theme.stylesheet(scale.windows()))
 
     def close_all(self) -> bool:
-        """The program ends: every window closes (each asks about what is not saved); False when one of them stays."""
+        """The program ends: every window closes (each asks about what is not saved); False when one of them stays. A save that runs, and what
+        was decided to follow it (Send, Discard, close), ends first (CR-03)."""
+        deadline = time.monotonic() + 10
+        while any(composer.busy() for composer in self.composers) and time.monotonic() < deadline:  # a decision may start another save
+            self._backend.wait_for_done(max(1, int((deadline - time.monotonic()) * 1000)))
         return all(composer.close() for composer in list(self.composers))
