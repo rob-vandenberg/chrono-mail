@@ -9,11 +9,13 @@ from typing import Any  # json.load returns untyped data; every value is checked
 
 from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebar.py 2.0.298"
+__version__ = "sidebar.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.0.298: the owner's order: Inbox, Outbox, Sent, Drafts, Snoozed, Scheduled, Recovered, Archive, Junk, Trash (D-232)
 # v2.0.289: the owner's order: Inbox, Drafts, Outbox, Sent, Snoozed, Scheduled, Recovered, Archive, Junk, Trash (D-232)
 # v2.0.288: LOCAL_FOLDER_KINDS is every standard folder in the one order the folder list shows them first: Snoozed after Scheduled, Recovered last (D-232)
@@ -187,7 +189,7 @@ def _string(data: dict[str, Any], key: str, name: str, default: str | None = Non
 
 def parse_sidebar(text: str) -> Sidebar:
     try:
-        data = _object(json.loads(text), "The sidebar file")
+        data = _object(load_json(text), "The sidebar file")
     except ValueError:
         raise ConfigurationError("The sidebar file is not valid JSON") from None
     if data.get("format") != FORMAT_VERSION:

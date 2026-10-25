@@ -15,14 +15,16 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand
 from chrono_mail.engine.rule_engine import Subject, applies_to, condition_holds, header_values, rule_matches
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER
+from chrono_mail.engine.newkey import kept_local_key
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.engine.undorecord import Verdicts
 from chrono_mail.mime import ParsedMessage, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "junkfilter.py 2.2.313"
+__version__ = "junkfilter.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: with the settings lost, the words are read with the key of the mail kept here (they were set aside as damaged)
 # v2.2.313: learn and learn_from_move say what each message was learned as before (Verdicts); set_verdicts puts that back (Undo, B-18)
 # v2.1.312: the busy bar names junk.learn-existing "Junk filter: checking mail for spam" (the owner: calm, not alarming)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -51,7 +53,10 @@ def server_says_junk(raw: bytes) -> bool:
 
 def _key(engine: Engine) -> DataKey | None:
     config = engine.config()
-    return None if config.key_id is None else engine.data_key(config)
+    if config.key_id is None:  # the settings were lost or reset: the key of the mail kept here is this computer's (never a plain read)
+        kept = kept_local_key(engine)
+        return None if kept is None else engine.data_key(config.with_key_id(kept))
+    return engine.data_key(config)
 
 
 def _tell_once(engine: Engine, text: str) -> None:

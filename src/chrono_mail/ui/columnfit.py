@@ -3,11 +3,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from chrono_mail.ui.scale import lpx, message_list
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnfit.py 0.3.108"
+__version__ = "columnfit.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v0.3.108: Icon columns and the smallest widths follow the size factor of the message list; icon widths are kept as the width at the standard size
 # v0.1.89: Initial column fit: the columns always fill the width of the list, text columns as shares, icon columns in pixels
 
@@ -29,7 +31,7 @@ class ColumnLayout:
 def read_layout(text: str) -> ColumnLayout | None:
     """A saved layout; None when there is none or it cannot be used. Unusable entries are left out."""
     try:
-        data: object = json.loads(text) if text else None
+        data: object = load_json(text) if text else None
     except ValueError:
         return None
     if not isinstance(data, dict):

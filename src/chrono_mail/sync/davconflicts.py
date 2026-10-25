@@ -10,11 +10,13 @@ from dataclasses import dataclass, replace
 from chrono_mail.core import StorageError
 from chrono_mail.pim.merge import Clash
 from chrono_mail.pimstore import PimStore
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davconflicts.py 2.0.286"
+__version__ = "davconflicts.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.0.286: The name or colour of a collection changed here and on the server, or a name the server refused for good (D-192, the Windows
 #           computer's F3)
 # v1.1.236: A collection made here (offline) that the server refused to make (R-29)
@@ -89,7 +91,7 @@ def load_conflicts(store: PimStore) -> list[SyncConflict]:
         return []
     try:
         found: list[SyncConflict] = []
-        for entry in json.loads(text)["conflicts"]:
+        for entry in load_json(text)["conflicts"]:
             clashes = tuple(Clash(str(c[0]), str(c[1]), str(c[2]), str(c[3])) for c in entry["clashes"])
             found.append(SyncConflict(
                 str(entry["id"]), str(entry["collection"]), str(entry["href"]), str(entry["item"]), str(entry["kind"]), str(entry["reason"]),

@@ -1,4 +1,3 @@
-import json
 import threading
 from collections.abc import Callable
 from dataclasses import replace
@@ -11,11 +10,13 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.index import Index
 from chrono_mail.mime import REPEAT_HEADER, parse_message, with_extra_headers
 from chrono_mail.store import Properties, Store
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "old_files.py 1.1.206"
+__version__ = "old_files.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v1.1.206: Initial version: the side files of before 1.1.206 (snoozed.json, archived.log, recurring.json) move into the messages'
 #           properties files and into the repeating messages themselves, once, when a mailbox is first opened (D-176)
 
@@ -67,7 +68,7 @@ def _read_json(path: Path) -> dict[str, object]:
     if path.stat().st_size > MAXIMUM_OLD_FILE_BYTES:
         return {}
     try:
-        data = json.loads(path.read_text("utf-8"))
+        data = load_json(path.read_text("utf-8"))
     except ValueError:
         return {}  # damaged: nothing can be taken from it
     return {str(key): value for key, value in data.items()} if isinstance(data, dict) else {}

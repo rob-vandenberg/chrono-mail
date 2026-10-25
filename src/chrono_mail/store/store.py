@@ -15,11 +15,16 @@ from chrono_mail.crypto.cipher import OVERHEAD
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_name, split_info
 from chrono_mail.store.properties import MessageProperties
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 2.5.336"
+__version__ = "store.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; folder_description: one way to read
+#           a folder.json, also for a restore; a description nested without end is damaged, never a crash; has_letter and set_letter: a flag
+#           letter the store does not model, put on or taken off by a rename (needs no free space), for the mark of a message the server
+#           took (SENT_LETTER)
 # v2.5.336: deliver_placed, copy_placed and move_placed give back where they put the message (Placed): nothing reads a whole folder to find it again (D-248, W13)
 # v1.9.276: stored_at: when a message's file was written here, the last resort of the Received column (D-226)
 # v1.1.227: Private files: encrypted texts the synchronisation keeps beside the mail (its sync conflicts, D-195)
@@ -33,6 +38,19 @@ __version__ = "store.py 2.5.336"
 # v0.2.101: Creating a folder re-reads the folders under a lock (no second folder with the same path when commands run at the same time); ensure_folder; merge_duplicate_folders repairs stores where that happened
 # v0.0.45: deliver can keep a message's identity
 # v0.0.7: Initial encrypted Maildir store
+
+
+def folder_description(text: str) -> tuple[tuple[str, ...], FolderRole]:
+    """A mail folder's path and role from the text of its folder.json, as the store reads it (a restore judges a backup's by the same
+    rules, RV-196). Raises ValueError, KeyError or TypeError when it cannot be used."""
+    description = load_json(text)  # nested without end: a ValueError
+    path, role = tuple(str(segment) for segment in description["path"]), FolderRole(description["role"])
+    Folder("check", path, role)  # the store refuses an empty path or an empty name in it (ValueError), as Store.refresh does
+    return path, role
+
+
+SENT_LETTER: str = "P"  # Maildir's "passed" on a message of the Outbox: the server took it, only its move to Sent is left (never sent again)
+
 
 FORMAT_VERSION: int = 1
 TEMPORARY_FILE_MAXIMUM_AGE_SECONDS: float = 36 * 3600  # the Maildir convention
@@ -161,7 +179,7 @@ class Store:
     @classmethod
     def open(cls, root: Path, key: DataKey | None, durable: bool = True, checkpoint: Checkpoint = _no_checkpoint) -> "Store":
         try:
-            metadata = json.loads((root / "store.json").read_text("utf-8"))
+            metadata = load_json((root / "store.json").read_text("utf-8"))
             encrypted, key_id, account_id = bool(metadata["encrypted"]), metadata["key_id"], str(metadata["account_id"])
             if metadata["format"] != FORMAT_VERSION:
                 raise StorageError("Unsupported store format")
@@ -190,9 +208,8 @@ class Store:
             return
         for directory in sorted(folders_root.iterdir()):
             try:
-                description = json.loads((directory / "folder.json").read_text("utf-8"))
-                path = tuple(str(segment) for segment in description["path"])
-                folder = Folder(self.account_id, path, FolderRole(description["role"]))
+                path, role = folder_description((directory / "folder.json").read_text("utf-8"))
+                folder = Folder(self.account_id, path, role)
             except (OSError, ValueError, KeyError, TypeError):
                 self.damaged_folders.append(directory.name)
                 continue
@@ -256,8 +273,7 @@ class Store:
             for name in list(self.damaged_folders):
                 extra = folders_root / name
                 try:
-                    description = json.loads((extra / "folder.json").read_text("utf-8"))
-                    path = tuple(str(segment) for segment in description["path"])
+                    path, _ = folder_description((extra / "folder.json").read_text("utf-8"))
                 except (OSError, ValueError, KeyError, TypeError):
                     continue  # really damaged: left alone
                 entry = self._folders.get(path)
@@ -531,6 +547,27 @@ class Store:
 
     def set_flags(self, ref: MessageRef, flags: frozenset[MessageFlag], hint: str | None = None) -> str:
         """Change the flags (a rename). Letters we do not model are kept. Returns the new relative path."""
+        return self._rename_info(ref, hint, lambda _flags, extra: join_info(flags, extra))
+
+    def has_letter(self, ref: MessageRef, letter: str, hint: str | None = None) -> bool:
+        """Whether the message's file name carries this flag letter the store does not model."""
+        parsed = parse_name(self._locate(self._folder_directory(ref.folder_path), ref.store_id, hint).name)
+        return parsed is not None and letter in split_info(parsed[1] or "")[1]
+
+    def set_letter(self, ref: MessageRef, letter: str, present: bool, hint: str | None = None) -> str:
+        """Put a flag letter the store does not model on the message's file name, or take it off: a rename, so it needs no free space on
+        the disk. The flags and the other letters stay. Returns the new relative path."""
+        if len(letter) != 1 or letter in join_info(frozenset(MessageFlag), ""):
+            raise ValueError(f"{letter!r} is not a letter the store leaves alone")
+
+        def changed(flags: frozenset[MessageFlag], extra: str) -> str:
+            kept = extra.replace(letter, "")
+            return join_info(flags, kept + letter if present else kept)
+
+        return self._rename_info(ref, hint, changed)
+
+    def _rename_info(self, ref: MessageRef, hint: str | None, change: Callable[[frozenset[MessageFlag], str], str]) -> str:
+        """Give the message's file name the flag part change makes of its flags and other letters (a rename)."""
         directory = self._folder_directory(ref.folder_path)
         with self._message_lock(ref.store_id):  # no read of this message happens during the rename
             for _ in range(3):
@@ -538,8 +575,8 @@ class Store:
                 hint = None
                 parsed = parse_name(path.name)
                 assert parsed is not None
-                _, extra = split_info(parsed[1] or "")
-                info = join_info(flags, extra)
+                flags, extra = split_info(parsed[1] or "")
+                info = change(flags, extra)
                 if info == "" and path.parent.name == "new":
                     return f"new/{path.name}"
                 target = directory / "cur" / build_name(ref.store_id, info)

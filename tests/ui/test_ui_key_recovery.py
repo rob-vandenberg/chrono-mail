@@ -13,9 +13,11 @@ from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
 from tests.ui.world import World, answer_input, answer_open_file, menu_named, reject_dialog, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_key_recovery.py 2.4.322"
+__version__ = "test_ui_key_recovery.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: kept Local Folders whose key is gone: Start without this mail, greyed when it does not apply; with its older key here,
+#           Start without says that Try again can still bring the mail back
 # v2.4.322: the key items are "Show the recovery code…" and "Use a recovery code…" (D-244)
 # v1.9.266: R-45: Not now looks for the red of the theme in use, not the light theme's red
 # v1.1.197: The dialog says why the key could not be had and tells a wallet that could not be opened apart; Try again shows the newest reason
@@ -246,3 +248,100 @@ def test_try_again_shows_the_newest_reason(world: World, qtbot: QtBot, monkeypat
     drive(monkeypatch, qtbot, steps)
     world.window.start()
     mail_is_readable(qtbot, world)
+
+
+def test_start_without_this_mail_sets_kept_local_folders_aside(world: World, qtbot: QtBot) -> None:
+    """Kept Local Folders whose settings were lost and whose key is gone for good: the key window offers Start without this mail (asked
+    first), which sets that mail aside, never deleted; for any other missing key the button is greyed, never hidden."""
+    from chrono_mail.config import AppConfig
+    from chrono_mail.core import LOCAL_ACCOUNT_ID
+    from chrono_mail.engine.commands_accounts import KeyStatus
+
+    plain = RestoreKeyDialog(world.backend, None, KeyStatus("ab" * 16, False, "not there"))
+    qtbot.addWidget(plain)
+    assert not plain.start_without_button.isEnabled() and not plain.start_without_button.isHidden()
+    world.call("local.enable")
+    key_id = world.engine.config().key_id
+    assert key_id is not None
+    world.engine.change_config(lambda config: AppConfig())
+    assert isinstance(world.engine.keys, InMemoryKeyStore)
+    world.engine.keys.delete(bytes.fromhex(key_id))
+    world.engine.forget_keys()
+    status = world.call("key.status")
+    dialog = RestoreKeyDialog(world.backend, None, status)
+    qtbot.addWidget(dialog)
+    assert dialog.start_without_button.isEnabled() and "Start without this mail" in dialog.explanation.text()
+    with qtbot.waitSignal(dialog.accepted, timeout=8000):
+        dialog.start_without_button.click()  # the question is answered Yes
+    assert any(title == "Start without this mail" for _, title, _ in world.dialogs.shown)
+    assert dialog.started_without and Path(dialog.started_without).exists()
+    assert not world.engine.directories.account_directory(LOCAL_ACCOUNT_ID).exists()
+
+
+def test_a_missing_key_is_never_hidden_behind_local_folders_older_key(world: World, qtbot: QtBot) -> None:
+    """The review of 3.6.350: with this computer's key missing and Local Folders written with an older key, the window said the other mail
+    was not affected and offered Start without this mail; and for a locked wallet it hid the locked text."""
+    from chrono_mail.engine.commands_accounts import KeyStatus
+    from chrono_mail.ui.restorekeydialog import LOCKED_TITLE, MISSING_TITLE, OTHER_KEY_TITLE, OTHER_STILL_MISSING, STILL_MISSING
+
+    for status, title, offered, declined in (
+        (KeyStatus("ab" * 16, False, "not there", kept_other=True), MISSING_TITLE, False, STILL_MISSING),
+        (KeyStatus("ab" * 16, False, "locked", store_answered=False, kept_other=True), LOCKED_TITLE, False, STILL_MISSING),
+        (KeyStatus("ab" * 16, True, kept_other=True), OTHER_KEY_TITLE, True, OTHER_STILL_MISSING),
+    ):
+        dialog = RestoreKeyDialog(world.backend, None, status)
+        qtbot.addWidget(dialog)
+        assert (dialog.windowTitle(), dialog.start_without_button.isEnabled(), dialog.declined) == (title, offered, declined)
+
+
+def _declined(self: RestoreKeyDialog) -> int:
+    return int(QDialog.DialogCode.Rejected)
+
+
+def test_only_local_folders_waiting_never_stops_the_start(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.350: Not now in the key window stopped the whole start (no accounts, no mail check) also when only Local Folders
+    waited for its older key; and the window could be closed while Local Folders was being taken back."""
+    from chrono_mail.engine.commands_accounts import KeyStatus
+    from chrono_mail.ui.restorekeydialog import NOT_TAKEN_BACK, OTHER_STILL_MISSING
+
+    for status, declined in ((KeyStatus("ab" * 16, True, kept_other=True), OTHER_STILL_MISSING), (KeyStatus("ab" * 16, True, take_back=True), NOT_TAKEN_BACK)):
+        monkeypatch.setattr(RestoreKeyDialog, "exec", _declined)
+        went_on: list[bool] = []
+        world.window._ask_for_key(lambda: went_on.append(True), status)  # noqa: SLF001 - the start's question
+        assert went_on == [True] and declined in world.window.status_label.text()
+    went_on.clear()
+    world.window._ask_for_key(lambda: went_on.append(True), KeyStatus("ab" * 16, False, "not there"))  # noqa: SLF001
+    assert went_on == []  # this computer's own key missing: nothing can be opened
+    dialog = RestoreKeyDialog(world.backend, None, KeyStatus("ab" * 16, False, "not there"))
+    qtbot.addWidget(dialog)
+    dialog._busy(True)  # noqa: SLF001 - while work runs
+    closed: list[int] = []
+    dialog.finished.connect(closed.append)
+    dialog.reject()
+    assert closed == [] and not dialog.cancel_button.isEnabled()
+
+
+def test_not_now_with_the_key_in_place_leaves_the_status_line_alone(world: World, qtbot: QtBot) -> None:
+    """The review of 3.6.350: File > Use a recovery code with the key in place, then Not now, emptied the status line in red."""
+    world.window.report.show("Mail checked")
+    dialog = RestoreKeyDialog(world.backend, None, None)
+    qtbot.addWidget(dialog)
+    dialog.tell(world.window.report, accepted=False)
+    assert world.window.status_label.text() == "Mail checked"
+
+
+def test_start_without_says_try_again_can_bring_the_mail_back_when_its_older_key_is_here(world: World, qtbot: QtBot) -> None:
+    """The final review of 3.6.350: with Local Folders' older key in the password store and only its take-back failed (no room on the
+    disk), Start without asked as if the mail could only be opened with a recovery code, and the person gave it up believing it lost."""
+    from PySide6.QtWidgets import QMessageBox
+
+    from chrono_mail.engine.commands_accounts import KeyStatus
+    from chrono_mail.ui.restorekeydialog import START_WITHOUT_KEY_HERE_QUESTION, START_WITHOUT_QUESTION
+
+    dialog = RestoreKeyDialog(world.backend, None, KeyStatus("ab" * 16, False, "not there"))
+    qtbot.addWidget(dialog)
+    dialog.show_status(KeyStatus("ab" * 16, True, take_back=True))  # the older key is here; the take-back that ran failed
+    world.dialogs.answer = QMessageBox.StandardButton.No
+    dialog.start_without_button.click()
+    assert [text for _, title, text in world.dialogs.shown if title == "Start without this mail"] == [START_WITHOUT_KEY_HERE_QUESTION]
+    assert START_WITHOUT_KEY_HERE_QUESTION != START_WITHOUT_QUESTION and dialog.started_without == ""

@@ -10,11 +10,13 @@ from dataclasses import dataclass
 from chrono_mail.core import StorageError
 from chrono_mail.pimstore import PimStore
 from chrono_mail.protocols.dav import DavClient, DavError, RemoteCollection
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davcreates.py 1.1.236"
+__version__ = "davcreates.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v1.1.236: Initial: collections waiting to be made on the server; made at a new place in the right home (R-29)
 
 WAITING_FILE: str = "collection-creates"
@@ -31,7 +33,7 @@ def load_waiting(store: PimStore) -> list[WaitingCreate]:
     if text is None:
         return []
     try:
-        return [WaitingCreate(str(entry["collection"]), float(entry["when"])) for entry in json.loads(text)["creates"]]
+        return [WaitingCreate(str(entry["collection"]), float(entry["when"])) for entry in load_json(text)["creates"]]
     except (ValueError, KeyError, TypeError) as error:
         raise StorageError(f"The list of calendars waiting to be made on the server is damaged: {error}") from None
 

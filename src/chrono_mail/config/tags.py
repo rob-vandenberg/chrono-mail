@@ -6,11 +6,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from chrono_mail.core import ConfigurationError
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "tags.py 0.5.135"
+__version__ = "tags.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v0.5.135: The person's order of the tags, a shortcut key and what each tag is for (Tags window); older files still load
 # v0.0.60: Initial colours of tags
 
@@ -125,7 +127,7 @@ class TagColours:
 
 def parse_tags(text: str) -> TagColours:
     try:
-        data = json.loads(text)
+        data = load_json(text)
         if data.get("format") != FORMAT_VERSION:
             raise ConfigurationError("The tags file has an unknown format")
         entries = data.get("tags", [])

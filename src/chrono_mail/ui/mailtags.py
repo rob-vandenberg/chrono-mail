@@ -11,16 +11,19 @@ from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
 from chrono_mail.engine.commands_tags import MESSAGE_TAG, MailTagParameters, MessageTagsResult
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.mailstate import MailState, Placed
-from chrono_mail.ui.messagelistpane import MessageListPane
+from chrono_mail.ui.messagelistpane import MessageListPane, SelectedMessage
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail
 from chrono_mail.ui.undoing import Undoing
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailtags.py 2.4.334"
+__version__ = "mailtags.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a tag by key acts on the messages still there without an action under way; the menu's ticks never hold Undo (RV-206);
+#           a tag with no message left to act on takes no action number (an Undo after it undoes nothing older); its answer always
+#           counts its command as ended
 # v2.4.334: a tag waits for the places of messages still on their way, then goes to all of them (W12b)
 # v2.4.329: a tag goes to every selected message, also those not loaded yet; the shortcut and the menu's ticks count them all (W12)
 # v2.2.313: a tag given or taken away is one action of Undo (B-18)
@@ -106,9 +109,9 @@ class MailTags(QObject):
             return
         chosen = self._messages.selected_rows()
 
-        def decide(rows: list[MessageRow]) -> None:
+        def decide(still: list[SelectedMessage], rows: list[MessageRow]) -> None:
             everyone = all(any(have.casefold() == name.casefold() for have in tuple(row.tags)) for row in rows)
-            self.toggle_tag(name, not everyone, chosen)
+            self.toggle_tag(name, not everyone, still)  # those still in the view without an action under way (D-146)
 
         if chosen:
             self._messages.with_rows(chosen, decide)
@@ -120,11 +123,11 @@ class MailTags(QObject):
         fill_tag_menu(menu, self._state.tags, self.book, [tuple(row.tags) for row in loaded], self.toggle_tag, self._new_tag, self._open_tags)
         if len(loaded) < len(chosen):
 
-            def refill(rows: list[MessageRow]) -> None:
+            def refill(_still: list[SelectedMessage], rows: list[MessageRow]) -> None:
                 if menu.isVisible():
                     fill_tag_menu(menu, self._state.tags, self.book, [tuple(row.tags) for row in rows], self.toggle_tag, self._new_tag, self._open_tags)
 
-            self._messages.with_rows(chosen, refill)
+            self._messages.with_rows(chosen, refill, action=False)  # only ticks: Undo never waits for it
 
     def toggle_tag(self, name: str, add: bool, chosen: Sequence[Placed] | None = None) -> None:
         """Give a tag to the selected messages (add) or take it away; the rows show the new tags at once."""
@@ -134,20 +137,26 @@ class MailTags(QObject):
         groups: dict[tuple[str, str], list[str]] = {}
         for row in rows:
             groups.setdefault((self._state.account_of(row), row.folder), []).append(row.message_id)
+        if not groups:  # nothing left to tag (all under way, or gone): no action, so an Undo pressed after it undoes nothing older
+            return
         new = not any(tag.name.casefold() == name.casefold() for tag in self._state.tags)
 
         def done(result: tuple[MessageTagsResult, ...]) -> None:
-            for item in result:
-                message_id, tags = item.message, item.tags
-                self._messages.model.replace_tags(message_id, tags)
-                self.message_tags_changed.emit(message_id, tags)
-            if new and add:
-                self.load()  # a message that loses the tag stays in a tag's list until it is left, as a read message in Unread (D-146)
-            self._undoing.ended()
+            try:
+                for item in result:
+                    message_id, tags = item.message, item.tags
+                    self._messages.model.replace_tags(message_id, tags)
+                    self.message_tags_changed.emit(message_id, tags)
+                if new and add:
+                    self.load()  # a message that loses the tag stays in a tag's list until it is left, as a read message in Unread (D-146)
+            finally:
+                self._undoing.ended()  # always: an Undo waiting for it, and what waits behind that Undo, go on
 
         def failed(error: ChronoMailError) -> None:
-            self._status.report("Could not change the tags", error)
-            self._undoing.ended()
+            try:
+                self._status.report("Could not change the tags", error)
+            finally:
+                self._undoing.ended()
 
         number = self._undoing.new_action()  # one key press, however many folders: one step of Undo
         for (account, folder), ids in groups.items():

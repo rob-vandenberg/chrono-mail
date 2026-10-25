@@ -1,3 +1,4 @@
+import html
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -27,9 +28,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 2.0.291"
+__version__ = "paletteeditor.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.0.291: A small margin at the right of the list, so the delete buttons do not touch the scrollbar (the owner)
 # v2.0.290: No outline around the list of colours (the owner)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -194,6 +196,6 @@ class PaletteEditor(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)
-            self.result_label.setText(f"<span style='color:{red()}'>{error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
 
         self._backend.ask(COLLECTION_SET_PALETTE, self.parameters(), saved, failed, owner=self)

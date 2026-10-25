@@ -20,11 +20,13 @@ from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 from chrono_mail.store.atomic import fsync_directory
 from chrono_mail.store.layout import parse_name
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "backup.py 3.3.343"
+__version__ = "backup.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v3.3.343: what was downloaded (POP3) is taken before the messages are listed, so it never names a message the backup lacks (RV-61); a
 #           message deleted while the backup runs no longer searches the whole mailbox again (RV-69)
 # v2.4.324: one backup or restore at a time (JOB_LOCK); backup.cancel stops either (CANCEL); backup_running
@@ -185,7 +187,7 @@ def _collection_kinds(pim_root: Path) -> dict[str, CollectionKind]:
         return kinds
     for directory in sorted(base.iterdir()):
         try:
-            description: object = json.loads((directory / "collection.json").read_text("utf-8"))
+            description: object = load_json((directory / "collection.json").read_text("utf-8"))
             if isinstance(description, dict):
                 kinds[directory.name] = CollectionKind(cast(dict[str, object], description).get("kind"))
         except (OSError, ValueError):
@@ -226,7 +228,7 @@ def _check(choice: BackupChoice) -> Path:
         raise UsageError("The window's settings are too large to back up")
     if choice.window_settings:
         try:
-            if not isinstance(json.loads(choice.window_settings), dict):
+            if not isinstance(load_json(choice.window_settings), dict):
                 raise ValueError
         except ValueError:
             raise UsageError("The window's settings are not readable") from None

@@ -2,6 +2,8 @@
 with the coloured tag, the name and the shortcut. The editor has Name, Colour (Change…), Shortcut and Use for. Changes are
 made on a copy and sent as commands when the Settings window's OK is pressed; Cancel throws them away."""
 
+import html
+
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
@@ -44,9 +46,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 2.4.333"
+__version__ = "tagsdialog.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.271: R-19: commands gives typed steps; tag.list typed
@@ -390,7 +393,7 @@ class TagsPanel(QWidget):
             steps.pop(0).start(self._backend, next_step, stopped, owner=self)
 
         def stopped(error: ChronoMailError) -> None:
-            message = f"<span style='{red_style()}'>Not saved: {error}. The page shows the tags as they are now.</span>"
+            message = f"<span style='{red_style()}'>Not saved: {html.escape(str(error))}. The page shows the tags as they are now.</span>"
             self.status.setText(message)
 
             def reloaded(result: tuple[TagInfo, ...]) -> None:  # what was saved before the error is the truth now, so OK never sends it twice

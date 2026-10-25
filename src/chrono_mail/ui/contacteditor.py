@@ -1,3 +1,4 @@
+import html
 from PySide6.QtCore import QDate, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -28,9 +29,10 @@ from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "contacteditor.py 3.2.342"
+__version__ = "contacteditor.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v3.2.342: a list of e-mail addresses, phone numbers, web or postal addresses is sent only when it changed; an entry without a kind keeps none (RV-20)
 # v3.0.339: a birthday without a year is shown (month and day) and kept; the birthday is sent only when it was changed (RV-16)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -353,7 +355,7 @@ class ContactEditor(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)
-            self.result_label.setText(f"<span style='color:{red()}'>{error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
 
         if self._item is None:
             self._backend.ask(CONTACT_ADD, carried(values, ContactAdd, collection=str(self.book.currentData())), done, failed, owner=self)

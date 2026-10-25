@@ -9,11 +9,13 @@ from dataclasses import dataclass
 from chrono_mail.core import StorageError
 from chrono_mail.pimstore import PimStore
 from chrono_mail.protocols.dav import DavClient, RemoteCollection, canonical_href
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davdeletes.py 1.1.235"
+__version__ = "davdeletes.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v1.1.235: Initial: deletes of whole collections waiting for the server, and whether the server changed one since it was last synchronised (R-28)
 
 WAITING_FILE: str = "collection-deletes"
@@ -43,7 +45,7 @@ def load_waiting(store: PimStore) -> list[WaitingDelete]:
                 str(entry["href"]), tuple(str(item) for item in entry["collections"]), str(entry["kind"]), str(entry["name"]),
                 tuple((str(pair[0]), str(pair[1])) for pair in entry["etags"]), float(entry["when"]),
             )
-            for entry in json.loads(text)["deletes"]
+            for entry in load_json(text)["deletes"]
         ]
     except (ValueError, KeyError, TypeError, IndexError) as error:
         raise StorageError(f"The list of deletes waiting for the server is damaged: {error}") from None

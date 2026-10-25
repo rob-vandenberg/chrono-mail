@@ -20,8 +20,8 @@ from chrono_mail.engine.old_files import settle_old_files
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER
 from chrono_mail.engine.session import OUTBOX, Engine
-from chrono_mail.index import Index, entry_from_raw
-from chrono_mail.store import MessageNotFoundError, Store, clean_tags
+from chrono_mail.index import Index, entry_from_raw, facts_lost, facts_told, told_at_once
+from chrono_mail.store import SENT_LETTER, MessageNotFoundError, Store, clean_tags
 from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.sync.imap_sync import imap_waiting
 from chrono_mail.sync.mailconflicts import MailConflict
@@ -31,9 +31,17 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 3.6.349"
+__version__ = "mailbox.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: sent_already: the letter in the file name (a full disk cannot stop it), sent_at or this run's memory; never in Sent
+#           a move from a server folder into the Outbox or Scheduled is done here first (one rename: its id, marks and details stay), then its
+#           server copy goes (D-193; never the server first, 4.1); a change told at once is no untold index write (told_at_once, RV-206);
+#           a message leaves Sent (moved, copied, moved back) only without the marks of a send whose move to Sent failed: they go first,
+#           and when they cannot go nothing is done (_leaving_sent); the group step on the server leaves out what each message's own
+#           step refuses (a sent one to Drafts or copied, marks that cannot go), so the server never does what here was refused; a
+#           message in Sent never moves to the Outbox or Scheduled (an Undo of a move to Sent would send it again); a message the server
+#           took moves only to Sent, Trash or back to the Outbox (D-262)
 # v3.6.349: a message that was sent already (sent_at) never moves or is copied to Drafts, from anywhere (RV-181); a snooze or send time in a row without the platform's conversion (RV-204); refuse_unseen: several folders looked at before any is deleted (RV-176); a message of the Outbox or Scheduled (never on a server) is deleted for good here alone, also many at once (together(server=False)): it never waits
 #           for the IMAP server or connects to it (RV-183, RV-184)
 # v2.5.336: a move, copy or delivery takes the place from the store instead of looking for the message again in its whole new folder (W13, D-248)
@@ -77,6 +85,10 @@ def parse_folder(text: str) -> tuple[str, ...]:
     return path
 
 
+class SentAlready(UsageError):
+    """The server took this message of the Outbox before; only its move to Sent failed. It is never made a draft (it would be sent twice)."""
+
+
 @dataclass
 class Mailbox:
     """The store and the index of one account, changed together so they never disagree for long."""
@@ -111,14 +123,17 @@ class Mailbox:
         with self._server():
             yield
 
-    def _checked(self, refs: list[MessageRef]) -> list[MessageRef]:
-        """The messages a group step may do on the server: still where they are named and here (the checks each message's own step makes
-        first); the others are left to their own step, which says why."""
+    def _checked(self, refs: list[MessageRef], refuse: Callable[[MessageRef], None] | None = None) -> list[MessageRef]:
+        """The messages a group step may do on the server: still where they are named and here, and not refused by the checks each
+        message's own step makes before it asks the server (refuse); the others are left to their own step, which says why. Never the
+        server first for a message its own step would refuse: the server would have done what here was refused."""
         fit: list[MessageRef] = []
         for ref in refs:
             try:
                 self._still_there(ref)
                 self.store.locate(ref, self.hint(ref.store_id))
+                if refuse is not None:
+                    refuse(ref)
             except ChronoMailError:
                 continue
             fit.append(ref)
@@ -133,17 +148,113 @@ class Mailbox:
     def prepare_moves(self, refs: list[MessageRef], target: tuple[str, ...]) -> None:
         """Many messages move on the server in one command per folder and 500 messages; then move for each."""
         if is_imap(self.settings):
-            fit = [ref for ref in self._checked(refs) if not (ref.folder_path[0] in LOCAL_ONLY and target[0] in LOCAL_ONLY) and ref.folder_path != target]
+            fit = [
+                ref for ref in self._checked(refs, lambda ref: self._refuse_move(ref, target))
+                if not (ref.folder_path[0] in LOCAL_ONLY and target[0] in LOCAL_ONLY) and ref.folder_path != target
+            ]
             with self._server() as server:
                 server.prepare_moves([ref.store_id for ref in fit], target)
 
     def prepare_copies(self, refs: list[MessageRef], target: tuple[str, ...]) -> None:
         if is_imap(self.settings):
             with self._server() as server:
-                server.prepare_copies([ref.store_id for ref in self._checked(refs)], target)
+                server.prepare_copies([ref.store_id for ref in self._checked(refs, lambda ref: self._refuse_copy(ref, target))], target)
 
     def _sent_already(self, ref: MessageRef) -> bool:
-        """A message of the Outbox the server took before, whose move to Sent failed: never a draft again (it would be sent twice)."""
+        return self.sent_already(ref)
+
+    def sent_already(self, ref: MessageRef, hint: str | None = None) -> bool:
+        """A message of the Outbox the server took before, whose move to Sent failed: never sent again, never a draft again (it would be sent
+        twice). Any of its marks says so: the letter in its file name (written even on a full disk), sent_at in its properties, or this run's
+        own memory. In Sent it is filed: nothing is left to guard."""
+        if not (ref.store_id in self.engine.sent_unfiled or self._sent_letter(ref, hint) or self._sent_noted(ref)):
+            return False
+        try:
+            return ref.folder_path != self.role_folder(FolderRole.SENT)
+        except StorageError:
+            return True
+
+    def take_out_of_outbox(self, ref: MessageRef) -> None:
+        """Hold engine.outbox_lock: the message of the Outbox or Scheduled that a send, a scheduled or delayed send or a draft replaces goes,
+        in the same locked step that stores (or sends) what replaces it, so no send takes it in between (a due scheduled send takes its
+        original out under the same lock). Refused when it is gone (sent meanwhile) or the server took it (SentAlready). Both folders are on
+        this computer only: removing it never needs a server."""
+        try:
+            self.store.locate(ref, self.hint(ref.store_id))
+        except MessageNotFoundError:
+            where = "the Outbox" if ref.folder_path == OUTBOX else "/".join(ref.folder_path)
+            raise UsageError(f"The message this replaces is no longer in {where}: it was sent meanwhile; nothing was done") from None
+        if self.sent_already(ref):
+            raise SentAlready("The message this replaces was sent already: it goes to Sent at the next Send and Receive; nothing was done")
+        try:
+            self.delete(ref, permanent=True)
+        except ChronoMailError:
+            try:
+                still_here = ref.store_id in self.store.all_store_ids()
+            except OSError:
+                still_here = True  # not known: the safe answer (what replaces it goes again, the old one stays)
+            if still_here:
+                raise
+            try:  # gone all the same (the error came a step after the file went, RV-179): what replaces it is all that is left, and it stays
+                self.forget(ref)
+            except ChronoMailError:
+                pass  # the index is repaired by the next reconcile
+
+    def drop_replacement(self, ref: MessageRef, error: ChronoMailError) -> None:
+        """What was stored to replace an Outbox message that a send took meanwhile goes again, so the two are never sent; when even that
+        fails, the person is told that both are there and where the new one is (error is why the replacing stopped)."""
+        try:
+            self.delete(ref, permanent=True)
+        except ChronoMailError as also:
+            where = "/".join(ref.folder_path)
+            raise type(error)(f"{error}. The new version may not have been removed again ({also}): look in {where} before the next Send and Receive") from None
+
+    def forget_sent_marks(self, ref: MessageRef) -> None:
+        """A message filed in Sent: the marks of a send whose move to Sent failed before go (the letter, sent_at and this run's memory), so
+        moved out of Sent later it is an ordinary message (copied, made a draft), never "sent already, waiting for Sent"."""
+        self.engine.sent_unfiled.discard(ref.store_id)
+        try:
+            if self.store.properties.of(ref.store_id).sent_at is not None:
+                self.store.properties.change(ref.store_id, lambda current: replace(current, sent_at=None))
+        except ChronoMailError:
+            pass  # the details of this message could not be written: in Sent the mark means nothing
+        self.forget_sent_letter(ref)
+
+    def forget_sent_letter(self, ref: MessageRef) -> None:
+        """A message filed in Sent: the letter of a send whose move failed before goes (in Sent it means nothing; never needed)."""
+        try:
+            hint = self.hint(ref.store_id)
+            if self.store.has_letter(ref, SENT_LETTER, hint=hint):
+                path = self.store.set_letter(ref, SENT_LETTER, False, hint=hint)
+                self.index.update_flags(ref.store_id, self.store.flags(ref, hint=path), path)  # only the file's name: no fact to tell
+        except ChronoMailError:
+            pass  # sent_already looks only outside Sent
+
+    def _leaving_sent(self, ref: MessageRef) -> None:
+        """A message leaves Sent (moved, copied or moved back): the marks of a send whose move to Sent failed, which filing it could not
+        clear (a full disk), go first, so it never arrives anywhere as "sent already" (its copy and its draft refused, a copy carrying the
+        letter). When they cannot go, nothing is done."""
+        if self._role_of(ref.folder_path) != FolderRole.SENT.value:
+            return
+        hint = self.hint(ref.store_id)
+        letter, noted = self._sent_letter(ref, hint), self._sent_noted(ref)
+        self.engine.sent_unfiled.discard(ref.store_id)
+        try:
+            if noted:
+                self.store.properties.change(ref.store_id, lambda current: replace(current, sent_at=None))
+            if letter:
+                path = self.store.set_letter(ref, SENT_LETTER, False, hint=hint)
+                self.index.update_flags(ref.store_id, self.store.flags(ref, hint=path), path)  # only the file's name: no fact to tell
+        except ChronoMailError as error:
+            raise UsageError(f"This message could not be taken out of Sent: {error}. Nothing was done") from None
+
+    def _sent_letter(self, ref: MessageRef, hint: str | None) -> bool:
+        try:
+            return self.store.has_letter(ref, SENT_LETTER, hint=hint or self.hint(ref.store_id))
+        except ChronoMailError:
+            return False
+
+    def _sent_noted(self, ref: MessageRef) -> bool:
         try:
             return self.store.properties.of(ref.store_id).sent_at is not None
         except ChronoMailError:
@@ -295,8 +406,11 @@ class Mailbox:
                 with self.engine.place_lock(self._place):  # the numbers belong to this fact: no other change of the mailbox comes between (D-151)
                     folders = dict.fromkeys(folder for folder in (change.folder, change.to_folder if change.kind == "moved" else "") if folder)
                     self.engine.report(replace(change, numbers=tuple(FolderNumbers(folder, *self._numbers(folder)) for folder in folders)))
+                facts_told()
                 return
             self.engine.report(change)
+            if not self.engine.is_quiet():
+                facts_told()
         finally:
             self.let_go()
 
@@ -374,6 +488,7 @@ class Mailbox:
 
     def move_back(self, ref: MessageRef, folder: tuple[str, ...]) -> MessageRef:
         """Settling a refused move (D-195): the message back here to the folder the server keeps it in, and only here."""
+        self._leaving_sent(ref)
         return self._move_here(ref, folder)
 
     def _set_flags_here(self, ref: MessageRef, flags: frozenset[MessageFlag]) -> frozenset[MessageFlag]:
@@ -389,12 +504,55 @@ class Mailbox:
         self._still_there(ref)
         return self.store.flags(ref, self.hint(ref.store_id))  # from the name of its file: the cost of one message, not of its folder
 
+    @contextmanager
+    def _outbox_still(self, ref: MessageRef) -> Generator[None]:
+        """A message of the Outbox is taken out of it (moved, copied, to Trash) only while no send runs: a send that took it would mark it
+        sent where it no longer is, and it could be sent again from where it went (D-262). Never waited for (a many-message move holds the
+        server's link, which a send may wait for: a standstill); refused at once instead, to be tried again in a moment."""
+        if ref.folder_path != OUTBOX:
+            yield
+            return
+        if not self.engine.outbox_lock.acquire(blocking=False):
+            raise UsageError("A message of the Outbox is being sent right now: try again in a moment")
+        try:
+            yield
+        finally:
+            self.engine.outbox_lock.release()
+
+    def refuse_if_sent(self, ref: MessageRef) -> None:
+        """What replaces this message (a send, a draft) may go on only when the server has not taken it meanwhile; for a message of the Outbox
+        or Scheduled, hold engine.outbox_lock (a send may take it)."""
+        if self.sent_already(ref):
+            raise SentAlready("The message this replaces was sent already: nothing was done")
+
     def move(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
+        with self._outbox_still(ref):
+            return self._move_checked(ref, target)
+
+    def _refuse_move(self, ref: MessageRef, target: tuple[str, ...]) -> None:
+        """The checks of a move before any server is asked (each message's own step, and the group step before its server command)."""
+        if target != OUTBOX and self._role_of(target) not in SENT_MAY_GO and self._sent_already(ref):  # from anywhere: also by way of Trash
+            raise UsageError(  # never a draft again (RV-181); only Sent, Trash or back to the Outbox (D-262): elsewhere it would reach a
+                "This message was sent already: it goes to Sent at the next Send and Receive" if ref.folder_path == OUTBOX  # server as ordinary mail
+                else "This message was sent already: it can go only to Sent, or back to the Outbox, which files it in Sent at the next Send and Receive"
+            )
+        if target[0] in HERE_ONLY and self._role_of(ref.folder_path) == FolderRole.SENT.value:  # an Undo of Outbox to Sent: sent again
+            raise UsageError("A message in Sent was sent: it never goes back to the Outbox or Scheduled, where it would be sent again")
+        self._leaving_sent(ref)
+
+    def _refuse_copy(self, ref: MessageRef, target: tuple[str, ...]) -> None:
+        """The checks of a copy before any server is asked (each message's own step, and the group step before its server command)."""
+        if self._sent_already(ref) and self._role_of(target) != FolderRole.SENT.value:  # a copy would lose the mark and could become a draft
+            raise UsageError("This message was sent already: it goes to Sent at the next Send and Receive, and is copied from there")  # (RV-181)
+        self._leaving_sent(ref)
+
+    def _move_checked(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
         self._still_there(ref)
-        if self._role_of(target) == FolderRole.DRAFTS.value and self._sent_already(ref):  # from anywhere: also by way of Trash
-            raise UsageError("This message was sent already: it goes to Sent at the next Send and Receive")  # never a draft again (RV-181)
-        if not is_imap(self.settings) or (ref.folder_path[0] in LOCAL_ONLY and target[0] in LOCAL_ONLY):  # the server has neither folder
-            return self._move_here(ref, target)
+        self._refuse_move(ref, target)
+        if not is_imap(self.settings) or (ref.folder_path[0] in LOCAL_ONLY and target[0] in LOCAL_ONLY) or ref.folder_path[0] in HERE_ONLY:
+            return self._move_here(ref, target)  # the server has neither folder, or not the one it leaves: the next check puts it there
+        if target[0] in HERE_ONLY:  # into the Outbox or Scheduled (Undo, the end of a snooze), which are never on a server: its copy there goes
+            return self._move_off_server(ref, target)  # (D-193), right after it is safe here
         flags = self.current_flags(ref)  # the message must be here before the server is asked
         with self._server() as server:
             commit = server.move(ref.store_id, target, flags)
@@ -402,21 +560,58 @@ class Mailbox:
             commit()
         return moved
 
+    def _move_off_server(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
+        """A message of a server folder moves into the Outbox or Scheduled: here first, in one rename that keeps its id, its marks (sent
+        already) and its details, then its copy on the server goes (offline: remembered, done at the next check), so no other computer keeps
+        it. Never the server first: a move here that failed then would leave it nowhere (4.1 comes before D-193's order). When the server
+        refuses, it moves back; when even that fails, it stays here and the server keeps its copy (two, never none)."""
+        was_unread = self._was_unread(ref.store_id)
+        try:
+            moved = self._move_here(ref, target)
+        except ChronoMailError:
+            moved = MessageRef(ref.account_id, target, ref.store_id)
+            try:
+                path = self.store.locate(moved)
+            except MessageNotFoundError:
+                raise  # nothing moved: the server is not asked
+            try:  # it went all the same (the error came a step after the file, RV-179): the index follows, and that is told
+                self._moved_here(ref, moved, path, was_unread)
+            except ChronoMailError:
+                pass  # the index is repaired by the next reconcile
+        try:
+            with self._server() as server:
+                server.delete(ref.store_id)()
+        except ChronoMailError as error:
+            try:
+                self._move_here(moved, ref.folder_path)
+            except ChronoMailError:
+                raise type(error)(f"{error}. It is in {'/'.join(target)} here, and the server keeps its copy in {'/'.join(ref.folder_path)}") from None
+            raise
+        return moved
+
     def _move_here(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
         was_unread = self._was_unread(ref.store_id)
         placed = self.store.move_placed(ref, target, hint=self.hint(ref.store_id))
-        moved, path = placed.ref, placed.place
+        self._moved_here(ref, placed.ref, placed.place, was_unread)
+        return placed.ref
+
+    def _moved_here(self, ref: MessageRef, moved: MessageRef, path: str, was_unread: bool) -> None:
+        """The file of a message moved here went from ref to moved (at path): the index follows, and that is told."""
+        target = moved.folder_path
         self._index(lambda: self.index.move(moved.store_id, target, path))
         row = self.row_of(moved.store_id)
+        role = self._role_of(target)
         self._tell(Change(
             "moved", self._place, "/".join(ref.folder_path), ref.store_id, to_folder="/".join(target), new_message_id=moved.store_id, row=row,
-            was_unread=was_unread, unread=row is not None and "seen" not in row.flags, role=self._role_of(target),
+            was_unread=was_unread, unread=row is not None and "seen" not in row.flags, role=role,
         ))
-        return moved
+        if role == FolderRole.SENT.value:
+            self.forget_sent_marks(moved)  # filed in Sent, however it got there: moved out again it is an ordinary message
 
     def deliver(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag]) -> MessageRef:
-        """Store a message (verified) and index it; in an IMAP account it is put into the server folder first."""
-        if not is_imap(self.settings):
+        """Store a message (verified) and index it; in an IMAP account it is put into the server folder first. The Outbox and Scheduled are
+        on this computer only: storing there never waits for a server (held under the Outbox lock, it would hold every send, D-262)."""
+        if not is_imap(self.settings) or (folder and folder[0] in HERE_ONLY):
             return self._deliver_here(folder, raw, flags)
         with self._server() as server:
             commit = server.append(folder, raw, flags)
@@ -491,10 +686,13 @@ class Mailbox:
         return next((folder.role.value for folder in self.store.list_folders() if folder.path == path), FolderRole.OTHER.value)
 
     def copy(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
+        with self._outbox_still(ref):
+            return self._copy_checked(ref, target)
+
+    def _copy_checked(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
         self._still_there(ref)
-        if self._sent_already(ref) and self._role_of(target) != FolderRole.SENT.value:  # a copy would lose the mark and could become a draft
-            raise UsageError("This message was sent already: it goes to Sent at the next Send and Receive, and is copied from there")  # (RV-181)
-        if not is_imap(self.settings):
+        self._refuse_copy(ref, target)
+        if not is_imap(self.settings) or ref.folder_path[0] in HERE_ONLY:  # the server has no copy to make: the next check puts it there
             return self._copy_here(ref, target)
         flags = self.current_flags(ref)
         with self._server() as server:
@@ -511,6 +709,8 @@ class Mailbox:
         tags = self.tags_of(copied.store_id)
         self._index(lambda: self.index.add(replace(entry_from_raw(copied, path, flags, len(raw), raw), tags=tags)))
         self._tell_added(copied)
+        if self._role_of(target) == FolderRole.SENT.value:
+            self.forget_sent_marks(copied)  # a copy of a message sent already, in Sent: an ordinary sent message (the letter came along)
         return copied
 
     def tags_of(self, store_id: str) -> tuple[str, ...]:
@@ -568,7 +768,12 @@ class Mailbox:
 
     def delete(self, ref: MessageRef, permanent: bool) -> str:
         """Move to Trash, or remove for good when permanent or when it is already in Trash. Returns what happened.
-        A message whose file is gone is deleted already: only its line in the index is removed, and the answer is "gone"."""
+        A message whose file is gone is deleted already: only its line in the index is removed, and the answer is "gone". A message of the
+        Outbox only while no send runs (_outbox_still): deleted during its send, it would be sent all the same, with no copy in Sent."""
+        with self._outbox_still(ref):
+            return self._delete(ref, permanent)
+
+    def _delete(self, ref: MessageRef, permanent: bool) -> str:
         self._still_there(ref)
         try:
             trash = self.role_folder(FolderRole.TRASH)
@@ -644,17 +849,24 @@ class Mailbox:
     def _index(self, change: Callable[[], None]) -> None:
         """The store is the truth: if the index cannot be updated, the next reconcile repairs it. The mailbox's place lock
         is taken first and kept until the change is told (_tell), so no question reads the index in between (D-151); a big
-        job that runs quietly tells its changes only at its end, so it does not hold the lock."""
-        if not self.engine.is_quiet():
+        job that runs quietly tells its changes only at its end, so it does not hold the lock. A change told at once is not counted as an
+        untold write of the index (database.writes): the list hears it as a fact and judges it itself (RV-206)."""
+        quiet = self.engine.is_quiet()
+        if not quiet:
             self.engine.place_lock(self._place).acquire()
             self._held += 1
         try:
-            change()
+            if quiet:
+                change()
+            else:
+                with told_at_once(flush=False):  # counted after all when its fact is never told (let_go)
+                    change()
         except ChronoMailError:
             pass
 
     def let_go(self) -> None:
         """The changes written to the index are told (or failed): the place lock is free again."""
+        facts_lost()  # an index write whose fact was not told counts as one the list never heard (database.writes)
         lock = self.engine.place_lock(self._place)
         while self._held:
             self._held -= 1
@@ -669,9 +881,14 @@ class Mailbox:
 
     @contextmanager
     def changing(self) -> Generator[None]:
-        """A change made past the mailbox's operations (a mail check): its index write and its fact in one step."""
+        """A change made past the mailbox's operations (a mail check): its index write and its fact in one step (counted as an untold write
+        of the index only when it runs quietly or its fact was not told, database.writes)."""
         with self.engine.place_lock(self._place):
-            yield
+            if self.engine.is_quiet():
+                yield
+            else:
+                with told_at_once():
+                    yield
 
     def folders(self) -> list[Folder]:
         return self.store.list_folders()
@@ -806,6 +1023,7 @@ class Mailbox:
         return len(unread)
 
 
+SENT_MAY_GO: frozenset[str] = frozenset({FolderRole.SENT.value, FolderRole.TRASH.value})  # where a message the server took may move (D-262)
 HERE_ONLY: frozenset[str] = frozenset({"Outbox", "Scheduled"})  # folders whose messages are never on a server (Recovered may hold some)
 
 

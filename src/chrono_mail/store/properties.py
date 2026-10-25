@@ -8,11 +8,14 @@ from pathlib import Path
 
 from chrono_mail.core import StorageError
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "properties.py 3.2.342"
+__version__ = "properties.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; a backup's properties nested without
+#           end are damaged, never a crash
 # v3.2.342: tags_and_unreadable: the messages whose tags cannot be read are told apart from those without tags (RV-48)
 # v3.1.341: sent_at: a message of the Outbox the server accepted, whose move to Sent failed; it is never sent again (RV-50)
 # v2.4.324: put_text: the properties of a message from a backup (D-244)
@@ -142,7 +145,7 @@ class MessageProperties:
         try:
             if path.stat().st_size > MAXIMUM_FILE_BYTES:
                 raise ValueError("far too large")
-            return _from_data(json.loads(path.read_text("utf-8")))
+            return _from_data(load_json(path.read_text("utf-8")))
         except FileNotFoundError:
             return Properties(), {}
         except (OSError, UnicodeDecodeError) as error:
@@ -217,8 +220,8 @@ class MessageProperties:
         """The properties of a message from a backup, as the backup kept them; existing ones are kept unless replace_existing.
         Whether they were written. A file that cannot be read is refused (StorageError), never written."""
         try:
-            found, whole = _from_data(json.loads(text))
-        except ValueError:
+            found, whole = _from_data(load_json(text))
+        except (ValueError, RecursionError):  # RecursionError: nested without end (a crafted backup)
             raise StorageError("The properties of a message in the backup are damaged") from None
         with self._lock(store_id):
             current, here = self._read(store_id)
@@ -309,7 +312,7 @@ class MessageProperties:
         try:
             if old.stat().st_size > MAXIMUM_OLD_TAGS_FILE_BYTES:
                 raise ValueError("far too large")
-            data = json.loads(old.read_text("utf-8"))
+            data = load_json(old.read_text("utf-8"))
             if not isinstance(data, dict) or not isinstance(data.get("messages"), dict):
                 raise ValueError("not a tags file")
             entries = {

@@ -1,3 +1,4 @@
+import html
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QComboBox,
@@ -24,9 +25,10 @@ from chrono_mail.ui.colours import red
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "ruleedit.py 1.9.275"
+__version__ = "ruleedit.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.271: R-19: values gives RuleAddParameters; add and edit typed
 # v1.1.174: Actions below Stop processing rules are shown greyed out (they are not done); they can still be changed and moved
@@ -352,7 +354,7 @@ class RuleEditDialog(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)
-            self.result_label.setText(f"<span style='color:{red()}'>{error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
 
         if self._rule_id is None:
             self._backend.ask(RULE_ADD, values, done, failed, owner=self)

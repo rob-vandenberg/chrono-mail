@@ -7,11 +7,13 @@ from PySide6.QtWidgets import QFrame, QLabel, QListWidget, QListWidgetItem, QVBo
 from chrono_mail.pim.times import local_time
 from chrono_mail.engine.changes import MessageRow
 from chrono_mail.core.words import counted
+from chrono_mail.ui.plainboxes import plain_tip
 
 # --- Version ------------------------------------------------------------
-__version__ = "conversationbar.py 3.6.349"
+__version__ = "conversationbar.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: the hover text of a subject is text, never markup (D-259)
 # v3.6.349: the dates of a conversation on this computer's clock through the named zone (Windows, RV-201)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.274: R-19 round 4: the rows of the conversation are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -73,7 +75,7 @@ class ConversationBar(QFrame):
                 font = QFont(item.font())
                 font.setBold(True)
                 item.setFont(font)
-            item.setToolTip(row.subject)
+            item.setToolTip(plain_tip(row.subject))  # never markup (D-259)
             self._list.addItem(item)
             if row.message_id == current_id:
                 self._list.setCurrentItem(item)

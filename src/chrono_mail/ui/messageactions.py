@@ -6,6 +6,7 @@ from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import QMenu, QMessageBox, QWidget
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.engine.changes import MessageRow
 from chrono_mail.engine.commands_actions import FOLDER_EMPTY, FOLDER_MARK_READ, EmptyResult, FolderActionParameters, MarkReadResult
 from chrono_mail.engine.commands_mail import MessageParameters
 from chrono_mail.engine.commands_schedule import MAIL_UNSCHEDULE, MESSAGE_WAKE, WakeParameters
@@ -20,7 +21,8 @@ from chrono_mail.store import MessageNotFoundError
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
 from chrono_mail.ui.mailstate import MailState, Placed
-from chrono_mail.ui.messagelistpane import MessageListPane
+from chrono_mail.ui.messagelist import LOST_PLACES
+from chrono_mail.ui.messagelistpane import MessageListPane, SelectedMessage
 from chrono_mail.ui.models import LOCAL_PLACES, SCHEDULED_TARGET_ROLES
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.undoing import Undoing
@@ -28,9 +30,17 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.349"
+__version__ = "messageactions.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a drop made while the list did not know every selected message yet moves them all: the rest is read from the view's whole
+#           order at the drop (RV-206); Mark all as read and Empty folder made while an action waits act on the folder they were made in,
+#           and a drop waiting in turn leaves out messages that are under way by then; every action of the person takes a number (also those
+#           that cannot be undone), so an Undo after it acts the same whether it waited or not; an answer always counts its command as
+#           ended, also when what it shows fails (an Undo held behind it never waits for ever);
+#           a mark with no message left takes no action number; "&" in a folder name shows in the Move to and Copy to menus; a click on
+#           the Delete icon goes in turn with what waits and never acts on a message under way, of another mailbox or in another view (delete_by_icon); the
+#           answers of Mark all as read and Empty folder always end their command
 # v3.6.349: Delete asks first and says Deleted when the account has no Trash folder: the messages go for good (RV-173)
 # v3.0.339: Delete asks whenever a selected message is in Trash already (it is deleted for good), in every view, not only in the Trash folder (RV-76)
 # v2.4.334: every action on the selection waits for the places of messages still on their way, then takes them all (W12b)
@@ -92,6 +102,8 @@ class MessageActions(QObject):
             values["seen"] = seen
         if flagged is not None:
             values["flagged"] = flagged
+        if not rows:  # nothing left to mark (all under way, or gone): no action, so an Undo pressed after it undoes nothing older
+            return
         account_of = self._state.account_of
         number = self._undoing.new_action()  # one key press, however many accounts: one step of Undo
         for account in dict.fromkeys(account_of(row) for row in rows):  # the combined views mix accounts
@@ -103,14 +115,14 @@ class MessageActions(QObject):
             return
         chosen = self._messages.selected_rows()
         if chosen:
-            self._messages.with_rows(chosen, lambda rows: self.mark_messages(chosen, seen=any("seen" not in row.flags for row in rows)))
+            self._messages.with_rows(chosen, lambda still, rows: self.mark_messages(still, seen=any("seen" not in row.flags for row in rows)))
 
     def toggle_flag(self) -> None:
         if self._messages.deferred(lambda: self.toggle_flag()):
             return
         chosen = self._messages.selected_rows()
         if chosen:
-            self._messages.with_rows(chosen, lambda rows: self.mark_messages(chosen, flagged=any("flagged" not in row.flags for row in rows)))
+            self._messages.with_rows(chosen, lambda still, rows: self.mark_messages(still, flagged=any("flagged" not in row.flags for row in rows)))
 
     # --- delete, archive, junk ---------------------------------------------------------------------------------------
 
@@ -141,6 +153,25 @@ class MessageActions(QObject):
             MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages, undo=number), targets, done, "Could not delete",
         )
 
+    def delete_by_icon(self, clicked: MessageRow) -> None:
+        """A click on the Delete icon of one message: in turn with what waits, as a key press, and only while that message (of its own
+        mailbox: ids are unique only within one) is still in the list and no action on it is under way (no second action, D-146)."""
+
+        view = self._messages.model.view_number  # the view it was clicked in (a sort keeps it): ids are unique only within one mailbox
+
+        def delete() -> None:
+            model = self._messages.model
+            row = model.find(clicked.message_id) if model.view_number == view else -1
+            message = model.row_at(row) if row >= 0 else None
+            if message is None or (message.account or "") != (clicked.account or ""):
+                self._status.show("Nothing was done: the message it was for is no longer in the list", error=True)
+            elif message.message_id in model.pending:
+                self._status.show("Nothing was done: an action on the message is under way", error=True)
+            else:
+                self.delete_rows([message])
+
+        self._messages.after_waiting(delete)
+
     def delete_permanently(self) -> None:
         """Shift+Delete: remove the selected messages for good, without a stop in Trash, after asking."""
         if self._messages.deferred(lambda: self.delete_permanently()):
@@ -150,6 +181,7 @@ class MessageActions(QObject):
             return
         if QMessageBox.question(self._parent, "Delete permanently", f"Delete {counted(len(rows), 'message')} for good, without moving them to Trash? This cannot be undone.") != QMessageBox.StandardButton.Yes:
             return
+        self._undoing.new_action()  # an action of the person, though it cannot be undone: an Undo after it acts as it would at once
         self.act_many(
             MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages, permanent=True), self._state.targets(rows),
             f"Deleted {counted(len(rows), 'message')} for good", "Could not delete",
@@ -285,7 +317,7 @@ class MessageActions(QObject):
             path = info.path
             if path == rows[0].folder or path in LOCAL_PLACES:
                 continue
-            menu.addAction(path).triggered.connect(lambda checked=False, target=path: self.copy_selected(target) if how == "copy" else self.move_selected(target))
+            menu.addAction(path.replace("&", "&&")).triggered.connect(lambda checked=False, target=path: self.copy_selected(target) if how == "copy" else self.move_selected(target))
         self.folder_popup = menu  # kept: a menu shown with popup() is gone when its last reference is
         menu.popup(QCursor.pos())
 
@@ -311,7 +343,7 @@ class MessageActions(QObject):
             path = info.path
             if path == view.folder or path in LOCAL_PLACES or (scheduled and info.role not in SCHEDULED_TARGET_ROLES):
                 continue  # a scheduled message goes back to Drafts or to Trash, nowhere else
-            self.move_menu.addAction(path).triggered.connect(lambda checked=False, target=path: self.move_selected(target))
+            self.move_menu.addAction(path.replace("&", "&&")).triggered.connect(lambda checked=False, target=path: self.move_selected(target))  # "R&D", never "RD"
 
     def move_selected(self, target: str) -> None:
         if self._messages.deferred(lambda: self.move_selected(target)):
@@ -321,9 +353,39 @@ class MessageActions(QObject):
             return
         self.move_many(target, self._state.targets(rows))
 
-    def messages_dropped(self, account: str, target: str, messages: list[tuple[str, str]]) -> None:
-        """Messages were dragged to a folder of the folder list."""
-        self.move_many(target, [(account, folder, message_id) for folder, message_id in messages])
+    def messages_dropped(self, account: str, target: str, messages: list[tuple[str, str]], rest: int = -1) -> None:
+        """Messages were dragged to a folder of the folder list. rest (not -1): the drag was made while the list did not know every
+        selected message yet; what was selected is taken once it does, in turn with the actions that wait for it, and all of it moves
+        together (RV-206). When the list could not keep those places since the drag began, which messages they held cannot be told:
+        nothing is moved, and that is said."""
+        if rest < 0:  # in its turn behind anything that waits (in order, D-146)
+
+            def known() -> None:  # without those an action made before it has under way by then (no second action, D-146)
+                pending = self._messages.model.pending
+                targets = [(account, folder, message_id) for folder, message_id in messages if message_id not in pending]
+                if targets:
+                    self.move_many(target, targets)
+                else:
+                    self._status.show("Nothing was moved: an action on the messages is under way")
+
+            self._messages.after_waiting(known)
+            return
+        if rest != self._messages.model.places_epoch:
+            self._status.show(LOST_PLACES, error=True)
+            return
+
+        def go(chosen: list[SelectedMessage]) -> None:
+            targets = [item for item in dict.fromkeys(self._state.targets(chosen)) if item[1] != target]  # pending ones are left out already
+            if any(item[0] != account for item in targets):
+                self._status.show("Nothing was moved: the selected messages are in several accounts, and a folder belongs to one", error=True)
+            elif any(item[1] == SCHEDULED_FOLDER_PATH for item in targets) and self._state.folder_role_of(account, target) not in SCHEDULED_TARGET_ROLES:
+                self._status.show("Nothing was moved: a scheduled message goes only to Drafts or Trash", error=True)  # as the drop refuses it (D-178)
+            elif not targets:
+                self._status.show(f"Nothing was moved: the messages are in {target} already, or an action on them is under way")
+            else:
+                self.move_many(target, targets)
+
+        self._messages.hold_selected_places(go)
 
     def move_many(self, target: str, targets: list[tuple[str, str, str]]) -> None:
         """A move of messages (by the menu or a drag): a scheduled message moved to Drafts goes back to being a draft (D-178), one by one;
@@ -332,6 +394,8 @@ class MessageActions(QObject):
         moves = [item for item in targets if item not in unschedule]
         finished = f"Moved {counted(len(targets), 'message')} to {target}"
         if unschedule:
+            if not moves:
+                self._undoing.new_action()  # an action of the person, though it is not undone: an Undo after it acts as it would at once
             self._messages.take_away([message_id for _, _, message_id in unschedule])
             done, failed = self._answers(len(unschedule), finished, "Could not move")
             for account, folder, message_id in unschedule:
@@ -350,38 +414,61 @@ class MessageActions(QObject):
     # --- the whole folder -------------------------------------------------------------------------------------------------
 
     def mark_folder_read(self) -> None:
-        """Mark every message of the folder being shown as read."""
+        """Mark every message of the folder being shown as read: at once, or in its turn behind what waits (in order, D-146), on this folder
+        also when another is shown by then."""
         view = self._state.view
         if view.account is None or view.folder is None:
             return
-        folder = view.folder
+        account, folder = view.account, view.folder
+        self._messages.after_waiting(lambda: self._mark_read(account, folder))
+
+    def _mark_read(self, account: str, folder: str) -> None:
 
         def done(result: MarkReadResult) -> None:
-            changed = result.changed
-            self._status.finished(f"Marked {counted(changed, 'message')} in {folder} as read" if changed else f"Nothing to mark in {folder}")
-            self._undoing.ended()
+            try:
+                changed = result.changed
+                self._status.finished(f"Marked {counted(changed, 'message')} in {folder} as read" if changed else f"Nothing to mark in {folder}")
+            finally:
+                self._undoing.ended()
 
         def failed(error: ChronoMailError) -> None:
-            self._status.report("Could not mark the messages", error)
-            self._undoing.ended()
+            try:
+                self._status.report("Could not mark the messages", error)
+            finally:
+                self._undoing.ended()
 
         self._undoing.started()
-        self._backend.ask(FOLDER_MARK_READ, FolderActionParameters(view.account, folder, undo=self._undoing.new_action()), done, failed, owner=self)
+        self._backend.ask(FOLDER_MARK_READ, FolderActionParameters(account, folder, undo=self._undoing.new_action()), done, failed, owner=self)
 
     def empty_folder(self) -> None:
-        """Delete everything in Trash or Junk for good, after asking."""
+        """Delete everything in Trash or Junk for good, after asking: at once, or in its turn behind what waits (in order, D-146), on this
+        folder also when another is shown by then."""
         view = self._state.view
         if view.account is None or view.folder is None or view.folder_role not in ("trash", "junk"):
             return
-        folder = view.folder
+        account, folder = view.account, view.folder
+        self._messages.after_waiting(lambda: self._empty(account, folder))
+
+    def _empty(self, account: str, folder: str) -> None:
         answer = QMessageBox.question(self._parent, "Empty folder", f"Delete all messages in {folder} for good? This cannot be undone.")
         if answer != QMessageBox.StandardButton.Yes:
             return
 
         def done(result: EmptyResult) -> None:
-            self._status.finished(f"Deleted {counted(result.removed, 'message')} from {folder}")
+            try:
+                self._status.finished(f"Deleted {counted(result.removed, 'message')} from {folder}")
+            finally:
+                self._undoing.ended()
 
-        self._backend.ask(FOLDER_EMPTY, FolderActionParameters(view.account, folder), done, lambda error: self._status.report("Could not empty the folder", error), owner=self)
+        def failed(error: ChronoMailError) -> None:
+            try:
+                self._status.report("Could not empty the folder", error)
+            finally:
+                self._undoing.ended()
+
+        self._undoing.new_action()  # an action of the person, given (it cannot be undone itself: an Undo after it acts as it would at once)
+        self._undoing.started()  # an Undo pressed after it waits for it, as for every action
+        self._backend.ask(FOLDER_EMPTY, FolderActionParameters(account, folder), done, failed, owner=self)
 
     # --- many messages at once ----------------------------------------------------------------------------------------------
 
@@ -415,24 +502,28 @@ class MessageActions(QObject):
         for (account, folder), messages in groups.items():
 
             def answered(result: ManyResult, messages: list[str] = messages) -> None:
-                for message_id in messages:
-                    model.clear_pending(message_id)  # done ones left with their fact; failed ones are back
-                failures.extend(result.failed)
-                if result.gone or any(item.missing for item in result.failed):
-                    self._status.warn_missing()  # a file gone here: one warning for the action, with the advice to repair the index (D-109)
-                if each is not None:
-                    each(result)
-                finish()
-                self._undoing.ended()
+                try:
+                    for message_id in messages:
+                        model.clear_pending(message_id)  # done ones left with their fact; failed ones are back
+                    failures.extend(result.failed)
+                    if result.gone or any(item.missing for item in result.failed):
+                        self._status.warn_missing()  # a file gone here: one warning for the action, with the advice to repair the index (D-109)
+                    if each is not None:
+                        each(result)
+                    finish()
+                finally:
+                    self._undoing.ended()  # always: an Undo waiting for it, and what waits behind that Undo, go on
 
             def refused(error: ChronoMailError, messages: list[str] = messages) -> None:
-                for message_id in messages:
-                    model.clear_pending(message_id)
-                failures.extend(NotDone(message_id, str(error)) for message_id in messages)
-                if isinstance(error, MessageNotFoundError):
-                    self._status.warn_missing()
-                finish()
-                self._undoing.ended()
+                try:
+                    for message_id in messages:
+                        model.clear_pending(message_id)
+                    failures.extend(NotDone(message_id, str(error)) for message_id in messages)
+                    if isinstance(error, MessageNotFoundError):
+                        self._status.warn_missing()
+                    finish()
+                finally:
+                    self._undoing.ended()
 
             self._undoing.started()
             self._backend.ask(command, parameters(account, folder, tuple(messages)), answered, refused, owner=self, in_order=True)
@@ -465,13 +556,17 @@ class MessageActions(QObject):
         its fact took the row out before this answer came)."""
 
         def ended(result: object) -> None:
-            self._messages.model.clear_pending(message_id)
-            done(result)
-            self._undoing.ended()
+            try:
+                self._messages.model.clear_pending(message_id)
+                done(result)
+            finally:
+                self._undoing.ended()  # always: an Undo waiting for it, and what waits behind that Undo, go on
 
         def refused(error: ChronoMailError) -> None:
-            self._messages.model.clear_pending(message_id)
-            failed(error)
-            self._undoing.ended()
+            try:
+                self._messages.model.clear_pending(message_id)
+                failed(error)
+            finally:
+                self._undoing.ended()
 
         return ended, refused

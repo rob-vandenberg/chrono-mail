@@ -15,11 +15,13 @@ from chrono_mail.core import (
     PaletteColour,
     ServerSettings,
 )
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 2.1.308"
+__version__ = "files.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.1.308: junk_filter per account (D-238)
 # v1.1.221: calendar_palette, calendar_own_colour_name, collection_looks
 # v1.1.213: outgoing_same_login (missing: the same user name on both servers)
@@ -152,7 +154,7 @@ def _looks(data: Any, where: str) -> tuple[CollectionLook, ...]:
 def parse_config(text: str) -> AppConfig:
     """Read the settings. Unknown settings are ignored; anything wrong is a ConfigurationError."""
     try:
-        data = json.loads(text)
+        data = load_json(text)
     except ValueError:
         raise ConfigurationError("The settings file is not valid JSON") from None
     if not isinstance(data, dict):

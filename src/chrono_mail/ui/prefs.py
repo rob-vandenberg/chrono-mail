@@ -6,11 +6,13 @@ from PySide6.QtCore import QSettings
 from chrono_mail.core.colours import accent_value
 from chrono_mail.ui.columns import valid_columns
 from chrono_mail.ui.scale import STANDARD, clamp
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 2.3.316"
+__version__ = "prefs.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.3.316: start_refresh: what the refresh at start does, apart from the automatic one (the owner)
 # v2.3.315: scheduled_refresh may also be send (only sends, the owner)
 # v2.2.314: scheduled_refresh (Send and Receive, or Receive only), send_delay with its seconds, send_on_refresh, warn_outbox_on_quit (B-21, B-20)
@@ -126,7 +128,7 @@ def allowed_senders(settings: QSettings) -> set[str]:
 def shortcuts(settings: QSettings) -> dict[str, str]:
     """The keys the person chose: action name -> key sequence text ('' for none)."""
     try:
-        data = json.loads(str(settings.value("shortcuts", "{}")))
+        data = load_json(str(settings.value("shortcuts", "{}")))
     except ValueError:
         return {}
     if not isinstance(data, dict):
@@ -482,7 +484,7 @@ class Remembered:
     def tree_state(self) -> dict[str, bool]:
         """Which headings, accounts and folders the person opened or closed in the folder list."""
         try:
-            data = json.loads(self._text("tree_state", "{}"))
+            data = load_json(self._text("tree_state", "{}"))
         except ValueError:
             return {}
         return {key: value for key, value in data.items() if isinstance(key, str) and isinstance(value, bool)} if isinstance(data, dict) else {}

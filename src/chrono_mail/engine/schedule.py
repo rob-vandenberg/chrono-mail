@@ -6,9 +6,10 @@ from chrono_mail.engine.registry import UsageError
 from chrono_mail.sync.imap_sync import SCHEDULED
 
 # --- Version ------------------------------------------------------------
-__version__ = "schedule.py 3.6.349"
+__version__ = "schedule.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: REPEAT_LOCK (was commands_schedule._REPEAT_LOCK), re-entrant: what replaces a scheduled message takes it too (D-262)
 # v3.6.349: the group of a snooze or send time without the platform's conversion too; a send time is shown without the platform's conversion, which Windows refuses past 3000 (RV-204)
 # v2.2.314: the Outbox is a timed folder too: a delayed send waits there for its moment (B-21)
 # v1.1.206: snoozed.json is gone: a snoozed message's time and origin are in its properties file (D-176)
@@ -23,6 +24,8 @@ SNOOZED_FOLDER: str = "Snoozed"
 SCHEDULED_FOLDER: str = SCHEDULED  # scheduled and repeating messages wait here for their time; local only, made when first used
 TIMED_FOLDERS: tuple[str, ...] = (SNOOZED_FOLDER, SCHEDULED_FOLDER, "Outbox")  # each message leaves at a time: the list shows and sorts by it (the Outbox: a delayed send)
 SNOOZED_LOCK = threading.RLock()  # snooze and wake change the snooze records (in the properties files): one command at a time
+REPEAT_LOCK = threading.RLock()  # two checks at the same moment must not send the same message twice; what replaces a scheduled message
+# takes it too, before the Outbox lock (a repeating send holds it from its timetable to its send); held again by the same command (Unschedule)
 SNOOZE_GROUPS: tuple[tuple[str, str], ...] = (("today", "Today"), ("tomorrow", "Tomorrow"), ("this_week", "This week"), ("next_week", "Next week"), ("later", "Later"))
 TOLERANCE_SECONDS: int = 60
 MAXIMUM_SECONDS_AHEAD: int = 5 * 366 * 86_400

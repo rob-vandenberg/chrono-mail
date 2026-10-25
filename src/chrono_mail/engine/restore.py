@@ -32,17 +32,22 @@ from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import OUTBOX, STANDARD_FOLDERS, Engine, WaitStopped
 from chrono_mail.pimstore.extract import extract
-from chrono_mail.store import Store
+from chrono_mail.store import SENT_LETTER, Store
+from chrono_mail.store.store import folder_description
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 from chrono_mail.store.layout import parse_name, split_info
 from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.sync.pop3_state import Pop3State
 from chrono_mail.core.words import counted
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 3.6.349"
+__version__ = "restore.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; an Outbox message the server took
+#           before (marked as sent, or known as sent to this run only) comes back in Sent, never as a draft (D-262); Local Folders kept on
+#           this computer but missing from the settings is taken back first, so the restore adds to it, never replaces it (D-251)
 # v3.6.349: a set-aside that stops half-way puts back only what was set aside, never moving or removing this computer's data (RV-193);
 #           a restored IMAP state names only the messages and folders that came back, keeping what the person did offline (RV-194, RV-195);
 #           an older backup's download list never names a message it lacks where the account deletes on the server by it (RV-197); only
@@ -79,6 +84,7 @@ _SETTING_WORDS: dict[str, str] = {  # the settings files of a backup, as the rep
     "data/junk-filter.bin": "what the junk filter learned", "config/window.json": "the window settings", "config/passwords.json": "the passwords",
 }
 DRAFTS: tuple[str, ...] = ("Drafts",)  # where the Outbox's messages go when the store has no folder for drafts yet
+SENT: tuple[str, ...] = ("Sent",)  # where a message the server took goes when the store has no Sent folder yet
 _ITEM_KINDS: dict[str, CollectionKind] = {"calendars": CollectionKind.EVENTS, "contacts": CollectionKind.CONTACTS, "tasks": CollectionKind.TASKS}
 
 
@@ -187,6 +193,14 @@ class _Progress:
 # --- the key of this computer -------------------------------------------------------------------------
 
 
+def _take_back_kept_local_folders(engine: Engine) -> None:
+    """Local Folders still on this computer but missing from the settings (lost or reset) is taken back first, as at a start (D-251), so the
+    restore adds to it what it lacks; it is never replaced by the backup's older copy. When it cannot be taken back (its older key is
+    missing, its description cannot be read), the restore stops with why, before anything changed."""
+    if engine.config().local_folders() is None and (engine.directories.store_directory(LOCAL_ACCOUNT_ID) / "store.json").exists():
+        ensure_local_folders(engine)
+
+
 def ensure_key(engine: Engine) -> bool:
     """Make this computer's encryption key when it has none yet (a fresh installation), before anything of a backup is read. Whether
     one was made: then the person is shown its recovery code before the backup is chosen."""
@@ -217,7 +231,7 @@ def _open(path: Path, password: str | None) -> tuple[_Reading, dict[str, object]
             if not password:
                 raise BackupPasswordNeeded("This backup is protected with a backup password")
             archive.setpassword(password.encode("utf-8"))
-        manifest = json.loads(_read(archive, MANIFEST_ENTRY))
+        manifest = load_json(_read(archive, MANIFEST_ENTRY))
         if not isinstance(manifest, dict):
             raise NotABackup("This file is not a backup of Chrono Mail")
         found = cast(dict[str, object], manifest)
@@ -387,6 +401,7 @@ def restore_backup(engine: Engine, choice: RestoreChoice) -> RestoreReport:
             with engine.server_work.paused(lambda: CANCEL.is_set() or engine.stop_event.is_set()):  # the checks and sends that run end first, new ones wait: never a POP3 delete
                 # while this computer's mail is set aside (RV-60)
                 ensure_key(engine)
+                _take_back_kept_local_folders(engine)
                 key = engine.data_key(engine.config())
                 engine.close_imap_links()
                 aside: Path | None = _set_aside(engine) if choice.remove_first else None
@@ -444,7 +459,7 @@ def _restore(engine: Engine, archive: _Reading, manifest: dict[str, object], key
         )
     if "rules" in parts:
         with _left_out_when_damaged("config/rules.json", report):
-            _restore_rules(engine, archive, names, choice.replace_existing, _ids_here(engine.config(), [settings for settings, _, _ in chosen]))
+            _restore_rules(engine, archive, names, choice.replace_existing, _ids_here(engine.config(), [settings for settings, _, _ in chosen]), report)
     if "settings" in parts:
         _restore_settings(engine, archive, names, sealed, key, choice.replace_existing, report)
     restored = {settings.account.account_id for settings, _, _ in chosen}
@@ -550,7 +565,7 @@ def _is_item(relative: list[str]) -> bool:
 def _passwords(archive: _Reading, names: list[str]) -> dict[str, dict[str, str]]:
     if "config/passwords.json" not in names:
         return {}
-    data: object = json.loads(_read(archive, "config/passwords.json"))
+    data: object = load_json(_read(archive, "config/passwords.json"))
     found: dict[str, dict[str, str]] = {}
     if isinstance(data, dict):
         for account_id, roles in cast(dict[str, object], data).items():
@@ -651,8 +666,10 @@ def _restore_whole(
         if mail and description.exists():
             sealed_store = _json_object(description.read_bytes()).get("encrypted") is True
             restored_store = Store.open(building / "store", key if sealed_store else None, durable=engine.durable)
+            if restored_store.damaged_folders:
+                restored_store.merge_duplicate_folders()  # a folder made twice: its messages together in the first, as opening it does
             own_mail = restored_store.all_store_ids()
-            _hold_back(restored_store, engine.clock(), report)
+            _hold_back(restored_store, engine.clock(), report, frozenset(engine.sent_unfiled))
             if (building / "imap-state.log").exists():
                 _mirror_that_came_back(building / "imap-state.log", restored_store, engine.durable)
         if (building / "pop3-state.log").exists():
@@ -744,29 +761,51 @@ def _lists_state_first(manifest: dict[str, object]) -> bool:
 
 
 def _damaged_folders(archive: _Reading, names: list[str], prefix: str) -> set[str]:
-    """The mail folders of an account in the backup whose description cannot be read, by their folder name (RV-65)."""
+    """The mail folders of an account in the backup whose description cannot be read or used, by their folder name (RV-65). A description the
+    store could not use hides its messages here: they are left out and told, as for an unreadable one, so what was downloaded (POP3) never
+    names them and the server never deletes them for not being here (RV-196). Two folders of one path are no damage: the store puts them
+    together."""
+    return _readable_folders(archive, names, prefix)[1]
+
+
+def _readable_folders(archive: _Reading, names: list[str], prefix: str) -> tuple[dict[str, tuple[tuple[str, ...], FolderRole]], set[str]]:
+    """The mail folders of an account in the backup as the store will read them, by their folder name, and those it could not use."""
+    folders: dict[str, tuple[tuple[str, ...], FolderRole]] = {}
     damaged: set[str] = set()
     for name in names:
         relative = name[len(prefix):].split("/") if name.startswith(prefix) else list[str]()
         if len(relative) == 4 and relative[:2] == ["store", "folders"] and relative[3] == "folder.json":
             try:
-                _read(archive, name)
-            except DamagedEntry:
+                folders[relative[2]] = folder_description(_read(archive, name).decode("utf-8"))  # exactly as the store will read it
+            except (DamagedEntry, ValueError, KeyError, TypeError):
                 damaged.add(relative[2])
-    return damaged
+    return folders, damaged
 
 
-def _hold_back(store: Store, now: float, report: RestoreReport) -> None:
+def _hold_back(store: Store, now: float, report: RestoreReport, sent_now: frozenset[str] = frozenset()) -> None:
     """Mail that comes back from a backup is never sent by itself (D-245): the Outbox's messages go to Drafts, for the person to send; a
-    scheduled message whose time has passed is paused (Settings > Scheduled messages > Resume)."""
+    scheduled message whose time has passed is paused (Settings > Scheduled messages > Resume). One the server took goes to Sent: marked
+    in its file name or details, or known to this run only (sent_now: a full disk kept both marks off it)."""
     folders = store.list_folders()
     if any(folder.path == OUTBOX for folder in folders):
         waiting = store.list_messages(OUTBOX)
-        if waiting:
+        for message in waiting:
+            if SENT_LETTER in message.extra_letters or message.ref.store_id in sent_now or _noted_as_sent(store, message.ref.store_id):  # the server took
+                # it: it was sent, never a draft
+                sent = next((folder.path for folder in folders if folder.role is FolderRole.SENT), None) or store.ensure_folder(SENT, FolderRole.SENT)[0].path
+                filed = store.move(message.ref, sent)
+                try:  # filed in Sent: its marks go, each on its own, as for any message that reaches Sent (Mailbox.forget_sent_marks)
+                    store.set_letter(filed, SENT_LETTER, False)
+                except ChronoMailError:
+                    pass  # in Sent the letter means nothing
+                try:
+                    store.properties.change(filed.store_id, lambda current: dataclasses.replace(current, sent_at=None))
+                except ChronoMailError:
+                    pass
+                continue
             drafts = next((folder.path for folder in folders if folder.role is FolderRole.DRAFTS), None) or store.ensure_folder(DRAFTS, FolderRole.DRAFTS)[0].path
-            for message in waiting:
-                store.move(message.ref, drafts)
-                report.to_drafts += 1
+            store.move(message.ref, drafts)
+            report.to_drafts += 1
     if any(folder.path == SCHEDULED for folder in folders):
         for message in store.list_messages(SCHEDULED):
             try:
@@ -815,8 +854,8 @@ def _wanted(relative: list[str], collections_kept: set[str], mail: bool) -> bool
 
 def _json_object(data: bytes) -> dict[str, object]:
     try:
-        found: object = json.loads(data)
-    except ValueError:
+        found: object = load_json(data)
+    except (ValueError, RecursionError):  # RecursionError: nested without end (a crafted backup)
         return {}
     return cast(dict[str, object], found) if isinstance(found, dict) else {}
 
@@ -856,26 +895,13 @@ def _fill_mail(
 ) -> None:
     """The messages of the backup that are not here. In an account on an IMAP server only the ones that were never on the server (made or
     moved offline): the rest is the server's to bring, or to have deleted since (D-193)."""
-    folders: dict[str, tuple[tuple[str, ...], FolderRole]] = {}
-    damaged_folders: set[str] = set()
+    folders, damaged_folders = _readable_folders(archive, names, prefix)  # a damaged one: its messages are left out and told (RV-65, RV-196)
     messages: list[tuple[str, list[str]]] = []
     for name in names:
         if not name.startswith(prefix):
             continue
         relative = name[len(prefix):].split("/")
-        if len(relative) == 4 and relative[:2] == ["store", "folders"] and relative[3] == "folder.json":
-            try:
-                description = _json_object(_read(archive, name))
-            except DamagedEntry:  # its messages are left out and told; the rest comes back (RV-65)
-                damaged_folders.add(relative[2])
-                continue
-            path = description.get("path")
-            if isinstance(path, list):
-                try:
-                    folders[relative[2]] = (tuple(str(part) for part in cast(list[object], path)), FolderRole(description.get("role", "other")))
-                except ValueError:
-                    continue
-        elif _is_message(relative):
+        if _is_message(relative):
             messages.append((name, relative))
     if not messages:
         return
@@ -914,7 +940,14 @@ def _fill_mail(
                 continue
             flags: frozenset[MessageFlag] = split_info(info)[0] if info else frozenset()
             target, role = folder
-            if target == OUTBOX:  # never sent by itself (D-245): the person sends it from Drafts
+            if target == OUTBOX and (store_id in engine.sent_unfiled or _sent_in_backup(archive, names, properties_name, info)):  # the server took
+                # it: it was sent (D-262; also when only this run knows it)
+                try:
+                    target = mailbox.role_folder(FolderRole.SENT)
+                except StorageError:
+                    target = SENT
+                role = FolderRole.SENT
+            elif target == OUTBOX:  # never sent by itself (D-245): the person sends it from Drafts
                 try:
                     target = mailbox.role_folder(FolderRole.DRAFTS)
                 except StorageError:
@@ -925,10 +958,34 @@ def _fill_mail(
                 raw = paused
                 report.paused += 1
             mailbox.ensure_folder(target, role)
-            mailbox.restore_here(target, raw, flags, store_id)
+            restored = mailbox.restore_here(target, raw, flags, store_id)
             if properties_name in names:
                 _put_properties(mailbox.store, store_id, archive, properties_name, report)
+            if role is FolderRole.SENT:
+                mailbox.forget_sent_marks(restored)  # filed in Sent: a sent mark of the Outbox it came from goes
             report.messages += 1
+
+
+def _noted_as_sent(store: Store, store_id: str) -> bool:
+    try:
+        return store.properties.of(store_id).sent_at is not None
+    except ChronoMailError:
+        return False
+
+
+def _sent_in_backup(archive: _Reading, names: list[str], properties_name: str, info: str | None) -> bool:
+    """Whether a message of the Outbox in the backup was taken by the server before (only its move to Sent was left): the letter in its file
+    name or sent_at in its details. It comes back in Sent, never as a draft (it would be sent twice, D-262)."""
+    if info and SENT_LETTER in split_info(info)[1]:
+        return True
+    if properties_name not in names:
+        return False
+    try:
+        details = load_json(_read(archive, properties_name).decode("utf-8"))
+    except (DamagedEntry, UnicodeDecodeError, ValueError, RecursionError):  # RecursionError: nested without end (a crafted backup)
+        return False
+    sent_at = details.get("sent_at") if isinstance(details, dict) else None
+    return isinstance(sent_at, int) and not isinstance(sent_at, bool)
 
 
 def _put_properties(store: Store, store_id: str, archive: _Reading, name: str, report: RestoreReport) -> None:
@@ -1079,12 +1136,24 @@ def _rules_for(rules: RuleSet, ids_here: dict[str, str]) -> RuleSet:
     return RuleSet(tuple(kept))
 
 
-def _restore_rules(engine: Engine, archive: _Reading, names: list[str], replace_existing: bool, ids_here: dict[str, str]) -> None:
+def _restore_rules(engine: Engine, archive: _Reading, names: list[str], replace_existing: bool, ids_here: dict[str, str], report: RestoreReport) -> None:
     if "config/rules.json" not in names:
         return
     backup = _rules_for(parse_rules(_read(archive, "config/rules.json").decode("utf-8")), ids_here)
     path = engine.directories.rules_file
-    here = load_rules(path) if path.exists() else RuleSet()
+    try:
+        here = load_rules(path) if path.exists() else RuleSet()
+    except ConfigurationError as error:  # this computer's rules file, not the backup's (RV-198)
+        copy = path.with_name(path.name + ".bad")
+        try:
+            kept = copy.read_bytes() == path.read_bytes()
+        except OSError:
+            kept = False
+        if not kept:  # never written over while it is the only copy of this computer's rules
+            report.notes.append(f"This computer's rules could not be read, so the rules of the backup were not added: {error}")
+            return
+        report.notes.append(f"This computer's rules could not be read; they are kept in {copy.name}, and the rules of the backup took their place")
+        here = RuleSet()
     by_id = {rule.rule_id: rule for rule in backup.rules}
     kept = tuple(by_id.pop(rule.rule_id) if replace_existing and rule.rule_id in by_id else rule for rule in here.rules)
     known = {rule.rule_id for rule in kept}

@@ -21,9 +21,10 @@ from chrono_mail.pim.vcard import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_contact.py 3.2.342"
+__version__ = "test_pim_contact.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a vCard 2.1's CHARSET and 8BIT encoding never reach the 3.0 card written back (RV-190)
 # v3.2.342: a birthday keeps Apple's mark and an unreadable one is kept (RV-145); a quoted-printable line is written back whole (RV-144)
 # v1.10.277: Contact groups in both forms, written back in their own form; a card keeps its own version (R-39)
 # v0.0.57: Initial vCard and contact tests
@@ -75,6 +76,18 @@ def test_a_vcard_2_1_with_quoted_printable_and_bare_types() -> None:
     assert (c.family_name, c.given_name) == ("Müller", "Jürgen") and c.display_name == "Jürgen Müöller"  # the soft line break joined the two halves
     assert [(p.value, p.types) for p in c.phones] == [("+49 30 1234", ("home", "voice")), ("+49 170 5678", ("cell",))]
     assert c.emails[0].types == ("internet",)
+
+
+def test_a_vcard_2_1_charset_and_8bit_never_reach_the_card_written_back() -> None:
+    """RV-190: vCard 2.1's CHARSET and ENCODING=8BIT were kept on lines of the 3.0 card written back, which has no such parameters."""
+    text = (
+        "BEGIN:VCARD\nVERSION:2.1\nN;CHARSET=UTF-8:Müller;Jürgen\nFN;CHARSET=UTF-8;ENCODING=8BIT:Jürgen Müller\nTEL;HOME;CHARSET=UTF-8:+49 30 1234\n"
+        "NOTE;CHARSET=ISO-8859-1:Notiz\nX-OWN;CHARSET=UTF-8;ENCODING=8BIT:kept\nTITLE;8BIT:Ingenieur\nEND:VCARD\n"
+    )
+    c = one(text)
+    written = contact_to_text(replace(c, nicknames=("JM",)))
+    assert "CHARSET" not in written and "8BIT" not in written
+    assert "Müller" in written and "X-OWN:kept" in written and c.phones[0].types == ("home",)
 
 
 def test_a_vcard_4_with_pref_and_a_photo_in_a_data_uri() -> None:

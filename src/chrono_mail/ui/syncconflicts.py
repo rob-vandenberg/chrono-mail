@@ -35,14 +35,17 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_conflicts import CONFLICT_SETTLE, ConflictSummary, SettleParameters, SettleResult
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_WORDS, SyncMarks, paint_why, why_kind, why_pixmap
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 3.4.344"
+__version__ = "syncconflicts.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an error text inside markup is escaped, the hover texts and the details of a conflict are plain: a server's or a file's words are
+#           never drawn as markup (D-259)
 # v3.4.344: the problems of Settle are escaped: they hold server replies (RV-167)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.237: A mail folder deleted on the server can be the conflict (What: Folder, R-30)
@@ -104,6 +107,13 @@ def _fields(conflict: ConflictSummary) -> str:
     return ", ".join(dict.fromkeys(field.label for field in conflict.fields)) or "—"
 
 
+def _plain(text: str, parent: QWidget) -> QLabel:
+    """A label that shows its text as it is: names and the server's words are never markup (D-259)."""
+    label = QLabel(text, parent)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    return label
+
+
 class ConflictDialog(QDialog):
     """Every detail of one conflict, and a choice per clashing field (or of a whole side: an item changed before the agreed version was kept, or
     one deleted on a side). After Apply: `choices` (field key -> local or server), or `side` for a whole side."""
@@ -117,12 +127,12 @@ class ConflictDialog(QDialog):
         self.setMinimumWidth(560)
         layout = QVBoxLayout(self)
         details = QFormLayout()
-        details.addRow("What", QLabel(KIND_WORDS.get(conflict.kind, conflict.kind), self))
-        details.addRow("Where", QLabel(_where(conflict), self))
-        details.addRow("Why", QLabel(conflict.reason_text, self))
-        details.addRow("Found", QLabel(time.strftime("%Y-%m-%d %H:%M", time.localtime(conflict.when)), self))
+        details.addRow("What", _plain(KIND_WORDS.get(conflict.kind, conflict.kind), self))
+        details.addRow("Where", _plain(_where(conflict), self))
+        details.addRow("Why", _plain(conflict.reason_text, self))
+        details.addRow("Found", _plain(time.strftime("%Y-%m-%d %H:%M", time.localtime(conflict.when)), self))
         if conflict.detail:
-            reason = QLabel(conflict.detail, self)
+            reason = _plain(conflict.detail, self)  # the server's own words: an HTML error page stays text
             reason.setWordWrap(True)
             details.addRow("The server said", reason)
         layout.addLayout(details)
@@ -133,7 +143,7 @@ class ConflictDialog(QDialog):
         self.groups: dict[str, tuple[QRadioButton, QRadioButton]] = {}
         per_field = not conflict.whole and bool(conflict.fields) and conflict.local_allowed and conflict.server_allowed  # else a whole side
         for row, field in enumerate(conflict.fields, start=1):
-            grid.addWidget(QLabel(field.label, self), row, 0)
+            grid.addWidget(_plain(field.label, self), row, 0)
             ours = QRadioButton(field.local or "(empty)", self)
             theirs = QRadioButton(field.server or "(empty)", self)
             group = QButtonGroup(self)
@@ -146,7 +156,7 @@ class ConflictDialog(QDialog):
             grid.addWidget(theirs, row, 2)
             self.groups[field.key] = (ours, theirs)
         if not conflict.fields:
-            grid.addWidget(QLabel(conflict.reason_text, self), 1, 0, 1, 3)
+            grid.addWidget(_plain(conflict.reason_text, self), 1, 0, 1, 3)
         layout.addLayout(grid)
         sides = QHBoxLayout()
         self.all_local = QPushButton("All from Chrono Mail", self)
@@ -299,9 +309,9 @@ class SyncConflictsPanel(QWidget):
             for column, text in enumerate(("", _fields(conflict), KIND_WORDS.get(conflict.kind, conflict.kind), conflict.name, _where(conflict), "")):
                 if column:
                     item.setText(column, text)
-                    item.setToolTip(column, text)
+                    item.setToolTip(column, plain_tip(text))  # a subject or a folder name: never markup (D-259)
             item.setData(WHY_COLUMN, ROLE_KIND, kind)
-            item.setToolTip(WHY_COLUMN, f"{WHY_WORDS[kind]}: {conflict.reason_text}")
+            item.setToolTip(WHY_COLUMN, plain_tip(f"{WHY_WORDS[kind]}: {conflict.reason_text}"))  # the server's words: never markup
         self.table.blockSignals(False)
         self._buttons()
 
@@ -435,7 +445,7 @@ class SyncConflictsPanel(QWidget):
                 self.sync_requested.emit(list(result.retried))
 
         def failed(error: ChronoMailError) -> None:
-            self.problems.setText(f"<span style='color:{red()}'>{error}</span>")
+            self.problems.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
             self._buttons()
 
         self._backend.ask(CONFLICT_SETTLE, parameters, settled, failed, owner=self)

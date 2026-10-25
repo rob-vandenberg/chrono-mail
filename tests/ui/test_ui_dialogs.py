@@ -12,9 +12,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dialogs.py 3.6.349"
+__version__ = "test_ui_dialogs.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a code that could not be shown is asked again with Try again
 # v3.6.349: while adding, nothing else in the window can be used (RV-207, RV-208, RV-209); the recovery code's tick needs the code (RV-210)
 # v3.5.346: the window cannot close while the account is being added (RV-02); Done of the recovery code notes it as stored (RV-03)
 # v2.0.287: the permission check of the recovery file not on Windows (the Windows computer's report)
@@ -343,3 +344,17 @@ def test_a_test_that_ends_during_an_add_never_brings_add_back(blank: World, qtbo
     dialog._busy(False)  # noqa: SLF001 - and a test that answers now
     assert not dialog.add_button.isEnabled() and not dialog.test_button.isEnabled() and dialog.result_label.text() != "Testing…"
 
+
+
+def test_a_code_that_could_not_be_shown_is_asked_again_with_try_again(blank: World, qtbot: QtBot) -> None:
+    """The open question of 3.6.349: a code that could not be read left only "Stop the restore"; Try again asks for it again."""
+    dialog = RecoveryDialog(blank.backend, restoring=True)
+    qtbot.addWidget(dialog)
+    assert not dialog.retry_button.isEnabled()  # greyed while the code is on its way
+    wait(qtbot, lambda: dialog.code.toPlainText() == "(the code could not be shown)")  # no key yet: the password store has nothing
+    assert dialog.retry_button.isEnabled() and not dialog.confirm.isEnabled()
+    blank.call("key.ensure")  # the password store answers now
+    expected = blank.call("key.recovery-code").code
+    dialog.retry_button.click()
+    wait(qtbot, lambda: dialog.code.toPlainText() == expected)
+    assert not dialog.retry_button.isEnabled() and dialog.confirm.isEnabled() and dialog.copy_button.isEnabled()

@@ -3,11 +3,13 @@ import json
 from typing import cast
 
 from PySide6.QtCore import QByteArray, QSettings
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "windowsettings.py 2.4.324"
+__version__ = "windowsettings.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.4.324: apply_window_settings: a backup's window settings put back (kept here unless Replace, D-244)
 # v2.4.322: Initial: the window's own settings (sizes, columns per folder, theme, keys…) as text for a backup (D-244)
 
@@ -40,7 +42,7 @@ def apply_window_settings(settings: QSettings, text: str, replace_existing: bool
     """The window's own settings from a backup put in place: a setting that is here already is kept unless replace_existing. How many
     were written. A value of a kind not known is left out."""
     try:
-        values: object = json.loads(text)
+        values: object = load_json(text)
     except ValueError:
         return 0
     if not isinstance(values, dict):

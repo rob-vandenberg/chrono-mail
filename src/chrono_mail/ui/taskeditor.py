@@ -1,3 +1,4 @@
+import html
 from datetime import date, datetime
 from typing import Literal
 
@@ -31,9 +32,10 @@ from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 3.6.349"
+__version__ = "taskeditor.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v3.6.349: a task's times through the zone the engine reads them back in (also never the platform's conversion, RV-201)
 # v3.2.342: a repeat or reminder the lists do not offer is shown as it is and kept; both are sent only when changed (RV-19); due and start
 #           times are shown on this computer's clock (RV-23)
@@ -230,7 +232,7 @@ class TaskEditor(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)
-            self.result_label.setText(f"<span style='color:{red()}'>{error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
 
         if self._item is None:
             self._backend.ask(TASK_ADD, carried(values, TaskAdd, list=str(self.list.currentData())), done, failed, owner=self)

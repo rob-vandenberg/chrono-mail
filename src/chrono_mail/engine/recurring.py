@@ -1,5 +1,4 @@
 import calendar
-import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from email.errors import HeaderParseError
@@ -9,11 +8,13 @@ from urllib.parse import quote, unquote
 
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.schedule import describe_when
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "recurring.py 1.1.206"
+__version__ = "recurring.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v1.1.206: The timetable is carried by the message itself (repeat_text, repeat_from_text); recurring.json is only read once to move it in (D-176)
 # v0.0.67: Initial schedule of messages that are sent again and again
 
@@ -121,7 +122,7 @@ def _from_data(data: object) -> Repeat | None:
 def load_old_repeats(path: Path) -> dict[str, Repeat]:
     """The file of before 1.1.206: store id of the repeating message -> its timetable. A missing or damaged file is an empty list."""
     try:
-        data = json.loads(path.read_text("utf-8"))
+        data = load_json(path.read_text("utf-8"))
     except (OSError, ValueError):
         return {}
     if not isinstance(data, dict):

@@ -9,11 +9,13 @@ from typing import Any  # json.load returns untyped data; every value is checked
 
 from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import ConfigurationError
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "rules.py 0.5.136"
+__version__ = "rules.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v0.5.136: Tags: the condition tag is / is not, the actions add_tag and remove_tag
 # v0.0.49: Rules without conditions for one account
 # v0.0.33: Initial mail rules
@@ -193,7 +195,7 @@ def _rule(data: object, position: int) -> Rule:
 
 def parse_rules(text: str) -> RuleSet:
     try:
-        data = json.loads(text)
+        data = load_json(text)
     except ValueError:
         raise ConfigurationError("The rules file is not valid JSON") from None
     if not isinstance(data, dict) or data.get("version") != FORMAT_VERSION:

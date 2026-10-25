@@ -5,9 +5,10 @@ from typing import Any  # command results are command-specific dataclasses
 
 import pytest
 
-from chrono_mail.core import ChronoMailError, ProtocolError, StorageError
+from chrono_mail.core import ChronoMailError, MessageRef, ProtocolError, StorageError
 from chrono_mail.engine.mailbox import Mailbox
 from chrono_mail.protocols.imap import ImapClient, ImapRefused
+from chrono_mail.store import Store
 from tests.enginefactory import make_engine
 from tests.fakeimap import FakeFolder, FakeImapServer
 from tests.fakesmtp import FakeSmtpServer
@@ -17,9 +18,11 @@ from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap_online.py 3.6.349"
+__version__ = "test_engine_imap_online.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a message moved into the Outbox leaves the server first; a sent message in a group moved to Drafts is never moved on the
+#           server; Undo of a move to Sent never puts the message back in the Outbox
 # v3.6.349: a message of a folder that exists only here is deleted without connecting to the server (RV-183, RV-184); after a folder
 #           delete an action in Inbox works (RV-170); a folder tree is looked at whole before any of it is deleted (RV-176); mail too
 #           large to download is named (RV-172)
@@ -370,3 +373,120 @@ def test_a_folder_tree_deleted_offline_waits_while_part_of_it_is_in_conflict(wor
     world.fetch()  # the second check: the subfolder is held by its conflict now
     assert "Projects" in world.imap.folders and "Projects/Done" in world.imap.folders
 
+
+
+def test_a_message_moved_into_the_outbox_leaves_the_server_first(world: World) -> None:
+    """The review of 3.6.350 (D-193): Undo of a move out of the Outbox (or the end of a snooze) moved a message from a server folder into
+    the Outbox here only; its copy stayed on the server, where another computer kept showing it."""
+    rows = filled(world, 2)
+    call(world.engine, "message.move", account=world.account, folder="Inbox", message=rows[0].message_id, target="Outbox")
+    assert len(world.imap.uids("INBOX")) == 1 and [row.subject for row in world.rows("Outbox")] == [rows[0].subject]
+
+
+def test_a_failed_move_into_the_outbox_never_leaves_the_message_nowhere(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.350 (4.1): the server deleted its copy first, then the move here failed, and the next check removed the one left in
+    Inbox as well. It moves here first now (its id, marks and details stay), and the server's copy goes only after; when the server
+    refuses, it moves back."""
+    from chrono_mail.engine.imap_online import ServerSession
+
+    rows = filled(world, 3)
+
+    def refuse(*arguments: object, **keywords: object) -> None:
+        raise StorageError("The message could not be moved: no room")
+
+    monkeypatch.setattr(Store, "move_placed", refuse)
+    with pytest.raises(StorageError):
+        call(world.engine, "message.move", account=world.account, folder="Inbox", message=rows[0].message_id, target="Outbox")
+    monkeypatch.undo()
+    assert len(world.imap.uids("INBOX")) == 3 and world.rows("Outbox") == []  # the server was not asked
+
+    def server_refuses(self: ServerSession, store_id: str) -> object:
+        raise ProtocolError("The server refused: NO")
+
+    monkeypatch.setattr(ServerSession, "delete", server_refuses)
+    with pytest.raises(ProtocolError):
+        call(world.engine, "message.move", account=world.account, folder="Inbox", message=rows[1].message_id, target="Outbox")
+    monkeypatch.undo()
+    world.fetch()
+    assert len(world.imap.uids("INBOX")) == 3 and len(world.rows("Inbox")) == 3 and world.rows("Outbox") == []  # back where it was
+
+
+def test_a_move_into_the_outbox_that_failed_after_its_file_went_leaves_one_copy(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.350 (D-262): the move here failed only a step after its file went into the Outbox (a folder that could not be
+    made durable), and a second copy was stored there from the copy read before: both were sent."""
+    rows = filled(world, 2)
+    real_move = Store.move_placed
+
+    def moved_then_failed(self: Store, ref: MessageRef, target: tuple[str, ...], hint: str | None = None) -> object:
+        real_move(self, ref, target, hint)
+        raise StorageError("The message could not be moved: input/output error")
+
+    monkeypatch.setattr(Store, "move_placed", moved_then_failed)
+    call(world.engine, "message.move", account=world.account, folder="Inbox", message=rows[0].message_id, target="Outbox")
+    monkeypatch.undo()
+    world.fetch()
+    assert [row.subject for row in world.rows("Outbox")] == [rows[0].subject] and len(world.imap.uids("INBOX")) == 1
+    assert [row.subject for row in world.rows("Inbox")] == [rows[1].subject]
+
+
+def test_a_mail_check_that_tells_each_change_keeps_the_index_stamp(world: World) -> None:
+    """The review of 3.6.350 (RV-206): every write of a mail check counted as one the list never heard, although each is told at once; new
+    mail in the Inbox then stopped a Delete waiting in a large Archive ("the list changed"). Only a write told later counts."""
+    world.imap.add("INBOX", mail(1))
+    world.fetch()
+    before = call(world.engine, "message.order", account=world.account, folder="Inbox").stamp
+    world.imap.add("INBOX", mail(2))
+    world.imap.set_flags("INBOX", world.imap.uids("INBOX")[0], {"\\Seen"})
+    world.fetch()
+    assert len(world.rows("Inbox")) == 2 and call(world.engine, "message.order", account=world.account, folder="Inbox").stamp == before
+
+
+def test_a_sent_message_moved_back_into_the_outbox_from_the_server_stays_sent(world: World) -> None:
+    """The review of 3.6.350 (D-262): a message the server took (its move to Sent failed) went to Trash, onto the server, and back into the
+    Outbox by Undo; stored there again as a new copy it lost its "sent already" mark and was sent a second time. It moves in one rename now."""
+    from chrono_mail.engine.mailbox import open_mailbox
+    from chrono_mail.store import SENT_LETTER
+
+    with open_mailbox(world.engine, world.account) as mailbox:
+        waiting = mailbox.deliver(("Outbox",), mail(7), frozenset())
+        mailbox.store.set_letter(waiting, SENT_LETTER, True, hint=mailbox.hint(waiting.store_id))
+    trashed = call(world.engine, "message.move", account=world.account, folder="Outbox", message=waiting.store_id, target="Trash")
+    world.fetch()  # now on the server, in Trash
+    assert len(world.imap.uids("Trash")) == 1
+    back = call(world.engine, "message.move", account=world.account, folder="Trash", message=trashed.message_id, target="Outbox")
+    with open_mailbox(world.engine, world.account) as mailbox:
+        assert mailbox.sent_already(mailbox.reference(("Outbox",), back.message_id))
+    assert world.imap.uids("Trash") == []
+
+
+def test_a_sent_message_moved_with_others_to_drafts_is_never_moved_on_the_server(world: World) -> None:
+    """Round 18 of the review of 3.6.350 (D-262): the group step moved every message on the server before each message's own step refused
+    the sent one; the next check brought the server's copy in Drafts here as an ordinary draft, sent a second time with Send."""
+    from chrono_mail.engine.mailbox import open_mailbox
+    from chrono_mail.store import SENT_LETTER
+
+    rows = filled(world, 2)
+    with open_mailbox(world.engine, world.account) as mailbox:
+        waiting = mailbox.deliver(("Outbox",), mail(7), frozenset())
+        mailbox.store.set_letter(waiting, SENT_LETTER, True, hint=mailbox.hint(waiting.store_id))
+    trashed = call(world.engine, "message.move", account=world.account, folder="Outbox", message=waiting.store_id, target="Trash")
+    other = call(world.engine, "message.move", account=world.account, folder="Inbox", message=rows[0].message_id, target="Trash")
+    world.fetch()  # both on the server, in Trash
+    assert len(world.imap.uids("Trash")) == 2
+    done = call(world.engine, "message.move-many", account=world.account, folder="Trash", messages=(trashed.message_id, other.message_id), target="Drafts")
+    assert len(done.done) == 1 and len(done.failed) == 1 and "sent already" in done.failed[0].reason
+    assert len(world.imap.uids("Drafts")) == 1 and len(world.imap.uids("Trash")) == 1  # only the other one moved, there too
+    world.fetch()
+    assert len(world.rows("Drafts")) == 1
+
+
+def test_undo_of_a_move_to_sent_never_puts_the_message_back_in_the_outbox(world: World) -> None:
+    """Round 18 of the review of 3.6.350 (D-262): Outbox to Sent, then Undo: back in the Outbox as an ordinary message, sent again by the
+    next Send and Receive."""
+    from chrono_mail.engine.mailbox import open_mailbox
+
+    with open_mailbox(world.engine, world.account) as mailbox:
+        waiting = mailbox.deliver(("Outbox",), mail(7), frozenset())
+    call(world.engine, "message.move-many", account=world.account, folder="Outbox", messages=(waiting.store_id,), target="Sent", undo=1)
+    undone = call(world.engine, "mail.undo")
+    assert undone.not_done == 1 and world.rows("Outbox") == [] and len(world.rows("Sent")) == 1

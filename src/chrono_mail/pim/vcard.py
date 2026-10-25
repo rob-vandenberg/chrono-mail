@@ -6,9 +6,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 
 # --- Version ------------------------------------------------------------
-__version__ = "vcard.py 3.2.342"
+__version__ = "vcard.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: vCard 2.1's CHARSET and its 8BIT and 7BIT encodings are not kept: the value is text, and a card is written as 3.0 or 4.0 (RV-190)
 # v3.2.342: a quoted-printable value keeps its line breaks escaped (\\n), so a line kept as it was is written back whole (RV-144)
 # v0.0.57: Initial vCard content lines: parsing (2.1, 3.0, 4.0), escaping, folding
 
@@ -152,6 +153,12 @@ def parse_line(line: str) -> ContentLine | None:
             line_value = value
         cleaned = [(key, tuple(item for item in values if item.upper() != "QUOTED-PRINTABLE")) for key, values in params if key not in ("ENCODING", "CHARSET")]
         params = [(key, values) for key, values in cleaned if values]
+    # vCard 2.1's CHARSET and its 8BIT and 7BIT encodings say how the bytes were written; the value here is text already, and a card is
+    # written as 3.0 or 4.0, which have no such parameters (another program would read the value wrongly, RV-190); BASE64 and b stay
+    cleaned = [  # also 2.1's bare form (FN;8BIT:...), which counts as TYPE
+        (key, tuple(item for item in values if key not in ("ENCODING", "TYPE") or item.upper() not in ("8BIT", "7BIT"))) for key, values in params if key != "CHARSET"
+    ]
+    params = [(key, values) for key, values in cleaned if values]
     return ContentLine(name_part.upper(), line_value, tuple(params), group)
 
 

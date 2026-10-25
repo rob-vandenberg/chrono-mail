@@ -8,11 +8,13 @@ from PySide6.QtWidgets import QApplication, QFrame, QLineEdit, QListWidget, QLis
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
 from chrono_mail.ui.icons import grey_icon, theme_icon
 from chrono_mail.ui.scale import px
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchhistory.py 1.5.259"
+__version__ = "searchhistory.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v1.5.259: A press outside is seen on the main window only, never by a filter on the whole program (with it, a Python filter saw
 #           every event of every object, also the web view's inner parts, and PySide crashed making them known to Python)
 # v1.5.258: The list never takes the mouse or the keyboard from the search field (it was a popup, which takes both: a double click,
@@ -33,7 +35,7 @@ TEXT_ROLE = Qt.ItemDataRole.UserRole + 1
 def read_history(saved: str) -> list[str]:
     """The searches kept in the settings, newest first; anything that is not a list of texts counts as no history."""
     try:
-        found: object = json.loads(saved) if saved else []
+        found: object = load_json(saved) if saved else []
     except ValueError:
         return []
     if not isinstance(found, list):

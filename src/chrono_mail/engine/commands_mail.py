@@ -2,8 +2,8 @@ import bisect
 import base64
 import mimetypes
 import os
-from collections.abc import Collection, Iterable, Sequence
-from contextlib import AbstractContextManager
+from collections.abc import Collection, Generator, Iterable, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 from email.utils import getaddresses, parseaddr
@@ -18,8 +18,8 @@ from chrono_mail.engine.commands_addressbook import AddressesParameters, contact
 from chrono_mail.engine.commands_emclient import fingerprint_of_raw, known_messages
 from chrono_mail.engine.changes import Change, MessageRow, flag_names
 from chrono_mail.engine.commands_rules import apply_to_new
-from chrono_mail.engine.recurring import Repeat, repeat_text
-from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZE_GROUPS, TIMED_FOLDERS, describe_when, parse_when, snooze_group
+from chrono_mail.engine.recurring import Repeat, repeat_from_text, repeat_text
+from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER, SNOOZE_GROUPS, TOLERANCE_SECONDS, TIMED_FOLDERS, describe_when, parse_when, snooze_group
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.imap_online import waiting_marker
 from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
@@ -28,15 +28,19 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.index.model import DateBounds, GroupCount
-from chrono_mail.mime import Address, Attachment, OutgoingMessage, ParsedMessage, build_message, parse_message
+from chrono_mail.mime import REPEAT_HEADER, Address, Attachment, OutgoingMessage, ParsedMessage, build_message, parse_message
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 3.6.349"
+__version__ = "commands_mail.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a send that replaces an Outbox message the server took, or one gone meanwhile, is refused (never sent twice); it goes in the
+#           same locked step that stores or sends what replaces it; a message sent whose move to Sent failed is remembered for the run
+#           (never sent again, also on a full disk); a message of Scheduled it replaces goes in that locked step too; a delayed send writes
+#           its waiting time before what it replaces goes, and a failure of either leaves only what was there before
 # v3.6.349: a snooze or send time in the list without the platform's conversion (Windows refuses before 1970 and after 3000, RV-201, RV-204); mail.settle waits for a restore and is held back by it, like a check (RV-171)
 # v3.1.341: Send puts its copy in the Outbox and sends it under the Outbox lock (a refresh never sends it too, RV-109); a failed send
 #           replaces its draft too: the message waits in the Outbox (RV-155)
@@ -485,20 +489,62 @@ def _note_replies_to(mailbox: Mailbox, reference: MessageRef, source: str | None
         pass  # the message is safe in the Outbox; only the replied mark of its original would be missed
 
 
-def _put_in_outbox(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, parameters: SendParameters) -> SendResult:
+def _refuse_a_time_sent(mailbox: Mailbox, replaced: MessageRef | None, when: int) -> None:
+    """Hold the send locks. A repeating message stays in Scheduled after each send: what replaces it may not start at a time it sent a moment
+    ago (a check sent it while it was being changed; the new one would send that time again, D-262)."""
+    if replaced is None or replaced.folder_path != SCHEDULED:
+        return
+    try:
+        notes = dict(parse_message(mailbox.store.read(replaced, hint=mailbox.hint(replaced.store_id))).chrono_headers)
+    except ChronoMailError:
+        return  # gone or unreadable: taking it out says so (_settle)
+    repeat = repeat_from_text(notes[REPEAT_HEADER]) if notes.get("x-chrono-mail-kind") == "recurring" and REPEAT_HEADER in notes else None
+    if repeat is not None and repeat.last_sent and when <= repeat.last_sent + TOLERANCE_SECONDS:
+        raise UsageError("This repeating message was sent at its time a moment ago: nothing was changed. Open it again to change the next sends")
+
+
+@contextmanager
+def _send_locks(engine: Engine, replaced: MessageRef | None) -> Generator[None]:
+    """The Outbox lock; first the repeat lock too when what is stored replaces a scheduled message: a repeating send holds it from writing
+    its timetable to its send, so it never sends a pattern that was replaced meanwhile (D-262)."""
+    if replaced is not None and replaced.folder_path == SCHEDULED:
+        with REPEAT_LOCK, engine.outbox_lock:
+            yield
+    else:
+        with engine.outbox_lock:
+            yield
+
+
+def _settle(mailbox: Mailbox, replaced: MessageRef | None) -> None:
+    """Hold engine.outbox_lock, after what replaces it is stored: an Outbox message it replaces goes now (refused when a send took it); for a
+    draft it replaces, whether a send took that meanwhile is asked once more (dragged to Drafts while it was being sent)."""
+    if replaced is None:
+        return
+    if replaced.folder_path in (OUTBOX, SCHEDULED):  # a send may take it: it goes in this locked step
+        mailbox.take_out_of_outbox(replaced)
+    else:
+        mailbox.refuse_if_sent(replaced)
+
+
+def _put_in_outbox(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, parameters: SendParameters, replaced: MessageRef | None) -> SendResult:
     """A delayed send (B-21): a verified copy waits in the Outbox, with the moment before which it is not sent; nothing is sent here.
     Send now or the end of its countdown sends it (mail.send-outbox with the message), else the next send of the Outbox does."""
     if not 0 <= parameters.delay_seconds <= MAXIMUM_DELAY_SECONDS:
         raise UsageError(f"A delay is 0 to {MAXIMUM_DELAY_SECONDS} seconds")
     not_before = int(engine.clock()) + parameters.delay_seconds if parameters.delay_seconds else None
     source = _replies_to(parameters)
-    with engine.outbox_lock:  # no send of the Outbox sees the message before its waiting time is written
+    with _send_locks(engine, replaced):  # no send of the Outbox sees the message before its waiting time is written
         reference = mailbox.deliver(OUTBOX, build_message(outgoing, draft=True), frozenset({MessageFlag.SEEN}))
-        if not_before is not None or source is not None:
-            mailbox.store.properties.change(reference.store_id, lambda current: replace(current, send_not_before=not_before, replies_to=source))
+        try:  # its waiting time first, then what it replaces goes: a failure of either leaves only what was there before
+            if not_before is not None or source is not None:
+                mailbox.store.properties.change(reference.store_id, lambda current: replace(current, send_not_before=not_before, replies_to=source))
+            _settle(mailbox, replaced)  # after the new one is safe, in the same locked step: the two never wait together
+        except ChronoMailError as error:
+            mailbox.drop_replacement(reference, error)  # without its waiting time it would go at the next refresh, beside a Send pressed again
+            raise
     if not_before is not None:
         mailbox.tell_changed(reference)  # the row shows when it may go
-    if parameters.replaces_folder and parameters.replaces_message:
+    if parameters.replaces_folder and parameters.replaces_message and (replaced is None or replaced.folder_path not in (OUTBOX, SCHEDULED)):
         try:
             mailbox.delete(mailbox.reference(mailbox.folder(parameters.replaces_folder), _check_id(parameters.replaces_message)), permanent=True)
         except ChronoMailError:
@@ -506,7 +552,7 @@ def _put_in_outbox(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, 
     return SendResult(False, reference.store_id, "/".join(OUTBOX), (), None, None, waiting=True)
 
 
-def _schedule(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, parameters: SendParameters) -> SendResult:
+def _schedule(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, parameters: SendParameters, replaced: MessageRef | None) -> SendResult:
     """Keep the message in the Scheduled folder, marked with the time it is to be sent (mail.send-due sends it then)."""
     when = parse_when(str(parameters.send_at), engine.clock())
     repeating = parameters.repeat_months or parameters.repeat_weeks or parameters.repeat_days
@@ -525,8 +571,15 @@ def _schedule(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, param
             notes.append(("X-Chrono-Mail-Mark-Replied", "1"))
     scheduled = replace(outgoing, extra_headers=tuple(notes))
     waiting, _ = mailbox.ensure_folder(SCHEDULED)  # made the first time it is used, like Snoozed and Archive; local only
-    reference = mailbox.deliver(waiting.path, build_message(scheduled, draft=True), frozenset({MessageFlag.SEEN}))
-    if parameters.replaces_folder and parameters.replaces_message:
+    with _send_locks(engine, replaced):  # the mailbox before the locks, as every send takes them; a due send waits for it too (it takes them)
+        _refuse_a_time_sent(mailbox, replaced, when)
+        reference = mailbox.deliver(waiting.path, build_message(scheduled, draft=True), frozenset({MessageFlag.SEEN}))  # never on a server
+        try:
+            _settle(mailbox, replaced)  # after the new one is safe, in the same locked step: the two never wait together
+        except ChronoMailError as error:
+            mailbox.drop_replacement(reference, error)
+            raise
+    if parameters.replaces_folder and parameters.replaces_message and (replaced is None or replaced.folder_path not in (OUTBOX, SCHEDULED)):
         try:
             mailbox.delete(mailbox.reference(mailbox.folder(parameters.replaces_folder), _check_id(parameters.replaces_message)), permanent=True)
         except ChronoMailError:
@@ -539,45 +592,71 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
     if not (parameters.to or parameters.cc or parameters.bcc):
         raise UsageError("There is no recipient")
     with open_mailbox(engine, parameters.account) as mailbox:
-        settings = mailbox.settings
-        password = engine.passwords.get(settings.account.account_id, ServerRole.OUTGOING)
-        if password is None:
-            raise ConfigurationError("No password is stored for this account")
-        outgoing = outgoing_message(mailbox, parameters)
-        if (parameters.repeat_months or parameters.repeat_weeks or parameters.repeat_days or parameters.repeat_until) and not parameters.send_at:
-            raise UsageError("Repeating needs the time of the first send (send_at)")
-        if parameters.send_at:
-            return _schedule(engine, mailbox, outgoing, parameters)
-        if parameters.delay_seconds or parameters.hold:
-            return _put_in_outbox(engine, mailbox, outgoing, parameters)
-        with engine.outbox_lock:  # its copy in the Outbox is sent by this send only: a refresh meanwhile waits, never sends it too (RV-109)
-            outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(settings, outgoing=True))
-            if not outcome.sent and _replies_to(parameters) is not None:  # sent again later from the Outbox: the original is marked then
-                _note_replies_to(mailbox, outcome.reference, _replies_to(parameters))
-        mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
-        if outcome.sent and outcome.reference.folder_path != OUTBOX:  # in Sent (a failed move leaves it in the Outbox, marked as sent)
-            mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
-        if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
-            try:
-                source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
-                mailbox.set_flags(source, frozenset({*mailbox.current_flags(source), MessageFlag.REPLIED}))
-                learn(mailbox, [source], junk=False)  # mail one replies to is good mail (D-238)
-            except ChronoMailError:
-                pass  # the reply was sent; failing to mark the original is not worth an error
-        if parameters.replaces_folder and parameters.replaces_message:  # sent, or kept in the Outbox to be sent later: the draft became that message
-            try:
-                old = mailbox.reference(mailbox.folder(parameters.replaces_folder), _check_id(parameters.replaces_message))
-                mailbox.delete(old, permanent=True)
-            except ChronoMailError:
-                pass
-        return SendResult(
-            outcome.sent,
-            outcome.reference.store_id,
-            "/".join(outcome.reference.folder_path),
-            tuple(f"{item.address}: {item.code} {item.text}" for item in outcome.refused),
-            outcome.error,
-            outcome.warning,
-        )
+        replaced = _replaced(mailbox, parameters)
+        if replaced is not None and mailbox.sent_already(replaced):  # the server took it: what replaces it would be sent a second time
+            raise UsageError("The message this replaces was sent already; nothing was sent")
+        return _send(engine, mailbox, parameters, replaced)
+
+
+def _replaced(mailbox: Mailbox, parameters: SendParameters) -> MessageRef | None:
+    """The draft or Outbox message a send replaces (the folder as the mailbox reads it, in any letter case); None when there is none."""
+    if not (parameters.replaces_folder and parameters.replaces_message):
+        return None
+    try:
+        return mailbox.reference(mailbox.folder(parameters.replaces_folder), _check_id(parameters.replaces_message))
+    except ChronoMailError:
+        return None  # its folder is gone: nothing is replaced
+
+
+def _send(engine: Engine, mailbox: Mailbox, parameters: SendParameters, replaced: MessageRef | None) -> SendResult:
+    """Send, schedule or put in the Outbox, in the open mailbox. An Outbox message this replaces: under the Outbox lock the
+    new one is stored first, then the old one goes (Mailbox.take_out_of_outbox), and when a send took it meanwhile the new one goes again
+    and nothing is sent (D-262): never sent twice, and never the old one lost before the new one is safe (its kept attachments with it).
+    replaced: the draft or Outbox message this replaces; whether a send took it meanwhile is asked again under the lock (_settle)."""
+    settings = mailbox.settings
+    password = engine.passwords.get(settings.account.account_id, ServerRole.OUTGOING)
+    if password is None:
+        raise ConfigurationError("No password is stored for this account")
+    outgoing = outgoing_message(mailbox, parameters)
+    if (parameters.repeat_months or parameters.repeat_weeks or parameters.repeat_days or parameters.repeat_until) and not parameters.send_at:
+        raise UsageError("Repeating needs the time of the first send (send_at)")
+    if parameters.send_at:
+        return _schedule(engine, mailbox, outgoing, parameters, replaced)
+    if parameters.delay_seconds or parameters.hold:
+        return _put_in_outbox(engine, mailbox, outgoing, parameters, replaced)
+    with _send_locks(engine, replaced):  # its copy in the Outbox is sent by this send only: a refresh meanwhile waits, never sends it too (RV-109)
+        outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT),
+            ssl_context=engine.tls_context(settings, outgoing=True),
+            before_send=lambda: _settle(mailbox, replaced),  # after the new copy
+        )  # is stored, before the server is asked, all under the lock: the old one never goes before the new one is safe (as RV-127)
+        if outcome.sent and outcome.reference.folder_path == OUTBOX:
+            engine.sent_unfiled.add(outcome.reference.store_id)  # a failed move to Sent: never sent again in this run, also without a mark on the disk
+        if not outcome.sent and _replies_to(parameters) is not None:  # sent again later from the Outbox: the original is marked then
+            _note_replies_to(mailbox, outcome.reference, _replies_to(parameters))
+    mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
+    if outcome.sent and outcome.reference.folder_path != OUTBOX:  # in Sent (a failed move leaves it in the Outbox, marked as sent)
+        mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
+    if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
+        try:
+            source = mailbox.reference(mailbox.folder(parameters.source_folder), _check_id(parameters.source_message))
+            mailbox.set_flags(source, frozenset({*mailbox.current_flags(source), MessageFlag.REPLIED}))
+            learn(mailbox, [source], junk=False)  # mail one replies to is good mail (D-238)
+        except ChronoMailError:
+            pass  # the reply was sent; failing to mark the original is not worth an error
+    if parameters.replaces_folder and parameters.replaces_message and (replaced is None or replaced.folder_path not in (OUTBOX, SCHEDULED)):  # sent, or kept in the Outbox to be sent later:
+        try:  # the draft became that message (an Outbox message it replaces went before it was sent)
+            old = mailbox.reference(mailbox.folder(parameters.replaces_folder), _check_id(parameters.replaces_message))
+            mailbox.delete(old, permanent=True)
+        except ChronoMailError:
+            pass
+    return SendResult(
+        outcome.sent,
+        outcome.reference.store_id,
+        "/".join(outcome.reference.folder_path),
+        tuple(f"{item.address}: {item.code} {item.text}" for item in outcome.refused),
+        outcome.error,
+        outcome.warning,
+    )
 
 
 # --- reading ----------------------------------------------------------------------------------------

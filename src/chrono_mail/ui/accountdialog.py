@@ -1,3 +1,4 @@
+import html
 from collections.abc import Callable
 from typing import Literal, override
 
@@ -26,9 +27,10 @@ from chrono_mail.ui.colours import red
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, mail_server_kind, policy_of, security_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 3.6.349"
+__version__ = "accountdialog.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a server's error text is shown as text, never markup (D-259)
 # v3.6.349: while the account is being added everything else is greyed: Restore a backup…, the certificate, the test and the fields
 #           (a test then let it close half-way, RV-207, RV-208); a test reached from the certificate does nothing then
 # v3.5.346: While the account is being added the window cannot close: Cancel greyed, Escape and the close button wait (half-way the account
@@ -260,7 +262,7 @@ class AccountDialog(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self._busy(False)
-            self.result_label.setText(f"<span style='color:{red()}'>{error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
 
         self._backend.ask(ACCOUNT_CHECK, self._values(), done, failed, owner=self)
 
@@ -289,7 +291,7 @@ class AccountDialog(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self._set_adding(False)
-            self.result_label.setText(f"<span style='color:{red()}'>The account could not be added: {error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>The account could not be added: {html.escape(str(error))}</span>")
             self._certificate_trouble(("incoming", str(error)))
 
         self._backend.ask(ACCOUNT_ADD, parameters, done, failed, owner=self)

@@ -30,9 +30,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 3.6.349"
+__version__ = "session.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: sent_unfiled: the messages the server took in this run whose move to Sent is left (never sent again, also on a full disk)
 # v3.6.349: the restore's refusal says to try again when it is done (RV-174); a wait that is stopped is WaitStopped, told as a cancelled restore (RV-175)
 # v3.0.339: server_work: a restore waits until the checks, sends and calendar syncs that run have ended and holds new ones back (RV-60)
 # v2.2.314: outbox_lock: a message is put in the Outbox with its waiting time, and checked and sent, one at a time (never sent twice, B-21)
@@ -311,6 +312,8 @@ class Engine:
     undo: UndoHistory = field(default_factory=UndoHistory, init=False, repr=False)  # what Undo and Redo can do, while the program runs (B-18)
     outbox_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # one message at a time is put in, taken out or sent (B-21)
     server_work: ServerWork = field(default_factory=ServerWork, init=False, repr=False)  # checks and sends against a restore (RV-60)
+    sent_unfiled: set[str] = field(default_factory=set, init=False, repr=False)  # store ids the server took in this run whose move to Sent is
+    # left: never sent again, also when no mark could be written on the disk (full)
 
     def first_time(self, problem: str) -> bool:
         """True the first time this problem is named in this run of the program, False after that: a problem that is met

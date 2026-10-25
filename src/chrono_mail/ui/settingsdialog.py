@@ -1,3 +1,4 @@
+import html
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal, override
@@ -59,9 +60,11 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 2.4.333"
+__version__ = "settingsdialog.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: the key line says when Local Folders waits for an older key;
+#           an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.3.316: General: "Refresh when the program starts [choice]" and "Automatic refresh [choice] every [n minutes]", each greyed with its tick (the owner)
 # v2.3.315: General: one row "Automatically [Send and Receive / Receive only / Send only] every [n minutes]"; "Refresh when the program starts" (the owner)
@@ -770,6 +773,8 @@ class SettingsDialog(QDialog):
     def _key_status(self, result: KeyStatus) -> None:
         if result.key_id is None:
             self.key_label.setText("No account uses an encryption key.")
+        elif result.in_credential_store and (result.kept_other or result.take_back):
+            self.key_label.setText(f"<span style='color:{red()}'>The encryption key is in the credential store, but Local Folders waits for an older key. Use “Restore the key…”.</span>")
         elif result.in_credential_store:
             self.key_label.setText("The encryption key is in this computer's credential store. Keep a copy of the recovery code somewhere safe: without the key the mail cannot be read.")
         else:
@@ -821,7 +826,7 @@ class SettingsDialog(QDialog):
 
             def make_failed(account: str) -> Callable[[ChronoMailError], None]:
                 def failed(error: ChronoMailError) -> None:
-                    report.append(f"{names[account]}: <span style='color:{red()}'>{error}</span>")
+                    report.append(f"{names[account]}: <span style='color:{red()}'>{html.escape(str(error))}</span>")
                     remaining.remove(account)
                     if not remaining:
                         finished()

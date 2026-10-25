@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import override
 
 from chrono_mail.core import MessageFlag, StorageError, shown_name
-from chrono_mail.index.database import IndexDatabase
+from chrono_mail.index.database import IndexDatabase, wrote
 from chrono_mail.index.model import (
     DATE_GROUPS,
     SIZE_GROUPS,
@@ -33,9 +33,10 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 3.4.344"
+__version__ = "index.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a rebuilt index put in place counts as written (database.writes)
 # v3.4.344: a stored moment before 1970 is read by adding seconds (Windows refused a negative time, so its folder could not be listed, RV-36);
 #           moments are counted without converting them (RV-34)
 # v2.5.335: a new file is made, and an old format upgraded, only after the format is read again under the write lock: a second
@@ -750,6 +751,7 @@ class IndexBuilder:
         for suffix in ("-wal", "-shm"):
             Path(f"{self._building}{suffix}").unlink(missing_ok=True)
             Path(f"{self.path}{suffix}").unlink(missing_ok=True)
+        wrote(self.path, told=False)  # another file in its place, counted before it can be read: whatever was read of the old one is old (database.writes)
         os.replace(self._building, self.path)
         return Index(self.path)
 

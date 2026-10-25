@@ -16,7 +16,7 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.delegate import ColumnDelegate, MessageDelegate
 from chrono_mail.ui.elidedlabel import ElidedLabel
 from chrono_mail.ui.mailstate import MailState
-from chrono_mail.ui.messagelist import MessageListModel, ViewSpec
+from chrono_mail.ui.messagelist import LOST_PLACES, MessageListModel, ViewSpec
 from chrono_mail.ui.messageorder import split_key
 from chrono_mail.ui.messagelistview import MessageListView
 from chrono_mail.ui.models import LOCAL_PLACES
@@ -25,9 +25,12 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 2.4.334"
+__version__ = "messagelistpane.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: the selected places not known yet held for a drop made then; an action waiting for places that could not be followed is not done, and
+#           says so (RV-206); one queue runs actions, drops and Undo presses one at a time in the order made: one fetching its rows, or an Undo
+#           being answered, holds the rest; an Undo pressed right after an action that gives no command goes with it
 # v2.4.334: each_selected: the selected messages one by one, so a yes-or-no question stops at the first answer
 # v2.4.334: deferred: an action on a selection whose places are still on their way runs once they are in (W12b)
 # v2.4.329: selected_rows gives every selected message, loaded or not (Ctrl+A acted on 100 of 1,142, W12), read from the selection's
@@ -61,6 +64,22 @@ class SelectedMessage:
     message_id: str
     row: MessageRow | None  # None while it has not come into view
 
+@dataclass(slots=True)
+class _Waiting:
+    """An action, a drop, or an Undo or Redo press made while something waited: done in turn, in the order made (D-146, B-18, RV-206)."""
+
+    epoch: int  # the list's places_epoch then: when it changed, the places no longer mean the messages selected
+    known: list[tuple[str, str]]  # (key, folder) of the selected messages the list knew then; the places' too once the whole order came
+    positions: list[int]  # the places of those it did not know yet (until the whole order came)
+    act: Callable[[list[SelectedMessage]], None]
+    undo: bool = False  # an Undo or Redo press: it goes when the action right before it gives no command (it would undo an older one)
+
+
+def _selected(model: MessageListModel, key: str, folder: str) -> SelectedMessage:
+    mailbox, message_id = split_key(key)
+    return SelectedMessage(key, mailbox, folder, message_id, model.loaded_row(key))
+
+
 class MessageListPane(QObject):
     """The message list: the one owner of the current view (what the list shows) and of the sort order."""
 
@@ -68,6 +87,8 @@ class MessageListPane(QObject):
     sort_changed = Signal()  # another sort order: the sorted column's arrow follows
     taken_away = Signal(bool)  # the message being opened went with an action; True: nothing is selected any more
     conversations_toggled = Signal()
+    waiting_started = Signal()  # an action waits (for the rest of a large view's order, or for the rows it needs): Undo waits in turn (B-18)
+    waiting_ended = Signal()  # nothing waits any more
     rows_changed = Signal()  # rows of the list changed (marks, folder, greyed): once for all the changes of one moment, never once per row (W13)
 
     def __init__(
@@ -112,10 +133,17 @@ class MessageListPane(QObject):
         self._rows_check.setSingleShot(True)
         self._rows_check.timeout.connect(self.rows_changed)
         self.model.dataChanged.connect(self._rows_check.start)
-        self._after_placed: list[Callable[[], None]] = []  # actions waiting for the rest of a large view's order (W12b)
+        self._queue: list[_Waiting] = []  # actions, drops and Undo presses waiting their turn, in the order made (W12b, D-146, B-18)
+        self._acting_on: list[SelectedMessage] | None = None  # while a waiting action runs: what was selected when it was made
+        self._draining: bool = False  # the queue is being run (an action may ask a question, and more may come inside it: they wait their turn)
+        self._holding: int = 0  # what holds the queue until it gave its command: an action fetching its rows (with_rows), an Undo being answered
+        self.actions: Callable[[], int] = lambda: 0  # how many actions the person made so far (Undoing gives it): whether one gave a command
+        self._selection_unknown: bool = False  # the selection held places not known yet when the list was last laid out again
         self.model.placed.connect(self._placed)
         self.model.placed.connect(self._rows_check.start)  # the Archive or Unarchive label counts every selected message then
-        self.model.modelReset.connect(self._after_placed.clear)  # another view: what was selected is gone, and its actions with it
+        self.model.modelReset.connect(lambda: self._places_lost(LOST_PLACES, reset=True))  # another view: what was selected is gone, its actions too
+        self.model.places_lost.connect(self._places_lost)
+        self.model.layoutAboutToBeChanged.connect(self._note_selection)
         self.model.rearranged.connect(self._show_current_row)
         self._to_select: list[str] = []  # messages Undo brought back, selected as they take their place in the list
         for placed in (self.model.rowsInserted, self.model.rearranged, self.model.loaded):
@@ -351,11 +379,15 @@ class MessageListPane(QObject):
 
     def selected_rows(self) -> list[SelectedMessage]:
         """The messages selected now, every one of them, also those whose rows have not come into view yet (Ctrl+A on a large folder; W12),
-        without those that have an action under way (they get no second one)."""
+        without those that have an action under way (they get no second one). While a waiting action runs: what was selected when it was
+        made (D-146), whatever was clicked since."""
         return list(self.each_selected())
 
     def each_selected(self) -> Iterator[SelectedMessage]:
         """The selected messages one by one, for a question that may stop at the first answer (is every one archived?)."""
+        if self._acting_on is not None:
+            yield from (item for item in self._acting_on if item.message_id not in self.model.pending)
+            return
         for list_row in self._selected_list_rows():
             place = self.model.place_at(list_row)
             if place is None:
@@ -365,28 +397,176 @@ class MessageListPane(QObject):
             if message_id not in self.model.pending:
                 yield SelectedMessage(key, mailbox, folder, message_id, row)
 
+    def hold_selected_places(self, then: Callable[[list[SelectedMessage]], None]) -> None:
+        """The selected messages, once the list knows every one (a drop made while it did not yet, RV-206): in turn with the actions waiting
+        for it, so what was done first goes first; at once when it knows them all."""
+        self._after_selection(then)
+
+    @property
+    def queued(self) -> bool:
+        """Whether something waits its turn, or holds what comes after it (an action fetching its rows, an Undo being answered): an action or
+        an Undo made now goes in turn after it (D-146, B-18)."""
+        return bool(self._queue) or self._holding > 0 or self._draining
+
+    @property
+    def waiting(self) -> bool:
+        """Whether an action or a drop waits for the rest of a large view's order, or for the rows it needs."""
+        return self.queued
+
     def deferred(self, again: Callable[[], None]) -> bool:
         """True when the selection holds messages whose places are still on their way (Ctrl+A just after a large folder opened: the list
-        knows its first 100 for a moment): the action runs again, on every selected message, once they are in (W12b). Qt keeps the
-        selection meanwhile."""
-        if self.model.complete or all(self.model.place_at(row) is not None or self.model.is_header(row) for row in self._selected_list_rows()):
+        knows its first 100 for a moment), or something waits before it: the action runs in its turn, on what was selected now, the key
+        press (W12b, D-146)."""
+        if self._acting_on is not None or (
+            (self.model.complete or not self.model.unknown_positions(self._selected_list_rows())) and not self.queued
+        ):
             return False
-        self._after_placed.append(again)
+
+        def run(chosen: list[SelectedMessage]) -> None:
+            self._acting_on = chosen
+            try:
+                again()
+            finally:
+                self._acting_on = None
+
+        self._after_selection(run)
         return True
 
-    def _placed(self) -> None:
-        waiting, self._after_placed = self._after_placed, list[Callable[[], None]]()
-        for again in waiting:
-            again()
+    def _after_selection(self, act: Callable[[list[SelectedMessage]], None]) -> None:
+        """Act on what is selected now: the messages the list knows now, and the places whose messages it does not know yet, which are
+        read when its whole order is in, unless the list could not keep those places meanwhile (places_epoch): then nothing is done, and
+        that is said (RV-206)."""
+        rows = self._selected_list_rows()
+        positions = self.model.unknown_positions(rows)
+        known = list(self.each_selected())
+        if not positions and not self.queued:  # nothing waits before it: at once
+            act(known)
+            return
+        if positions and not self.model.loading:  # the rest of the order could not be read: it will not come by itself
+            self._status.show("Nothing was done: the list could not be read to its end. Open the folder again.", error=True)
+            return
+        self._enqueue(_Waiting(self.model.places_epoch, [(entry.key, entry.folder) for entry in known], positions, act))
 
-    def with_rows(self, chosen: list[SelectedMessage], act: Callable[[list[MessageRow]], None]) -> None:
-        """Act on the rows of these messages, for a choice that needs their marks or tags: the rows not loaded yet are asked first, so the
-        choice counts every message, not only those that came into view (W12)."""
+    def _note_selection(self) -> None:
+        """Before the list is laid out again: whether the selection holds places not known yet (only while the rest of the order is on its way;
+        once it is in, a later layout keeps what was noted: places_lost or the order's arrival says what became of them)."""
+        if not self.model.complete:
+            self._selection_unknown = bool(self.model.unknown_positions(self._selected_list_rows()))
+
+    def after_waiting(self, act: Callable[[], None], undo: bool = False) -> None:
+        """An action that takes no selection (a drop of messages the list knows, Mark all as read), or an Undo or Redo press (undo): at once,
+        or, while something waits, in its turn behind it, so everything is done in the order made."""
+        if not self.queued:
+            act()
+            return
+        self._enqueue(_Waiting(self.model.places_epoch, [], [], lambda chosen: act(), undo))
+
+    def hold(self) -> Callable[[], None]:
+        """What comes after waits until the returned call (an Undo until it is answered): it sees the facts of what came before it."""
+        self._holding += 1
+        self.waiting_started.emit()
+        released: list[bool] = []
+
+        def release() -> None:
+            if not released:
+                released.append(True)
+                self._holding -= 1
+                self._drain()
+
+        return release
+
+    def _enqueue(self, item: _Waiting) -> None:
+        self._queue.append(item)
+        self.waiting_started.emit()
+        self._drain()
+
+    def _drop(self, lost: Callable[[_Waiting], bool]) -> None:
+        """The waiting actions that are not done go, each with the Undo and Redo presses right after it (meant for it)."""
+        kept: list[_Waiting] = []
+        dropping = False
+        for item in self._queue:
+            if item.undo and dropping:
+                continue
+            dropping = not item.undo and lost(item)
+            if not dropping:
+                kept.append(item)
+        self._queue = kept
+
+    def _skip_undo(self) -> None:
+        """The action before them gave no command (nothing of it was left, or the person said no): the Undo and Redo presses made right
+        after it go too; they would undo an older action the person never asked about (B-18)."""
+        while self._queue and self._queue[0].undo:
+            self._queue.pop(0)
+
+    def _places_lost(self, why: str, reset: bool = False) -> None:
+        """Selected places whose messages were not known yet could not be kept: what waits for them is not done, and says so; what waited
+        only behind them (its messages known by key) goes on, in order."""
+        cut, self._selection_unknown = self._selection_unknown and not reset, False  # (a view that went takes its selection with it)
+        if cut:  # the selection lost what it held past the start: a later key press would act on part of it; it is cleared
+            self.view.clearSelection()
+        if any(item.positions for item in self._queue):
+            self._status.show(why, error=True)
+            self._drop(lambda item: bool(item.positions))
+        elif cut:
+            self._status.show("The list changed while it loaded: select the messages again", error=True)
+        self._drain()
+
+    def _placed(self) -> None:
+        """The whole order is in: every waiting place becomes its message now (an action that asks a question may let the list change before
+        the next runs); those whose places the list could not keep are not done, and say so."""
+        self._selection_unknown = False
+        epoch = self.model.places_epoch
+        if any(item.positions and item.epoch != epoch for item in self._queue):
+            self._status.show(LOST_PLACES, error=True)
+            self._drop(lambda item: bool(item.positions) and item.epoch != epoch)
+        for item in self._queue:
+            if item.positions:
+                item.known = item.known + self.model.places_at(item.positions)
+                item.positions = list[int]()
+        self._drain()
+
+    def _drain(self) -> None:
+        """Run what waits, one at a time, in the order made: each with its messages as they are now (without those that left or have an
+        action under way, D-146); one that holds (fetches its rows, an Undo being answered) holds the rest until it gave its command."""
+        if self._draining:
+            return  # inside one that runs (a question it asks): the loop below goes on with what came meanwhile
+        self._draining = True
+        try:
+            while self._queue and not self._holding and not self._queue[0].positions:  # places not known yet: their order is on its way
+                item = self._queue.pop(0)
+                chosen = [_selected(self.model, key, folder) for key, folder in ((key, self.model.folder_of(key)) for key, _ in item.known) if folder is not None]
+                if item.known and not chosen:  # none of its messages is in the list any more (another view opened, or they left): said
+                    self._status.show("Nothing was done: the messages it was for are no longer in the list", error=True)
+                before = self.actions()
+                item.act([entry for entry in chosen if entry.message_id not in self.model.pending])
+                if not item.undo and not self._holding and self.actions() == before:
+                    self._skip_undo()
+        finally:
+            self._draining = False
+        self._ended_waiting()
+
+    def _ended_waiting(self) -> None:
+        if not self.waiting:
+            self.waiting_ended.emit()
+
+    def with_rows(self, chosen: list[SelectedMessage], act: Callable[[list[SelectedMessage], list[MessageRow]], None], action: bool = True) -> None:
+        """Act on these messages and their rows, for a choice that needs their marks or tags: the rows not loaded yet are asked first, so the
+        choice counts every message, not only those that came into view (W12). act gets the messages still in the view without an action under
+        way by then (a Delete made meanwhile took some: no second action, D-146). action: it gives a command, and what is made meanwhile (an
+        action, an Undo) waits for it; a menu that only shows ticks does not."""
+        release = self.hold() if action else (lambda: None)
 
         def loaded() -> None:
-            rows = [row for row in (item.row or self.model.loaded_row(item.key) for item in chosen) if row is not None]
-            if rows:
-                act(rows)
+            try:
+                still = [_selected(self.model, item.key, folder) for item in chosen if (folder := self.model.folder_of(item.key)) is not None]  # as
+                still = [item for item in still if item.message_id not in self.model.pending]  # they are now: their folder may have changed
+                rows = [row for row in (item.row or self.model.loaded_row(item.key) for item in still) if row is not None]
+                if still and rows:
+                    act(still, rows)
+                elif action:
+                    self._skip_undo()
+            finally:
+                release()
 
         self.model.load_rows([item.key for item in chosen if item.row is None], loaded)
 

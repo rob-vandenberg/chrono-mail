@@ -41,9 +41,12 @@ from chrono_mail.mime import with_extra_headers
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 3.6.349"
+__version__ = "test_engine_restore.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an Outbox message the server took before comes back in Sent, never as a draft (D-262); a folder description the store could
+#           not use leaves its messages out of what was downloaded (RV-196); this computer's damaged rules file is told as such (RV-198); a
+#           restore after the settings were lost adds to the Local Folders kept here, never replaces it (D-251)
 # v3.6.349: a set-aside that stops half-way leaves this computer's data where it is (RV-193); a restored IMAP state names only what came
 #           back (RV-194, RV-195); an older backup never leads to POP3 mail deleted on the server (RV-197); a damaged setting is not counted as
 #           a damaged message (RV-199); Cancel or quitting during the wait is a cancelled restore, the refusal says try again (RV-174, RV-175)
@@ -311,6 +314,50 @@ def _sends_nothing(engine: Engine, result: RestoreResult, outbox: str, late: str
     assert mail[outbox][0] == "Drafts" and mail[late][0] == "Scheduled"
     (info,) = REGISTRY.ask(engine, MAIL_SCHEDULED, AccountOptional())
     assert info.message_id == late and info.paused
+
+
+def test_an_outbox_message_the_server_took_comes_back_in_sent(tmp_path: Path) -> None:
+    """A message of the Outbox the server took before (its move to Sent had failed, marked by the letter in its file name or by sent_at)
+    came back in Drafts, where the person could send it a second time (D-262)."""
+    from chrono_mail.store import SENT_LETTER
+
+    first = _computer(tmp_path / "first")
+    with open_mailbox(first, LOCAL_ACCOUNT_ID) as mailbox:
+        lettered = mailbox.deliver(mailbox.folder("Outbox"), raw_message(subject="Lettered", message_id="<lettered@example.com>"), frozenset({MessageFlag.SEEN}))
+        mailbox.store.set_letter(lettered, SENT_LETTER, True)
+        noted = mailbox.deliver(mailbox.folder("Outbox"), raw_message(subject="Noted", message_id="<noted@example.com>"), frozenset({MessageFlag.SEEN}))
+        mailbox.store.properties.change(noted.store_id, lambda current: dataclasses.replace(current, sent_at=1_700_000_000))
+    password = _backup(first, tmp_path / "all.cmz")
+    second = make_engine(tmp_path / "second")
+    REGISTRY.run(second, KEY_ENSURE.id, {})
+    result = _restore(second, tmp_path / "all.cmz", password)
+    mail = _mail(second)
+    assert result.to_drafts == 0 and mail[lettered.store_id][0] == "Sent" and mail[noted.store_id][0] == "Sent"  # a whole account
+    with open_mailbox(first, LOCAL_ACCOUNT_ID) as mailbox:
+        for reference in (lettered, noted):
+            mailbox.delete(mailbox.reference(("Outbox",), reference.store_id), permanent=True)
+    result = _restore(first, tmp_path / "all.cmz", password)
+    mail = _mail(first)
+    assert result.to_drafts == 0 and mail[lettered.store_id][0] == "Sent" and mail[noted.store_id][0] == "Sent"  # filled into one that is here
+
+
+def test_an_outbox_message_only_this_run_knows_was_sent_comes_back_in_sent(tmp_path: Path) -> None:
+    """The review of 3.6.350 (D-262): on a full disk neither mark of a message the server took reached it (only this run's memory knew);
+    a backup and a restore in the same run brought it back in Drafts, to be sent a second time."""
+    first = _computer(tmp_path / "first")
+    with open_mailbox(first, LOCAL_ACCOUNT_ID) as mailbox:
+        taken = mailbox.deliver(mailbox.folder("Outbox"), raw_message(subject="Taken", message_id="<taken@example.com>"), frozenset({MessageFlag.SEEN}))
+    first.sent_unfiled.add(taken.store_id)  # as a send whose marks could not be written leaves it
+    password = _backup(first, tmp_path / "all.cmz")
+    with open_mailbox(first, LOCAL_ACCOUNT_ID) as mailbox:
+        mailbox.delete(mailbox.reference(("Outbox",), taken.store_id), permanent=True)
+    result = _restore(first, tmp_path / "all.cmz", password)
+    assert result.to_drafts == 0 and _mail(first)[taken.store_id][0] == "Sent"  # filled into one that is here
+    second = make_engine(tmp_path / "second")
+    REGISTRY.run(second, KEY_ENSURE.id, {})
+    second.sent_unfiled.add(taken.store_id)  # the same run, a whole account
+    result = _restore(second, tmp_path / "all.cmz", password)
+    assert result.to_drafts == 0 and _mail(second)[taken.store_id][0] == "Sent"
 
 
 def test_a_restore_sends_nothing_by_itself(tmp_path: Path) -> None:
@@ -607,6 +654,105 @@ def test_a_damaged_folder_description_or_setting_leaves_only_that_out(tmp_path: 
     assert result.damaged == 3 and len(_mail(first)) == 3
 
 
+def _rewrite(backup: Path, name: str, data: bytes) -> None:
+    """A backup (not protected) with this entry's contents replaced: a readable entry whose contents are wrong."""
+    with zipfile.ZipFile(backup) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    with zipfile.ZipFile(backup, "w", zipfile.ZIP_DEFLATED) as archive:
+        for info, contents in entries:
+            archive.writestr(info, data if info.filename == name else contents)
+
+
+def test_a_folder_the_store_cannot_use_is_left_out_of_what_was_downloaded(tmp_path: Path) -> None:
+    """RV-196: a folder description that could be read but not used (not a folder's) hid its messages after the restore, while the download
+    list still named them; with "delete from the server when deleted here" the next check deleted them on the server."""
+    first = _computer(tmp_path / "first")
+    anna = _anna(first)
+    fetched = _downloaded(first, anna, 2)
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    with zipfile.ZipFile(tmp_path / "all.cmz") as archive:
+        inbox = next(
+            name for name in archive.namelist() if name.endswith("/folder.json") and f"/{anna}/" in name and json.loads(archive.read(name)).get("path") == ["Inbox"]
+        )
+    _rewrite(tmp_path / "all.cmz", inbox, b'{"path": ["Inbox"], "role": "no such role"}')
+    second = _fresh(tmp_path / "second")
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert result.damaged == 2 and _named(second, anna) == set()  # downloaded again, never deleted on the server
+    assert set(fetched).isdisjoint(_mail(second, anna))
+
+
+def test_a_folder_given_twice_comes_back_together_and_odd_descriptions_never_stop_a_restore(tmp_path: Path) -> None:
+    """The review of RV-196: a folder made twice (its messages in two folders of one path) was left out as damaged, though the store puts
+    them together; a description with a BOM counted as readable although the store cannot use it; a description or a message's details
+    nested without end stopped the whole restore."""
+    first = _computer(tmp_path / "first")
+    anna = _anna(first)
+    fetched = _downloaded(first, anna, 2)
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    with zipfile.ZipFile(tmp_path / "all.cmz") as archive:
+        names = archive.namelist()
+        descriptions = {name: json.loads(archive.read(name)) for name in names if name.endswith("/folder.json") and f"/{anna}/" in name}
+    inbox = next(name for name, description in descriptions.items() if description.get("path") == ["Inbox"])
+    sent = next(name for name, description in descriptions.items() if description.get("path") == ["Sent"])
+    junk = next(name for name, description in descriptions.items() if description.get("path") == ["Junk"])
+    _rewrite(tmp_path / "all.cmz", sent, json.dumps(descriptions[inbox]).encode())  # Sent's folder now says it is the Inbox: a path twice
+    _rewrite(tmp_path / "all.cmz", junk, b"\xef\xbb\xbf" + json.dumps(descriptions[junk]).encode())  # a BOM: the store cannot read it
+    properties = next((name for name in names if f"/{LOCAL_ACCOUNT_ID}/store/properties/" in name), None)
+    if properties is not None:
+        _rewrite(tmp_path / "all.cmz", properties, b"[" * 200_000)
+    drafts = next(name for name, description in descriptions.items() if description.get("path") == ["Drafts"])
+    _rewrite(tmp_path / "all.cmz", drafts, b"[" * 200_000)  # nested without end
+    second = _fresh(tmp_path / "second")
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert set(fetched) <= set(_mail(second, anna)) and _named(second, anna) == set(fetched)  # both Inbox folders came back, together
+    assert all(folder == "Inbox" for folder, _, _ in (_mail(second, anna)[store_id] for store_id in fetched))
+    assert result.messages >= 2
+    result = _restore(first, tmp_path / "all.cmz", "")  # filled in: the account is here; nothing stops it either
+    assert result.messages == 0
+
+
+def test_an_empty_folder_path_and_deep_details_in_a_backup_never_stop_a_restore(tmp_path: Path) -> None:
+    """The review of 3.6.350: a folder description with an empty path was taken as usable (the store hides it; the fill path crashed); the
+    details of an Outbox message nested without end, or a rules file nested without end, stopped a whole restore."""
+    from chrono_mail.store import SENT_LETTER
+
+    first = _computer(tmp_path / "first")
+    anna = _anna(first)
+    fetched = _downloaded(first, anna, 2)
+    with open_mailbox(first, LOCAL_ACCOUNT_ID) as mailbox:
+        waiting = mailbox.deliver(mailbox.folder("Outbox"), raw_message(subject="Waiting", message_id="<waiting@example.com>"), frozenset({MessageFlag.SEEN}))
+        mailbox.store.properties.change(waiting.store_id, lambda current: dataclasses.replace(current, sent_at=1_700_000_000))
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    with zipfile.ZipFile(tmp_path / "all.cmz") as archive:
+        names = archive.namelist()
+        inbox = next(
+            name for name in names if name.endswith("/folder.json") and f"/{anna}/" in name and json.loads(archive.read(name)).get("path") == ["Inbox"]
+        )
+    details = next(name for name in names if name.endswith(f"{waiting.store_id}.json"))
+    _rewrite(tmp_path / "all.cmz", inbox, b'{"path": [], "role": "inbox"}')
+    _rewrite(tmp_path / "all.cmz", details, b"[" * 60_000)
+    _rewrite(tmp_path / "all.cmz", "config/rules.json", b"[" * 60_000)
+    second = _fresh(tmp_path / "second")
+    result = _restore(second, tmp_path / "all.cmz", "")  # whole
+    assert _named(second, anna) == set() and result.damaged >= 2 and any("the rules" in note for note in result.notes)
+    assert SENT_LETTER is not None and set(fetched).isdisjoint(_mail(second, anna))
+    result = _restore(first, tmp_path / "all.cmz", "")  # filled in: nothing stops it
+    assert result.damaged >= 2
+
+
+def test_this_computers_damaged_rules_file_is_not_told_as_the_backups(tmp_path: Path) -> None:
+    """RV-198: this computer's own rules file could not be read, and the restore said the backup's rules were damaged."""
+    first = _computer(tmp_path / "first")
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    second = _fresh(tmp_path / "second")
+    second.directories.rules_file.parent.mkdir(parents=True, exist_ok=True)
+    second.directories.rules_file.write_text("not rules", "utf-8")
+    result = _restore(second, tmp_path / "all.cmz", "")
+    assert not any("Part of the backup could not be read" in note for note in result.notes)
+    assert any("This computer's rules could not be read" in note for note in result.notes)
+    assert load_rules(second.directories.rules_file) == RULES and (second.directories.rules_file.with_name("rules.json.bad")).read_text("utf-8") == "not rules"
+
+
 def test_replace_keeps_where_the_mail_is_kept_and_its_encryption(tmp_path: Path) -> None:
     """RV-67: Replace items that already exist put back the account's storage and encryption from the backup."""
     first = _computer(tmp_path / "first")
@@ -813,3 +959,17 @@ def test_settle_waits_for_a_restore_like_a_check(tmp_path: Path) -> None:
         with pytest.raises(ServerWorkPaused):
             REGISTRY.run(engine, "mail.settle", {"account": _anna(engine), "folder": "Inbox", "choice": "keep_here"})
 
+
+
+def test_a_restore_after_the_settings_were_lost_adds_to_the_local_folders_kept_here(tmp_path: Path) -> None:
+    """The final review of 3.6.350 (D-251): Local Folders still on this computer but missing from the lost settings counted as "not here";
+    the backup's older copy took its place whole and the newer mail was moved aside where the program never looks."""
+    engine = _computer(tmp_path / "a")
+    password = _backup(engine, tmp_path / "b.cmz")
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        mailbox.deliver(mailbox.folder("Inbox"), raw_message(subject="After the backup", body="new\r\n", message_id="<new@example.com>"), frozenset({MessageFlag.SEEN}))
+    before = _mail(engine)
+    engine.change_config(lambda fresh: AppConfig((), None))  # the settings lost or reset; the mail is still here
+    _restore(engine, tmp_path / "b.cmz", password)
+    assert _mail(engine) == before
+    assert not any(path.name.startswith(f"{LOCAL_ACCOUNT_ID}-kept-") for path in (engine.directories.data_directory / "accounts").iterdir())

@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
 
@@ -9,16 +11,21 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "undoing.py 2.2.313"
+__version__ = "undoing.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: Undo waits in turn in the message list's queue, right after the action it is meant for (RV-206): it goes with that action
+#           when the action is not done or gives no command; what comes after it waits until it is answered, and is let go however the
+#           answer ends
 # v2.2.313: Initial: Undo and Redo of the actions on mail: each action numbered, Undo waits for the actions under way, the menu says what it would do (B-18)
 
 
 class Undoing(QObject):
     """Undo and Redo of the actions on mail (B-18). The engine keeps what can be undone and does it; this part gives every action
     of the person its number (one key press is one action, however many commands it takes), holds Undo and Redo until the actions
-    under way are done (so Ctrl+Z right after Delete undoes that Delete), and says what Undo and Redo would do."""
+    under way are done (so Ctrl+Z right after Delete undoes that Delete), and says what Undo and Redo would do. While actions wait their
+    turn in the message list (a large view's order on its way, rows being fetched), a press waits in the same queue, right after the
+    action it is meant for, and goes with it when that action gives no command."""
 
     labels_changed = Signal()  # undo_label, redo_label or busy changed: the window shows them
 
@@ -29,14 +36,18 @@ class Undoing(QObject):
         self._messages: MessageListPane = messages
         self._number: int = 0
         self._running: int = 0  # commands of actions (and of Undo and Redo) not answered yet
-        self._wanted: list[bool] = []  # Undo (False) and Redo (True) pressed while something ran, in order
+        self._wanted: list[tuple[bool, Callable[[], None]]] = []  # Undo (False) and Redo (True) waiting for the commands under way, in
+        # order, each with what lets the list's queue go on once it is answered
+        messages.waiting_ended.connect(self._waiting_ended)
+        messages.waiting_started.connect(self.labels_changed)  # Undo can be pressed already: it waits in turn
+        messages.actions = lambda: self._number  # whether an action that waited gave a command
         self.undo_label: str = ""  # "Move to Trash (3 messages)": what Undo would do; "" for nothing
         self.redo_label: str = ""
 
     @property
     def busy(self) -> bool:
         """An action is under way: Undo can be pressed already and waits for it."""
-        return self._running > 0 or bool(self._wanted)
+        return self._running > 0 or bool(self._wanted) or self._messages.waiting
 
     def new_action(self) -> int:
         """The number of a new action of the person: the commands it takes are one step of Undo."""
@@ -58,33 +69,56 @@ class Undoing(QObject):
             else:
                 self.refresh()
 
+    def _waiting_ended(self) -> None:
+        if self._wanted:
+            self._next()
+        else:
+            self.refresh()
+
     def undo(self) -> None:
-        self._wanted.append(False)
-        self._next()
+        self._press(False)
 
     def redo(self) -> None:
-        self._wanted.append(True)
+        self._press(True)
+
+    def _press(self, redo: bool) -> None:
+        """In turn: behind what waits in the message list (right after the action it is meant for), else behind the commands under way;
+        either way an action made after it waits until it is answered (it never undoes an action made after the press)."""
+        if self._messages.queued:
+            self._messages.after_waiting(lambda: self._take(redo, self._messages.hold()), undo=True)
+            self.labels_changed.emit()
+            return
+        self._take(redo, self._messages.hold())
+
+    def _take(self, redo: bool, release: Callable[[], None]) -> None:
+        self._wanted.append((redo, release))
         self._next()
 
     def _next(self) -> None:
-        """Undo or Redo, once nothing runs: each sees the facts of what came before it."""
+        """Undo or Redo, once the commands before it are answered: each sees the facts of what came before it."""
         if self._running or not self._wanted:
             return
-        redo = self._wanted.pop(0)
+        redo, release = self._wanted.pop(0)
         self.started()
 
         def done(result: UndoResult) -> None:
-            if result.not_done:
-                count = result.not_done + len(result.messages)
-                self._status.show(f"{'Redone' if redo else 'Undone'}: {result.action}. {result.not_done:,} of {count:,} stayed as they are: {result.reason}")
-            else:
-                self._status.finished(f"{'Redone' if redo else 'Undone'}: {result.action}")
-            self._messages.select_messages(result.messages)
-            self.ended()
+            try:
+                if result.not_done:
+                    count = result.not_done + len(result.messages)
+                    self._status.show(f"{'Redone' if redo else 'Undone'}: {result.action}. {result.not_done:,} of {count:,} stayed as they are: {result.reason}")
+                else:
+                    self._status.finished(f"{'Redone' if redo else 'Undone'}: {result.action}")
+                self._messages.select_messages(result.messages)
+            finally:  # always: what waits behind this Undo goes on
+                self.ended()
+                release()
 
         def failed(error: ChronoMailError) -> None:
-            self._status.show(str(error))  # "Nothing to undo": not an error of the mail
-            self.ended()
+            try:
+                self._status.show(str(error))  # "Nothing to undo": not an error of the mail
+            finally:
+                self.ended()
+                release()
 
         self._backend.ask(MAIL_REDO if redo else MAIL_UNDO, NoParameters(), done, failed, owner=self)
 

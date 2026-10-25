@@ -9,11 +9,13 @@ from dataclasses import dataclass, replace
 
 from chrono_mail.core import StorageError
 from chrono_mail.store import Store
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailconflicts.py 1.1.240"
+__version__ = "mailconflicts.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v1.1.240: A folder renamed or deleted here offline whose rename or delete the server refused, or that the server changed meanwhile (R-31)
 # v1.1.237: A folder the server confirmed deleted while it had changes here not yet sent (FOLDER_GONE_CHANGED), or mail that exists only here
 #           (FOLDER_GONE_WITH_MAIL); held_under: a held folder holds the folders inside it too (R-30)
@@ -63,7 +65,7 @@ def load(store: Store) -> list[MailConflict]:
                 str(entry["detail"]), tuple(str(part) for part in entry["server_folder"]), str(entry["local_marks"]), str(entry["server_marks"]),
                 float(entry["when"]), tuple(str(flag) for flag in entry.get("server_flags", [])), bool(entry.get("kept", False)),
             )
-            for entry in json.loads(text)["conflicts"]
+            for entry in load_json(text)["conflicts"]
         ]
     except (ValueError, KeyError, TypeError) as error:
         raise StorageError(f"The list of sync conflicts is damaged: {error}") from None

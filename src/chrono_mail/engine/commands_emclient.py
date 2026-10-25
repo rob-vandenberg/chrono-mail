@@ -38,11 +38,13 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.mime import parse_message
 from chrono_mail.store import clean_tags
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 2.1.311"
+__version__ = "commands_emclient.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed import.emclient-scan, import.emclient
 # v1.2.254: The names of the export's standard folders come from one table (emclient_source.STANDARD_FOLDERS), shared with the rules
@@ -119,7 +121,7 @@ class _Journal:
         try:
             for line in path.read_text("utf-8").splitlines():
                 try:
-                    lines.append(json.loads(line))
+                    lines.append(load_json(line))
                 except ValueError:
                     continue
         except (OSError, UnicodeDecodeError):
@@ -274,7 +276,7 @@ def _journal_matches(engine: Engine, mail_path: Path) -> bool:
     """Is there a journal of an earlier import of this mail export? (Only then is it opened, so a scan never starts a new one.)"""
     try:
         first = (engine.directories.data_directory / JOURNAL_FILE).read_text("utf-8").split("\n", 1)[0]
-        return bool(json.loads(first) == ["source", str(mail_path.resolve())])
+        return bool(load_json(first) == ["source", str(mail_path.resolve())])
     except (OSError, UnicodeDecodeError, ValueError):
         return False
 

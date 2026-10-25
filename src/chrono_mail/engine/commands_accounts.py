@@ -2,6 +2,7 @@ import os
 import shutil
 import urllib.parse
 from dataclasses import dataclass, field, replace
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -18,6 +19,7 @@ from chrono_mail.config import (
     server_pin,
 )
 from chrono_mail.core import (
+    LOCAL_ACCOUNT_ID,
     Account,
     AccountKind,
     ChronoMailError,
@@ -25,6 +27,7 @@ from chrono_mail.core import (
     ConnectionSecurity,
     CryptoError,
     ServerSettings,
+    StorageError,
 )
 from chrono_mail.crypto import (
     CredentialStoreError,
@@ -34,8 +37,8 @@ from chrono_mail.crypto import (
     seal_key_with_passphrase,
     unseal_key_with_passphrase,
 )
-from chrono_mail.engine.local import ensure_local_folders
-from chrono_mail.engine.newkey import kept_local_key, make_data_key, recovery_code_not_stored, recovery_code_stored
+from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders, take_back
+from chrono_mail.engine.newkey import kept_local_key, kept_other_key, make_data_key, recovery_code_not_stored, recovery_code_stored, usable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
@@ -45,9 +48,11 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 3.6.349"
+__version__ = "commands_accounts.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: key.status names the key of Local Folders kept here when the settings name none (kept), so the start asks for it;
+#           key.start-without-kept-mail sets that mail aside (never deleted) when its key is gone for good, so a new key can be made
 # v3.6.349: a recovery code or file brings back the key of Local Folders kept on this computer when the settings are gone (RV-177)
 # v3.5.346: key.code-stored: the person confirmed the recovery code is stored; account.add says whether the code still has to be shown
 #           (the key is made in one place, which remembers it until then; RV-03)
@@ -172,14 +177,15 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
     )
     key: DataKey | None = None
     key_created = False
-    new_config = config
     if parameters.encrypted:
-        if config.key_id is None:
-            key = make_data_key(engine)  # never an encrypted store whose key cannot be read back
-            key_created = True
-            new_config = config.with_key_id(key.key_id.hex())
-        else:
-            key = engine.data_key(config)
+        with SETUP_LOCK:  # one key for this computer: another command making one at the same moment waits and then uses this one (RV-70)
+            current = engine.config()
+            if current.key_id is None:
+                made = make_data_key(engine)  # never an encrypted store whose key cannot be read back
+                noted = engine.change_config(lambda fresh: fresh.with_key_id(made.key_id.hex()) if fresh.key_id is None else fresh)
+                key, key_created = (made, True) if noted.key_id == made.key_id.hex() else (engine.data_key(noted), False)  # another key came first
+            else:
+                key = engine.data_key(current)
     store_directory = engine.directories.store_directory(account_id)
     engine.passwords.set(account_id, ServerRole.INCOMING, parameters.password)
     engine.passwords.set(account_id, ServerRole.OUTGOING, parameters.outgoing_password or parameters.password)
@@ -188,11 +194,10 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
             store = Store.create(store_directory, account_id, key, durable=engine.durable)
             for path, role in STANDARD_FOLDERS:
                 store.create_folder(path, role)
-        key_id = new_config.key_id
 
         def add(fresh: AppConfig) -> AppConfig:
             _refuse_same_account(fresh.accounts, settings.account.kind, settings.account.incoming.username, settings.account.incoming.host, None)  # added meanwhile?
-            return (fresh.with_key_id(key_id) if fresh.key_id is None else fresh).with_account(settings)
+            return fresh.with_account(settings)
 
         engine.change_config(add)  # the commit point: until here nothing refers to the account
     except ChronoMailError:
@@ -537,20 +542,66 @@ class KeyStatus:
     in_credential_store: bool
     problem: str = ""  # why the key could not be had, in the credential store's own words ("" when it is there)
     store_answered: bool = True  # False: the store could not be asked at all (locked, not running yet); the key may well be there
+    kept: bool = False  # the key of Local Folders' mail kept on this computer while the settings name none (they were lost or reset)
+    kept_other: bool = False  # Local Folders' mail kept here was written with an older key of this computer that the store no longer has
+    take_back: bool = False  # ... with an older key the store has: it is taken back (written again with this computer's key, local.take-back)
 
 
 def key_status(engine: Engine, parameters: NoParameters) -> KeyStatus:
     config = engine.config()
     key_id = config.key_id
+    kept = False
+    older = kept_other_key(engine)
+    try:
+        other = older is not None and not usable(engine, older)
+        back = older is not None and not other  # an older key the store has: Local Folders is taken back with it (local.take-back)
+    except CredentialStoreError:
+        other = back = False  # the store cannot be asked now: nothing is said about the older key
     if key_id is None:
-        return KeyStatus(None, False)
+        key_id = kept_local_key(engine)  # the settings were lost or reset, but Local Folders' mail is still here: its key is this computer's
+        if key_id is None:
+            return KeyStatus(None, False)
+        kept = True
     try:
         engine.keys.load(bytes.fromhex(key_id))
     except CredentialStoreError as error:
-        return KeyStatus(key_id, False, str(error), store_answered=False)
+        return KeyStatus(key_id, False, str(error), store_answered=False, kept=kept, kept_other=other)
     except (CryptoError, ValueError) as error:  # not there, or there but damaged: the store did answer
-        return KeyStatus(key_id, False, str(error))
-    return KeyStatus(key_id, True)
+        return KeyStatus(key_id, False, str(error), kept=kept, kept_other=other)
+    return KeyStatus(key_id, True, kept=kept, kept_other=other, take_back=back)
+
+
+def local_take_back(engine: Engine, parameters: NoParameters) -> KeyStatus:
+    """Local Folders kept on this computer, written with an older key of this computer that the password store has: written again with this
+    computer's key and taken into use; the old files are kept aside, never deleted. Files that could not be read are said in problem."""
+    said = take_back(engine)
+    return replace(key_status(engine, parameters), problem=said)
+
+
+@dataclass(frozen=True, slots=True)
+class KeptSetAside:
+    folder: str  # where the mail kept on this computer now is (never deleted)
+
+
+def key_start_without_kept_mail(engine: Engine, parameters: NoParameters) -> KeptSetAside:
+    """Start without Local Folders' mail, calendars, contacts and tasks kept on this computer that cannot be opened: their key is gone for
+    good (no recovery code or file), whether the settings name no key or an older version made another key for this computer. They are set
+    aside in a folder of their own, never deleted, so Local Folders (and a key) can be made again. Refused while their key is in the password
+    store, or the store cannot be asked (a locked wallet is no lost key)."""
+    with SETUP_LOCK:
+        kept, older = kept_local_key(engine), kept_other_key(engine)
+        if kept is None and older is None:
+            raise UsageError("No mail kept on this computer waits for its key (Local Folders is in use): nothing was set aside")
+        if kept is not None and usable(engine, kept):  # its key is here: it opens as it is (an older key it was written with may still fail
+            # to be taken back, for want of room: then it may be set aside)
+            raise UsageError("The key of the mail kept on this computer is in the password store: it is taken back, nothing was set aside")
+        source = engine.directories.account_directory(LOCAL_ACCOUNT_ID)
+        target = engine.directories.data_directory / f"set-aside-local-folders-{datetime.now():%Y%m%d-%H%M%S}"
+        try:
+            source.rename(target)
+        except OSError as error:
+            raise StorageError(f"The mail kept on this computer could not be set aside ({error.strerror or error}); nothing was changed") from None
+        return KeptSetAside(str(target))
 
 
 @dataclass(frozen=True, slots=True)
@@ -566,9 +617,17 @@ class KeyExportResult:
     path: str
 
 
+def _this_computers_key(engine: Engine) -> DataKey:
+    """The data key: the one the settings name, or, when they name none (they were lost or reset), the one the mail kept here was written
+    with (the review of 3.6.350: its code could not be shown)."""
+    config = engine.config()
+    kept = kept_local_key(engine) if config.key_id is None else None
+    return engine.data_key(config.with_key_id(kept) if kept is not None else config)
+
+
 def key_export_file(engine: Engine, parameters: KeyExportParameters) -> KeyExportResult:
     """Write the data key, sealed with a passphrase, to a file. Keep it somewhere other than this computer."""
-    key = engine.data_key(engine.config())
+    key = _this_computers_key(engine)
     target = Path(parameters.path)
     if target.exists() and not parameters.overwrite:
         raise UsageError("The file exists; use overwrite to replace it")
@@ -595,7 +654,7 @@ class RecoveryCode:
 
 def key_recovery_code(engine: Engine, parameters: NoParameters) -> RecoveryCode:
     """The data key as a printable code. Anyone who has this code can read your mail: store it like a password."""
-    key = engine.data_key(engine.config())
+    key = _this_computers_key(engine)
     return RecoveryCode(key.key_id.hex(), recovery_code_for(key))
 
 
@@ -619,6 +678,11 @@ class KeyRestoreCodeParameters:
 def _restore(engine: Engine, key: DataKey) -> KeyStatus:
     config = engine.config()
     wanted = config.key_id if config.key_id is not None else kept_local_key(engine)  # settings lost: the key the kept mail was written with
+    if config.key_id is not None and key.key_id.hex() == kept_other_key(engine):  # the older key the kept Local Folders was written with
+        engine.keys.save(key)  # only stored here: taking Local Folders back is its own step (local.take-back), which the key window runs next
+        if engine.keys.load(key.key_id) != key:
+            raise CryptoError("The credential store did not return the key that was just saved")
+        return key_status(engine, NoParameters())
     if wanted is None:
         raise ConfigurationError("No account uses a data key yet")
     if key.key_id.hex() != wanted:
@@ -626,11 +690,12 @@ def _restore(engine: Engine, key: DataKey) -> KeyStatus:
     engine.keys.save(key)
     if engine.keys.load(key.key_id) != key:
         raise CryptoError("The credential store did not return the key that was just saved")
-    if config.key_id is None:  # the kept Local Folders can be taken into use again with it (RV-177)
-        if engine.change_config(lambda fresh: fresh.with_key_id(wanted) if fresh.key_id is None else fresh).key_id != wanted:
-            raise CryptoError("Another key was made on this computer meanwhile; nothing was changed")
-        ensure_local_folders(engine)  # and is shown at once, with its mail
-    return KeyStatus(wanted, True)
+    if config.key_id is None:  # the kept Local Folders can be taken into use again with it (RV-177); one key at a time (SETUP_LOCK)
+        with SETUP_LOCK:
+            if engine.change_config(lambda fresh: fresh.with_key_id(wanted) if fresh.key_id is None else fresh).key_id != wanted:
+                raise CryptoError("Another key was made on this computer meanwhile; nothing was changed")
+            ensure_local_folders(engine)  # and is shown at once, with its mail
+    return key_status(engine, NoParameters())  # also says when Local Folders still waits for an older key (the review of 3.6.350)
 
 
 def key_restore_file(engine: Engine, parameters: KeyRestoreFileParameters) -> KeyStatus:
@@ -724,6 +789,8 @@ KEY_RECOVERY_CODE: TypedCommand[NoParameters, RecoveryCode] = TypedCommand("key.
 KEY_CODE_STORED: TypedCommand[NoParameters, KeyStatus] = TypedCommand("key.code-stored", NoParameters, KeyStatus)
 KEY_RESTORE_FILE: TypedCommand[KeyRestoreFileParameters, KeyStatus] = TypedCommand("key.restore-file", KeyRestoreFileParameters, KeyStatus)
 KEY_RESTORE_CODE: TypedCommand[KeyRestoreCodeParameters, KeyStatus] = TypedCommand("key.restore-code", KeyRestoreCodeParameters, KeyStatus)
+KEY_START_WITHOUT_KEPT: TypedCommand[NoParameters, KeptSetAside] = TypedCommand("key.start-without-kept-mail", NoParameters, KeptSetAside)
+LOCAL_TAKE_BACK: TypedCommand[NoParameters, KeyStatus] = TypedCommand("local.take-back", NoParameters, KeyStatus)
 
 
 def register(registry: CommandRegistry) -> None:
@@ -742,3 +809,11 @@ def register(registry: CommandRegistry) -> None:
     registry.register(KEY_CODE_STORED.id, "Note that the recovery code of the data key is stored in a safe place", NoParameters, key_code_stored, doing="Noting the recovery code as stored")
     registry.register(KEY_RESTORE_FILE.id, "Put the data key back into the credential store from a recovery file", KeyRestoreFileParameters, key_restore_file, doing="Restoring the key from the recovery file")
     registry.register(KEY_RESTORE_CODE.id, "Put the data key back into the credential store from a recovery code", KeyRestoreCodeParameters, key_restore_code, doing="Restoring the key from the recovery code")
+    registry.register(
+        KEY_START_WITHOUT_KEPT.id, "Set aside Local Folders' mail kept here whose key is gone for good (never deleted), so a new key can be made", NoParameters,
+        key_start_without_kept_mail, destructive=True, doing="Setting the mail kept on this computer aside",
+    )
+    registry.register(
+        LOCAL_TAKE_BACK.id, "Take back Local Folders kept here with an older key of this computer (written again with this computer's key)",
+        NoParameters, local_take_back, doing="Taking Local Folders back",
+    )

@@ -1,6 +1,6 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog
+from PySide6.QtWidgets import QDialog, QLabel
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui.sections import CALENDAR
@@ -12,9 +12,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 2.4.334"
+__version__ = "test_ui_sync_conflicts.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a name with markup is shown as text in its hover text and in the details window (D-259)
 # v2.4.334: the counts in the texts are written one way (F1b)
 # v1.1.233: the table fills the width (fixed columns, Name and Where shared); no triangle in the rows; the Why icons drawn in the text colour
 # v1.1.232: the legend one under the other; Close lines up with the rest
@@ -401,3 +402,25 @@ def test_the_table_fills_the_width_name_and_where_share_it_and_the_icons_are_in_
             return abs(colour.red() - text.red()) + abs(colour.green() - text.green()) + abs(colour.blue() - text.blue())
         nearest = min(distance(x, y) for x in range(left, left + header.sectionSize(WHY_COLUMN)) for y in range(rect.top(), rect.bottom()))
         assert nearest < 60  # the lines in the theme's text colour (softened a little at their edges)
+
+
+def test_a_name_with_markup_is_shown_as_text_in_its_hover_text(world: World, qtbot: QtBot) -> None:
+    """The final review of 3.6.350 (D-259): the hover texts of the rows took an event's name and the server's reply as they came, so
+    markup in them was drawn."""
+    from chrono_mail.ui.plainboxes import plain_tip
+
+    with FakeDav() as server:
+        account = linked(world, qtbot, server)
+        made = world.call("event.add", calendar=calendar_of(world, account), summary="Meeting", start="2026-10-14T16:00", end="2026-10-14T17:00")
+        change_on_server(server, str(made.uid), "SUMMARY:Meeting", "SUMMARY:Theirs")
+        world.call("event.edit", item=made.item, summary="<b>Ours</b>")
+        panel = panel_of(world, qtbot)
+        wait(qtbot, lambda: panel.table.topLevelItemCount() == 1)
+        row = panel.table.topLevelItem(0)
+        assert row is not None and row.text(3) == "<b>Ours</b>" and row.toolTip(3) == plain_tip("<b>Ours</b>") != "<b>Ours</b>"
+        conflict = world.window.sync_marks.conflicts[0]
+        dialog = ConflictDialog(conflict)
+        qtbot.addWidget(dialog)
+        details = {conflict.reason_text, f"{shown_name(world)} — Calendar", *(field.label for field in conflict.fields)}
+        shown = [label for label in dialog.findChildren(QLabel) if label.text() in details]  # the conflict's own words, not the headings
+        assert len(shown) >= 3 and all(label.textFormat() == Qt.TextFormat.PlainText for label in shown)

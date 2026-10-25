@@ -1,16 +1,24 @@
+import html
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox, QPushButton, QWidget
 
 # --- Version ------------------------------------------------------------
-__version__ = "plainboxes.py 3.6.349"
+__version__ = "plainboxes.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: plain_tip: a hover text from mail is shown as text, never as markup (D-259)
 # v3.6.349: a ready-made box is deleted once answered; its default button is the one Qt's own would have
 # v3.5.348: no event filter on the whole program any more (the kind that crashed PySide on 2026-10-21): the four ready-made message boxes
 #           are made with plain text from the start, set up once at start; a box made by hand sets plain text where it is made
 # v3.4.344: Initial: every message box shows plain text unless it says otherwise (RV-167, D-259)
+
+def plain_tip(text: str) -> str:
+    """A hover text Qt always shows as the text itself: Qt guesses markup in a hover text with "<...>", while it often is a subject, a
+    sender or a folder name (hostile input, D-259); such a text is given escaped inside markup, any other as it is."""
+    return f"<p style='white-space:pre'>{html.escape(text)}</p>" if "<" in text else text
+
 
 Buttons = QMessageBox.StandardButton
 Shown = Callable[..., QMessageBox.StandardButton]

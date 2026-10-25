@@ -26,9 +26,10 @@ from chrono_mail.engine.commands_accounts import (
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "recoverydialog.py 3.6.349"
+__version__ = "recoverydialog.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a code that could not be shown can be asked again with Try again (during a restore "Stop the restore" was the only way on)
 # v3.6.349: the tick and Copy work only once the code is shown: a code never seen is never noted as stored (RV-210); a saved recovery file allows the tick too
 # v3.5.346: Done tells the engine the code is stored (key.code-stored); until then it is shown again before a restore and after an account is added (RV-03)
 # v2.4.324: "Your recovery code"; "this computer's password store"; Copy says "Copied" for 2 s; closing without the tick asks first;
@@ -77,12 +78,15 @@ class RecoveryDialog(QDialog):
         buttons = QHBoxLayout()
         self.copy_button = QPushButton("Copy", self)
         self.file_button = QPushButton("Save a recovery file…", self)
+        self.retry_button = QPushButton("Try again", self)  # greyed until the code could not be shown: then it is asked again
+        self.retry_button.setEnabled(False)
         buttons.addWidget(self.copy_button)
         if restoring:
             self.file_button.setVisible(False)  # a third secret during a restore would confuse: the file can be saved later from the menu
         else:
             buttons.addWidget(self.file_button)
         buttons.addStretch(1)
+        buttons.addWidget(self.retry_button)
         layout.addLayout(buttons)
         self.confirm = QCheckBox("I have stored the recovery code (or a recovery file) in a safe place", self)
         self.confirm.setEnabled(False)  # only once the code is there to be stored (RV-210)
@@ -98,7 +102,14 @@ class RecoveryDialog(QDialog):
         self.done_button.clicked.connect(self._stored)
         self.copy_button.clicked.connect(self._copy)
         self.file_button.clicked.connect(self._save_file)
-        backend.ask(KEY_RECOVERY_CODE, NoParameters(), self._show_code, self._failed, owner=self)
+        self.retry_button.clicked.connect(self._ask_code)
+        self._ask_code()
+
+    def _ask_code(self) -> None:
+        """Ask the engine for the code; after a failure (a locked or slow password store) the person asks again with Try again."""
+        self.retry_button.setEnabled(False)
+        self.code.setPlainText("Loading…")
+        self._backend.ask(KEY_RECOVERY_CODE, NoParameters(), self._show_code, self._failed, owner=self)
 
     def _stored(self) -> None:
         """Done with the tick: the engine notes that the code is stored, so it is not shown again before a restore (RV-03)."""
@@ -120,6 +131,7 @@ class RecoveryDialog(QDialog):
 
     def _failed(self, error: ChronoMailError) -> None:
         self.code.setPlainText("(the code could not be shown)")
+        self.retry_button.setEnabled(True)
         QMessageBox.warning(self, "Recovery code", str(error))
 
     def _copy(self) -> None:

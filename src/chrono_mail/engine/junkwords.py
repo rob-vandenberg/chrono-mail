@@ -16,11 +16,13 @@ from chrono_mail.crypto import DataKey, decrypt_message, encrypt_message
 from chrono_mail.index import html_to_text
 from chrono_mail.mime import ParsedMessage
 from chrono_mail.store.atomic import replace_file_atomically
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "junkwords.py 2.2.313"
+__version__ = "junkwords.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.2.313: set_verdict: a message's verdict set to junk, good or none at all (Undo puts back what was learned before, B-18)
 # v2.1.308: Initial junk filter words: tokens, learning, scoring, the encrypted file (D-238)
 
@@ -166,7 +168,7 @@ def _to_bytes(words: JunkWords) -> bytes:
 
 def _from_bytes(data: bytes) -> JunkWords:
     try:
-        loaded: object = json.loads(data.decode("utf-8"))
+        loaded: object = load_json(data.decode("utf-8"))
     except ValueError:
         raise StorageError("The junk filter's file is damaged") from None
     if not isinstance(loaded, dict) or loaded.get("format") != FORMAT:

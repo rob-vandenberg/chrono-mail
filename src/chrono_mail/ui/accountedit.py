@@ -1,3 +1,4 @@
+import html
 import urllib.parse
 from typing import Literal
 
@@ -39,9 +40,10 @@ from chrono_mail.ui.serverfields import ServerFields, kind_of, mail_server_kind,
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 2.4.334"
+__version__ = "accountedit.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a server's error text is shown as text, never markup (D-259)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.1.308: General: Filter junk mail (D-238)
@@ -254,7 +256,7 @@ class AccountEditDialog(QDialog):
                 self.dav_result.setText("The certificate was accepted.")
 
             def failed(error: ChronoMailError) -> None:
-                self.dav_result.setText(f"<span style='{red_style()}'>{error}</span>")
+                self.dav_result.setText(f"<span style='{red_style()}'>{html.escape(str(error))}</span>")
 
             self._backend.ask(ACCOUNT_TRUST_CERTIFICATE, TrustParameters(self._account.account_id, address[0], address[1], fingerprint), done, failed, owner=self)
 
@@ -366,7 +368,7 @@ class AccountEditDialog(QDialog):
         return tab
 
     def _folders_failed(self, error: ChronoMailError) -> None:
-        self.folders_label.setText(f"<span style='{red_style()}'>The folders could not be listed: {error}</span>")
+        self.folders_label.setText(f"<span style='{red_style()}'>The folders could not be listed: {html.escape(str(error))}</span>")
 
     def _folders_arrived(self, result: tuple[FolderChoice, ...]) -> None:
         table = self.folder_table
@@ -443,7 +445,7 @@ class AccountEditDialog(QDialog):
         inspect_and_ask(self._backend, self, host, port, security_of(security), kind, accepted)
 
     def _certificate_failed(self, error: ChronoMailError) -> None:
-        self.result_label.setText(f"<span style='{red_style()}'>{error}</span>")
+        self.result_label.setText(f"<span style='{red_style()}'>{html.escape(str(error))}</span>")
 
     def _forget_certificates(self) -> None:
         if QMessageBox.question(self, "Accepted certificates", "Forget every accepted certificate of this account? Servers with such certificates can no longer be reached until you accept them again.") != QMessageBox.StandardButton.Yes:
@@ -468,7 +470,7 @@ class AccountEditDialog(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self.test_button.setEnabled(True)
-            self.result_label.setText(f"<span style='{red_style()}'>{error}</span>")
+            self.result_label.setText(f"<span style='{red_style()}'>{html.escape(str(error))}</span>")
 
         self._backend.ask(ACCOUNT_CHECK, parameters, done, failed, owner=self)
 
@@ -521,7 +523,7 @@ class AccountEditDialog(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)
-            self.result_label.setText(f"<span style='{red_style()}'>The account could not be changed: {error}</span>")
+            self.result_label.setText(f"<span style='{red_style()}'>The account could not be changed: {html.escape(str(error))}</span>")
 
         if values is not None:
             self._backend.ask(ACCOUNT_EDIT, values, lambda _result: done(), failed, owner=self)

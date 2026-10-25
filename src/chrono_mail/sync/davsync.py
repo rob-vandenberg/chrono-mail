@@ -49,11 +49,13 @@ from chrono_mail.sync.davconflicts import (
 from chrono_mail.sync.davconflicts import forget as forget_conflict
 from chrono_mail.store.atomic import replace_file_atomically
 from chrono_mail.core.words import counted
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 2.4.333"
+__version__ = "davsync.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.0.286: A collection's name or colour changed here and on the server, or a name the server refused for good, is a sync conflict (kept in
 #           step with every synchronisation, gone once both sides agree), no longer an error line at every synchronisation (D-192, the Windows
@@ -115,7 +117,7 @@ class DavState:
 
     def _load(self) -> None:
         try:
-            data = json.loads(self.path.read_text("utf-8"))
+            data = load_json(self.path.read_text("utf-8"))
             if data.get("version") != STATE_VERSION:
                 return
             for collection, description in data["collections"].items():

@@ -1,3 +1,4 @@
+import html
 from typing import override
 
 from PySide6.QtCore import Signal
@@ -14,9 +15,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "scheduledpanel.py 2.4.327"
+__version__ = "scheduledpanel.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.327: Pause and Resume for a one-off scheduled message too; a paused one says so in its line (D-245)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.268: R-21: Send now, Cancel snooze, Pause and Resume change only their own line (it leaves, the next one is selected; or it
@@ -203,7 +205,7 @@ class ScheduledPanel(QWidget):
         self.status.setText("The changes are saved; the message stays scheduled")
 
     def _failed(self, error: ChronoMailError) -> None:
-        self.status.setText(f"<span style='color:{red()}'>{error}</span>")
+        self.status.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
 
     def _selected(self) -> ScheduledInfo | SnoozedInfo | None:
         item = self.list.currentItem()

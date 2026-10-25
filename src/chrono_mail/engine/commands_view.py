@@ -1,4 +1,7 @@
+import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from chrono_mail.engine.changes import MessageRow
 from chrono_mail.engine.commands_combined import CombinedParameters, gather, groups_in_order, in_order
@@ -7,12 +10,14 @@ from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.index import SearchFilter
+from chrono_mail.index.database import writes
 from chrono_mail.index.model import GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_view.py 2.1.311"
+__version__ = "commands_view.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: every order answer carries a write stamp of its index files (how many changes were written), read before the order (RV-206)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.6.260: Initial: message.order and message.combined-order (the whole order of a view: every message's id, folder and unread mark, the
 #           headings, the first rows), message.rows (rows asked by the message, never by a place) (R-15)
@@ -34,6 +39,7 @@ class ViewOrder:
     complete: bool  # every message of the view is given
     groups: tuple[GroupCount, ...]  # the group headings in order with their numbers of messages (asked with headings)
     rows: tuple[MessageRow, ...]  # the rows of the first messages and of the messages named
+    stamp: str = ""  # when the index files were last written, read before the order (write_stamp): another stamp, other writes between
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,10 +68,24 @@ def _shared(text: str, seen: dict[str, str]) -> str:
     return seen.setdefault(text, text)
 
 
+def write_stamp(paths: Iterable[Path]) -> str:
+    """How many changes this program wrote to these index files that were not told at once: two answers with the same stamp were read with no
+    such write between them (a big job that tells its changes only at its end, a rebuilt index); the changes told at once the list hears as
+    facts and judges itself (the window's places not known yet, RV-206)."""
+    return ";".join(str(writes(path)) for path in paths)
+
+
+def settled_stamp(before: str, paths: Iterable[Path]) -> str:
+    """The stamp of an answer: the same before and after it was read, or, when something was written meanwhile (a big job that holds no
+    lock, the mailboxes of a Favorites view read one after the other), one that matches no other answer."""
+    return before if write_stamp(paths) == before else f"moving:{uuid.uuid4().hex}"
+
+
 def message_order(engine: Engine, parameters: OrderParameters) -> ViewOrder:
     """The order of a folder or a search of one mailbox, read at one moment: what the list holds of a view (R-15)."""
     first = max(0, parameters.first)
     with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
+        before = write_stamp([mailbox.index.path])  # before anything is read: a write after it changes the stamp of the next answer
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         groups = message_groups(engine, parameters) if parameters.headings else ()  # inside the same reading: the same moment
         names: dict[str, str] = {}
@@ -75,6 +95,7 @@ def message_order(engine: Engine, parameters: OrderParameters) -> ViewOrder:
             return ViewOrder(
                 tuple(row.message_id for row in everything), (), tuple(_shared(row.folder, names) for row in everything), tuple("seen" not in row.flags for row in everything),
                 len(everything), sum(1 for row in everything if "seen" not in row.flags), True, groups, tuple(row for row in everything if row.message_id in wanted),
+                settled_stamp(before, [mailbox.index.path]),
             )
         filters = _search_filter(parameters)
         found = mailbox.index.ordered(parameters.query, folder, filters, _sort_field(parameters.sort), not parameters.oldest_first, None if parameters.whole else first)
@@ -89,7 +110,7 @@ def message_order(engine: Engine, parameters: OrderParameters) -> ViewOrder:
         rows = _rows(mailbox, [indexed[store_id] for store_id in dict.fromkeys(wanted_ids) if store_id in indexed], mailbox.timed(folder))
         return ViewOrder(
             tuple(store_id for store_id, _, _ in found), (), tuple(_shared("/".join(path), names) for _, path, _ in found), tuple(unread for _, _, unread in found),
-            total, unread_total, parameters.whole or total <= len(found), groups, rows,
+            total, unread_total, parameters.whole or total <= len(found), groups, rows, settled_stamp(before, [mailbox.index.path]),
         )
 
 
@@ -99,6 +120,8 @@ def message_combined_order(engine: Engine, parameters: CombinedOrderParameters) 
         raise UsageError("Give the mailbox of each message of rows_of")
     first = max(0, parameters.first)
     whole = parameters.whole or parameters.sort == CONTACT_SORT  # the Contact sort looks at every message anyway
+    indexes = sorted(engine.directories.index_file(settings.account.account_id) for settings in engine.config().accounts)
+    before = write_stamp(indexes)  # before reading
     found = gather(engine, parameters, EVERYTHING if whole else first, groups=parameters.headings, tally=not whole)
     ordered = in_order(found, parameters)
     if whole:
@@ -112,7 +135,7 @@ def message_combined_order(engine: Engine, parameters: CombinedOrderParameters) 
     return ViewOrder(
         tuple(row.message_id for row in ordered), tuple(_shared(row.account, names) for row in ordered), tuple(_shared(row.folder, names) for row in ordered),
         tuple("seen" not in row.flags for row in ordered), total, unread_total, whole or total <= len(ordered), groups_in_order(found, parameters),
-        tuple(row for number, row in enumerate(ordered) if number < first or (row.account, row.message_id) in named),
+        tuple(row for number, row in enumerate(ordered) if number < first or (row.account, row.message_id) in named), settled_stamp(before, indexes),
     )
 
 

@@ -1,4 +1,5 @@
 import json
+import shutil
 from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -8,7 +9,7 @@ from typing import Any  # command results are command-specific dataclasses
 import pytest
 
 from chrono_mail.config import config_to_text, parse_config
-from chrono_mail.core import LOCAL_ACCOUNT_ID, ConfigurationError, MessageFlag
+from chrono_mail.core import LOCAL_ACCOUNT_ID, ConfigurationError, MessageFlag, StorageError
 from chrono_mail.engine import Engine, UsageError
 from chrono_mail.engine.mailbox import open_mailbox
 from tests.enginefactory import make_engine
@@ -19,9 +20,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 3.6.349"
+__version__ = "test_engine_local.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: no new key while kept Local Folders needs its own; Start without this mail sets it aside, never deleted
 # v3.6.349: kept Local Folders whose key is gone names the recovery code, and that code brings it back (RV-177)
 # v3.0.340: Local Folders can never be removed, also when no account keeps its mail there (D-255)
 # v3.0.339: Local Folders missing from the settings while its mail is here is taken into use again, never removed (RV-62)
@@ -533,3 +535,388 @@ def test_kept_local_folders_whose_key_is_gone_comes_back_with_the_recovery_code(
     call(engine, "key.restore-code", code=code)  # Local Folders is taken back with it at once
     assert [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages] == ["Message 1"]
 
+
+
+def _kept_without_key(tmp_path: Path) -> tuple[Engine, str, str]:
+    """Local Folders with one message, then the settings and the password store both lost: the engine, the recovery code and the key id."""
+    from chrono_mail.config import AppConfig
+
+    engine = make_engine(tmp_path)
+    call(engine, "local.enable")
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        mailbox.deliver(("Inbox",), mail(1), frozenset())
+    code = str(call(engine, "key.recovery-code").code)
+    key_id = engine.config().key_id
+    assert key_id is not None
+    engine.change_config(lambda config: AppConfig())
+    engine.keys.delete(bytes.fromhex(key_id))
+    engine.forget_keys()
+    return engine, code, key_id
+
+
+def test_no_new_key_is_made_while_kept_local_folders_waits_for_its_own(tmp_path: Path) -> None:
+    """The open question of 3.6.349: with the settings lost, adding an account made a new key, after which the kept mail of Local Folders
+    could never be opened again, not even with its recovery code."""
+    from chrono_mail.core import CryptoError
+
+    engine, code, key_id = _kept_without_key(tmp_path)
+    status = call(engine, "key.status")
+    assert status.key_id == key_id and status.kept and not status.in_credential_store  # the start asks for this key
+    with FakePop3Server({}) as pop, FakeSmtpServer() as smtp:
+        with pytest.raises(CryptoError, match="No new key was made"):
+            add_account(engine, pop, smtp)
+        assert engine.config().key_id is None and call(engine, "account.list") == ()
+        with pytest.raises(CryptoError, match="No new key was made"):
+            call(engine, "key.ensure")  # Restore… neither
+        call(engine, "key.restore-code", code=code)
+        account = add_account(engine, pop, smtp)  # with the kept mail's key
+    assert engine.config().key_id == key_id and account
+    assert [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages] == ["Message 1"]
+
+
+def test_start_without_the_kept_mail_sets_it_aside_and_a_new_key_can_be_made(tmp_path: Path) -> None:
+    """Without the recovery code the kept mail can never be opened: Start without this mail sets it aside, never deleted."""
+    engine, _code, key_id = _kept_without_key(tmp_path)
+    result = call(engine, "key.start-without-kept-mail")
+    aside = Path(result.folder)
+    assert (aside / "store").exists() or any(aside.rglob("store.json"))  # the files are kept, out of the way
+    assert not engine.directories.account_directory(LOCAL_ACCOUNT_ID).exists()
+    status = call(engine, "key.status")
+    assert status.key_id is None and not status.kept
+    with FakePop3Server({}) as pop, FakeSmtpServer() as smtp:
+        add_account(engine, pop, smtp)
+    assert engine.config().key_id not in (None, key_id)
+    call(engine, "local.enable")  # Local Folders starts again, empty
+    assert call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages == ()
+    assert any(aside.rglob("store.json"))
+
+
+def test_start_without_the_kept_mail_is_refused_while_its_key_is_there(tmp_path: Path) -> None:
+    engine, code, _key_id = _kept_without_key(tmp_path)
+    call(engine, "key.restore-code", code=code)
+    with pytest.raises(UsageError):
+        call(engine, "key.start-without-kept-mail")
+    fresh = make_engine(tmp_path / "fresh")
+    with pytest.raises(UsageError):
+        call(fresh, "key.start-without-kept-mail")  # nothing kept here at all
+
+
+def _kept_with_older_key(tmp_path: Path, keep_old_key: bool) -> tuple[Engine, str, str]:
+    """As an older version left it: the settings lost, a new key made by adding an account, the kept Local Folders (one message, one
+    appointment) written with the old key. The engine, the old key's recovery code, the old key id."""
+    from chrono_mail.engine.pimaccess import ensure_local_pim
+
+    engine, code, key_id = _kept_without_key(tmp_path)
+    store_json = engine.directories.store_directory(LOCAL_ACCOUNT_ID) / "store.json"
+    store_json.rename(store_json.with_suffix(".away"))  # as 3.6.349 did: nothing kept in the way, so a new key is made
+    with FakePop3Server({}) as pop, FakeSmtpServer() as smtp:
+        add_account(engine, pop, smtp)
+    store_json.with_suffix(".away").rename(store_json)
+    if keep_old_key:
+        from chrono_mail.crypto import key_from_recovery_code
+        engine.keys.save(key_from_recovery_code(code))
+    assert ensure_local_pim is not None
+    return engine, code, key_id
+
+
+def test_kept_mail_written_with_an_older_key_the_store_has_is_taken_back(tmp_path: Path) -> None:
+    """The review of 3.6.350: kept Local Folders written with an older key was only offered to be set aside, also when that key was still in
+    the password store; now it is written again with this computer's key and taken back, the old files kept aside."""
+    from chrono_mail.core import CryptoError
+
+    engine, _code, key_id = _kept_with_older_key(tmp_path, keep_old_key=True)
+    status = call(engine, "key.status")
+    assert status.take_back and not status.kept_other  # the start opens the key window, which takes it back
+    with pytest.raises(CryptoError, match="taken back first"):
+        call(engine, "local.enable")  # never hidden inside another command
+    assert call(engine, "local.take-back").take_back is False
+    assert [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages] == ["Message 1"]
+    description = json.loads((engine.directories.store_directory(LOCAL_ACCOUNT_ID) / "store.json").read_text("utf-8"))
+    assert description["key_id"] == engine.config().key_id != key_id
+    assert any(engine.directories.data_directory.glob("set-aside-local-folders-older-key-*"))
+
+
+def test_the_older_keys_recovery_code_takes_kept_mail_back(tmp_path: Path) -> None:
+    engine, code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=False)
+    assert call(engine, "key.status").kept_other
+    status = call(engine, "key.restore-code", code=code)  # only stored: taking back is its own step, which the key window runs next
+    assert status.take_back and not status.kept_other
+    call(engine, "local.take-back")
+    assert [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages] == ["Message 1"]
+
+
+def test_a_rewrite_with_this_computers_key_that_is_cut_off_is_finished_or_undone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """AGENTS.md 4.1.4: cut off while the files are written, the old Local Folders stays; cut off after, the new one takes its place."""
+    from chrono_mail.engine import local
+
+    engine, _code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=True)
+    real_write = local.write_new_file
+    written: list[Path] = []
+
+    def cut_off(path: Path, data: bytes, durable: bool) -> None:
+        if len(written) == 3:
+            raise OSError(28, "No space left on device")
+        written.append(path)
+        real_write(path, data, durable)
+
+    monkeypatch.setattr(local, "write_new_file", cut_off)
+    with pytest.raises(StorageError):
+        call(engine, "local.take-back")
+    monkeypatch.setattr(local, "write_new_file", real_write)
+    assert not (engine.directories.data_directory / "accounts" / local.REKEYING).exists()
+    real_replace = local.os.replace
+    replaced: list[str] = []
+
+    def cut_after_setting_aside(source: object, target: object) -> None:
+        real_replace(source, target)  # type: ignore[arg-type]
+        replaced.append(str(target))
+        if len(replaced) == 1:
+            raise OSError(5, "The power went")
+
+    monkeypatch.setattr(local.os, "replace", cut_after_setting_aside)
+    with pytest.raises(StorageError):
+        call(engine, "local.take-back")
+    monkeypatch.setattr(local.os, "replace", real_replace)
+    assert not engine.directories.account_directory(LOCAL_ACCOUNT_ID).exists()  # between the two renames
+    call(engine, "local.take-back")  # finished by the next take-back, and Local Folders in use again (the review of 3.6.350)
+    assert engine.config().local_folders() is not None
+    assert [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages] == ["Message 1"]
+
+
+def test_a_finished_copy_never_takes_the_place_of_local_folders_in_use(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.350: a finished copy left behind (its first rename refused) took the place of a Local Folders that came back
+    another way meanwhile (a restore)."""
+    from chrono_mail.engine import local
+
+    engine, _code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=True)
+    real_replace = local.os.replace
+
+    def refused(source: object, target: object) -> None:
+        raise OSError(13, "The file is in use")
+
+    monkeypatch.setattr(local.os, "replace", refused)
+    with pytest.raises(StorageError):
+        call(engine, "local.take-back")
+    monkeypatch.setattr(local.os, "replace", real_replace)
+    copy = engine.directories.data_directory / "accounts" / local.REKEYING
+    assert (copy / local.REKEYED_MARK).exists()
+    in_use = engine.directories.account_directory(LOCAL_ACCOUNT_ID)
+    shutil.rmtree(in_use)
+    copy.rename(copy.with_name("away"))
+    call(engine, "local.enable")  # a fresh Local Folders in the settings, as a restore would put one in place
+    copy.with_name("away").rename(copy)
+    (in_use / "made-here").write_text("x", "utf-8")
+    call(engine, "local.enable")
+    assert (in_use / "made-here").exists() and not copy.exists()
+    assert any(engine.directories.data_directory.glob("set-aside-local-folders-unused-*"))
+
+
+def test_this_computers_own_code_never_says_local_folders_is_back(tmp_path: Path) -> None:
+    """The review of 3.6.350: with Local Folders waiting for its older key, typing this computer's own code said the key was back."""
+    from chrono_mail.crypto import recovery_code_for
+
+    engine, _code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=False)
+    own = recovery_code_for(engine.data_key(engine.config()))
+    status = call(engine, "key.restore-code", code=own)
+    assert status.in_credential_store and status.kept_other
+
+
+def test_a_damaged_kept_key_counts_as_gone(tmp_path: Path) -> None:
+    """The review of 3.6.350: a damaged entry for the kept key let neither the key back nor Start without this mail."""
+    from chrono_mail.core import CryptoError
+
+    engine, _code, key_id = _kept_without_key(tmp_path)
+    real_load = engine.keys.load
+
+    def damaged(wanted: bytes) -> object:
+        if wanted == bytes.fromhex(key_id):
+            raise CryptoError("The key in the password store is damaged")
+        return real_load(wanted)
+
+    engine.keys.load = damaged  # type: ignore[method-assign]
+    with FakePop3Server({}) as pop, FakeSmtpServer() as smtp:
+        with pytest.raises(CryptoError, match="No new key was made"):
+            add_account(engine, pop, smtp)
+    call(engine, "key.start-without-kept-mail")
+    assert not engine.directories.account_directory(LOCAL_ACCOUNT_ID).exists()
+
+
+def test_the_recovery_code_of_a_kept_key_can_be_shown(tmp_path: Path) -> None:
+    """The review of 3.6.350: the settings name no key, the kept key is in the store: the code window said no key had been made."""
+    engine, code, key_id = _kept_without_key(tmp_path)
+    call(engine, "key.restore-code", code=code)
+    from chrono_mail.config import AppConfig
+    engine.change_config(lambda config: AppConfig())  # the settings lost again, the key kept
+    assert call(engine, "key.status").kept and call(engine, "key.recovery-code").code == code
+    assert engine.config().key_id is None
+
+
+def test_two_accounts_added_at_once_share_one_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-70 (found again by the review of 3.6.350): two commands that made the first key at the same moment made two; the account
+    whose store was written with the second could never be opened."""
+    import threading
+    from chrono_mail.engine import commands_accounts
+
+    engine = make_engine(tmp_path)
+    real_make = commands_accounts.make_data_key
+    both_in = threading.Barrier(2, timeout=2)
+
+    def slow_make(made_for: Engine) -> object:
+        try:
+            both_in.wait()  # without the lock both get here
+        except threading.BrokenBarrierError:
+            pass
+        return real_make(made_for)
+
+    monkeypatch.setattr(commands_accounts, "make_data_key", slow_make)
+    with FakePop3Server({}) as pop, FakeSmtpServer() as smtp:
+        threads = [threading.Thread(target=add_account, args=(engine, pop, smtp, f"{name}@example.com"), kwargs={"incoming_host": host}) for name, host in (("a", "127.0.0.1"), ("b", "localhost"))]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(10)
+    assert len(engine.config().accounts) == 2
+    for settings in engine.config().accounts:
+        with open_mailbox(engine, settings.account.account_id) as mailbox:
+            assert mailbox.store.list_folders()
+
+
+def test_kept_mail_written_with_another_key_names_the_way_out(tmp_path: Path) -> None:
+    """Made by an older version: the settings were lost, a new key made, and the kept Local Folders written with the old one."""
+    from chrono_mail.core import CryptoError
+
+    engine, _code, key_id = _kept_without_key(tmp_path)
+    store_json = engine.directories.store_directory(LOCAL_ACCOUNT_ID) / "store.json"
+    kept_text = store_json.read_text("utf-8")
+    store_json.rename(store_json.with_suffix(".away"))  # as 3.6.349 did: nothing kept in the way, so a new key is made
+    with FakePop3Server({}) as pop, FakeSmtpServer() as smtp:
+        add_account(engine, pop, smtp)
+    store_json.with_suffix(".away").rename(store_json)
+    assert json.loads(kept_text)["key_id"] == key_id != engine.config().key_id
+    status = call(engine, "key.status")
+    assert status.in_credential_store and status.kept_other
+    with pytest.raises(CryptoError, match="Start without this mail"):
+        call(engine, "local.enable")
+    call(engine, "key.start-without-kept-mail")
+    call(engine, "local.enable")
+    assert not call(engine, "key.status").kept_other
+
+
+def test_a_file_that_cannot_be_read_never_stops_taking_local_folders_back(tmp_path: Path) -> None:
+    """The review of 3.6.350: one file that could not be read stopped the whole take-back, at every start (AGENTS.md 4.2.1)."""
+    import os
+    import sys
+
+    engine, _code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=True)
+    skip = sys.platform == "win32"
+    if sys.platform != "win32":  # Windows has no geteuid; inside this block the type check for Windows skips it
+        skip = os.geteuid() == 0
+    if skip:
+        pytest.skip("file permissions cannot make a file unreadable here")
+    local = engine.directories.account_directory(LOCAL_ACCOUNT_ID)
+    unreadable = next(path for path in local.rglob("*") if path.is_file() and path.parent.name in ("cur", "new"))
+    relative = unreadable.relative_to(local)
+    unreadable.chmod(0)
+    status = call(engine, "local.take-back")
+    (aside,) = engine.directories.data_directory.glob("set-aside-local-folders-older-key-*")
+    (aside / relative).chmod(0o600)  # it stays in the old files, kept aside
+    assert not status.take_back and "1 file could not be read" in status.problem
+
+
+def test_taking_local_folders_back_without_room_changes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import shutil as shell
+    from collections import namedtuple
+
+    engine, _code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=True)
+    usage = namedtuple("usage", "total used free")
+
+    def full(path: object) -> object:
+        return usage(10, 10, 0)
+
+    monkeypatch.setattr(shell, "disk_usage", full)
+    with pytest.raises(StorageError, match="needs about"):
+        call(engine, "local.take-back")
+    monkeypatch.undo()
+    assert call(engine, "key.status").take_back  # as it was: it can be done once there is room
+
+
+def test_with_the_settings_lost_the_junk_filter_keeps_what_it_learned(tmp_path: Path) -> None:
+    """The review of 3.6.350: with the settings lost the junk filter read its words without a key and set them aside as damaged."""
+    from chrono_mail.engine.junkfilter import _key  # noqa: PLC2701 - the key the words are read with
+
+    engine, code, key_id = _kept_without_key(tmp_path)
+    call(engine, "key.restore-code", code=code)
+    from chrono_mail.config import AppConfig
+    engine.change_config(lambda config: AppConfig())  # the settings lost again, the key kept
+    key = _key(engine)
+    assert key is not None and key.key_id.hex() == key_id
+
+
+def test_taking_back_puts_the_junk_filters_learning_back_in_use(tmp_path: Path) -> None:
+    """The review of 3.6.350: the learning written with the older key stayed in the .bad copy, never used again."""
+    from chrono_mail.crypto import key_from_recovery_code
+    from chrono_mail.engine.junkwords import JunkWords, save_words
+
+    engine, code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=True)
+    junk = engine.directories.junk_filter_file
+    save_words(junk.with_name(junk.name + ".bad"), JunkWords(), key_from_recovery_code(code), engine.durable)
+    junk.unlink(missing_ok=True)
+    call(engine, "local.take-back")
+    from chrono_mail.crypto import read_key_id
+    assert junk.exists() and read_key_id(junk.read_bytes()).hex() == engine.config().key_id
+
+
+def test_start_without_is_possible_when_taking_back_cannot_be_done(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of 3.6.350: with the older key in the store but no room to take Local Folders back, Start without this mail was offered
+    and then refused, and the window came back at every start."""
+    engine, _code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=True)
+    call(engine, "key.start-without-kept-mail")
+    assert not engine.directories.account_directory(LOCAL_ACCOUNT_ID).exists() and not call(engine, "key.status").take_back
+
+
+def test_taking_back_keeps_the_time_of_every_file_and_joins_the_junk_learning(tmp_path: Path) -> None:
+    """The review of 3.6.350: every file got the day of the take-back as its time (the last resort of the Received column, D-226); the
+    junk filter's learning kept aside stayed unused when learning had started again meanwhile."""
+    import os
+    from chrono_mail.crypto import key_from_recovery_code
+    from chrono_mail.engine.junkwords import JunkWords, load_words, save_words
+
+    engine, code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=True)
+    local = engine.directories.account_directory(LOCAL_ACCOUNT_ID)
+    message = next(path for path in local.rglob("*") if path.is_file() and path.parent.name in ("cur", "new"))
+    relative = message.relative_to(local)
+    os.utime(message, (1_000_000_000, 1_000_000_000))
+    junk = engine.directories.junk_filter_file
+    older, newer = JunkWords(junk_messages=5), JunkWords(junk_messages=2)
+    save_words(junk.with_name(junk.name + ".bad"), older, key_from_recovery_code(code), engine.durable)
+    save_words(junk, newer, engine.data_key(engine.config()), engine.durable)
+    call(engine, "local.take-back")
+    assert int((local / relative).stat().st_mtime) == 1_000_000_000
+    key = engine.data_key(engine.config())
+    assert load_words(junk, key).junk_messages == 5  # the copy that knows more is used (never added up: one message would count twice)
+    (since,) = junk.parent.glob(junk.name + ".since-*")
+    assert load_words(since, key).junk_messages == 2 and not junk.with_name(junk.name + ".bad").exists()
+
+
+def test_a_folder_that_cannot_be_opened_stops_taking_back(tmp_path: Path) -> None:
+    """The review of 3.6.350: a folder that could not be opened was left out of the copy without a word, and then Local Folders came back
+    without what it held. Only a single message or item may stay behind."""
+    import os
+    import sys
+
+    engine, _code, _key_id = _kept_with_older_key(tmp_path, keep_old_key=True)
+    skip = sys.platform == "win32"
+    if sys.platform != "win32":  # Windows has no geteuid; inside this block the type check for Windows skips it
+        skip = os.geteuid() == 0
+    if skip:
+        pytest.skip("folder permissions cannot shut a folder here")
+    local = engine.directories.account_directory(LOCAL_ACCOUNT_ID)
+    shut = next(path for path in sorted(local.rglob("*")) if path.is_dir() and path.name == "tmp")
+    relative = shut.relative_to(local)
+    shut.chmod(0)
+    try:
+        with pytest.raises(StorageError, match="could not be read"):  # a folder left out would hide what it holds: nothing is changed
+            call(engine, "local.take-back")
+    finally:
+        (local / relative).chmod(0o700)
+    assert call(engine, "key.status").take_back and not any(engine.directories.data_directory.glob("set-aside-local-folders-older-key-*"))

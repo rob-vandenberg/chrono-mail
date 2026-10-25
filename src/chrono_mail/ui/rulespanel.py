@@ -1,3 +1,4 @@
+import html
 from collections.abc import Callable
 
 from typing import override
@@ -27,9 +28,10 @@ from chrono_mail.ui.colours import red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "rulespanel.py 2.4.333"
+__version__ = "rulespanel.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.271: R-19: every engine call typed; the rules are RuleInfo
@@ -119,7 +121,7 @@ class RulesPanel(QWidget):
         self._backend.ask(RULE_LIST, NoRuleParameters(), listed, self._failed, owner=self)
 
     def _failed(self, error: ChronoMailError) -> None:
-        self.status.setText(f"<span style='color:{red()}'>{error}</span>")
+        self.status.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
 
     def _selected(self) -> RuleInfo | None:
         item = self.list.currentItem()

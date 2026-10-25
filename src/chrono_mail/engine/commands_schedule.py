@@ -1,4 +1,3 @@
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
@@ -10,7 +9,7 @@ from chrono_mail.engine.junkfilter import learn
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.recurring import MAXIMUM_ATTEMPTS, Repeat, advance, describe_repeat, index_after, next_due, repeat_from_text, repeat_text
-from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER, SNOOZED_LOCK, describe_when, parse_when
+from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER, SNOOZED_FOLDER, SNOOZED_LOCK, describe_when, parse_when
 from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
 from chrono_mail.engine.undorecord import UndoRecorder
 from chrono_mail.mime import REPEAT_HEADER, SEND_AT_HEADER, Address, OutgoingMessage, ParsedMessage, build_message, parse_message, send_time, with_extra_headers
@@ -18,9 +17,12 @@ from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 3.6.349"
+__version__ = "commands_schedule.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a message sent whose move to Sent failed is remembered for the run (never sent again, also on a full disk); the repeat lock is
+#           schedule.REPEAT_LOCK; Unschedule that could not take the original says it stays scheduled; a failed repeating send whose Outbox
+#           copy could not be removed is that send (the Outbox sends it), never tried again by the series
 # v3.6.349: a scheduled send reads the message again under its locks and sends what is there then (an edit or a pause just made
 #           counts, a message just made repeating waits for the next check; RV-180); a removal of the original that fails after it is gone
 #           from every folder keeps the copy, which is sent (RV-179); the password is read before the locks; mail.unschedule takes the
@@ -59,7 +61,7 @@ __version__ = "commands_schedule.py 3.6.349"
 SEND_AT: str = SEND_AT_HEADER
 KIND: str = "x-chrono-mail-kind"
 PAUSED: str = "x-chrono-mail-paused"  # a one-off scheduled message that waits for Resume ("yes"); a repeating one keeps it in its timetable
-_REPEAT_LOCK = threading.Lock()  # two checks at the same moment must not send the same message twice
+_REPEAT_LOCK = REPEAT_LOCK  # two checks at the same moment must not send the same message twice
 
 
 def _notes(parsed: ParsedMessage) -> dict[str, str]:
@@ -388,6 +390,8 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                             mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX,
                             mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference), ssl_context=engine.tls_context(sender, outgoing=True),
                         )
+                        if outcome.sent and outcome.reference.folder_path == OUTBOX:
+                            engine.sent_unfiled.add(outcome.reference.store_id)  # a failed move to Sent: never sent again in this run, also without a mark on the disk
                     except ChronoMailError as error:
                         failed.append(f"{parsed.subject}: {error}")
                         continue
@@ -447,16 +451,28 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
             except ChronoMailError as problem:  # without its progress written first a crash could send it twice: not sent now
                 failed.append(f"{parsed.subject}: it is not sent now, because its progress could not be written: {problem}")
                 return 0, 0
-        error = ""
+        error, handed_over = "", False
         try:
             with engine.outbox_lock:  # its copy in the Outbox is sent by this send only (RV-109)
                 outcome = send_and_file(
                     mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX, mailbox.role_folder(FolderRole.SENT),
                     ssl_context=engine.tls_context(sender, outgoing=True),
                 )
+                if outcome.sent and outcome.reference.folder_path == OUTBOX:
+                    engine.sent_unfiled.add(outcome.reference.store_id)  # a failed move to Sent: never sent again in this run, also without a mark on the disk
                 if not outcome.sent:  # the series tries this send again itself: its copy must not wait in the Outbox to be sent as well (RV-123)
                     error = outcome.error or "the server refused the message"
-                    mailbox.delete(outcome.reference, permanent=True)
+                    try:
+                        mailbox.delete(outcome.reference, permanent=True)
+                    except ChronoMailError as not_removed:
+                        if _still_stored(mailbox, outcome.reference):  # the copy waits in the Outbox: it is this send, never tried again here
+                            handed_over = True
+                            error = f"{error}. Its copy could not be taken out of the Outbox ({not_removed}): it is sent from there at the next Send and Receive"
+                        else:  # gone all the same (the error came a step after the file went): its row goes too
+                            try:
+                                mailbox.forget(outcome.reference)
+                            except ChronoMailError:
+                                pass  # the index is repaired by the next reconcile
             if not error:
                 mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent
                 if outcome.reference.folder_path != OUTBOX:  # in Sent: a failed move leaves it in the Outbox, marked as sent
@@ -467,7 +483,9 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
             after = replace(moved, sent=moved.sent + 1, last_sent=int(now), last_error="")
         else:
             failed.append(f"{parsed.subject}: {error}")
-            if forced:
+            if handed_over:
+                after = replace(moved, last_error=error)  # the Outbox sends it: the series goes on to the next send
+            elif forced:
                 after = replace(repeat, last_error=error)
             elif repeat.attempts + 1 < MAXIMUM_ATTEMPTS:
                 after = replace(repeat, attempts=repeat.attempts + 1, last_error=error)  # the same send is tried again
@@ -478,6 +496,14 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
         except ChronoMailError as problem:  # the timetable already moved on before the send: nothing is sent twice
             failed.append(f"{parsed.subject}: the count of its sends could not be written: {problem}")
         return (0, 0) if error else (1, 0)
+
+
+def _still_stored(mailbox: Mailbox, reference: MessageRef) -> bool:
+    """Whether a message whose removal failed is there all the same (not known: yes, the safe answer)."""
+    try:
+        return reference.store_id in mailbox.store.all_store_ids()
+    except OSError:
+        return True
 
 
 def _remover(mailbox: Mailbox, reference: MessageRef) -> Callable[[], None]:
@@ -537,14 +563,22 @@ def mail_unschedule(engine: Engine, parameters: MessageParameters) -> DraftSaveR
                 raise UsageError("That message is not scheduled")  # a repeating message's timetable is in itself: it ends with it
         sender = _sender(members, parsed)
         draft_account = sender.account.account_id if sender is not None else parameters.account
-        saved = draft_save(
-            engine,
-            DraftSaveParameters(
-                account=draft_account, to=tuple(_shown(parsed.to_addresses)), cc=tuple(_shown(parsed.cc_addresses)), bcc=tuple(_shown(parsed.bcc_addresses)),
-                subject=parsed.subject, body=parsed.text_body or "", html=parsed.html_body, keep_attachments=tuple(str(i) for i in range(len(parsed.attachments))),
-                in_reply_to=parsed.in_reply_to, references=parsed.references, replace_folder="/".join(reference.folder_path), replace_message=reference.store_id,
-            ),
-        )
+        try:
+            saved = draft_save(
+                engine,
+                DraftSaveParameters(
+                    account=draft_account, to=tuple(_shown(parsed.to_addresses)), cc=tuple(_shown(parsed.cc_addresses)), bcc=tuple(_shown(parsed.bcc_addresses)),
+                    subject=parsed.subject, body=parsed.text_body or "", html=parsed.html_body, keep_attachments=tuple(str(i) for i in range(len(parsed.attachments))),
+                    in_reply_to=parsed.in_reply_to, references=parsed.references, replace_folder="/".join(reference.folder_path), replace_message=reference.store_id,
+                ),
+            )
+        except ChronoMailError as error:  # the draft takes its place in one locked step (draft.save): when the original could not go, the
+            with open_mailbox(engine, parameters.account) as mailbox:  # draft went again (or says where it stays)
+                try:
+                    mailbox.store.locate(reference, hint=mailbox.hint(reference.store_id))
+                except MessageNotFoundError:
+                    raise error from None
+            raise StorageError(f"The scheduled message could not be taken out of Scheduled ({error}); it stays scheduled") from None
         with open_mailbox(engine, parameters.account) as mailbox:
             try:
                 mailbox.store.locate(reference, hint=mailbox.hint(reference.store_id))

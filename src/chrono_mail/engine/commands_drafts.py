@@ -3,16 +3,20 @@ from typing import Literal
 
 from chrono_mail.core import ChronoMailError, FolderRole, MessageFlag
 from chrono_mail.engine.commands_mail import _addresses, _attachment, _check_id, _shown, kept_attachments
-from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.engine.mailbox import SentAlready, open_mailbox
+from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
-from chrono_mail.engine.session import Engine
+from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, OutgoingMessage, build_message, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_drafts.py 2.1.311"
+__version__ = "commands_drafts.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a message the server took is never replaced by a draft (D-262), also from the command line; one of the Outbox goes in one
+#           locked step after the draft is stored, and when a send took it meanwhile the draft goes again (told when it cannot); a message
+#           of Scheduled the same way; one elsewhere never waits for a running send; the refusal for one outside the Outbox says where it can go
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.270: R-19: typed draft.open, draft.save
 # v0.0.86: A draft can be a forward as attachment
@@ -52,14 +56,21 @@ class DraftSaveResult:
 
 def draft_save(engine: Engine, parameters: DraftSaveParameters) -> DraftSaveResult:
     """Store the message being written in the Drafts folder. A later save replaces the earlier version, but
-    only after the new one is safely stored, so a failure never loses the draft."""
+    only after the new one is safely stored, so a failure never loses the draft. A message of the Outbox it replaces goes in one locked step
+    after the draft is stored (Mailbox.take_out_of_outbox): when a send took it meanwhile, the new draft goes again and nothing is changed,
+    so a message is never both sent and a draft (D-262)."""
     with open_mailbox(engine, parameters.account) as mailbox:
         settings = mailbox.settings
         drafts = mailbox.role_folder(FolderRole.DRAFTS)
         previous = None
         previous_raw: bytes | None = None
         if parameters.replace_message:
-            previous = mailbox.reference(mailbox.folder(parameters.replace_folder or "Drafts"), _check_id(parameters.replace_message))
+            previous = mailbox.reference(mailbox.folder(parameters.replace_folder or "Drafts"), _check_id(parameters.replace_message))  # any letter case
+            if mailbox.sent_already(previous):  # the server took it: a draft of it would be sent twice (D-262)
+                raise SentAlready(
+                    "This message was sent already: it goes to Sent at the next Send and Receive, never back to Drafts" if previous.folder_path == OUTBOX
+                    else "This message was sent already: it can go only to Sent, or back to the Outbox, never back to Drafts"
+                )
             previous_raw = mailbox.store.read(previous, hint=mailbox.hint(previous.store_id))
         notes: list[tuple[str, str]] = [("X-Chrono-Mail-Kind", parameters.kind)]
         if parameters.source_folder and parameters.source_message:
@@ -78,7 +89,19 @@ def draft_save(engine: Engine, parameters: DraftSaveParameters) -> DraftSaveResu
             extra_headers=tuple(notes),
         )
         saved = mailbox.deliver(drafts, build_message(outgoing, draft=True), DRAFT_FLAGS)
-        if previous is not None and previous != saved:
+        if previous is not None and previous.folder_path in (OUTBOX, (SCHEDULED_FOLDER,)):  # a send may take it: it goes in this locked step
+            try:
+                with REPEAT_LOCK, engine.outbox_lock:  # the mailbox before the locks, as every send takes them (a repeating send holds both)
+                    mailbox.take_out_of_outbox(previous)
+            except ChronoMailError as error:  # sent meanwhile, or it could not be taken out: no draft beside it (told when it stays)
+                mailbox.drop_replacement(saved, error)
+                raise
+        elif previous is not None and previous != saved:
+            try:  # no send takes it here (a message of the Outbox never leaves it while sent): no wait for a send
+                mailbox.refuse_if_sent(previous)
+            except SentAlready as error:
+                mailbox.drop_replacement(saved, error)
+                raise
             try:
                 mailbox.delete(previous, permanent=True)
             except ChronoMailError:

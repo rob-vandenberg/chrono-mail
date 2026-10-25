@@ -4,11 +4,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from chrono_mail.core import StorageError
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_state.py 3.6.349"
+__version__ = "imap_state.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v3.6.349: forget_numbering ("z"): a folder synchronised afresh, the person's choices for it kept (RV-195)
 # v1.1.248: Where each folder stood on the server at the end of the last check that left nothing open (checkpoints, event "c": UIDNEXT and the
 #           change counter), so the next check asks only what changed since (R-09); forgotten with the folder's UIDs, moved with a rename
@@ -115,7 +117,7 @@ class ImapState:
                 continue
             self._lines += 1
             try:
-                self._apply(json.loads(raw))
+                self._apply(load_json(raw))
             except (ValueError, KeyError, TypeError, AttributeError):
                 self.ignored_lines += 1
 

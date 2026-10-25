@@ -4,11 +4,13 @@ from typing import Literal, get_args
 
 from chrono_mail.ui.columns import BY_ID, SCHEDULED_FOLDER_PATH, SNOOZED_COLUMN, SNOOZED_FOLDER_PATH, valid_columns
 from chrono_mail.ui.currentview import CurrentView, EntryKind
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 2.2.314"
+__version__ = "columnsetup.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.2.314: an Outbox starts with the Send at column (a delayed send shows when it goes, B-21)
 # v2.0.280: Columns per folder (B-16): the six kinds of folder, the columns and sort each kind starts with, which setup a view
 #           uses, the sort a folder falls back to when its sorted column goes, the setups kept as text
@@ -127,7 +129,7 @@ def _setup_from(data: object) -> tuple[ColumnSetup, FolderType] | None:
 def read_setups(text: str) -> dict[str, tuple[ColumnSetup, FolderType]]:
     """Kept setups by name, each with the kind of folder it belongs to; anything unusable is left out."""
     try:
-        data: object = json.loads(text) if text else {}
+        data: object = load_json(text) if text else {}
     except ValueError:
         return {}
     if not isinstance(data, dict):

@@ -14,9 +14,10 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 3.6.349"
+__version__ = "imap_sync.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: the comment on the unknown tags says what None means, as the code does (RV-192)
 # v3.6.349: a refused group keeps what came before the refusal; a server refusing all of a few spread probes is not asked once per message (RV-202)
 # v3.4.344: a group of messages the server refuses to send is fetched one by one: only the refused one waits for the next check, new mail
 #           and uploads go on (RV-49)
@@ -544,7 +545,7 @@ def _sync_folder(
     on_server, told = _read_server(client, state, local, info)
     stored = dict(here.folders.get(local, {}))
     tags: dict[str, tuple[str, ...]] = {}  # the properties could not be listed: the flags still go on; the tags wait
-    unknown: set[str] | None = None  # whose tags cannot be read here (None: of none of them): their keywords stay on the server as they are (RV-48)
+    unknown: set[str] | None = None  # whose tags cannot be read here (None: of every one, the properties could not be listed): their keywords stay on the server as they are (RV-48)
     if here.with_properties is not None:
         try:
             tags, unknown = store.properties.tags_and_unreadable(stored, here.with_properties)  # only this folder; a damaged file: that one message

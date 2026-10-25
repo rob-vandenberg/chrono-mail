@@ -21,12 +21,17 @@ from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import grey_icon
 from chrono_mail.ui.messageorder import MessageOrder, message_key, split_key
 from chrono_mail.ui.models import LOCAL_PLACES
+from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 3.5.346"
+__version__ = "messagelist.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: a selected place whose message was not known yet keeps its place when the rest of the order comes and nothing in the view
+#           changed meanwhile (Qt dropped it); otherwise it goes and what waits for it says so (places_lost); a drag started then carries the
+#           rest of the selection with the list's places_epoch, its badge counts every selected message (RV-206);
+#           the hover texts of rows and group headings show mail text as text, never as markup (D-259); view_number
 # v3.5.346: A drag takes every selected message, loaded or not, without those under way; messages of several accounts go to no folder (RV-77)
 # v2.5.337: data answers the questions it never answers (icon, tick box, background...) at once, without looking for the row; flags is one of
 #           two ready answers (Qt asks every row after each change of the list: 404,000 times in a delete of 4,000)
@@ -76,6 +81,11 @@ class _Group:
     count: int  # its messages
     shown: int  # of those, the rows under the header: 0 while folded
     folded: bool
+
+
+LOST_PLACES: str = "Nothing was done: the list changed before it knew every selected message. Select the messages again."
+
+
 
 
 def group_name(sort: str, value: str) -> str:
@@ -141,6 +151,7 @@ class MessageListModel(QAbstractTableModel):
     loaded = Signal()
     rearranged = Signal()  # the same messages were put in another order; Qt's selection moved with them
     placed = Signal()  # the whole order of the view is in: every message has its place (a large view comes start first, W12b)
+    places_lost = Signal(str)  # selected places whose messages were not known yet could not be followed (another sort, a change meanwhile)
 
     def __init__(self, backend: Backend, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -152,6 +163,10 @@ class MessageListModel(QAbstractTableModel):
         self.settled: bool = True  # the view has its first answer (or shows nothing): an empty list is really empty
         self._order: MessageOrder = MessageOrder()  # every message of the view in order (only the first ones while not complete)
         self._complete: bool = True
+        self._changed_while_loading: bool = False  # something in the view changed while its whole order was on its way (RV-206)
+        self._start_stamp: str = ""  # the index files' write stamp of the start answer: the whole order's must be the same (RV-206)
+        self._lost_to_tell: bool = False  # places were given up in a swap: places_lost goes out after the answer's facts
+        self.places_epoch: int = 0  # counts the times selected places not known yet were given up: a drag made before one is refused
         self._total: int = 0  # while not complete: how many messages the view holds
         self._unread_total: int = 0  # ... and how many of them are unread
         self._unread: set[str] = set()  # the keys of the unread messages of the order
@@ -272,6 +287,8 @@ class MessageListModel(QAbstractTableModel):
 
     def _hold_nothing(self) -> None:
         """Forget every message held (call between the begin and end of a reset)."""
+        self.places_epoch += 1  # selected places not known yet are gone with them: a drag made before is refused (RV-206)
+        self._changed_while_loading = False
         self._order, self._complete, self._total, self._unread_total = MessageOrder(), True, 0, 0
         self._unread.clear()
         self._rows.clear()
@@ -289,6 +306,12 @@ class MessageListModel(QAbstractTableModel):
     def spec(self) -> ViewSpec | None:
         return self._spec
 
+    @property
+    def view_number(self) -> int:
+        """Which view is shown: it changes only when something else is shown (another folder, a filter), never by a sort, a reload or a
+        rename of the folder shown."""
+        return self._view
+
     def show(self, spec: ViewSpec | None) -> None:
         """Start showing something else (or nothing). The order is asked (for a large view, its start first)."""
         self.pending.clear()
@@ -296,6 +319,7 @@ class MessageListModel(QAbstractTableModel):
         self._arriving.clear()
         self._placing = None
         self.settled = spec is None or (self.settled and spec == self._spec and self._display_rows == 0)  # an empty view reloaded stays settled; one with messages waits for them
+        self._changed_while_loading = False
         self.beginResetModel()
         self._view += 1
         self._spec = spec
@@ -450,6 +474,9 @@ class MessageListModel(QAbstractTableModel):
                 return
             self._ordering = None
             self._failed(error)
+            if not self._complete:  # what waits for the rest of the order would wait for ever: it is not done, and that is said (RV-206)
+                self.places_epoch += 1
+                self.places_lost.emit(f"Nothing was done: the list could not be read to its end ({error})")
             self.settled = True
             if purpose == "rearrange":
                 self.show(spec)  # the new order without the rows kept: the error is shown
@@ -463,14 +490,20 @@ class MessageListModel(QAbstractTableModel):
         """An order arrived: it takes the place of what the list held, then the facts heard since it was asked are applied to it."""
         keys = [message_key(mailbox, message_id) for mailbox, message_id in zip(order.mailboxes, order.messages, strict=True)] if order.mailboxes else list(order.messages)
         if purpose == "show":
+            self._start_stamp = order.stamp
             self.beginResetModel()  # the list is empty: there is nothing on it to keep
             self._set_order(spec, order, keys, keep_rows=False)
             self.endResetModel()
             self.groups_changed.emit()
         else:
-            self._swap_in(spec, order, keys, keep_rows=purpose != "reload")
+            self._swap_in(spec, order, keys, keep_rows=purpose != "reload", completed=purpose == "complete")
+        if not self._complete and any(self._touches_view(fact) for fact in facts):
+            self._changed_while_loading = True  # heard while the start was on its way: the start may or may not count it
         for fact in facts:
             self._follow(fact)
+        if self._lost_to_tell:
+            self._lost_to_tell = False
+            self.places_lost.emit(LOST_PLACES)  # after the facts: an action known by key that runs now sees the list as it is
         self._counts_changed()
         self.settled = True
         if purpose in ("rearrange", "reload"):
@@ -503,20 +536,79 @@ class MessageListModel(QAbstractTableModel):
         self._group_counts = _groups_of(spec.sort, order.groups) if self.show_groups and spec.sort not in YES_NO_SORTS else None
         self._layout_groups()
 
-    def _swap_in(self, spec: ViewSpec, order: ViewOrder, keys: list[str], keep_rows: bool) -> None:
+    def _swap_in(self, spec: ViewSpec, order: ViewOrder, keys: list[str], keep_rows: bool, completed: bool = False) -> None:
         """The new order replaces the old one in one layout change. Every index Qt holds (its selection, the current message) is
-        moved to the row its message has now; one whose message is not in the view any more goes."""
+        moved to the row its message has now; one whose message is not in the view any more goes. A place whose message was not known
+        yet keeps its place when the rest of the order came and nothing in the view changed meanwhile: the place then holds exactly the
+        message the person selected (Ctrl+A or a Shift range right after the view opened, RV-206). Otherwise which message it was cannot be
+        told: such places go, and an action or a drop waiting for them is not done, and says so (places_lost)."""
         self.layoutAboutToBeChanged.emit()
         held = self.persistentIndexList()
-        held_keys = [self._key_at_row(index.row()) if index.isValid() else None for index in held]
+        held_places: list[tuple[str | None, int | None]] = []
+        for index in held:
+            position = self.message_position(index.row()) if index.isValid() else None
+            held_places.append((None if position is None else self._order.key_at(position), position))
+        had_unknown = self._available() > len(self._order)  # before the new order: places not known yet were there
+        start: list[str | None] = [self._order.key_at(position) for position in range(len(self._order))] if had_unknown and completed else []
+        same_places = completed and not self._changed_while_loading and (  # also a big job that tells nothing until its end (rules, an import)
+            order.total == self._available() and keys[: len(start)] == start and order.stamp == self._start_stamp  # leaves its mark: another
+        )  # total, another start, or another write stamp of the index (no write told only later between the two answers)
         self._set_order(spec, order, keys, keep_rows)
         moved: list[QModelIndex] = []
-        for index, key in zip(held, held_keys, strict=True):
-            shown = self.display_row(self._order.position(key)) if key is not None and key in self._order else -1
+        dropped = False
+        for index, (key, position) in zip(held, held_places, strict=True):
+            if key is not None:
+                shown = self.display_row(self._order.position(key)) if key in self._order else -1
+            elif position is not None:  # a place whose message was not known yet
+                shown = self.display_row(position) if same_places and position < len(self._order) else -1
+                dropped = dropped or shown < 0
+            else:
+                shown = -1
             moved.append(self.index(shown, index.column()) if 0 <= shown < self._display_rows else QModelIndex())
         self.changePersistentIndexList(held, moved)
         self.layoutChanged.emit()
         self.groups_changed.emit()
+        if self._complete:
+            self._changed_while_loading = False
+        if dropped or (had_unknown and not same_places):  # also when nothing on screen sits on such a place: what waits keeps them (RV-206)
+            self.places_epoch += 1
+            self._lost_to_tell = True  # told once the facts heard meanwhile are applied (_take_order): what waits then sees the list as it is
+
+    def _touches_view(self, change: Change) -> bool:
+        """Whether a fact may change which messages the view holds or their order (a fact of another folder of a folder's view does not, nor a
+        change of marks or tags where the view neither filters nor sorts by them: a message read while the view loads changes nothing)."""
+        spec = self._spec
+        if spec is None:
+            return False
+        if str(change.kind) == "mailbox_changed":
+            return True  # a big job ended: anything in the mailbox may have changed
+        if str(change.kind) in ("flags", "tags", "folder_read") and not (  # also a Favorites view: Unread, Flagged and Tags are (a changed message
+            _filters_marks(spec) or spec.tag or spec.query or spec.sort in YES_NO_SORTS or spec.sort == "tags"  # in _filters_marks; a search
+        ):  # may name tags (tag:) or words a change of the message touches; may have another subject, date or size: always counts)
+            return False
+        return spec.combined is not None or spec.folder is None or change.folder == spec.folder or change.to_folder == spec.folder
+
+    @property
+    def loading(self) -> bool:
+        """Whether an answer about the order is on its way (after a failed one the rest of a large view's order never comes by itself)."""
+        return self._ordering is not None
+
+    def folder_of(self, key: str) -> str | None:
+        """The folder of a message of the view now; None when the view does not hold it."""
+        return self._order.folder_of(key) if key in self._order else None
+
+    def holds(self, key: str) -> bool:
+        """Whether the view holds this message now."""
+        return key in self._order
+
+    def places_at(self, positions: Iterable[int]) -> list[tuple[str, str]]:
+        """The key and folder of the messages at these places of the view (those it knows)."""
+        found: list[tuple[str, str]] = []
+        for position in positions:
+            key = self._order.key_at(position)
+            if key is not None:
+                found.append((key, self._order.folder_at(position)))
+        return found
 
     # --- group headers ------------------------------------------------------------------------
 
@@ -656,7 +748,7 @@ class MessageListModel(QAbstractTableModel):
             if role == GROUP_HEADER_ROLE:
                 return (group.name, group.folded)
             if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
-                return group.name if index.column() == 0 else None
+                return (group.name if role == Qt.ItemDataRole.DisplayRole else plain_tip(group.name)) if index.column() == 0 else None
             return None
         if role == GROUP_HEADER_ROLE:
             return None
@@ -680,7 +772,8 @@ class MessageListModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.DisplayRole and column_id == "tag":
             return ""  # the delegate draws the tags; the tooltip names them
         if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.ToolTipRole):
-            return cell_text(column_id, row, self.recipients_first, self.date_style)
+            text = cell_text(column_id, row, self.recipients_first, self.date_style)
+            return text if role == Qt.ItemDataRole.DisplayRole else plain_tip(text)  # a subject or a sender: never markup (D-259)
         tags: tuple[str, ...] = row.tags
         if role == Qt.ItemDataRole.ForegroundRole and self.tag_text and tags and not column.symbol:
             return QBrush(self.tag_book.colour(tags[0]))
@@ -709,13 +802,17 @@ class MessageListModel(QAbstractTableModel):
     def drag_data(self, list_rows: Iterable[int]) -> tuple[QMimeData, int]:
         """The drag of the messages at these rows, every one of them, loaded or not (D-218), without those with an action under way, and how
         many go along (the badge). Messages of several accounts (a Favorites view) are one drag that no folder takes: a folder belongs to one
-        account, and nothing moves halfway without a word (RV-77)."""
+        account, and nothing moves halfway without a word (RV-77). Rows whose message is not known yet (the rest of a large view's order is
+        on its way) make the drag say so: the drop waits for them and moves every selected message (RV-206)."""
         default = self._spec.account if self._spec is not None else ""
         messages: list[tuple[str, str]] = []
         accounts: set[str] = set()
+        unknown = 0
         for list_row in list_rows:
             place = self.place_at(list_row)
             if place is None:
+                if not self.is_header(list_row) and self.message_position(list_row) is not None:
+                    unknown += 1  # its message is not known yet: it goes along once it is
                 continue
             key, folder, _row = place
             mailbox, message_id = split_key(key)
@@ -723,8 +820,21 @@ class MessageListModel(QAbstractTableModel):
                 continue
             accounts.add(mailbox or default)
             messages.append((folder, message_id))
+        if unknown and not accounts and default:
+            accounts.add(default)  # a view of one account: the messages not known yet are of that account too
         account = next(iter(accounts)) if len(accounts) == 1 else ""  # "" is no account: the folder list refuses the drop
-        return messages_mime_data(account, messages), len(messages)
+        one_folder = self._spec.folder if self._spec is not None and self._spec.combined is None else None
+        return messages_mime_data(account, messages, rest=self.places_epoch if unknown else None, rest_folder=one_folder), len(messages) + unknown
+
+    def unknown_positions(self, list_rows: Iterable[int]) -> list[int]:
+        """The places in the view of the messages at these rows that the list does not know yet (the rest of a large view's order is on its
+        way); group headers are no messages."""
+        positions: list[int] = []
+        for list_row in list_rows:
+            position = self.message_position(list_row)
+            if position is not None and self._order.key_at(position) is None:
+                positions.append(position)
+        return positions
 
     # --- the rows -----------------------------------------------------------------------------
 
@@ -766,26 +876,26 @@ class MessageListModel(QAbstractTableModel):
         asked = [self._key(mailbox, message_id) for message_id in message_ids]
 
         def answered(answer: RowsAnswer) -> None:
-            facts = self._answered(question)
-            if view != self._view:
+            try:
+                facts = self._answered(question)
+                if view != self._view:
+                    return
+                self._asked.difference_update(asked)
+                changed: list[int] = []
+                for row in answer.rows:
+                    held = self._held(row, mailbox)
+                    key = self._row_key(held)
+                    if key not in self._order:
+                        continue  # it left the view meanwhile
+                    for fact in facts:  # what changed it since it was asked (or changes nothing when the answer counts it)
+                        held = self._followed_row(held, fact)
+                    self._store(key, held)
+                    changed.append(self._order.position(key))
+                self._redraw_positions(changed)
+                self.loaded.emit()
+            finally:
                 if then is not None:
-                    then()
-                return
-            self._asked.difference_update(asked)
-            changed: list[int] = []
-            for row in answer.rows:
-                held = self._held(row, mailbox)
-                key = self._row_key(held)
-                if key not in self._order:
-                    continue  # it left the view meanwhile
-                for fact in facts:  # what changed it since it was asked (or changes nothing when the answer counts it)
-                    held = self._followed_row(held, fact)
-                self._store(key, held)
-                changed.append(self._order.position(key))
-            self._redraw_positions(changed)
-            self.loaded.emit()
-            if then is not None:
-                then()
+                    then()  # always: an action waiting for these rows is never left waiting for ever (Undo waits for it)
 
         def failed(error: ChronoMailError) -> None:
             self._answered(question)
@@ -866,6 +976,8 @@ class MessageListModel(QAbstractTableModel):
             return
         if self._open:
             self._log.append(change)  # applied again to the answers on their way
+        if not self._complete and self._touches_view(change):
+            self._changed_while_loading = True  # selected places not known yet can no longer be told by their number (_swap_in)
         if str(change.kind) == "removed" or (str(change.kind) == "moved" and not self._may_hold(change)):  # it only leaves this view
             if self._leave_soon.busy:
                 self._leaving.append(change)  # more leave in the same moment (a large delete): they go together when it ends
@@ -1339,8 +1451,12 @@ class MessageListModel(QAbstractTableModel):
             return
         self.layoutAboutToBeChanged.emit()
         held = self.persistentIndexList()
-        held_keys = [self._key_at_row(index.row()) if index.isValid() else None for index in held]
-        gone = set(keys)
+        held_places: list[tuple[str | None, int | None]] = []
+        for index in held:
+            position = self.message_position(index.row()) if index.isValid() else None
+            held_places.append((None if position is None else self._order.key_at(position), position))
+        known = len(self._order)
+        gone = {key for key in keys if key in self._order}
         if self._group_counts is not None:
             lost: dict[int, int] = {}
             for key in keys:
@@ -1360,8 +1476,13 @@ class MessageListModel(QAbstractTableModel):
             self._asked.discard(key)
         self._layout_groups()
         moved: list[QModelIndex] = []
-        for index, key in zip(held, held_keys, strict=True):
-            shown = self.display_row(self._order.position(key)) if key is not None and key not in gone else -1
+        for index, (key, position) in zip(held, held_places, strict=True):
+            if key is not None:
+                shown = self.display_row(self._order.position(key)) if key not in gone else -1
+            elif position is not None and position >= known:  # a place whose message is not known yet (after the known start): it moves up
+                shown = self.display_row(position - (known - len(self._order)))  # by the messages that left before it (RV-206)
+            else:
+                shown = -1
             moved.append(self.index(shown, index.column()) if 0 <= shown < self._display_rows else QModelIndex())
         self.changePersistentIndexList(held, moved)
         self.layoutChanged.emit()

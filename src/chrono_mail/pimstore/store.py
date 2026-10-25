@@ -11,11 +11,13 @@ from chrono_mail.crypto import DataKey, decrypt_message, encrypt_message
 from chrono_mail.pimstore.extract import extract
 from chrono_mail.pimstore.index import PimIndex
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
+from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 1.1.225"
+__version__ = "store.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v1.1.225: Private files: encrypted texts the synchronisation keeps beside the items (the agreed version of an item changed here, the sync
 #           conflicts), written atomically (D-194)
 # v1.1.221: The palette belongs to the account (D-191): a calendar keeps none; old_palettes and forget_old_palette take over what 1.1.219 kept
@@ -93,7 +95,7 @@ class PimStore:
     @classmethod
     def open(cls, root: Path, key: DataKey | None, durable: bool = True, checkpoint: Checkpoint = _no_checkpoint) -> "PimStore":
         try:
-            metadata = json.loads((root / "pim.json").read_text("utf-8"))
+            metadata = load_json((root / "pim.json").read_text("utf-8"))
             encrypted, key_id = bool(metadata["encrypted"]), metadata["key_id"]
             if metadata["format"] != FORMAT_VERSION:
                 raise StorageError("Unsupported format of the store for calendars and contacts")
@@ -148,7 +150,7 @@ class PimStore:
             return found
         for directory in sorted(base.iterdir()):
             try:
-                description = json.loads((directory / "collection.json").read_text("utf-8"))
+                description = load_json((directory / "collection.json").read_text("utf-8"))
                 info = CollectionInfo(
                     directory.name, CollectionKind(description["kind"]), str(description["name"]), str(description.get("colour", "")),
                     bool(description.get("read_only", False)), tuple((str(key), str(value)) for key, value in description.get("server", {}).items()),
@@ -256,7 +258,7 @@ class PimStore:
         found: list[OldPalette] = []
         for info in self.collections(CollectionKind.EVENTS):
             try:
-                kept = json.loads((self._collection_directory(info.collection_id) / "collection.json").read_text("utf-8")).get("palette")
+                kept = load_json((self._collection_directory(info.collection_id) / "collection.json").read_text("utf-8")).get("palette")
                 if kept is None:
                     continue
                 colours = kept.get("colours")

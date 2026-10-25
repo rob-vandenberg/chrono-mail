@@ -41,7 +41,7 @@ from chrono_mail.ui.pimpages import PimPage
 from chrono_mail.ui.prefs import InUse, Remembered
 from chrono_mail.ui.readingpane import ReadingPane
 from chrono_mail.ui.recoverydialog import RecoveryDialog
-from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
+from chrono_mail.ui.restorekeydialog import RestoreKeyDialog, worth_telling
 from chrono_mail.ui.scale import px
 from chrono_mail.ui.searchfilters import ListFilters, MailSearch
 from chrono_mail.ui.sections import CALENDAR, CONTACTS, MAIL, SECTIONS, TASKS, SectionBar
@@ -61,9 +61,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 3.5.346"
+__version__ = "mainwindow.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: File > Use a recovery code says why the key is missing; Start without this mail is reported in the status line;
+#           a click on the Delete icon is MessageActions.delete_by_icon (in turn with what waits); Redo can be pressed while busy
 # v3.5.346: After Add account the recovery code is shown whenever it was never confirmed as stored (RV-03)
 # v2.4.334: the Archive or Unarchive label stops at the first selected message that is not archived
 # v2.4.334: the last "(s)" texts counted one way (F1b)
@@ -862,7 +864,7 @@ class MainWindow(QMainWindow):
         self.act_undo.setText(f"Undo {undoing.undo_label}" if undoing.undo_label else "Undo")
         self.act_redo.setText(f"Redo {undoing.redo_label}" if undoing.redo_label else "Redo")
         self.act_undo.setEnabled(mail and (bool(undoing.undo_label) or undoing.busy))
-        self.act_redo.setEnabled(mail and bool(undoing.redo_label))
+        self.act_redo.setEnabled(mail and (bool(undoing.redo_label) or undoing.busy))  # pressed while busy it waits in turn, as Undo
         self.act_redo_other.setEnabled(self.act_redo.isEnabled())
 
     KEY_NAMES: dict[str, str] = {"undo": "Undo", "redo": "Redo"}  # their text says what they would do; Settings > Keyboard shows only the name
@@ -1135,7 +1137,7 @@ class MainWindow(QMainWindow):
         """Continue when the encryption key can be read; otherwise ask for it first."""
 
         def got(status: KeyStatus) -> None:
-            if status.key_id is not None and not status.in_credential_store:
+            if worth_telling(status) is not None:  # a key missing, or Local Folders written with an older one
                 self._ask_for_key(then, status)
             else:
                 then()
@@ -1147,17 +1149,16 @@ class MainWindow(QMainWindow):
         self.backend.ask(KEY_STATUS, NoParameters(), got, failed, owner=self)
 
     def _ask_for_key(self, then: Callable[[], None], status: KeyStatus | None = None) -> None:
-        dialog = RestoreKeyDialog(self.backend, self, status)  # status: why the key could not be had (None from the menu)
-        if dialog.exec() == RestoreKeyDialog.DialogCode.Accepted:
-            self.backend.engine.forget_keys()
-            self.report.show("The encryption key is back.")
+        dialog = RestoreKeyDialog(self.backend, self, status)  # status: why the key could not be had (None when it could not be asked)
+        accepted = dialog.exec() == RestoreKeyDialog.DialogCode.Accepted
+        self.backend.engine.forget_keys()
+        dialog.tell(self.report, accepted)  # the key is back, or why not (nothing when nothing was missing)
+        if accepted or dialog.only_local_folders:  # this computer's key is there: the rest of the mail is opened whatever Local Folders waits for
             then()
-        else:
-            self.report.show("The encryption key is missing, so your mail cannot be read yet. Use File > Use a recovery code.", error=True)
 
     def restore_key(self) -> None:
-        """File > Use a recovery code: ask for the key and, when it is back, load everything."""
-        self._ask_for_key(lambda: self.reload_accounts(select_saved=True))
+        """File > Use a recovery code: ask for the key and, when it is back, load everything; the key's status first, so the window says why."""
+        self.backend.ask(KEY_STATUS, NoParameters(), lambda status: self._ask_for_key(lambda: self.reload_accounts(select_saved=True), worth_telling(status)), lambda error: self._ask_for_key(lambda: self.reload_accounts(select_saved=True)), owner=self)
 
     def reload_accounts(self, select_saved: bool = False, then: Callable[[], None] | None = None) -> None:
         def listed(result: tuple[AccountSummary, ...]) -> None:
@@ -1351,7 +1352,7 @@ class MainWindow(QMainWindow):
         if message is None:
             return
         if column_id == "trash":
-            self.mail_actions.delete_rows([message])
+            self.mail_actions.delete_by_icon(message)
             return
         found = self.list_model.index(row, 0).data(CONTACT_ROLE)
         if column_id == "contact" and isinstance(found, tuple) and len(found) == 2:

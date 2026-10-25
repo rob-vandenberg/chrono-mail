@@ -1,3 +1,4 @@
+import html
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QDate, QDateTime, Qt, QTime, Signal
@@ -32,9 +33,10 @@ from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circl
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 3.6.349"
+__version__ = "eventeditor.py 3.6.350"
 
 # --- Version history ----------------------------------------------------
+# v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v3.6.349: an event's times through the zone the engine reads them back in (also never the platform's conversion, RV-201)
 # v3.2.342: the reminders are sent only when the reminder choice was changed: a second alarm or one at a fixed time stays (RV-18)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -303,7 +305,7 @@ class EventEditor(QDialog):
 
         def failed(error: ChronoMailError) -> None:
             self.save_button.setEnabled(True)
-            self.result_label.setText(f"<span style='color:{red()}'>{error}</span>")
+            self.result_label.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
 
         if self._item is None:
             self._backend.ask(EVENT_ADD, carried(values, EventAdd, calendar=str(self.calendar.currentData())), done, failed, owner=self)
