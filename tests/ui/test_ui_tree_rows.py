@@ -11,9 +11,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import REGISTRY, World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tree_rows.py 2.0.298"
+__version__ = "test_ui_tree_rows.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
 # v2.0.298: the owner's order: Inbox, Unread, Outbox, Sent, Drafts, Flagged, then the other standard folders (D-232)
 # v2.0.289: the owner's order: Unread, Inbox, Flagged, Drafts, Outbox, Sent, Snoozed, Scheduled, Recovered, Archive, Junk, Trash (D-232)
 # v2.0.288: every standard folder (Snoozed and Recovered too) before every folder the person made, in one order, in every kind of account (D-232)
@@ -173,8 +174,8 @@ def test_the_empty_item_says_which_folder_it_empties(world: World, qtbot: QtBot)
 
 # Every standard folder as each kind of account has it: by its role (from the server or made here), or by its place (made by the program, no role)
 STANDARD = [  # the owner's order (D-232)
-    ("Inbox", "inbox"), ("Outbox", "other"), ("Sent", "sent"), ("Drafts", "drafts"), ("Snoozed", "other"), ("Scheduled", "other"),
-    ("Recovered", "other"), ("Archive", "archive"), ("Junk", "junk"), ("Trash", "trash"),
+    ("Inbox", "inbox"), ("Outbox", "outbox"), ("Sent", "sent"), ("Drafts", "drafts"), ("Snoozed", "snoozed"), ("Scheduled", "scheduled"),
+    ("Recovered", "recovered"), ("Archive", "archive"), ("Junk", "junk"), ("Trash", "trash"),
 ]
 
 

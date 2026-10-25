@@ -12,7 +12,7 @@ from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional
 from chrono_mail.engine.compose import ComposeKind
 from chrono_mail.ui import appearance, prefs, scale, theme
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
+from chrono_mail.ui.columns import OUTBOX_FOLDER_PATH, SCHEDULED_FOLDER_PATH
 from chrono_mail.ui.composer import ComposeOptions, ComposeWindow
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelistpane import MessageListPane
@@ -21,9 +21,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 3.6.349"
+__version__ = "composing.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.349: an Outbox message that was sent already opens to be read (sent_already), never as a draft (RV-181)
 # v3.1.341: a message of the Outbox opened to be changed is taken out of the Outbox into Drafts first (left_outbox; RV-156)
 # v2.4.334: New asks the engine for the accounts while the window does not know them yet (the index rebuild after a restore, W9b)
@@ -173,7 +174,7 @@ class Composing(QObject):
 
             self._backend.ask(MAIL_SCHEDULED, AccountOptional(account), listed, lambda error: self._status.report("Could not open the message", error), owner=self)
             return
-        if folder == "Outbox":  # never changed while it waits to be sent: a refresh would send it, then Send a second copy (RV-156)
+        if folder == OUTBOX_FOLDER_PATH:  # never changed while it waits to be sent: a refresh would send it, then Send a second copy (RV-156)
             self._take_out_of_outbox(account, message_id)
             return
         if self._bring_forward(folder, message_id):
@@ -202,7 +203,7 @@ class Composing(QObject):
         def refused(error: ChronoMailError) -> None:
             if isinstance(error, SentAlready):
                 self._status.show(str(error))
-                self.sent_already.emit(account, "Outbox", message_id)
+                self.sent_already.emit(account, OUTBOX_FOLDER_PATH, message_id)
                 return
             self._status.report("Could not open the message", error)
 

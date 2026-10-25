@@ -6,14 +6,14 @@ from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.engine.commands_folders import FolderInfo
 from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.engine.commands_sidebar import EMPTY_SIDEBAR, SidebarInfo
-from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH, SEND_AT_FOLDERS, SNOOZED_FOLDER_PATH
 from chrono_mail.ui.currentview import CurrentView, EntryKind
-from chrono_mail.ui.models import FAVORITES, LOCAL_PLACES, USED_ONLY, favorite_in_use, local_folder_kind
+from chrono_mail.ui.models import FAVORITES, HERE_ONLY_ROLES, USED_ONLY, favorite_in_use, local_folder_kind
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailstate.py 3.6.353"
+__version__ = "mailstate.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: confirmed_by_server: whether an action waits for a server's word (IMAP) or is done here (POP3, Local Folders, D-266)
 # v3.6.349: deleted_for_good: in Trash, or a mailbox without a Trash folder (RV-173)
 # v2.4.334: all_archived stops at the first message that is not archived
@@ -129,7 +129,7 @@ class MailState:
 
     def outbox_count(self) -> int:
         """The messages that wait in the Outbox (failed, delayed or counting down), each place where mail is kept counted once."""
-        return sum(info.messages for place in self.accounts_with_mail() for info in self.folders.get(place, []) if info.path == "Outbox")
+        return sum(info.messages for place in self.accounts_with_mail() for info in self.folders.get(place, []) if info.role == "outbox")
 
     def group_accounts(self, group_id: str) -> tuple[str, ...]:
         return next((group.accounts for group in self.sidebar.groups if group.group_id == group_id), ())
@@ -148,21 +148,21 @@ class MailState:
     def in_snoozed(self) -> bool:
         """The Snoozed folder of an account is shown (its messages know when they come back)."""
         view = self.view
-        return view.combined is None and view.kind == EntryKind.FOLDER and view.folder == SNOOZED_FOLDER_PATH
+        return view.combined is None and view.kind == EntryKind.FOLDER and view.folder_role == "snoozed"
 
     def in_timed(self) -> bool:
         """The Snoozed or the Scheduled folder or the Outbox of an account is shown: its messages leave at a time (it comes back, it is sent)."""
         view = self.view
-        return view.combined is None and view.kind == EntryKind.FOLDER and view.folder in (SNOOZED_FOLDER_PATH, *SEND_AT_FOLDERS)
+        return view.combined is None and view.kind == EntryKind.FOLDER and view.folder_role in ("snoozed", "scheduled", "outbox")
 
     def in_drafts(self) -> bool:
         view = self.view
-        return view.folder_role == "drafts" or view.folder in LOCAL_PLACES or view.combined == "scheduled"
+        return view.folder_role == "drafts" or view.folder_role in HERE_ONLY_ROLES or view.combined == "scheduled"
 
     def in_scheduled_view(self) -> bool:
         """Local Folders > Scheduled (or an account's), or Favorites > Scheduled."""
         view = self.view
-        return view.combined == "scheduled" or (view.combined is None and view.kind == EntryKind.FOLDER and view.folder == SCHEDULED_FOLDER_PATH)
+        return view.combined == "scheduled" or (view.combined is None and view.kind == EntryKind.FOLDER and view.folder_role == "scheduled")
 
     def archived(self, row: Placed) -> bool:
         """The message is in an archive folder of its account (by the folder's role, not its name)."""

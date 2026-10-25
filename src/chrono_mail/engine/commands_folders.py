@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
 
-from chrono_mail.core import AccountKind, ChronoMailError, MessageRef, RebuildAborted, StorageError
+from chrono_mail.core import AccountKind, ChronoMailError, FolderRole, MessageRef, RebuildAborted, StorageError
 from chrono_mail.engine.changes import RebuildStep
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters, account_label
 from chrono_mail.engine.mailbox import open_mailbox, parse_folder
@@ -13,9 +13,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 3.6.349"
+__version__ = "commands_folders.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: A standard folder (any folder with a role) is never deleted, also not inside a folder that is; no longer six English names (CR-36)
 # v3.6.349: a folder with its subfolders is deleted only when none of them holds mail on the server this computer never had: never half-way (RV-176)
 # v2.5.335: index.prepare tells how many messages it indexed (it always said 0: the index window's report read "0 messages indexed")
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -103,11 +104,13 @@ def folder_delete(engine: Engine, parameters: FolderDeleteParameters) -> FolderD
     The files are kept in the store's .deleted directory, not erased."""
     with open_mailbox(engine, parameters.account) as mailbox:
         folder = mailbox.folder(parameters.folder)
-        if folder[0].lower() in ("inbox", "sent", "drafts", "trash", "junk", "outbox") and len(folder) == 1:
-            raise UsageError("The standard folders cannot be deleted")
         targets = [folder]
         if parameters.include_subfolders:
             targets = sorted((info.path for info in mailbox.folders() if info.path[: len(folder)] == folder), key=len, reverse=True)
+        roles = {info.path: info.role for info in mailbox.folders()}
+        standard = next((path for path in sorted(targets, key=len) if roles.get(path, FolderRole.OTHER) is not FolderRole.OTHER), None)
+        if standard is not None:  # known by its role, whatever its name (CR-36): deleting it would break sending, Trash or Junk
+            raise UsageError(f"The standard folder “{'/'.join(standard)}” cannot be deleted")
         if not parameters.with_messages:
             for path in targets:
                 if mailbox.store.list_messages(path):

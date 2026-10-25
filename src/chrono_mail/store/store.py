@@ -15,12 +15,15 @@ from chrono_mail.crypto.cipher import OVERHEAD
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_name, split_info
 from chrono_mail.store.properties import MessageProperties
+from chrono_mail.core.folder import OWN_FOLDERS, own_role
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 3.6.350"
+__version__ = "store.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) carry their role: given when made, once to the ones made
+#           before, and by a rename to the folder that takes their place; one of them that is only the parent of others is made a folder (CR-36)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; folder_description: one way to read
 #           a folder.json, also for a restore; a description nested without end is damaged, never a crash; has_letter and set_letter: a flag
 #           letter the store does not model, put on or taken off by a rename (needs no free space), for the mark of a message the server
@@ -49,6 +52,7 @@ def folder_description(text: str) -> tuple[tuple[str, ...], FolderRole]:
     return path, role
 
 
+RECOVERED_PATH: tuple[str, ...] = OWN_FOLDERS[FolderRole.RECOVERED]
 SENT_LETTER: str = "P"  # Maildir's "passed" on a message of the Outbox: the server took it, only its move to Sent is left (never sent again)
 
 
@@ -216,7 +220,20 @@ class Store:
             if path in self._folders:
                 self.damaged_folders.append(directory.name)
                 continue
+            own = own_role(path)
+            if own is not None and role is FolderRole.OTHER:  # one of Chrono Mail's own folders, made before they had a role: it gets it once
+                folder = Folder(self.account_id, path, own)
+                try:
+                    self._write_description(directory, folder)
+                except OSError:
+                    pass  # written at the next start; the role holds in this run all the same
             self._folders[path] = _FolderEntry(directory.name, folder)
+
+    def make_own_parents(self) -> None:
+        """Recovered, the one of Chrono Mail's own folders that holds others, when it is only their parent (Recovered/<folder> made before
+        3.6.354): a folder of its own, with its role, so it is known as what it is (CR-36)."""
+        if RECOVERED_PATH in self.virtual_parent_paths():
+            self.ensure_folder(RECOVERED_PATH)
 
     def list_folders(self) -> list[Folder]:
         return sorted((entry.folder for entry in self._folders.values()), key=lambda folder: folder.path)
@@ -235,11 +252,13 @@ class Store:
         replace_file_atomically(directory / "folder.json", json.dumps(description).encode(), self._durable)
 
     def create_folder(self, path: tuple[str, ...], role: FolderRole = FolderRole.OTHER) -> Folder:
-        folder = Folder(self.account_id, path, role)
+        folder = Folder(self.account_id, path, own_role(path) or role)  # Chrono Mail's own folder takes its role wherever it is made
         with _folder_lock(self.root):
             self.refresh()  # another command may have made it a moment ago
             if path in self._folders:
                 raise StorageError("A folder with this path already exists")
+            if len(path) > 1 and path[:1] == RECOVERED_PATH and RECOVERED_PATH not in self._folders:
+                self.create_folder(RECOVERED_PATH)  # Recovered/<folder>: Recovered itself a folder with its role, never only a parent (CR-36)
             directory = self.root / "folders" / f"f-{os.urandom(6).hex()}"
             try:
                 for name in ("tmp", "new", "cur"):
@@ -327,7 +346,8 @@ class Store:
                 raise StorageError("A folder with the new path already exists")
         for source, target in sorted(moves.items(), key=lambda item: len(item[0]), reverse=True):
             entry = self._folders[source]
-            renamed = Folder(self.account_id, target, entry.folder.role)
+            kept = FolderRole.OTHER if entry.folder.role in OWN_FOLDERS else entry.folder.role  # the role goes with the place for Chrono Mail's own
+            renamed = Folder(self.account_id, target, own_role(target) or kept)  # a rename the server made (D-193) is always followed
             self._checkpoint("rename-folder:before-folder")
             try:
                 self._write_description(self.root / "folders" / entry.directory, renamed)

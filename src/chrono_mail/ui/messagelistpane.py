@@ -10,7 +10,7 @@ from chrono_mail.engine.changes import Change, MessageRow
 from chrono_mail.engine.commands_addressbook import CONTACT_ADDRESSES, AddressesParameters, ContactAddress
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columnfit import MINIMUM_ICON
-from chrono_mail.ui.columns import SAVED_LABEL, SEND_AT_FOLDERS
+from chrono_mail.ui.columns import SAVED_LABEL
 from chrono_mail.ui.columnsetup import STARTING, folder_type
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.delegate import ColumnDelegate, MessageDelegate
@@ -19,15 +19,16 @@ from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelist import LOST_PLACES, MessageListModel, ViewSpec
 from chrono_mail.ui.messageorder import split_key
 from chrono_mail.ui.messagelistview import MessageListView
-from chrono_mail.ui.models import LOCAL_PLACES
+from chrono_mail.ui.models import HERE_ONLY_ROLES
 from chrono_mail.ui.prefs import InUse, Remembered
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 3.6.353"
+__version__ = "messagelistpane.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: take_away at_once: the rows of an action that needs no server's word go at the key press and the list is painted before the next key press is read (D-266)
 # v3.6.350: the selected places not known yet held for a drop made then; an action waiting for places that could not be followed is not done, and
 #           says so (RV-206); one queue runs actions, drops and Undo presses one at a time in the order made: one fetching its rows, or an Undo
@@ -247,7 +248,7 @@ class MessageListPane(QObject):
 
     def apply_view(self) -> None:
         view = self._state.view
-        self.delegate.show_recipients = view.folder_role in ("sent", "drafts") or view.folder in LOCAL_PLACES or view.combined in LOCAL_PLACES.values()
+        self.delegate.show_recipients = view.folder_role in ("sent", "drafts", *HERE_ONLY_ROLES) or view.combined in HERE_ONLY_ROLES
         self.model.recipients_first = self.delegate.show_recipients
         self.model.show(self.view_spec())
 
@@ -293,7 +294,7 @@ class MessageListPane(QObject):
     def _sort_label(self, value: str, label: str) -> str:
         if value == "sent" and folder_type(self._state.view) == "drafts":
             return SAVED_LABEL
-        return "Send at" if value == "snoozed" and self._state.view.folder in SEND_AT_FOLDERS and self._state.in_timed() else label
+        return "Send at" if value == "snoozed" and self._state.view.folder_role in ("scheduled", "outbox") and self._state.in_timed() else label
 
     def effective_sort(self) -> str:
         """The chosen sort order; sorting by Snoozed until (Send at) is sorting by Received outside Snoozed and Scheduled."""

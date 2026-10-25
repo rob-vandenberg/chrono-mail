@@ -43,9 +43,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 3.6.353"
+__version__ = "restore.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.353: the kept index connections are let go before account files are moved aside or into place (D-266)
 # v3.6.351: this computer's damaged tags file is handled as its rules file (kept as .bad, told), never stopping the restore; a damaged
 #           record of the server (IMAP, DAV) leaves out only that account's messages or items, a damaged POP3 list only itself, and any
@@ -804,7 +805,7 @@ def _hold_back(store: Store, now: float, report: RestoreReport, sent_now: frozen
     scheduled message whose time has passed is paused (Settings > Scheduled messages > Resume). One the server took goes to Sent: marked
     in its file name or details, or known to this run only (sent_now: a full disk kept both marks off it)."""
     folders = store.list_folders()
-    if any(folder.path == OUTBOX for folder in folders):
+    if any(folder.role is FolderRole.OUTBOX for folder in folders):
         waiting = store.list_messages(OUTBOX)
         for message in waiting:
             if SENT_LETTER in message.extra_letters or message.ref.store_id in sent_now or _noted_as_sent(store, message.ref.store_id):  # the server took

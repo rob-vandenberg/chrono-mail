@@ -3,6 +3,7 @@ from dataclasses import replace as replace_entry
 from dataclasses import dataclass, field
 
 from chrono_mail.core import ChronoMailError, Folder, FolderRole, MessageFlag, MessageRef, ProtocolError
+from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.mime import parse_message
 from chrono_mail.protocols.imap import FetchedItem, FolderChanges, FolderEntry, ImapClient, ImapRefused, SelectInfo, keyword_to_tag, tag_to_keyword
@@ -14,9 +15,10 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 3.6.351"
+__version__ = "imap_sync.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.351: a message the server will not send (refused, NIL, too large) no longer keeps its folder from a checkpoint: it is asked again from it
 # v3.6.350: the comment on the unknown tags says what None means, as the code does (RV-192)
 # v3.6.349: a refused group keeps what came before the refusal; a server refusing all of a few spread probes is not asked once per message (RV-202)
@@ -79,9 +81,9 @@ STANDARD_PATH: dict[FolderRole, tuple[str, ...]] = {
     FolderRole.INBOX: ("Inbox",), FolderRole.SENT: ("Sent",), FolderRole.DRAFTS: ("Drafts",), FolderRole.TRASH: ("Trash",),
     FolderRole.JUNK: ("Junk",), FolderRole.ARCHIVE: ("Archive",),
 }
-RECOVERED: str = "Recovered"
-SCHEDULED: str = "Scheduled"  # messages that wait for the time they are to be sent (engine.schedule.SCHEDULED_FOLDER)
-LOCAL_ONLY: frozenset[str] = frozenset({"Outbox", RECOVERED, SCHEDULED})  # folders that exist only here, never on a server
+RECOVERED: str = OWN_FOLDERS[FolderRole.RECOVERED][0]
+SCHEDULED: str = OWN_FOLDERS[FolderRole.SCHEDULED][0]  # messages that wait for the time they are to be sent (engine.schedule.SCHEDULED_FOLDER)
+LOCAL_ONLY: frozenset[str] = frozenset({OWN_FOLDERS[FolderRole.OUTBOX][0], RECOVERED, SCHEDULED})  # folders that exist only here, never on a server
 REMOVAL_RATIO_LIMIT: float = 0.5
 REMOVAL_RATIO_MINIMUM_COUNT: int = 10
 

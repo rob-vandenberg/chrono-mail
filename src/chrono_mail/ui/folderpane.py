@@ -26,7 +26,7 @@ from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.mailtags import MailTags
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.models import (
-    ACCOUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, GROUP_ROLE, KIND_ROLE, LOCAL_PLACES, NAME_ROLE, PIN_ROLE, UNREAD_ROLE, FolderNode,
+    ACCOUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, GROUP_ROLE, KIND_ROLE, NAME_ROLE, PIN_ROLE, UNREAD_ROLE, FolderNode,
     FolderTreeModel, TreeEntry,
 )
 from chrono_mail.ui.prefs import InUse, Remembered
@@ -37,9 +37,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 2.4.334"
+__version__ = "folderpane.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Delete in the folder list: never a standard folder, known by its role, also Snoozed and Recovered (CR-36)
 # v2.4.334: the folder numbers of the facts of one moment are shown once (they laid the list out once per message)
 # v2.0.300: the Favorites menu lists only the favorites that can appear (Snoozed, Scheduled, Archive once a mailbox has them, D-234)
 # v2.0.299: a right-click in Favorites lists every standard favorite with a tick; a click shows or hides it (D-234); Show again and
@@ -753,7 +754,7 @@ class FolderPane(QObject):
         first), never the messages selected in the list. Nothing on a standard folder, a heading, an account or an entry of
         Favorites (a pinned folder there is not the folder itself)."""
         view = self._state.view
-        if view.key_kind is EntryKind.FOLDER and view.kind is EntryKind.FOLDER and view.folder_role == "other" and view.folder not in LOCAL_PLACES:
+        if view.key_kind is EntryKind.FOLDER and view.kind is EntryKind.FOLDER and view.folder_role == "other":  # never a standard folder (CR-36)
             self.delete_folder()
 
     def delete_folder(self) -> None:

@@ -10,9 +10,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import World, menu_named, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columnsetup.py 2.0.280"
+__version__ = "test_ui_columnsetup.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
 # v2.0.280: Initial version: columns and sort per folder, the six kinds of folder, Apply to all folders (B-16)
 
 ACCOUNT = "a" * 32
@@ -30,7 +31,7 @@ def test_each_folder_and_view_has_its_kind_and_its_own_key() -> None:
     kinds = {
         folder_view("Inbox", "inbox"): "incoming", folder_view("Projects"): "incoming", folder_view("Archive", "archive"): "incoming",
         folder_view("Trash", "trash"): "incoming", folder_view("Sent", "sent"): "sent", folder_view("Drafts", "drafts"): "drafts",
-        folder_view("Outbox"): "outbox", folder_view("Scheduled"): "scheduled", folder_view("Snoozed"): "snoozed",
+        folder_view("Outbox", "outbox"): "outbox", folder_view("Scheduled", "scheduled"): "scheduled", folder_view("Snoozed", "snoozed"): "snoozed",
         favorite_view("inboxes"): "incoming", favorite_view("unread"): "incoming", favorite_view("sent"): "sent", favorite_view("drafts"): "drafts",
         favorite_view("outbox"): "outbox", favorite_view("scheduled"): "scheduled", favorite_view("snoozed"): "snoozed", favorite_view("trash"): "incoming",
     }

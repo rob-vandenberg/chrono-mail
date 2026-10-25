@@ -13,11 +13,13 @@ from chrono_mail.engine.commands_schedule import (
 )
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
 
 # --- Version ------------------------------------------------------------
-__version__ = "scheduledpanel.py 3.6.350"
+__version__ = "scheduledpanel.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders' names written once (CR-36)
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.327: Pause and Resume for a one-off scheduled message too; a paused one says so in its line (D-245)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -257,7 +259,7 @@ class ScheduledPanel(QWidget):
             return
         resumed = "It is sent again from now on" if info.repeat else "It is sent at its time; when that has passed, within a minute"
         command, text = (MAIL_REPEAT_RESUME, resumed) if info.paused else (MAIL_REPEAT_PAUSE, "Paused")
-        parameters = MessageParameters(info.account, "Scheduled", info.message_id)
+        parameters = MessageParameters(info.account, SCHEDULED_FOLDER_PATH, info.message_id)
         self._backend.ask(command, parameters, lambda result: self._repeat_changed(info.message_id, text, result), self._failed, owner=self)
 
     def _repeat_changed(self, message_id: str, text: str, result: RepeatState) -> None:

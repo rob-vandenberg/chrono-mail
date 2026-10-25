@@ -61,9 +61,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 3.6.353"
+__version__ = "mainwindow.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Delete folder… greyed for a standard folder, known by its role (CR-36)
 # v3.6.353: the message list knows the roles of the folders (a message that comes back is placed by it, D-266)
 # v3.6.352: the Archive button changes only when it switches between Archive and Unarchive (a new icon at every selection laid out the toolbar again); the sync marks repaint the whole list through repaint_all (D-266)
 # v3.6.350: File > Use a recovery code says why the key is missing; Start without this mail is reported in the status line;
@@ -510,6 +511,7 @@ class MainWindow(QMainWindow):
         self.act_new_folder = self._action("New folder…", self.folders.new_folder)
         self.act_rename_folder = self._action("Rename folder…", self.folders.rename_folder, "F2")
         self.act_delete_folder = self._action("Delete folder…", self.folders.delete_folder)
+        self.act_delete_folder.setEnabled(False)  # only a folder the person made (CR-36)
         self.act_about = self._action("About Chrono Mail", self._about, "F1")
         self.folders.use_menu(FolderMenu(self.act_new_folder, self.act_rename_folder, self.act_delete_folder, self.act_mark_all_read, self.act_empty_folder))
 
@@ -1247,12 +1249,14 @@ class MainWindow(QMainWindow):
         if chosen.account is None:  # an account without an Inbox: an empty list that says so
             self.act_empty_folder.setEnabled(False)
             self.act_mark_all_read.setEnabled(False)
+            self.act_delete_folder.setEnabled(False)
             self.reading.clear()
             self.messages.show_empty()
             self._update_unread_summary()
             return
         folder_shown, role = chosen.kind is EntryKind.FOLDER, chosen.folder_role
         self.act_empty_folder.setEnabled(folder_shown and role in ("trash", "junk"))
+        self.act_delete_folder.setEnabled(folder_shown and role == "other")  # a standard folder, known by its role, is never deleted (CR-36)
         self.act_new_folder.setEnabled(self.mail_state.can_make_folder())
         self.act_empty_folder.setText(EMPTY_TEXTS.get(role, "Empty folder…") if folder_shown else "Empty folder…")
         self.act_not_junk.setEnabled(folder_shown and role == "junk")

@@ -6,13 +6,15 @@ from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyledIt
 
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
 from chrono_mail.ui.dragdata import read_messages_mime_data, read_messages_rest, read_messages_summary
+from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
 from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, KIND_ROLE, SCHEDULED_TARGET_ROLES
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 3.6.350"
+__version__ = "foldertree.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.350: a drop says when the rest of the selection follows (RV-206)
 # v3.6.349: the drag checks at every pointer move read only the drag's summary, never its whole list; the drop checks the list against
 #           it once (RV-205)
@@ -154,9 +156,9 @@ class FolderTree(QTreeView):
         if dragged is None or not index.isValid() or index.data(KIND_ROLE) != "folder":
             return None
         account, folder = str(index.data(ACCOUNT_ROLE)), str(index.data(FOLDER_PATH_ROLE))
-        if account != dragged[0] or folder == "Outbox" or dragged[1] == {folder}:
+        if account != dragged[0] or str(index.data(FOLDER_ROLE_ROLE)) == "outbox" or dragged[1] == {folder}:
             return None
-        if "Scheduled" in dragged[1] and str(index.data(FOLDER_ROLE_ROLE)) not in SCHEDULED_TARGET_ROLES:
+        if SCHEDULED_FOLDER_PATH in dragged[1] and str(index.data(FOLDER_ROLE_ROLE)) not in SCHEDULED_TARGET_ROLES:
             return None  # a scheduled message goes back to Drafts (no longer scheduled) or to Trash, nowhere else
         return account, folder
 

@@ -2,14 +2,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from email.utils import getaddresses
 
+from chrono_mail.core import FolderRole
+from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.pim.times import local_time
 from chrono_mail.engine.changes import MessageRow
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 3.6.349"
+__version__ = "columns.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.349: the dates of the list on this computer's clock through the named zone (Windows, RV-201)
 # v2.2.314: SEND_AT_FOLDERS: the Scheduled folder and the Outbox (a delayed send, B-21)
 # v2.0.280: the Sent column (the moment the message carries itself, sorts by sent; "Saved" in Drafts); the standard columns are those of incoming mail, with From (B-16); the pixel widths of versions before 0.1.89 are no longer taken over
@@ -60,10 +63,11 @@ COLUMNS: tuple[Column, ...] = (
 DEFAULT_COLUMNS: tuple[str, ...] = ("flag", "status", "attachment", "from", "subject", "date", "size", "contact", "trash")  # those of incoming mail (columnsetup.STARTING)
 NEW_COLUMNS: tuple[str, ...] = ("contact", "trash")  # added once to a set of columns saved before they existed
 SNOOZED_COLUMN: str = "snoozed"  # shown in the Snoozed folder only; not in the column lists of Settings and the Message list window
-SNOOZED_FOLDER_PATH: str = "Snoozed"
-SCHEDULED_FOLDER_PATH: str = "Scheduled"  # its messages carry when they are sent in the same field: the column is called Send at there
+SNOOZED_FOLDER_PATH: str = OWN_FOLDERS[FolderRole.SNOOZED][0]
+SCHEDULED_FOLDER_PATH: str = OWN_FOLDERS[FolderRole.SCHEDULED][0]  # its messages carry when they are sent in the same field: the column is called Send at there
 SEND_AT_LABEL: str = "Send at"
-SEND_AT_FOLDERS: tuple[str, ...] = (SCHEDULED_FOLDER_PATH, "Outbox")  # the column says when each message is sent (the Outbox: a delayed send, B-21)
+OUTBOX_FOLDER_PATH: str = OWN_FOLDERS[FolderRole.OUTBOX][0]
+SEND_AT_FOLDERS: tuple[str, ...] = (SCHEDULED_FOLDER_PATH, OUTBOX_FOLDER_PATH)  # the column says when each message is sent (the Outbox: a delayed send, B-21)
 SAVED_LABEL: str = "Saved"  # the Sent column in Drafts: a draft carries when it was last saved
 BY_ID: dict[str, Column] = {column.column_id: column for column in COLUMNS}
 SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎", "replied": "↩", "contact": "", "trash": "", "tag": ""}  # Contact and Delete draw icons, their headers stay empty

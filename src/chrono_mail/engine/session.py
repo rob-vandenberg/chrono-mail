@@ -20,6 +20,7 @@ from chrono_mail.config import (
     save_config,
 )
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, CryptoError, FolderRole, StorageError
+from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.crypto import DataKey, KeyStore
 from chrono_mail.engine.changes import Change, RebuildStep
 from chrono_mail.engine.junkwords import JunkHolder
@@ -31,9 +32,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 3.6.353"
+__version__ = "session.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.353: IndexGate keeps one connection to the index open between commands, let go before a replace or removal: closing the last one wrote the whole change log back, 18 ms of every 23 ms Delete (D-266)
 # v3.6.350: sent_unfiled: the messages the server took in this run whose move to Sent is left (never sent again, also on a full disk)
 # v3.6.349: the restore's refusal says to try again when it is done (RV-174); a wait that is stopped is WaitStopped, told as a cancelled restore (RV-175)
@@ -67,14 +69,14 @@ __version__ = "session.py 3.6.353"
 # v0.0.13: key cache, safe for concurrent commands
 # v0.0.12: Initial engine session
 
-OUTBOX: tuple[str, ...] = ("Outbox",)
+OUTBOX: tuple[str, ...] = OWN_FOLDERS[FolderRole.OUTBOX]
 STANDARD_FOLDERS: tuple[tuple[tuple[str, ...], FolderRole], ...] = (
     (("Inbox",), FolderRole.INBOX),
     (("Sent",), FolderRole.SENT),
     (("Drafts",), FolderRole.DRAFTS),
     (("Trash",), FolderRole.TRASH),
     (("Junk",), FolderRole.JUNK),
-    (OUTBOX, FolderRole.OTHER),
+    (OUTBOX, FolderRole.OUTBOX),
 )
 Progress = Callable[[str, int, int | None], None]
 Activity = Callable[[str, str, str, int | None, int | None], None]  # account id, "receive" or "send", step, done, total
@@ -548,6 +550,7 @@ class Engine:
         store = Store.open(self.store_directory(settings), key, durable=self.durable)
         if store.damaged_folders:
             store.merge_duplicate_folders()  # folders made twice by commands that ran at the same time (before 0.2.101)
+        store.make_own_parents()  # Recovered only the parent of the recovered folders: a folder of its own, with its role (CR-36)
         return store
 
     def open_index(self, settings: AccountSettings, store: Store) -> Index:

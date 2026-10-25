@@ -3,6 +3,7 @@ from typing import Literal
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, FolderRole, MessageRef, StorageError
+from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.engine.commands_accounts import AccountSummary, NoParameters, _summary
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -12,9 +13,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import Pop3State, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_local.py 2.1.311"
+__version__ = "commands_local.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed account.set-storage
 # v1.1.206: Moving an account's mail to or from Local Folders takes each message's properties along (its tags were left behind before) (D-176)
@@ -55,8 +57,8 @@ def _target_path(source: Store, path: tuple[str, ...]) -> tuple[tuple[str, ...],
     role = next((folder.role for folder in source.list_folders() if folder.path == path), FolderRole.OTHER)
     if role in STANDARD_PATHS:
         return STANDARD_PATHS[role], role
-    if path == OUTBOX:
-        return OUTBOX, FolderRole.OTHER
+    if role in OWN_FOLDERS:
+        return OWN_FOLDERS[role], role
     return path, FolderRole.OTHER
 
 

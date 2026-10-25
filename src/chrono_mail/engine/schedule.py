@@ -3,12 +3,15 @@ from datetime import datetime, timedelta
 
 from chrono_mail.pim.times import local_time, moment_at
 from chrono_mail.engine.registry import UsageError
+from chrono_mail.core import FolderRole
+from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.sync.imap_sync import SCHEDULED
 
 # --- Version ------------------------------------------------------------
-__version__ = "schedule.py 3.6.350"
+__version__ = "schedule.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.350: REPEAT_LOCK (was commands_schedule._REPEAT_LOCK), re-entrant: what replaces a scheduled message takes it too (D-262)
 # v3.6.349: the group of a snooze or send time without the platform's conversion too; a send time is shown without the platform's conversion, which Windows refuses past 3000 (RV-204)
 # v2.2.314: the Outbox is a timed folder too: a delayed send waits there for its moment (B-21)
@@ -20,9 +23,9 @@ __version__ = "schedule.py 3.6.350"
 # v0.0.86: Ready-made snooze times (tomorrow, later this week, this weekend, next week)
 # v0.0.34: Initial times for sending later and snoozing
 
-SNOOZED_FOLDER: str = "Snoozed"
+SNOOZED_FOLDER: str = OWN_FOLDERS[FolderRole.SNOOZED][0]
 SCHEDULED_FOLDER: str = SCHEDULED  # scheduled and repeating messages wait here for their time; local only, made when first used
-TIMED_FOLDERS: tuple[str, ...] = (SNOOZED_FOLDER, SCHEDULED_FOLDER, "Outbox")  # each message leaves at a time: the list shows and sorts by it (the Outbox: a delayed send)
+TIMED_FOLDERS: tuple[str, ...] = (SNOOZED_FOLDER, SCHEDULED_FOLDER, OWN_FOLDERS[FolderRole.OUTBOX][0])  # each message leaves at a time: the list shows and sorts by it (the Outbox: a delayed send)
 SNOOZED_LOCK = threading.RLock()  # snooze and wake change the snooze records (in the properties files): one command at a time
 REPEAT_LOCK = threading.RLock()  # two checks at the same moment must not send the same message twice; what replaces a scheduled message
 # takes it too, before the Outbox lock (a repeating send holds it from its timetable to its send); held again by the same command (Unschedule)

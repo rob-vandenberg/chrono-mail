@@ -18,9 +18,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, PAGE_SIZE, ROW_ROLE, M
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_models.py 2.0.298"
+__version__ = "test_ui_models.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
 # v2.0.298: the owner's order: Inbox, Unread, Outbox, Sent, Drafts, Flagged; Favorites All Inboxes, Unread, …, Flagged, Unreplied (D-232, D-061)
 # v2.0.290: Favorites in the owner's order: Unread, All Inboxes, Flagged, Unreplied, Drafts, Outbox, Sent, Snoozed, Scheduled, Archive, Junk, Trash (D-061)
 # v2.0.289: Unread, Inbox, Flagged, then the owner's order (D-232)
@@ -550,7 +551,7 @@ def test_snoozed_and_archive_show_only_once_used_and_a_hidden_tree_goes(qtbot: Q
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
     assert labels == ["All Inboxes", "Unread", "Outbox", "Sent", "Drafts", "Flagged", "Unreplied", "Junk", "Trash"]
-    used = {"a" * 32: [Info("Inbox", "inbox", 0), Info("Snoozed", "other", 0), Info("Archive", "archive", 0)], "b" * 32: [Info("Inbox", "inbox", 0)]}
+    used = {"a" * 32: [Info("Inbox", "inbox", 0), Info("Snoozed", "snoozed", 0), Info("Archive", "archive", 0)], "b" * 32: [Info("Inbox", "inbox", 0)]}
     model.populate(accounts, used)
     favorites = model.index(0, 0)
     labels = [str(model.index(row, 0, favorites).data()) for row in range(model.rowCount(favorites))]
@@ -573,7 +574,7 @@ def test_a_hidden_standard_folder_of_local_folders_goes_with_the_folders_inside_
     model = FolderTreeModel()
     model.show_favorites = False
     accounts: list[object] = [Place(local, "Local Folders", kind="local")]
-    infos: list[object] = [Info("Inbox", "inbox"), Info("Inbox/Sub", "other"), Info("Trash", "trash"), Info("Snoozed", "other"), Info("Projects", "other")]
+    infos: list[object] = [Info("Inbox", "inbox"), Info("Inbox/Sub", "other"), Info("Trash", "trash"), Info("Snoozed", "snoozed"), Info("Projects", "other")]
     folders: dict[str, list[object]] = {local: infos}
 
     def children() -> list[str]:
@@ -585,7 +586,7 @@ def test_a_hidden_standard_folder_of_local_folders_goes_with_the_folders_inside_
     model.hidden_local = {"inbox", "snoozed", "scheduled"}
     model.populate(accounts, folders)
     assert children() == ["Unread", "Flagged", "Trash", "Projects"]  # Inbox/Sub went with its Inbox
-    infos.extend([Info("Scheduled", "other"), Info("Inbox/Other", "other"), Info("Later", "other")])  # made while switched off, inside a hidden folder, and plain
+    infos.extend([Info("Scheduled", "scheduled"), Info("Inbox/Other", "other"), Info("Later", "other")])  # made while switched off, inside a hidden folder, and plain
     model.populate(accounts, folders)
     assert children() == ["Unread", "Flagged", "Trash", "Later", "Projects"]  # only Later is shown
     assert model.find_item(local, "folder", "Inbox") is None
@@ -607,11 +608,11 @@ def test_a_hidden_standard_folder_of_local_folders_goes_with_the_folders_inside_
 def test_favorites_scheduled_is_shown_only_once_a_scheduled_folder_exists() -> None:
     model = FolderTreeModel()
     accounts: list[object] = [Place("a" * 32, "one@example.com")]
-    without = {"a" * 32: [Info("Inbox", "inbox"), Info("Outbox", "other")]}
+    without = {"a" * 32: [Info("Inbox", "inbox"), Info("Outbox", "outbox")]}
     model.populate(accounts, without)
     favorites = model.index(0, 0)
     assert "Scheduled" not in [str(model.index(row, 0, favorites).data(NAME_ROLE)) for row in range(model.rowCount(favorites))]
-    model.populate(accounts, {"a" * 32: [Info("Inbox", "inbox"), Info("Outbox", "other"), Info("Scheduled", "other")]})
+    model.populate(accounts, {"a" * 32: [Info("Inbox", "inbox"), Info("Outbox", "outbox"), Info("Scheduled", "scheduled")]})
     favorites = model.index(0, 0)
     names = [str(model.index(row, 0, favorites).data(NAME_ROLE)) for row in range(model.rowCount(favorites))]
     assert names.index("Scheduled") == names.index("Unreplied") + 1  # the owner's order: Unreplied, Snoozed, Scheduled (no Snoozed folder here)

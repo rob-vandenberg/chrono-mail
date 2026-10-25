@@ -12,9 +12,10 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 2.0.298"
+__version__ = "models.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v2.0.298: the owner's order: Inbox, Unread, Outbox, Sent, Drafts, Flagged, then the other standard folders (D-232); Favorites the same with
 #           All Inboxes first and Unreplied after Flagged (D-061)
 # v2.0.290: Favorites in the owner's order: Unread, All Inboxes, Flagged, Unreplied, Drafts, Outbox, Sent, Snoozed, Scheduled, Archive, Junk, Trash (D-061)
@@ -566,7 +567,7 @@ def favorite_in_use(view: str, mailbox_ids: list[str], folders: Mapping[str, Seq
     for account_id in mailbox_ids:
         for info in folders.get(account_id, []):
             role, path = info.role, info.path
-            if (view == "scheduled" and path == "Scheduled") or (view == "snoozed" and path == "Snoozed") or (view == "archive" and role == "archive"):
+            if view in ("scheduled", "snoozed", "archive") and role == view:
                 return True
     return False
 
@@ -577,9 +578,9 @@ def favorite_unread(view: str, mailbox_ids: list[str], folders: Mapping[str, Seq
     for account_id in mailbox_ids:
         for info in folders.get(account_id, []):
             role, path = info.role, info.path
-            if (view in _FAVORITE_ROLE and role == _FAVORITE_ROLE[view]) or (view in LOCAL_PLACES.values() and LOCAL_PLACES.get(path) == view) or (view == "snoozed" and path == "Snoozed"):
+            if (view in _FAVORITE_ROLE and role == _FAVORITE_ROLE[view]) or (view in ("outbox", "scheduled", "snoozed") and role == view):
                 found += info.messages if number == "messages" else info.unread
-            elif view == "unread" and role not in ("trash", "junk") and path not in LOCAL_PLACES:
+            elif view == "unread" and role not in ("trash", "junk", *HERE_ONLY_ROLES):
                 found += info.messages if number == "messages" else info.unread
     return found
 
@@ -591,7 +592,7 @@ OUTGOING_FAVORITES: frozenset[str] = frozenset({"drafts", "outbox", "scheduled",
 
 def holds_outgoing(path: str, role: str) -> bool:
     """Whether a folder holds outgoing messages (D-225): Drafts, Outbox, Scheduled, Snoozed."""
-    return role in ("drafts", "outbox") or path in ("Outbox", "Scheduled", "Snoozed")
+    return role in ("drafts", "outbox", "scheduled", "snoozed")
 
 
 def shown_number(info: FolderInfo) -> int:
@@ -608,18 +609,13 @@ def favorite_number(view: str, mailbox_ids: list[str], folders: Mapping[str, Seq
 
 
 SCHEDULED_TARGET_ROLES: tuple[str, ...] = ("drafts", "trash")  # where a scheduled message may be moved: back to drafts, or away (D-178)
-LOCAL_PLACES: dict[str, str] = {"Outbox": "outbox", "Scheduled": "scheduled"}  # folders that exist only here, with no role on a server
-
-
-# The folders the program makes itself without a role, known by their place (a server gives them none)
-_KIND_BY_PATH: dict[str, str] = {"Outbox": "outbox", "Scheduled": "scheduled", "Snoozed": "snoozed", "Recovered": "recovered"}
+HERE_ONLY_ROLES: tuple[str, ...] = ("outbox", "scheduled")  # the roles of the folders whose messages are never moved there by the person
 
 
 def standard_kind(path: str, role: str) -> str:
-    """Which standard folder this is (one of LOCAL_FOLDER_KINDS), or "" for a folder the person made: by its role, or by its place for
-    the folders the program makes without a role. The one definition the order of the list, Settings > Sidebar and the icons use (D-232)."""
-    kind = _KIND_BY_PATH.get(path, role)
-    return kind if kind in LOCAL_FOLDER_KINDS else ""
+    """Which standard folder this is (one of LOCAL_FOLDER_KINDS), or "" for a folder the person made: by its role, also for Chrono
+    Mail's own folders (CR-36). The one definition the order of the list, Settings > Sidebar and the icons use (D-232)."""
+    return role if role in LOCAL_FOLDER_KINDS else ""
 
 
 def _order(role: str, path: str = "") -> int:

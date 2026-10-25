@@ -16,9 +16,10 @@ from chrono_mail.ui.statusreport import MISSING_WARNING
 from tests.ui.world import Dialogs, World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_parts.py 2.0.306"
+__version__ = "test_ui_parts.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
 # v2.0.306: in_archive is gone: Archive or Unarchive follows the selected messages (MailState.all_archived, D-101)
 # v1.9.273: The window's own calls (the key, the accounts) are typed (R-19)
 # v1.9.264: Initial tests of the parts of the main window (R-17): each part keeps its own data and works through what the others offer;
@@ -88,7 +89,7 @@ def test_the_shared_record_answers_the_questions_every_part_asks() -> None:
 
 def test_the_shared_record_knows_the_kind_of_view() -> None:
     state = MailState()
-    state.view = CurrentView(account="a", kind=EntryKind.FOLDER, folder="Snoozed")
+    state.view = CurrentView(account="a", kind=EntryKind.FOLDER, folder="Snoozed", folder_role="snoozed")
     assert state.in_snoozed() and state.in_timed() and not state.in_scheduled_view()
     state.view = CurrentView(account="", kind=EntryKind.FAVORITE, combined="scheduled")
     assert state.in_scheduled_view() and state.in_drafts() and not state.in_timed()

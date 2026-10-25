@@ -7,17 +7,17 @@ import string
 
 from chrono_mail.core import Folder, FolderRole, shown_name
 from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, neighbours, not_heard, with_headings, _day, _rows, contact_address_set, date_bounds, from_contacts, group_of
-from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
-from chrono_mail.engine.session import OUTBOX, Engine
+from chrono_mail.engine.session import Engine
 from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 2.1.311"
+__version__ = "commands_combined.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.280: the sort order sent (the message's own Date) merges and groups like Received (B-16)
 # v1.9.270: R-19: typed message.combined-places
@@ -46,7 +46,7 @@ CombinedSort = Literal["date", "sent", "subject", "sender", "to", "size", "unrea
 VIEWS: tuple[str, ...] = typing.get_args(ViewName)
 _ROLE_OF_VIEW: dict[str, FolderRole] = {
     "inboxes": FolderRole.INBOX, "unreplied": FolderRole.INBOX, "sent": FolderRole.SENT, "drafts": FolderRole.DRAFTS, "archive": FolderRole.ARCHIVE,
-    "junk": FolderRole.JUNK, "trash": FolderRole.TRASH,
+    "junk": FolderRole.JUNK, "trash": FolderRole.TRASH, "outbox": FolderRole.OUTBOX, "snoozed": FolderRole.SNOOZED, "scheduled": FolderRole.SCHEDULED,
 }
 
 
@@ -113,13 +113,7 @@ def _row_key(row: MessageRow, sort: str) -> tuple[bool, float] | int | str:
 def _chosen(view: str, folder: Folder) -> bool:
     if view in _ROLE_OF_VIEW:
         return folder.role is _ROLE_OF_VIEW[view]
-    if view == "outbox":
-        return folder.path == OUTBOX
-    if view == "snoozed":
-        return folder.path == (SNOOZED_FOLDER,)
-    if view == "scheduled":
-        return folder.path == (SCHEDULED_FOLDER,)
-    return folder.role not in (FolderRole.TRASH, FolderRole.JUNK) and folder.path not in (OUTBOX, (SCHEDULED_FOLDER,))
+    return folder.role not in (FolderRole.TRASH, FolderRole.JUNK, FolderRole.OUTBOX, FolderRole.SCHEDULED)
 
 
 def _narrowed(name: str, own: bool | None, chosen: bool | None) -> bool | None:

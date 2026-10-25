@@ -14,9 +14,10 @@ from chrono_mail.store import MessageNotFoundError, Properties, StoredMessage
 from chrono_mail.sync import file_sent_again, send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 3.6.351"
+__version__ = "commands_outbox.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.351: what follows a send the server took never makes it fail or stops the rest of the Outbox (a warning)
 # v3.6.350: a message the server took is known by any of its marks (the letter written even on a full disk, sent_at, this run's memory): never sent again
 # v3.6.349: a message of the Outbox the server took whose move to Sent failed keeps its "sent" mark, so it is never sent again (RV-178);
@@ -77,7 +78,7 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
     for members in _places(engine, parameters.account):
         with open_mailbox(engine, members[0].account.account_id) as mailbox:
             waiting: list[tuple[StoredMessage, str | None, bytes, ParsedMessage, tuple[str, ...], AccountSettings, str]] = []
-            for message in mailbox.store.list_messages(mailbox.folder("Outbox")):
+            for message in mailbox.store.list_messages(OUTBOX):
                 if parameters.message is not None and message.ref.store_id != parameters.message:
                     continue
                 hint = mailbox.hint(message.ref.store_id)

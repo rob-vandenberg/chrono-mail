@@ -20,14 +20,15 @@ from chrono_mail.ui.columns import BY_ID, CARD, SEND_AT_FOLDERS, SEND_AT_LABEL, 
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import grey_icon
 from chrono_mail.ui.messageorder import MessageOrder, message_key, split_key
-from chrono_mail.ui.models import LOCAL_PLACES
+from chrono_mail.ui.models import HERE_ONLY_ROLES
 from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 3.6.353"
+__version__ = "messagelist.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: leave_now, done_early, come_back: a message whose action needs no server's word leaves the list at its key press and comes back when the action fails (D-266)
 # v3.6.352: rows that leave the view go together only when they arrive in the same pass of the event loop, never held back for 100 ms (a held Delete key removed at most ten rows a second, D-266)
 # v3.6.350: a selected place whose message was not known yet keeps its place when the rest of the order comes and nothing in the view
@@ -1225,11 +1226,11 @@ class MessageListModel(QAbstractTableModel):
             return False
         flags, tags = tuple(row.flags), tuple(tag.casefold() for tag in row.tags)
         if spec.combined is not None:
-            everywhere = role not in ("trash", "junk") and folder not in LOCAL_PLACES
+            everywhere = role not in ("trash", "junk", *HERE_ONLY_ROLES)
             wanted = {
                 "inboxes": role == "inbox", "sent": role == "sent", "drafts": role == "drafts", "junk": role == "junk", "trash": role == "trash",
-                "outbox": folder == "Outbox", "scheduled": folder == "Scheduled", "unread": everywhere and "seen" not in flags, "flagged": everywhere and "flagged" in flags,
-                "snoozed": folder == "Snoozed", "unreplied": role == "inbox" and "replied" not in flags, "archive": role == "archive",
+                "outbox": role == "outbox", "scheduled": role == "scheduled", "unread": everywhere and "seen" not in flags, "flagged": everywhere and "flagged" in flags,
+                "snoozed": role == "snoozed", "unreplied": role == "inbox" and "replied" not in flags, "archive": role == "archive",
                 "tagged": everywhere and (spec.combined_tag or "").casefold() in tags,
             }
             if not wanted.get(spec.combined, False):

@@ -23,16 +23,17 @@ from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
 from chrono_mail.ui.mailstate import MailState, Placed
 from chrono_mail.ui.messagelist import LOST_PLACES
 from chrono_mail.ui.messagelistpane import MessageListPane, SelectedMessage
-from chrono_mail.ui.models import LOCAL_PLACES, SCHEDULED_TARGET_ROLES
+from chrono_mail.ui.models import HERE_ONLY_ROLES, SCHEDULED_TARGET_ROLES
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.undoing import Undoing
 from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.353"
+__version__ = "messageactions.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: act_many: an action that needs no server's word takes its rows out at the key press; a failed one brings its messages back and stops the same actions waiting behind it (D-266)
 # v3.6.350: a drop made while the list did not know every selected message yet moves them all: the rest is read from the view's whole
 #           order at the drop (RV-206); Mark all as read and Empty folder made while an action waits act on the folder they were made in,
@@ -316,7 +317,7 @@ class MessageActions(QObject):
         menu = QMenu(self._parent)
         for info in self._state.folders.get(account, []):
             path = info.path
-            if path == rows[0].folder or path in LOCAL_PLACES:
+            if path == rows[0].folder or info.role in HERE_ONLY_ROLES:
                 continue
             menu.addAction(path.replace("&", "&&")).triggered.connect(lambda checked=False, target=path: self.copy_selected(target) if how == "copy" else self.move_selected(target))
         self.folder_popup = menu  # kept: a menu shown with popup() is gone when its last reference is
@@ -342,7 +343,7 @@ class MessageActions(QObject):
         scheduled = self._state.in_scheduled_view()
         for info in self._state.folders.get(view.account, []):
             path = info.path
-            if path == view.folder or path in LOCAL_PLACES or (scheduled and info.role not in SCHEDULED_TARGET_ROLES):
+            if path == view.folder or info.role in HERE_ONLY_ROLES or (scheduled and info.role not in SCHEDULED_TARGET_ROLES):
                 continue  # a scheduled message goes back to Drafts or to Trash, nowhere else
             self.move_menu.addAction(path.replace("&", "&&")).triggered.connect(lambda checked=False, target=path: self.move_selected(target))  # "R&D", never "RD"
 

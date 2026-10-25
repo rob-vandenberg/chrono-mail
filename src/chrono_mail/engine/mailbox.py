@@ -5,6 +5,7 @@ from datetime import datetime
 
 from chrono_mail.pim.times import moment_at
 from chrono_mail.config import AccountSettings, load_sidebar, save_sidebar
+from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.core import (
     ChronoMailError,
     ConfigurationError,
@@ -31,9 +32,11 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 3.6.351"
+__version__ = "mailbox.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS); Rename never renames one of
+#           them nor gives another folder one of their names, refused before the server is asked (CR-36)
 # v3.6.351: told_after_send: what follows a send never makes it a failed send (a warning instead)
 # v3.6.350: sent_already: the letter in the file name (a full disk cannot stop it), sent_at or this run's memory; never in Sent
 #           a move from a server folder into the Outbox or Scheduled is done here first (one rename: its id, marks and details stay), then its
@@ -924,6 +927,8 @@ class Mailbox:
 
     def ensure_folder(self, path: tuple[str, ...], role: FolderRole = FolderRole.OTHER) -> tuple[Folder, bool]:
         """The folder with this path, made when there is none (and whether it was made): on the server first."""
+        if len(path) > 1 and path[:1] == OWN_FOLDERS[FolderRole.RECOVERED]:
+            self._made(self.store.ensure_folder(path[:1]))  # Recovered itself first, told, so the folder list knows its role (CR-36)
         if self._on_server(path) and path not in {folder.path for folder in self.store.list_folders()}:
             Folder(self.store.account_id, path, role)  # a name that cannot be used is refused before the server is asked
             with self._server() as server:
@@ -945,12 +950,14 @@ class Mailbox:
 
     def rename_folder(self, old: tuple[str, ...], new: tuple[str, ...]) -> None:
         """Rename a folder and everything below it; in an IMAP account on the server first, and only while it can be reached."""
+        known = self.store.list_folders()
+        if new in OWN_FOLDERS.values() or any(folder.path[: len(old)] == old and folder.role in OWN_FOLDERS for folder in known):
+            raise UsageError("Chrono Mail's own folders keep their names, and no other folder takes one of them")  # before the server is asked (CR-36)
         if not self._on_server(old):
             self.store.rename_folder(old, new)
             self.index.rename_folder(old, new)
             self._tell(Change("folder_renamed", self._place, "/".join(old), to_folder="/".join(new)))
             return
-        known = self.store.list_folders()
         if any(folder.path[: len(old)] == old and folder.role is not FolderRole.OTHER for folder in known):
             raise UsageError("The standard folders cannot be renamed in an IMAP account")
         Folder(self.store.account_id, new, FolderRole.OTHER)  # a name that cannot be used is refused before the server is asked
@@ -1041,7 +1048,7 @@ class Mailbox:
 
 SENT_MAY_GO: frozenset[str] = frozenset({FolderRole.SENT.value, FolderRole.TRASH.value})  # where a message the server took may move (D-262)
 LIST_COULD_NOT_FOLLOW: str = "the message list could not follow ({error}): go to Settings > Security and storage and click Repair the search index"
-HERE_ONLY: frozenset[str] = frozenset({"Outbox", "Scheduled"})  # folders whose messages are never on a server (Recovered may hold some)
+HERE_ONLY: frozenset[str] = frozenset(OWN_FOLDERS[role][0] for role in (FolderRole.OUTBOX, FolderRole.SCHEDULED))  # folders whose messages are never on a server (Recovered may hold some)
 
 
 @contextmanager

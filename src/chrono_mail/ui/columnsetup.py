@@ -2,14 +2,15 @@ import json
 from dataclasses import dataclass
 from typing import Literal, get_args
 
-from chrono_mail.ui.columns import BY_ID, SCHEDULED_FOLDER_PATH, SNOOZED_COLUMN, SNOOZED_FOLDER_PATH, valid_columns
+from chrono_mail.ui.columns import BY_ID, SNOOZED_COLUMN, valid_columns
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 3.6.350"
+__version__ = "columnsetup.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.2.314: an Outbox starts with the Send at column (a delayed send shows when it goes, B-21)
 # v2.0.280: Columns per folder (B-16): the six kinds of folder, the columns and sort each kind starts with, which setup a view
@@ -17,7 +18,6 @@ __version__ = "columnsetup.py 3.6.350"
 
 FolderType = Literal["incoming", "sent", "drafts", "outbox", "scheduled", "snoozed"]
 FOLDER_TYPES: tuple[FolderType, ...] = get_args(FolderType)
-OUTBOX_FOLDER_PATH: str = "Outbox"
 SEARCH_KEY: str = "search"  # a search in all folders of an account: one setup of its own
 
 
@@ -42,7 +42,7 @@ STARTING: dict[FolderType, ColumnSetup] = {
     "snoozed": ColumnSetup(("flag", "attachment", "from_to", "subject", SNOOZED_COLUMN, "size", "trash"), "snoozed", oldest_first=True),
 }
 _OUTGOING_FAVORITES: dict[str, FolderType] = {"sent": "sent", "drafts": "drafts", "outbox": "outbox", "scheduled": "scheduled", "snoozed": "snoozed"}
-_LOCAL_FOLDERS: dict[str, FolderType] = {OUTBOX_FOLDER_PATH: "outbox", SCHEDULED_FOLDER_PATH: "scheduled", SNOOZED_FOLDER_PATH: "snoozed"}
+_LOCAL_FOLDERS: dict[str, FolderType] = {"outbox": "outbox", "scheduled": "scheduled", "snoozed": "snoozed"}  # by the folder's role (CR-36)
 
 # The columns that show each sort order (the From / To column sorts by sender)
 SORT_COLUMNS: dict[str, tuple[str, ...]] = {
@@ -65,7 +65,7 @@ def folder_type(view: CurrentView) -> FolderType:
         return "incoming"
     if view.folder_role in ("sent", "drafts"):
         return "sent" if view.folder_role == "sent" else "drafts"
-    return _LOCAL_FOLDERS.get(view.folder, "incoming")
+    return _LOCAL_FOLDERS.get(view.folder_role or "", "incoming")
 
 
 def setup_key(view: CurrentView) -> str:

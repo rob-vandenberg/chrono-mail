@@ -35,9 +35,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 3.6.351"
+__version__ = "commands_mail.py 3.6.354"
 
 # --- Version history ----------------------------------------------------
+# v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError; what follows a send the server took never makes it fail (told_after_send: a warning)
 # v3.6.350: a send that replaces an Outbox message the server took, or one gone meanwhile, is refused (never sent twice); it goes in the
 #           same locked step that stores or sends what replaces it; a message sent whose move to Sent failed is remembered for the run
@@ -146,7 +147,7 @@ def contact_address_set(engine: Engine) -> frozenset[str]:
 def from_contacts(mailbox: Mailbox, messages: list[IndexedMessage], known: frozenset[str]) -> dict[str, bool]:
     """store id -> whether the message is from a contact (in Sent, Drafts and Outbox: to a contact, the first recipient),
     as the Contact column shows it."""
-    to_folders = {folder.path for folder in mailbox.folders() if folder.role in _RECIPIENT_ROLES} | {OUTBOX, SCHEDULED}
+    to_folders = {folder.path for folder in mailbox.folders() if folder.role in _RECIPIENT_ROLES or folder.role in (FolderRole.OUTBOX, FolderRole.SCHEDULED)}
     result: dict[str, bool] = {}
     for message in messages:
         found = getaddresses([message.recipients if message.folder in to_folders and message.recipients else message.sender])
