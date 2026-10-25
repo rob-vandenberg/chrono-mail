@@ -1,12 +1,12 @@
 from collections.abc import Callable, Sequence
 from datetime import datetime
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 from PySide6.QtGui import QAction, QCursor
 from PySide6.QtWidgets import QMenu, QMessageBox, QWidget
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.engine.changes import MessageRow
+from chrono_mail.engine.changes import Change, MessageRow
 from chrono_mail.engine.commands_actions import FOLDER_EMPTY, FOLDER_MARK_READ, EmptyResult, FolderActionParameters, MarkReadResult
 from chrono_mail.engine.commands_mail import MessageParameters
 from chrono_mail.engine.commands_schedule import MAIL_UNSCHEDULE, MESSAGE_WAKE, WakeParameters
@@ -30,9 +30,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.360"
+__version__ = "messageactions.py 3.6.361"
 
 # --- Version history ----------------------------------------------------
+# v3.6.361: an action on many messages not done after a second says so: "Preparing to …" until the first message is done, then how many of how many (_Progress, D-266)
 # v3.6.360: every action that takes messages out of the list first asks paused_at_edge: Delete, Archive, Junk and the Delete icon are forgotten while the next rows load; the others wait for them (D-266)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: act_many: an action that needs no server's word takes its rows out at the key press; a failed one brings its messages back and stops the same actions waiting behind it (D-266)
@@ -59,6 +60,50 @@ __version__ = "messageactions.py 3.6.360"
 #           command per account and folder (R-08), greyed at the key press, one line for what could not be done
 
 _WEEKDAYS: tuple[str, ...] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # in the snooze menu, English like the rest of the interface
+
+
+PROGRESS_AFTER_MS: int = 1000  # an action not done by then says what it does in the status line (shorter ones show only their last line)
+
+
+class _Progress(QObject):
+    """What an action on many messages is doing, in the status line, once it takes longer than a moment: first what it prepares (the undo
+    record, the server's work: nothing is done yet), then, from the first message done, how many of how many. The count follows the engine's
+    fact for each message done, the same fact that changes the folder numbers. parts: how many routines end it (the last one ends it)."""
+
+    def __init__(self, backend: Backend, status: StatusReport, message_ids: Sequence[str], preparing: str, counting: str, parent: QObject, parts: int = 1) -> None:
+        super().__init__(parent)
+        self._backend, self._status = backend, status
+        self._ids, self._done = set(message_ids), set[str]()
+        self._preparing, self._counting, self._parts = preparing, counting, parts
+        self._shown, self._ended = False, False
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._show)
+        self._timer.start(PROGRESS_AFTER_MS)
+        backend.changed.connect(self._fact)
+
+    def _fact(self, change: object) -> None:
+        if isinstance(change, Change) and change.message_id in self._ids and change.message_id not in self._done:
+            self._done.add(change.message_id)
+            if self._shown:
+                self._show()
+
+    def _show(self) -> None:
+        self._shown = True
+        if self._done:
+            self._status.show(f"{self._counting}: {len(self._done):,} of {len(self._ids):,}")
+        else:
+            self._status.show(self._preparing)
+
+    def end(self) -> None:
+        """One routine of the action is done; after the last its own final line follows (the summary or the error)."""
+        self._parts -= 1
+        if self._parts > 0 or self._ended:
+            return
+        self._ended = True
+        self._timer.stop()
+        self._backend.changed.disconnect(self._fact)
+        self.deleteLater()
 
 
 class MessageActions(QObject):
@@ -156,6 +201,7 @@ class MessageActions(QObject):
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages, undo=number), targets, done, "Could not delete",
+            doing=(f"Preparing to delete {counted(len(rows), 'message')}…", "Deleting"),
         )
 
     def delete_by_icon(self, clicked: MessageRow) -> None:
@@ -195,6 +241,7 @@ class MessageActions(QObject):
         self.act_many(
             MESSAGE_DELETE_MANY, lambda account, folder, messages: ManyDeleteParameters(account, folder, messages, permanent=True), self._state.targets(rows),
             f"Deleted {counted(len(rows), 'message')} for good", "Could not delete",
+            doing=(f"Preparing to delete {counted(len(rows), 'message')} for good…", "Deleting for good"),
         )
 
     def unarchive_selected(self) -> None:
@@ -209,7 +256,7 @@ class MessageActions(QObject):
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_UNARCHIVE_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number), self._state.targets(rows),
-            f"Unarchived {counted(len(rows), 'message')}", "Could not unarchive",
+            f"Unarchived {counted(len(rows), 'message')}", "Could not unarchive", doing=(f"Preparing to unarchive {counted(len(rows), 'message')}…", "Unarchiving"),
         )
 
     def archive_selected(self) -> None:
@@ -232,7 +279,7 @@ class MessageActions(QObject):
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_ARCHIVE_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number), self._state.targets(rows),
-            f"Archived {counted(len(rows), 'message')}", "Could not archive",
+            f"Archived {counted(len(rows), 'message')}", "Could not archive", doing=(f"Preparing to archive {counted(len(rows), 'message')}…", "Archiving"),
         )
 
     def junk_selected(self, junk: bool) -> None:
@@ -249,6 +296,8 @@ class MessageActions(QObject):
         self.act_many(
             MESSAGE_JUNK_MANY if junk else MESSAGE_NOT_JUNK_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number),
             self._state.targets(rows), finished, "Could not move",
+            doing=(f"Preparing to move {counted(len(rows), 'message')} to Junk…", "Moving to Junk") if junk
+            else (f"Preparing to move {counted(len(rows), 'message')} back to the Inbox…", "Moving back to the Inbox"),
         )
 
     def junk_key(self) -> None:
@@ -291,6 +340,7 @@ class MessageActions(QObject):
         self.act_many(
             MESSAGE_SNOOZE_MANY, lambda account, folder, messages: ManySnoozeParameters(account, folder, until, messages, undo=number), self._state.targets(rows),
             f"Snoozed {counted(len(rows), 'message')} until {until.replace('T', ' ')}", "Could not snooze",
+            doing=(f"Preparing to snooze {counted(len(rows), 'message')}…", "Snoozing"),
         )
 
     def cancel_snooze_selected(self) -> None:
@@ -306,16 +356,20 @@ class MessageActions(QObject):
         remaining = len(rows)
         number = self._undoing.new_action()
         self._messages.take_away([row.message_id for row in rows])
+        progress = _Progress(self._backend, self._status, [row.message_id for row in rows], f"Preparing to bring back {counted(len(rows), 'message')}…", "Bringing back", self)
 
         def done(result: object) -> None:
             nonlocal remaining
             remaining -= 1
             if remaining == 0:
+                progress.end()
                 self._status.finished(f"Brought back {counted(len(rows), 'message')}")
 
         def failed(error: ChronoMailError) -> None:
             nonlocal remaining
             remaining -= 1
+            if remaining == 0:
+                progress.end()
             self._status.report("Could not cancel the snooze", error)
 
         for row in rows:
@@ -416,18 +470,20 @@ class MessageActions(QObject):
         unschedule = [item for item in targets if self._unschedules(item[0], item[1], target)]
         moves = [item for item in targets if item not in unschedule]
         finished = f"Moved {counted(len(targets), 'message')} to {target}"
+        progress = _Progress(self._backend, self._status, [message_id for _, _, message_id in targets], f"Preparing to move {counted(len(targets), 'message')} to {target}…",
+                             f"Moving to {target}", self, parts=int(bool(unschedule)) + int(bool(moves)))
         if unschedule:
             if not moves:
                 self._undoing.new_action()  # an action of the person, though it is not undone: an Undo after it acts as it would at once
             self._messages.take_away([message_id for _, _, message_id in unschedule])
-            done, failed = self._answers(len(unschedule), finished, "Could not move")
+            done, failed = self._answers(len(unschedule), finished, "Could not move", progress)
             for account, folder, message_id in unschedule:
                 on_success, on_error = self._each(message_id, done, failed)
                 self._undoing.started()
                 self._backend.ask(MAIL_UNSCHEDULE, MessageParameters(account, folder, message_id), on_success, on_error, owner=self, in_order=True)
         if moves:
             number = self._undoing.new_action()  # a scheduled message moved to Drafts is not undone (its schedule is gone from the message)
-            self.act_many(MESSAGE_MOVE_MANY, lambda account, folder, messages: ManyTargetParameters(account, folder, target, messages, undo=number), moves, finished, "Could not move")
+            self.act_many(MESSAGE_MOVE_MANY, lambda account, folder, messages: ManyTargetParameters(account, folder, target, messages, undo=number), moves, finished, "Could not move", progress=progress)
 
     def _unschedules(self, account: str, folder: str, target: str) -> bool:
         """Whether a move is the engine's unschedule: a scheduled message moved to Drafts goes back to being a draft (its schedule
@@ -497,7 +553,8 @@ class MessageActions(QObject):
 
     def act_many[P](
         self, command: TypedCommand[P, ManyResult], parameters: Callable[[str, str, tuple[str, ...]], P], targets: list[tuple[str, str, str]], finished: str,
-        title: str, take_away: bool = True, each: Callable[[ManyResult], None] | None = None,
+        title: str, take_away: bool = True, each: Callable[[ManyResult], None] | None = None, doing: tuple[str, str] | None = None,
+        progress: _Progress | None = None,
     ) -> None:
         """An action on many messages (R-08): greyed at the key press (take_away), one command per account and folder, each message's row
         follows its fact; when every answer is in, one line: the summary, or how many could not be done and why (one reason, not one line each)."""
@@ -505,7 +562,11 @@ class MessageActions(QObject):
         for account, folder, message_id in targets:
             groups.setdefault((account, folder), []).append(message_id)
         if not groups:
+            if progress is not None:
+                progress.end()
             return
+        if progress is None and doing is not None:
+            progress = _Progress(self._backend, self._status, [message_id for _, _, message_id in targets], doing[0], doing[1], self)
         at_once = take_away and not any(self._state.confirmed_by_server(account) for account, _ in groups)  # POP3, Local Folders: no server's word to wait for
         if take_away:
             self._messages.take_away([message_id for _, _, message_id in targets], at_once=at_once)
@@ -527,6 +588,8 @@ class MessageActions(QObject):
             remaining -= 1
             if remaining:
                 return
+            if progress is not None:
+                progress.end()  # before the last line: it never covers it
             if failures:
                 reason = failures[0].reason if all(item.reason == failures[0].reason for item in failures) else f"{failures[0].reason} (and other reasons)"
                 back = " and back in the list" if at_once else ""  # taken out at the key press: they came back (D-266)
@@ -566,13 +629,15 @@ class MessageActions(QObject):
             self._undoing.started()
             self._backend.ask(command, parameters(account, folder, tuple(messages)), answered, refused, owner=self, in_order=True)
 
-    def _answers(self, count: int, finished: str, title: str) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
+    def _answers(self, count: int, finished: str, title: str, progress: _Progress | None = None) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
         """The answers of an action on several messages, one per message: when all are in, failed ones too, the summary only when
         none failed, else the error stays in the red line."""
         remaining, failures = count, 0
 
         def finish() -> None:
             if remaining == 0:
+                if progress is not None:
+                    progress.end()
                 self._status.finished(finished, keep_error=failures > 0)
 
         def done(result: object) -> None:

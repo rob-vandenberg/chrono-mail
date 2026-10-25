@@ -2998,6 +2998,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.361: An action on many messages says what it prepares, then counts (the owner, D-266)
+
+1. The owner: 1,221 IMAP messages to Junk showed nothing for about 20 seconds (the undo record and the server's work come before the first message is done).
+2. `ui/messageactions.py` _Progress: after 1 second "Preparing to … n messages…", from the first fact "Moving to Junk: n of m", then the last line; for Delete, Delete for good, Archive, Unarchive, Junk, Not junk, Snooze, Cancel snooze, Move to (also a scheduled message to Drafts).
+3. Tests: new tests/ui/test_ui_progress.py (2; the slow one fails on 3.6.360); the 5 tests that check these actions' last lines; Pyrefly src (Linux and win32) and the layer check pass.
+
 ## 2026-10-26 3.6.360: A held Delete, Archive or Junk key pauses where the loaded rows end and stops after the last message (the owner, D-266)
 
 1. The owner's report: a held Delete past the first 100 rows jumped up and deleted the messages above. Cause: the next message to select had to be loaded, and when none below was, the one above was taken.
