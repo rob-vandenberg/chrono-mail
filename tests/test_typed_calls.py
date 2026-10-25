@@ -2,9 +2,10 @@ import ast
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_typed_calls.py 1.9.275"
+__version__ = "test_typed_calls.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named; "more than 50 modules" is "some modules" (OR-42)
 # v1.9.275: The window reads the engine's answers by their fields: a getattr only with a "# getattr:" reason on its line (R-19 round 5)
 # v1.9.273: Initial guard (R-19): the window calls the engine only by typed commands, so Pyrefly checks every parameter and every answer
 
@@ -22,10 +23,11 @@ def _untyped_calls(path: Path) -> list[str]:
 
 
 def test_the_window_calls_the_engine_only_by_typed_commands() -> None:
+    # owner rule OR-40 (D-175): typed calls
     """A command called by its text name is checked by nobody: a renamed or misspelled field shows only when someone clicks
     (R-19). Every call goes through Backend.ask with the command's TypedCommand, its parameter dataclass and its answer type."""
     modules = sorted(path for path in UI.rglob("*.py") if path.name != "backend.py")
-    assert len(modules) > 50  # the window's modules were found
+    assert modules  # the window's modules were found (no count of them: a number of its own, OR-42)
     found = [place for path in modules for place in _untyped_calls(path)]
     assert found == [], "untyped engine calls (use Backend.ask with a TypedCommand): " + ", ".join(found)
 
@@ -42,6 +44,7 @@ def _guessed_reads(path: Path) -> list[str]:
 
 
 def test_the_window_reads_the_engines_answers_by_their_fields() -> None:
+    # owner rule OR-40 (D-175): typed calls
     """A field read with getattr(x, "name") is checked by nobody (R-19): the window keeps every answer as its own type and reads
     x.name, which Pyrefly checks. Only a read that cannot be typed (PySide's stubs give a style option's fields no type, the
     window's own actions by name, a dataclass copied field by field) stays, with "# getattr: <why>" on its line."""

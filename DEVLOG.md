@@ -2998,6 +2998,16 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.355: The owner's rules outrank everything; the reference client's name out of the whole history (OR-41 to OR-43, D-270)
+
+1. The size guards of tests/ui/test_ui_parts.py (the main window under 1,100 code lines, a part under 650; written by Claude in R-17 without the owner's consent) are gone: they went against the owner's rule that a code file may have up to 2,000 lines.
+2. OWNER-RULES.md: every rule the owner set, numbered OR-1 to OR-43; read at every session start (AGENTS.md) and loaded by a SessionStart hook (.claude/settings.local.json: startup, resume, clear, compact).
+3. tests/test_owner_rules.py: every test that checks the project itself (18 found) names the owner rule it enforces, and every number it compares against is in that rule; a self-test proves the old 1,100 guard is refused. test_typed_calls' "more than 50 modules" became "some modules".
+4. The reference client's name was in 10 old versions of DECISIONS.md, DEVLOG.md, tools/demo/COVERAGE.md (2.0.283 to 2.3.321) and HANDOVER-DELETE-SPEED.md (3.6.352 to 3.6.354). The history was cleaned with git-filter-repo (four exact sentences replaced; authors, dates and messages unchanged; 62 commits, 62 tags) and force-pushed; GitHub Support is asked by the owner to purge the old commits (scratchpad/github-support-request.txt). The full old repository is kept in ~/.claude/chrono-mail/old-git/.
+5. The push guard: .git/hooks/pre-push runs ~/.claude/chrono-mail/name_guard.py (test_legal_names' own rule over every commit and message being pushed); ./gitpush.sh refuses to push without it.
+6. Snoozed, a server folder in an IMAP account, follows a rename or delete made on the server again (D-193), although it has a role since 3.6.354 (test_sync_imap::test_snoozed_deleted_on_the_server_goes_here_too, fails on 3.6.354).
+7. Tests: test_owner_rules (2), the 12 changed check files, test_sync_imap, test_engine_standard_folders, test_ui_parts: passed. Pyrefly 0 on src (Linux, win32) and on the new tests; layer check kept.
+
 ## 2026-10-26 3.6.354: A standard folder is known by its role and never deleted (CR-36, D-269)
 
 1. Found by CodeRabbit (CR-36): Delete folder refused only six English one-word names, so an IMAP "Sent Items", "Deleted Items" or Archive, or a folder holding one, could be deleted on the server with its mail after one question; the Delete key refused Snoozed and Recovered, the menu did not.
@@ -3005,7 +3015,7 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 3. folder.delete refuses any folder with a role, also inside the folder being deleted; Delete folder… is greyed for it; the person's Rename never renames an own folder nor gives another one their name (refused before the server is asked).
 4. Two review rounds: the first found a rename to "Snoozed" on an IMAP server stopping every later check (the store refused it) and Recovered losing its icon; both fixed; the second found Recovered's first making not told to the folder list; fixed.
 5. Tests: test_engine_standard_folders.py (5) and tests/ui/test_ui_standard_folders.py (1), all failing on 3.6.353; five old window test files updated (their made-up folders now carry the roles). Related tests: 642 engine, 256 window; failing, as on 3.6.353: test_legal_names (HANDOVER-DELETE-SPEED.md names the reference client), test_ui_parts size guard (mainwindow 1,100 code lines on 3.6.353, 1,103 now), six window tests that read the engine right after a row leaves at the key press (D-267). Pyrefly 0 (Linux, win32), layer check kept.
-6. Not done: Snoozed on an IMAP server is now a standard folder (a delete or rename made on the server is no longer followed: it is kept and made again, D-199), for the owner to decide; an older version cannot read the new roles (the four folders show as damaged there).
+6. Not done: an older version cannot read the new roles (the four folders show as damaged there; going back is not supported).
 
 ## 2026-10-26 3.6.353: Delete without a server is instant; every action costs less in the engine (D-267, D-268)
 

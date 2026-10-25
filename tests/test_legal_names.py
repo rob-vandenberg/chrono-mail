@@ -3,9 +3,10 @@ import subprocess
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_legal_names.py 1.9.266"
+__version__ = "test_legal_names.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v1.9.266: R-45: only the files that go to GitHub (private files never leave this computer), the name as a word of its own
 #           (SlowItemClient is no hit), and the name may be anywhere in the importer: its files, modules, commands and tests
 # v0.5.132: The importer may name the program it imports from (the owner, 2026-10-15); elsewhere only its module names
@@ -47,6 +48,7 @@ def test_the_check_finds_the_name_and_only_the_name() -> None:
 
 
 def test_no_other_mail_programs_name_is_in_the_project() -> None:
+    # owner rule OR-10: no other mail program named, except in the importer
     """For legal reasons the repository and the program never refer to a competing product by name (D-046)."""
     found: list[str] = []
     for path in published_files():

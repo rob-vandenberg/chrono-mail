@@ -9,9 +9,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_searchfield.py 1.5.259"
+__version__ = "test_ui_searchfield.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v1.5.259: the history watches the main window only (no filter on the whole program: a crash); focus into the message text or a press in the list closes it
 # v1.5.258: the history never takes the mouse or the keyboard: a double click with a drag and a plain drag select text in the field while it is shown; its keys come from the field; a press outside closes it
 # v0.2.97: The ends stay round when the field is higher
@@ -205,6 +206,7 @@ def test_a_press_outside_the_field_and_the_history_closes_it(world: World, qtbot
 
 
 def test_nothing_puts_a_python_filter_on_the_whole_program() -> None:
+    # owner rule OR-40 (D-259): never an event filter on the whole program
     """The crash of 2026-10-21 (1.5.258): a Python event filter on the whole program saw every event of every object, also the
     inner parts of the web view, and PySide crashed making one of them known to Python while the window became active."""
     import re

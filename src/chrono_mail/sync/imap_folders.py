@@ -18,12 +18,15 @@ from chrono_mail.sync.mailconflicts import FOLDER_GONE_CHANGED, FOLDER_GONE_WITH
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_folders.py 2.4.333"
+__version__ = "imap_folders.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: Snoozed, a server folder in an IMAP account, follows the server's rename and delete like the person's folders (D-193), although it now has a role (CR-36)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.1.241: A folder taken off the server's list of folders to show is synchronised one last time, then taken away here (R-34)
 # v1.1.237: Initial: folders deleted or renamed on the server followed here, only on the server's confirmation (R-30)
+
+FOLLOWED_ROLES: frozenset[FolderRole] = frozenset({FolderRole.OTHER, FolderRole.SNOOZED})  # folders a rename or delete on the server is followed for (D-193); the others are standard: kept and made again (D-199)
 
 MarksChanged = Callable[[StoredMessage, ImapEntry], bool]
 
@@ -77,7 +80,7 @@ def follow_server_folders(
         if there:
             continue  # still on the server (no longer subscribed, for one): not a deletion
         role = existing[path].role
-        if role is FolderRole.OTHER and (target := _renamed_to(client, state.validity[path], candidates, validities)) is not None:
+        if role in FOLLOWED_ROLES and (target := _renamed_to(client, state.validity[path], candidates, validities)) is not None:
             _rename_here(store, index, state, path, target, name, announcer)
             candidates.remove(target)
             changes.renamed.append((path, target.local_path))
@@ -123,7 +126,7 @@ def _deleted_on_server(
     and the folder is made again on the server by the same run."""
     folders = _subtree(store, path)
     only_here, changed = _waiting(store, state, folders, marks_changed)
-    if role is not FolderRole.OTHER:
+    if role not in FOLLOWED_ROLES:
         _drop_server_mail(store, index, state, path, marks_changed, announcer)
         state.forget_folder(path, name)
         changes.notes.append(f"The standard folder '{name}' was deleted on the server; it is kept here and made there again")

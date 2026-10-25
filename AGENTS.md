@@ -15,7 +15,7 @@ An account in Chrono Mail is a faithful **copy** of the account on its server (I
 
 Every changelist says how it keeps this rule. Nothing counts as obvious: what the rule does not settle is asked, never chosen.
 
-**Read this file first. Then read `PY-DEVELOPMENT-RULES.md` completely. Then `STATUS.md`.** Those three files are mandatory at the start of every session. The others are read when the task needs them.
+**Read this file first. Then read `PY-DEVELOPMENT-RULES.md` completely. Then `OWNER-RULES.md`. Then `STATUS.md`.** Those four files are mandatory at the start of every session (`OWNER-RULES.md` is also loaded by itself at every session start). An owner rule outranks everything Claude wrote (OR-41). The others are read when the task needs them.
 
 ## 1. Orientation
 
@@ -23,7 +23,8 @@ Every changelist says how it keeps this rule. Nothing counts as obvious: what th
 |---|---|---|
 | `AGENTS.md` | Project-specific technical rules (this file) | Every session, first |
 | `PY-DEVELOPMENT-RULES.md` | How we work together: the owner's working rules for this project | Every session, second |
-| `STATUS.md` | Where we are now, the next task, open questions | Every session, third |
+| `OWNER-RULES.md` | Every rule the owner set, numbered (OR-nn); only the owner changes it | Every session, third (also loaded by itself) |
+| `STATUS.md` | Where we are now, the next task, open questions | Every session, fourth |
 | `STATUS-ARCHIVE.md` | Old text of STATUS.md (every version since 0.0.73); git-ignored | Never read whole; search when history is needed |
 | `ARCHITECTURE.md` | Module map, layers, storage design, account model | Before any code task |
 | `ARCHITECTURE-ARCHIVE.md` | Old text of ARCHITECTURE.md; git-ignored | Never read whole; search when the history of the design is needed |
@@ -123,7 +124,8 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
    - Stage 3: approve the plan with accept edits; the user reviews the result per task in git.
    - Stage 4 (optional, later): auto mode for routine tasks.
 3. **Within an approved plan**, the agent may run tests and fix its own test failures, as long as the fixes stay inside the approved scope. Anything outside the scope needs a new plan.
-4. **Delivery.** In a chat session, files are delivered for download with versioned names (Rule 4/5). In a Claude Code session working in the repository, files are edited in place. In both cases every response that modifies files ends with the Rule 5 summary and release line. The user commits with their own `release` tooling.
+4. **Owner rules.** Every changelist ends with the line "Your rules this touches: OR-…". A test that checks the project itself names the rule it enforces and uses only that rule's numbers (OR-42, `tests/test_owner_rules.py`). A conflict with an owner rule is Claude's fault, reported, never settled by bending the program, a test or the rule.
+5. **Delivery.** In a chat session, files are delivered for download with versioned names (Rule 4/5). In a Claude Code session working in the repository, files are edited in place. In both cases every response that modifies files ends with the Rule 5 summary and release line. The user commits with their own `release` tooling.
 
 ## 7. Before you finish a task
 

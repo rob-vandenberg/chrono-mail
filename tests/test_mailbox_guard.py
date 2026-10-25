@@ -2,9 +2,10 @@ import re
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mailbox_guard.py 3.5.348"
+__version__ = "test_mailbox_guard.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v3.5.348: the restore may hand the store to _put_properties (the tags and notes of a message from the backup; 3.3.343 moved it into a helper)
 # v3.1.341: file_sent_again may take the store and index: only the move to Sent of a message the server took (RV-50)
 # v1.1.206: tags are changed through the messages' properties files (D-176)
@@ -41,6 +42,7 @@ def _sources() -> list[Path]:
 
 
 def test_no_command_changes_the_store_or_index_of_a_mailbox_directly() -> None:
+    # owner rule OR-1, OR-40 (D-117, D-118): every change of a mailbox goes through Mailbox, server first
     found = [
         f"{path.name}:{number}: {line.strip()}"
         for path in _sources()
@@ -51,6 +53,7 @@ def test_no_command_changes_the_store_or_index_of_a_mailbox_directly() -> None:
 
 
 def test_the_store_or_index_is_handed_over_only_where_allowed() -> None:
+    # owner rule OR-1, OR-40 (D-117, D-118): every change of a mailbox goes through Mailbox, server first
     found = [
         f"{path.name}:{number}: {line.strip()}"
         for path in _sources()

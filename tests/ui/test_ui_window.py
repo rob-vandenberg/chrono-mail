@@ -21,9 +21,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 3.6.349"
+__version__ = "test_ui_window.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v3.6.349: Delete asks first when the account has no Trash folder, where it deletes for good (RV-173)
 # v3.0.339: Delete asks for a message in Trash shown outside the Trash folder (RV-76)
 # v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
@@ -349,6 +350,7 @@ def test_quick_filter_clicks_and_a_folder_change_leave_the_buttons_and_the_list_
 
 
 def test_the_window_never_switches_its_widgets_signals_off() -> None:
+    # owner rule OR-40 (D-214): the window blocks no signals
     """R-14: the window shows its one current view in the widgets, and they answer only the person: nothing to keep quiet."""
     source = Path(MainWindow.__module__.replace(".", "/") + ".py")
     text = (Path(__file__).resolve().parents[2] / "src" / source).read_text(encoding="utf-8")

@@ -18,9 +18,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 1.9.264"
+__version__ = "test_ui_appearance.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.2.253: the Settings window hands back the typed settings (chosen(), R-12)
 # v1.1.191: The text on the accent is white unless white's contrast is below 3:1
@@ -118,6 +119,7 @@ COLOUR_WRITTEN: re.Pattern[str] = re.compile(r"""["']#[0-9a-fA-F]{3,8}["']|QColo
 
 
 def test_no_colour_is_written_outside_the_colour_file() -> None:
+    # owner rule OR-9: every colour in core/colours.py
     source = Path(__file__).resolve().parents[2] / "src" / "chrono_mail"
     colour_file = source / "core" / "colours.py"
     found = [f"{path.relative_to(source)}:{number}: {line.strip()}" for path in sorted(source.rglob("*.py")) if path != colour_file

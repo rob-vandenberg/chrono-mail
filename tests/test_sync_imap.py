@@ -17,9 +17,10 @@ from tests.fakeimap import FakeImapServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_sync_imap.py 2.4.330"
+__version__ = "test_sync_imap.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: Snoozed deleted on the server goes here too, although it has a role of its own (CR-36)
 # v2.4.330: a Junk folder the server has but does not show (unsubscribed) is used, by its special-use mark or its name, never made again (W7)
 # v2.0.285: a mark the server changed meanwhile shows in the same check that sends the mark made here (F2)
 # v1.9.266: R-45: the compaction tests put COMPACT_MINIMUM_LINES back (it stayed 1 or 100 for every later test)
@@ -955,6 +956,16 @@ def test_a_standard_folder_deleted_on_the_server_is_kept_and_made_there_again(wo
     world.sync()
     assert ("Trash",) in paths(world) and [b"Message 9" in raw for raw, _ in world.messages(("Trash",)).values()] == [True]  # the server's mail went, what is only here stayed
     assert "Trash" in world.server.folders and len(world.server.folders["Trash"].messages) == 1  # made again, with what was only here
+
+
+def test_snoozed_deleted_on_the_server_goes_here_too(world: World) -> None:
+    """Snoozed is a folder on the server in an IMAP account: although it has a role of its own (CR-36), the server's delete is followed (D-193)."""
+    world.server.add("Snoozed", mail(1))
+    world.sync()
+    assert [folder.role for folder in world.store.list_folders() if folder.path == ("Snoozed",)] == [FolderRole.SNOOZED]
+    del world.server.folders["Snoozed"]
+    world.sync()
+    assert ("Snoozed",) not in paths(world) and "Snoozed" not in world.server.folders  # gone here, never made again there
 
 
 def test_a_state_from_before_without_server_names_changes_nothing(world: World) -> None:

@@ -10,9 +10,10 @@ from chrono_mail.ui.prefs import DEFAULTS, Preferences, Remembered, StartupView,
 from tests.ui.world import World, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_prefs.py 2.0.280"
+__version__ = "test_ui_prefs.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v2.0.280: the columns are kept per folder by Remembered (folder_columns, type_columns); the one setup of earlier versions is handed over once (B-16)
 # v1.2.253: Initial version: every setting read and written in one place, typed, checked the same way at start and after OK (R-12)
 
@@ -87,6 +88,7 @@ def test_what_the_window_remembers_has_one_default_each(tmp_path: Path) -> None:
 
 
 def test_no_window_code_reads_a_setting_by_its_name_outside_the_settings_module() -> None:
+    # owner rule OR-40 (D-211): every setting in ui/prefs.py
     names = set(DEFAULTS) | set(REMEMBERED)
     found: list[str] = []
     for path in sorted(UI.glob("*.py")):

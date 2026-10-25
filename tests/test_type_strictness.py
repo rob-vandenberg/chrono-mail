@@ -3,9 +3,10 @@ import sys
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_type_strictness.py 2.0.287"
+__version__ = "test_type_strictness.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v2.0.287: Pyrefly runs with this run's Python, so Windows finds its packages (the Windows computer's report)
 # v0.0.2: Initial skeleton
 
@@ -23,11 +24,13 @@ def run_pyrefly(*arguments: str) -> subprocess.CompletedProcess[str]:
 
 
 def test_project_has_zero_type_errors() -> None:
+    # owner rule OR-7: Pyrefly strict
     result = run_pyrefly()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_strict_mode_reports_errors_on_bad_file() -> None:
+    # owner rule OR-7: Pyrefly strict
     result = run_pyrefly("--config", "pyproject.toml", str(BAD_FILE))
     assert result.returncode != 0, result.stdout + result.stderr
     assert "bad-assignment" in result.stdout + result.stderr

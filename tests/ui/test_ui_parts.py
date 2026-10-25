@@ -16,9 +16,11 @@ from chrono_mail.ui.statusreport import MISSING_WARNING
 from tests.ui.world import Dialogs, World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_parts.py 3.6.354"
+__version__ = "test_ui_parts.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42); the size guards are gone (the window under 1,100 code lines, a part under 650): limits the owner never set, against his rule
+#           that a code file may have up to 2,000 lines
 # v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
 # v2.0.306: in_archive is gone: Archive or Unarchive follows the selected messages (MailState.all_archived, D-101)
 # v1.9.273: The window's own calls (the key, the accounts) are typed (R-19)
@@ -40,21 +42,17 @@ class Account:
 
 # --- the window stays the window ------------------------------------------------------------------------------
 
-def _code_lines(path: Path) -> int:
-    """The lines of a module that are code: no version history, no blank lines, no comments."""
-    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip() and not line.lstrip().startswith("#"))
-
-
-def test_the_window_stays_small_and_runs_no_mail_command_of_its_own() -> None:
+def test_the_window_runs_no_mail_command_of_its_own() -> None:
+    # owner rule OR-4, OR-40 (D-221): the window holds no mail work of its own
     """R-17: the window builds the screen and puts the parts together. Mail work lives in the parts: the window asks the engine only
     about the key and the accounts (and the calendars a new account has)."""
     source = (UI / "mainwindow.py").read_text(encoding="utf-8")
-    assert _code_lines(UI / "mainwindow.py") < 1100  # 3,444 before R-17: mostly the screen, the actions and the menus now
     asked = set(re.findall(r"backend\.ask\(\s*([A-Z_]+)", source))  # every call is typed (R-19, tests/test_typed_calls.py)
     assert asked <= {"KEY_STATUS", "ACCOUNT_LIST", "DAV_FIND", "DAV_LINK"}, asked
 
 
 def test_no_part_reaches_back_into_the_window() -> None:
+    # owner rule OR-40 (D-221): parts talk by signals, never into the window
     """A part knows only the parts it is given: none imports the window, and none reads the window's insides through its parent."""
     for name in PARTS:
         tree = ast.parse((UI / name).read_text(encoding="utf-8"))
@@ -62,11 +60,6 @@ def test_no_part_reaches_back_into_the_window() -> None:
         assert "chrono_mail.ui.mainwindow" not in imported, name
         reached = [node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute) and node.value.attr == "_parent"]
         assert not [attr for attr in reached if attr.startswith("act_") or attr in ("folders", "messages", "reading", "checking", "composing", "mail_actions", "tags")], name
-
-
-def test_the_parts_are_small() -> None:
-    for name in PARTS:
-        assert _code_lines(UI / name) < 650, name
 
 
 # --- what the parts share ------------------------------------------------------------------------------------------

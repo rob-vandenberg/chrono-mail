@@ -8,9 +8,10 @@ from tests.ui.test_ui_columnsetup import open_folder
 from tests.ui.world import World, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_plain_text.py 3.6.350"
+__version__ = "test_ui_plain_text.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v3.6.350: a hover text from mail is the text itself (the list's rows, plain_tip); "&" in a folder name shows in Move to
 # v3.6.349: every message box made by hand sets its text format where it is made (guard; the reviewer of 3.5.348)
 # v3.5.348: the boxes are made plain where they are made; no event filter on the whole program
@@ -45,6 +46,7 @@ def test_the_ready_made_boxes_are_plain_and_nothing_watches_every_event() -> Non
 
 
 def test_every_message_box_made_by_hand_says_how_its_text_is_shown() -> None:
+    # owner rule OR-40 (D-259): message boxes are plain text
     """A message box made by hand guesses (AutoText) and takes a folder name or a server's reply with "<...>" for markup. Since 3.5.348
     nothing watches the program's events to correct that, so each one sets its text format where it is made (RV-167, D-259)."""
     from pathlib import Path
@@ -126,6 +128,7 @@ def test_a_folder_name_with_an_ampersand_shows_whole_in_the_move_menu(world: Wor
 
 
 def test_no_error_text_is_put_into_markup_as_it_came() -> None:
+    # owner rule OR-40 (D-259): no markup from mail or errors
     """The final review of 3.6.350 (D-259): the account windows put a server's error text into a red <span> as it came, so markup in it
     was drawn. An error inside markup is escaped."""
     import re

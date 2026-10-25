@@ -6,9 +6,10 @@ from PySide6.QtGui import QColor
 from chrono_mail.ui.formatting import avatar_colour, display_name, file_size, initials, long_date, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_formatting.py 3.6.349"
+__version__ = "test_ui_formatting.py 3.6.355"
 
 # --- Version history ----------------------------------------------------
+# v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v3.6.349: dates before 1970 and after 3000 are shown without the platform's conversion, which Windows refuses (RV-201, RV-204)
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Initial UI formatting tests
@@ -76,6 +77,7 @@ def test_every_avatar_colour_takes_white_initials_readably() -> None:
 
 
 def test_dates_before_1970_and_after_3000_are_shown_without_the_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    # owner rule OR-40 (D-259): dates through the named zone, never the platform's conversion
     """RV-201, RV-204: on Windows the platform's own conversion to local time refuses moments before 1970 and after 3000, which mail and a
     scheduled message may carry: the list cell, the reading pane, the print and the Scheduled list failed. They go through the named zone."""
     from pathlib import Path
