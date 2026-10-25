@@ -20,9 +20,10 @@ PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_reader.py 3.5.346"
+__version__ = "test_ui_reader.py 3.6.357"
 
 # --- Version history ----------------------------------------------------
+# v3.6.357: a link in <...> or quotes stops at its closing character; an apostrophe inside an address stays (CR-19)
 # v3.5.346: HTML mail and its pictures come through chrono-message: addresses; an HTML message over 2 MB is shown (RV-158)
 # v2.0.302: a click on a file selects it, a double click opens it, a right-click on it or on a picture offers Open attachment and Save as… (D-236)
 # v2.0.301: the attached pictures the text does not show are shown below it, fitted to the width, never enlarged (B-11)
@@ -144,6 +145,39 @@ def test_linkify() -> None:
     assert linkify("javascript:alert(1)") == "javascript:alert(1)"  # only web and mail addresses become links
     assert linkify("<script>alert(1)</script>") == "&lt;script&gt;alert(1)&lt;/script&gt;"
     assert linkify("") == ""
+
+
+def test_linkify_stops_a_link_at_its_closing_bracket_or_quote() -> None:
+    """CR-19: a link in <...> or quotes never takes the closing character into its address."""
+    assert linkify("<https://example.com/a>") == '&lt;<a href="https://example.com/a">https://example.com/a</a>&gt;'
+    assert linkify('"https://example.com/b"') == '&quot;<a href="https://example.com/b">https://example.com/b</a>&quot;'
+    assert linkify("'https://example.com/c'") == '&#x27;<a href="https://example.com/c">https://example.com/c</a>&#x27;'
+    assert linkify("<mailto:me@example.org>") == '&lt;<a href="mailto:me@example.org">mailto:me@example.org</a>&gt;'
+    assert linkify("<https://e.com/p?q=1&r=2> & <b>") == '&lt;<a href="https://e.com/p?q=1&amp;r=2">https://e.com/p?q=1&amp;r=2</a>&gt; &amp; &lt;b&gt;'
+    # an apostrophe inside an address belongs to it, unless the address opened with one
+    assert linkify("https://example.com/wiki/O'Brien x") == '<a href="https://example.com/wiki/O&#x27;Brien">https://example.com/wiki/O&#x27;Brien</a> x'
+    assert linkify("'https://example.com/wiki/O'Brien'") == '&#x27;<a href="https://example.com/wiki/O">https://example.com/wiki/O</a>&#x27;Brien&#x27;'
+    assert linkify("'https://'") == "&#x27;https://&#x27;"
+    # an address right after one that closed with an apostrophe is found too
+    assert linkify("'http://a'http://b x") == '&#x27;<a href="http://a">http://a</a>&#x27;<a href="http://b">http://b</a> x'
+    assert linkify("'http://'https://b.org") == '&#x27;http://&#x27;<a href="https://b.org">https://b.org</a>'
+
+
+def test_linkify_leaves_the_punctuation_of_the_sentence_out_of_a_link() -> None:
+    """A full stop, comma, closing quote or bracket right after an address ends the sentence, not the address."""
+    assert linkify("See https://example.com/a.") == 'See <a href="https://example.com/a">https://example.com/a</a>.'
+    assert linkify("'see https://example.com'") == '&#x27;see <a href="https://example.com">https://example.com</a>&#x27;'
+    assert linkify("(at https://example.com/b), or mailto:me@example.org!") == (
+        '(at <a href="https://example.com/b">https://example.com/b</a>), or <a href="mailto:me@example.org">mailto:me@example.org</a>!'
+    )
+    wiki = "https://en.wikipedia.org/wiki/Mercury_(planet)"
+    assert linkify(f"({wiki}).") == f'(<a href="{wiki}">{wiki}</a>).'  # a bracket that belongs to the address stays
+    assert linkify("https://...") == "https://..."  # nothing but the scheme is left: plain text
+    assert linkify("Write to mailto:.") == "Write to mailto:."  # the scheme's own colon is never cut
+    assert linkify("(mailto:)") == "(mailto:)"
+    assert linkify("Go to HTTPS://Example.com/A.") == 'Go to <a href="HTTPS://Example.com/A">HTTPS://Example.com/A</a>.'  # a scheme in capitals is a scheme
+    assert linkify("MAILTO:.") == "MAILTO:."
+    assert linkify("https://example.com/" + ")" * 200_000).startswith('<a href="https://example.com/">')  # one pass, also over hostile text
 
 
 def test_embed_inline_images() -> None:

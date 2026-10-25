@@ -11,6 +11,7 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.config import ServerRole
 from chrono_mail.engine.commands_sidebar import FAVORITE_PIN, PinParameters
+from chrono_mail.engine.registry import UsageError
 from chrono_mail.ui.sections import CALENDAR, MAIL
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.backend import Failure, Success
@@ -21,9 +22,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 3.6.355"
+__version__ = "test_ui_window.py 3.6.357"
 
 # --- Version history ----------------------------------------------------
+# v3.6.357: the tests of actions without a server wait for the engine's work, which follows after the row left at the key press (D-267, AGENTS.md 4.5.5.1)
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v3.6.349: Delete asks first when the account has no Trash folder, where it deletes for good (RV-173)
 # v3.0.339: Delete asks for a message in Trash shown outside the Trash folder (RV-76)
@@ -431,6 +433,14 @@ def test_mark_flag_and_unflag(world: World, qtbot: QtBot) -> None:
     assert flag_sets(world).count(()) == 3
 
 
+def folder_total(world: World, folder: str) -> int:
+    """How many messages the engine has in a folder of the account; -1 while the folder is not made yet."""
+    try:
+        return world.call("message.list", account=world.account_id, folder=folder).total
+    except UsageError:
+        return -1
+
+
 def test_delete_moves_to_trash_and_deleting_in_trash_asks_first(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     select(world.window, 0)
@@ -450,7 +460,7 @@ def test_delete_moves_to_trash_and_deleting_in_trash_asks_first(world: World, qt
     world.dialogs.answer = QMessageBox.StandardButton.Yes
     world.window.act_delete.trigger()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 0)
-    assert world.call("message.list", account=world.account_id, folder="Trash").total == 0
+    wait(qtbot, lambda: folder_total(world, "Trash") == 0)  # the row leaves at the key press, the work follows (D-267)
 
 
 def test_delete_several_messages_at_once(world: World, qtbot: QtBot) -> None:
@@ -458,7 +468,7 @@ def test_delete_several_messages_at_once(world: World, qtbot: QtBot) -> None:
     world.window.list_view.selectAll()
     world.window.act_delete.trigger()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 0)
-    assert world.call("message.list", account=world.account_id, folder="Trash").total == 3
+    wait(qtbot, lambda: folder_total(world, "Trash") == 3)  # the rows leave at the key press, the work follows (D-267)
     assert world.window.reader._header.isHidden()  # noqa: SLF001
 
 
@@ -517,7 +527,7 @@ def test_in_the_archive_folder_archive_is_unarchive(world: World, qtbot: QtBot) 
     assert window.act_archive.text() == "Unarchive"  # the selected message is archived (D-101)
     window.act_archive.trigger()
     wait(qtbot, lambda: window.list_model.rowCount() == 0)
-    assert target in {row.message_id for row in world.call("message.list", account=world.account_id, folder="Inbox").messages}
+    wait(qtbot, lambda: target in {row.message_id for row in world.call("message.list", account=world.account_id, folder="Inbox").messages})  # the work follows the row (D-267)
 
 
 def test_the_selection_of_a_folder_starts_at_its_icon(world: World, qtbot: QtBot) -> None:
@@ -614,7 +624,7 @@ def test_move_to_another_folder(world: World, qtbot: QtBot) -> None:
     assert "Junk" in titles and "Inbox" not in titles and "Outbox" not in titles
     world.window.mail_actions.move_selected("Junk")
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
-    assert world.call("message.list", account=world.account_id, folder="Junk").total == 1
+    wait(qtbot, lambda: folder_total(world, "Junk") == 1)  # the row leaves at once, the work follows (D-267)
 
 
 def test_several_messages_go_as_one_command_and_failures_are_told_once(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -647,9 +657,9 @@ def test_several_messages_go_as_one_command_and_failures_are_told_once(world: Wo
     window.list_view.selectAll()
     window.mail_actions.move_selected("Junk")
     wait(qtbot, lambda: model.rowCount() == 1 and not model.pending)
-    assert [command for command in asked if command != "mail.undo-labels"] == ["message.move-many"]  # one command for the three
+    assert [command for command in asked if command not in ("mail.undo-labels", "message.places")] == ["message.move-many"]  # one command for the three; the one that came back asks only for its place (D-267)
     assert str(getattr(model.row_at(0), "message_id")) == refused  # it came back
-    assert window.status_label.text() == "Could not move: 1 of 3 messages: the disk is full"
+    assert window.status_label.text() == "Could not move: 1 of 3 messages and back in the list: the disk is full"  # taken out at once, so it says it came back (D-267)
     assert world.call("message.list", account=world.account_id, folder="Junk").total == 2
 
 
@@ -980,7 +990,7 @@ def test_archive_moves_the_selected_messages_and_creates_the_folder(world: World
     select(world.window, 0)
     world.window.act_archive.trigger()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
-    assert world.call("message.list", account=world.account_id, folder="Archive").total == 1
+    wait(qtbot, lambda: folder_total(world, "Archive") == 1)  # the folder is made and the message moved after the row left (D-267)
     wait(qtbot, lambda: any(label.strip().startswith("Archive") for label in tree_labels(world.window)))
     open_folder(world, qtbot, "Archive", 1)
     select(world.window, 0)
@@ -1140,7 +1150,7 @@ def test_mark_as_junk_and_not_junk(world: World, qtbot: QtBot) -> None:
     select(world.window, 0)
     world.window.act_junk.trigger()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
-    assert world.call("message.list", account=world.account_id, folder="Junk").total == 1
+    wait(qtbot, lambda: folder_total(world, "Junk") == 1)  # the row leaves at once, the work follows (D-267)
     open_folder(world, qtbot, "Junk", 1)
     select(world.window, 0)
     assert world.window.act_junk.isEnabled() and world.window.act_not_junk.isEnabled()  # Ctrl+J is a switch: in Junk it brings the message back
