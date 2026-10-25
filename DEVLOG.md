@@ -2998,6 +2998,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.356: An appointment keeps its end when only its start changes (CodeRabbit CR-58)
+
+1. An event kept as start plus length (DURATION), or with no end written at all (an all-day event of one day), lost its end when only its start changed: the length was removed, and the end was written only when it differed from the old one. Now the end is written whenever it was not written as an end (pim/ical.py _write_event); the change went to the CalDAV server too.
+2. Test: test_pim_ical::test_an_event_without_a_written_end_keeps_its_end_when_only_its_start_changes (both cases; fails on 3.6.355). Related: test_engine_calendar, test_pim_ical, test_pimstore, test_owner_rules (86 passed). Pyrefly 0 (Linux, win32), layer check kept.
+3. A fresh reviewer found the second case (no end written at all), fixed. Recorded, not fixed (older, speculative): RV-294.
+
 ## 2026-10-26 3.6.355: The owner's rules outrank everything; the reference client's name out of the whole history (OR-41 to OR-43, D-270)
 
 1. The size guards of tests/ui/test_ui_parts.py (the main window under 1,100 code lines, a part under 650; written by Claude in R-17 without the owner's consent) are gone: they went against the owner's rule that a code file may have up to 2,000 lines.

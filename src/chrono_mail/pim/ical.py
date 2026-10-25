@@ -8,9 +8,11 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 3.6.351"
+__version__ = "ical.py 3.6.356"
 
 # --- Version history ----------------------------------------------------
+# v3.6.356: an event kept with a length (DURATION), or with no end written at all, whose start alone changed keeps its end: the end is
+#           written whenever it was not written as an end (CR-58)
 # v3.6.351: a change of the attendee list keeps each attendee's own line (CUTYPE, DELEGATED-*, SCHEDULE-*), writing afresh only
 #           the changed fields and the new attendees (RV-17)
 # v3.2.342: an object with only changed occurrences gets no made-up main event when it is written (RV-146)
@@ -476,9 +478,11 @@ def _write_event(component: icalendar.Component, event: Event, old: Event | None
     _set(component, "DESCRIPTION", event.description, old.description if old else None)
     _set(component, "LOCATION", event.location, old.location if old else None)
     _set(component, "DTSTART", event.start, old.start if old else None)
-    _set(component, "DTEND", event.end, old.end if old else None)
-    if old is None or event.start != old.start or event.end != old.end:
+    timed_anew = old is None or event.start != old.start or event.end != old.end
+    end_unwritten = timed_anew and ("DURATION" in component or "DTEND" not in component)  # the end kept as a length, or only implied: written whatever it was (CR-58)
+    if timed_anew:
         component.pop("DURATION", None)  # the end is written as an end; a duration left behind would contradict it
+    _set(component, "DTEND", event.end, None if end_unwritten else (old.end if old else None))
     _set(component, "RECURRENCE-ID", event.recurrence_id, old.recurrence_id if old else None)
     _set_rrule(component, event.rrule, old.rrule if old else "")
     _set_list(component, "EXDATE", event.exdates, old.exdates if old else ())

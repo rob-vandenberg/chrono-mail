@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -19,9 +20,10 @@ from chrono_mail.pim.ical import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_ical.py 1.1.218"
+__version__ = "test_pim_ical.py 3.6.356"
 
 # --- Version history ----------------------------------------------------
+# v3.6.356: an event kept with a length, or with no end written, keeps its end when only its start changes (CR-58)
 # v1.1.218: an event every second costs only what it shows; the limit
 # v0.0.58: Initial iCalendar tests: events, tasks, reminders, recurrence, hostile input
 
@@ -129,6 +131,20 @@ def test_all_day_floating_and_duration_events() -> None:
     assert c.end == date(2027, 1, 3)
     found = occurrences([text], datetime(2026, 12, 24, tzinfo=UTC), datetime(2026, 12, 26, tzinfo=UTC), zone=AMS)
     assert [o.event.uid for o in found] == ["a", "b"]  # all-day first, then the dinner
+
+
+def test_an_event_without_a_written_end_keeps_its_end_when_only_its_start_changes() -> None:
+    """CR-58: an end kept as a length (DURATION), or not written at all, must be written when the start changes, also when the end did not."""
+    text = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:b\r\nDTSTART:20261224T100000Z\r\nDURATION:PT1H\r\nSUMMARY:Meeting\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    (series,) = parse_events(text)
+    earlier = replace(series.master, start=datetime(2026, 12, 24, 9, tzinfo=UTC))  # an hour earlier, the end left at 11:00
+    (written,) = parse_events(events_to_text(replace(series, master=earlier), text))
+    assert written.master.start == datetime(2026, 12, 24, 9, tzinfo=UTC) and written.master.end == datetime(2026, 12, 24, 11, tzinfo=UTC)
+    all_day = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:c\r\nDTSTART;VALUE=DATE:20261228\r\nSUMMARY:Away\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    (away,) = parse_events(all_day)  # no end written: one day, the 28th
+    sooner = replace(away.master, start=date(2026, 12, 27))  # from the 27th, still until the 29th
+    (written,) = parse_events(events_to_text(replace(away, master=sooner), all_day))
+    assert written.master.start == date(2026, 12, 27) and written.master.end == date(2026, 12, 29)
 
 
 def test_reminder_kinds() -> None:
