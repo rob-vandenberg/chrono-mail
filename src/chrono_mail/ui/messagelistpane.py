@@ -25,9 +25,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 3.6.350"
+__version__ = "messagelistpane.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: take_away at_once: the rows of an action that needs no server's word go at the key press and the list is painted before the next key press is read (D-266)
 # v3.6.350: the selected places not known yet held for a drop made then; an action waiting for places that could not be followed is not done, and
 #           says so (RV-206); one queue runs actions, drops and Undo presses one at a time in the order made: one fetching its rows, or an Undo
 #           being answered, holds the rest; an Undo pressed right after an action that gives no command goes with it
@@ -570,10 +571,12 @@ class MessageListPane(QObject):
 
         self.model.load_rows([item.key for item in chosen if item.row is None], loaded)
 
-    def take_away(self, message_ids: list[str]) -> None:
+    def take_away(self, message_ids: list[str], at_once: bool = False) -> None:
         """At the key press of an action that takes messages out of the view: they are greyed until the engine reports the
         change (or the action fails), and the selection and the reading pane move at once to the next message without an
-        action under way (the one after them, else the one before), so a next key press acts on what the person sees."""
+        action under way (the one after them, else the one before), so a next key press acts on what the person sees. An action
+        that needs no server's word (at_once: POP3, Local Folders) takes the rows out now, and the list is painted before the next
+        key press is read (D-266)."""
         model = self.model
         model.mark_pending(message_ids)
         taken = set(message_ids)
@@ -584,6 +587,9 @@ class MessageListPane(QObject):
         if current_row is not None and current_row.message_id in taken:
             self.taken_away.emit(False)  # the message that is being opened is moved away: its opening no longer counts
         elif current_row is not None:
+            if at_once:
+                model.leave_now(message_ids)  # the selected message stays where it is shown: it follows its message
+                self.view.viewport().repaint()
             return  # the selected message stays: nothing moves under the person's eyes
 
         def free(row: int) -> bool:
@@ -598,10 +604,25 @@ class MessageListPane(QObject):
             self.view.selectionModel().clearSelection()
             self.view.setCurrentIndex(QModelIndex())
             self.taken_away.emit(True)
+            if at_once:
+                model.leave_now(message_ids)
+                self.view.viewport().repaint()
             return
+        if at_once:
+            found = model.row_at(target)
+            model.leave_now(message_ids)  # the rows go at the key press; the selection follows its message (D-266)
+            target = model.find(found.message_id) if found is not None else -1
+            if target < 0:
+                self.view.selectionModel().clearSelection()
+                self.view.setCurrentIndex(QModelIndex())
+                self.taken_away.emit(True)
+                self.view.viewport().repaint()
+                return
         index = model.index(target, 0)
         self.view.selectionModel().setCurrentIndex(index, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows)
         self.view.scrollTo(index)
+        if at_once:
+            self.view.viewport().repaint()  # on screen before the next key press is read: a press always acts on the row it shows highlighted (D-266)
 
     def select_messages(self, message_ids: Iterable[str]) -> None:
         """Select these messages where the list shows them (Undo brought them back); the first is the current one, in view. Those still

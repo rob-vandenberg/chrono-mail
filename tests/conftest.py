@@ -14,9 +14,10 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu 
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 2.0.293"
+__version__ = "conftest.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: the kept index connections are let go after every test (D-266)
 # v2.0.293: on Windows the run without a screen gets Windows' own fonts (the Windows computer's report of 2.0.287)
 # v1.9.266: R-45: no test may take longer than 20 seconds (setup, run and clean-up together); a longer one fails, and where
 #           it waited is printed (faulthandler_timeout in pyproject.toml)
@@ -59,3 +60,13 @@ def pytest_runtest_protocol(item: pytest.Item, nextitem: pytest.Item | None) -> 
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, earlier)
+
+
+@pytest.fixture(autouse=True)
+def _kept_indexes_let_go() -> Generator[None]:
+    """Every test leaves no index connection open behind it: each test makes indexes of its own, and the engine keeps one connection to
+    each open (D-266); a whole run would run out of open files, and Windows could not remove the test's folder."""
+    yield
+    from chrono_mail.engine.session import let_go_kept_indexes
+
+    let_go_kept_indexes()

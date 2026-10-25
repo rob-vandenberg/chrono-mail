@@ -11,9 +11,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.models import FAVORITES, LOCAL_PLACES, USED_ONLY, favorite_in_use, local_folder_kind
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailstate.py 3.6.349"
+__version__ = "mailstate.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: confirmed_by_server: whether an action waits for a server's word (IMAP) or is done here (POP3, Local Folders, D-266)
 # v3.6.349: deleted_for_good: in Trash, or a mailbox without a Trash folder (RV-173)
 # v2.4.334: all_archived stops at the first message that is not archived
 # v2.4.329: account_of, targets and archived take any message by its place (a row, or a selected message not loaded yet, W12)
@@ -96,6 +97,10 @@ class MailState:
         ]
 
     # --- folders --------------------------------------------------------------------------------------------
+
+    def confirmed_by_server(self, account: str) -> bool:
+        """An action on this account's mail is done only when its server confirms it (IMAP, D-193); POP3 and Local Folders act here."""
+        return any(item.account_id == account and item.kind == "imap" for item in self.accounts)
 
     def folder_role_of(self, account: str, path: str) -> str:
         return next((info.role for info in self.folders.get(account, []) if info.path == path), "other")

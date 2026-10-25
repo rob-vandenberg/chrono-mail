@@ -2998,6 +2998,14 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.353: Delete without a server is instant; every action costs less in the engine (D-267, D-268)
+
+1. Measured in the owner's own window (a sampler of the GUI thread after each Delete): the window was idle most of the time, waiting for the engine; the row left only with its fact.
+2. Measured in the engine (3,000 made-up messages): a Delete took about 23 ms, of which about 18 ms was closing the index (SQLite writes its change log back at the last close). The engine now keeps one connection to each index open (IndexGate.keep, let go before a replace and before restore, rekeying and setting Local Folders aside): about 2.6 to 3 ms per Delete.
+3. POP3 and Local Folders: the rows of Delete, Archive, Junk and drops leave at the key press (take_away at_once, MessageListModel.leave_now); the list is repainted before the next key press is read; a failure brings the messages back (come_back) and cancels the same actions waiting behind it (Backend.cancel_waiting); the status line says "... and back in the list".
+4. Tests: test_ui_listpainting.py (8; the two new ones fail on 3.6.352), test_ui_large_selection.py (47), test_ui_rapid_actions.py, test_ui_undo.py, test_ui_keys.py, test_engine_restore.py and test_engine_local.py (102; the file comparison now lets the kept connections go first), the rebuild tests, the main engine tests (107); Pyrefly strict 0; the layer check.
+5. Not done: IMAP deletes waiting in turn as one server command (each press carries its own Undo number: merging them needs a design for Undo), and measuring when the IMAP connection is made again. Not checked on the Windows computer (an open index file there).
+
 ## 2026-10-26 3.6.352: Delete is drawn at once and keeps up with a held key (D-266)
 
 1. The message list moves the rows below a removed one up with the window system's own scroll (the pixels stay, so the text looks the same) and paints only the new strip at the bottom and the changed rows. Paint per Delete: about 4 ms instead of about 25 ms per whole repaint, and one paint instead of three (test window, 26 rows, 19 columns, offscreen).
@@ -3005,4 +3013,4 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 3. Compared with a whole repaint after each Delete: one corner pixel of the selection differs by 1 step of blue out of 255 (anti-aliasing), nothing else.
 4. Held key (20 presses without pause, test window): 20 of 20 removals done.
 5. Also: the Archive button changes only when its text changes; the busy bar keeps its place; the Contact and Delete icons are made once.
-6. Still open: not yet measured on the owner's own window (record_owner.py); the "lost presses" of the handover did not happen in this test (20 of 20).
+6. Measured in the owner's own window (a sampler of the GUI thread after each Delete): the window was idle most of the time; rows that left within 100 ms of the previous one waited for a 100 ms batch interval (`Burst` of the message list), so a held key removed at most ten rows a second. The list now gathers leaving rows only within one pass of the event loop (interval 0); the large-delete tests (test_ui_large_selection.py, 47) pass.

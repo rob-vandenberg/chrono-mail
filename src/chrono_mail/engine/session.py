@@ -1,4 +1,5 @@
 import ssl
+import sqlite3
 import threading
 import time
 import functools
@@ -30,9 +31,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 3.6.350"
+__version__ = "session.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: IndexGate keeps one connection to the index open between commands, let go before a replace or removal: closing the last one wrote the whole change log back, 18 ms of every 23 ms Delete (D-266)
 # v3.6.350: sent_unfiled: the messages the server took in this run whose move to Sent is left (never sent again, also on a full disk)
 # v3.6.349: the restore's refusal says to try again when it is done (RV-174); a wait that is stopped is WaitStopped, told as a cancelled restore (RV-175)
 # v3.0.339: server_work: a restore waits until the checks, sends and calendar syncs that run have ended and holds new ones back (RV-60)
@@ -221,6 +223,27 @@ class IndexGate:
         self._condition: threading.Condition = threading.Condition()
         self._readers: dict[int, int] = {}  # thread -> how many times it has the index open
         self._replacing: bool = False
+        self._kept: sqlite3.Connection | None = None  # held open between commands: closing a command's own is then never the last close (D-266)
+
+    def keep(self, path: Path) -> None:
+        """Hold one connection to the index open from now on. SQLite writes its whole change log back into the file when the last
+        connection closes: every command paid that (about 18 ms of a 23 ms Delete) when it closed the index."""
+        with self._condition:
+            if self._kept is not None or self._replacing:
+                return
+            try:
+                kept = sqlite3.connect(path, check_same_thread=False)
+                kept.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()  # takes part in the change log (WAL) from now on
+            except sqlite3.Error:
+                return  # only a speed-up: a command opens the index as before
+            self._kept = kept
+
+    def let_go(self) -> None:
+        """Close the kept connection: the file is about to be replaced or removed (Windows refuses to while it is open)."""
+        with self._condition:
+            kept, self._kept = self._kept, None
+        if kept is not None:
+            kept.close()
 
     def enter(self) -> int:
         me = threading.get_ident()
@@ -244,6 +267,8 @@ class IndexGate:
         """Held while a new file takes the index's place: waits until no command has it open."""
         with self._condition:
             self._replacing = True
+        self.let_go()
+        with self._condition:
             while self._readers:
                 self._condition.wait()
         try:
@@ -261,6 +286,15 @@ _REBUILD_ABORTS: dict[str, threading.Event] = {}  # index file -> set when the p
 def index_gate(path: Path) -> IndexGate:
     with _INDEX_LOCKS_GUARD:
         return _INDEX_GATES.setdefault(str(path.resolve()), IndexGate())
+
+
+def let_go_kept_indexes() -> None:
+    """Close every kept index connection: account files are about to be removed or replaced (an account removed, a restore). The next
+    command that opens an index keeps one again."""
+    with _INDEX_LOCKS_GUARD:
+        gates = list(_INDEX_GATES.values())
+    for gate in gates:
+        gate.let_go()
 
 
 def rebuild_abort(path: Path) -> threading.Event:
@@ -530,6 +564,7 @@ class Engine:
                     pass
                 else:
                     index.when_closed(lambda: gate.leave(reader))
+                    gate.keep(path)
                     return index
             gate.leave(reader)
             with index_lock(path):  # commands that need the same rebuild at once (accounts in Local Folders) wait for the one that runs

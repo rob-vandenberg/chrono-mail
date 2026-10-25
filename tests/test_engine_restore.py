@@ -32,7 +32,7 @@ from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.restore import BackupPasswordNeeded, NotABackup, RestoreCancelled, WrongBackupPassword
-from chrono_mail.engine.session import ServerWorkPaused
+from chrono_mail.engine.session import ServerWorkPaused, let_go_kept_indexes
 from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.sync.pop3_state import Pop3State
 from tests.enginefactory import make_engine
@@ -41,9 +41,10 @@ from chrono_mail.mime import with_extra_headers
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 3.6.351"
+__version__ = "test_engine_restore.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: the files are compared as they lie at rest, the kept index connections let go (D-266)
 # v3.6.351: a message that moves during the backup's search is found, never left out; this computer's damaged tags file never
 #           stops the restore; a damaged record of the server or file of an account leaves out
 #           only that account's part
@@ -128,6 +129,8 @@ def _items(engine: Engine) -> list[str]:
 
 
 def _tree(root: Path) -> dict[str, str]:
+    """The files as they lie at rest: a kept index connection holds the index's last changes in its log until it is let go (D-266)."""
+    let_go_kept_indexes()
     return {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(root.rglob("*")) if path.is_file()}
 
 

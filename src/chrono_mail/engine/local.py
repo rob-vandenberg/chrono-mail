@@ -20,15 +20,16 @@ from chrono_mail.core.words import counted
 from chrono_mail.crypto import CredentialStoreError, DataKey, decrypt_message, encrypt_message, read_key_id
 from chrono_mail.engine.junkwords import JunkWords, load_words
 from chrono_mail.engine.newkey import kept_other_key, make_data_key, usable
-from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
+from chrono_mail.engine.session import STANDARD_FOLDERS, Engine, let_go_kept_indexes
 from chrono_mail.store import Store
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "local.py 3.6.350"
+__version__ = "local.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: the kept index connections are let go before Local Folders takes its rewritten files (D-266)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; the messages about kept Local
 #           Folders name Start without this mail, the way out when its key is gone; kept Local Folders written with an older key of this
 #           computer is taken back with it, written again with this computer's key (the old files kept aside); an interrupted rewrite is
@@ -300,6 +301,7 @@ def _finish_rekeying(engine: Engine) -> None:
         except OSError:
             pass  # tried again at the next setup; it never takes the place of a Local Folders in use
         return
+    let_go_kept_indexes()  # the kept index connections are closed first: Windows refuses to move an open file (D-266)
     try:
         if source.exists():
             os.replace(source, engine.directories.data_directory / f"set-aside-local-folders-older-key-{time.strftime('%Y%m%d-%H%M%S')}")

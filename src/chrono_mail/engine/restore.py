@@ -30,7 +30,7 @@ from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.newkey import make_data_key
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import UsageError
-from chrono_mail.engine.session import OUTBOX, STANDARD_FOLDERS, Engine, WaitStopped
+from chrono_mail.engine.session import OUTBOX, STANDARD_FOLDERS, Engine, WaitStopped, let_go_kept_indexes
 from chrono_mail.pimstore.extract import extract
 from chrono_mail.store import SENT_LETTER, Store
 from chrono_mail.store.store import folder_description
@@ -43,9 +43,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 3.6.351"
+__version__ = "restore.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: the kept index connections are let go before account files are moved aside or into place (D-266)
 # v3.6.351: this computer's damaged tags file is handled as its rules file (kept as .bad, told), never stopping the restore; a damaged
 #           record of the server (IMAP, DAV) leaves out only that account's messages or items, a damaged POP3 list only itself, and any
 #           other file an account cannot come back without only that account: the restore goes on
@@ -689,6 +690,7 @@ def _restore_whole(
                 _mirror_that_came_back(building / "imap-state.log", restored_store, engine.durable)
         if (building / "pop3-state.log").exists():
             _downloaded_that_came_back(engine, building, settings, local_mail, own_mail, not state_first, report)
+        let_go_kept_indexes()  # the kept index connections are closed first: Windows refuses to move an open file (D-266)
         if target.exists():  # the files of an account removed earlier (its mail is kept on removal): kept beside it, never written over
             kept = target.with_name(f"{account_id}-kept-{time.strftime('%Y%m%d-%H%M%S')}")
             os.replace(target, kept)
@@ -1276,6 +1278,7 @@ def _set_aside(engine: Engine) -> Path:
             if path.exists():
                 os.replace(path, aside / "config" / path.name)
         accounts = directories.data_directory / "accounts"
+        let_go_kept_indexes()  # the kept index connections are closed first: Windows refuses to move an open file (D-266)
         if accounts.exists():
             os.replace(accounts, aside / "accounts")
         else:
@@ -1308,6 +1311,7 @@ def _put_back(engine: Engine, aside: Path) -> None:
     done = (aside / SET_ASIDE_DONE).exists()  # the restore may have written in the places that were emptied
     try:
         if (aside / "accounts").exists():
+            let_go_kept_indexes()  # the kept index connections are closed first (D-266)
             if accounts.exists():  # what the restore wrote goes aside in one step (removed with the rest below): never half of it (RV-68)
                 os.replace(accounts, aside / "restored")
             os.replace(aside / "accounts", accounts)

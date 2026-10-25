@@ -10,13 +10,15 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QStatusBar, QWidget
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.core import ChronoMailError
+from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_listpainting.py 3.6.352"
+__version__ = "test_ui_listpainting.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: a Delete without a server takes the row out at the key press; rapid presses take exactly the highlighted messages; a failure brings them back and stops the rest (D-266)
 # v3.6.352: Initial: a Delete moves the rows below up as they are and paints only the new strip and the changed rows, and the list looks
 #           exactly as when painted whole; a removal is painted with the rest of its change; the Archive button and the busy bar move
 #           nothing in the window while nothing about them changes (D-266)
@@ -154,6 +156,58 @@ def test_a_second_delete_right_after_the_first_is_not_held_back(unread: World, q
         assert model.rowCount() == before - 2, "the second removal waited for a batch interval"
     finally:
         backend.changed.disconnect(facts.append)
+
+
+def test_a_delete_without_a_server_takes_the_row_out_at_the_key_press(unread: World) -> None:
+    """POP3 and Local Folders need no server's word: the row is gone at the key press, before the engine has answered (D-266)."""
+    model, view, backend = unread.window.list_model, unread.window.list_view, unread.window.backend
+    before = model.rowCount()
+    QTest.keyClick(view, Qt.Key.Key_Delete)
+    assert model.rowCount() == before - 1 and backend._pending  # noqa: SLF001 (the engine has not answered yet)
+
+
+def selected_message(world: World) -> str:
+    row = world.window.list_model.row_at(world.window.list_view.currentIndex().row())
+    assert row is not None
+    return row.message_id
+
+
+def test_rapid_deletes_take_exactly_the_highlighted_messages(unread: World, qtbot: QtBot) -> None:
+    """Each press takes the message highlighted when it is read, also when the presses come faster than the engine answers (D-266)."""
+    window = unread.window
+    model, view, backend = window.list_model, window.list_view, window.backend
+    before = model.rowCount()
+    chosen: list[str] = []
+    for _ in range(12):
+        chosen.append(selected_message(unread))
+        QTest.keyClick(view, Qt.Key.Key_Delete)
+    wait(qtbot, lambda: backend._pending == {})  # noqa: SLF001
+    shown = {row.message_id for row in (model.row_at(number) for number in range(model.rowCount())) if row is not None}
+    assert len(set(chosen)) == 12 and model.rowCount() == before - 12 and not set(chosen) & shown
+    trash = window.folders.find_item((unread.account_id, "folder", "Trash"))
+    assert trash is not None
+
+
+def test_a_failed_delete_brings_its_rows_back_and_stops_the_rest(unread: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A delete that fails brings its message back, and the deletes waiting behind it are not done: they come back too, and the status
+    line says so (D-266)."""
+    window = unread.window
+    model, view, backend = window.list_model, window.list_view, window.backend
+
+    def refuse(*_: object, **__: object) -> None:
+        raise ChronoMailError("The disk is full")
+
+    monkeypatch.setattr(Mailbox, "delete", refuse)
+    before = model.rowCount()
+    chosen: list[str] = []
+    for _ in range(4):
+        chosen.append(selected_message(unread))
+        QTest.keyClick(view, Qt.Key.Key_Delete)
+    assert model.rowCount() == before - 4
+    wait(qtbot, lambda: backend._pending == {} and model.rowCount() == before)  # noqa: SLF001
+    shown = {row.message_id for row in (model.row_at(number) for number in range(model.rowCount())) if row is not None}
+    assert set(chosen) <= shown
+    assert "back in the list" in window.report.label.text()
 
 
 def test_the_archive_button_is_left_alone_while_it_stays_archive(unread: World) -> None:

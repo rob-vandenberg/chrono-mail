@@ -25,9 +25,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 3.6.352"
+__version__ = "messagelist.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: leave_now, done_early, come_back: a message whose action needs no server's word leaves the list at its key press and comes back when the action fails (D-266)
 # v3.6.352: rows that leave the view go together only when they arrive in the same pass of the event loop, never held back for 100 ms (a held Delete key removed at most ten rows a second, D-266)
 # v3.6.350: a selected place whose message was not known yet keeps its place when the rest of the order comes and nothing in the view
 #           changed meanwhile (Qt dropped it); otherwise it goes and what waits for it says so (places_lost); a drag started then carries the
@@ -195,6 +196,8 @@ class MessageListModel(QAbstractTableModel):
         self.pending: set[str] = set()  # message ids with an action under way: greyed, and no second action (D-146)
         self._stay: set[str] = set()  # keys of messages read, unflagged or untagged while this view showed them: they stay until it is left
         self._leaving: list[Change] = []  # messages that left the view in this moment: their rows go together (16,000 one by one took minutes)
+        self._left_early: dict[str, tuple[str, MessageRow]] = {}  # message id -> its key and row: taken out at the key press, its action not done yet (D-266)
+        self.role_of: Callable[[str, str], str] = lambda account, folder: "other"  # the role of an account's folder (a row brought back is placed by it)
         self._leave_soon: Burst = Burst(self._flush_leaving, self, interval_ms=0)  # those that arrive in the same pass of the event loop go together; none waits (D-266)
         self._arriving: dict[str, MessageRow] = {}  # messages that came in, by key -> their row (kept current by later facts), placed together
         self._arrival_planned: bool = False
@@ -295,6 +298,7 @@ class MessageListModel(QAbstractTableModel):
         self._rows.clear()
         self._ids.clear()
         self._leaving.clear()
+        self._left_early.clear()  # the new order comes from the engine: it holds every message whose action was not done
         self._asked.clear()
         self._wanted_pages.clear()
 
@@ -1167,6 +1171,32 @@ class MessageListModel(QAbstractTableModel):
         """An action is under way for these messages: they are drawn greyed until it ends."""
         self.pending.update(message_ids)
         self._redraw(message_ids)
+
+    def leave_now(self, message_ids: list[str]) -> None:
+        """An action that needs no server's word (POP, Local Folders) takes these messages out of the view at its key press, not when
+        its fact comes: the row goes, and the rows below close up, at once (D-266). Kept until the action is done: a failed one comes back."""
+        for message_id in message_ids:
+            key = self._loaded_key(message_id)
+            row = self._rows.get(key) if key is not None else None
+            if key is None or row is None:
+                continue  # not shown or not loaded: it leaves with its fact, as before
+            self._left_early[message_id] = (key, row)
+            self._take_out(key, _unread(row))
+            self.pending.add(message_id)  # still under way until its action answers: what waits in turn never acts on it again (D-146)
+
+    def done_early(self, message_id: str) -> None:
+        """The action of a message taken out at its key press is done: nothing comes back."""
+        self._left_early.pop(message_id, None)
+
+    def come_back(self, message_id: str) -> None:
+        """The action of a message taken out at its key press was not done: it comes back at its place, the engine says where."""
+        left = self._left_early.pop(message_id, None)
+        spec = self._spec
+        if left is None or spec is None:
+            return
+        key, row = left
+        mailbox = split_key(key)[0] or spec.account or ""
+        self._bring_in(Change("added", mailbox, folder=row.folder, message_id=message_id, row=row, unread=_unread(row), role=self.role_of(mailbox, row.folder)))
 
     def clear_pending(self, message_id: str) -> None:
         """The action of this message ended (its fact took the row out already, or it failed): drawn as normal again."""

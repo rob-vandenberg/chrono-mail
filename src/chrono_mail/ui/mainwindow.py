@@ -61,9 +61,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 3.6.352"
+__version__ = "mainwindow.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: the message list knows the roles of the folders (a message that comes back is placed by it, D-266)
 # v3.6.352: the Archive button changes only when it switches between Archive and Unarchive (a new icon at every selection laid out the toolbar again); the sync marks repaint the whole list through repaint_all (D-266)
 # v3.6.350: File > Use a recovery code says why the key is missing; Start without this mail is reported in the status line;
 #           a click on the Delete icon is MessageActions.delete_by_icon (in turn with what waits); Redo can be pressed while busy
@@ -346,6 +347,7 @@ class MainWindow(QMainWindow):
         self.folders = FolderPane(backend, state, self.report, self.prefs, memory, self.tags, self.messages, self)
         self.tree, self.tree_model = self.folders.tree, self.folders.model
         self.list_model, self.list_view = self.messages.model, self.messages.view
+        self.list_model.role_of = self.mail_state.folder_role_of  # a message that comes back is placed by its folder's role (D-266)
         self.delegate, self.column_delegate = self.messages.delegate, self.messages.column_delegate
         self.sort_button, self.sort_menu, self.count_label = self.messages.sort_button, self.messages.sort_menu, self.messages.count_label
         self.setMinimumWidth(MINIMUM_WIDTH)  # one minimum for all sections: showing another section never makes the window wider

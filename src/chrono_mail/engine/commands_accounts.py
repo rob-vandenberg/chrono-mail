@@ -40,7 +40,7 @@ from chrono_mail.crypto import (
 from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders, take_back
 from chrono_mail.engine.newkey import kept_local_key, kept_other_key, make_data_key, recovery_code_not_stored, recovery_code_stored, usable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
-from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
+from chrono_mail.engine.session import STANDARD_FOLDERS, Engine, let_go_kept_indexes
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
 from chrono_mail.protocols.tls import context_for, inspect_certificate, valid_fingerprint
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
@@ -49,9 +49,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 3.6.351"
+__version__ = "commands_accounts.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: the kept index connections are let go before the mail kept on this computer is set aside (D-266)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.6.350: key.status names the key of Local Folders kept here when the settings name none (kept), so the start asks for it;
 #           key.start-without-kept-mail sets that mail aside (never deleted) when its key is gone for good, so a new key can be made
@@ -599,6 +600,7 @@ def key_start_without_kept_mail(engine: Engine, parameters: NoParameters) -> Kep
             raise UsageError("The key of the mail kept on this computer is in the password store: it is taken back, nothing was set aside")
         source = engine.directories.account_directory(LOCAL_ACCOUNT_ID)
         target = engine.directories.data_directory / f"set-aside-local-folders-{datetime.now():%Y%m%d-%H%M%S}"
+        let_go_kept_indexes()  # the kept index connections are closed first: Windows refuses to move an open file (D-266)
         try:
             source.rename(target)
         except OSError as error:

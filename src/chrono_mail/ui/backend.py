@@ -11,9 +11,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, TypedCommand, UsageError, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 2.1.311"
+__version__ = "backend.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: cancel_waiting: the commands of one kind that wait their turn for an account are answered as not done (a failed Delete stops the rest, D-266)
 # v2.1.311: jobs_changed and running(): which commands run (what each is doing, for which account), not only how many: the busy bar names them
 # v2.0.295: A job answers exactly once however it ends (also an error that is no Exception), so a window never waits for ever
 # v2.0.294: Every job started is held here until its answer is delivered: Qt's pool only borrows it, so nothing can throw it away before
@@ -62,6 +63,14 @@ class _Task(QRunnable):
     def __init__(self, request: int, engine: Engine, registry: CommandRegistry, command: str, values: Mapping[str, object], done: _Done) -> None:
         super().__init__()
         self._request, self._engine, self._registry, self._command, self._values, self._done = request, engine, registry, command, values, done
+
+    @property
+    def request(self) -> int:
+        return self._request
+
+    @property
+    def command(self) -> str:
+        return self._command
 
     @override
     @Slot()
@@ -182,6 +191,25 @@ class Backend(QObject):
             on_success(answer)
 
         return self.call(command.id, command.values(parameters), answered, on_error, owner, waiting=waiting, in_order=in_order, checking=checking)
+
+    def cancel_waiting(self, command: str, account: str, reason: str) -> None:
+        """The commands of this kind for this account that wait their turn (in_order) are not run: each is answered with this reason.
+        An action that failed stops the ones given after it (a held Delete key, D-266)."""
+        cancelled: list[_Pending] = []
+        for key, waiting in list(self._queued.items()):
+            if not key.startswith(f"{account}\t"):
+                continue
+            for task in [task for task in waiting if task.command == command]:
+                waiting.remove(task)
+                self._jobs.pop(task.request, None)
+                self._queue_of.pop(task.request, None)
+                pending = self._pending.pop(task.request, None)
+                if pending is not None:
+                    cancelled.append(pending)
+        self._tell_busy()
+        for pending in cancelled:  # answered once all are out of the queue: an answer may cancel again
+            if pending.on_error is not None and (pending.owner is None or _alive(pending.owner)):
+                pending.on_error(ChronoMailError(reason))
 
     def run_now(self, command: str, values: Mapping[str, object]) -> object:
         """Run a command in the calling thread (for the few places that cannot continue without the answer)."""

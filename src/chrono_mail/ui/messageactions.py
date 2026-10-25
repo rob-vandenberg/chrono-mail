@@ -30,9 +30,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.350"
+__version__ = "messageactions.py 3.6.353"
 
 # --- Version history ----------------------------------------------------
+# v3.6.353: act_many: an action that needs no server's word takes its rows out at the key press; a failed one brings its messages back and stops the same actions waiting behind it (D-266)
 # v3.6.350: a drop made while the list did not know every selected message yet moves them all: the rest is read from the view's whole
 #           order at the drop (RV-206); Mark all as read and Empty folder made while an action waits act on the folder they were made in,
 #           and a drop waiting in turn leaves out messages that are under way by then; every action of the person takes a number (also those
@@ -483,10 +484,21 @@ class MessageActions(QObject):
             groups.setdefault((account, folder), []).append(message_id)
         if not groups:
             return
+        at_once = take_away and not any(self._state.confirmed_by_server(account) for account, _ in groups)  # POP3, Local Folders: no server's word to wait for
         if take_away:
-            self._messages.take_away([message_id for _, _, message_id in targets])
+            self._messages.take_away([message_id for _, _, message_id in targets], at_once=at_once)
         remaining, failures, total = len(groups), list[NotDone](), len(targets)
         model = self._messages.model
+
+        def settle(done: list[str], failed: list[str], account: str) -> None:
+            """The rows taken out at the key press: the done ones stay away, the others come back. A failure stops the same actions
+            that wait their turn behind it (a held Delete key): they come back too, and say why (D-266)."""
+            for message_id in done:
+                model.done_early(message_id)
+            for message_id in failed:
+                model.come_back(message_id)
+            if failed and at_once:
+                self._backend.cancel_waiting(command.id, account, "Not done: an action before it could not be done")
 
         def finish() -> None:
             nonlocal remaining
@@ -495,16 +507,19 @@ class MessageActions(QObject):
                 return
             if failures:
                 reason = failures[0].reason if all(item.reason == failures[0].reason for item in failures) else f"{failures[0].reason} (and other reasons)"
-                self._status.report(title, ChronoMailError(f"{len(failures):,} of {counted(total, 'message')}: {reason}"))
+                back = " and back in the list" if at_once else ""  # taken out at the key press: they came back (D-266)
+                self._status.report(title, ChronoMailError(f"{len(failures):,} of {counted(total, 'message')}{back}: {reason}"))
             if finished:
                 self._status.finished(finished, keep_error=bool(failures))
 
         for (account, folder), messages in groups.items():
 
-            def answered(result: ManyResult, messages: list[str] = messages) -> None:
+            def answered(result: ManyResult, messages: list[str] = messages, account: str = account) -> None:
                 try:
                     for message_id in messages:
                         model.clear_pending(message_id)  # done ones left with their fact; failed ones are back
+                    not_done = {item.message for item in result.failed}
+                    settle([message_id for message_id in messages if message_id not in not_done], [message_id for message_id in messages if message_id in not_done], account)
                     failures.extend(result.failed)
                     if result.gone or any(item.missing for item in result.failed):
                         self._status.warn_missing()  # a file gone here: one warning for the action, with the advice to repair the index (D-109)
@@ -514,10 +529,11 @@ class MessageActions(QObject):
                 finally:
                     self._undoing.ended()  # always: an Undo waiting for it, and what waits behind that Undo, go on
 
-            def refused(error: ChronoMailError, messages: list[str] = messages) -> None:
+            def refused(error: ChronoMailError, messages: list[str] = messages, account: str = account) -> None:
                 try:
                     for message_id in messages:
                         model.clear_pending(message_id)
+                    settle([], messages, account)
                     failures.extend(NotDone(message_id, str(error)) for message_id in messages)
                     if isinstance(error, MessageNotFoundError):
                         self._status.warn_missing()
