@@ -1,0 +1,30 @@
+"""Parsing and building messages, robust against malformed input."""
+
+from chrono_mail.mime.builder import build_message, envelope_recipients, with_extra_headers, without_bcc
+from chrono_mail.mime.model import REPEAT_HEADER, SEND_AT_HEADER, Address, Attachment, OutgoingMessage, ParsedMessage, send_time
+from chrono_mail.mime.parser import parse_message
+
+# --- Version ------------------------------------------------------------
+__version__ = "__init__.py 1.1.206"
+
+# --- Version history ----------------------------------------------------
+# v1.1.206: Export REPEAT_HEADER and with_extra_headers
+# v1.1.196: Export SEND_AT_HEADER and send_time
+# v0.0.86: Export without_bcc
+# v0.0.5: Export the parser, the builder and the message model
+# v0.0.2: Initial skeleton
+
+__all__ = [
+    "REPEAT_HEADER",
+    "SEND_AT_HEADER",
+    "Address",
+    "Attachment",
+    "OutgoingMessage",
+    "ParsedMessage",
+    "build_message",
+    "envelope_recipients",
+    "with_extra_headers",
+    "without_bcc",
+    "parse_message",
+    "send_time",
+]
