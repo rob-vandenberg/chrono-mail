@@ -11,9 +11,11 @@ from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolEr
 from chrono_mail.protocols.lineconnection import LineConnection
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 3.4.344"
+__version__ = "imap.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a refusal keeps what the server sent before it; uid_fetch_what_comes gives it (RV-202); a refused SELECT leaves no folder
+#           open here either
 # v3.4.344: a body the server sends as NIL is not sent, never an empty message (RV-51)
 # v1.8.263: R-16: sending and reading lines go through LineConnection (protocols/lineconnection.py), shared with POP3
 # v1.1.248: What changed in a folder (RFC 7162): enable_changes switches on QRESYNC or CONDSTORE where the server has them, uid_changes asks for the
@@ -38,7 +40,11 @@ _STATUS_WORDS: frozenset[str] = frozenset({"OK", "NO", "BAD", "BYE", "PREAUTH"})
 
 
 class ImapRefused(ProtocolError):
-    """The server answered a command with NO or BAD."""
+    """The server answered a command with NO or BAD. What it sent before that answer is kept (a FETCH may have sent part of the messages)."""
+
+    def __init__(self, text: str, before: tuple["Response", ...] = ()) -> None:
+        super().__init__(text)
+        self.before: tuple[Response, ...] = before
 
 
 @dataclass(frozen=True, slots=True)
@@ -494,7 +500,7 @@ class ImapClient:
             if reply.name == "OK":
                 collected.append(reply)
                 return collected
-            raise ImapRefused(reply.text or reply.name)
+            raise ImapRefused(reply.text or reply.name, tuple(collected))
 
     @staticmethod
     def _capabilities_from(response: Response) -> frozenset[str]:
@@ -528,6 +534,7 @@ class ImapClient:
 
     def select(self, folder: str, read_only: bool = False) -> SelectInfo:
         verb = "EXAMINE" if read_only else "SELECT"
+        self.selected = None  # a refused SELECT or EXAMINE leaves no folder open (RFC 3501 6.3.1), never the one open before
         responses = self._command(f"{verb} {quote(encode_folder_name(folder))}")
         exists, validity, next_uid, modseq = 0, 0, 1, None
         flags: frozenset[str] = frozenset()
@@ -610,6 +617,14 @@ class ImapClient:
         """FETCH for a UID set such as '5', '5:9' or '1:*'. The items decide what is filled in: FLAGS, RFC822.SIZE, BODY[] (data)."""
         suffix = f" (CHANGEDSINCE {changed_since})" if changed_since is not None else ""
         return self._fetched(self._command(f"UID FETCH {uids} {items}{suffix}"))
+
+    def uid_fetch_what_comes(self, uids: str, items: str) -> tuple[tuple[FetchedItem, ...], bool]:
+        """FETCH, also when the server refuses it: what it sent before the refusal, and whether it refused (RV-202: that part was thrown
+        away and asked again)."""
+        try:
+            return self.uid_fetch(uids, items), False
+        except ImapRefused as refusal:
+            return self._fetched(list(refusal.before)), True
 
     def _fetched(self, responses: list[Response]) -> tuple[FetchedItem, ...]:
         fetched: list[FetchedItem] = []

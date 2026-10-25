@@ -13,9 +13,11 @@ from chrono_mail.sync import ImapState, plan_folders, planned_anyway
 from chrono_mail.sync.imap_sync import LOCAL_ONLY  # first parts of the local folders that never exist on a server
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_online.py 3.0.339"
+__version__ = "imap_online.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: after a folder delete Inbox is opened for changes again before the next action there (RV-170); a folder that holds mail too
+#           large to download says so instead of "check for mail first" (RV-172); refuse_unseen for a folder tree (RV-176)
 # v3.0.339: a folder is deleted on the server only when it holds no mail this computer never had (the server deletes it with its mail; RV-108)
 # v2.4.330: a folder that is on the server but not subscribed is used, never created again ("Mailbox already exists", W7)
 # v2.0.284: A folder made on the server is known to the sync at once (its server name and how the server numbers it), so a rename or delete
@@ -41,6 +43,20 @@ __version__ = "imap_online.py 3.0.339"
 OFFLINE_NOTICE: str = "The server of {account} could not be reached: the change is made there at the next mail check"
 LEAVE_OUT_UNREACHABLE: str = "The server of {account} cannot be reached: a folder is only left out while the server can be reached"
 BATCH: int = 500  # UIDs per command, so that a command line stays short
+
+
+SIZES_ASKED: int = 500  # the unseen messages of a folder whose sizes are asked, to tell a message too large to download apart
+TOO_LARGE_TO_DOWNLOAD: int = 256 * 1024 * 1024  # what the mail check never downloads (MAXIMUM_MESSAGE_BYTES of commands_mail)
+
+
+def _unseen_text(local: tuple[str, ...], unseen: set[int], too_large: set[int]) -> str:
+    """Why a folder was not deleted, with what helps: a check for new mail, or, for messages too large to download (which no check brings),
+    the provider's web mail (RV-172)."""
+    name = "/".join(local)
+    if unseen <= too_large:
+        return (f"The folder '{name}' holds mail too large for Chrono Mail to download (over 256 MB). Nothing was deleted: remove that mail "
+                "with your provider's web mail first, then delete the folder.")
+    return f"The folder '{name}' has new mail on the server that is not here yet. Nothing was deleted: check for mail first, then look at the folder again."
 
 
 class GoneFromServer(ImapRefused):
@@ -195,6 +211,8 @@ class ServerSession:
         """Close a server folder before it is renamed or deleted (some servers refuse that for the open folder)."""
         if client.selected == server:
             client.select("INBOX", read_only=True)
+            self.link.validity.pop("INBOX", None)  # open read-only now: the next action in Inbox opens it for changes again (RV-170)
+            self.link.keywords.pop("INBOX", None)
         self.link.validity.pop(server, None)
 
     def _select(self, client: ImapClient, local: tuple[str, ...], server: str) -> bool:
@@ -618,6 +636,24 @@ class ServerSession:
 
         return commit
 
+    def refuse_unseen(self, local: tuple[str, ...]) -> None:
+        """Before a folder and its subfolders are deleted: refused when this one holds mail this computer never had, so a tree is never
+        deleted half-way (RV-176). Offline nothing is asked: the delete waits for the next check, which applies the same rule (D-200)."""
+        client = self._client(notice=False)
+        if client is None:
+            return
+        try:
+            server = self._folders(client, fresh=True).get(local)
+            if server is None:
+                return
+            unseen, too_large = self._unseen_mail(client, local, server)
+        except ImapRefused:
+            raise
+        except ProtocolError:  # the connection broke while looking: nothing of the tree is deleted (the second review of RV-176)
+            raise UsageError("The connection to the server broke while the folders were looked at. Nothing was deleted: try again.") from None
+        if unseen:
+            raise UsageError(_unseen_text(local, unseen, too_large))
+
     def delete_folder(self, local: tuple[str, ...]) -> Commit:
         """Delete one folder on the server, with its mail. When the server cannot be reached it is deleted here and the next check deletes it
         there, unless the server changed it meanwhile (D-193 1.3, R-31)."""
@@ -628,11 +664,9 @@ class ServerSession:
             server = self._folders(client, fresh=True).get(local)
             if server is None:
                 return _nothing  # not on the server: only here
-            if self._has_unseen_mail(client, local, server):
-                raise UsageError(
-                    f"The folder '{'/'.join(local)}' has new mail on the server that is not here yet. Nothing was deleted: check for mail first, "
-                    "then look at the folder again."
-                )
+            unseen, too_large = self._unseen_mail(client, local, server)
+            if unseen:
+                raise UsageError(_unseen_text(local, unseen, too_large))
             self._leave(client, server)
             client.delete_folder(server)
         except ImapRefused:
@@ -642,16 +676,23 @@ class ServerSession:
         self.link.folders = None
         return lambda: self.state.forget_folder(local, server)
 
-    def _has_unseen_mail(self, client: ImapClient, local: tuple[str, ...], server: str) -> bool:
-        """Does the server folder hold mail this computer never had? A server deletes a folder with all its mail, so mail that arrived
-        after the last check would be gone unseen (RV-108; the same rule as a delete made offline, D-200)."""
-        info = client.select(server, read_only=True)
-        known = set(self.state.entries.get(local, {}))
-        on_server = set(client.uid_search("ALL")) if info.exists else set[int]()
-        self._leave(client, server)  # opened read-only to look: never left open for the person's next action there
-        if info.uid_validity != self.state.validity.get(local, 0):
-            return bool(on_server)  # numbered differently than the sync knows: any message there may be unseen
-        return bool(on_server - known)
+    def _unseen_mail(self, client: ImapClient, local: tuple[str, ...], server: str) -> tuple[set[int], set[int]]:
+        """The messages of the server folder this computer never had, and which of them are too large to download. A server deletes a
+        folder with all its mail, so mail that arrived after the last check would be gone unseen (RV-108; the same rule as a delete made
+        offline, D-200)."""
+        self.link.validity.pop(server, None)  # opened read-only from here on: whatever happens, the next action there opens it again
+        self.link.keywords.pop(server, None)
+        try:
+            info = client.select(server, read_only=True)  # a refusal to open it is a refusal of the delete, never an empty folder
+            known = set(self.state.entries.get(local, {}))
+            on_server = set(client.uid_search("ALL")) if info.exists else set[int]()
+            unseen = on_server if info.uid_validity != self.state.validity.get(local, 0) else on_server - known  # numbered differently than
+            # the sync knows: any message there may be unseen
+            asked = sorted(unseen)[:SIZES_ASKED]
+            too_large = {item.uid for item in client.uid_fetch(",".join(map(str, asked)), "(UID RFC822.SIZE)") if (item.size or 0) > TOO_LARGE_TO_DOWNLOAD} if asked else set[int]()
+        finally:
+            self._leave(client, server)  # opened read-only to look: never left open for the person's next action there
+        return unseen, too_large
 
     def empty_folder(self, local: tuple[str, ...]) -> Commit | None:
         """Delete every message of a server folder for good, also those not downloaded yet. None when that cannot be done

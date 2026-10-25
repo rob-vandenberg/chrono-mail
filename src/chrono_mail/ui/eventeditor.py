@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.pim.times import in_local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.core import OWN_COLOUR_ID, ChronoMailError
 from chrono_mail.engine.commands_calendar import EVENT_ADD, EVENT_EDIT, EventInfo
@@ -31,9 +32,10 @@ from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circl
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 3.2.342"
+__version__ = "eventeditor.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: an event's times through the zone the engine reads them back in (also never the platform's conversion, RV-201)
 # v3.2.342: the reminders are sent only when the reminder choice was changed: a second alarm or one at a fixed time stays (RV-18)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -57,7 +59,7 @@ def to_qdatetime(text: str) -> QDateTime:
     if len(text) == 10:
         return QDateTime(QDate.fromString(text, DATE_FORMAT), QTime(0, 0))
     moment = datetime.fromisoformat(text)
-    local = moment.astimezone() if moment.tzinfo else moment
+    local = in_local_zone(moment)  # shown in the zone the engine reads the times back in
     return QDateTime(QDate(local.year, local.month, local.day), QTime(local.hour, local.minute))
 
 

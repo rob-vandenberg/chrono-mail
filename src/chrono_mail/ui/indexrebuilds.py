@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import override
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
@@ -15,9 +15,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "indexrebuilds.py 2.4.333"
+__version__ = "indexrebuilds.py 3.5.348"
 
 # --- Version history ----------------------------------------------------
+# v3.5.348: The question Abort rebuilding shows plain text (RV-167, without a filter on the whole program)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.0.303: show_window: the window comes back after Run in background (a click on the bar in the status line, D-229)
 # v2.0.281: Initial version (D-229): at start every index is checked; the ones that cannot be used are rebuilt one after the other before
@@ -39,6 +40,7 @@ BACKGROUND_TIP: str = "Only while Chrono Mail can keep using the index it has: t
 def ask_abort(parent: QWidget, usable: bool) -> bool:
     """Abort rebuilding?, with Continue rebuilding as the default: whether the person chose to abort."""
     box = QMessageBox(QMessageBox.Icon.Warning, ABORT_TITLE, ABORT_KEEPS if usable else ABORT_CLOSES, QMessageBox.StandardButton.NoButton, parent)
+    box.setTextFormat(Qt.TextFormat.PlainText)  # never markup (RV-167)
     abort = box.addButton("Abort" if usable else "Abort and close", QMessageBox.ButtonRole.DestructiveRole)
     keep_going = box.addButton("Continue rebuilding", QMessageBox.ButtonRole.RejectRole)
     box.setDefaultButton(keep_going)

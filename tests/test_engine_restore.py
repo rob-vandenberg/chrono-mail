@@ -1,6 +1,7 @@
 import dataclasses
 import hashlib
 import json
+import os
 import threading
 import time
 import zipfile
@@ -9,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from chrono_mail.config import AccountSettings, Action, AppConfig, Condition, Rule, RuleSet, ServerRole, load_rules, save_rules
-from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, MessageFlag
+from chrono_mail.config import AccountSettings, Action, AppConfig, Condition, Pop3DeletePolicy, Rule, RuleSet, ServerRole, load_rules, save_rules
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, FolderRole, MessageFlag
 from chrono_mail.engine import Engine, backup, build_registry, restore
 from chrono_mail.engine.backup import cancel_backup
 from chrono_mail.engine.commands_backup import (
@@ -40,9 +41,12 @@ from chrono_mail.mime import with_extra_headers
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_restore.py 3.5.346"
+__version__ = "test_engine_restore.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a set-aside that stops half-way leaves this computer's data where it is (RV-193); a restored IMAP state names only what came
+#           back (RV-194, RV-195); an older backup never leads to POP3 mail deleted on the server (RV-197); a damaged setting is not counted as
+#           a damaged message (RV-199); Cancel or quitting during the wait is a cancelled restore, the refusal says try again (RV-174, RV-175)
 # v3.5.346: the recovery code is shown before every restore until it was confirmed as stored (RV-03)
 # v3.3.343: the code review's batch 3: what was downloaded names only messages that came back (RV-61); size limits (RV-63); damaged
 #           descriptions and settings are left out (RV-64, RV-65); Replace keeps storage and encryption (RV-67); a failed restore leaves
@@ -596,10 +600,11 @@ def test_a_damaged_folder_description_or_setting_leaves_only_that_out(tmp_path: 
     _damage(tmp_path / "all.cmz", lambda name: name == "config/rules.json")
     second = _fresh(tmp_path / "second")
     result = _restore(second, tmp_path / "all.cmz", "")  # back whole: the account was not here
-    assert result.damaged == 4 and result.messages == 0 and result.items == 1 and any("the rules" in note for note in result.notes)
+    assert result.damaged == 3 and result.messages == 0 and result.items == 1 and any("the rules" in note for note in result.notes)  # the 3 messages
+    # of the Inbox; the rules file is named in the notes, never counted as a message that did not come back (RV-199)
     assert _anna(first) in {settings.account.account_id for settings in second.config().accounts}
     result = _restore(first, tmp_path / "all.cmz", "")  # filled in: the account was here
-    assert result.damaged == 4 and len(_mail(first)) == 3
+    assert result.damaged == 3 and len(_mail(first)) == 3
 
 
 def test_replace_keeps_where_the_mail_is_kept_and_its_encryption(tmp_path: Path) -> None:
@@ -655,4 +660,156 @@ def test_the_recovery_code_is_shown_before_every_restore_until_it_was_stored(tmp
     REGISTRY.ask(engine, KEY_CODE_STORED, NoParameters())  # Done, with the tick
     assert not REGISTRY.ask(engine, KEY_ENSURE, NoParameters()).show_code
     assert not REGISTRY.ask(make_engine(tmp_path), KEY_ENSURE, NoParameters()).show_code  # also after a restart
+
+
+@pytest.mark.parametrize("held", ["accounts", "tags.json"])
+def test_a_set_aside_that_stops_half_way_leaves_this_computers_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, held: str) -> None:
+    """RV-193: Remove all data first could not move one thing aside (a file another program held open); putting back then moved the
+    mail that was still in its place away and deleted it with the aside folder, and removed the settings files not moved yet."""
+    engine = _computer(tmp_path / "first")
+    password = _backup(engine, tmp_path / "all.cmz")
+    engine.directories.tags_file.write_text("{}", "utf-8")  # a settings file that is moved aside after rules and sidebar
+    before = _tree(engine.directories.data_directory), _tree(engine.directories.config_directory)
+    real_replace = os.replace
+
+    def replace(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        if Path(source).name == held and "restore-aside-" in str(target):
+            raise PermissionError(13, "The file is in use by another program")
+        real_replace(source, target)
+
+    monkeypatch.setattr(restore.os, "replace", replace)
+    with pytest.raises(OSError, match="in use"):
+        _restore(engine, tmp_path / "all.cmz", password, remove_first=True)
+    assert (_tree(engine.directories.data_directory), _tree(engine.directories.config_directory)) == before
+    assert not list(engine.directories.data_directory.glob("restore-aside-*"))
+
+
+def test_a_restored_imap_state_names_only_what_came_back(tmp_path: Path) -> None:
+    """RV-194, RV-195: the IMAP state came back as it was: a message it named that did not come back (damaged, too large, downloaded while
+    the backup was made) counted as deleted here and was deleted on the server; a folder left out was taken as deleted here and never
+    synchronised again. What the person did here and the server had not got yet stays."""
+    from chrono_mail.store import Store
+    from chrono_mail.sync.imap_state import Checkpoint, ImapState
+
+    store = Store.create(tmp_path / "store", "0" * 31 + "2", None, durable=False)
+    store.create_folder(("Inbox",), FolderRole.INBOX)
+    store.create_folder(("Renamed",))
+    here = store.deliver(("Inbox",), raw_message(subject="Came back")).store_id
+    path = tmp_path / "imap-state.log"
+    state = ImapState(path, durable=False)
+    state.set_validity(("Inbox",), 1)
+    state.map(("Inbox",), 1, here, frozenset())
+    state.map(("Inbox",), 2, "a" * 32, frozenset())  # not in the backup
+    state.map(("Inbox",), 3, "b" * 32, frozenset())  # deleted for good here, offline: the server still has to delete it
+    state.note_deleted("b" * 32)
+    state.set_checkpoint(("Inbox",), Checkpoint(4, None))  # with CONDSTORE only, a check would ask only what changed since
+    for folder, name, validity in ((("Lost",), "Lost", 5), (("Unticked",), "Unticked", 7), (("Old",), "Old", 9)):
+        state.set_validity(folder, validity)
+        state.set_server_name(folder, name)
+        state.map(folder, 1, "c" * 31 + str(validity), frozenset())
+    state.hide_folder("Unticked", ("Unticked",))
+    state.rename_later(("Old",), ("Renamed",))  # renamed here offline, not on the server yet
+    restore._mirror_that_came_back(path, store, durable=False)  # noqa: SLF001
+    after = ImapState(path, durable=False)
+    assert sorted(after.folder_entries(("Inbox",))) == [1, 3]
+    assert ("Lost",) not in after.validity and after.server_names.get(("Lost",)) == "Lost"  # brought from the server again at the next check
+    assert ("Inbox",) not in after.checkpoints  # listed in full at the next check: never only what changed since
+    assert "Unticked" in after.hidden and ("Renamed",) in after.validity and after.pending  # the person's own choices stay
+
+
+def _as_older_backup(backup: Path, account_id: str, extra_record: str) -> None:
+    """The backup as one made before 3.3.343: its version older, and its download list naming a message it lacks."""
+    with zipfile.ZipFile(backup) as archive:
+        entries = [(info, archive.read(info)) for info in archive.infolist()]
+    with zipfile.ZipFile(backup, "w") as archive:
+        for info, data in entries:
+            if info.filename == "chrono-mail-backup.json":
+                manifest = json.loads(data)
+                manifest["version"] = "3.3.342"
+                data = json.dumps(manifest).encode("utf-8")
+            elif info.filename == f"data/accounts/{account_id}/pop3-state.log":
+                data += extra_record.encode("utf-8")
+            archive.writestr(info, data)
+
+
+def test_an_older_backup_of_an_account_kept_in_local_folders_never_names_a_message_it_lacks(tmp_path: Path) -> None:
+    """The review of RV-197: an account that keeps its mail in Local Folders, restored together with Local Folders, kept the older backup's
+    list as it was."""
+    first = _computer(tmp_path / "first")
+    shop = _add_local_pop3(first)
+    settings = first.config().find(shop)
+    first.change_config(lambda fresh: fresh.with_account(dataclasses.replace(settings, pop3=dataclasses.replace(settings.pop3, policy=Pop3DeletePolicy.DELETE_WHEN_DELETED_LOCALLY))))
+    fetched = _downloaded(first, shop, 1, local=True)
+    BACKUP_MAKE.answer(REGISTRY.run(first, BACKUP_MAKE.id, {"path": str(tmp_path / "both.cmz"), "accounts": (shop, "local-folders"), "passwords": False}))
+    _as_older_backup(tmp_path / "both.cmz", shop, f"D\tuid-later\t{'f' * 32}\t1000001\n")
+    second = _fresh(tmp_path / "second")
+    _restore(second, tmp_path / "both.cmz", "")
+    assert _named(second, shop) == set(fetched)
+
+
+@pytest.mark.parametrize("version_older", [True, False])
+def test_an_older_backup_never_names_a_message_it_lacks(tmp_path: Path, version_older: bool) -> None:
+    """RV-197: a backup made before 3.3.343 read the download list after the mail: it named messages downloaded meanwhile, which it lacks;
+    with "delete from the server when deleted here" the next check deleted them on the server."""
+    first = _computer(tmp_path / "first")
+    anna = _anna(first)
+    settings = first.config().find(anna)
+    first.change_config(lambda fresh: fresh.with_account(dataclasses.replace(settings, pop3=dataclasses.replace(settings.pop3, policy=Pop3DeletePolicy.DELETE_WHEN_DELETED_LOCALLY))))
+    fetched = _downloaded(first, anna, 1)
+    _backup(first, tmp_path / "all.cmz", protected=False)
+    if version_older:
+        _as_older_backup(tmp_path / "all.cmz", anna, f"D\tuid-later\t{'f' * 32}\t1000001\n")
+    second = _fresh(tmp_path / "second")
+    _restore(second, tmp_path / "all.cmz", "")
+    assert _named(second, anna) == set(fetched)
+
+
+@pytest.mark.parametrize("stopped_by", ["cancel", "quit"])
+def test_cancel_or_quit_while_the_restore_waits_is_a_cancelled_restore(tmp_path: Path, stopped_by: str) -> None:
+    """RV-175, RV-174: Cancel while the restore waited for a running check said "The restore did not finish"; quitting did not end the
+    wait; a send refused meanwhile promised to be sent later, which nothing did."""
+    engine = _computer(tmp_path / "first")
+    password = _backup(engine, tmp_path / "all.cmz")
+    checking, release = threading.Event(), threading.Event()
+
+    def a_check_that_runs() -> None:
+        with engine.server_work.running():
+            checking.set()
+            release.wait(10)
+
+    check = threading.Thread(target=a_check_that_runs)
+    check.start()
+    assert checking.wait(5)
+    errors: list[BaseException] = []
+
+    def restoring() -> None:
+        try:
+            _restore(engine, tmp_path / "all.cmz", password)
+        except BaseException as error:  # noqa: BLE001 - kept for the assert below
+            errors.append(error)
+
+    thread = threading.Thread(target=restoring)
+    thread.start()
+    time.sleep(0.3)
+    try:
+        with pytest.raises(ServerWorkPaused, match="try again when it is done"):
+            with engine.server_work.running():
+                pass
+        if stopped_by == "cancel":
+            cancel_backup()
+        else:
+            engine.stop_event.set()
+        thread.join(5)
+    finally:
+        release.set()
+        check.join(5)
+    assert len(errors) == 1 and isinstance(errors[0], RestoreCancelled)
+
+
+def test_settle_waits_for_a_restore_like_a_check(tmp_path: Path) -> None:
+    """RV-171: answering "messages out of step" ran a full IMAP sync while a restore was filling or renaming that account's store."""
+    engine = _computer(tmp_path / "first")
+    with engine.server_work.paused(lambda: False):
+        with pytest.raises(ServerWorkPaused):
+            REGISTRY.run(engine, "mail.settle", {"account": _anna(engine), "folder": "Inbox", "choice": "keep_here"})
 

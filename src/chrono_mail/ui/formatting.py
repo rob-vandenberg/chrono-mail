@@ -4,12 +4,14 @@ from datetime import UTC, datetime, timedelta
 from PySide6.QtGui import QColor
 
 from chrono_mail.core import shown_name
+from chrono_mail.pim.times import local_time
 from chrono_mail.core.colours import AVATAR_HUES, AVATAR_LIGHTNESS, AVATAR_SATURATION
 
 # --- Version ------------------------------------------------------------
-__version__ = "formatting.py 3.5.346"
+__version__ = "formatting.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: dates on this computer's clock through the named zone: a mail dated before 1970 or after 3000 shows on Windows too (RV-201)
 # v3.5.346: local_zone_now removed: a fixed offset of today; the calendar uses the named zone (RV-15)
 # v1.1.172: The avatar colours' hues, saturation and lightness are in the colour file (D-158)
 # v0.5.166: display_name uses the one rule of core (shown_name), the same as the index
@@ -46,8 +48,8 @@ def coming_date(moment: datetime | None, now: datetime | None = None) -> str:
     """A time still to come, short: the time today, the weekday and time in the next six days, otherwise the date and time; local time."""
     if moment is None:
         return ""
-    local = moment.astimezone()
-    current = (now or datetime.now(UTC)).astimezone()
+    local = local_time(moment)
+    current = local_time(now or datetime.now(UTC))
     if local.date() <= current.date():
         return local.strftime("%H:%M")
     if local.date() - current.date() < timedelta(days=7):
@@ -61,8 +63,8 @@ def short_date(moment: datetime | None, now: datetime | None = None) -> str:
     """Time today, 'Yesterday', the weekday this week, otherwise the date; always in local time."""
     if moment is None:
         return ""
-    local = moment.astimezone()
-    current = (now or datetime.now(UTC)).astimezone()
+    local = local_time(moment)
+    current = local_time(now or datetime.now(UTC))
     if local.date() == current.date():
         return local.strftime("%H:%M")
     if local.date() == (current - timedelta(days=1)).date():
@@ -75,7 +77,7 @@ def short_date(moment: datetime | None, now: datetime | None = None) -> str:
 
 
 def long_date(moment: datetime | None) -> str:
-    return "" if moment is None else moment.astimezone().strftime("%A %d %B %Y, %H:%M")
+    return "" if moment is None else local_time(moment).strftime("%A %d %B %Y, %H:%M")
 
 
 def file_size(size: int) -> str:

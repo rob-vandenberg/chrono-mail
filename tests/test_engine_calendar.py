@@ -9,9 +9,12 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 3.2.342"
+__version__ = "test_engine_calendar.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a series whose days the rule sets keeps its skipped dates when its first date moves (RV-185); one date of an invitation is
+#           edited exactly (RV-186); an RDATE series keeps its exceptions (RV-187); a changed date never moved in time moves along (RV-188); a task without a due time keeps no RELATED=END (RV-189); a rule change keeps every changed date, a hostile
+#           rule never breaks an edit, a title edit leaves a task's reminders as they are (the review of these fixes)
 # v3.2.342: a series moved to a new time keeps its exceptions (RV-93); an invitation to one occurrence gets no main event (RV-146); a task
 #           reminder counts back from the due time (RV-99)
 # v3.0.339: attendees given again keep their names, roles and answers (RV-17)
@@ -369,6 +372,72 @@ def test_a_series_moved_to_a_new_time_keeps_its_skipped_and_changed_occurrences(
     assert listed() == [("Team", "2026-11-02T10:00:00+00:00")]  # no longer repeating: its exceptions go with the rule
 
 
+def _listed(engine: Engine, item: str, first: str, last: str) -> list[tuple[str, str]]:
+    return [(o.summary, o.start) for o in call(engine, "event.list", from_date=first, to_date=last).events if o.item == item]
+
+
+def test_a_series_whose_rule_sets_its_days_keeps_its_skipped_dates_when_its_first_date_moves(engine: Engine) -> None:
+    """RV-185: every skipped date was moved by as much as the first date: "every Monday and Wednesday" begun a week later brought the
+    deleted Wednesday back and deleted the one a week after it, on the server too."""
+    series = call(engine, "event.add", calendar=collection(engine, "events"), summary="Gym", start="2027-01-04T10:00", end="2027-01-04T11:00",
+                  time_zone="UTC", rrule="FREQ=WEEKLY;BYDAY=MO,WE;COUNT=12")
+    wednesday = next(o.occurrence for o in call(engine, "event.list", from_date="2027-02-01", to_date="2027-02-07").events if o.item == series.item and o.start.startswith("2027-02-03"))
+    call(engine, "event.delete", item=series.item, occurrence=wednesday)
+    call(engine, "event.edit", item=series.item, start="2027-01-11T10:00", end="2027-01-11T11:00", time_zone="UTC")
+    days = [start[:10] for _, start in _listed(engine, series.item, "2027-01-01", "2027-03-31")]
+    assert "2027-02-03" not in days and "2027-02-10" in days and days[0] == "2027-01-11"
+
+
+def test_a_changed_date_never_moved_in_time_moves_with_its_series(engine: Engine) -> None:
+    """RV-188: an occurrence whose title alone was changed kept its old time when the whole series moved to another hour."""
+    series = call(engine, "event.add", calendar=collection(engine, "events"), summary="Stand-up", start="2027-01-04T09:00", end="2027-01-04T09:15",
+                  time_zone="UTC", rrule="FREQ=DAILY;COUNT=3")
+    second = [o.occurrence for o in call(engine, "event.list", from_date="2027-01-01", to_date="2027-01-31").events if o.item == series.item][1]
+    call(engine, "event.edit", item=series.item, occurrence=second, summary="Stand-up (demo)")
+    call(engine, "event.edit", item=series.item, start="2027-01-04T10:00", end="2027-01-04T10:15", time_zone="UTC")
+    assert _listed(engine, series.item, "2027-01-01", "2027-01-31") == [
+        ("Stand-up", "2027-01-04T10:00:00+00:00"), ("Stand-up (demo)", "2027-01-05T10:00:00+00:00"), ("Stand-up", "2027-01-06T10:00:00+00:00"),
+    ]
+
+
+RDATE_SERIES: str = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:dates@example.com\r\nDTSTAMP:20261020T100000Z\r\n"
+    "DTSTART:20270104T090000Z\r\nDTEND:20270104T100000Z\r\nRDATE:20270111T090000Z,20270118T090000Z\r\nEXDATE:20270111T090000Z\r\n"
+    "SUMMARY:Clinic\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+
+
+def test_a_series_of_named_dates_keeps_its_skipped_dates_when_its_start_changes(engine: Engine) -> None:
+    """RV-187: a series made of named dates (RDATE, from another program) lost every skipped and changed date when its start changed."""
+    item = call(engine, "event.import", calendar=collection(engine, "events"), text=RDATE_SERIES).items[0]
+    call(engine, "event.edit", item=item, start="2027-01-04T08:00", end="2027-01-04T09:00", time_zone="UTC")
+    days = [start[:10] for _, start in _listed(engine, item, "2027-01-01", "2027-01-31")]
+    assert days == ["2027-01-04", "2027-01-18"]  # 11 January stays skipped
+
+
+TWO_OCCURRENCES: str = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\n"
+    "BEGIN:VEVENT\r\nUID:board@example.com\r\nDTSTAMP:20261020T100000Z\r\nRECURRENCE-ID:20261104T090000Z\r\nDTSTART:20261104T130000Z\r\n"
+    "DTEND:20261104T140000Z\r\nSUMMARY:Board one\r\nEND:VEVENT\r\n"
+    "BEGIN:VEVENT\r\nUID:board@example.com\r\nDTSTAMP:20261020T100000Z\r\nRECURRENCE-ID:20261111T090000Z\r\nDTSTART:20261111T130000Z\r\n"
+    "DTEND:20261111T140000Z\r\nSUMMARY:Board two\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+)
+
+
+def test_one_date_of_an_invitation_without_its_main_event_is_edited_exactly(engine: Engine) -> None:
+    """RV-186: an edit of one date of an object of only changed occurrences was lost (the old text written back), or wrote over the
+    other date."""
+    item = call(engine, "event.import", calendar=collection(engine, "events"), text=TWO_OCCURRENCES).items[0]
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        before = store.get(collection(engine, "events"), item)
+    for moment, title in (("2026-11-04T09:00:00+00:00", "Board one (room 2)"), ("2026-11-11T09:00:00+00:00", "Board two (room 3)")):
+        call(engine, "event.edit", item=item, occurrence=moment, summary=title)
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        text = store.get(collection(engine, "events"), item)
+    assert text != before and text.count("BEGIN:VEVENT") == 2
+    assert "SUMMARY:Board one (room 2)" in text and "SUMMARY:Board two (room 3)" in text and "20261111T130000Z" in text and "20261104T130000Z" in text
+
+
 ONE_OCCURRENCE: str = (
     "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VEVENT\r\nUID:series@example.com\r\nDTSTAMP:20261020T100000Z\r\n"
     "RECURRENCE-ID:20261104T090000Z\r\nDTSTART:20261104T130000Z\r\nDTEND:20261104T140000Z\r\nSUMMARY:Board (moved)\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
@@ -385,6 +454,89 @@ def test_an_invitation_to_one_occurrence_gets_no_made_up_main_event(engine: Engi
     with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
         text = store.get(collection(engine, "events"), item)
     assert text.count("BEGIN:VEVENT") == 1 and "RECURRENCE-ID" in text
+
+
+def test_a_task_whose_due_time_goes_counts_its_reminders_from_the_start(engine: Engine) -> None:
+    """RV-189: the due time removed, the reminder untouched: the task kept TRIGGER;RELATED=END without a DUE, which RFC 5545 forbids."""
+    tasks = collection(engine, "tasks")
+    added = call(engine, "task.add", list=tasks, summary="Call the bank", start="2099-01-01T09:00", due="2099-01-01T17:00", time_zone="UTC", reminder=("15",))
+    call(engine, "task.edit", item=added.item, due="")  # what the task window sends when the due date is taken away (it keeps its start)
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        text = store.get(tasks, added.item).replace("\r\n ", "")
+    assert "DUE:" not in text and "DUE;" not in text and "RELATED=END" not in text and "TRIGGER:-PT15M" in text
+
+
+def test_a_new_rule_keeps_every_changed_date_and_a_hostile_rule_never_breaks_an_edit(engine: Engine) -> None:
+    """The review of RV-185: a rule changed from every second day to every third moved one changed date onto another, which was lost on
+    the server; a rule the walk could not follow crashed the edit."""
+    series = call(engine, "event.add", calendar=collection(engine, "events"), summary="Run", start="2027-01-01T09:00", end="2027-01-01T10:00",
+                  time_zone="UTC", rrule="FREQ=DAILY;INTERVAL=2;COUNT=10")
+    for day in ("03", "05", "07"):
+        call(engine, "event.edit", item=series.item, occurrence=f"2027-01-{day}T09:00:00+00:00", summary=f"Run {day}")
+    call(engine, "event.edit", item=series.item, rrule="FREQ=DAILY;INTERVAL=3;COUNT=10")
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        text = store.get(collection(engine, "events"), series.item)
+    assert all(f"SUMMARY:Run {day}" in text for day in ("03", "05", "07"))
+    hostile = call(engine, "event.add", calendar=collection(engine, "events"), summary="Odd", start="2027-01-04T09:00", end="2027-01-04T10:00",
+                   time_zone="UTC", rrule="FREQ=MONTHLY;BYDAY=+53MO")
+    call(engine, "event.edit", item=hostile.item, start="2027-01-11T09:00", end="2027-01-11T10:00", time_zone="UTC")  # never a crash
+
+
+def test_a_series_moved_to_another_zone_keeps_its_skipped_dates_on_their_days(engine: Engine) -> None:
+    """The second review of RV-185: moved from Amsterdam 09:00 to New York 09:00 (or 20:00, the next day in Amsterdam), the skipped dates
+    were moved by Amsterdam's clock and missed the new occurrences: deleted ones came back."""
+    series = call(engine, "event.add", calendar=collection(engine, "events"), summary="Call", start="2026-03-02T09:00", end="2026-03-02T09:30",
+                  time_zone="Europe/Amsterdam", rrule="FREQ=WEEKLY;COUNT=6")
+    skipped = next(o.occurrence for o in call(engine, "event.list", from_date="2026-03-15", to_date="2026-03-17").events if o.item == series.item)
+    call(engine, "event.delete", item=series.item, occurrence=skipped)
+    for when in ("2026-03-02T09:00", "2026-03-02T20:00"):
+        call(engine, "event.edit", item=series.item, start=when, end=when[:11] + str(int(when[11:13])).zfill(2) + ":30", time_zone="America/New_York")
+        days = [start[:10] for _, start in _listed(engine, series.item, "2026-03-01", "2026-04-15")]
+        assert "2026-03-16" not in days and len(days) == 5, when
+
+
+def test_the_first_occurrence_keeps_its_exception_when_the_rule_goes(engine: Engine) -> None:
+    """The second review of RV-185: with the rule removed and named dates left, a deleted first occurrence came back."""
+    item = call(engine, "event.import", calendar=collection(engine, "events"), text=RDATE_SERIES.replace("EXDATE:20270111T090000Z", "EXDATE:20270104T090000Z").replace("RDATE:", "RRULE:FREQ=WEEKLY;COUNT=2\r\nRDATE:")).items[0]
+    call(engine, "event.edit", item=item, rrule="")
+    assert [start[:10] for _, start in _listed(engine, item, "2027-01-01", "2027-01-31")] == ["2027-01-11", "2027-01-18"]
+
+
+def test_a_rule_change_leaves_the_skipped_dates_as_they_were(engine: Engine) -> None:
+    """The second review of RV-185: a new rule with a new time of day still moved every skipped date."""
+    series = call(engine, "event.add", calendar=collection(engine, "events"), summary="Walk", start="2027-01-04T09:00", end="2027-01-04T10:00",
+                  time_zone="UTC", rrule="FREQ=DAILY;COUNT=5")
+    call(engine, "event.delete", item=series.item, occurrence="2027-01-06T09:00:00+00:00")
+    call(engine, "event.edit", item=series.item, rrule="FREQ=DAILY;COUNT=10", start="2027-01-04T10:00", end="2027-01-04T11:00", time_zone="UTC")
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        assert "20270106T090000Z" in store.get(collection(engine, "events"), series.item)
+
+
+def test_a_series_of_several_times_a_day_moves_each_skipped_time_by_as_much(engine: Engine) -> None:
+    """The third review of RV-185: every three hours from 09:00, moved to 09:30: the skipped 12:00 and 15:00 both became 09:30."""
+    series = call(engine, "event.add", calendar=collection(engine, "events"), summary="Pills", start="2026-01-06T09:00", end="2026-01-06T09:05",
+                  time_zone="Europe/Amsterdam", rrule="FREQ=HOURLY;INTERVAL=3;COUNT=4")
+    for moment in ("2026-01-06T12:00:00+01:00", "2026-01-06T15:00:00+01:00"):
+        call(engine, "event.delete", item=series.item, occurrence=moment)
+    call(engine, "event.edit", item=series.item, start="2026-01-06T09:30", end="2026-01-06T09:35", time_zone="Europe/Amsterdam")
+    assert [start[11:16] for _, start in _listed(engine, series.item, "2026-01-06", "2026-01-07")] == ["09:30", "18:30"]
+
+
+TASK_WITH_A_LENGTH: str = (
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGIN:VTODO\r\nUID:long@example.com\r\nDTSTAMP:20261020T100000Z\r\n"
+    "DTSTART:20991101T090000Z\r\nDURATION:PT8H\r\nSUMMARY:Report\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Report\r\n"
+    "TRIGGER;RELATED=END:-PT30M\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+)
+
+
+def test_a_title_edit_leaves_the_reminders_of_a_task_as_they_are(engine: Engine) -> None:
+    """The review of RV-189: every edit turned an end-related reminder of a task without DUE (but with a DURATION, which is valid) into
+    one counted from the start: the reminder rang hours early, on the server too."""
+    tasks = collection(engine, "tasks")
+    item = call(engine, "task.import", list=tasks, text=TASK_WITH_A_LENGTH).items[0]
+    call(engine, "task.edit", item=item, summary="Report (draft)")
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        assert "TRIGGER;RELATED=END:-PT30M" in store.get(tasks, item).replace("\r\n ", "")
 
 
 def test_a_task_reminder_counts_back_from_the_due_time(engine: Engine) -> None:

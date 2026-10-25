@@ -12,9 +12,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dialogs.py 3.5.346"
+__version__ = "test_ui_dialogs.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: while adding, nothing else in the window can be used (RV-207, RV-208, RV-209); the recovery code's tick needs the code (RV-210)
 # v3.5.346: the window cannot close while the account is being added (RV-02); Done of the recovery code notes it as stored (RV-03)
 # v2.0.287: the permission check of the recovery file not on Windows (the Windows computer's report)
 # v1.9.271: The account window's values are typed (R-19)
@@ -289,4 +290,56 @@ def test_done_notes_that_the_recovery_code_is_stored(blank: World, qtbot: QtBot)
     with qtbot.waitSignal(dialog.accepted, timeout=8000):
         dialog.done_button.click()
     assert not blank.call("key.ensure").show_code
+
+
+def test_while_adding_nothing_else_in_the_window_can_be_used(blank: World, qtbot: QtBot) -> None:
+    """RV-207, RV-208: Restore a backup… and the certificate's test stayed usable while the account was being added; the test cleared the
+    guard, so Cancel closed the window half-way and Add could start twice."""
+    restores: list[str] = []
+    dialog = AccountDialog(blank.backend, first_account=True, restore=lambda: restores.append("restore"))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    fill(dialog, blank)
+    dialog.certificate_button.show()
+    with qtbot.waitSignal(dialog.accepted, timeout=8000):
+        dialog.add_button.click()
+        assert not any(widget.isEnabled() for widget in (dialog.restore_button, dialog.certificate_button, dialog.test_button, dialog.email, dialog.password))
+        dialog.restore_button.click()  # greyed: nothing happens
+        dialog._restore_instead()  # noqa: SLF001 - and not even when reached another way
+    qtbot.wait(50)
+    assert restores == []
+
+
+def test_while_a_calendar_account_is_added_find_cannot_start_a_second_add(blank: World, qtbot: QtBot) -> None:
+    """RV-209: during Adding… Find and the fields stayed usable; a finished Find enabled Add again, and a second add could start."""
+    from chrono_mail.ui.calendaraccount import CalendarAccountDialog
+
+    dialog = CalendarAccountDialog(blank.backend, [])
+    qtbot.addWidget(dialog)
+    dialog._set_adding(True)  # noqa: SLF001 - the state while Add runs
+    assert not any(widget.isEnabled() for widget in (dialog.find_button, dialog.url, dialog.username, dialog.password, dialog.add_button))
+    assert dialog.cancel_button is not None and not dialog.cancel_button.isEnabled()
+    dialog._set_adding(False)  # noqa: SLF001 - it failed: the person may try again
+    assert dialog.find_button.isEnabled() and dialog.cancel_button.isEnabled()
+
+
+def test_the_recovery_code_cannot_be_ticked_as_stored_before_it_is_shown(blank: World, qtbot: QtBot) -> None:
+    """RV-210: the tick and Done worked while the code showed "Loading…" or could not be shown; Done then noted it as stored for good."""
+    dialog = RecoveryDialog(blank.backend)
+    qtbot.addWidget(dialog)
+    assert not dialog.confirm.isEnabled() and not dialog.copy_button.isEnabled()  # "Loading…"
+    wait(qtbot, lambda: dialog.code.toPlainText() not in ("", "Loading…"))
+    shown = dialog.code.toPlainText() != "(the code could not be shown)"
+    assert dialog.confirm.isEnabled() == shown and dialog.copy_button.isEnabled() == shown
+
+
+def test_a_test_that_ends_during_an_add_never_brings_add_back(blank: World, qtbot: QtBot) -> None:
+    """The review of RV-208: a test started from the certificate before Add answered during the add and made Add usable again."""
+    dialog = AccountDialog(blank.backend)
+    qtbot.addWidget(dialog)
+    fill(dialog, blank)
+    dialog._set_adding(True)  # noqa: SLF001 - the state while Add runs
+    dialog._test()  # noqa: SLF001 - what an accepted certificate starts: nothing while adding
+    dialog._busy(False)  # noqa: SLF001 - and a test that answers now
+    assert not dialog.add_button.isEnabled() and not dialog.test_button.isEnabled() and dialog.result_label.text() != "Testing…"
 

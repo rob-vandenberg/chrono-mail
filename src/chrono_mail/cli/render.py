@@ -4,14 +4,24 @@ from datetime import datetime
 from enum import Enum
 
 # --- Version ------------------------------------------------------------
-__version__ = "render.py 3.4.344"
+__version__ = "render.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: printable for the progress and error lines too (RV-203)
 # v3.4.344: control characters from mail and servers are printed as "?": a terminal never runs their escape codes (RV-129)
 # v0.0.12: Initial text output
 
 _INDENT = "  "
 _CONTROL: re.Pattern[str] = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f]")  # every control character but tab and line break
+
+
+def printable(text: str) -> str:
+    """Text from a mail or a server, safe for a terminal on one line (the progress and error lines of the command line, RV-203): no escape
+    codes, no line breaks that would make up lines, no marks that turn the order of the text around."""
+    return _ONE_LINE.sub(" ", _printable(text))
+
+
+_ONE_LINE: re.Pattern[str] = re.compile("[\n\r\u2028\u2029\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 
 def _printable(text: str) -> str:

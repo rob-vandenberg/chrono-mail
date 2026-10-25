@@ -3,10 +3,11 @@ from typing import Literal
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QWidget
 
+from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, AccountSummary, NoParameters
 from chrono_mail.engine.commands_drafts import DRAFT_OPEN, DraftOpenParameters, DraftOpenResult
 from chrono_mail.engine.commands_mail import MESSAGE_COMPOSE, ComposeParameters, ComposeResult
-from chrono_mail.engine.commands_outbox import MAIL_CANCEL_SEND, CancelSendResult, OutboxMessageParameters
+from chrono_mail.engine.commands_outbox import MAIL_CANCEL_SEND, CancelSendResult, OutboxMessageParameters, SentAlready
 from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional, ScheduledInfo
 from chrono_mail.engine.compose import ComposeKind
 from chrono_mail.ui import appearance, prefs, scale, theme
@@ -20,9 +21,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 3.1.341"
+__version__ = "composing.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: an Outbox message that was sent already opens to be read (sent_already), never as a draft (RV-181)
 # v3.1.341: a message of the Outbox opened to be changed is taken out of the Outbox into Drafts first (left_outbox; RV-156)
 # v2.4.334: New asks the engine for the accounts while the window does not know them yet (the index rebuild after a restore, W9b)
 # v2.4.332: New works while no folder is selected: the default account, else the open one, else the first (W9)
@@ -42,6 +44,8 @@ class Composing(QObject):
 
     send_waiting = Signal(str, str, str, int)  # a delayed send waits in the Outbox: account, message id, subject, seconds of its countdown (B-21)
     left_outbox = Signal(str)  # a message was taken out of the Outbox to be changed: its message id (a countdown for it goes, RV-156)
+    sent_already = Signal(str, str, str)  # the Outbox message opened was sent already (its move to Sent failed): its account, folder and id,
+    # to open exactly it to be read (RV-181)
 
     def __init__(self, backend: Backend, state: MailState, status: StatusReport, prefs_in_use: InUse, messages: MessageListPane, parent: QWidget) -> None:
         super().__init__(parent)
@@ -195,8 +199,15 @@ class Composing(QObject):
                 lambda error: self._status.report("Could not open the draft", error), owner=self,
             )
 
+        def refused(error: ChronoMailError) -> None:
+            if isinstance(error, SentAlready):
+                self._status.show(str(error))
+                self.sent_already.emit(account, "Outbox", message_id)
+                return
+            self._status.report("Could not open the message", error)
+
         self._backend.ask(
-            MAIL_CANCEL_SEND, OutboxMessageParameters(account, message_id), taken_out, lambda error: self._status.report("Could not open the message", error),
+            MAIL_CANCEL_SEND, OutboxMessageParameters(account, message_id), taken_out, refused,
             owner=self,
         )
 

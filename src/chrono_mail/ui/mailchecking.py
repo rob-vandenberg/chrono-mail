@@ -24,9 +24,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 2.4.334"
+__version__ = "mailchecking.py 3.5.348"
 
 # --- Version history ----------------------------------------------------
+# v3.5.348: A question with buttons of its own shows plain text (RV-167, without a filter on the whole program)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.4.327: check_mail (after a rebuild, an import, a restore, a first account) only receives; a refresh a rebuild held back runs after it
@@ -65,6 +66,7 @@ BLOCKED_QUESTIONS: dict[str, tuple[str, tuple[tuple[str, SettleChoice, str], ...
 def ask_choice(parent: QWidget, title: str, text: str, buttons: list[str]) -> int | None:
     """A question with buttons of its own: the position of the button that was clicked, None when the window was closed."""
     box = QMessageBox(QMessageBox.Icon.Question, title, text, QMessageBox.StandardButton.NoButton, parent)
+    box.setTextFormat(Qt.TextFormat.PlainText)  # the text may hold server and mail words: never markup (RV-167)
     made = [box.addButton(label, QMessageBox.ButtonRole.AcceptRole) for label in buttons]
     box.exec()
     clicked = box.clickedButton()

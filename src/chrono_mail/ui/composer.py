@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.pim.times import moment_at
 from chrono_mail.engine.commands_mail import ComposeResult
 from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.core import ChronoMailError
@@ -43,9 +44,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 3.1.341"
+__version__ = "composer.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the Schedule window opens on the message's time without the platform's conversion (Windows refuses past 3000, RV-204)
 # v3.1.341: a send that failed hands the message to the Outbox and closes the window (Send again sent a second copy, RV-155)
 # v2.2.314: Send follows Settings > General: a delay with a notice in the main window (waiting), or the Outbox until the next refresh; a message
 #           taken back from the Outbox (Cancel) opens as one not saved yet, so Discard removes it (B-21); a failed send is tried again at the next refresh
@@ -587,8 +589,8 @@ class ComposeWindow(QMainWindow):
         dialog = WhenDialog("Schedule", "Send this message at:", "Schedule", self, repeat=True)
         editing = self._editing
         if editing is not None:  # it opens on what the message has now
-            end = datetime.fromtimestamp(editing.end) if editing.end is not None else None
-            dialog.show_current(datetime.fromtimestamp(editing.seconds), editing.months, editing.weeks, editing.days, end)
+            end = moment_at(editing.end).replace(tzinfo=None) if editing.end is not None else None  # never the platform's conversion (RV-204)
+            dialog.show_current(moment_at(editing.seconds).replace(tzinfo=None), editing.months, editing.weeks, editing.days, end)
         if dialog.exec() != WhenDialog.DialogCode.Accepted:
             return
         if editing is not None:

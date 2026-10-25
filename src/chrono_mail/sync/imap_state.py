@@ -6,9 +6,10 @@ from pathlib import Path
 from chrono_mail.core import StorageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_state.py 1.1.248"
+__version__ = "imap_state.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: forget_numbering ("z"): a folder synchronised afresh, the person's choices for it kept (RV-195)
 # v1.1.248: Where each folder stood on the server at the end of the last check that left nothing open (checkpoints, event "c": UIDNEXT and the
 #           change counter), so the next check asks only what changed since (R-09); forgotten with the folder's UIDs, moved with a rename
 # v1.1.241: A folder ticked here that the server's list of folders to show now has follows that list from then on (event "l", R-34)
@@ -38,6 +39,8 @@ __version__ = "imap_state.py 1.1.248"
 #   {"e": "k", "s": store id}                                           the person deleted the message for good here while the server could not be reached
 #   {"e": "w", "f": [old path], "t": [new path], "p": [[old name, new name], ...]}   the person renamed the folder (and those below it) on the server
 #   {"e": "y", "f": [path], "n": server folder name}                     the person deleted the folder on the server: everything known about it is forgotten
+#   {"e": "z", "f": [path]}                                             how the folder numbers its messages is no longer known (a restore left it out): it is
+#                                                                        synchronised from the server afresh; the person's choices for it stay
 #   {"e": "n", "f": [path], "n": server folder name}                     the name the server has for the local folder (R-30)
 #   {"e": "pr", "f": [old path], "t": [new path], "n": server name}      renamed here offline: to be renamed on the server (R-31)
 #   {"e": "pd", "f": [path], "n": server name, "v": validity, "u": [uids]} deleted here offline: to be deleted on the server (R-31)
@@ -164,6 +167,12 @@ class ImapState:
                     raise ValueError("bad folder rename")
                 names[str(pair[0])] = str(pair[1])
             self._rename(tuple(str(part) for part in old), tuple(str(part) for part in new), names)
+            return
+        if kind == "z":
+            where = event["f"]
+            if not isinstance(where, list) or not where:
+                raise ValueError("bad folder")
+            self._unknown(tuple(str(part) for part in where))
             return
         if kind == "y":
             where, name = event["f"], event["n"]
@@ -400,6 +409,17 @@ class ImapState:
         self.roles.pop(server_name, None)
         self.forced.discard(server_name)
         self.hidden.discard(server_name)
+
+    def forget_numbering(self, folder: tuple[str, ...]) -> None:
+        """How the folder numbers its messages is no longer known (a restore left the folder out, RV-195): the next check synchronises it
+        from the server afresh, as a folder new here. Its name on the server and the person's choices (ticked, its role) stay."""
+        self._append({"e": "z", "f": list(folder)})
+        self._unknown(folder)
+
+    def _unknown(self, folder: tuple[str, ...]) -> None:
+        self.validity.pop(folder, None)
+        self.entries.pop(folder, None)
+        self.checkpoints.pop(folder, None)
 
     def mark_uploaded(self, store_id: str) -> None:
         """Remember that a local message was sent to the server. Call right after the server accepted it."""

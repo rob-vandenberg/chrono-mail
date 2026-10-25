@@ -5,14 +5,16 @@ from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDro
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeView, QWidget
 
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
-from chrono_mail.ui.dragdata import read_messages_mime_data
+from chrono_mail.ui.dragdata import read_messages_mime_data, read_messages_summary
 from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, KIND_ROLE, SCHEDULED_TARGET_ROLES
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 1.9.275"
+__version__ = "foldertree.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the drag checks at every pointer move read only the drag's summary, never its whole list; the drop checks the list against
+#           it once (RV-205)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.208: A scheduled message can be dropped only on Drafts or Trash (D-178)
 # v0.2.104: Dragged messages are taken as the copy kind (for the desktop's arrow with a plus) and still moved
@@ -145,20 +147,20 @@ class FolderTree(QTreeView):
 
     def _target(self, event: QDragMoveEvent | QDropEvent) -> tuple[str, str] | None:
         """The (account, folder) under the pointer when the dragged messages may go there."""
-        dragged = read_messages_mime_data(event.mimeData())
+        dragged = read_messages_summary(event.mimeData())  # never the whole list: it is read at every pointer move (RV-205)
         index = self.indexAt(event.position().toPoint())
         if dragged is None or not index.isValid() or index.data(KIND_ROLE) != "folder":
             return None
         account, folder = str(index.data(ACCOUNT_ROLE)), str(index.data(FOLDER_PATH_ROLE))
-        if account != dragged[0] or folder == "Outbox" or all(source == folder for source, _ in dragged[1]):
+        if account != dragged[0] or folder == "Outbox" or dragged[1] == {folder}:
             return None
-        if any(source == "Scheduled" for source, _ in dragged[1]) and str(index.data(FOLDER_ROLE_ROLE)) not in SCHEDULED_TARGET_ROLES:
+        if "Scheduled" in dragged[1] and str(index.data(FOLDER_ROLE_ROLE)) not in SCHEDULED_TARGET_ROLES:
             return None  # a scheduled message goes back to Drafts (no longer scheduled) or to Trash, nowhere else
         return account, folder
 
     @override
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:
-        if read_messages_mime_data(event.mimeData()) is not None:
+        if read_messages_summary(event.mimeData()) is not None:
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -183,8 +185,9 @@ class FolderTree(QTreeView):
         self._set_drop_row(None)
         target = self._target(event)
         dragged = read_messages_mime_data(event.mimeData())
-        if target is None or dragged is None:
-            event.ignore()
+        summary = read_messages_summary(event.mimeData())
+        if target is None or dragged is None or summary is None or dragged[0] != summary[0] or {folder for folder, _ in dragged[1]} != summary[1]:
+            event.ignore()  # the list that moves must be the one the checks were made for (a drag from another program)
             return
         event.setDropAction(Qt.DropAction.CopyAction)  # the cursor with a plus; the messages are moved
         event.accept()

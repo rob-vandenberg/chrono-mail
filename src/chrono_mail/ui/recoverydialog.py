@@ -26,9 +26,10 @@ from chrono_mail.engine.commands_accounts import (
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "recoverydialog.py 3.5.346"
+__version__ = "recoverydialog.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the tick and Copy work only once the code is shown: a code never seen is never noted as stored (RV-210); a saved recovery file allows the tick too
 # v3.5.346: Done tells the engine the code is stored (key.code-stored); until then it is shown again before a restore and after an account is added (RV-03)
 # v2.4.324: "Your recovery code"; "this computer's password store"; Copy says "Copied" for 2 s; closing without the tick asks first;
 #           restoring: one line that the backup's password comes next, and no recovery file (one secret at a time, D-244)
@@ -84,6 +85,8 @@ class RecoveryDialog(QDialog):
         buttons.addStretch(1)
         layout.addLayout(buttons)
         self.confirm = QCheckBox("I have stored the recovery code (or a recovery file) in a safe place", self)
+        self.confirm.setEnabled(False)  # only once the code is there to be stored (RV-210)
+        self.copy_button.setEnabled(False)
         layout.addWidget(self.confirm)
         done_row = QHBoxLayout()
         done_row.addStretch(1)
@@ -112,6 +115,8 @@ class RecoveryDialog(QDialog):
 
     def _show_code(self, result: RecoveryCode) -> None:
         self.code.setPlainText(result.code)
+        self.confirm.setEnabled(True)
+        self.copy_button.setEnabled(True)
 
     def _failed(self, error: ChronoMailError) -> None:
         self.code.setPlainText("(the code could not be shown)")
@@ -150,6 +155,7 @@ class RecoveryDialog(QDialog):
             return
 
         def saved(result: KeyExportResult) -> None:
+            self.confirm.setEnabled(True)  # a recovery file is stored: the tick says "or a recovery file" (the review of RV-210)
             QMessageBox.information(self, "Recovery file", f"The recovery file was saved as:\n{result.path}\n\nYou need the passphrase to use it. Keep both safe, but not together.")
 
         self._backend.ask(KEY_EXPORT_FILE, KeyExportParameters(path, passphrase, overwrite=True), saved, self._failed_save, owner=self)

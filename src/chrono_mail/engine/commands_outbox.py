@@ -14,9 +14,11 @@ from chrono_mail.store import MessageNotFoundError, Properties, StoredMessage
 from chrono_mail.sync import file_sent_again, send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 3.1.341"
+__version__ = "commands_outbox.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a message of the Outbox the server took whose move to Sent failed keeps its "sent" mark, so it is never sent again (RV-178);
+#           such a message is never made a draft (SentAlready, RV-181), and is filed in Sent without a countdown, recipient or password
 # v3.1.341: a message marked as sent (sent_at) is only moved to Sent, never sent again (RV-50); Cancel of a reply keeps its link to the
 #           original (RV-121)
 # v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
@@ -76,7 +78,8 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
             for message in mailbox.store.list_messages(mailbox.folder("Outbox")):
                 if parameters.message is not None and message.ref.store_id != parameters.message:
                     continue
-                if parameters.message is None and not parameters.now and _held_back(mailbox, message.ref, engine.clock()):
+                sent_already = _properties(mailbox, message.ref).sent_at is not None  # only its move to Sent is left (the review of RV-178)
+                if not sent_already and parameters.message is None and not parameters.now and _held_back(mailbox, message.ref, engine.clock()):
                     continue  # its countdown runs: it may be cancelled still
                 hint = mailbox.hint(message.ref.store_id)
                 try:
@@ -88,6 +91,10 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                 if _due_time(parsed) is not None or _notes(parsed).get(KIND) == "recurring":
                     continue
                 recipients = _recipients(tuple(address.address for address in (*parsed.to_addresses, *parsed.cc_addresses, *parsed.bcc_addresses)))
+                if sent_already:  # nothing goes to a server: no recipient or password is needed to file it in Sent
+                    known = _sender(members, parsed) or members[0]
+                    waiting.append((message, hint, raw, parsed, recipients, known, ""))
+                    continue
                 if not recipients:
                     fail("", f"{parsed.subject}: there is no recipient")
                     continue
@@ -109,7 +116,9 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                 replies_to: str | None = None
                 sent_before = False
                 with engine.outbox_lock:  # another send of the Outbox, or a Cancel, may have taken it meanwhile
-                    if _still_waiting(mailbox, message.ref, hint) and not (parameters.message is None and not parameters.now and _held_back(mailbox, message.ref, engine.clock())):
+                    if _still_waiting(mailbox, message.ref, hint) and not (
+                        parameters.message is None and not parameters.now and _properties(mailbox, message.ref).sent_at is None and _held_back(mailbox, message.ref, engine.clock())
+                    ):  # a message the server took is filed in Sent whatever its countdown said
                         noted = _properties(mailbox, message.ref)
                         replies_to, sent_before = noted.replies_to, noted.sent_at is not None
                         try:
@@ -124,9 +133,11 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                             fail(account_id, f"{parsed.subject}: {error}")
                 if outcome is not None and outcome.sent:
                     sent += 0 if sent_before else 1
-                    _forget_waiting(mailbox, outcome.reference)
-                    mailbox.report_moved(message.ref, outcome.reference)
-                    mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
+                    if outcome.reference.folder_path != message.ref.folder_path:  # in Sent now; else it waits in the Outbox marked as sent,
+                        # and that mark must stay or the next refresh sends it again (RV-178)
+                        _forget_waiting(mailbox, outcome.reference)
+                        mailbox.report_moved(message.ref, outcome.reference)
+                        mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
                     _mark_replied(mailbox, parsed)
                     _mark_answered(mailbox, replies_to)
                     if outcome.warning:
@@ -193,16 +204,23 @@ class CancelSendResult:
     message_id: str
 
 
+class SentAlready(UsageError):
+    """The server took this message of the Outbox before; only its move to Sent failed. It is never made a draft (it would be sent twice)."""
+
+
 def mail_cancel_send(engine: Engine, parameters: OutboxMessageParameters) -> CancelSendResult:
     """Cancel a delayed send (B-21): the message leaves the Outbox and becomes a draft again, written from the account in its From, to be
     opened in the message window. Refused when it was sent meanwhile."""
     (members,) = _places(engine, parameters.account)
-    with engine.outbox_lock, open_mailbox(engine, parameters.account) as mailbox:  # never while it is being sent
+    with open_mailbox(engine, parameters.account) as mailbox, engine.outbox_lock:  # never while it is being sent; the mailbox before the lock, as
+        # every send takes them (the other order could wait for an index rebuild that waits for a send: a standstill)
         reference = mailbox.reference(OUTBOX, _check_id(parameters.message))
         try:
             parsed = parse_message(mailbox.store.read(reference, hint=mailbox.hint(reference.store_id)))
         except MessageNotFoundError:
             raise UsageError("The message has been sent already") from None
+        if _properties(mailbox, reference).sent_at is not None:  # RV-181
+            raise SentAlready("This message was sent already: it goes to Sent at the next Send and Receive")
         sender = _sender(members, parsed)
         account = sender.account.account_id if sender is not None else parameters.account
         answers = _properties(mailbox, reference).replies_to  # a reply stays a reply: its original is marked once it is really sent (RV-121)
@@ -221,7 +239,7 @@ def mail_cancel_send(engine: Engine, parameters: OutboxMessageParameters) -> Can
 
 def mail_end_countdown(engine: Engine, parameters: OutboxMessageParameters) -> OutboxMessageParameters:
     """The countdown of a delayed send is over and it waits for the next send of the Outbox: its waiting time goes (B-21)."""
-    with engine.outbox_lock, open_mailbox(engine, parameters.account) as mailbox:
+    with open_mailbox(engine, parameters.account) as mailbox, engine.outbox_lock:  # the mailbox before the lock, as every send takes them
         reference = mailbox.reference(OUTBOX, _check_id(parameters.message))
         if _still_waiting(mailbox, reference, mailbox.hint(reference.store_id)):
             mailbox.store.properties.change(reference.store_id, lambda current: replace(current, send_not_before=None))

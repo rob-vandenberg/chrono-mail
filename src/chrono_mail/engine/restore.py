@@ -16,7 +16,7 @@ from typing import Protocol, cast
 
 import pyzipper
 
-from chrono_mail.config import AccountSettings, AppConfig, Rule, RuleSet, ServerRole, TagColours, parse_config, parse_rules, parse_sidebar, parse_tags, save_rules, save_tags
+from chrono_mail.config import AccountSettings, AppConfig, Pop3DeletePolicy, Rule, RuleSet, ServerRole, TagColours, parse_config, parse_rules, parse_sidebar, parse_tags, save_rules, save_tags
 from chrono_mail.config.files import load_config
 from chrono_mail.config.rules import load_rules
 from chrono_mail.config.sidebar import save_sidebar
@@ -30,7 +30,7 @@ from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.newkey import make_data_key
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import UsageError
-from chrono_mail.engine.session import OUTBOX, STANDARD_FOLDERS, Engine
+from chrono_mail.engine.session import OUTBOX, STANDARD_FOLDERS, Engine, WaitStopped
 from chrono_mail.pimstore.extract import extract
 from chrono_mail.store import Store
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
@@ -40,9 +40,14 @@ from chrono_mail.sync.pop3_state import Pop3State
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 3.5.346"
+__version__ = "restore.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a set-aside that stops half-way puts back only what was set aside, never moving or removing this computer's data (RV-193);
+#           a restored IMAP state names only the messages and folders that came back, keeping what the person did offline (RV-194, RV-195);
+#           an older backup's download list never names a message it lacks where the account deletes on the server by it (RV-197); only
+#           damaged messages and items are counted as damaged (RV-199); Cancel or quitting while the restore waits for running checks is a
+#           cancelled restore (RV-175)
 # v3.5.346: The data key is made in the one place that remembers its recovery code was not stored yet (RV-03)
 # v3.3.343: what was downloaded (POP3) never names a message that did not come back, so it is never deleted on the server (RV-61); every
 #           file of a backup has a size limit (RV-63); a damaged description of a calendar, a folder, a message's details or a setting is
@@ -379,7 +384,7 @@ def restore_backup(engine: Engine, choice: RestoreChoice) -> RestoreReport:
     try:
         archive, manifest, _ = _open(choice.path, choice.password)
         try:
-            with engine.server_work.paused(CANCEL.is_set):  # the checks and sends that run end first, new ones wait: never a POP3 delete
+            with engine.server_work.paused(lambda: CANCEL.is_set() or engine.stop_event.is_set()):  # the checks and sends that run end first, new ones wait: never a POP3 delete
                 # while this computer's mail is set aside (RV-60)
                 ensure_key(engine)
                 key = engine.data_key(engine.config())
@@ -397,6 +402,8 @@ def restore_backup(engine: Engine, choice: RestoreChoice) -> RestoreReport:
                 elif aside is not None:
                     _let_go(engine, aside, report)
                 return report
+        except WaitStopped:  # Cancel, or the program ending, while the restore waited for the checks and sends that ran (RV-175)
+            raise RestoreCancelled("The restore was cancelled") from None
         finally:
             archive.close()
     finally:
@@ -424,9 +431,17 @@ def _restore(engine: Engine, archive: _Reading, manifest: dict[str, object], key
     local_mail = any(mail and settings.account.kind is AccountKind.LOCAL for settings, mail, _ in chosen)  # Local Folders' mail comes back too
     for settings, mail, items in chosen:
         if items:
-            report.damaged.extend(_damaged_collections(archive, names, f"data/accounts/{settings.account.account_id}/"))
+            left_out = _damaged_collections(archive, names, f"data/accounts/{settings.account.account_id}/")
+            report.damaged.extend(left_out)
+            if any(name.endswith("/collection.json") for name in left_out):  # one without items: told, as nothing else names it
+                note = "A calendar, task list or address book without items could not be read from the backup and was left out"
+                if note not in report.notes:
+                    report.notes.append(note)
     for settings, mail, items in sorted(chosen, key=lambda row: row[0].account.kind is not AccountKind.LOCAL):  # Local Folders first: accounts may keep their mail in it
-        _one_account(engine, archive, names, sealed, kinds if items else set[CollectionKind](), mail, local_mail, key, settings, choice, report, progress)
+        _one_account(
+            engine, archive, names, sealed, kinds if items else set[CollectionKind](), mail, local_mail, key, settings, choice, report, progress,
+            _lists_state_first(manifest),
+        )
     if "rules" in parts:
         with _left_out_when_damaged("config/rules.json", report):
             _restore_rules(engine, archive, names, choice.replace_existing, _ids_here(engine.config(), [settings for settings, _, _ in chosen]))
@@ -460,6 +475,12 @@ def _left_out_when_damaged(name: str, report: RestoreReport) -> Generator[None]:
     except (DamagedEntry, ConfigurationError, UnicodeDecodeError, ValueError):
         report.damaged.append(name)
         report.notes.append(f"Part of the backup could not be read and was left out: {_SETTING_WORDS.get(name, name)}")
+
+
+def damaged_messages_and_items(report: RestoreReport) -> int:
+    """How many messages and items of the backup were damaged and left out. A damaged setting or a message's details file is told in the
+    notes, never counted as a message that did not come back (RV-199)."""
+    return sum(1 for name in report.damaged if name.startswith("data/accounts/") and (_is_message(name.split("/")[3:]) or _is_item(name.split("/")[3:])))
 
 
 def _damaged_places(archive: _Reading, names: list[str], damaged: list[str], backup_config: AppConfig) -> list[str]:
@@ -540,7 +561,7 @@ def _passwords(archive: _Reading, names: list[str]) -> dict[str, dict[str, str]]
 
 def _one_account(
     engine: Engine, archive: _Reading, names: list[str], sealed: set[str], kinds: set[CollectionKind], mail: bool, local_mail: bool, key: DataKey,
-    settings: AccountSettings, choice: RestoreChoice, report: RestoreReport, progress: _Progress,
+    settings: AccountSettings, choice: RestoreChoice, report: RestoreReport, progress: _Progress, state_first: bool = True,
 ) -> None:
     """One account of the backup: its mail when mail, its calendars, contacts and tasks of these kinds; its definition always."""
     here = _same_here(engine.config(), settings)
@@ -548,6 +569,7 @@ def _one_account(
     if here is None:
         _restore_whole(
             engine, archive, [name for name in names if name.startswith(prefix)], prefix, sealed, kinds, mail, local_mail, key, settings, report, progress,
+            state_first,
         )
         report.made.append(settings.account.account_id)
         return
@@ -568,7 +590,7 @@ def _one_account(
 
 def _restore_whole(
     engine: Engine, archive: _Reading, names: list[str], prefix: str, sealed: set[str], kinds: set[CollectionKind], mail: bool, local_mail: bool,
-    key: DataKey, settings: AccountSettings, report: RestoreReport, progress: _Progress,
+    key: DataKey, settings: AccountSettings, report: RestoreReport, progress: _Progress, state_first: bool = True,
 ) -> None:
     """The account's files are written in a folder of their own and that folder is renamed into place in one step, so the account comes
     back whole or not at all; only then is it added to the accounts."""
@@ -625,11 +647,16 @@ def _restore_whole(
             for path_of_folder, role in STANDARD_FOLDERS:
                 store.create_folder(path_of_folder, role)
         description = building / "store" / "store.json"
+        own_mail: set[str] | None = None
         if mail and description.exists():
             sealed_store = _json_object(description.read_bytes()).get("encrypted") is True
-            _hold_back(Store.open(building / "store", key if sealed_store else None, durable=engine.durable), engine.clock(), report)
+            restored_store = Store.open(building / "store", key if sealed_store else None, durable=engine.durable)
+            own_mail = restored_store.all_store_ids()
+            _hold_back(restored_store, engine.clock(), report)
+            if (building / "imap-state.log").exists():
+                _mirror_that_came_back(building / "imap-state.log", restored_store, engine.durable)
         if (building / "pop3-state.log").exists():
-            _downloaded_that_came_back(engine, building, settings, local_mail, key, report)
+            _downloaded_that_came_back(engine, building, settings, local_mail, own_mail, not state_first, report)
         if target.exists():  # the files of an account removed earlier (its mail is kept on removal): kept beside it, never written over
             kept = target.with_name(f"{account_id}-kept-{time.strftime('%Y%m%d-%H%M%S')}")
             os.replace(target, kept)
@@ -646,17 +673,25 @@ def _restore_whole(
     engine.change_config(lambda fresh: fresh.with_account(settings))
 
 
-def _downloaded_that_came_back(engine: Engine, building: Path, settings: AccountSettings, local_mail: bool, key: DataKey, report: RestoreReport) -> None:
+def _downloaded_that_came_back(
+    engine: Engine, building: Path, settings: AccountSettings, local_mail: bool, own_mail: set[str] | None, older: bool, report: RestoreReport,
+) -> None:
     """What was downloaded (POP3) names only messages that came back, or that the person deleted here before the backup: a message it
     names that is not here would be deleted on the server ("delete from the server when deleted here"), or never downloaded again (RV-61).
     Left out: the messages of the backup that were damaged, and, for an account that keeps its mail in Local Folders while their mail
     does not come back with it, every message that is not in Local Folders here. A message left out is downloaded again: twice at worst,
-    never lost."""
+    never lost. A backup made before 3.3.343 (older) read the list after the mail, so it may name messages downloaded meanwhile, which it
+    lacks: where the account deletes on the server what the list names and is not here ("delete from the server when deleted here"),
+    every message it names that is not here is left out too, in its own folders (own_mail: those that came back) or in Local Folders
+    (RV-197)."""
     path = building / "pop3-state.log"
     state = Pop3State(path, durable=False)
     damaged = {parsed[0] for name in report.damaged if (parsed := parse_name(name.rsplit("/", 1)[-1])) is not None}
     present: set[str] | None = None
-    if settings.storage == "local" and not local_mail:
+    deletes_by_it = older and settings.pop3.policy in DELETES_BY_THE_LIST
+    if deletes_by_it and settings.storage == "own":
+        present = own_mail or set()
+    elif settings.storage == "local" and (not local_mail or deletes_by_it):  # Local Folders came back first: what it holds now
         try:
             with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
                 present = mailbox.store.all_store_ids()
@@ -671,6 +706,41 @@ def _downloaded_that_came_back(engine: Engine, building: Path, settings: Account
     lines = [f"D\t{record.unique_id}\t{record.store_id}\t{record.downloaded_at}" for record in kept]
     lines += [f"X\t{record.unique_id}\t{record.downloaded_at}" for record in kept if record.deleted_on_server]
     replace_file_atomically(path, "".join(f"{line}\n" for line in lines).encode("utf-8"), engine.durable)
+
+
+def _mirror_that_came_back(path: Path, store: Store, durable: bool) -> None:
+    """Which messages and folders of the server an IMAP account holds names only what came back. A message it names that is not here
+    would count as deleted here, and the next check would delete it on the server; a folder it names that is not here would count as
+    deleted here and never be synchronised again (RV-194, RV-195). Left out: messages of the backup that were damaged or too large, those
+    downloaded while the backup was made (older backups), and the folders whose description could not be read. A message or folder left
+    out is brought from the server again: the server stays the truth (D-193). Kept: what the person did here and was not on the server
+    yet (a delete for good, a folder renamed or deleted, its choices for a folder)."""
+    state = ImapState(path, durable=durable)  # on the disk before the account is renamed into place: a power cut never brings the old list back
+    present = store.all_store_ids()
+    folders = {folder.path for folder in store.list_folders()}
+    for folder in list(state.validity):
+        if folder in folders:
+            left_out = [uid for uid, entry in state.folder_entries(folder).items() if entry.store_id not in present and entry.store_id not in state.deleted_here]
+            for uid in left_out:
+                state.unmap(folder, uid)
+            if left_out:
+                state.set_checkpoint(folder, None)  # the next check lists the folder in full, never only what changed since
+        else:
+            state.forget_numbering(folder)  # synchronised from the server afresh; ticked or unticked, its role: the person's choices stay
+
+
+DELETES_BY_THE_LIST: frozenset[Pop3DeletePolicy] = frozenset({Pop3DeletePolicy.DELETE_WHEN_DELETED_LOCALLY})  # the one policy that deletes on the
+# server what the list names and is not here (after some days deletes only what is verified here)
+STATE_FIRST_SINCE: tuple[int, int, int] = (3, 3, 343)  # backups since this version take what was downloaded before they list the mail
+
+
+def _lists_state_first(manifest: dict[str, object]) -> bool:
+    """Whether the backup took what was downloaded before it listed the mail (RV-61, RV-197). An unreadable version counts as older."""
+    numbers = str(manifest.get("version", "")).split(".")[:3]
+    try:
+        return tuple(int(number) for number in numbers) >= STATE_FIRST_SINCE and len(numbers) == 3
+    except ValueError:
+        return False
 
 
 def _damaged_folders(archive: _Reading, names: list[str], prefix: str) -> set[str]:
@@ -1067,6 +1137,9 @@ def _restore_passwords(engine: Engine, passwords: dict[str, dict[str, str]], rep
 # --- this computer's data set aside (Remove all data on this computer first) ------------------------------------------
 
 
+SET_ASIDE_DONE: str = "set-aside-done"  # in the aside folder once all of this computer's data is in it
+
+
 def _config_files(engine: Engine) -> tuple[Path, ...]:
     directories = engine.directories
     return directories.rules_file, directories.sidebar_file, directories.tags_file
@@ -1086,11 +1159,14 @@ def _set_aside(engine: Engine) -> Path:
         accounts = directories.data_directory / "accounts"
         if accounts.exists():
             os.replace(accounts, aside / "accounts")
+        else:
+            (aside / "accounts").mkdir()  # none before: what a failed restore writes there goes, and none comes back
         with engine.junk.lock:
             if directories.junk_filter_file.exists():
                 os.replace(directories.junk_filter_file, aside / directories.junk_filter_file.name)
             engine.junk.words = None
         engine.change_config(lambda fresh: AppConfig((), fresh.key_id))
+        (aside / SET_ASIDE_DONE).write_bytes(b"")  # from here on everything of this computer is in the aside folder (RV-193)
     return aside
 
 
@@ -1104,24 +1180,31 @@ def _undo_on_failure(undo: Callable[[], None]) -> Generator[None]:
 
 
 def _put_back(engine: Engine, aside: Path) -> None:
-    """Everything as it was before the restore: what the restore wrote goes, what was set aside comes back."""
+    """Everything as it was before the restore: what the restore wrote goes, what was set aside comes back. Only what was really set
+    aside is touched: when setting aside stopped half-way (a file another program holds open), what was still in its place is this
+    computer's own data and stays (RV-193)."""
     directories = engine.directories
     accounts = directories.data_directory / "accounts"
     restored = {settings.account.account_id for settings in engine.config().accounts}
+    done = (aside / SET_ASIDE_DONE).exists()  # the restore may have written in the places that were emptied
     try:
-        if accounts.exists():  # what the restore wrote goes aside in one step (removed with the rest below): never half of it (RV-68)
-            os.replace(accounts, aside / "restored")
         if (aside / "accounts").exists():
+            if accounts.exists():  # what the restore wrote goes aside in one step (removed with the rest below): never half of it (RV-68)
+                os.replace(accounts, aside / "restored")
             os.replace(aside / "accounts", accounts)
         with engine.junk.lock:
-            directories.junk_filter_file.unlink(missing_ok=True)
-            if (aside / directories.junk_filter_file.name).exists():
-                os.replace(aside / directories.junk_filter_file.name, directories.junk_filter_file)
+            kept = aside / directories.junk_filter_file.name
+            if done or kept.exists():
+                directories.junk_filter_file.unlink(missing_ok=True)
+            if kept.exists():
+                os.replace(kept, directories.junk_filter_file)
             engine.junk.words = None
         for path in _config_files(engine):
-            path.unlink(missing_ok=True)
-            if (aside / "config" / path.name).exists():
-                os.replace(aside / "config" / path.name, path)
+            kept = aside / "config" / path.name
+            if done or kept.exists():
+                path.unlink(missing_ok=True)
+            if kept.exists():
+                os.replace(kept, path)
         before = (aside / "config" / "config.json").read_text("utf-8")
         old = load_config(aside / "config" / "config.json") if before else AppConfig()
         engine.change_config(lambda fresh: AppConfig(old.accounts, fresh.key_id))

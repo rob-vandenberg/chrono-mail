@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime
 
+from chrono_mail.pim.times import moment_at
 from chrono_mail.config import AccountSettings, load_sidebar, save_sidebar
 from chrono_mail.core import (
     ChronoMailError,
@@ -30,9 +31,11 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 2.5.336"
+__version__ = "mailbox.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a message that was sent already (sent_at) never moves or is copied to Drafts, from anywhere (RV-181); a snooze or send time in a row without the platform's conversion (RV-204); refuse_unseen: several folders looked at before any is deleted (RV-176); a message of the Outbox or Scheduled (never on a server) is deleted for good here alone, also many at once (together(server=False)): it never waits
+#           for the IMAP server or connects to it (RV-183, RV-184)
 # v2.5.336: a move, copy or delivery takes the place from the store instead of looking for the message again in its whole new folder (W13, D-248)
 # v2.4.324: restore_here: a message from a backup, kept here only under its own id (an IMAP account sends it at the next check, D-244)
 # v2.2.314: the Outbox is timed too (a message there may wait for its moment, B-21); tell_changed: a row shows its new Send at
@@ -99,9 +102,10 @@ class Mailbox:
                 self._session = None
 
     @contextmanager
-    def together(self) -> Generator[None]:
-        """An action on many messages: one server session (one connection, one hold on the account) for all of them."""
-        if not is_imap(self.settings):
+    def together(self, server: bool = True) -> Generator[None]:
+        """An action on many messages: one server session (one connection, one hold on the account) for all of them. server=False: they
+        need no server (removed for good from a folder that exists only here), so nothing waits for it."""
+        if not is_imap(self.settings) or not server:
             yield
             return
         with self._server():
@@ -138,9 +142,27 @@ class Mailbox:
             with self._server() as server:
                 server.prepare_copies([ref.store_id for ref in self._checked(refs)], target)
 
+    def _sent_already(self, ref: MessageRef) -> bool:
+        """A message of the Outbox the server took before, whose move to Sent failed: never a draft again (it would be sent twice)."""
+        try:
+            return self.store.properties.of(ref.store_id).sent_at is not None
+        except ChronoMailError:
+            return False
+
+    def removed_here_only(self, folder: tuple[str, ...], permanent: bool) -> bool:
+        """A delete from this folder needs no server: it exists only here (Outbox, Scheduled) and the messages go for good, not to a Trash
+        on the server (RV-183, RV-184). Recovered is not one: a message moved there keeps its place on the server."""
+        if not folder or folder[0] not in HERE_ONLY:
+            return False
+        try:
+            trash = self.role_folder(FolderRole.TRASH)
+        except StorageError:
+            trash = ()
+        return permanent or not trash
+
     def prepare_deletes(self, refs: list[MessageRef], permanent: bool) -> None:
         """Many messages of one folder deleted: moved to Trash together, or removed for good together, as delete decides for each."""
-        if not is_imap(self.settings) or not refs:
+        if not is_imap(self.settings) or not refs or self.removed_here_only(refs[0].folder_path, permanent):
             return
         try:
             trash = self.role_folder(FolderRole.TRASH)
@@ -188,7 +210,7 @@ class Mailbox:
         if message is None:
             return None
         moment = (self.timed(message.folder) or {}).get(store_id)
-        snoozed_until = datetime.fromtimestamp(moment).astimezone() if moment is not None else None
+        snoozed_until = moment_at(moment) if moment is not None else None  # never the platform's conversion (Windows refuses before 1970 and after 3000, RV-201, RV-204)
         size = self.index.thread_sizes([message.thread_key]).get(message.thread_key, 1)
         return MessageRow(
             message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, flag_names(message.flags),
@@ -369,6 +391,8 @@ class Mailbox:
 
     def move(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
         self._still_there(ref)
+        if self._role_of(target) == FolderRole.DRAFTS.value and self._sent_already(ref):  # from anywhere: also by way of Trash
+            raise UsageError("This message was sent already: it goes to Sent at the next Send and Receive")  # never a draft again (RV-181)
         if not is_imap(self.settings) or (ref.folder_path[0] in LOCAL_ONLY and target[0] in LOCAL_ONLY):  # the server has neither folder
             return self._move_here(ref, target)
         flags = self.current_flags(ref)  # the message must be here before the server is asked
@@ -468,6 +492,8 @@ class Mailbox:
 
     def copy(self, ref: MessageRef, target: tuple[str, ...]) -> MessageRef:
         self._still_there(ref)
+        if self._sent_already(ref) and self._role_of(target) != FolderRole.SENT.value:  # a copy would lose the mark and could become a draft
+            raise UsageError("This message was sent already: it goes to Sent at the next Send and Receive, and is copied from there")  # (RV-181)
         if not is_imap(self.settings):
             return self._copy_here(ref, target)
         flags = self.current_flags(ref)
@@ -548,9 +574,11 @@ class Mailbox:
             trash = self.role_folder(FolderRole.TRASH)
         except StorageError:
             trash = ()
-        if is_imap(self.settings) and (permanent or not trash or ref.folder_path == trash):
+        removed_for_good = permanent or not trash or ref.folder_path == trash
+        local_only = self.removed_here_only(ref.folder_path, permanent)  # Outbox, Scheduled: never on a server
+        if is_imap(self.settings) and removed_for_good and not local_only:
             return self._delete_on_server_first(ref)
-        if is_imap(self.settings):
+        if is_imap(self.settings) and not removed_for_good:
             try:
                 self.move(ref, trash)
             except GoneFromServer:
@@ -702,6 +730,15 @@ class Mailbox:
             commit()
         self._tell(Change("folder_renamed", self._place, "/".join(old), to_folder="/".join(new)))
 
+    def refuse_unseen(self, paths: list[tuple[str, ...]]) -> None:
+        """Before several folders are deleted: refused, with nothing deleted, when one of them holds mail on the server this computer never
+        had (RV-176: the subfolders went first and the parent was then refused)."""
+        on_server = [path for path in paths if self._on_server(path)]
+        if on_server:
+            with self._server() as server:
+                for path in on_server:
+                    server.refuse_unseen(path)
+
     def delete_folder(self, path: tuple[str, ...], require_empty: bool) -> int:
         """Take one folder out of the store (its files are kept in .deleted); in an IMAP account it is deleted on the
         server first, with its mail, and only while the server can be reached. Returns the messages removed from the index."""
@@ -767,6 +804,9 @@ class Mailbox:
         for message in unread:  # one by one: each on the server first, or sent at the next check while offline
             self.set_flags(message.ref, message.flags | {MessageFlag.SEEN})
         return len(unread)
+
+
+HERE_ONLY: frozenset[str] = frozenset({"Outbox", "Scheduled"})  # folders whose messages are never on a server (Recovered may hold some)
 
 
 @contextmanager

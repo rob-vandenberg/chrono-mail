@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from chrono_mail.pim.times import local_time
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, _shown
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -10,9 +11,10 @@ from chrono_mail.index import html_to_text
 from chrono_mail.mime import parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_export.py 2.1.311"
+__version__ = "commands_export.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the printed date on this computer's clock through the named zone (Windows, RV-201)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.270: R-19: typed message.export, message.source, message.text
 # v0.0.22: Initial export, source and plain text commands
@@ -96,7 +98,7 @@ def message_text(engine: Engine, parameters: MessageParameters) -> TextResult:
     names = tuple(attachment.filename or attachment.content_type for attachment in parsed.attachments if not attachment.inline)
     return TextResult(
         parsed.subject, _shown(parsed.from_addresses), _shown(parsed.to_addresses), _shown(parsed.cc_addresses),
-        parsed.date.astimezone().strftime("%A %d %B %Y, %H:%M") if parsed.date else "", body[:MAXIMUM_TEXT_CHARACTERS], names,
+        local_time(parsed.date).strftime("%A %d %B %Y, %H:%M") if parsed.date else "", body[:MAXIMUM_TEXT_CHARACTERS], names,
     )
 
 

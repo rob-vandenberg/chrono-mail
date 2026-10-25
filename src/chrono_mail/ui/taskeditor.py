@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.pim.times import in_local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_tasklist import TASK_ADD, TASK_EDIT, TaskInfo
@@ -30,9 +31,10 @@ from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 3.2.342"
+__version__ = "taskeditor.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a task's times through the zone the engine reads them back in (also never the platform's conversion, RV-201)
 # v3.2.342: a repeat or reminder the lists do not offer is shown as it is and kept; both are sent only when changed (RV-19); due and start
 #           times are shown on this computer's clock (RV-23)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -91,7 +93,7 @@ class DateField(QWidget):
         self.all_day.setChecked(False)
         moment = datetime.fromisoformat(text)
         if moment.tzinfo is not None:  # shown on this computer's clock, as the list shows it and as value() gives it back (RV-23)
-            moment = moment.astimezone()
+            moment = in_local_zone(moment)  # shown in the zone the engine reads it back in
         self.stamp.setDateTime(QDateTime(QDate(moment.year, moment.month, moment.day), self.stamp.time().fromString(f"{moment.hour:02d}:{moment.minute:02d}", "HH:mm")))
 
     def value(self) -> str:

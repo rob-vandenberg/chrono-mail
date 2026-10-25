@@ -19,14 +19,15 @@ from chrono_mail.core import AccountKind, ChronoMailError, ConnectionSecurity
 from chrono_mail.engine.commands_accounts import AccountCheckParameters, NoParameters, Security, account_check
 from chrono_mail.engine.commands_dav import DiscoverParameters, dav_discover
 from chrono_mail.engine.newkey import recovery_code_not_stored
-from chrono_mail.engine.restore import RestoreChoice, ensure_key, read_contents, restore_backup
+from chrono_mail.engine.restore import RestoreChoice, damaged_messages_and_items, ensure_key, read_contents, restore_backup
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_backup.py 3.5.346"
+__version__ = "commands_backup.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: backup.restore counts only damaged messages and items as damaged; a damaged setting is told in the notes (RV-199)
 # v3.5.346: key.ensure also says whether the recovery code was never confirmed as stored, also for a key made before (RV-03)
 # v2.4.334: backup.restore says where the damaged messages and items were
 # v2.4.328: backup.restore says how many damaged messages and items it left out (W5)
@@ -193,7 +194,7 @@ def backup_restore(engine: Engine, parameters: RestoreParameters) -> RestoreResu
         Path(parameters.path).expanduser(), parameters.password, parameters.remove_first, parameters.replace_existing, parameters.accounts or None,
         frozenset(part for part, chosen in wanted.items() if chosen), parameters.passwords,
     ))
-    return RestoreResult(tuple(report.made), tuple(report.filled), report.messages, report.items, report.skipped, report.window_settings, tuple(report.notes), report.to_drafts, report.paused, len(report.damaged), tuple(report.damaged_places))
+    return RestoreResult(tuple(report.made), tuple(report.filled), report.messages, report.items, report.skipped, report.window_settings, tuple(report.notes), report.to_drafts, report.paused, damaged_messages_and_items(report), tuple(report.damaged_places))
 
 
 def backup_check_account(engine: Engine, parameters: CheckAccountParameters) -> CheckAccountResult:

@@ -15,9 +15,13 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, parse_m
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 3.2.342"
+__version__ = "commands_calendar.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a series whose time of day moves moves its skipped and changed dates by as much on their own day; when its first date or
+#           its rule changes they stay as they were (RV-185); dates the series names itself (RDATE) stay (RV-187); a changed occurrence
+#           never moved in time moves with the series (RV-188); an edit of one date of an object of only changed occurrences changes
+#           exactly that date (RV-186)
 # v3.2.342: a whole series changed to a new start takes its skipped and changed occurrences along; they go when it no longer repeats (RV-93)
 # v3.0.339: an attendee who stays keeps their name, role and answer when the attendees are given again (RV-17)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -286,33 +290,111 @@ def _attendee(text: str) -> Attendee:
     return Attendee(address, name)
 
 
-def _shifted(moment: Moment, before: Moment, after: Moment) -> Moment | None:
-    """moment moved as far as before moved to after; None when they cannot be compared (a day and a moment, a floating and a zoned time)."""
-    if isinstance(before, datetime) and isinstance(after, datetime) and isinstance(moment, datetime):
-        if (before.tzinfo is None) != (after.tzinfo is None) or (before.tzinfo is None) != (moment.tzinfo is None):
-            return None
-        return moment + (after - before)
-    if not isinstance(before, datetime) and not isinstance(after, datetime) and not isinstance(moment, datetime):
-        return moment + (after - before)
-    return None
-
-
 def _following_the_start(series: EventSeries, master: Event) -> EventSeries:
-    """The whole series changed: its skipped occurrences (EXDATE) and changed ones (RECURRENCE-ID) move along with a new start, and go
-    when it no longer repeats. They named the old moments: a deleted occurrence came back, a moved one showed twice (RV-93)."""
+    """The whole series changed: its skipped occurrences (EXDATE) and changed ones (RECURRENCE-ID) follow it, and go when it no longer
+    repeats. When the rule stayed and the first occurrence stayed on its day, each of them moves on the wall clock by exactly as much as
+    the start moved, from the old zone into the new one: a new time of day, a new zone, also for a rule of several times a day (RV-93),
+    and a changed occurrence whose own time was never moved moves with it (RV-188). When the first day or the rule changed, they stay
+    exactly as they were: a date that is still in the series keeps being skipped or changed, and two of them can never land on one date
+    (RV-185). Dates the series names itself (RDATE) never move (RV-187)."""
     before = series.master
-    if not series.own_master or master.start == before.start and (master.rrule or not before.rrule):
+    if not series.own_master or master.start == before.start and master.rrule == before.rrule and master.repeats == before.repeats:  # the same
+        # moment: an edit of the title only (the window gives the start back in this computer's zone) moves nothing
         return replace(series, master=master)  # (a stand-in master names no occurrences of its own)
-    if not master.rrule:
+    if not master.repeats:
         return replace(series, master=replace(master, exdates=()), overrides=())
-    exdates = [_shifted(moment, before.start, master.start) for moment in master.exdates]
-    overrides = [(override, _shifted(override.recurrence_id, before.start, master.start)) for override in series.overrides if override.recurrence_id is not None]
-    if any(moment is None for moment in exdates) or any(moment is None for _, moment in overrides):
-        return replace(series, master=master)  # all-day became timed or the other way: nothing can be moved as it was
+    length = _length(master)
+    if before.rrule and not master.rrule:  # only its named dates are left (and its first one): the exceptions of the rule go with it
+        named = {*master.rdates, master.start}
+
+        def first(moment: Moment) -> Moment:  # an exception of the first occurrence goes with the start when that moved
+            return master.start if moment == before.start else moment
+
+        return replace(
+            series, master=replace(master, exdates=tuple(first(moment) for moment in master.exdates if first(moment) in named)),
+            overrides=tuple(
+                _moved_override(override, first(override.recurrence_id), before, length)
+                for override in series.overrides if override.recurrence_id is not None and first(override.recurrence_id) in named
+            ),
+        )
+    if master.rrule != before.rrule or not _same_first_day(before.start, master.start) or _rule_sets_the_times(master.rrule):
+        return replace(series, master=master)  # (a rule that sets its own hours keeps its occurrences where they are)
+    fixed = set(before.rdates)
+
+    def follows(moment: Moment) -> Moment:
+        return moment if moment in fixed else _moved_like_the_start(moment, before.start, master.start)
+
     return replace(
-        series, master=replace(master, exdates=tuple(moment for moment in exdates if moment is not None)),
-        overrides=tuple(replace(override, recurrence_id=moment) for override, moment in overrides),
+        series, master=replace(master, exdates=tuple(follows(moment) for moment in master.exdates)),
+        overrides=tuple(
+            _moved_override(override, follows(override.recurrence_id), before, length) if override.recurrence_id is not None else override
+            for override in series.overrides
+        ),
     )
+
+
+def _rule_sets_the_times(rule: str) -> bool:
+    """A rule that names the hours, minutes or positions itself (BYHOUR=9,15): its occurrences do not move with the start's time."""
+    parts = {part.split("=", 1)[0].strip().upper() for part in rule.split(";")}
+    return bool(parts & {"BYHOUR", "BYMINUTE", "BYSECOND", "BYSETPOS"})
+
+
+def _day_of(moment: Moment) -> date:
+    return moment.date() if isinstance(moment, datetime) else moment
+
+
+def _same_first_day(before: Moment, after: Moment) -> bool:
+    """The first occurrence stays on its day, each in its own zone: only its time of day, its zone, or all-day or not changed. A floating
+    time and a zoned one are never compared."""
+    if isinstance(before, datetime) and isinstance(after, datetime) and (before.tzinfo is None) != (after.tzinfo is None):
+        return False
+    return _day_of(before) == _day_of(after)
+
+
+def _wall(moment: Moment) -> datetime:
+    """The moment on its own wall clock, without a zone (a day: its midnight)."""
+    return moment.replace(tzinfo=None) if isinstance(moment, datetime) else datetime(moment.year, moment.month, moment.day)
+
+
+def _moved_like_the_start(moment: Moment, before: Moment, after: Moment) -> Moment:
+    """A skipped or changed occurrence moved on the wall clock by as much as the start: read in the series' old zone, moved, and given the
+    new zone (a day stays a day, a time a time, as the new start). One that cannot be read that way (a floating time in a zoned series,
+    the edge of year 9999) stays as it is."""
+    if isinstance(moment, datetime) != isinstance(before, datetime):
+        return moment
+    try:
+        if isinstance(moment, datetime) and isinstance(before, datetime):
+            if (moment.tzinfo is None) != (before.tzinfo is None):
+                return moment
+            moment = moment.astimezone(before.tzinfo) if before.tzinfo is not None else moment
+        moved = _wall(moment) + (_wall(after) - _wall(before))
+        if isinstance(after, datetime):
+            return moved.replace(tzinfo=after.tzinfo)
+        return moved.date()
+    except (OverflowError, ValueError):
+        return moment
+
+
+def _moved_override(override: Event, moment: Moment, before: Event, length: timedelta | None) -> Event:
+    """A changed occurrence at its new place; when its own time was the series' (only its title or people changed), it keeps the
+    series' time there too (RV-188). At the edge of the years it only changes its place."""
+    kept_time = override.start == override.recurrence_id and _length(override) == _length(before)
+    if kept_time and length is not None:  # also across a change between all-day and timed: it takes the series' new kind
+        try:
+            return replace(override, recurrence_id=moment, start=moment, end=moment + length)
+        except OverflowError:
+            pass
+    return replace(override, recurrence_id=moment)
+
+
+def _length(event: Event) -> timedelta | None:
+    """How long it lasts; None when its start and end cannot be compared (a day and a time, a floating and a zoned time)."""
+    start, end = event.start, event.end
+    if isinstance(start, datetime) and isinstance(end, datetime):
+        return end - start if (start.tzinfo is None) == (end.tzinfo is None) else None
+    if not isinstance(start, datetime) and not isinstance(end, datetime):
+        return end - start
+    return None
 
 
 def _attendees_kept(before: tuple[Attendee, ...], texts: tuple[str, ...]) -> tuple[Attendee, ...]:
@@ -498,8 +580,11 @@ def event_edit(engine: Engine, parameters: EditParameters) -> EventInfo:
                 changed = _apply(_clear(base, parameters.clear), parameters, creating=False)
                 if parameters.colour is not None:
                     changed = _with_colour(changed, palette_for(engine.config().find(found.account), found.collection), parameters.colour.strip())
-                others = tuple(o for o in series.overrides if o.recurrence_id != moment)
-                series = replace(series, overrides=(*others, changed))
+                known = any(o.recurrence_id == moment for o in series.overrides)  # in its own place: the order says which one stands for
+                overrides = tuple(changed if o.recurrence_id == moment else o for o in series.overrides) if known else (*series.overrides, changed)
+                series = replace(series, overrides=overrides)  # the event in an object of only changed occurrences (RV-186)
+                if not series.own_master and overrides[0].recurrence_id == moment:
+                    series = replace(series, master=replace(changed, recurrence_id=None))  # the occurrence that stands for the event changed
             else:
                 master = _apply(_clear(series.master, parameters.clear), parameters, creating=False)
                 if parameters.add_tag or parameters.remove_tag:

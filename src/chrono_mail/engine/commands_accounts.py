@@ -35,7 +35,7 @@ from chrono_mail.crypto import (
     unseal_key_with_passphrase,
 )
 from chrono_mail.engine.local import ensure_local_folders
-from chrono_mail.engine.newkey import make_data_key, recovery_code_not_stored, recovery_code_stored
+from chrono_mail.engine.newkey import kept_local_key, make_data_key, recovery_code_not_stored, recovery_code_stored
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
@@ -45,9 +45,10 @@ from chrono_mail.protocols.smtp import SmtpLimits, check_login
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 3.5.346"
+__version__ = "commands_accounts.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a recovery code or file brings back the key of Local Folders kept on this computer when the settings are gone (RV-177)
 # v3.5.346: key.code-stored: the person confirmed the recovery code is stored; account.add says whether the code still has to be shown
 #           (the key is made in one place, which remembers it until then; RV-03)
 # v3.0.340: Local Folders can never be removed, only hidden (the owner, D-255)
@@ -540,15 +541,16 @@ class KeyStatus:
 
 def key_status(engine: Engine, parameters: NoParameters) -> KeyStatus:
     config = engine.config()
-    if config.key_id is None:
+    key_id = config.key_id
+    if key_id is None:
         return KeyStatus(None, False)
     try:
-        engine.keys.load(bytes.fromhex(config.key_id))
+        engine.keys.load(bytes.fromhex(key_id))
     except CredentialStoreError as error:
-        return KeyStatus(config.key_id, False, str(error), store_answered=False)
-    except CryptoError as error:  # not there, or there but damaged: the store did answer
-        return KeyStatus(config.key_id, False, str(error))
-    return KeyStatus(config.key_id, True)
+        return KeyStatus(key_id, False, str(error), store_answered=False)
+    except (CryptoError, ValueError) as error:  # not there, or there but damaged: the store did answer
+        return KeyStatus(key_id, False, str(error))
+    return KeyStatus(key_id, True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -616,14 +618,19 @@ class KeyRestoreCodeParameters:
 
 def _restore(engine: Engine, key: DataKey) -> KeyStatus:
     config = engine.config()
-    if config.key_id is None:
+    wanted = config.key_id if config.key_id is not None else kept_local_key(engine)  # settings lost: the key the kept mail was written with
+    if wanted is None:
         raise ConfigurationError("No account uses a data key yet")
-    if key.key_id.hex() != config.key_id:
+    if key.key_id.hex() != wanted:
         raise CryptoError("This is not the key of this installation's accounts")
     engine.keys.save(key)
     if engine.keys.load(key.key_id) != key:
         raise CryptoError("The credential store did not return the key that was just saved")
-    return KeyStatus(config.key_id, True)
+    if config.key_id is None:  # the kept Local Folders can be taken into use again with it (RV-177)
+        if engine.change_config(lambda fresh: fresh.with_key_id(wanted) if fresh.key_id is None else fresh).key_id != wanted:
+            raise CryptoError("Another key was made on this computer meanwhile; nothing was changed")
+        ensure_local_folders(engine)  # and is shown at once, with its mail
+    return KeyStatus(wanted, True)
 
 
 def key_restore_file(engine: Engine, parameters: KeyRestoreFileParameters) -> KeyStatus:

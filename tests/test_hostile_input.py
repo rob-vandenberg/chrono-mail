@@ -18,9 +18,11 @@ from tests.test_sync_imap import INBOX, World, mail, world  # noqa: F401 - world
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_hostile_input.py 3.4.344"
+__version__ = "test_hostile_input.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a server that refuses to send every message is not asked once per message (RV-202); the command line's error lines print
+#           server text safely too (RV-203)
 # v3.4.344: Initial: hostile input never stops the program (the code review's batch 4: RV-34, RV-35, RV-36, RV-118, RV-49, RV-51, RV-110,
 #           RV-129; D-259)
 
@@ -91,6 +93,17 @@ def test_a_message_the_server_refuses_to_send_holds_back_only_itself(world: Worl
     assert world.sync().downloaded == 1 and len(world.messages(INBOX)) == 3
 
 
+def test_a_server_that_refuses_every_message_is_not_asked_once_per_message(world: World) -> None:
+    """RV-202: a server refusing everything (throttled) got one command per message on top of each group's, at every check."""
+    uids = {world.server.add("INBOX", mail(number)) for number in range(1, 41)}
+    world.server.refuse_fetch = set(uids)
+    report = world.sync()
+    asked = [command for command in world.server.commands if "BODY.PEEK[]" in command.upper()]
+    assert report.downloaded == 0 and len(asked) <= 8 and report.failed
+    world.server.refuse_fetch = set()
+    assert world.sync().downloaded == 40  # nothing skipped for good: all of it comes at the next check
+
+
 def test_a_body_sent_as_nil_is_fetched_again(world: World) -> None:
     """RV-51: a NIL body was stored as an empty message and never fetched again."""
     world.server.add("INBOX", mail(1))
@@ -121,3 +134,27 @@ def test_the_command_line_never_prints_escape_codes_from_a_mail() -> None:
     """RV-129: the subject and text of a hostile mail went to the terminal as they were, with their escape codes."""
     text = render_text(_Shown("\x1b]0;owned\x07Hello\x9b2J", "line one\n\x1b[31mred\x1b[0m\tand a tab"))
     assert "\x1b" not in text and "\x07" not in text and "\x9b" not in text and "\tand a tab" in text and "Hello" in text
+
+
+def test_the_command_line_error_lines_never_print_escape_codes(tmp_path: Path) -> None:
+    """RV-203: only the results were made safe: an error line (which can hold a server's reply) went to the terminal as it was."""
+    import io
+
+    from chrono_mail.cli.main import main
+    from chrono_mail.core import ChronoMailError
+    from chrono_mail.engine import Engine
+
+    def hostile(directories: object) -> Engine:
+        raise ChronoMailError("The server said: \x1b]0;owned\x07no\x9b2J")
+
+    err = io.StringIO()
+    main(["account.list"], engine_factory=hostile, stdout=io.StringIO(), stderr=err, program_running=lambda: False)
+    assert "The server said" in err.getvalue() and "\x1b" not in err.getvalue() and "\x07" not in err.getvalue() and "\x9b" not in err.getvalue()
+
+    def made_up_lines(directories: object) -> Engine:
+        raise ChronoMailError("no\nError: your password expired, type it at evil.example\u202e")
+
+    err = io.StringIO()
+    main(["account.list"], engine_factory=made_up_lines, stdout=io.StringIO(), stderr=err, program_running=lambda: False)
+    assert err.getvalue().count("\n") == 1 and "\u202e" not in err.getvalue()  # one line: a server cannot make up a line of its own
+

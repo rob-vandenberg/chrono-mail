@@ -17,9 +17,11 @@ from chrono_mail.ui.foundfolders import FoundFoldersDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 3.5.346"
+__version__ = "calendaraccount.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: while the account is being added Find, the certificate and the fields are greyed too, and a Find never enables a second
+#           Add (RV-209); Find does nothing during an add, and Add after a failed add only with what Find found
 # v3.5.346: While the account is being added or linked the window cannot close: Cancel greyed, Escape and the close button wait (RV-02)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.274: R-19 round 4: the mail accounts offered are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -108,6 +110,8 @@ class CalendarAccountDialog(QDialog):
         self.result_label.setText(f"<span style='{red_style()}'>{text.replace('<', '&lt;')}</span>")
 
     def _find(self) -> None:
+        if self._adding:  # reached from an accepted certificate while the account is being added: never then
+            return
         url = self.url.text().strip()
         username, password = self.username.text().strip(), self.password.text()
         if self._new() and (not url or not username or not password):
@@ -118,16 +122,16 @@ class CalendarAccountDialog(QDialog):
         self.result_label.setText("Looking…")
 
         def found(result: FoundServer) -> None:
-            self.find_button.setEnabled(True)
+            self.find_button.setEnabled(not self._adding)
             if not result.folders:
                 self._show_problem(result.problem or "No calendars, contacts or tasks were found")
                 return
             self._found = result
-            self.add_button.setEnabled(True)
+            self.add_button.setEnabled(not self._adding)  # never a second Add while one runs (RV-209)
             self.result_label.setText(f"<span style='color:{green()}'><b>✓</b> {counted(len(result.folders), 'folder')} found on {result.url.replace('<', '&lt;')}.</span>")
 
         def failed(error: ChronoMailError) -> None:
-            self.find_button.setEnabled(True)
+            self.find_button.setEnabled(not self._adding)
             self._show_problem(str(error))
 
         if self._new():
@@ -189,10 +193,17 @@ class CalendarAccountDialog(QDialog):
             self._backend.ask(DAV_LINK, link, linked, failed, owner=self)
 
     def _set_adding(self, adding: bool) -> None:
+        """While the account is being added nothing else can be done here: no Cancel, no Find, no certificate, no field changed (RV-209)."""
         self._adding = adding
-        self.add_button.setEnabled(not adding)
-        if self.cancel_button is not None:
-            self.cancel_button.setEnabled(not adding)
+        widgets: list[QWidget | None] = [
+            self.add_button, self.cancel_button, self.find_button, self.certificate_button, self.target, self.account_name, self.url, self.username, self.password,
+        ]
+        for widget in widgets:
+            if widget is not None:
+                widget.setEnabled(not adding)
+        if not adding:
+            self.account_name.setEnabled(self._new())  # a mail account has its own name
+            self.add_button.setEnabled(self._found is not None)  # Add needs what Find found
 
     @override
     def reject(self) -> None:

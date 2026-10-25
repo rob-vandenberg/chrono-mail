@@ -14,9 +14,10 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 3.4.344"
+__version__ = "imap_sync.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a refused group keeps what came before the refusal; a server refusing all of a few spread probes is not asked once per message (RV-202)
 # v3.4.344: a group of messages the server refuses to send is fetched one by one: only the refused one waits for the next check, new mail
 #           and uploads go on (RV-49)
 # v3.2.342: a message whose tags cannot be read here keeps its keywords on the server (they were all removed, RV-48)
@@ -843,20 +844,37 @@ def _download(
             _store_one(store, index, state, view, uid, item, pool, counts)
 
 
+BODIES: str = "(UID FLAGS BODY.PEEK[])"
+
+
 def _fetch_bodies(client: ImapClient, batch: list[int]) -> tuple[dict[int, FetchedItem], set[int]]:
-    """The messages of a group, and the ones the server refuses to send. A refusal of the group is asked again one message at a time, so
-    one message the server will not send never holds back the others (passing: it is tried again at the next check, RV-49)."""
-    try:
-        return {item.uid: item for item in client.uid_fetch(",".join(str(uid) for uid in batch), "(UID FLAGS BODY.PEEK[])")}, set()
-    except ImapRefused:
-        if len(batch) == 1:
-            return {}, set(batch)
-    fetched: dict[int, FetchedItem] = {}
+    """The messages of a group, and the ones the server refuses to send. What came before a refusal is kept; the rest is asked again one
+    message at a time, so one message the server will not send never holds back the others (passing: it is tried again at the next check,
+    RV-49). A server that refuses every one of a few of them spread over the group (the first, the middle, the last) refuses all of it for
+    now (throttled, or the folder gone): the rest waits for the next check instead of costing one command each (RV-202)."""
+    items, refused_group = client.uid_fetch_what_comes(",".join(str(uid) for uid in batch), BODIES)
+    fetched = {item.uid: item for item in items if item.data is not None or not refused_group}  # before a refusal only what holds a body counts
+    missing = [uid for uid in batch if uid not in fetched]
+    if not refused_group or not missing:
+        return fetched, set()
+    if len(missing) == 1:
+        return fetched, set(missing)
     refused: set[int] = set()
-    for uid in batch:
-        found, no = _fetch_bodies(client, [uid])
-        fetched.update(found)
-        refused |= no
+    probes = list(dict.fromkeys((missing[0], missing[len(missing) // 2], missing[-1])))
+    for uid in probes:
+        found, _ = client.uid_fetch_what_comes(str(uid), BODIES)
+        fetched.update((item.uid, item) for item in found if item.data is not None or item.uid not in fetched)
+        if uid not in fetched:
+            refused.add(uid)
+    if refused == set(probes) and len(missing) > len(probes):
+        return fetched, set(missing) - set(fetched)
+    for uid in missing:
+        if uid in fetched or uid in refused:
+            continue
+        found, _ = client.uid_fetch_what_comes(str(uid), BODIES)
+        fetched.update((item.uid, item) for item in found if item.data is not None or item.uid not in fetched)
+        if uid not in fetched:
+            refused.add(uid)
     return fetched, refused
 
 

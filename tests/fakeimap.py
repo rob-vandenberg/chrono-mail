@@ -9,9 +9,10 @@ from chrono_mail.protocols.imap import decode_folder_name, encode_folder_name
 from tests.fakeserver import Conversation, ScriptedServer
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakeimap.py 3.4.344"
+__version__ = "fakeimap.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a folder opened with EXAMINE refuses STORE, MOVE and EXPUNGE (READ-ONLY), as a real server does (RV-170)
 # v3.4.344: refuse_fetch: a FETCH of the body of one of these UIDs answers NO; nil_bodies: their body is sent as NIL (RV-49, RV-51)
 # v1.1.248: CONDSTORE and QRESYNC on request (ENABLE, HIGHESTMODSEQ, CHANGEDSINCE, VANISHED): every change of a message counts up the folder's
 #           change counter; set_flags changes marks as another program would (R-09)
@@ -141,6 +142,7 @@ class FakeImapServer(ScriptedServer):
         self.refuse_creates: bool = False  # CREATE answers NO
         self.refuse_single_list: bool = False  # a LIST of one name answers NO
         self.refuse_fetch: set[int] = set()  # a FETCH of the body that includes one of these UIDs answers NO
+        self.read_only: dict[int, bool] = {}  # per connection: the folder open was opened with EXAMINE, so changes there are refused
         self.nil_bodies: set[int] = set()  # the body of these UIDs is sent as NIL
         self.stale_subscriptions: set[str] = set()  # subscribed names of folders that no longer exist
         self.idle_pushes: list[str] = []
@@ -333,6 +335,7 @@ class FakeImapServer(ScriptedServer):
                 conversation.send_line(f"* OK [UIDNEXT {folder.uid_next}] Predicted next UID")
                 if "CONDSTORE" in self.enabled_for.get(id(conversation), set()):
                     conversation.send_line(f"* OK [HIGHESTMODSEQ {folder.highest_modseq}] changes")
+                self.read_only[id(conversation)] = verb == "EXAMINE"
                 conversation.send_line(f"{tag} OK [{'READ-ONLY' if verb == 'EXAMINE' else 'READ-WRITE'}] done")
                 return name
             elif verb == "CREATE":
@@ -377,6 +380,8 @@ class FakeImapServer(ScriptedServer):
                 return self._append(conversation, tag, argument, selected)
             elif selected is None:
                 conversation.send_line(f"{tag} BAD select a folder first")
+            elif verb == "EXPUNGE" and self.read_only.get(id(conversation)):
+                conversation.send_line(f"{tag} NO [READ-ONLY] the folder is open read-only")
             elif verb == "EXPUNGE":
                 self._expunge(selected, None)
                 conversation.send_line(f"{tag} OK expunged")
@@ -431,6 +436,9 @@ class FakeImapServer(ScriptedServer):
         folder = self.folders[selected]
         subverb, _, rest = argument.partition(" ")
         subverb = subverb.upper()
+        if subverb in ("STORE", "MOVE", "EXPUNGE") and self.read_only.get(id(conversation)):
+            conversation.send_line(f"{tag} NO [READ-ONLY] the folder is open read-only")  # as a real server: EXAMINE allows no changes
+            return
         if subverb == "SEARCH":
             criteria = rest.upper()
             found = [m.uid for m in folder.messages if criteria == "ALL" or (criteria == "UNSEEN" and "\\Seen" not in m.flags) or (criteria == "SEEN" and "\\Seen" in m.flags)]

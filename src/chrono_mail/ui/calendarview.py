@@ -43,9 +43,10 @@ from chrono_mail.ui.toolbar import view_button
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 3.5.346"
+__version__ = "calendarview.py 3.5.348"
 
 # --- Version history ----------------------------------------------------
+# v3.5.348: The question "this occurrence or all" shows plain text (RV-167, without a filter on the whole program)
 # v3.5.346: The computer's named time zone, as the engine uses (today's fixed offset put every event past a daylight-saving change an hour off; RV-15)
 # v3.2.342: This occurrence of an all-day event opens as an all-day event (RV-21)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
@@ -480,6 +481,7 @@ class CalendarPage(PimPage):
     def _ask_scope(self, verb: str) -> str:
         """For a repeating event: 'occurrence' (only this one), 'series' (all of them) or '' (cancel)."""
         box = QMessageBox(self.content)
+        box.setTextFormat(Qt.TextFormat.PlainText)  # never markup (RV-167)
         box.setWindowTitle(verb)
         box.setText(f"This event repeats. {verb} only this occurrence, or all of them?")
         only = box.addButton("This occurrence", QMessageBox.ButtonRole.AcceptRole)

@@ -1,13 +1,15 @@
+import json
 from pathlib import Path
 
-from chrono_mail.core import CryptoError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, CryptoError
 from chrono_mail.crypto import DataKey, generate_data_key
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "newkey.py 3.5.346"
+__version__ = "newkey.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: kept_local_key: the key kept Local Folders needs when the settings name none, for its recovery code (RV-177)
 # v3.5.346: Initial: one way to make this computer's data key, and the remembered fact that its recovery code was not stored yet (RV-03)
 
 NOT_STORED_FILE: str = "recovery-code-not-stored"  # holds the id of the key whose recovery code the person has not confirmed yet
@@ -43,3 +45,16 @@ def recovery_code_stored(engine: Engine) -> None:
 
 def _marker(engine: Engine) -> Path:
     return engine.directories.data_directory / NOT_STORED_FILE
+
+
+def kept_local_key(engine: Engine) -> str | None:
+    """The key id the Local Folders mail kept on this computer was written with, when it is encrypted and the settings name no key (they
+    were lost or reset): that key, never a new one, opens it."""
+    if engine.config().key_id is not None:
+        return None
+    try:
+        metadata = json.loads((engine.directories.store_directory(LOCAL_ACCOUNT_ID) / "store.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    key_id = metadata.get("key_id") if isinstance(metadata, dict) and metadata.get("encrypted") is True else None
+    return key_id if isinstance(key_id, str) else None

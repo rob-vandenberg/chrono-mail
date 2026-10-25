@@ -141,3 +141,38 @@ def test_a_drag_of_messages_of_several_accounts_goes_to_no_folder(world: World, 
     assert not move_probe(world, folder_point(world, "Junk"), data)
     assert not drop(world, folder_point(world, "Junk"), data)
 
+
+def test_a_pointer_move_reads_only_the_summary_of_the_drag(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-205: every move of the pointer over the folder list decoded the whole list of the drag: Ctrl+A on 500,000 messages and a drag
+    froze the window. The moves read a small summary; the list is read once, on the drop."""
+    from chrono_mail.ui import foldertree
+
+    started(qtbot, world)
+    data = messages_mime_data(world.account_id, [("Inbox", f"{number:032x}") for number in range(50_000)])
+    reads: list[str] = []
+    real_read = foldertree.read_messages_mime_data
+
+    def counted_read(mime: QMimeData) -> tuple[str, list[tuple[str, str]]] | None:
+        reads.append("whole list")
+        return real_read(mime)
+
+    monkeypatch.setattr(foldertree, "read_messages_mime_data", counted_read)
+    junk = folder_point(world, "Junk")
+    for _ in range(20):
+        assert move_probe(world, junk, data)
+    assert not move_probe(world, folder_point(world, "Inbox"), data)  # where they are already
+    assert reads == []
+
+
+def test_a_drop_whose_list_differs_from_its_summary_is_refused(world: World, qtbot: QtBot) -> None:
+    """The review of RV-205: the checks read only the summary; a drag from another program whose summary says Inbox but whose list holds
+    Scheduled messages slipped past the rule that a scheduled message goes only to Drafts or Trash."""
+    import json
+
+    from chrono_mail.ui.dragdata import MESSAGES_SUMMARY_TYPE
+
+    started(qtbot, world)
+    data = messages_mime_data(world.account_id, [("Scheduled", "a" * 32)])
+    data.setData(MESSAGES_SUMMARY_TYPE, json.dumps({"account": world.account_id, "folders": ["Inbox"]}).encode("utf-8"))
+    assert not drop(world, folder_point(world, "Junk"), data)
+

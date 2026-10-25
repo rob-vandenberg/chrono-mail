@@ -4,13 +4,15 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QFrame, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
+from chrono_mail.pim.times import local_time
 from chrono_mail.engine.changes import MessageRow
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "conversationbar.py 2.4.333"
+__version__ = "conversationbar.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the dates of a conversation on this computer's clock through the named zone (Windows, RV-201)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.274: R-19 round 4: the rows of the conversation are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v0.0.18: Initial conversation bar
@@ -60,7 +62,7 @@ class ConversationBar(QFrame):
         self._title.setText(f"Conversation: {counted(len(rows), 'message')}")
         for row in rows:
             date = row.date
-            when = date.astimezone().strftime("%d %b %H:%M") if isinstance(date, datetime) else ""
+            when = local_time(date).strftime("%d %b %H:%M") if isinstance(date, datetime) else ""
             folder = row.folder
             where = "" if folder == "Inbox" else f"  [{folder}]"
             item = QListWidgetItem(f"{_who(row.sender or row.recipients)}  ·  {when}{where}")

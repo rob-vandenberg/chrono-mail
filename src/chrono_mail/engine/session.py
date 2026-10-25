@@ -30,9 +30,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 3.0.339"
+__version__ = "session.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the restore's refusal says to try again when it is done (RV-174); a wait that is stopped is WaitStopped, told as a cancelled restore (RV-175)
 # v3.0.339: server_work: a restore waits until the checks, sends and calendar syncs that run have ended and holds new ones back (RV-60)
 # v2.2.314: outbox_lock: a message is put in the Outbox with its waiting time, and checked and sent, one at a time (never sent twice, B-21)
 # v2.2.313: undo: the person's last actions on mail, for Undo and Redo while the program runs (B-18)
@@ -158,7 +159,7 @@ class ServerWork:
         if depth == 0:
             with self._condition:
                 if self._paused:
-                    raise ServerWorkPaused("A backup is being restored: mail is checked and sent again when the restore is done")
+                    raise ServerWorkPaused("A backup is being restored: try again when it is done")  # RV-174: nothing is kept for later
                 self._running += 1
         self._depth.value = depth + 1
         try:
@@ -179,12 +180,16 @@ class ServerWork:
                 self._condition.wait(0.2)
             if self._running:
                 self._paused = False
-                raise ServerWorkPaused("The restore was cancelled")
+                raise WaitStopped("The restore was cancelled")  # the restore tells it as cancelled (RV-175)
         try:
             yield
         finally:
             with self._condition:
                 self._paused = False
+
+
+class WaitStopped(ServerWorkPaused):
+    """The restore was cancelled, or the program is ending, while it waited for the work that runs."""
 
 
 def talks_to_servers[**P, R](handler: Callable[Concatenate["Engine", P], R]) -> Callable[Concatenate["Engine", P], R]:

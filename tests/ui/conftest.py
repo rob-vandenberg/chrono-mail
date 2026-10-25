@@ -5,8 +5,9 @@ from typing import cast
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
-from PySide6.QtGui import QFont, QPalette
-from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
+from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtPrintSupport import QPrintDialog
+from PySide6.QtWidgets import QApplication, QColorDialog, QDialog, QFileDialog, QInputDialog, QMessageBox, QStyle, QWidget
 
 from chrono_mail.ui import appearance, colours, scale, sendnotices
 from tests.ui.world import dialogs, world
@@ -14,9 +15,12 @@ from tests.ui.world import dialogs, world
 __all__ = ["dialogs", "world"]  # fixtures, found by pytest in this directory
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 2.2.314"
+__version__ = "conftest.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the About boxes and the print window too (they run without QDialog.exec; the reviewer of 3.5.348)
+# v3.5.347: every window that waits for a click (a dialog's exec, a message box made by hand, the text, file, folder and colour
+#           pickers) is never shown for real either: noted, answered with Cancel, and the test fails (a restore's recovery code window hung a run)
 # v2.2.314: the question on Quit while messages wait in the Outbox (a box of its own, B-20) is never shown for real either
 # v2.0.293: the window tests on Windows use Segoe UI 9 pt, the real program's font there, not Qt's "Sans Serif" (the Windows computer's report of 2.0.287)
 # v1.9.266: R-45: every window test starts as the first test of a run does: the colours, sizes and style of the program are put
@@ -89,17 +93,61 @@ def _unanswered_box(kind: str) -> object:
     return staticmethod(show)
 
 
+def _unanswered_exec(self: QDialog) -> int:
+    """A window of the program that waits for a click (exec) and that no test answers: noted (the test then fails) and answered with
+    Cancel, the safe answer, so the run goes on. A test that expects the window answers it itself (its class's exec, which wins)."""
+    _unanswered.shown.append(f"window '{self.windowTitle()}' ({type(self).__name__})")
+    return QDialog.DialogCode.Rejected.value
+
+
+def _unanswered_picker(name: str, cancelled: object) -> object:
+    """A ready-made picker (text, file, folder, colour) that no test answers (answer_input, answer_open_file, answer_save_file): noted, and
+    answered as cancelled."""
+
+    def show(*args: object, **kwargs: object) -> object:
+        _unanswered.shown.append(f"picker {name}")
+        return cancelled
+
+    return staticmethod(show)
+
+
+_PICKERS: tuple[tuple[type[QWidget], str, object], ...] = (
+    (QMessageBox, "about", None),  # made and run inside Qt itself, so the stand-in exec never sees them
+    (QMessageBox, "aboutQt", None),
+    (QInputDialog, "getText", ("", False)),
+    (QInputDialog, "getItem", ("", False)),
+    (QInputDialog, "getInt", (0, False)),
+    (QFileDialog, "getOpenFileName", ("", "")),
+    (QFileDialog, "getOpenFileNames", ([], "")),
+    (QFileDialog, "getSaveFileName", ("", "")),
+    (QFileDialog, "getExistingDirectory", ""),
+    (QColorDialog, "getColor", QColor()),
+)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def no_box_waits_for_a_click() -> Generator[None]:
-    """For the whole run: a message box is never shown for real (a test answers it with `dialogs`, else it is noted)."""
+    """For the whole run: a message box, a window that waits for a click or a picker is never shown for real (a test answers it, with
+    `dialogs`, its own patch or the answer_ helpers of world.py; else it is noted and the test fails)."""
     real = {name: QMessageBox.__dict__[name] for name in ("question", "warning", "information", "critical")}
     for name in real:
         setattr(QMessageBox, name, _unanswered_box(name))
+    real_exec = {owner: owner.__dict__["exec"] for owner in (QDialog, QPrintDialog)}  # a message box made by hand runs QDialog.exec too;
+    # the print window has an exec of its own
+    for owner in real_exec:
+        setattr(owner, "exec", _unanswered_exec)
+    real_pickers = [(owner, name, owner.__dict__[name]) for owner, name, _ in _PICKERS]
+    for owner, name, cancelled in _PICKERS:
+        setattr(owner, name, _unanswered_picker(f"{owner.__name__}.{name}", cancelled))
     real_quit_question = sendnotices.quit_question
     sendnotices.quit_question = _unanswered_quit_question
     yield
     for name, function in real.items():
         setattr(QMessageBox, name, function)
+    for owner, function in real_exec.items():
+        setattr(owner, "exec", function)
+    for owner, name, function in real_pickers:
+        setattr(owner, name, function)
     sendnotices.quit_question = real_quit_question
 
 
@@ -128,4 +176,4 @@ def every_test_starts_clean(qapp: QApplication) -> Generator[None]:
     if _unanswered.shown:
         shown = list(_unanswered.shown)
         _unanswered.shown.clear()
-        pytest.fail(f"A message box came up that the test did not answer: {shown}", pytrace=False)
+        pytest.fail(f"A message box or window came up that the test did not answer: {shown}", pytrace=False)

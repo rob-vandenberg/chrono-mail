@@ -14,15 +14,16 @@ from chrono_mail.core import (
     ServerSettings,
     StorageError,
 )
-from chrono_mail.crypto import DataKey
+from chrono_mail.crypto import DataKey, KeyNotFoundError
 from chrono_mail.engine.newkey import make_data_key
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine
 from chrono_mail.store import Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "local.py 3.5.346"
+__version__ = "local.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: kept Local Folders whose key is gone names File > Use a recovery code, and that code brings it back (newkey.kept_local_key, RV-177)
 # v3.5.346: The data key is made in the one place that remembers its recovery code was not stored yet (RV-03)
 # v3.0.339: Local Folders that is missing from the settings while its mail is still here is taken into use again, never removed;
 #           a failed first setup removes only what it made (RV-62)
@@ -84,7 +85,13 @@ def _take_kept_local_folders(engine: Engine, directory: Path) -> AppConfig:
     config = engine.config()
     if encrypted and config.key_id is not None and config.key_id != kept_key:
         raise CryptoError(f"The mail of Local Folders in {directory} was written with another key than this computer's; nothing was changed")
-    key = engine.data_key(config.with_key_id(str(kept_key))) if encrypted else None  # its own key, from the credential store
+    try:
+        key = engine.data_key(config.with_key_id(str(kept_key))) if encrypted else None  # its own key, from the credential store
+    except KeyNotFoundError:
+        raise CryptoError(
+            f"The mail of Local Folders is still in {directory}, but its key is not in this computer's password store. Use File > Use a "
+            "recovery code to bring the key back; nothing was changed."
+        ) from None
     store = Store.open(directory, key, durable=engine.durable)
     for path, role in STANDARD_FOLDERS:
         store.ensure_folder(path, role)

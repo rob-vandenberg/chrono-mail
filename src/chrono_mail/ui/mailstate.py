@@ -11,9 +11,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.models import FAVORITES, LOCAL_PLACES, USED_ONLY, favorite_in_use, local_folder_kind
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailstate.py 2.4.334"
+__version__ = "mailstate.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: deleted_for_good: in Trash, or a mailbox without a Trash folder (RV-173)
 # v2.4.334: all_archived stops at the first message that is not archived
 # v2.4.329: account_of, targets and archived take any message by its place (a row, or a selected message not loaded yet, W12)
 # v2.2.314: in_timed: the Outbox too (a delayed send shows when it goes, B-21); outbox_count: the messages waiting in the Outbox, each place where mail is kept counted once (the warning on Quit, B-20)
@@ -98,6 +99,11 @@ class MailState:
 
     def folder_role_of(self, account: str, path: str) -> str:
         return next((info.role for info in self.folders.get(account, []) if info.path == path), "other")
+
+    def deleted_for_good(self, account: str, path: str) -> bool:
+        """Delete removes a message of this folder for good: it is in Trash, or its mailbox has no Trash folder (RV-173)."""
+        known = self.folders.get(account)
+        return self.folder_role_of(account, path) == "trash" or (bool(known) and not any(info.role == "trash" for info in known or ()))
 
     def rule_folders(self) -> list[str]:
         return sorted({info.path for infos in self.folders.values() for info in infos})

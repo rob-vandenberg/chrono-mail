@@ -26,9 +26,11 @@ from chrono_mail.ui.colours import red
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, mail_server_kind, policy_of, security_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 3.5.346"
+__version__ = "accountdialog.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: while the account is being added everything else is greyed: Restore a backup…, the certificate, the test and the fields
+#           (a test then let it close half-way, RV-207, RV-208); a test reached from the certificate does nothing then
 # v3.5.346: While the account is being added the window cannot close: Cancel greyed, Escape and the close button wait (half-way the account
 #           and its key were made, but its recovery code was never shown and the list not updated; RV-02)
 # v2.4.332: the first-account window offers Restore a backup… (the Windows computer's W2)
@@ -62,6 +64,8 @@ class AccountDialog(QDialog):
 
     def _restore_instead(self) -> None:
         """Restore a backup… instead of adding an account: this window closes, then the restore starts (its windows are never under this one)."""
+        if self._adding:
+            return  # never while an account is being added (RV-207)
         self.reject()
         if self._restore is not None:
             QTimer.singleShot(0, self._restore)
@@ -90,6 +94,7 @@ class AccountDialog(QDialog):
             layout.addWidget(self.restore_button, 0, Qt.AlignmentFlag.AlignLeft)
 
         who = QGroupBox("Your account", self)
+        self._who: QGroupBox = who
         who_form = QFormLayout(who)
         self.kind = QComboBox(who)
         for kind, label in KINDS:
@@ -112,6 +117,7 @@ class AccountDialog(QDialog):
         layout.addWidget(servers.outgoing_group)
 
         options = QGroupBox("Options", self)
+        self._options: QGroupBox = options
         options_layout = QFormLayout(options)
         self.policy = QComboBox(options)
         for value, label in POLICIES:
@@ -216,12 +222,21 @@ class AccountDialog(QDialog):
     def _values(self) -> AccountCheckParameters:
         return self.servers.check_parameters(trusted=tuple(self.trusted))
 
-    def _busy(self, busy: bool, adding: bool = False) -> None:
+    def _busy(self, busy: bool) -> None:
         for widget in (self.test_button, self.add_button):
-            widget.setEnabled(not busy)
+            widget.setEnabled(not busy and not self._adding)  # a test that ends during an add never brings Add back (RV-208)
+
+    def _set_adding(self, adding: bool) -> None:
+        """While the account is being added nothing else can be done here: no Cancel, no test, no certificate, no restore, no field
+        changed (a test started then let the window close half-way, and Add start twice; RV-02, RV-207, RV-208)."""
         self._adding = adding
-        if self.cancel_button is not None:
-            self.cancel_button.setEnabled(not adding)  # a test may be left; an account half added may not
+        widgets: list[QWidget | None] = [
+            self.test_button, self.add_button, self.cancel_button, self.restore_button, self.certificate_button, self._who,
+            self.servers.incoming_group, self.servers.outgoing_group, self._options,
+        ]
+        for widget in widgets:
+            if widget is not None:
+                widget.setEnabled(not adding)
 
     def _complete(self) -> bool:
         if not (self.email.text().strip() and self.username.text().strip() and self.password.text() and self.incoming_host.text().strip() and self.outgoing_host.text().strip()):
@@ -233,7 +248,7 @@ class AccountDialog(QDialog):
         return True
 
     def _test(self) -> None:
-        if not self._complete():
+        if self._adding or not self._complete():  # reached from an accepted certificate while the account is being added: never then
             return
         self._busy(True)
         self.result_label.setText("Testing…")
@@ -252,7 +267,7 @@ class AccountDialog(QDialog):
     def _add(self) -> None:
         if not self._complete():
             return
-        self._busy(True, adding=True)
+        self._set_adding(True)
         self.result_label.setText("Adding the account…")
         servers = self._values()
         storage: Literal["own", "local"] = "local" if not self._is_imap() and str(self.storage.currentData()) == "local" else "own"
@@ -273,7 +288,7 @@ class AccountDialog(QDialog):
             self.accept()
 
         def failed(error: ChronoMailError) -> None:
-            self._busy(False)
+            self._set_adding(False)
             self.result_label.setText(f"<span style='color:{red()}'>The account could not be added: {error}</span>")
             self._certificate_trouble(("incoming", str(error)))
 

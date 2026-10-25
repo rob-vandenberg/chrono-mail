@@ -12,9 +12,10 @@ from chrono_mail.pim.contact import Address, Contact, Labeled, PartialDate, bare
 from chrono_mail.pimstore import IndexedItem, ItemQuery, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_addressbook.py 3.2.342"
+__version__ = "commands_addressbook.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: each earlier phone, address or other entry is matched once: two with the same value and first kind stay two (RV-191)
 # v3.2.342: an entry given again with the same value and first kind keeps its other kinds, preferred mark and details (RV-20)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.10.277: Contact groups (R-39): the list leaves groups out and gives one group's members (group); a contact shows its groups; a contact deleted
@@ -256,13 +257,17 @@ def _first_kind(types: tuple[str, ...]) -> str:
 
 def _labeled_kept(before: tuple[Labeled, ...], entries: tuple[str, ...]) -> tuple[Labeled, ...]:
     """The entries as given; one that was there with the same value and the same first kind keeps everything else it had (more kinds, the
-    preferred mark, parameters, its group): the window shows only the value and the first kind (RV-20)."""
+    preferred mark, parameters, its group): the window shows only the value and the first kind (RV-20). Each earlier entry is taken once:
+    the same number as work voice and work fax stays two entries (RV-191)."""
     result: list[Labeled] = []
+    left = list(before)
     for entry in entries:
         if not entry.strip():
             continue
         given = _labeled(entry)
-        earlier = next((item for item in before if item.value == given.value and _first_kind(item.types) == _first_kind(given.types)), None)
+        earlier = next((item for item in left if item.value == given.value and _first_kind(item.types) == _first_kind(given.types)), None)
+        if earlier is not None:
+            left.remove(earlier)
         result.append(earlier if earlier is not None and not given.preferred else given)
     return tuple(result)
 
@@ -270,12 +275,15 @@ def _labeled_kept(before: tuple[Labeled, ...], entries: tuple[str, ...]) -> tupl
 def _addresses_kept(before: tuple[Address, ...], entries: tuple[str, ...]) -> tuple[Address, ...]:
     """As _labeled_kept, for postal addresses: an address whose shown parts are all the same keeps its P.O. box, extended part, kinds and the rest."""
     result: list[Address] = []
+    left = list(before)
     for entry in entries:
         if not entry.strip():
             continue
         given = _address(entry)
         shown = (given.street, given.locality, given.region, given.postal_code, given.country, _first_kind(given.types))
-        earlier = next((item for item in before if (item.street, item.locality, item.region, item.postal_code, item.country, _first_kind(item.types)) == shown), None)
+        earlier = next((item for item in left if (item.street, item.locality, item.region, item.postal_code, item.country, _first_kind(item.types)) == shown), None)
+        if earlier is not None:
+            left.remove(earlier)
         result.append(earlier if earlier is not None and not given.preferred else given)
     return tuple(result)
 

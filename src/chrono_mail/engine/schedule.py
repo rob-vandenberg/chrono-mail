@@ -1,13 +1,15 @@
 import threading
 from datetime import datetime, timedelta
 
+from chrono_mail.pim.times import local_time, moment_at
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.sync.imap_sync import SCHEDULED
 
 # --- Version ------------------------------------------------------------
-__version__ = "schedule.py 2.2.314"
+__version__ = "schedule.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the group of a snooze or send time without the platform's conversion too; a send time is shown without the platform's conversion, which Windows refuses past 3000 (RV-204)
 # v2.2.314: the Outbox is a timed folder too: a delayed send waits there for its moment (B-21)
 # v1.1.206: snoozed.json is gone: a snoozed message's time and origin are in its properties file (D-176)
 # v1.1.200: SCHEDULED_FOLDER, where scheduled and repeating messages wait (made when first used); TIMED_FOLDERS
@@ -47,8 +49,8 @@ def snooze_group(until: int | None, now: datetime) -> str:
     this week (to Sunday), next week, later. A message without a record is later."""
     if until is None:
         return "later"
-    today = now.astimezone().date()
-    day = datetime.fromtimestamp(until).astimezone().date()
+    today = local_time(now).date()
+    day = moment_at(until).date()  # a send time read from a message: never the platform's conversion (RV-204)
     next_monday = today + timedelta(days=7 - today.weekday())
     if day <= today:
         return "today"
@@ -76,4 +78,4 @@ def parse_when(text: str, now: float) -> int:
 
 
 def describe_when(epoch: int) -> str:
-    return datetime.fromtimestamp(epoch).astimezone().strftime("%Y-%m-%d %H:%M")
+    return moment_at(epoch).strftime("%Y-%m-%d %H:%M")  # never the platform's conversion: Windows refuses times past 3000 (RV-204)

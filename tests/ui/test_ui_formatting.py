@@ -6,9 +6,10 @@ from PySide6.QtGui import QColor
 from chrono_mail.ui.formatting import avatar_colour, display_name, file_size, initials, long_date, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_formatting.py 0.0.14"
+__version__ = "test_ui_formatting.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: dates before 1970 and after 3000 are shown without the platform's conversion, which Windows refuses (RV-201, RV-204)
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
 # v0.0.13: Initial UI formatting tests
 
@@ -72,3 +73,27 @@ def test_every_avatar_colour_takes_white_initials_readably() -> None:
         colour = QColor.fromHslF(hue / AVATAR_HUES, AVATAR_SATURATION, AVATAR_LIGHTNESS)
         assert contrast_with_white(colour) >= 4.5, hue
     assert all(contrast_with_white(avatar_colour(f"sender{n}@example.org")) >= 4.5 for n in range(500))
+
+
+def test_dates_before_1970_and_after_3000_are_shown_without_the_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-201, RV-204: on Windows the platform's own conversion to local time refuses moments before 1970 and after 3000, which mail and a
+    scheduled message may carry: the list cell, the reading pane, the print and the Scheduled list failed. They go through the named zone."""
+    from pathlib import Path
+    from zoneinfo import ZoneInfo
+
+    from chrono_mail.engine.schedule import describe_when
+    from chrono_mail.pim import times
+    from chrono_mail.ui.columns import date_text
+
+    monkeypatch.setattr(times, "_local", ZoneInfo("Europe/Amsterdam"))
+    old, far = datetime(1965, 5, 1, 12, 0, tzinfo=UTC), datetime(5000, 7, 1, 12, 0, tzinfo=UTC)
+    assert date_text(old, "iso") == "1965-05-01 13:00" and date_text(far, "iso") == "5000-07-01 14:00"  # summer time in 5000 too
+    assert long_date(old).endswith("13:00") and short_date(far).endswith("5000")
+    assert describe_when(int((far - datetime(1970, 1, 1, tzinfo=UTC)).total_seconds())) == "5000-07-01 14:00"
+    source = Path(__file__).resolve().parents[2] / "src" / "chrono_mail"
+    for name in ("ui/formatting.py", "ui/columns.py", "ui/conversationbar.py", "engine/commands_export.py", "ui/contactdetail.py", "ui/tasksview.py",
+                 "ui/eventeditor.py", "ui/taskeditor.py"):  # they show the dates of mail, events and tasks
+        assert ".astimezone()" not in (source / name).read_text("utf-8"), name
+    for name in ("engine/schedule.py", "engine/mailbox.py", "engine/commands_tasklist.py"):  # send, snooze and due times read from messages and items
+        assert "fromtimestamp(" not in (source / name).read_text("utf-8"), name
+

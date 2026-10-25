@@ -7,6 +7,7 @@ from PySide6.QtCore import QByteArray, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QTabWidget, QTextBrowser, QVBoxLayout, QWidget
 
+from chrono_mail.pim.times import local_time
 from chrono_mail.engine.commands_addressbook import ContactInfo
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.changes import MessageRow
@@ -17,9 +18,10 @@ from chrono_mail.ui.formatting import avatar_colour, initials
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "contactdetail.py 1.10.277"
+__version__ = "contactdetail.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the dates of a contact's mail on this computer's clock through the named zone (Windows refuses before 1970 and after 3000, RV-201, RV-204)
 # v1.10.277: The groups a contact is in, under Contact information (R-39)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: the mail history is a typed search
@@ -227,7 +229,7 @@ class ContactDetail(QWidget):
             self.history.addItem("No mail with this contact yet.")
             return
         for moment, subject, sender in sorted(found, key=lambda entry: entry[0].timestamp() if entry[0] else 0.0, reverse=True)[:100]:
-            day = moment.astimezone().strftime("%Y-%m-%d") if moment else ""
+            day = local_time(moment).strftime("%Y-%m-%d") if moment else ""
             item = QListWidgetItem(f"{day}   {subject}   — {sender}")
             item.setSizeHint(QSize(0, 26))
             self.history.addItem(item)

@@ -10,13 +10,14 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.ical import Moment, Task, advance_task, complete_task, new_uid, parse_tasks, reopen_task, tasks_to_text
-from chrono_mail.pim.times import format_moment, local_zone, parse_moment, zone_named
+from chrono_mail.pim.times import moment_at, format_moment, local_zone, parse_moment, zone_named
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 3.2.342"
+__version__ = "commands_tasklist.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a due date without the platform's conversion (RV-201); a task whose due time goes keeps its reminders, counted from the start (RELATED=END needs a due time, RV-189)
 # v3.2.342: a task's reminder in minutes counts back from its due time (RELATED=END), as the window says (RV-99)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.273: R-19: typed task.show, -add, -edit, -complete, -reopen, -delete, -move
@@ -171,7 +172,10 @@ def _due_day(item: IndexedItem) -> str:
     without a zone is read as wall-clock time (at worst a day off near midnight)."""
     if item.due is None:
         return ""
-    moment = datetime.fromtimestamp(item.due, UTC) if item.floating else datetime.fromtimestamp(item.due, local_zone())
+    try:
+        moment = (datetime(1970, 1, 1, tzinfo=UTC) + timedelta(seconds=item.due)) if item.floating else moment_at(item.due)
+    except OverflowError:  # a due date at the edge of the years (hostile data): no day, never a failed list
+        return ""  # never the platform (Windows refuses before 1970 and after 3000, RV-201, RV-204)
     return moment.date().isoformat()
 
 
@@ -331,6 +335,9 @@ def _apply(task: Task, values: TaskFields) -> Task:
     if values.reminder:  # minutes before the due time: RELATED=END, or other programs ring them before the start (RV-99)
         reminders = (_reminder(text, zone_name) for text in values.reminder)
         result = replace(result, reminders=tuple(replace(item, relative_to_end=item.minutes_before is not None and result.due is not None) for item in reminders))
+    if task.due is not None and result.due is None and result.start is not None and not values.reminder and any(item.relative_to_end for item in result.reminders):  # this edit
+        # took the due time away: its reminders count from the start (RELATED=END needs a due time, RV-189); any other edit leaves them
+        result = replace(result, reminders=tuple(replace(item, relative_to_end=False) for item in result.reminders))
     if values.tag:
         result = replace(result, categories=tuple(dict.fromkeys(" ".join(tag.split()) for tag in values.tag if tag.strip())))
     if values.parent is not None:

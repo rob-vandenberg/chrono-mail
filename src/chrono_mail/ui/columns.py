@@ -2,13 +2,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from email.utils import getaddresses
 
+from chrono_mail.pim.times import local_time
 from chrono_mail.engine.changes import MessageRow
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 2.2.314"
+__version__ = "columns.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the dates of the list on this computer's clock through the named zone (Windows, RV-201)
 # v2.2.314: SEND_AT_FOLDERS: the Scheduled folder and the Outbox (a delayed send, B-21)
 # v2.0.280: the Sent column (the moment the message carries itself, sorts by sent; "Saved" in Drafts); the standard columns are those of incoming mail, with From (B-16); the pixel widths of versions before 0.1.89 are no longer taken over
 # v1.9.274: R-19 round 4: the rows are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -129,9 +131,9 @@ def date_text(moment: datetime | None, style: str) -> str:
     if moment is None:
         return ""
     if style == "full":
-        return moment.astimezone().strftime("%d %b %Y %H:%M")
+        return local_time(moment).strftime("%d %b %Y %H:%M")
     if style == "iso":
-        return moment.astimezone().strftime("%Y-%m-%d %H:%M")
+        return local_time(moment).strftime("%Y-%m-%d %H:%M")
     return short_date(moment)
 
 

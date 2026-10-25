@@ -8,9 +8,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_pim.py 0.1.89"
+__version__ = "test_engine_pim.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the same number as work voice and work fax stays two entries when the phone list is saved (RV-191)
 # v0.1.89: contact.addresses
 # v0.0.65: The CalDAV and CardDAV client; first-time setup of the local calendars is serialised
 # v0.0.60: Initial tests of the collection, tag and contact commands
@@ -162,3 +163,16 @@ def test_the_addresses_of_all_contacts_are_listed_once_in_lower_case(engine: Eng
     call(engine, "contact.add", collection=book, name="No address")
     found = call(engine, "contact.addresses")
     assert [(entry.address, entry.item, entry.collection) for entry in found] == [("john@example.com", john.item, book), ("john@home.example", john.item, book)]
+
+
+def test_the_same_number_as_voice_and_fax_stays_two_entries(engine: Engine) -> None:
+    """RV-191: both entries were matched to the first earlier one with that number and first kind: the fax kind was lost and the voice
+    number written twice."""
+    call(engine, "pim.enable")
+    card = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:u1\r\nFN:Ann Lee\r\nTEL;TYPE=work,voice:123\r\nTEL;TYPE=work,fax:123\r\nEND:VCARD\r\n"
+    item = call(engine, "contact.import", collection=books(engine)["contacts"], text=card).items[0]
+    call(engine, "contact.edit", item=item, phone=("work|123", "work|123", "cell|456"))  # the window sends each number with its first kind
+    exported = call(engine, "contact.export", collection=books(engine)["contacts"]).text.replace("\r\n ", "")
+    lines = sorted(line.upper() for line in exported.split("\r\n") if line.upper().startswith("TEL"))
+    assert len(lines) == 3 and any("FAX" in line for line in lines) and any("VOICE" in line for line in lines)
+

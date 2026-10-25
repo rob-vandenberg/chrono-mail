@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import override
 
-from PySide6.QtCore import QEvent, QObject, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from chrono_mail.core import ChronoMailError
@@ -16,9 +16,10 @@ from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "sendnotices.py 3.1.341"
+__version__ = "sendnotices.py 3.5.348"
 
 # --- Version history ----------------------------------------------------
+# v3.5.348: The question on Quit shows plain text (RV-167, without a filter on the whole program)
 # v3.1.341: forget: the notice of a message taken out of the Outbox to be changed goes (RV-156)
 # v2.3.317: the notice as the owner's mockup: the text above, Send now and Cancel below it at the right, a rounded outline, more room
 # v2.2.314: Initial: the notice of a delayed send at the bottom left (Send now, Cancel, its countdown) and the question on Quit while
@@ -34,6 +35,7 @@ def quit_question(parent: QWidget, count: int) -> tuple[str, bool]:
     """Quitting while messages wait in the Outbox (B-20): "send" (Send now, then quit), "quit" (Quit anyway) or "cancel", and whether the
     person ticked Do not warn again."""
     box = QMessageBox(QMessageBox.Icon.Question, "Quit", f"{count:,} message{'' if count == 1 else 's'} wait{'s' if count == 1 else ''} in the Outbox.", parent=parent)
+    box.setTextFormat(Qt.TextFormat.PlainText)  # never markup (RV-167)
     send = box.addButton("Send now", QMessageBox.ButtonRole.AcceptRole)
     leave = box.addButton("Quit anyway", QMessageBox.ButtonRole.DestructiveRole)
     box.addButton(QMessageBox.StandardButton.Cancel)

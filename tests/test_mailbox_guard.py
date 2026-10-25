@@ -2,9 +2,10 @@ import re
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mailbox_guard.py 3.1.341"
+__version__ = "test_mailbox_guard.py 3.5.348"
 
 # --- Version history ----------------------------------------------------
+# v3.5.348: the restore may hand the store to _put_properties (the tags and notes of a message from the backup; 3.3.343 moved it into a helper)
 # v3.1.341: file_sent_again may take the store and index: only the move to Sent of a message the server took (RV-50)
 # v1.1.206: tags are changed through the messages' properties files (D-176)
 # v0.5.134: changes of tags count as changes too
@@ -31,6 +32,7 @@ ALLOWED_HAND_OVER: dict[tuple[str, str], str] = {
     ("commands_outbox.py", "mailbox.store, mailbox.index, sender.account.outgoing, password, message.ref,"): "sending the Outbox; the Sent copy goes to the server at once",
     ("commands_outbox.py", "file_sent_again(mailbox.store, mailbox.index,"): "a message the server took before, only moved to Sent; the Sent copy goes to the server at once",
     ("commands_schedule.py", "mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX"): "scheduled and repeating mail; the Sent copy goes to the server at once",
+    ("restore.py", "_put_properties(mailbox.store, "): "a restore writes a message's tags and notes from the backup, as it did inline before 3.3.343; IMAP tags reach the server at the next check (D-050)",
 }
 
 

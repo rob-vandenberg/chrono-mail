@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
 )
 
+from chrono_mail.pim.times import local_time
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.core import ChronoMailError
@@ -58,9 +59,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.ui.taskeditor import TaskEditor
 
 # --- Version ------------------------------------------------------------
-__version__ = "tasksview.py 1.9.275"
+__version__ = "tasksview.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a task's dates through the named zone (Windows refuses before 1970 and after 3000, RV-201, RV-204)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.273: R-19: every engine call typed; delete and move are typed steps
 # v1.9.265: A row's height comes from its kind (KIND_ROLE: heading or task), which asks for nothing: the list fetched every task's row to work out
@@ -98,7 +100,7 @@ def due_text(text: str) -> str:
     if moment is None:
         return ""
     if isinstance(moment, datetime):
-        local = moment.astimezone() if moment.tzinfo else moment
+        local = local_time(moment)
         return f"{local.strftime('%b')} {local.day}, {local.year} ({local.strftime('%H:%M')})"
     return f"{moment.strftime('%b')} {moment.day}, {moment.year}"
 

@@ -13,9 +13,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 2.5.335"
+__version__ = "commands_folders.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a folder with its subfolders is deleted only when none of them holds mail on the server this computer never had: never half-way (RV-176)
 # v2.5.335: index.prepare tells how many messages it indexed (it always said 0: the index window's report read "0 messages indexed")
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.304: FILL_BATCH 100 (was 500): the counter moves about every second, a restart reads at most 100 messages again
@@ -112,8 +113,11 @@ def folder_delete(engine: Engine, parameters: FolderDeleteParameters) -> FolderD
                 if mailbox.store.list_messages(path):
                     raise StorageError("The folder is not empty")
         removed = 0
-        for path in targets:  # the deepest folders first, so that no folder is ever left without its parent
-            removed += mailbox.delete_folder(path, require_empty=not parameters.with_messages)
+        with mailbox.together():  # one hold on the account: no check runs between the look and the deletes
+            if len(targets) > 1:
+                mailbox.refuse_unseen(targets)  # all of them looked at before any is deleted (RV-176)
+            for path in targets:  # the deepest folders first, so that no folder is ever left without its parent
+                removed += mailbox.delete_folder(path, require_empty=not parameters.with_messages)
         return FolderDeleteResult("/".join(folder), removed, str(mailbox.store.root / ".deleted"), len(targets))
 
 

@@ -8,9 +8,10 @@ from chrono_mail.sync.imap_state import PendingFolder, ImapState
 from chrono_mail.sync.mailconflicts import FOLDER_DELETE_REFUSED, FOLDER_DELETED_HERE_CHANGED, FOLDER_RENAME_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_pending.py 1.1.240"
+__version__ = "imap_pending.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a folder tree deleted offline is deleted on the server whole or not at all: one with new mail there holds its tree back (RV-176)
 # v1.1.240: Initial: folder renames and deletes made offline done on the server at the next check (R-31)
 
 
@@ -28,12 +29,31 @@ def send_pending(client: ImapClient, store: Store, state: ImapState, listed: tup
     delimiter = next((entry.delimiter for entry in listed if entry.delimiter), "/")
     names = {entry.name for entry in listed}
     changed = False
+    deletes = [change for change in state.pending.values() if change.kind != "rename"]
+    arrived: set[tuple[str, ...]] = set()  # the deleted folders with new mail on the server: their tree is not deleted at all (the review of RV-176)
+    waiting: set[tuple[str, ...]] = {change.path for change in deletes if held_under(held_folders, change.path)}  # held by an open conflict
+    for change in deletes:
+        if change.force or change.server_name not in names or change.path in waiting:
+            continue
+        try:
+            if _arrived(client, change):
+                arrived.add(change.path)
+        except ImapRefused as error:  # the server will not let it be looked at: a refusal, told as such, and its tree waits
+            if record(store, FOLDER_DELETE_REFUSED, change.path, "", "/".join(change.path), str(error), server_folder=change.path):
+                notes.append(f"The folder '{'/'.join(change.path)}' could not be deleted on the server: {error} (see Sync conflicts)")
+            waiting.add(change.path)
+    roots = {_root(path, deletes) for path in arrived | waiting}  # the whole tree that was deleted together: its other branches wait too
+    waiting_trees = arrived | waiting | roots
     for change in list(state.pending.values()):
         if held_under(held_folders, change.path):
             continue  # an open conflict: the person decides first
         try:
             if change.kind == "rename":
                 changed = _rename(client, store, state, change, delimiter, names, notes) or changed
+            elif any(change.path[: len(path)] == path or path[: len(change.path)] == change.path for path in waiting_trees):
+                if change.path in arrived and record(store, FOLDER_DELETED_HERE_CHANGED, change.path, "", "/".join(change.path), "", server_folder=change.path):
+                    notes.append(f"The folder '{'/'.join(change.path)}' was deleted here, but it has new mail on the server (see Sync conflicts)")
+                # the rest of its tree waits with it, until the person settled that
             else:
                 changed = _delete(client, store, state, change, names, notes) or changed
         except ImapRefused as error:  # a lasting "no": a sync conflict, not a line at every check (D-195)
@@ -66,17 +86,23 @@ def _rename(client: ImapClient, store: Store, state: ImapState, change: PendingF
     return True
 
 
+def _arrived(client: ImapClient, change: PendingFolder) -> bool:
+    """The server changed the folder since it was deleted here: mail the person never saw is never deleted unasked. A refusal to open it
+    raises (ImapRefused): it is never taken as empty."""
+    info = client.select(change.server_name, read_only=True)
+    return bool(set(client.uid_search("ALL")) - change.uids if info.uid_validity == change.validity else {0})
+
+
+def _root(path: tuple[str, ...], deletes: list[PendingFolder]) -> tuple[str, ...]:
+    """The topmost folder deleted here together with this one (the folder whose tree was deleted)."""
+    above = [change.path for change in deletes if path[: len(change.path)] == change.path]
+    return min(above, key=len) if above else path
+
+
 def _delete(client: ImapClient, store: Store, state: ImapState, change: PendingFolder, names: set[str], notes: list[str]) -> bool:
     if change.server_name not in names:
         state.pending_done(change.path)  # gone there already
         return False
-    if not change.force:
-        info = client.select(change.server_name, read_only=True)
-        arrived = set(client.uid_search("ALL")) - change.uids if info.uid_validity == change.validity else {0}
-        if arrived:  # the server changed it meanwhile: mail the person never saw is never deleted unasked
-            if record(store, FOLDER_DELETED_HERE_CHANGED, change.path, "", "/".join(change.path), "", server_folder=change.path):
-                notes.append(f"The folder '{'/'.join(change.path)}' was deleted here, but it has new mail on the server (see Sync conflicts)")
-            return False
     if client.selected == change.server_name:
         client.select("INBOX", read_only=True)
     client.delete_folder(change.server_name)

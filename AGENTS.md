@@ -91,7 +91,7 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 4. Performance target: the app stays responsive with **500,000 messages**. Heavy operations are measured against a generated test mailbox of that size.
 5. **A test is unambiguous** (the owner, R-45, D-223). Its result never depends on what ran before it, nor on timing; a test that can do that is a gamble, not a test. So:
    1. It waits for the thing it checks, never for something that usually comes first (a list row leaves at the engine's fact, the status line comes with the answer later).
-   2. It answers every message box it causes (`dialogs`, or its own patch). A box no test answers fails the test at once; nothing ever waits for a click.
+   2. It answers every message box and window it causes (`dialogs`, its own patch, or the `answer_` helpers of `tests/ui/world.py`). A box, a window that waits for a click (a dialog's exec) or a picker (text, file, folder, colour) that no test answers is answered with Cancel and fails the test at once; nothing ever waits for a click.
    3. It leaves nothing behind: `tests/ui/conftest.py` deletes every window after the test and puts the colours, sizes and style back; anything else program-wide that a test changes, it puts back itself.
    4. Its name is the same in every run (no random values in parametrized ids), so it can be run on its own.
    5. No test takes longer than 20 seconds (`tests/conftest.py` stops it and prints where it waited); only the opt-in 500,000-message measurement (`-m perf`) is exempt.

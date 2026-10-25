@@ -6,16 +6,18 @@ import tzlocal
 from chrono_mail.pim.ical import Moment
 
 # --- Version ------------------------------------------------------------
-__version__ = "times.py 0.0.60"
+__version__ = "times.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a zone the system cannot name falls back to its offset of now, never UTC (the review of RV-201); local_time and moment_at: a moment on this computer's clock without the platform's conversion, which Windows refuses before 1970 and after 3000 (RV-201, RV-204)
 # v0.0.60: Initial time input and output for commands
 
 _local: tzinfo | None = None
 
 
 def local_zone() -> tzinfo:
-    """The time zone of this computer as a named zone (Europe/Amsterdam), on Windows too; a fixed offset only when the system names none."""
+    """The time zone of this computer as a named zone (Europe/Amsterdam), on Windows too; UTC when the system names none, so a time written
+    to a server is always exact (a zone without a name has no definition a server could read)."""
     global _local
     if _local is None:
         try:
@@ -23,6 +25,39 @@ def local_zone() -> tzinfo:
         except Exception:  # noqa: BLE001 - a system without a usable zone setting is read as UTC, not as a failure
             _local = UTC
     return _local
+
+
+def local_time(moment: datetime) -> datetime:
+    """A moment on this computer's clock, through the named zone (the one typed times are read back in, so a list and an editor agree):
+    Windows' own conversion refuses moments before 1970 and after 3000, which mail may carry (RV-201). A moment no conversion can show
+    (the edges of year 1 and 9999) stays as it is. A floating time stays as it is."""
+    if moment.tzinfo is None:
+        return moment
+    try:
+        return moment.astimezone(local_zone())
+    except (OverflowError, ValueError):
+        return moment
+
+
+def in_local_zone(moment: datetime) -> datetime:
+    """A moment in the zone the engine reads typed times back in (what an editor shows is what it saves); at the edges of the years, as
+    it is."""
+    if moment.tzinfo is None:
+        return moment
+    try:
+        return moment.astimezone(local_zone())
+    except (OverflowError, ValueError):
+        return moment
+
+
+def moment_at(epoch: int) -> datetime:
+    """Seconds since 1970 as a moment on this computer's clock, without the platform (Windows refuses times past 3000, RV-204); a number
+    beyond the years a date can have is the first or last moment there is."""
+    try:
+        moment = datetime(1970, 1, 1, tzinfo=UTC) + timedelta(seconds=epoch)
+    except OverflowError:
+        moment = datetime.max.replace(tzinfo=UTC) if epoch > 0 else datetime.min.replace(tzinfo=UTC)
+    return local_time(moment)
 
 
 def zone_named(name: str) -> tzinfo:

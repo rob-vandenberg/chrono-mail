@@ -31,9 +31,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 2.0.302"
+__version__ = "readingpane.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: an Outbox message that was sent already opens in a message window to be read (RV-181)
 # v2.0.302: Open attachment from the attachment row and the pictures (D-236)
 # v1.9.274: R-19 round 4: the rows and tags are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.270: R-19: every engine call typed; the answers read by their fields
@@ -59,6 +60,7 @@ class ReadingPane(QObject):
         self._tags: MailTags = tags
         self._actions: MessageActions = actions
         self._composing: Composing = composing
+        composing.sent_already.connect(self.open_window_of)  # an Outbox message sent already opens to be read, never as a draft (RV-181)
         self._splitter: PaneSplitter = content_splitter  # the list and the reading pane, side by side or one above the other
         self._wide: Callable[[], bool] = wide  # the list is laid out in columns: the reading pane at the right starts narrower
         self._parent: QWidget = parent
@@ -270,9 +272,11 @@ class ReadingPane(QObject):
     def open_message_window(self) -> None:
         """Enter or a double click on a message that is not a draft: read it in a window of its own."""
         chosen = self.selected_message()
-        if chosen is None:
-            return
-        account, folder, message_id, _ = chosen
+        if chosen is not None:
+            self.open_window_of(*chosen[:3])
+
+    def open_window_of(self, account: str, folder: str, message_id: str) -> None:
+        """This message read in a window of its own (also when the selection moved meanwhile)."""
 
         def shown(result: ShowResult) -> None:
             window = MessageWindow(self._backend, account, folder, message_id, result, self._composing.compose_in_window, self.open_link, self.prepare_message_reader, self._prefs.settings)

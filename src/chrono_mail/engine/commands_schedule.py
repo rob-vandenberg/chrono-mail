@@ -18,9 +18,13 @@ from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 3.1.341"
+__version__ = "commands_schedule.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a scheduled send reads the message again under its locks and sends what is there then (an edit or a pause just made
+#           counts, a message just made repeating waits for the next check; RV-180); a removal of the original that fails after it is gone
+#           from every folder keeps the copy, which is sent (RV-179); the password is read before the locks; mail.unschedule takes the
+#           locks of a send
 # v3.1.341: a scheduled send holds the repeat and Outbox locks and reads the message again (sent once, RV-126); a repeating send that
 #           failed leaves no copy in the Outbox (RV-123); the failure text says it is tried again at the next refresh that sends (RV-132)
 # v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
@@ -358,15 +362,26 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                 if not parameters.message and (due > now or _paused(parsed)):
                     waiting += 1
                     continue
-                sender = _sender(members, parsed)
-                password = engine.passwords.get(sender.account.account_id, ServerRole.OUTGOING) if sender is not None else None
-                if sender is None or password is None:
-                    failed.append(f"{parsed.subject}: no password is stored for the account it is sent from")
-                    continue
+                first_sender = _sender(members, parsed)  # the password store may ask to be unlocked: never while the locks below are held
+                first_password = engine.passwords.get(first_sender.account.account_id, ServerRole.OUTGOING) if first_sender is not None else None
                 with _REPEAT_LOCK, engine.outbox_lock:  # one send of it at a time: the minute check and Send now never both send it (RV-126)
-                    try:
-                        _read(mailbox, reference)  # again, under the locks: another send (or an edit) may have taken it meanwhile
+                    try:  # again, under the locks: another send may have taken it, and what goes is what is there now: an edit or a pause
+                        parsed = _read(mailbox, reference)  # made a moment ago counts (RV-180)
                     except ChronoMailError:
+                        continue
+                    due = _due_time(parsed)
+                    if due is None or _notes(parsed).get(KIND) == "recurring" or (not parameters.message and (due > now or _paused(parsed))):
+                        waiting += 0 if due is None else 1  # (made repeating meanwhile: the next check sends it as a series)
+                        if parameters.message and _notes(parsed).get(KIND) == "recurring":
+                            failed.append(f"{parsed.subject}: it was made a repeating message a moment ago; it goes at its next time")
+                        continue
+                    sender = _sender(members, parsed)
+                    if sender is not None and (first_sender is None or sender.account.account_id != first_sender.account.account_id):
+                        waiting += 1  # its From changed a moment ago: the next check reads its password, never under these locks
+                        continue
+                    password = first_password
+                    if sender is None or password is None:
+                        failed.append(f"{parsed.subject}: no password is stored for the account it is sent from")
                         continue
                     try:
                         outcome = send_and_file(
@@ -379,7 +394,8 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                 mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
                 if outcome.sent:
                     sent += 1
-                    mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
+                    if outcome.reference.folder_path != OUTBOX:  # in Sent (a failed move leaves it in the Outbox, marked as sent)
+                        mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
                     _mark_replied(mailbox, parsed)
                 else:
                     failed.append(f"{parsed.subject}: {outcome.error} (it stays in the Outbox and is tried again at the next refresh that sends)")
@@ -395,6 +411,11 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
     """Send a repeating message whose time has come (or now, when forced), as (sent, waiting). The pattern stays in the Scheduled
     folder and records in itself how far the series is: the timetable moves on before the server is asked, so a crash can lose
     one send but never makes two; a send that failed for certain is tried again at the next check, up to three times."""
+    try:  # the password store may ask to be unlocked: never while the lock below is held
+        first_sender = _sender(members, _read(mailbox, reference))
+    except ChronoMailError:
+        first_sender = None
+    first_password = engine.passwords.get(first_sender.account.account_id, ServerRole.OUTGOING) if first_sender is not None else None
     with _REPEAT_LOCK:
         try:
             parsed = _read(mailbox, reference)  # again, under the lock: another check may have moved it on meanwhile
@@ -412,12 +433,15 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
         if not forced and (repeat.paused or due is None or due > now):
             return 0, 1
         sender = _sender(members, parsed)
-        password = engine.passwords.get(sender.account.account_id, ServerRole.OUTGOING) if sender is not None else None
+        if sender is not None and (first_sender is None or sender.account.account_id != first_sender.account.account_id):
+            return 0, 1  # its From changed a moment ago: the next check reads its password, never under this lock
+        password = first_password
         if sender is None or password is None:
             failed.append(f"{parsed.subject}: no password is stored for the account it is sent from")
             return 0, 0
-        moved = advance(repeat, now) if not forced else repeat
-        if not forced:
+        moved = advance(repeat, now) if not forced or due is not None and due <= now else repeat  # Send now of a send that is due takes its
+        # place: it is never sent again at the next check
+        if moved is not repeat:  # moved on (also a Send now of a due send): written before the server is asked
             try:
                 _record(mailbox, reference, moved, now)
             except ChronoMailError as problem:  # without its progress written first a crash could send it twice: not sent now
@@ -435,7 +459,8 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
                     mailbox.delete(outcome.reference, permanent=True)
             if not error:
                 mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent
-                mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
+                if outcome.reference.folder_path != OUTBOX:  # in Sent: a failed move leaves it in the Outbox, marked as sent
+                    mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
         except ChronoMailError as problem:
             error = error or str(problem)
         if not error:
@@ -456,8 +481,29 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
 
 
 def _remover(mailbox: Mailbox, reference: MessageRef) -> Callable[[], None]:
+    """Remove the scheduled original once its copy is safe in the Outbox. When the removal fails, the copy is thrown away and the original
+    waits; but when the original is gone all the same (only a step after the removal failed), the copy is all that is left and is sent
+    (RV-179: both were thrown away, and the message was lost unsent)."""
+
     def remove() -> None:
-        mailbox.delete(reference, permanent=True)
+        try:  # still in Scheduled right now? Someone else may have removed or moved it a moment ago (deleted for good, dragged to Drafts)
+            mailbox.store.locate(reference, hint=mailbox.hint(reference.store_id))
+        except MessageNotFoundError:
+            raise StorageError("It was taken out of Scheduled a moment ago") from None  # never sent then
+        try:
+            if mailbox.delete(reference, permanent=True) != "deleted":
+                raise StorageError("It was taken out of Scheduled a moment ago")
+        except ChronoMailError:
+            try:
+                still_here = reference.store_id in mailbox.store.all_store_ids()
+            except OSError:  # a folder went meanwhile: not known, so the safe answer
+                still_here = True
+            if still_here:  # the copy is thrown away, nothing is sent (the review of RV-179)
+                raise
+            try:  # it was here a moment ago and is gone now: this removal took it, only a step after it failed
+                mailbox.forget(reference)
+            except ChronoMailError:
+                pass  # the index is repaired by the next reconcile; the copy is still sent, never lost
 
     return remove
 
@@ -478,22 +524,43 @@ def _mark_replied(mailbox: Mailbox, parsed: ParsedMessage) -> None:
 
 def mail_unschedule(engine: Engine, parameters: MessageParameters) -> DraftSaveResult:
     """Take a scheduled message back: it becomes a draft again, written from the account in its From (the place where the mail
-    is kept may be Local Folders, which sends nothing itself: a drop on Drafts names it)."""
+    is kept may be Local Folders, which sends nothing itself: a drop on Drafts names it). All of it under the locks of a send: it is never
+    sent and a draft too, whatever happens at the same moment (the reviews of RV-180). On an IMAP account it may wait for a running check:
+    a wait, never a second send."""
     (members,) = _places(engine, parameters.account)
-    with open_mailbox(engine, parameters.account) as mailbox:
-        reference = _waiting_place(mailbox, _check_id(parameters.message))
-        parsed = parse_message(mailbox.store.read(reference, hint=mailbox.hint(reference.store_id)))
-        if _due_time(parsed) is None and _notes(parsed).get(KIND) != "recurring":
-            raise UsageError("That message is not scheduled")  # a repeating message's timetable is in itself: it ends with it
-    sender = _sender(members, parsed)
-    return draft_save(
-        engine,
-        DraftSaveParameters(
-            account=sender.account.account_id if sender is not None else parameters.account, to=tuple(_shown(parsed.to_addresses)), cc=tuple(_shown(parsed.cc_addresses)), bcc=tuple(_shown(parsed.bcc_addresses)),
-            subject=parsed.subject, body=parsed.text_body or "", html=parsed.html_body, keep_attachments=tuple(str(i) for i in range(len(parsed.attachments))),
-            in_reply_to=parsed.in_reply_to, references=parsed.references, replace_folder="/".join(reference.folder_path), replace_message=reference.store_id,
-        ),
-    )
+    with open_mailbox(engine, parameters.account), _REPEAT_LOCK, engine.outbox_lock:  # the mailbox first and kept open, as every send takes
+        # them: the opens below come back to it, and never wait for an index rebuild that waits for a send (a standstill)
+        with open_mailbox(engine, parameters.account) as mailbox:
+            reference = _waiting_place(mailbox, _check_id(parameters.message))
+            parsed = parse_message(mailbox.store.read(reference, hint=mailbox.hint(reference.store_id)))
+            if _due_time(parsed) is None and _notes(parsed).get(KIND) != "recurring":
+                raise UsageError("That message is not scheduled")  # a repeating message's timetable is in itself: it ends with it
+        sender = _sender(members, parsed)
+        draft_account = sender.account.account_id if sender is not None else parameters.account
+        saved = draft_save(
+            engine,
+            DraftSaveParameters(
+                account=draft_account, to=tuple(_shown(parsed.to_addresses)), cc=tuple(_shown(parsed.cc_addresses)), bcc=tuple(_shown(parsed.bcc_addresses)),
+                subject=parsed.subject, body=parsed.text_body or "", html=parsed.html_body, keep_attachments=tuple(str(i) for i in range(len(parsed.attachments))),
+                in_reply_to=parsed.in_reply_to, references=parsed.references, replace_folder="/".join(reference.folder_path), replace_message=reference.store_id,
+            ),
+        )
+        with open_mailbox(engine, parameters.account) as mailbox:
+            try:
+                mailbox.store.locate(reference, hint=mailbox.hint(reference.store_id))
+            except MessageNotFoundError:
+                return saved  # the draft took its place
+            try:  # the draft could not take its place (its removal failed): it goes now, or it would be sent at its time and as a draft
+                mailbox.delete(reference, permanent=True)
+                return saved
+            except ChronoMailError:
+                pass
+        try:  # the scheduled one stays as it was: the new draft goes again, so there are never two
+            with open_mailbox(engine, draft_account) as mailbox:
+                mailbox.delete(mailbox.reference(mailbox.folder(saved.folder), saved.message_id), permanent=True)
+        except ChronoMailError as error:
+            raise StorageError(f"The scheduled message could not be taken out of Scheduled, and its new draft could not be removed again ({error}): delete the draft") from None
+        raise StorageError("The scheduled message could not be taken out of Scheduled; it stays scheduled, nothing was changed")
 
 
 def _shown(addresses: tuple[Address, ...]) -> list[str]:

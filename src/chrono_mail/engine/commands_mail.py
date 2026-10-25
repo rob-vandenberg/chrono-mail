@@ -10,6 +10,7 @@ from email.utils import getaddresses, parseaddr
 from pathlib import Path
 from typing import Literal
 
+from chrono_mail.pim.times import moment_at
 from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine.commands_accounts import AccountParameters
@@ -33,9 +34,10 @@ from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 3.1.341"
+__version__ = "commands_mail.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a snooze or send time in the list without the platform's conversion (Windows refuses before 1970 and after 3000, RV-201, RV-204); mail.settle waits for a restore and is held back by it, like a check (RV-171)
 # v3.1.341: Send puts its copy in the Outbox and sends it under the Outbox lock (a refresh never sends it too, RV-109); a failed send
 #           replaces its draft too: the message waits in the Outbox (RV-155)
 # v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
@@ -108,7 +110,7 @@ def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage], snoozed: dict[st
         MessageRow(
             message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, flag_names(message.flags),
             message.has_attachments, message.preview, message.recipients, sizes.get(message.thread_key, 1),
-            snoozed_until=datetime.fromtimestamp(times[message.store_id]).astimezone() if message.folder in TIMED and message.store_id in times else None,
+            snoozed_until=moment_at(times[message.store_id]) if message.folder in TIMED and message.store_id in times else None,
             tags=message.tags, sent=message.sent,
         )
         for message in found
@@ -333,6 +335,7 @@ class SettleParameters:
     )
 
 
+@talks_to_servers  # a full sync like a check: a restore waits for it and holds it back meanwhile (RV-171)
 def mail_settle(engine: Engine, parameters: SettleParameters) -> FetchResult:
     """Synchronise an IMAP account once with the person's answer for a folder that a safety rule held back."""
     with open_mailbox(engine, parameters.account) as mailbox:
@@ -552,7 +555,7 @@ def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
             if not outcome.sent and _replies_to(parameters) is not None:  # sent again later from the Outbox: the original is marked then
                 _note_replies_to(mailbox, outcome.reference, _replies_to(parameters))
         mailbox.report_added(outcome.reference)  # stored past the mailbox's operations: in Sent, or in the Outbox when it failed
-        if outcome.sent:
+        if outcome.sent and outcome.reference.folder_path != OUTBOX:  # in Sent (a failed move leaves it in the Outbox, marked as sent)
             mailbox.put_on_server(outcome.reference)  # IMAP: the Sent copy is in Sent on the server at once
         if outcome.sent and parameters.mark_replied and parameters.source_folder and parameters.source_message:
             try:

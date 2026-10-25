@@ -5,7 +5,7 @@ from typing import Any  # command results are command-specific dataclasses
 
 import pytest
 
-from chrono_mail.core import ProtocolError, StorageError
+from chrono_mail.core import ChronoMailError, ProtocolError, StorageError
 from chrono_mail.engine.mailbox import Mailbox
 from chrono_mail.protocols.imap import ImapClient, ImapRefused
 from tests.enginefactory import make_engine
@@ -17,9 +17,12 @@ from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap_online.py 2.4.330"
+__version__ = "test_engine_imap_online.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: a message of a folder that exists only here is deleted without connecting to the server (RV-183, RV-184); after a folder
+#           delete an action in Inbox works (RV-170); a folder tree is looked at whole before any of it is deleted (RV-176); mail too
+#           large to download is named (RV-172)
 # v2.4.330: Junk by hand works when the server's Junk folder is not subscribed (it failed with "Mailbox already exists", W7)
 # v1.1.238: a move on a server without MOVE and UIDPLUS leaves another program's deleted-marked mail alone (R-35)
 # v0.4.121: Many actions at once, a mail check while deleting, a connection the server closed, a renumbered folder
@@ -253,3 +256,117 @@ def test_junk_by_hand_uses_a_junk_folder_the_server_does_not_show(world: World) 
     call(world.engine, "message.junk-many", account=world.account, folder="Inbox", messages=[rows[0].message_id])
     assert len(world.imap.uids("Junk")) == 1 and [row.subject for row in world.rows("Junk")] == [rows[0].subject]
     assert not any(command.startswith("CREATE") and "Junk" in command for command in world.imap.commands)
+
+
+def test_a_message_of_a_folder_only_here_is_deleted_without_the_server(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """RV-183, RV-184: removing a message of the Outbox or Scheduled (they exist only here) waited for the server session, behind a whole
+    mail check, with the Outbox lock held; offline it waited for a connection that could not come."""
+    from chrono_mail.engine.mailbox import open_mailbox
+
+    with open_mailbox(world.engine, world.account) as mailbox:
+        reference = mailbox.deliver(mailbox.folder("Outbox"), mail(1), frozenset())
+    world.engine.close_imap_links()
+    tried: list[str] = []
+
+    def unreachable(self: ImapClient) -> None:
+        tried.append("connect")
+        raise ProtocolError("Connection failed: no route")
+
+    monkeypatch.setattr(ImapClient, "connect", unreachable)
+    with open_mailbox(world.engine, world.account) as mailbox:
+        assert mailbox.delete(reference, permanent=True) == "deleted"
+    assert tried == [] and world.rows("Outbox") == []
+
+
+def test_after_a_folder_delete_an_action_in_inbox_works(world: World) -> None:
+    """RV-170: deleting a folder left Inbox open read-only; the next flag, move or delete in Inbox was refused until the next check."""
+    rows = filled(world, 2)
+    call(world.engine, "message.flag", account=world.account, folder="Inbox", message=rows[0].message_id, flagged=True)  # Inbox open now
+    call(world.engine, "folder.create", account=world.account, folder="Old")
+    call(world.engine, "folder.delete", account=world.account, folder="Old", with_messages=True)
+    call(world.engine, "message.flag", account=world.account, folder="Inbox", message=rows[1].message_id, flagged=True)
+    assert all("\\Flagged" in world.imap.flags_of("INBOX", uid) for uid in world.imap.uids("INBOX"))
+
+
+def test_a_folder_tree_is_looked_at_whole_before_any_of_it_is_deleted(world: World) -> None:
+    """RV-176: the subfolders were deleted first; then the parent was refused for its new mail, and the tree was half gone."""
+    call(world.engine, "folder.create", account=world.account, folder="Projects")
+    call(world.engine, "folder.create", account=world.account, folder="Projects/Done")
+    world.imap.add("Projects", mail(1))  # new mail on the server, not here yet
+    with pytest.raises(ChronoMailError, match="check for mail first"):
+        call(world.engine, "folder.delete", account=world.account, folder="Projects", with_messages=True, include_subfolders=True)
+    assert "Projects/Done" in world.imap.folders and "Projects" in world.imap.folders
+
+
+def test_a_folder_with_mail_too_large_to_download_says_so(world: World) -> None:
+    """RV-172: a message over 256 MB is never downloaded, so "check for mail first" could never help; the folder could never be deleted."""
+    from chrono_mail.engine import imap_online
+
+    call(world.engine, "folder.create", account=world.account, folder="Huge")
+    world.imap.add("Huge", mail(1))
+    world.fetch()
+    world.imap.add("Huge", mail(2))
+    real = imap_online.TOO_LARGE_TO_DOWNLOAD
+    try:
+        imap_online.TOO_LARGE_TO_DOWNLOAD = 10  # every message counts as too large
+        with pytest.raises(ChronoMailError, match="too large for Chrono Mail to download"):
+            call(world.engine, "folder.delete", account=world.account, folder="Huge", with_messages=True)
+    finally:
+        imap_online.TOO_LARGE_TO_DOWNLOAD = real
+    assert "Huge" in world.imap.folders
+
+
+def test_a_folder_tree_deleted_offline_is_deleted_on_the_server_whole_or_not_at_all(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of RV-176: deleted here offline, the subfolders went on the server at the next check and the parent, with new mail
+    meanwhile, became a sync conflict: the tree was half gone."""
+    call(world.engine, "folder.create", account=world.account, folder="Projects")
+    call(world.engine, "folder.create", account=world.account, folder="Projects/Done")
+    world.engine.close_imap_links()
+
+    def unreachable(self: ImapClient) -> None:
+        raise ProtocolError("Connection failed: no route")
+
+    monkeypatch.setattr(ImapClient, "connect", unreachable)
+    call(world.engine, "folder.delete", account=world.account, folder="Projects", with_messages=True, include_subfolders=True)
+    monkeypatch.undo()
+    world.imap.add("Projects", mail(1))  # new mail on the server meanwhile
+    world.fetch()
+    assert "Projects" in world.imap.folders and "Projects/Done" in world.imap.folders
+
+
+def test_many_messages_of_the_outbox_are_deleted_without_the_server(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review of RV-183: deleting several messages of the Outbox at once still waited for the server session and connected to it."""
+    from chrono_mail.engine.mailbox import open_mailbox
+
+    with open_mailbox(world.engine, world.account) as mailbox:
+        ids = [mailbox.deliver(mailbox.folder("Outbox"), mail(number), frozenset()).store_id for number in (1, 2, 3)]
+    world.engine.close_imap_links()
+    tried: list[str] = []
+
+    def unreachable(self: ImapClient) -> None:
+        tried.append("connect")
+        raise ProtocolError("Connection failed: no route")
+
+    monkeypatch.setattr(ImapClient, "connect", unreachable)
+    done = call(world.engine, "message.delete-many", account=world.account, folder="Outbox", messages=tuple(ids), permanent=True)
+    assert tried == [] and len(done.done) == 3 and world.rows("Outbox") == []
+
+
+def test_a_folder_tree_deleted_offline_waits_while_part_of_it_is_in_conflict(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The second review of RV-176: at the second check the subfolder with new mail was held by its conflict and left out of the look, so
+    its parent was deleted on the server while that conflict was still open."""
+    call(world.engine, "folder.create", account=world.account, folder="Projects")
+    call(world.engine, "folder.create", account=world.account, folder="Projects/Done")
+    world.engine.close_imap_links()
+
+    def unreachable(self: ImapClient) -> None:
+        raise ProtocolError("Connection failed: no route")
+
+    monkeypatch.setattr(ImapClient, "connect", unreachable)
+    call(world.engine, "folder.delete", account=world.account, folder="Projects", with_messages=True, include_subfolders=True)
+    monkeypatch.undo()
+    world.imap.add("Projects/Done", mail(1))  # new mail in the subfolder on the server meanwhile
+    world.fetch()
+    world.fetch()  # the second check: the subfolder is held by its conflict now
+    assert "Projects" in world.imap.folders and "Projects/Done" in world.imap.folders
+

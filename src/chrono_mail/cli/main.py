@@ -21,12 +21,13 @@ from chrono_mail.core import (
 from chrono_mail.crypto import KeyringKeyStore
 from chrono_mail.engine import Command, CommandRegistry, Engine, ParameterSpec, UsageError, build_registry, to_data
 from chrono_mail.engine.changes import RebuildStep
-from chrono_mail.cli.render import render_text
+from chrono_mail.cli.render import printable, render_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "main.py 2.0.281"
+__version__ = "main.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: the progress and error lines print text from servers safely, as the results do (RV-203)
 # v2.0.281: a rebuild of an index shows how far it is (how many of how many)
 # v0.5.144: A command is refused while the Chrono Mail program runs (program_running; the tests give their own)
 # v0.0.12: Initial command line interface
@@ -137,7 +138,7 @@ def main(
         engine = engine_factory(directories) if engine_factory is not None else Engine(directories, KeyringPasswordStore(), KeyringKeyStore())
         if err.isatty():
             def show_progress(what: str, done: int, total: int | None) -> None:
-                err.write(f"\r{what}: {done}{'/' + str(total) if total else ''}   ")
+                err.write(f"\r{printable(what)}: {done}{'/' + str(total) if total else ''}   ")  # a folder name of a server (RV-203)
 
             def show_rebuilding(step: RebuildStep) -> None:
                 if not step.ended:
@@ -151,7 +152,7 @@ def main(
         err.write("\nInterrupted\n")
         return EXIT_INTERRUPTED
     except OSError as error:  # for example a file that cannot be written: reported like any storage problem
-        message = f"{error.strerror or type(error).__name__}" + (f": {error.filename}" if error.filename else "")
+        message = printable(f"{error.strerror or type(error).__name__}" + (f": {error.filename}" if error.filename else ""))
         if wants_json:
             out.write(json.dumps({"error": message, "exit_code": EXIT_STORAGE}) + "\n")
         else:
@@ -162,7 +163,7 @@ def main(
         if wants_json:
             out.write(json.dumps({"error": str(error), "exit_code": code}) + "\n")
         else:
-            err.write(f"Error: {error}\n")
+            err.write(f"Error: {printable(str(error))}\n")  # may hold a server's reply (RV-203)
         return code
     if wants_json:
         out.write(json.dumps(to_data(result), indent=2, ensure_ascii=False) + "\n")

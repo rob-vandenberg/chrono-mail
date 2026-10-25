@@ -19,9 +19,10 @@ from chrono_mail.engine.undorecord import UndoRecorder, Verdicts
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_many.py 2.2.313"
+__version__ = "commands_many.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: deleting many messages of the Outbox or Scheduled for good never waits for or connects to the IMAP server (RV-183, RV-184)
 # v2.2.313: undo: an action given with a number notes each message before and after, so Undo can put it back (B-18)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.1.308: Junk, Not junk and moves into or out of Junk teach the junk filter, once for the whole group (D-238)
@@ -99,7 +100,7 @@ class ManyResult:
 def _each(
     engine: Engine, account: str, folder: str, messages: tuple[str, ...], prepare: Callable[[Mailbox, list[MessageRef]], None],
     act: Callable[[Mailbox, MessageRef], object], after: Callable[[Mailbox, list[tuple[MessageRef, object]]], Verdicts] | None = None,
-    undo: tuple[int, str] = (0, ""),
+    undo: tuple[int, str] = (0, ""), needs_server: Callable[[Mailbox, tuple[str, ...]], bool] = lambda mailbox, folder: True,
 ) -> tuple[ManyResult, list[tuple[MessageRef, object]]]:
     """The group: the messages named, prepared on the server together, then each one's own step; a failure is that message's alone.
     after: what follows for the ones done, once for the group (the junk filter learns them, and says what it learned).
@@ -118,7 +119,7 @@ def _each(
                 failed.append(_not_done(message, error))
         recorder = UndoRecorder(mailbox, account, undo[0])
         recorder.before(ref.store_id for ref in refs)
-        with mailbox.together():
+        with mailbox.together(server=needs_server(mailbox, source)):
             try:
                 prepare(mailbox, refs)
             except ChronoMailError as error:  # the server said no for the whole group: nothing was done there or here
@@ -143,6 +144,7 @@ def message_delete_many(engine: Engine, parameters: ManyDeleteParameters) -> Man
     result, answers = _each(
         engine, parameters.account, parameters.folder, parameters.messages, lambda mailbox, refs: mailbox.prepare_deletes(refs, parameters.permanent),
         lambda mailbox, ref: mailbox.delete(ref, parameters.permanent), undo=(parameters.undo, "Move to Trash"),
+        needs_server=lambda mailbox, folder: not mailbox.removed_here_only(folder, parameters.permanent),  # RV-183, RV-184
     )
     return ManyResult(result.done, result.failed, tuple(ref.store_id for ref, outcome in answers if outcome == "gone"))
 

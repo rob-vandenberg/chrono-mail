@@ -19,9 +19,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 3.0.340"
+__version__ = "test_engine_local.py 3.6.349"
 
 # --- Version history ----------------------------------------------------
+# v3.6.349: kept Local Folders whose key is gone names the recovery code, and that code brings it back (RV-177)
 # v3.0.340: Local Folders can never be removed, also when no account keeps its mail there (D-255)
 # v3.0.339: Local Folders missing from the settings while its mail is here is taken into use again, never removed (RV-62)
 # v1.1.242: the filters narrow Favorites and Tags views: unread, flagged, attachments, a second tag, days and sizes; groups and places agree (R-03)
@@ -509,3 +510,26 @@ def test_the_view_scheduled_lists_the_waiting_messages_of_every_account(two: Two
     assert sorted(row.subject for row in call(two.engine, "message.combined", view="scheduled")) == ["From a", "From b"]
     call(two.engine, "mail.unschedule", account=two.a, folder="Scheduled", message=first.message_id)
     assert [row.subject for row in call(two.engine, "message.combined", view="scheduled")] == ["From b"]
+
+
+def test_kept_local_folders_whose_key_is_gone_comes_back_with_the_recovery_code(tmp_path: Path) -> None:
+    """RV-177: the settings and the password store both lost, the mail of Local Folders kept: every setup failed with "Key ... was not
+    found" and named no way out, and the recovery code was refused ("No account uses a data key yet")."""
+    from chrono_mail.config import AppConfig
+    from chrono_mail.core import CryptoError
+
+    engine = make_engine(tmp_path)
+    call(engine, "local.enable")
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        mailbox.deliver(("Inbox",), mail(1), frozenset())
+    code = call(engine, "key.recovery-code").code
+    key_id = engine.config().key_id
+    assert key_id is not None
+    engine.change_config(lambda config: AppConfig())  # the settings lost
+    engine.keys.delete(bytes.fromhex(key_id))  # and the password store
+    engine.forget_keys()
+    with pytest.raises(CryptoError, match="Use a recovery code"):
+        call(engine, "local.enable")
+    call(engine, "key.restore-code", code=code)  # Local Folders is taken back with it at once
+    assert [row.subject for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages] == ["Message 1"]
+
