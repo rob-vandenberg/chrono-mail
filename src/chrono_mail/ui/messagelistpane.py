@@ -2,8 +2,10 @@ import bisect
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from dataclasses import replace as changed
+from typing import override
 
-from PySide6.QtCore import QCoreApplication, QItemSelection, QItemSelectionModel, QModelIndex, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QEvent, QItemSelection, QItemSelectionModel, QModelIndex, QObject, Qt, QTimer, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QMenu, QToolButton, QTreeView, QVBoxLayout, QWidget
 
 from chrono_mail.engine.changes import Change, MessageRow
@@ -25,9 +27,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 3.6.360"
+__version__ = "messagelistpane.py 3.6.362"
 
 # --- Version history ----------------------------------------------------
+# v3.6.362: drop_repeats: a held key's repeats that piled up are thrown away after each action and during a pause; a separate press always counts (D-266)
 # v3.6.360: paused_at_edge: a move whose next message has not come yet loads and paints it first; presses meanwhile are forgotten; after the last message nothing is selected (D-266)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: take_away at_once: the rows of an action that needs no server's word go at the key press and the list is painted before the next key press is read (D-266)
@@ -78,6 +81,28 @@ class _Waiting:
     undo: bool = False  # an Undo or Redo press: it goes when the action right before it gives no command (it would undo an older one)
 
 
+class _KeyRepeats(QObject):
+    """The keys that reach the message list: whether the last press was the automatic repeat of a held key, and, while eating, those
+    repeats thrown away before their shortcut acts. A separate press always goes through: four quick taps are four actions (D-266)."""
+
+    def __init__(self, parent: QObject) -> None:
+        super().__init__(parent)
+        self.repeat: bool = False
+        self.eating: bool = False
+
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        kind = event.type()
+        if kind in (QEvent.Type.ShortcutOverride, QEvent.Type.KeyPress) and isinstance(event, QKeyEvent):
+            if self.eating and event.isAutoRepeat():
+                event.accept()  # an accepted shortcut override: no shortcut acts; the key press after it is eaten here too
+                return True
+            self.repeat = event.isAutoRepeat()
+        elif kind == QEvent.Type.KeyRelease and isinstance(event, QKeyEvent) and not event.isAutoRepeat():
+            self.repeat = False  # the key is let go
+        return False
+
+
 def _selected(model: MessageListModel, key: str, folder: str) -> SelectedMessage:
     mailbox, message_id = split_key(key)
     return SelectedMessage(key, mailbox, folder, message_id, model.loaded_row(key))
@@ -118,6 +143,8 @@ class MessageListPane(QObject):
         self.delegate.tag_book = tag_book
         self.column_delegate.tag_book = tag_book
         self.view: MessageListView = MessageListView(parent)
+        self._repeats: _KeyRepeats = _KeyRepeats(self)
+        self.view.installEventFilter(self._repeats)
         self._build_view()
         self.pane: QWidget = QWidget(parent)
         self.header_layout: QHBoxLayout = QHBoxLayout()
@@ -584,8 +611,9 @@ class MessageListPane(QObject):
         those rows are painted and the keyboard buffer is cleared. An action after a question or a menu (not keyed) waits in turn and is
         checked again when its turn comes (again: how it is done then). Rows that could not be read, or an order that will not come, end
         the folder there: the action is done and nothing is selected after it."""
+        repeat = keyed and self._repeats.repeat  # a held key's automatic repeat, not a separate press
         if self._paused:
-            return keyed
+            return repeat  # a repeat is forgotten; a separate press or a button waits its turn behind the pause
         taken = self._selected_list_rows() if rows is None else rows
         current = self.view.currentIndex()
         if not current.isValid() or current.row() not in taken:
@@ -597,7 +625,7 @@ class MessageListPane(QObject):
             return False  # asked and not come, or the rest of the order could not be read: it ends there
         self._pause(following)
         if keyed and self._acting_on is None:
-            return True  # a press now: forgotten
+            return repeat  # a held key's repeat now: forgotten; a separate press is done once the rows are painted
         if self._acting_on is not None and again is not None:  # its turn came (it was accepted then) and the next rows are not there yet: first in turn again
             chosen = self._acting_on
             self._queue.insert(0, _Waiting(self.model.places_epoch, [(item.key, item.folder) for item in chosen], [], lambda now: self._act_on(now, again)))
@@ -607,11 +635,13 @@ class MessageListPane(QObject):
     def _pause(self, keys: list[str]) -> None:
         """The next rows are loaded (keys), or the rest of the order is awaited (no keys), painted, and the keyboard buffer cleared."""
         self._paused = True
+        self._repeats.eating = True  # a held key's repeats are thrown away meanwhile
         release = self.hold()  # an action after a question or a menu waits behind it
         ended: list[bool] = []
 
         def painted() -> None:
-            QCoreApplication.processEvents()  # the keyboard buffer: the presses that came meanwhile are read now, and forgotten
+            QCoreApplication.processEvents()  # the keyboard buffer: the repeats that came meanwhile are read now, and thrown away
+            self._repeats.eating = False
             self._paused = False
             self._unreadable = {key for key in keys if self.model.loaded_row(key) is None and self.model.holds(key)}
             release()
@@ -631,6 +661,17 @@ class MessageListPane(QObject):
         else:  # the rest of the order comes, cannot come, or the view goes
             for signal in (self.model.placed, self.model.load_failed, self.model.modelReset):
                 signal.connect(loaded)
+
+    def drop_repeats(self) -> None:
+        """After an action that took messages out of the list: the automatic repeats of a held key that piled up meanwhile are thrown
+        away, so letting go of the key stops at once; a separate press is never thrown away (D-266)."""
+        if self._repeats.eating:
+            return  # inside one already, or during a pause
+        self._repeats.eating = True
+        try:
+            QCoreApplication.processEvents()
+        finally:
+            self._repeats.eating = self._paused
 
     def _forget_unreadable(self) -> None:
         self._unreadable = set()

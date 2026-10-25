@@ -2998,6 +2998,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.362: A held key stops the moment it is let go (the owner, D-266)
+
+1. The owner: after letting go of a held Delete, about 20 more messages left the list (repeats that piled up faster than each delete was done).
+2. `ui/messagelistpane.py` _KeyRepeats, drop_repeats: after each action the piled-up automatic repeats are thrown away, also during the pause; a separate press is never thrown away (during the pause it waits its turn). `ui/messageactions.py` act_many calls it after its commands are given.
+3. Tests: test_ui_heldkey.py presses a held key as its repeats; two new tests (piled-up repeats thrown away: fails on 3.6.361; four quick separate presses delete four); the five quick-delete tests; Pyrefly src (Linux and win32) and the layer check pass.
+
 ## 2026-10-26 3.6.361: An action on many messages says what it prepares, then counts (the owner, D-266)
 
 1. The owner: 1,221 IMAP messages to Junk showed nothing for about 20 seconds (the undo record and the server's work come before the first message is done).

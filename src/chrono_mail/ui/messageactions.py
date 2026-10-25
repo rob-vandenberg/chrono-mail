@@ -30,9 +30,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.361"
+__version__ = "messageactions.py 3.6.362"
 
 # --- Version history ----------------------------------------------------
+# v3.6.362: act_many: after its commands are given, the held key's piled-up repeats are thrown away (drop_repeats, D-266)
 # v3.6.361: an action on many messages not done after a second says so: "Preparing to …" until the first message is done, then how many of how many (_Progress, D-266)
 # v3.6.360: every action that takes messages out of the list first asks paused_at_edge: Delete, Archive, Junk and the Delete icon are forgotten while the next rows load; the others wait for them (D-266)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
@@ -628,6 +629,8 @@ class MessageActions(QObject):
 
             self._undoing.started()
             self._backend.ask(command, parameters(account, folder, tuple(messages)), answered, refused, owner=self, in_order=True)
+        if take_away:
+            self._messages.drop_repeats()  # its commands are given: a held key's repeats that piled up meanwhile are thrown away (D-266)
 
     def _answers(self, count: int, finished: str, title: str, progress: _Progress | None = None) -> tuple[Callable[[object], None], Callable[[ChronoMailError], None]]:
         """The answers of an action on several messages, one per message: when all are in, failed ones too, the summary only when
