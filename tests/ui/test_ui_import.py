@@ -8,8 +8,8 @@ from PySide6.QtCore import QObject
 from PySide6.QtWidgets import QMenu
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.core import LOCAL_ACCOUNT_ID
-from chrono_mail.engine.commands_emclient import ImportResult, ScanResult
+from chrono_mail.core import LOCAL_ACCOUNT_ID, ChronoMailError
+from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, ImportResult, ScanResult
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.ui import importdialog
 from chrono_mail.ui.backend import Backend, Failure, Success
@@ -19,9 +19,10 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 2.4.327"
+__version__ = "test_ui_import.py 3.6.359"
 
 # --- Version history ----------------------------------------------------
+# v3.6.359: CR-07: a failed batch reloads the window, keeps what was imported in the summary, and Import finishes the rest
 # v2.4.327: the check after an import only receives (D-245)
 # v2.3.316: the one refresh after an import sends the Outbox first, as the automatic refresh does (D-030, since 2.2.314)
 # v1.9.271: The import window's sources are typed (R-19)
@@ -98,6 +99,34 @@ def test_stop_ends_after_the_batch_and_import_continues(qtbot: QtBot, setup: Set
     dialog.import_button.click()
     wait(qtbot, lambda: dialog.summary.text().startswith("The import is done."))
     assert setup.messages() == 7
+
+
+def test_a_failed_batch_reloads_the_window_and_import_continues(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """CR-07: the batches before the failure are shown, the check after an import runs, and Import finishes the rest."""
+    monkeypatch.setattr(importdialog, "BATCH", 3)
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    ask = setup.backend.ask
+    calls = [0]
+
+    def failing_second(command: object, parameters: object, done: Callable[[object], None], failed: Callable[[ChronoMailError], None], owner: QObject) -> None:
+        if command is IMPORT_EMCLIENT:
+            calls[0] += 1
+            if calls[0] == 2:
+                failed(ChronoMailError("The disk is full"))
+                return
+        ask(command, parameters, done, failed, owner=owner)  # pyrefly: ignore[bad-argument-type]
+
+    monkeypatch.setattr(setup.backend, "ask", failing_second)
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    wait(qtbot, lambda: dialog.summary.text().startswith("The disk is full"))
+    assert "Messages imported: 3;" in dialog.summary.text() and setup.changed == 1
+    assert setup.messages() == 3 and dialog.close_button.isEnabled()
+    dialog.import_button.click()
+    wait(qtbot, lambda: dialog.summary.text().startswith("The import is done."))
+    assert setup.messages() == 7 and setup.changed == 2
 
 
 def test_the_summaries_in_plain_words() -> None:

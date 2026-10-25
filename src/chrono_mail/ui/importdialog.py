@@ -26,9 +26,10 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 2.4.333"
+__version__ = "importdialog.py 3.6.359"
 
 # --- Version history ----------------------------------------------------
+# v3.6.359: CR-07: a failed batch reloads the window and runs the check after an import; the summary keeps what was imported
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.271: R-19: reading the exports and the import are typed calls
 # v0.5.151: on_running: the main window learns when an import starts and ends (mail checks wait meanwhile)
@@ -266,8 +267,10 @@ class ImportDialog(QDialog):
         self.summary.setText(str(error))  # Import stays off: there is nothing it could import
 
     def _failed(self, error: ChronoMailError) -> None:
+        """A batch failed: the window is reloaded (this batch may have stored part of its work), the summary counts the earlier batches, and the check after an import runs (D-143)."""
         self._finish()
-        self.summary.setText(str(error))
+        self.summary.setText(f"{error}\n{import_summary(self._result, stopped=True)}")
+        self._on_changed()
 
     # --- the import ---------------------------------------------------------------------------
 

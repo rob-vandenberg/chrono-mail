@@ -2998,6 +2998,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.359: A failed import batch reloads the window and runs the check after an import (CodeRabbit CR-07, RV-09, D-143)
+
+1. `ui/importdialog.py` `_failed`: after a failed batch the main window is told the import ended (folder list reloaded, the one receive-only check runs); the summary shows the error, what was imported, and that Import continues where it stopped.
+2. New test `test_a_failed_batch_reloads_the_window_and_import_continues` (fails on 3.6.358); test_ui_import.py 16 passed, Pyrefly src 0 errors (Linux and win32), layer check passed.
+
 ## 2026-10-26 3.6.358: Attachments, Send, Save and Discard during a draft save (CodeRabbit CR-03, RV-159, D-271)
 
 1. After a save the window read the draft back and replaced its attachment list: a file attached or removed during the save was undone and the window counted as unchanged; after typing during a save it kept the places of the replaced draft, so the next save or Send could keep the wrong attachments. Now draft.save returns where each attachment it took is (matched in order by name, kind and contents), and the window marks only those entries, in place; no read-back.
