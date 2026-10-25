@@ -18,9 +18,10 @@ from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import paint_tag_marks
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 2.2.314"
+__version__ = "delegate.py 3.6.352"
 
 # --- Version history ----------------------------------------------------
+# v3.6.352: the Contact and Delete icons of the column layout are made once, not read from their file for every cell (D-266)
 # v2.2.314: a card in the Outbox says Send and its time, as in the Scheduled folder (a delayed send, B-21)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.6.260: The roles of the message list from messagelist.py (R-15)
@@ -261,6 +262,13 @@ class ColumnDelegate(QStyledItemDelegate):
         self.column_of: Callable[[int], str] = lambda column: ""  # the column id at a model column
         self.tag_book: TagColourBook = TagColourBook()
         self.mark_of: Callable[[str], str] = _no_mark  # a message's sync mark: waiting for the server, or none (D-195)
+        self._icons: dict[str, QIcon] = {}  # made once: an icon takes the palette's colours when it is drawn
+
+    def _named_icon(self, name: str) -> QIcon:
+        icon = self._icons.get(name)
+        if icon is None:
+            icon = self._icons[name] = theme_icon(name)
+        return icon
 
     @override
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> QSize:
@@ -297,9 +305,9 @@ class ColumnDelegate(QStyledItemDelegate):
         state: object = getattr(option, "state")  # getattr: PySide's stubs give the fields of a style option no type
         hovered = isinstance(state, QStyle.StateFlag) and bool(state & QStyle.StateFlag.State_MouseOver)
         if column_id == "contact" and index.data(CONTACT_ROLE):
-            self._icon(painter, option, theme_icon("user"))
+            self._icon(painter, option, self._named_icon("user"))
         elif column_id == "trash" and hovered:
-            self._icon(painter, option, theme_icon("edit-delete"))
+            self._icon(painter, option, self._named_icon("edit-delete"))
         elif column_id == "tag":
             row = message_row(index)
             tags: tuple[str, ...] = row.tags if row is not None else ()

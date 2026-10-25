@@ -12,9 +12,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 3.4.344"
+__version__ = "statusreport.py 3.6.352"
 
 # --- Version history ----------------------------------------------------
+# v3.6.352: the busy bar is never shown or hidden: it keeps its place and is empty while nothing runs (D-266)
 # v3.4.344: the status line shows plain text: folder names, subjects and server replies are never markup (RV-167)
 # v2.4.322: backup_hint: while a backup runs in the background, a click on the busy bar brings the Back up window back (D-244)
 # v2.1.311: the busy bar's hover text always names what runs (every command's doing, with its accounts), then what a click does; it follows
@@ -47,10 +48,8 @@ class StatusReport(QObject):
         self.progress_bar: ClickableBar = ClickableBar(parent)
         self.progress_bar.clicked.connect(self.bar_clicked)
         self.progress_bar.setToolTip(CLICK_OPERATIONS)
-        self.progress_bar.setRange(0, 0)
         self.progress_bar.setMaximumWidth(120)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.hide()
         self.line: StatusLine = StatusLine(self.label, parent)  # while the pointer is on a link in the reading pane: where it leads (D-215)
         self._is_error: bool = False
         self._index_running: bool = False
@@ -123,10 +122,13 @@ class StatusReport(QObject):
         text = self.bar_text()
         self.progress_bar.setToolTip(text)
         if QToolTip.isVisible() and self.progress_bar.underMouse():
-            QToolTip.showText(QCursor.pos(), text, self.progress_bar)  # the hover text being read follows what runs
+            if self.progress_bar.busy:
+                QToolTip.showText(QCursor.pos(), text, self.progress_bar)  # the hover text being read follows what runs
+            else:
+                QToolTip.hideText()  # nothing runs: the empty place says nothing
 
     def busy_changed(self, count: int) -> None:
-        self.progress_bar.setVisible(count > 0)
+        self.progress_bar.set_busy(count > 0)  # never shown or hidden: that laid the whole window out again at every action (D-266)
 
     def notice(self, text: str) -> None:
         """Something the engine wants the person to know (an IMAP change waits for the server)."""

@@ -25,9 +25,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 3.6.350"
+__version__ = "messagelist.py 3.6.352"
 
 # --- Version history ----------------------------------------------------
+# v3.6.352: rows that leave the view go together only when they arrive in the same pass of the event loop, never held back for 100 ms (a held Delete key removed at most ten rows a second, D-266)
 # v3.6.350: a selected place whose message was not known yet keeps its place when the rest of the order comes and nothing in the view
 #           changed meanwhile (Qt dropped it); otherwise it goes and what waits for it says so (places_lost); a drag started then carries the
 #           rest of the selection with the list's places_epoch, its badge counts every selected message (RV-206);
@@ -194,7 +195,7 @@ class MessageListModel(QAbstractTableModel):
         self.pending: set[str] = set()  # message ids with an action under way: greyed, and no second action (D-146)
         self._stay: set[str] = set()  # keys of messages read, unflagged or untagged while this view showed them: they stay until it is left
         self._leaving: list[Change] = []  # messages that left the view in this moment: their rows go together (16,000 one by one took minutes)
-        self._leave_soon: Burst = Burst(self._flush_leaving, self)  # those that leave right after another go together, ten times a second
+        self._leave_soon: Burst = Burst(self._flush_leaving, self, interval_ms=0)  # those that arrive in the same pass of the event loop go together; none waits (D-266)
         self._arriving: dict[str, MessageRow] = {}  # messages that came in, by key -> their row (kept current by later facts), placed together
         self._arrival_planned: bool = False
         self._placing: dict[str, MessageRow] | None = None  # the messages whose places are being asked (one question at a time)

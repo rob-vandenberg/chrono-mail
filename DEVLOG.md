@@ -2997,3 +2997,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Three confirming rounds on these fixes found faults in them, fixed (RV-280 to RV-286): Local Folders that cannot come back still stops the restore; with the server's record unreadable the Outbox, Scheduled, local calendars and mail written offline still come back (server folders' mail in Recovered, on this computer only); Send and Receive goes on after a sent message the list cannot follow; "sent meanwhile" is never "try again" (SentAlready, GoneMeanwhile; a failed clean-up a StorageError); occurrences of a floating series are floating; the backup searches again only the folders that changed since their last search (never the index: it is never the truth), so a moved message is found and a deleted one costs nothing; a command-line number has one minus at most and at most 18 characters. The backup's search: a folder searched again forgets what it held (a deleted message never searches every folder), a file renamed again right after it was found is looked for once more; a coarse file-system clock is a known limit (RV-291).
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
+
+## 2026-10-26 3.6.352: Delete is drawn at once and keeps up with a held key (D-266)
+
+1. The message list moves the rows below a removed one up with the window system's own scroll (the pixels stay, so the text looks the same) and paints only the new strip at the bottom and the changed rows. Paint per Delete: about 4 ms instead of about 25 ms per whole repaint, and one paint instead of three (test window, 26 rows, 19 columns, offscreen).
+2. The view lays its rows out at the removal itself, so Qt's later layout pass paints nothing again.
+3. Compared with a whole repaint after each Delete: one corner pixel of the selection differs by 1 step of blue out of 255 (anti-aliasing), nothing else.
+4. Held key (20 presses without pause, test window): 20 of 20 removals done.
+5. Also: the Archive button changes only when its text changes; the busy bar keeps its place; the Contact and Delete icons are made once.
+6. Still open: not yet measured on the owner's own window (record_owner.py); the "lost presses" of the handover did not happen in this test (20 of 20).

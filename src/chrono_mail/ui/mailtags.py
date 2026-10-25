@@ -18,9 +18,10 @@ from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail
 from chrono_mail.ui.undoing import Undoing
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailtags.py 3.6.350"
+__version__ = "mailtags.py 3.6.352"
 
 # --- Version history ----------------------------------------------------
+# v3.6.352: new tag colours paint the whole message list through the list's own repaint_all (D-266)
 # v3.6.350: a tag by key acts on the messages still there without an action under way; the menu's ticks never hold Undo (RV-206);
 #           a tag with no message left to act on takes no action number (an Undo after it undoes nothing older); its answer always
 #           counts its command as ended
@@ -67,7 +68,7 @@ class MailTags(QObject):
             self.book.update(self._state.tags)
             self._make_shortcuts()
             self._arrived()
-            self._messages.view.viewport().update()
+            self._messages.view.repaint_all()
 
         def failed(error: ChronoMailError) -> None:
             self._status.report("Tags", error)

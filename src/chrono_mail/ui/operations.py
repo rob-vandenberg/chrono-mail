@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import override
 
-from PySide6.QtCore import QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QCloseEvent, QColor, QGuiApplication, QHideEvent, QMouseEvent, QPainter, QPaintEvent, QPalette, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QStackedWidget,
     QTabBar,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -29,9 +30,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "operations.py 1.2.253"
+__version__ = "operations.py 3.6.352"
 
 # --- Version history ----------------------------------------------------
+# v3.6.352: the busy bar keeps its place and is empty while nothing runs (shown and hidden, it laid the whole window out again at every action, D-266)
 # v1.2.253: Its tick "Hide when all operations are complete" reads and saves the one settings object (R-12)
 # v1.1.172: The symbol on the blue badge takes the theme's colour for marks on the blue (D-158)
 # v0.5.148: The bar of a row is drawn by the program (OperationBar): blue on every platform; Windows' own style drew it grey
@@ -79,13 +81,41 @@ def account_picture(size: int, palette: QPalette) -> QPixmap:
 
 
 class ClickableBar(QProgressBar):
-    """The busy bar of the status line: a click on it opens the Operations window."""
+    """The busy bar of the status line: a click on it opens the Operations window. It keeps its place whether something runs or
+    not and is simply empty while nothing does, without a hover text or a click (D-266): shown and hidden at every action, it laid
+    the whole window out again each time, and a held Delete key fell behind."""
 
     clicked = Signal()
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.busy: bool = False
+        self.setRange(0, 1)  # still while nothing runs: it moves only while it is seen
+
+    def set_busy(self, busy: bool) -> None:
+        if busy == self.busy:
+            return
+        self.busy = busy
+        self.setRange(0, 0 if busy else 1)
+        self.update()
+        if not busy and QToolTip.isVisible() and self.underMouse():
+            QToolTip.hideText()  # the work ended while its hover text was read: an empty place says nothing
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        if self.busy:
+            super().paintEvent(event)
+
+    @override
+    def event(self, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.ToolTip and not self.busy:
+            event.ignore()  # nothing runs: an empty place says nothing
+            return True
+        return super().event(event)
+
     @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        if event.button() == Qt.MouseButton.LeftButton:
+        if event.button() == Qt.MouseButton.LeftButton and self.busy:
             self.clicked.emit()
         super().mousePressEvent(event)
 

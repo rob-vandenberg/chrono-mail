@@ -61,9 +61,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 3.6.350"
+__version__ = "mainwindow.py 3.6.352"
 
 # --- Version history ----------------------------------------------------
+# v3.6.352: the Archive button changes only when it switches between Archive and Unarchive (a new icon at every selection laid out the toolbar again); the sync marks repaint the whole list through repaint_all (D-266)
 # v3.6.350: File > Use a recovery code says why the key is missing; Start without this mail is reported in the status line;
 #           a click on the Delete icon is MessageActions.delete_by_icon (in turn with what waits); Redo can be pressed while busy
 # v3.5.346: After Add account the recovery code is shown whenever it was never confirmed as stored (RV-03)
@@ -907,7 +908,7 @@ class MainWindow(QMainWindow):
         self.waiting_label.setText(f"Waiting for the server: {counted(count, 'change')}")
         self.waiting_label.setVisible(count > 0)
         self._show_mail_conflicts()
-        self.list_view.viewport().update()
+        self.list_view.repaint_all()
 
     def _show_mail_conflicts(self) -> None:
         marks = getattr(self, "sync_marks", None)  # getattr: the sync marks are made later in the start and asked before they exist
@@ -1267,9 +1268,10 @@ class MainWindow(QMainWindow):
     def _show_archive_action(self, *_: object) -> None:
         """The Archive button, key and menu item are Unarchive when every selected message is archived, wherever they are shown (D-101)."""
         archived = self.mail_state.all_archived(self.messages.each_selected())  # stops at the first that is not archived
-        self.act_archive.setText("Unarchive" if archived else "Archive")
-        self.act_archive.setIconText("Unarchive" if archived else "Archive")
-        self.act_archive.setIcon(theme_icon("archive-extract" if archived else "archive-insert"))
+        if self.act_archive.text() != (text := "Unarchive" if archived else "Archive"):  # only a real switch: a new icon always counts as a change and lays the toolbar out again (D-266)
+            self.act_archive.setText(text)
+            self.act_archive.setIconText(text)
+            self.act_archive.setIcon(theme_icon("archive-extract" if archived else "archive-insert"))
 
     # --- the sections: mail, calendar, tasks, contacts ---------------------------------------------------------
 
