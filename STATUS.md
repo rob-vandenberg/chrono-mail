@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-26, version 3.6.362 (a held key stops the moment it is let go: its piled-up repeats are thrown away, separate presses always count; 3.6.361: an action on many messages says "Preparing to …" and then counts in the status line; 3.6.360: a held Delete, Archive or Junk key pauses where the loaded rows end and stops after the last message, D-266). Kept up to date before every push. Only the current state is here; the history of every version is in `DEVLOG.md` and the old text of this file in the git-ignored `STATUS-ARCHIVE.md` (search it, never read it whole).*
+*Last updated: 2026-10-26, version 3.6.363 (an informative status line is cleared after a minute, warnings and errors stay; 3.6.362: a held key stops the moment it is let go: its piled-up repeats are thrown away, separate presses always count; 3.6.361: an action on many messages says "Preparing to …" and then counts in the status line; 3.6.360: a held Delete, Archive or Junk key pauses where the loaded rows end and stops after the last message, D-266). Kept up to date before every push. Only the current state is here; the history of every version is in `DEVLOG.md` and the old text of this file in the git-ignored `STATUS-ARCHIVE.md` (search it, never read it whole).*
 
 ## Where we are
 

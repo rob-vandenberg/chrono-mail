@@ -2998,6 +2998,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.363: An informative status line is cleared after a minute (the owner, D-266)
+
+1. `ui/statusreport.py`: a line that is not red is cleared 60 seconds after it came; red ones (warnings, errors) stay; while work runs nothing is cleared, the minute counts from its end.
+2. Tests: new tests/ui/test_ui_statusclear.py (3; the first fails on 3.6.362); Pyrefly src (Linux and win32) and the layer check pass.
+
 ## 2026-10-26 3.6.362: A held key stops the moment it is let go (the owner, D-266)
 
 1. The owner: after letting go of a held Delete, about 20 more messages left the list (repeats that piled up faster than each delete was done).

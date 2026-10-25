@@ -12,9 +12,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 3.6.352"
+__version__ = "statusreport.py 3.6.363"
 
 # --- Version history ----------------------------------------------------
+# v3.6.363: an informative line is cleared a minute after it came, or a minute after the work that ran; warnings and errors stay
 # v3.6.352: the busy bar is never shown or hidden: it keeps its place and is empty while nothing runs (D-266)
 # v3.4.344: the status line shows plain text: folder names, subjects and server replies are never markup (RV-167)
 # v2.4.322: backup_hint: while a backup runs in the background, a click on the busy bar brings the Back up window back (D-244)
@@ -29,6 +30,7 @@ __version__ = "statusreport.py 3.6.352"
 CLICK_OPERATIONS: str = "Click to show the Operations window"
 CLICK_INDEX: str = "Click to show the index progress"
 CLICK_BACKUP: str = "Click to show the backup progress"
+CLEAR_AFTER_MS: int = 60_000  # an informative line is cleared a minute after it came (or after the work that runs); a warning or an error stays
 MISSING_WARNING: str = "Some messages no longer exist on disk. Go to Settings > Security and storage and click Repair the search index."
 
 
@@ -58,6 +60,10 @@ class StatusReport(QObject):
         self._missing_timer.setSingleShot(True)
         self._missing_timer.setInterval(300)
         self._missing_timer.timeout.connect(self._show_missing_warning)
+        self._busy: bool = False
+        self._clear_timer: QTimer = QTimer(self)
+        self._clear_timer.setSingleShot(True)
+        self._clear_timer.timeout.connect(self._clear)
 
     def install(self, bar: QStatusBar) -> None:
         bar.addWidget(self.line, 1)
@@ -67,6 +73,17 @@ class StatusReport(QObject):
         self.label.setText(text)
         self._is_error = error
         self.restyle()
+        if error or not text:
+            self._clear_timer.stop()  # a warning or an error stays until the next line
+        else:
+            self._clear_timer.start(CLEAR_AFTER_MS)
+
+    def _clear(self) -> None:
+        """An informative line a minute old goes; while work runs it waits (a long "Preparing to …" stays as long as it is true)."""
+        if self._busy:
+            return  # counted again from the moment the work is done (busy_changed)
+        if not self._is_error:
+            self.label.setText("")
 
     def restyle(self) -> None:
         """The red of an error follows the colours."""
@@ -129,6 +146,9 @@ class StatusReport(QObject):
 
     def busy_changed(self, count: int) -> None:
         self.progress_bar.set_busy(count > 0)  # never shown or hidden: that laid the whole window out again at every action (D-266)
+        was, self._busy = self._busy, count > 0
+        if was and not self._busy and self.label.text() and not self._is_error:
+            self._clear_timer.start(CLEAR_AFTER_MS)  # the minute counts from the end of the work
 
     def notice(self, text: str) -> None:
         """Something the engine wants the person to know (an IMAP change waits for the server)."""
