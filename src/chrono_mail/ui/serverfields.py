@@ -5,17 +5,21 @@ a port the person typed stays. Also the one way to show the result of Test conne
 from dataclasses import dataclass
 from typing import Literal
 
-from PySide6.QtWidgets import QCheckBox, QComboBox, QFormLayout, QGroupBox, QLineEdit, QSpinBox, QWidget
+from PySide6.QtWidgets import QCheckBox, QComboBox, QGroupBox, QLabel, QLineEdit, QSpinBox, QWidget
 
 from chrono_mail.engine.commands_accounts import AccountCheckResult, AccountSummary
 from chrono_mail.core import AccountKind
 from chrono_mail.engine.commands_accounts import AccountCheckParameters, Kind, Policy, Security
+from chrono_mail.ui import forms
 from chrono_mail.ui.colours import green, red
+from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "serverfields.py 1.9.275"
+__version__ = "serverfields.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: the two boxes are built from their Qt Designer form (ui/forms/server_fields.ui, D-276) as one part (widget) that Add account
+#           and Edit account place in their own forms; the Tab order follows the boxes from top to bottom
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.272: mail_server_kind: the incoming server's kind for the certificate look
 # v1.9.271: R-19: check_parameters gives account.check's typed parameters; security_of, mail_kind_of, policy_of
@@ -72,31 +76,35 @@ class ServerFields:
 
     def __init__(self, parent: QWidget, kind: AccountKind, editing: bool, start: StartValues = StartValues()) -> None:
         self.kind: AccountKind = kind
-        self.username = QLineEdit(start.username, parent)
-        self.password = QLineEdit(parent)
-        self.incoming_host = QLineEdit(start.incoming_host, parent)
-        self.incoming_port = QSpinBox(parent)
-        self.incoming_security = _security_combo(start.incoming_security)
-        self.outgoing_username = QLineEdit(start.outgoing_username, parent)
-        self.outgoing_password = QLineEdit(parent)
-        self.outgoing_host = QLineEdit(start.outgoing_host, parent)
-        self.outgoing_port = QSpinBox(parent)
-        self.outgoing_security = _security_combo(start.outgoing_security)
-        self.same_login = QCheckBox(SAME_LOGIN_TEXT, parent)
+        self.widget: QWidget = QWidget(parent)  # both boxes, one under the other, at the "servers" place of a window's form
+        form = forms.fill(self.widget, "server_fields")  # D-276
+        self.incoming_group: QGroupBox = part(form, QGroupBox, "incomingGroup")
+        self.outgoing_group: QGroupBox = part(form, QGroupBox, "outgoingGroup")
+        self.username: QLineEdit = part(form, QLineEdit, "username")
+        self.username.setText(start.username)
+        self.password: QLineEdit = part(form, QLineEdit, "password")
+        self.incoming_host: QLineEdit = part(form, QLineEdit, "incomingHost")
+        self.incoming_host.setText(start.incoming_host)
+        self.incoming_port: QSpinBox = part(form, QSpinBox, "incomingPort")
+        self.incoming_security: QComboBox = _security_combo(part(form, QComboBox, "incomingSecurity"), start.incoming_security)
+        self.outgoing_username: QLineEdit = part(form, QLineEdit, "outgoingUsername")
+        self.outgoing_username.setText(start.outgoing_username)
+        self.outgoing_password: QLineEdit = part(form, QLineEdit, "outgoingPassword")
+        self.outgoing_host: QLineEdit = part(form, QLineEdit, "outgoingHost")
+        self.outgoing_host.setText(start.outgoing_host)
+        self.outgoing_port: QSpinBox = part(form, QSpinBox, "outgoingPort")
+        self.outgoing_security: QComboBox = _security_combo(part(form, QComboBox, "outgoingSecurity"), start.outgoing_security)
+        self.same_login: QCheckBox = part(form, QCheckBox, "sameLogin")
         self.same_login.setChecked(start.same_login)
         for port, value in ((self.incoming_port, start.incoming_port), (self.outgoing_port, start.outgoing_port)):
             port.setRange(1, 65535)
             port.setValue(value)
-        password_label = "New password" if editing else "Password"
-        for password in (self.password, self.outgoing_password):
+        for password, label in ((self.password, "passwordLabel"), (self.outgoing_password, "outgoingPasswordLabel")):
             password.setEchoMode(QLineEdit.EchoMode.Password)
             if editing:
                 password.setPlaceholderText("(unchanged)")
-        self.incoming_group = _group(parent, incoming_title(kind), self.incoming_host, self.incoming_security, self.incoming_port, self.username, self.password, password_label)
-        self.outgoing_group = _group(
-            parent, "Outgoing mail (SMTP)", self.outgoing_host, self.outgoing_security, self.outgoing_port, self.outgoing_username, self.outgoing_password, password_label,
-            self.same_login,
-        )
+                part(form, QLabel, label).setText("New password")
+        self.incoming_group.setTitle(incoming_title(kind))
         self._incoming_was: str = start.incoming_security
         self._outgoing_was: str = start.outgoing_security
         self.incoming_security.currentIndexChanged.connect(self._incoming_security_changed)
@@ -200,25 +208,8 @@ def test_result_text(result: AccountCheckResult) -> str:
     ))
 
 
-def _security_combo(current: str) -> QComboBox:
-    combo = QComboBox()
+def _security_combo(combo: QComboBox, current: str) -> QComboBox:
     for value, label in SECURITY_CHOICES:
         combo.addItem(label, value)
     combo.setCurrentIndex(max(0, combo.findData(current)))
     return combo
-
-
-def _group(
-    parent: QWidget, title: str, host: QLineEdit, security: QComboBox, port: QSpinBox, user: QLineEdit, password: QLineEdit, password_label: str,
-    same: QCheckBox | None = None,
-) -> QGroupBox:
-    group = QGroupBox(title, parent)
-    form = QFormLayout(group)
-    form.addRow("Server", host)
-    form.addRow("Security", security)
-    form.addRow("Port", port)
-    if same is not None:
-        form.addRow("", same)
-    form.addRow("User name", user)
-    form.addRow(password_label, password)
-    return group

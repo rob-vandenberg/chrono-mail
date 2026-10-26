@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
-    QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -17,8 +16,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QScrollArea,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -42,15 +39,19 @@ from chrono_mail.engine.commands_backup import (
     RestoreResult,
 )
 from chrono_mail.engine.restore import DOING_ITEMS, DOING_MESSAGES, BackupPasswordNeeded, RestoreCancelled, WrongBackupPassword
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.recoverydialog import RecoveryDialog
+from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowsettings import apply_window_settings
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restoredialog.py 3.5.346"
+__version__ = "restoredialog.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: built from its Qt Designer form (ui/forms/restore.ui, D-276): the parts the backup does not hold are hidden; the file's name is
+#           plain text, as the summary and the report; Close comes back with the form's text; its sizes and blank lines follow the size factor
 # v3.5.346: The recovery code is shown before every restore until it was confirmed as stored, not only when the key was just made (RV-03)
 # v2.4.334: the report names where the damaged messages and items were
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -64,7 +65,9 @@ __version__ = "restoredialog.py 3.5.346"
 #           that already exist", progress and Cancel, and afterwards a test of every account it made (D-244)
 
 MENU_TEXT: str = "Restore…"
-PART_NAMES: dict[str, str] = {MESSAGES: "Messages", RULES: "Mail rules", CALENDARS: "Calendar items", CONTACTS: "Contacts", TASKS: "Tasks", SETTINGS: "Settings"}
+PART_BOXES: tuple[tuple[str, str], ...] = (  # each part of a backup and its tick in the form
+    (MESSAGES, "partMessages"), (RULES, "partRules"), (CALENDARS, "partCalendars"), (CONTACTS, "partContacts"), (TASKS, "partTasks"), (SETTINGS, "partSettings"),
+)
 TESTING: str = "testing the connection…"
 SHOWN_DOING: dict[str, str] = {DOING_MESSAGES: "Messages", DOING_ITEMS: "Calendar items, contacts and tasks"}
 REMOVE_QUESTION: str = (
@@ -116,32 +119,28 @@ class RestoreDialog(QDialog):
         self._lines: list[str] = []  # the report after the restore
         self._tested: dict[str, str] = {}  # per account the restore made: what its test said (until then: testing)
         self.running: bool = False
-        self.setWindowTitle("Restore")
-        self.setMinimumWidth(560)
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(f"<b>{path.name}</b>", self))
-        self.summary = QLabel(contents_text(contents), self)
-        self.summary.setWordWrap(True)
+        form = forms.fill(self, "restore")  # D-276
+        file_name = forms.part(form, QLabel, "fileName")
+        file_name.setTextFormat(Qt.TextFormat.PlainText)  # a file's name: never markup
+        file_name.setText(path.name)
+        self.summary: QLabel = forms.part(form, QLabel, "summary")
+        self.summary.setTextFormat(Qt.TextFormat.PlainText)  # it holds the backup file's own words: never markup
+        self.summary.setText(contents_text(contents))
         self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.summary)
-        layout.addSpacing(8)
-        layout.addWidget(QLabel("<b>What to restore</b>", self))
         self.part_boxes: dict[str, QCheckBox] = {}
-        for part in (MESSAGES, RULES, CALENDARS, CONTACTS, TASKS, SETTINGS):
+        for part, box_name in PART_BOXES:
+            box = forms.part(form, QCheckBox, box_name)
             if part in contents.parts:  # only what the backup holds
-                box = QCheckBox(PART_NAMES[part], self)
                 box.setChecked(True)
                 box.toggled.connect(self._update)
                 self.part_boxes[part] = box
-                layout.addWidget(box)
-        layout.addSpacing(8)
-        layout.addWidget(QLabel("<b>Accounts</b>", self))
-        self.select_all = QCheckBox("Select all", self)
+            else:
+                box.hide()
+        self.select_all: QCheckBox = forms.part(form, QCheckBox, "selectAll")
         self.select_all.setChecked(True)
         self.select_all.clicked.connect(self._select_all_clicked)
-        layout.addWidget(self.select_all)
-        self.accounts = QListWidget(self)
-        self.accounts.setMinimumHeight(100)
+        self.accounts: QListWidget = forms.part(form, QListWidget, "accounts")
+        self.accounts.setMinimumHeight(wpx(100))
         for row in contents.accounts:
             item = QListWidgetItem(entry_text(row), self.accounts)
             item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsUserCheckable)
@@ -149,40 +148,24 @@ class RestoreDialog(QDialog):
             item.setData(ENTRY_ROLE, row.entry_id)
             item.setData(PARTS_ROLE, list(row.parts))
         self.accounts.itemChanged.connect(self._item_changed)
-        layout.addWidget(self.accounts)
-        self.passwords = QCheckBox("Account passwords", self)
+        self.passwords: QCheckBox = forms.part(form, QCheckBox, "passwords")
         self.passwords.setChecked(contents.passwords)
         self.passwords.setVisible(contents.passwords)  # only when the backup holds them: nothing to choose otherwise
         self.passwords.toggled.connect(self._update)
-        layout.addWidget(self.passwords)
-        layout.addSpacing(8)
-        self.remove_first = QCheckBox("Remove all data on this computer first", self)
-        self.replace_existing = QCheckBox("Replace items that already exist", self)
+        self.remove_first: QCheckBox = forms.part(form, QCheckBox, "removeFirst")
+        self.replace_existing: QCheckBox = forms.part(form, QCheckBox, "replaceExisting")
         self.remove_first.toggled.connect(self._update)
-        layout.addWidget(self.remove_first)
-        layout.addWidget(self.replace_existing)
-        layout.addSpacing(8)
-        self.progress = QProgressBar(self)
+        self.progress: QProgressBar = forms.part(form, QProgressBar, "progress")
         self.progress.setVisible(False)
-        layout.addWidget(self.progress)
-        self.status = QLabel("", self)
-        self.status.setWordWrap(True)
-        self.status.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.status: QLabel = forms.part(form, QLabel, "status")  # in a scrolling area: a report of many accounts never falls off the window
+        self.status.setTextFormat(Qt.TextFormat.PlainText)  # names from the backup and the servers' answers: never markup
         self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        area = QScrollArea(self)  # many accounts: the report scrolls instead of falling off the window
-        area.setWidgetResizable(True)
-        area.setFrameShape(QScrollArea.Shape.NoFrame)
-        area.setWidget(self.status)
-        layout.addWidget(area, 1)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        self.restore_button = QPushButton(MENU_TEXT, self)
+        self.restore_button: QPushButton = forms.part(form, QPushButton, "restore")
         self.restore_button.clicked.connect(self.start)
-        self.close_button = QPushButton("Close", self)  # Cancel while the restore runs: the one action that applies
+        self.close_button: QPushButton = forms.part(form, QPushButton, "close")  # Cancel while the restore runs: the one action that applies
+        self._close_text: str = self.close_button.text()
         self.close_button.clicked.connect(self._close_or_cancel)
-        buttons.addWidget(self.restore_button)
-        buttons.addWidget(self.close_button)
-        layout.addLayout(buttons)
+        forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
         backend.progress.connect(self._progress)
         self._update()
 
@@ -225,7 +208,7 @@ class RestoreDialog(QDialog):
             widget.setEnabled(before)
         self.replace_existing.setEnabled(before and not self.remove_first.isChecked())  # nothing exists after removing it all
         self.restore_button.setEnabled(before and bool(self.chosen_accounts()) and bool(self.chosen_parts()))
-        self.close_button.setText("Cancel" if self.running else "Close")
+        self.close_button.setText("Cancel" if self.running else self._close_text)
 
     def start(self) -> None:
         if self.running or not self.restore_button.isEnabled():

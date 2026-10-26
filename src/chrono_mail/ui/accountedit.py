@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -31,18 +30,23 @@ from chrono_mail.engine.commands_dav import ACCOUNT_SET_DAV, SetDavParameters
 from chrono_mail.engine.commands_imap import ACCOUNT_FOLDERS, ACCOUNT_SET_FOLDERS, FolderAccount, FolderChoice, SetFolders
 from chrono_mail.engine.commands_local import ACCOUNT_SET_STORAGE, StorageParameters
 from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, FoundServer, LinkParameters
-from chrono_mail.ui.accountdialog import POLICIES, add_name_rows
+from chrono_mail.ui.accountdialog import POLICIES
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import green, red_style
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.foundfolders import FolderTicks
 from chrono_mail.ui.serverfields import ServerFields, kind_of, mail_server_kind, policy_of, security_of, start_values_of, test_result_text
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 3.6.350"
+__version__ = "accountedit.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: built from its Qt Designer form (ui/forms/account_edit.ui, D-276) with every tab in it; the tabs and rows an account of this kind
+#           has not are taken out (before, the unused Server copies page of an IMAP account was drawn over the tabs at the top left); its
+#           smallest width follows the size factor and never cuts a text off
 # v3.6.350: a server's error text is shown as text, never markup (D-259)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -85,121 +89,108 @@ class AccountEditDialog(QDialog):
         kind = kind_of(account)
         calendars_only = kind is AccountKind.DAV  # no mail: only its name and its calendar server can be changed
         self.setWindowTitle(f"Account: {account.email_address or account.shown_name}")
-        self.setMinimumWidth(560)
-        layout = QVBoxLayout(self)
-        self.tabs = QTabWidget(self)
-        layout.addWidget(self.tabs)
+        form = forms.fill(self, "account_edit", {"servers": self._server_fields, "davFolders": FolderTicks})  # D-276
+        self.tabs: QTabWidget = part(form, QTabWidget, "tabs")
 
-        general = QWidget(self)
-        general_form = QFormLayout(general)
-        self.account_name = QLineEdit(account.account_name, general)
-        self.name = QLineEdit(account.display_name, general)
-        self.email = QLineEdit(account.email_address, general)
-        self.signature = QPlainTextEdit(general)
+        general = part(form, QFormLayout, "generalForm")
+        self.account_name: QLineEdit = part(form, QLineEdit, "accountName")
+        self.account_name.setText(account.account_name)
+        self.name: QLineEdit = part(form, QLineEdit, "yourName")
+        self.name.setText(account.display_name)
+        self.email: QLineEdit = part(form, QLineEdit, "email")
+        self.email.setText(account.email_address)
+        self.signature: QPlainTextEdit = part(form, QPlainTextEdit, "signature")
         self.signature.setPlainText(account.signature)
-        self.signature.setPlaceholderText("Added at the end of new messages, replies and forwards")
         self.signature.setMinimumHeight(110)
-        self.signature_count = QLabel("", general)
-        mail_form = general_form
-        if calendars_only:
-            general_form.addRow("Account name", self.account_name)
-            unused = QWidget(general)  # the mail fields keep their stored values (nothing about them is sent) and are never shown
-            unused.hide()
-            mail_form = QFormLayout(unused)
-            mail_form.addRow("Your name", self.name)
-            mail_form.addRow("E-mail address", self.email)
-        else:
-            add_name_rows(general_form, self.account_name, self.name, self.email)
-        mail_form.addRow("Signature", self.signature)
-        mail_form.addRow("", self.signature_count)
-        self.check_minutes = QSpinBox(general)
+        self.signature_count: QLabel = part(form, QLabel, "signatureCount")
+        self.check_minutes: QSpinBox = part(form, QSpinBox, "checkMinutes")
         self.check_minutes.setRange(0, 240)
-        self.check_minutes.setSpecialValueText("As set in the general settings")
-        self.check_minutes.setSuffix(" minutes")
         self.check_minutes.setValue(account.check_minutes)
-        mail_form.addRow("Check this account every", self.check_minutes)
-        self.junk_filter = QCheckBox("Filter junk mail", general)
+        self.junk_filter: QCheckBox = part(form, QCheckBox, "junkFilter")
         self.junk_filter.setChecked(account.junk_filter)
-        self.junk_filter.setToolTip("New mail that the server marked as spam, or that looks very much like junk, goes to the Junk folder before your rules run")
-        mail_form.addRow("", self.junk_filter)
+        if calendars_only:  # the mail fields keep their stored values (nothing about them is sent) and are never shown
+            for field in (self.name, self.email, self.signature, self.signature_count, self.check_minutes, self.junk_filter):
+                general.setRowVisible(field, False)
+        storage = part(form, QComboBox, "storage")
         self.storage: QComboBox | None = None
         if kind is AccountKind.POP3:  # an IMAP account always has the folders of its server
-            self.storage = QComboBox(general)
+            self.storage = storage
             self.storage.addItem("A mailbox of its own, with its own folders", "own")
             self.storage.addItem("Local Folders, together with the other accounts that keep their mail there", "local")
             self.storage.setCurrentIndex(max(0, self.storage.findData(account.storage)))
-            self.storage.setToolTip("Changing this moves the stored mail of this account. Nothing is deleted before the copy has been checked.")
-            general_form.addRow("Keep the mail in", self.storage)
-        self.tabs.addTab(general, "General")
+        else:
+            general.setRowVisible(storage, False)
 
-        servers = QWidget(self)
-        servers_layout = QVBoxLayout(servers)
-        self.servers = ServerFields(servers, kind, editing=True, start=start_values_of(account))
         fields = self.servers
         self.username, self.password, self.same_login = fields.username, fields.password, fields.same_login
         self.incoming_host, self.incoming_port, self.incoming_security = fields.incoming_host, fields.incoming_port, fields.incoming_security
         self.outgoing_host, self.outgoing_port, self.outgoing_security = fields.outgoing_host, fields.outgoing_port, fields.outgoing_security
         self.outgoing_username, self.outgoing_password = fields.outgoing_username, fields.outgoing_password
-        servers_layout.addWidget(fields.incoming_group)
-        servers_layout.addWidget(fields.outgoing_group)
-        self.test_button = QPushButton("Test connection", servers)
-        servers_layout.addWidget(self.test_button)
+        self.test_button: QPushButton = part(form, QPushButton, "testConnection")
         self.trusted: list[str] = list(account.trusted_certificates)
-        self.certificates_label = QLabel("", servers)
-        self.certificates_label.setWordWrap(True)
-        self.incoming_certificate_button = QPushButton("Look at the incoming server's certificate…", servers)
-        self.outgoing_certificate_button = QPushButton("Look at the outgoing server's certificate…", servers)
-        self.forget_certificates_button = QPushButton("Forget the accepted certificates", servers)
-        for widget in (self.certificates_label, self.incoming_certificate_button, self.outgoing_certificate_button, self.forget_certificates_button):
-            servers_layout.addWidget(widget)
+        self.certificates_label: QLabel = part(form, QLabel, "certificates")
+        self.incoming_certificate_button: QPushButton = part(form, QPushButton, "incomingCertificate")
+        self.outgoing_certificate_button: QPushButton = part(form, QPushButton, "outgoingCertificate")
+        self.forget_certificates_button: QPushButton = part(form, QPushButton, "forgetCertificates")
         self._show_certificates()
-        servers_layout.addStretch(1)
-        if calendars_only:
-            servers.hide()  # its server is the calendar server, on the Calendars and contacts tab
-        else:
-            self.tabs.addTab(servers, "Servers")
 
-        self.dav_url = QLineEdit(account.dav_url, self)
-        self.dav_username = QLineEdit(account.dav_username, self)
-        self.dav_password = QLineEdit(self)
-        self.dav_result = QLabel("", self)
-        self.dav_check_button = QPushButton("Find calendars, contacts and tasks", self)
-        self.dav_folders = FolderTicks(self)
+        self.dav_url: QLineEdit = part(form, QLineEdit, "davUrl")
+        self.dav_url.setText(account.dav_url)
+        self.dav_username: QLineEdit = part(form, QLineEdit, "davUsername")
+        self.dav_username.setText(account.dav_username)
+        self.dav_password: QLineEdit = part(form, QLineEdit, "davPassword")
+        self.dav_password.setEchoMode(QLineEdit.EchoMode.Password)
+        self.dav_result: QLabel = part(form, QLabel, "davResult")
+        self.dav_result.setTextFormat(Qt.TextFormat.RichText)
+        self.dav_check_button: QPushButton = part(form, QPushButton, "findDav")
+        self.dav_folders: FolderTicks = part(form, FolderTicks, "davFolders")
         self._dav_found: FoundServer | None = None  # the folders shown, as the server gave them
-        self.dav_certificate_button = QPushButton("Look at the server's certificate…", self)
-        if kind is not AccountKind.LOCAL:
-            self.tabs.addTab(self._calendars_tab(), "Calendars and contacts")
-            if account.dav_url:
-                self._find_dav_folders(loading=True)
+        self.dav_certificate_button: QPushButton = part(form, QPushButton, "davCertificate")
+        self.dav_check_button.clicked.connect(self._check_dav)
+        self.dav_certificate_button.clicked.connect(self._look_at_dav)
 
-        copies = QWidget(self)
-        copies_form = QFormLayout(copies)
-        self.policy = QComboBox(copies)
+        self.policy: QComboBox = part(form, QComboBox, "policy")
         for value, label in POLICIES:
             self.policy.addItem(label, value)
         self.policy.setCurrentIndex(max(0, self.policy.findData(account.delete_policy)))
-        self.days = QSpinBox(copies)
+        self.days: QSpinBox = part(form, QSpinBox, "days")
         self.days.setRange(1, 3650)
         self.days.setValue(account.delete_days)
-        self.days.setSuffix(" days")
-        copies_form.addRow("Mail on the server", self.policy)
-        copies_form.addRow("Delete after", self.days)
         self.folder_table: QTableWidget | None = None
         self._folders_loaded: dict[str, tuple[bool, str]] = {}  # server folder -> (synchronised, chosen role) as they were
-        if kind is AccountKind.IMAP:
-            self.tabs.addTab(self._folders_tab(), "Folders")
-        if kind is AccountKind.POP3:  # copies on the server are a POP3 matter; an IMAP account is the server's mail
-            self.tabs.addTab(copies, "Server copies")
+        self.folders_label: QLabel = part(form, QLabel, "foldersNote")
 
-        self.result_label = QLabel("", self)
-        self.result_label.setWordWrap(True)
+        # the tabs this kind of account has; the others are taken out (their fields keep the stored values and send nothing)
+        wanted = {
+            "serversPage": not calendars_only,  # its server is the calendar server, on the Calendars and contacts tab
+            "calendars": kind is not AccountKind.LOCAL,
+            "folders": kind is AccountKind.IMAP,
+            "copies": kind is AccountKind.POP3,  # copies on the server are a POP3 matter; an IMAP account is the server's mail
+        }
+        for name, keep in wanted.items():
+            if not keep:
+                page = part(form, QWidget, name)
+                self.tabs.removeTab(self.tabs.indexOf(page))
+                page.hide()
+        if kind is not AccountKind.LOCAL and account.dav_url:
+            self._find_dav_folders(loading=True)
+        if kind is AccountKind.IMAP:
+            self.folder_table = part(form, QTableWidget, "folderTable")
+            self.folder_table.setColumnCount(3)
+            self.folder_table.setHorizontalHeaderLabels(["Synchronise", "Folder on the server", "Used as"])
+            self.folder_table.verticalHeader().hide()
+            self.folder_table.horizontalHeader().setStretchLastSection(True)
+            self.folder_table.setColumnWidth(0, 100)
+            self.folder_table.setColumnWidth(1, 280)
+            self._backend.ask(ACCOUNT_FOLDERS, FolderAccount(self._account.account_id), self._folders_arrived, self._folders_failed, owner=self)
+
+        self.result_label: QLabel = part(form, QLabel, "result")
         self.result_label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self.result_label)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
         self.signature.textChanged.connect(self._count_signature)
         self.test_button.clicked.connect(self._test)
         self.incoming_certificate_button.clicked.connect(lambda: self._look_at("incoming"))
@@ -209,33 +200,11 @@ class AccountEditDialog(QDialog):
         self._policy_changed()
         self._count_signature()
 
-    def _calendars_tab(self) -> QWidget:
-        tab = QWidget(self)
-        layout = QVBoxLayout(tab)
-        explanation = QLabel(
-            "Calendars, task lists and address books of this account are kept in step with a CalDAV and CardDAV server. "
-            "Leave the address empty if this account has none.", tab,
-        )
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
-        form = QFormLayout()
-        self.dav_url.setPlaceholderText("https://server.example.com/caldav/")
-        self.dav_username.setPlaceholderText("(the same as for incoming mail)")
-        self.dav_password.setEchoMode(QLineEdit.EchoMode.Password)
-        self.dav_password.setPlaceholderText("(unchanged; or the mail password)")
-        form.addRow("Server address", self.dav_url)
-        form.addRow("User name", self.dav_username)
-        form.addRow("New password", self.dav_password)
-        form.addRow("Folders", self.dav_folders)
-        layout.addLayout(form)
-        self.dav_result.setWordWrap(True)
-        self.dav_result.setTextFormat(Qt.TextFormat.RichText)
-        for widget in (self.dav_check_button, self.dav_certificate_button, self.dav_result):
-            layout.addWidget(widget)
-        layout.addStretch(1)
-        self.dav_check_button.clicked.connect(self._check_dav)
-        self.dav_certificate_button.clicked.connect(self._look_at_dav)
-        return tab
+    def _server_fields(self, parent: QWidget) -> QWidget:
+        """The incoming and outgoing server boxes (shared with Add account), made at their place in the form."""
+        account = self._account
+        self.servers = ServerFields(parent, kind_of(account), editing=True, start=start_values_of(account))
+        return self.servers.widget
 
     def _dav_address(self) -> tuple[str, int] | None:
         parts = urllib.parse.urlsplit(self.dav_url.text().strip())
@@ -350,22 +319,6 @@ class AccountEditDialog(QDialog):
             junk_filter=differing(self.junk_filter.isChecked(), account.junk_filter),
         )
         return None if parameters == AccountEditParameters(account.account_id) else parameters
-
-    def _folders_tab(self) -> QWidget:
-        tab = QWidget(self)
-        layout = QVBoxLayout(tab)
-        self.folders_label = QLabel("Loading the folders from the server…", tab)
-        self.folders_label.setWordWrap(True)
-        layout.addWidget(self.folders_label)
-        self.folder_table = QTableWidget(0, 3, tab)
-        self.folder_table.setHorizontalHeaderLabels(["Synchronise", "Folder on the server", "Used as"])
-        self.folder_table.verticalHeader().hide()
-        self.folder_table.horizontalHeader().setStretchLastSection(True)
-        self.folder_table.setColumnWidth(0, 100)
-        self.folder_table.setColumnWidth(1, 280)
-        layout.addWidget(self.folder_table, 1)
-        self._backend.ask(ACCOUNT_FOLDERS, FolderAccount(self._account.account_id), self._folders_arrived, self._folders_failed, owner=self)
-        return tab
 
     def _folders_failed(self, error: ChronoMailError) -> None:
         self.folders_label.setText(f"<span style='{red_style()}'>The folders could not be listed: {html.escape(str(error))}</span>")

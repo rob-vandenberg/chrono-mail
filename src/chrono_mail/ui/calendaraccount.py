@@ -3,23 +3,26 @@ import urllib.parse
 from typing import override
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QLabel, QLineEdit, QPushButton, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import ACCOUNT_TRUST_CERTIFICATE, AccountAddResult, AccountSummary, TrustParameters
 from chrono_mail.engine.commands_dav import (
     ACCOUNT_ADD_DAV, DAV_FIND, DAV_FIND_NEW, DAV_LINK, AddDavParameters, FindNewParameters, FindParameters, FoundServer, LinkParameters, web_address,
 )
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import green, red_style
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 3.6.349"
+__version__ = "calendaraccount.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: built from its Qt Designer form (ui/forms/calendar_account.ui, D-276); its smallest width follows the size factor
 # v3.6.349: while the account is being added Find, the certificate and the fields are greyed too, and a Find never enables a second
 #           Add (RV-209); Find does nothing during an add, and Add after a failed add only with what Find found
 # v3.5.346: While the account is being added or linked the window cannot close: Cancel greyed, Escape and the close button wait (RV-02)
@@ -45,45 +48,27 @@ class CalendarAccountDialog(QDialog):
         self._adding: bool = False  # Add is running: the window stays until the engine answered (RV-02)
         self._found: FoundServer | None = None
         self._fingerprint: str = ""  # a certificate the person accepted in this window, for a new account
-        self.setWindowTitle("Add account")
-        self.setMinimumWidth(520)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.target = QComboBox(self)
+        form = forms.fill(self, "calendar_account")  # D-276
+        self.target: QComboBox = part(form, QComboBox, "target")
         self.target.addItem(NEW_ACCOUNT_TEXT, NEW_ACCOUNT)
         for account in mail_accounts:
             if account.kind != "local":
                 self.target.addItem((account.shown_name or account.email_address), account.account_id)
-        self.account_name = QLineEdit(self)
-        self.url = QLineEdit(self)
-        self.url.setPlaceholderText("https://server.example.com/ (a host name is enough)")
-        self.username = QLineEdit(self)
-        self.password = QLineEdit(self)
+        self.account_name: QLineEdit = part(form, QLineEdit, "accountName")
+        self.url: QLineEdit = part(form, QLineEdit, "url")
+        self.username: QLineEdit = part(form, QLineEdit, "username")
+        self.password: QLineEdit = part(form, QLineEdit, "password")
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
-        form.addRow("For", self.target)
-        form.addRow("Account name", self.account_name)
-        form.addRow("Server address", self.url)
-        form.addRow("User name", self.username)
-        form.addRow("Password", self.password)
-        layout.addLayout(form)
-        row = QHBoxLayout()
-        self.find_button = QPushButton("Find calendars, contacts and tasks", self)
-        self.certificate_button = QPushButton("Look at the server's certificate…", self)
-        row.addWidget(self.find_button)
-        row.addWidget(self.certificate_button)
-        row.addStretch(1)
-        layout.addLayout(row)
-        self.result_label = QLabel("", self)
-        self.result_label.setWordWrap(True)
+        self.find_button: QPushButton = part(form, QPushButton, "find")
+        self.certificate_button: QPushButton = part(form, QPushButton, "lookAtCertificate")
+        self.result_label: QLabel = part(form, QLabel, "result")
         self.result_label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self.result_label)
-        layout.addStretch(1)
-        box = QDialogButtonBox(self)
+        box = part(form, QDialogButtonBox, "buttons")
         self.add_button = box.addButton("Add", QDialogButtonBox.ButtonRole.AcceptRole)
         self.cancel_button: QPushButton | None = box.addButton(QDialogButtonBox.StandardButton.Cancel)
         box.accepted.connect(self._add)
         box.rejected.connect(self.reject)
-        layout.addWidget(box)
+        forms.smallest(self, 520)  # its texts are never cut off, also at the largest size
         self.find_button.clicked.connect(self._find)
         self.certificate_button.clicked.connect(self._look_at_certificate)
         self.target.currentIndexChanged.connect(self._target_changed)

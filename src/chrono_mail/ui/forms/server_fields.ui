@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ServerFields</class>
+ <widget class="QWidget" name="ServerFields">
+  <layout class="QVBoxLayout" name="layout">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
+   <item>
+    <widget class="QGroupBox" name="incomingGroup">
+     <property name="title">
+      <string>Incoming mail (POP3)</string>
+     </property>
+     <layout class="QFormLayout" name="incomingForm">
+      <item row="0" column="0">
+       <widget class="QLabel" name="incomingHostLabel">
+        <property name="text">
+         <string>Server</string>
+        </property>
+        <property name="buddy">
+         <cstring>incomingHost</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QLineEdit" name="incomingHost" />
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="incomingSecurityLabel">
+        <property name="text">
+         <string>Security</string>
+        </property>
+        <property name="buddy">
+         <cstring>incomingSecurity</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QComboBox" name="incomingSecurity" />
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="incomingPortLabel">
+        <property name="text">
+         <string>Port</string>
+        </property>
+        <property name="buddy">
+         <cstring>incomingPort</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QSpinBox" name="incomingPort" />
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="usernameLabel">
+        <property name="text">
+         <string>User name</string>
+        </property>
+        <property name="buddy">
+         <cstring>username</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QLineEdit" name="username" />
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="passwordLabel">
+        <property name="text">
+         <string>Password</string>
+        </property>
+        <property name="buddy">
+         <cstring>password</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QLineEdit" name="password" />
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="outgoingGroup">
+     <property name="title">
+      <string>Outgoing mail (SMTP)</string>
+     </property>
+     <layout class="QFormLayout" name="outgoingForm">
+      <item row="0" column="0">
+       <widget class="QLabel" name="outgoingHostLabel">
+        <property name="text">
+         <string>Server</string>
+        </property>
+        <property name="buddy">
+         <cstring>outgoingHost</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QLineEdit" name="outgoingHost" />
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="outgoingSecurityLabel">
+        <property name="text">
+         <string>Security</string>
+        </property>
+        <property name="buddy">
+         <cstring>outgoingSecurity</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QComboBox" name="outgoingSecurity" />
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="outgoingPortLabel">
+        <property name="text">
+         <string>Port</string>
+        </property>
+        <property name="buddy">
+         <cstring>outgoingPort</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QSpinBox" name="outgoingPort" />
+      </item>
+      <item row="3" column="1">
+       <widget class="QCheckBox" name="sameLogin">
+        <property name="text">
+         <string>Use the same user name and password as for incoming mail</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="outgoingUsernameLabel">
+        <property name="text">
+         <string>User name</string>
+        </property>
+        <property name="buddy">
+         <cstring>outgoingUsername</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QLineEdit" name="outgoingUsername" />
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="outgoingPasswordLabel">
+        <property name="text">
+         <string>Password</string>
+        </property>
+        <property name="buddy">
+         <cstring>outgoingPassword</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="QLineEdit" name="outgoingPassword" />
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>UseRecoveryCode</class>
+ <widget class="QWidget" name="UseRecoveryCode">
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <widget class="QLabel" name="explanation">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="code">
+     <property name="placeholderText">
+      <string>Recovery code, for example ABCD-EFGH-…</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="result">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="buttons" stretch="0,0,0,0,1,0">
+     <item>
+      <widget class="QPushButton" name="restoreWithCode">
+       <property name="text">
+        <string>Restore with this code</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="useFile">
+       <property name="text">
+        <string>Use a recovery file…</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="tryAgain">
+       <property name="text">
+        <string>Try again</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="startWithout">
+       <property name="text">
+        <string>Start without this mail</string>
+       </property>
+       <property name="toolTip">
+        <string>Only for Local Folders kept on this computer whose key is gone and whose recovery code is lost</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="buttonsMiddle">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="notNow">
+       <property name="text">
+        <string>Not now</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

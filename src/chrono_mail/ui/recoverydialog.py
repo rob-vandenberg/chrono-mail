@@ -8,14 +8,12 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
-    QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -23,12 +21,15 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import (
     KEY_CODE_STORED, KEY_EXPORT_FILE, KEY_RECOVERY_CODE, KeyExportParameters, KeyExportResult, KeyStatus, NoParameters, RecoveryCode,
 )
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "recoverydialog.py 3.6.350"
+__version__ = "recoverydialog.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: built from its Qt Designer form (ui/forms/recovery_code.ui, D-276); Copy comes back with the form's text; its smallest width follows the size factor
 # v3.6.350: a code that could not be shown can be asked again with Try again (during a restore "Stop the restore" was the only way on)
 # v3.6.349: the tick and Copy work only once the code is shown: a code never seen is never noted as stored (RV-210); a saved recovery file allows the tick too
 # v3.5.346: Done tells the engine the code is stored (key.code-stored); until then it is shown again before a restore and after an account is added (RV-03)
@@ -52,52 +53,27 @@ class RecoveryDialog(QDialog):
         super().__init__(parent)
         self._backend: Backend = backend
         self._restoring: bool = restoring  # shown before a restore: the backup's own password is asked for in the next step
-        self.setWindowTitle("Your recovery code")
-        self.setMinimumWidth(560)
-        layout = QVBoxLayout(self)
-        intro = QLabel(
-            "Your mail is stored encrypted on this computer. The key that opens it is kept in this computer's "
-            "password store. <b>If that key is lost, your mail can no longer be read.</b><br><br>"
-            "Keep this recovery code somewhere safe, away from this computer (for example printed, or in a password manager). "
-            "Anyone who has the code can read your mail, so treat it like a password.",
-            self,
-        )
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
-        if restoring:
-            layout.addWidget(QLabel(RESTORING_TEXT, self))
-        self.code = QPlainTextEdit(self)
-        self.code.setReadOnly(True)
+        form = forms.fill(self, "recovery_code")  # D-276
+        part(form, QLabel, "restoring").setVisible(restoring)
+        self.code: QPlainTextEdit = part(form, QPlainTextEdit, "code")
         self.code.setFixedHeight(70)
         monospace = QFont("monospace")
         monospace.setStyleHint(QFont.StyleHint.Monospace)
         monospace.setPointSizeF(monospace.pointSizeF() * 1.2)
         self.code.setFont(monospace)
         self.code.setPlainText("Loading…")
-        layout.addWidget(self.code)
-        buttons = QHBoxLayout()
-        self.copy_button = QPushButton("Copy", self)
-        self.file_button = QPushButton("Save a recovery file…", self)
-        self.retry_button = QPushButton("Try again", self)  # greyed until the code could not be shown: then it is asked again
+        self.copy_button: QPushButton = part(form, QPushButton, "copy")
+        self._copy_text: str = self.copy_button.text()  # the form's text, back after "Copied"
+        self.file_button: QPushButton = part(form, QPushButton, "saveFile")
+        self.file_button.setVisible(not restoring)  # a third secret during a restore would confuse: the file can be saved later from the menu
+        self.retry_button: QPushButton = part(form, QPushButton, "tryAgain")  # greyed until the code could not be shown: then it is asked again
         self.retry_button.setEnabled(False)
-        buttons.addWidget(self.copy_button)
-        if restoring:
-            self.file_button.setVisible(False)  # a third secret during a restore would confuse: the file can be saved later from the menu
-        else:
-            buttons.addWidget(self.file_button)
-        buttons.addStretch(1)
-        buttons.addWidget(self.retry_button)
-        layout.addLayout(buttons)
-        self.confirm = QCheckBox("I have stored the recovery code (or a recovery file) in a safe place", self)
+        self.confirm: QCheckBox = part(form, QCheckBox, "confirm")
         self.confirm.setEnabled(False)  # only once the code is there to be stored (RV-210)
         self.copy_button.setEnabled(False)
-        layout.addWidget(self.confirm)
-        done_row = QHBoxLayout()
-        done_row.addStretch(1)
-        self.done_button = QPushButton("Done", self)
+        self.done_button: QPushButton = part(form, QPushButton, "done")
         self.done_button.setEnabled(False)
-        done_row.addWidget(self.done_button)
-        layout.addLayout(done_row)
+        forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
         self.confirm.toggled.connect(self.done_button.setEnabled)
         self.done_button.clicked.connect(self._stored)
         self.copy_button.clicked.connect(self._copy)
@@ -141,7 +117,7 @@ class RecoveryDialog(QDialog):
 
     def _copy_again(self) -> None:
         try:
-            self.copy_button.setText("Copy")
+            self.copy_button.setText(self._copy_text)
         except RuntimeError:
             pass  # the window is gone
 

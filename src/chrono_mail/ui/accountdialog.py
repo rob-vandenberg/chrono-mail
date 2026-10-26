@@ -8,28 +8,30 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QGroupBox,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 
 from chrono_mail.config import server_pin
 from chrono_mail.core import AccountKind, ChronoMailError
 from chrono_mail.engine.commands_accounts import ACCOUNT_ADD, ACCOUNT_CHECK, AccountAddParameters, AccountAddResult, AccountCheckParameters, AccountCheckResult
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, mail_server_kind, policy_of, security_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 3.6.350"
+__version__ = "accountdialog.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: built from its Qt Designer form (ui/forms/account_add.ui, D-276), the server boxes at its "servers" place; its smallest width
+#           follows the size factor and never cuts a text off; add_name_rows is gone (each form has its own rows)
 # v3.6.350: a server's error text is shown as text, never markup (D-259)
 # v3.6.349: while the account is being added everything else is greyed: Restore a backup…, the certificate, the test and the fields
 #           (a test then let it close half-way, RV-207, RV-208); a test reached from the certificate does nothing then
@@ -82,82 +84,58 @@ class AccountDialog(QDialog):
         self.show_recovery_code: bool = False  # this computer's recovery code was never confirmed as stored: shown after the add (RV-03)
         self._adding: bool = False  # Add account is running: the window stays until the engine answered (RV-02)
         self._restore: Callable[[], None] | None = restore  # the first-account window's Restore a backup…: the main window's restore
-        self.setWindowTitle("Add an account")
-        self.setMinimumWidth(520)
-        layout = QVBoxLayout(self)
-        if first_account:
-            welcome = QLabel("<b>Welcome to Chrono Mail.</b><br>Add your first e-mail account to get started, or bring back a backup of Chrono Mail.", self)
-            welcome.setWordWrap(True)
-            layout.addWidget(welcome)
-        self.restore_button: QPushButton = QPushButton("Restore a backup…", self)
+        form = forms.fill(self, "account_add", {"servers": self._server_fields})  # D-276
+        part(form, QLabel, "welcome").setVisible(first_account)
+        self.restore_button: QPushButton = part(form, QPushButton, "restoreBackup")
         self.restore_button.setVisible(first_account and restore is not None)
         if first_account and restore is not None:
             self.restore_button.clicked.connect(self._restore_instead)  # a person on a new computer looks for it here first (W2)
-            layout.addWidget(self.restore_button, 0, Qt.AlignmentFlag.AlignLeft)
-
-        who = QGroupBox("Your account", self)
-        self._who: QGroupBox = who
-        who_form = QFormLayout(who)
-        self.kind = QComboBox(who)
+        self._who: QGroupBox = part(form, QGroupBox, "yourAccount")
+        self.kind: QComboBox = part(form, QComboBox, "kind")
         for kind, label in KINDS:
             self.kind.addItem(label, kind.value)
-        who_form.addRow("Account type", self.kind)
-        self.account_name = QLineEdit(who)
-        self.name = QLineEdit(who)
-        self.email = QLineEdit(who)
-        add_name_rows(who_form, self.account_name, self.name, self.email)
-        layout.addWidget(who)
-
-        self.servers = ServerFields(self, AccountKind.POP3, editing=False)
+        self.account_name: QLineEdit = part(form, QLineEdit, "accountName")
+        self.name: QLineEdit = part(form, QLineEdit, "yourName")
+        self.email: QLineEdit = part(form, QLineEdit, "email")
         servers = self.servers
         self.username, self.password, self.same_login = servers.username, servers.password, servers.same_login
         self.incoming_host, self.incoming_port, self.incoming_security = servers.incoming_host, servers.incoming_port, servers.incoming_security
         self.outgoing_host, self.outgoing_port, self.outgoing_security = servers.outgoing_host, servers.outgoing_port, servers.outgoing_security
         self.outgoing_username, self.outgoing_password = servers.outgoing_username, servers.outgoing_password
         self.incoming_group = servers.incoming_group
-        layout.addWidget(servers.incoming_group)
-        layout.addWidget(servers.outgoing_group)
-
-        options = QGroupBox("Options", self)
-        self._options: QGroupBox = options
-        options_layout = QFormLayout(options)
-        self.policy = QComboBox(options)
+        self._options: QGroupBox = part(form, QGroupBox, "options")
+        self.policy: QComboBox = part(form, QComboBox, "policy")
         for value, label in POLICIES:
             self.policy.addItem(label, value)
-        self.storage = QComboBox(options)
+        self.storage: QComboBox = part(form, QComboBox, "storage")
         self.storage.addItem("A mailbox of its own, with its own folders", "own")
         self.storage.addItem("Local Folders, together with the other accounts that keep their mail there", "local")
-        self.storage.setToolTip("Only for POP3. You can change this later in the settings of the account.")
-        self.encrypt = QCheckBox("Encrypt the stored mail on this computer (recommended)", options)
+        self.encrypt: QCheckBox = part(form, QCheckBox, "encrypt")
         self.encrypt.setChecked(True)
-        options_layout.addRow("Server copies", self.policy)
-        options_layout.addRow("Keep the mail in", self.storage)
-        options_layout.addRow("", self.encrypt)
-        layout.addWidget(options)
-
-        self.result_label = QLabel("", self)
-        self.result_label.setWordWrap(True)
+        self.result_label: QLabel = part(form, QLabel, "result")
         self.result_label.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self.result_label)
-
-        self.certificate_button = QPushButton("Look at the server's certificate…", self)
-        self.certificate_button.hide()
-        layout.addWidget(self.certificate_button)  # not in the button box: the box shows every button it holds
-        buttons = QDialogButtonBox(self)
-        self.test_button = QPushButton("Test connection", self)
-        self.add_button = QPushButton("Add account", self)
+        self.certificate_button: QPushButton = part(form, QPushButton, "lookAtCertificate")
+        self.certificate_button.hide()  # not in the button box: the box shows every button it holds
+        buttons = part(form, QDialogButtonBox, "buttons")
+        self.test_button = QPushButton("Test connection", buttons)
+        self.add_button = QPushButton("Add account", buttons)
         self.add_button.setDefault(True)
         buttons.addButton(self.test_button, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.addButton(self.add_button, QDialogButtonBox.ButtonRole.AcceptRole)
         self.cancel_button: QPushButton | None = buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        forms.smallest(self, 520)  # its texts are never cut off, also at the largest size
 
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self.email.textEdited.connect(self._guess_from_address)
         self.certificate_button.clicked.connect(self._look_at_certificates)
         self.test_button.clicked.connect(self._test)
         self.add_button.clicked.connect(self._add)
+
+    def _server_fields(self, parent: QWidget) -> QWidget:
+        """The incoming and outgoing server boxes (shared with Edit account), made at their place in the form."""
+        self.servers = ServerFields(parent, AccountKind.POP3, editing=False)
+        return self.servers.widget
 
     # --- what follows what ------------------------------------------------------------------------
 
@@ -302,13 +280,6 @@ class AccountDialog(QDialog):
         if not self._adding:
             super().reject()
 
-
-
-def add_name_rows(form: QFormLayout, account_name: QLineEdit, your_name: QLineEdit, email: QLineEdit) -> None:
-    """Account name, Your name and E-mail address (D-184): the same in Add account and the editor."""
-    form.addRow("Account name", account_name)
-    form.addRow("Your name", your_name)
-    form.addRow("E-mail address", email)
 
 
 def explain_error(parent: QWidget | None, title: str, error: ChronoMailError) -> None:

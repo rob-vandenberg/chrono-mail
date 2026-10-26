@@ -7,8 +7,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
-    QGridLayout,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QProgressBar,
@@ -16,19 +14,22 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QTreeWidget,
     QTreeWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, IMPORT_EMCLIENT_SCAN, ImportParameters, ImportResult, ScanParameters, ScanResult
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 3.6.359"
+__version__ = "importdialog.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: built from its Qt Designer form (ui/forms/import.ui, D-276); the source program's name stays in this file (D-046); the summary is plain text (names from the exports); its sizes
+#           follow the size factor
 # v3.6.359: CR-07: a failed batch reloads the window and runs the check after an import; the summary keeps what was imported
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.271: R-19: reading the exports and the import are typed calls
@@ -133,16 +134,8 @@ class ImportDialog(QDialog):
         self._done_before = 0
         self._scan_number = 0  # the latest reading of the exports; the answer of an older one is ignored
         self._result = ImportResult()
-        self.setWindowTitle("Import")
-        self.setMinimumWidth(820)
-        self.setMinimumHeight(560)
-        layout = QVBoxLayout(self)
-        body = QHBoxLayout()
-        layout.addLayout(body, 1)
-
-        left = QVBoxLayout()
-        left.addWidget(QLabel("Import from:", self))
-        self.sources = QTreeWidget(self)
+        form = forms.fill(self, "import")  # D-276
+        self.sources: QTreeWidget = forms.part(form, QTreeWidget, "sources")
         self.sources.setHeaderHidden(True)
         self.sources.setRootIsDecorated(False)
         group = QTreeWidgetItem(self.sources, ["Applications"])
@@ -153,68 +146,40 @@ class ImportDialog(QDialog):
         self.source_item = QTreeWidgetItem(group, [SOURCE_NAME])
         group.setExpanded(True)
         self.sources.setCurrentItem(self.source_item)
-        self.sources.setFixedWidth(220)
-        left.addWidget(self.sources, 1)
-        body.addLayout(left)
-
-        right = QVBoxLayout()
-        title = QLabel(f"<b>Import data from {SOURCE_NAME}</b>", self)
-        right.addWidget(title)
-        right.addWidget(QLabel("Choose types for import:", self))
-        self.accounts = QCheckBox("Accounts and passwords", self)
-        self.rules = QCheckBox("Rules", self)
-        self.mail = QCheckBox("Mail", self)
-        self.contacts = QCheckBox("Contacts", self)
-        self.tags = QCheckBox("Tags", self)
+        self.sources.setFixedWidth(wpx(220))
+        forms.part(form, QLabel, "title").setText(f"Import data from {SOURCE_NAME}")  # the program's name only here (D-046)
+        self.accounts: QCheckBox = forms.part(form, QCheckBox, "accounts")
+        self.rules: QCheckBox = forms.part(form, QCheckBox, "rules")
+        self.mail: QCheckBox = forms.part(form, QCheckBox, "mail")
+        self.contacts: QCheckBox = forms.part(form, QCheckBox, "contacts")
+        self.tags: QCheckBox = forms.part(form, QCheckBox, "tags")
         for box in (self.accounts, self.rules, self.mail, self.contacts, self.tags):
             box.setChecked(True)
-            right.addWidget(box)
-        right.addSpacing(8)
-        right.addWidget(QLabel("Select the exports:", self))
-        grid = QGridLayout()
-        self.settings_file = QLineEdit(self)
-        self.mail_folder = QLineEdit(self)
-        self.backup_file = QLineEdit(self)
-        rows = (
-            ("Settings (.xml):", self.settings_file, self._browse_settings),
-            ("Mail (.eml folder):", self.mail_folder, self._browse_mail),
-            ("Backup (.zip):", self.backup_file, self._browse_backup),
-        )
-        for row, (label, field, browse) in enumerate(rows):
-            grid.addWidget(QLabel(label, self), row, 0)
-            grid.addWidget(field, row, 1)
-            button = QPushButton("Browse", self)
-            button.clicked.connect(browse)
-            grid.addWidget(button, row, 2)
+        self.settings_file: QLineEdit = forms.part(form, QLineEdit, "settingsFile")
+        self.mail_folder: QLineEdit = forms.part(form, QLineEdit, "mailFolder")
+        self.backup_file: QLineEdit = forms.part(form, QLineEdit, "backupFile")
+        for field, browse, button in (
+            (self.settings_file, self._browse_settings, "browseSettings"), (self.mail_folder, self._browse_mail, "browseMail"),
+            (self.backup_file, self._browse_backup, "browseBackup"),
+        ):
+            forms.part(form, QPushButton, button).clicked.connect(browse)
             field.editingFinished.connect(self.scan)
-        right.addLayout(grid)
-        self.summary = QLabel("Choose the exports to see what will be imported.", self)
-        self.summary.setWordWrap(True)
-        self.summary.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.summary: QLabel = forms.part(form, QLabel, "summary")
+        self.summary.setTextFormat(Qt.TextFormat.PlainText)  # names from the exports: never markup
         self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.summary_area = QScrollArea(self)  # a long summary (many accounts or rules) scrolls instead of falling off the window
-        self.summary_area.setWidgetResizable(True)
-        self.summary_area.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.summary_area.setWidget(self.summary)
-        right.addWidget(self.summary_area, 1)
-        self.progress = QProgressBar(self)
+        self.summary_area: QScrollArea = forms.part(form, QScrollArea, "summaryArea")  # a long summary scrolls instead of falling off the window
+        self.progress: QProgressBar = forms.part(form, QProgressBar, "progress")
         self.progress.setVisible(False)
-        right.addWidget(self.progress)
-        body.addLayout(right, 1)
-
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        self.import_button = QPushButton("Import", self)
-        self.stop_button = QPushButton("Stop", self)
-        self.close_button = QPushButton("Close", self)
+        self.import_button: QPushButton = forms.part(form, QPushButton, "import")
+        self.stop_button: QPushButton = forms.part(form, QPushButton, "stop")
+        self.close_button: QPushButton = forms.part(form, QPushButton, "close")
         self.stop_button.setEnabled(False)
         self.import_button.setEnabled(False)  # until the reading of the exports has answered: the import needs its count
         self.import_button.clicked.connect(self.start)
         self.stop_button.clicked.connect(self.request_stop)
         self.close_button.clicked.connect(self.reject)
-        for button in (self.import_button, self.stop_button, self.close_button):
-            buttons.addWidget(button)
-        layout.addLayout(buttons)
+        self.setMinimumHeight(wpx(560))
+        forms.smallest(self, 820)  # its texts are never cut off, also at the largest size
         backend.progress.connect(self._progress)
 
     # --- choosing the exports -----------------------------------------------------------------

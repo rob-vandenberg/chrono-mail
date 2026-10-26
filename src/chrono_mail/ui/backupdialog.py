@@ -9,14 +9,12 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QDialog,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QProgressBar,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -34,14 +32,18 @@ from chrono_mail.engine.commands_backup import (
     BackupResult,
     CancelResult,
 )
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.windowsettings import window_settings_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "backupdialog.py 2.5.338"
+__version__ = "backupdialog.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: built from its Qt Designer form (ui/forms/backup.ui, D-276): the parts' ticks by name, the status line is plain text; Copy and Close come back with the form's
+#           texts; its sizes and blank lines follow the size factor
 # v2.5.338: Copy stays usable while the backup is made (the owner)
 # v2.4.324: may_quit: Quit while a backup is made or restored asks first (D-244)
 # v2.4.323: "Backup" is one word (the owner): the menu item and the button Backup…, the window and its save window Backup
@@ -49,12 +51,11 @@ __version__ = "backupdialog.py 2.5.338"
 #           password made by Chrono Mail with Copy and "I have saved the backup password", progress, Cancel, Run in background (D-244)
 
 MENU_TEXT: str = "Backup…"
-PARTS: tuple[tuple[str, str], ...] = (
-    (MESSAGES, "Messages"), (RULES, "Mail rules"), (CALENDARS, "Calendar items"), (CONTACTS, "Contacts"), (TASKS, "Tasks"), (SETTINGS, "Settings"),
+PART_BOXES: tuple[tuple[str, str], ...] = (  # each part of a backup and its tick in the form
+    (MESSAGES, "partMessages"), (RULES, "partRules"), (CALENDARS, "partCalendars"), (CONTACTS, "partContacts"), (TASKS, "partTasks"), (SETTINGS, "partSettings"),
 )
 EVERY_ACCOUNT: frozenset[str] = frozenset({RULES, SETTINGS})  # parts that belong to the program, not to an account: never greyed
 SHOWN_DOING: dict[str, str] = {DOING_MESSAGES: "Messages", DOING_ITEMS: "Calendar items, contacts and tasks", DOING_SETTINGS: "Settings"}
-PASSWORD_TEXT: str = "Save this password somewhere safe. Without it the backup cannot be opened, and it cannot be recovered."
 COPIED_MILLISECONDS: int = 2000
 ENTRY_ROLE: int = int(Qt.ItemDataRole.UserRole)
 PARTS_ROLE: int = int(Qt.ItemDataRole.UserRole) + 1
@@ -83,88 +84,53 @@ class BackupDialog(QDialog):
         self._backend: Backend = backend
         self._settings: QSettings = settings
         self.running: bool = False
-        self.setWindowTitle("Backup")
-        self.setMinimumWidth(560)
-        layout = QVBoxLayout(self)
-
-        layout.addWidget(QLabel("<b>What to back up</b>", self))
+        form = forms.fill(self, "backup")  # D-276
         self.part_boxes: dict[str, QCheckBox] = {}
-        parts_row = QHBoxLayout()
-        columns = (QVBoxLayout(), QVBoxLayout())
-        for number, (part, text) in enumerate(PARTS):
-            box = QCheckBox(text, self)
+        for part_name, box_name in PART_BOXES:
+            box = forms.part(form, QCheckBox, box_name)
             box.setChecked(True)
             box.toggled.connect(self._update)
-            self.part_boxes[part] = box
-            columns[number // 3].addWidget(box)
-        for column in columns:
-            parts_row.addLayout(column)
-        parts_row.addStretch(1)
-        layout.addLayout(parts_row)
-
-        layout.addSpacing(8)
-        layout.addWidget(QLabel("<b>Accounts</b>", self))
-        self.select_all = QCheckBox("Select all", self)
+            self.part_boxes[part_name] = box
+        self.select_all: QCheckBox = forms.part(form, QCheckBox, "selectAll")
         self.select_all.setTristate(False)
         self.select_all.setChecked(True)
         self.select_all.clicked.connect(self._select_all_clicked)
-        layout.addWidget(self.select_all)
-        self.accounts = QListWidget(self)
-        self.accounts.setMinimumHeight(120)
+        self.accounts: QListWidget = forms.part(form, QListWidget, "accounts")
+        self.accounts.setMinimumHeight(wpx(120))
         self.accounts.itemChanged.connect(self._item_changed)
-        layout.addWidget(self.accounts, 1)
-
-        layout.addSpacing(8)
-        self.include_passwords = QCheckBox("Include account passwords", self)
+        self.include_passwords: QCheckBox = forms.part(form, QCheckBox, "includePasswords")
         self.include_passwords.toggled.connect(self._passwords_toggled)
-        layout.addWidget(self.include_passwords)
-        self.protect = QCheckBox("Protect the backup with a password", self)
+        self.protect: QCheckBox = forms.part(form, QCheckBox, "protect")
         self.protect.setChecked(True)
         self.protect.toggled.connect(self._update)
-        layout.addWidget(self.protect)
-        password_row = QHBoxLayout()
-        self.password = QLineEdit(self)
-        self.password.setReadOnly(True)
+        self.password: QLineEdit = forms.part(form, QLineEdit, "password")
         monospace = QFont("monospace")
         monospace.setStyleHint(QFont.StyleHint.Monospace)
         self.password.setFont(monospace)
-        password_row.addWidget(self.password, 1)
-        self.copy_button = QPushButton("Copy", self)
+        self.copy_button: QPushButton = forms.part(form, QPushButton, "copy")
+        self._copy_text: str = self.copy_button.text()  # the form's text, back after "Copied"
         self.copy_button.clicked.connect(self._copy)
-        password_row.addWidget(self.copy_button)
-        layout.addLayout(password_row)
-        self.password_note = QLabel(PASSWORD_TEXT, self)
-        self.password_note.setWordWrap(True)
-        layout.addWidget(self.password_note)
-        self.saved = QCheckBox("I have saved the backup password", self)
+        self.password_note: QLabel = forms.part(form, QLabel, "passwordNote")
+        self.saved: QCheckBox = forms.part(form, QCheckBox, "saved")
         self.saved.toggled.connect(self._update)
-        layout.addWidget(self.saved)
-
-        layout.addSpacing(8)
-        self.progress = QProgressBar(self)
+        self.progress: QProgressBar = forms.part(form, QProgressBar, "progress")
         self.progress.setVisible(False)
-        layout.addWidget(self.progress)
-        self.status = QLabel("", self)
-        self.status.setWordWrap(True)
+        self.status: QLabel = forms.part(form, QLabel, "status")
+        self.status.setTextFormat(Qt.TextFormat.PlainText)  # file names and error texts: never markup
         self.status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.status)
-
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        self.back_up_button = QPushButton(MENU_TEXT, self)
+        self.back_up_button: QPushButton = forms.part(form, QPushButton, "backUp")
         self.back_up_button.clicked.connect(self.start)
-        self.background_button = QPushButton("Run in background", self)
+        self.background_button: QPushButton = forms.part(form, QPushButton, "runInBackground")
         self.background_button.clicked.connect(self.hide)
-        self.close_button = QPushButton("Close", self)  # Cancel while the backup runs: one button, the one action that applies
+        self.close_button: QPushButton = forms.part(form, QPushButton, "close")  # Cancel while the backup runs: one button, the one action that applies
+        self._close_text: str = self.close_button.text()
         self.close_button.clicked.connect(self._close_or_cancel)
-        for button in (self.back_up_button, self.background_button, self.close_button):
-            buttons.addWidget(button)
-        layout.addLayout(buttons)
+        forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
 
         self._copied_timer = QTimer(self)
         self._copied_timer.setSingleShot(True)
         self._copied_timer.setInterval(COPIED_MILLISECONDS)
-        self._copied_timer.timeout.connect(lambda: self.copy_button.setText("Copy"))
+        self._copied_timer.timeout.connect(lambda: self.copy_button.setText(self._copy_text))
         backend.progress.connect(self._progress)
         self._update()
         backend.ask(BACKUP_CHOICES, NoParameters(), self._listed, self._failed, owner=self)
@@ -238,7 +204,7 @@ class BackupDialog(QDialog):
         ready = bool(self.chosen_accounts()) and bool(self.chosen_parts()) and (not protected or (self.saved.isChecked() and bool(self.password.text())))
         self.back_up_button.setEnabled(idle and ready)
         self.background_button.setEnabled(self.running)
-        self.close_button.setText("Cancel" if self.running else "Close")
+        self.close_button.setText("Cancel" if self.running else self._close_text)
 
     def _copy(self) -> None:
         clipboard = QGuiApplication.clipboard()

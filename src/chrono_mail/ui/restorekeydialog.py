@@ -5,14 +5,12 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
-    QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -21,14 +19,18 @@ from chrono_mail.engine.commands_accounts import (
     KEY_RESTORE_CODE, KEY_RESTORE_FILE, KEY_START_WITHOUT_KEPT, KEY_STATUS, LOCAL_TAKE_BACK, KeptSetAside, KeyRestoreCodeParameters, KeyRestoreFileParameters,
     KeyStatus, NoParameters,
 )
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import AnyStep, Backend, Step
 from chrono_mail.ui.colours import green_style, red_style
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "restorekeydialog.py 3.6.350"
+__version__ = "restorekeydialog.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: built from its Qt Designer form (ui/forms/restore_key.ui, D-276); the Tab order follows the window from top to bottom (Start
+#           without this mail came first); its smallest width follows the size factor
 # v3.6.350: mail of Local Folders kept on this computer whose settings were lost: the dialog says so, and Start without this mail sets it
 #           aside (never deleted) when its key is gone for good, so a new key can be made (before, a new key made it unreadable for good);
 #           when its older key is here and only its take-back failed, Start without says that Try again can still bring the mail back
@@ -59,7 +61,6 @@ START_WITHOUT_KEY_HERE_QUESTION: str = (
     "the disk, or solve what the window says, and choose Try again.\n\nWithout them, Local Folders starts again, empty. They are not "
     "deleted: they stay on this computer in a folder of their own, but Chrono Mail does not open them again.\n\nStart without them?"
 )
-START_WITHOUT_HINT: str = "Only for Local Folders kept on this computer whose key is gone and whose recovery code is lost"
 KEY_BACK: str = "The encryption key is back."
 NOT_TAKEN_BACK: str = "Local Folders is not taken back yet; the rest of your mail is open. Use File > Use a recovery code to try again."
 STILL_MISSING: str = "The encryption key is missing, so your mail cannot be read yet. Use File > Use a recovery code."
@@ -126,34 +127,21 @@ class RestoreKeyDialog(QDialog):
         self.declined: str = ""
         self.only_local_folders: bool = False
         self._working: bool = False  # a take-back runs: the window stays until it ends
-        self.start_without_button = QPushButton("Start without this mail", self)  # made first: show_status greys it or not
-        self.start_without_button.setToolTip(START_WITHOUT_HINT)
-        self.setMinimumWidth(560)
-        layout = QVBoxLayout(self)
-        self.explanation = QLabel("", self)
-        self.explanation.setWordWrap(True)
-        layout.addWidget(self.explanation)
+        form = forms.fill(self, "restore_key")  # D-276
+        self.start_without_button: QPushButton = part(form, QPushButton, "startWithout")  # found first: show_status greys it or not
+        self.explanation: QLabel = part(form, QLabel, "explanation")
         self.show_status(status)
-        self.code = QPlainTextEdit(self)
-        self.code.setPlaceholderText("Recovery code, for example ABCD-EFGH-…")
+        self.code: QPlainTextEdit = part(form, QPlainTextEdit, "code")
         self.code.setFixedHeight(70)
-        layout.addWidget(self.code)
-        self.result_label = QLabel("", self)
-        self.result_label.setWordWrap(True)
-        layout.addWidget(self.result_label)
-        buttons = QHBoxLayout()
-        self.restore_code_button = QPushButton("Restore with this code", self)
+        self.result_label: QLabel = part(form, QLabel, "result")
+        self.restore_code_button: QPushButton = part(form, QPushButton, "restoreWithCode")
         self.restore_code_button.setDefault(True)
-        self.file_button = QPushButton("Use a recovery file…", self)
-        self.retry_button = QPushButton("Try again", self)
-        self.cancel_button = QPushButton("Not now", self)
+        self.file_button: QPushButton = part(form, QPushButton, "useFile")
+        self.retry_button: QPushButton = part(form, QPushButton, "tryAgain")
+        self.cancel_button: QPushButton = part(form, QPushButton, "notNow")
         self.started_without: str = ""  # where the mail kept here was set aside, once the person chose to start without it
         self.outcome: str = KEY_BACK  # for the status line once the window is accepted
-        for button in (self.restore_code_button, self.file_button, self.retry_button, self.start_without_button):
-            buttons.addWidget(button)
-        buttons.addStretch(1)
-        buttons.addWidget(self.cancel_button)
-        layout.addLayout(buttons)
+        forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
         self.restore_code_button.clicked.connect(self._restore_with_code)
         self.file_button.clicked.connect(self._restore_with_file)
         self.retry_button.clicked.connect(self._try_again)

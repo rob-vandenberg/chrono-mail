@@ -11,9 +11,10 @@ from chrono_mail.ui import theme
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "forms.py 4.0.375"
+__version__ = "forms.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: smallest sets only the width (the height is the layout's)
 # v4.0.375: fill: a window takes its title from its form (the form's windowTitle), so the title is designed with the rest; the spacers are
 #           scaled in the form's text before Qt reads it (asking the layouts for their items left Python stand-ins that outlived the
 #           window and were taken for a part made later at the same address); a spacer of size 0 stays 0 (it took 1 pixel); the layouts
@@ -108,10 +109,10 @@ def fill(host: QWidget, name: str, own_parts: Mapping[str, Callable[[QWidget], Q
 
 
 def smallest(window: QWidget, width: int) -> None:
-    """A window's smallest width: its own (at the standard size, here at the size factor of the windows) but never below what its layout
-    needs, since a width set on a window overrules its layout and a text would be cut off at a small or a large size; never wider than the
-    screen it opens on (a very long text, from a server for example, is cut off rather than pushing the window off the screen). Called once
-    the window holds its parts."""
+    """A window's smallest width: its own, at the standard size, here at the size factor of the windows, but never below what its layout
+    needs (a width set on a window overrules its layout, so a part was cut off: a certificate's fingerprint, a long choice, a row of
+    buttons; a wrapping text counts only with its longest word), and never wider than the screen it opens on (a very long text from a
+    server is cut off rather than pushing the window off the screen). Called once the window holds its parts."""
     screen = window.screen()
     room = screen.availableGeometry().width() if screen is not None else wpx(width)
     window.setMinimumWidth(min(max(wpx(width), window.minimumSizeHint().width()), max(wpx(width), room)))

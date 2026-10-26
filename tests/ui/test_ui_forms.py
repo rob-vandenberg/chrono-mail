@@ -1,7 +1,7 @@
 import xml.etree.ElementTree as ElementTree
 
 import pytest
-from PySide6.QtWidgets import QAbstractButton, QLabel, QSpacerItem, QWidget
+from PySide6.QtWidgets import QAbstractButton, QLabel, QSpacerItem, QTabWidget, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import forms, scale
@@ -10,9 +10,11 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_forms.py 4.0.375"
+__version__ = "test_ui_forms.py 4.0.376"
 
 # --- Version history ----------------------------------------------------
+# v4.0.376: the texts of the account, recovery, backup, restore and import windows fit at the smallest and largest size; Edit account shows
+#           nothing of a tab the account has not; Tab reaches the found folders before OK; a backup's file name is never markup
 # v4.0.375: loading leaves no stand-ins for the layouts' items; a form inside a form keeps its margins and sizes; a window takes its form's
 #           title; the texts of the sync conflicts, Operations, rebuild windows and the send notice fit at the smallest and largest size;
 #           a very long text never makes a window wider than its screen; a subject and an account name are never markup
@@ -365,3 +367,124 @@ def test_a_subject_and_an_account_name_are_never_markup(world: World, qtbot: QtB
     rebuild.show_step(1, 1, "<i>anna</i>", 1, 2, True)
     assert notice.label.textFormat() == Qt.TextFormat.PlainText and rebuild.account_label.textFormat() == Qt.TextFormat.PlainText
     notice.deleteLater()
+
+
+def _account(world: World, kind: str) -> object:
+    from dataclasses import replace
+
+    from tests.ui.world import REGISTRY
+
+    listed = REGISTRY.run(world.engine, "account.list", {})
+    assert isinstance(listed, tuple)
+    return replace(listed[0], kind=kind)
+
+
+@pytest.mark.parametrize("factor", [0.75, 2.0], ids=["smallest", "largest"])
+def test_every_text_of_the_account_and_safety_windows_fits(world: World, qtbot: QtBot, factor: float) -> None:
+    from pathlib import Path
+
+    from chrono_mail.engine.commands_accounts import AccountSummary, CertificateResult, KeyStatus
+    from chrono_mail.engine.commands_backup import ContentsResult, ContentsRow
+    from chrono_mail.engine.commands_dav import FoundFolder, FoundServer
+    from chrono_mail.ui.accountdialog import AccountDialog
+    from chrono_mail.ui.accountedit import AccountEditDialog
+    from chrono_mail.ui.backupdialog import BackupDialog
+    from chrono_mail.ui.calendaraccount import CalendarAccountDialog
+    from chrono_mail.ui.certificatedialog import CertificateDialog
+    from chrono_mail.ui.foundfolders import FoundFoldersDialog
+    from chrono_mail.ui.importdialog import ImportDialog
+    from chrono_mail.ui.recoverydialog import RecoveryDialog
+    from chrono_mail.ui.restoredialog import RestoreDialog
+    from chrono_mail.ui.restorekeydialog import RestoreKeyDialog
+
+    parts = ("messages", "rules", "calendars", "contacts", "tasks", "settings")
+    contents = ContentsResult("2026-10-20T10:00:00", "4.0.375", parts, (ContentsRow("acc1", "anna@example.com", parts, 12, 3, False),), 12, 3, True, True)
+    found = FoundServer("https://dav.example.com/", "", (FoundFolder("a", "Work", "events", True, True, True),), "")
+    certificate = CertificateResult("ab" * 32, "mail.example.org", "Home CA", ("mail.example.org",), "2026-01-01", "2026-12-31", True, False, "the issuer is not known")
+    world.window.try_windows_scale(factor)
+    try:
+        windows: list[QWidget] = [
+            AccountDialog(world.backend, True, world.window, lambda: None), CalendarAccountDialog(world.backend, [], world.window),
+            FoundFoldersDialog(found, world.window), CertificateDialog("mail.example.org", certificate, world.window),
+            RecoveryDialog(world.backend, world.window, True), RestoreKeyDialog(world.backend, world.window, KeyStatus("ab" * 16, False, "not there", kept=True)),
+            BackupDialog(world.backend, world.window.settings, world.window),
+            RestoreDialog(world.backend, world.window.settings, Path("backup.cmz"), None, contents, world.window), ImportDialog(world.backend, lambda: None, world.window),
+        ]
+        for kind in ("pop3", "imap"):
+            summary = _account(world, kind)
+            assert isinstance(summary, AccountSummary)
+            windows.append(AccountEditDialog(world.backend, summary, world.window))
+        for window in windows:
+            qtbot.addWidget(window)
+            window.show()
+            window.resize(window.sizeHint())  # its own size: the test's screen (800 x 800) is smaller than a window at the largest size
+            qtbot.wait(50)
+            tabs = window.findChild(QTabWidget)
+            for page in range(tabs.count() if tabs is not None else 1):
+                if tabs is not None:
+                    tabs.setCurrentIndex(page)
+                    qtbot.wait(20)
+                _texts_fit(window, factor)
+            window.hide()
+    finally:
+        world.window.try_windows_scale(1.0)
+
+
+@pytest.mark.parametrize("kind", ["imap", "local", "dav"])
+def test_edit_account_shows_nothing_of_a_tab_the_account_has_not(world: World, qtbot: QtBot, kind: str) -> None:
+    """A page the account has not was a child of the window outside its tabs and was drawn over them at the top left."""
+    from chrono_mail.engine.commands_accounts import AccountSummary
+    from chrono_mail.ui.accountedit import AccountEditDialog
+
+    summary = _account(world, kind)
+    assert isinstance(summary, AccountSummary)
+    dialog = AccountEditDialog(world.backend, summary, world.window)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.wait(50)
+    from PySide6.QtCore import QPoint, QRect
+
+    def place(widget: QWidget) -> QRect:
+        return QRect(widget.mapTo(dialog, QPoint(0, 0)), widget.size())
+
+    tabs = place(dialog.tabs)
+    loose = [
+        widget for widget in dialog.findChildren(QWidget)
+        if widget.isVisible() and not dialog.tabs.isAncestorOf(widget) and not widget.isAncestorOf(dialog.tabs) and widget is not dialog.tabs
+        and tabs.intersects(place(widget))
+    ]
+    assert loose == []
+
+
+def test_tab_reaches_the_found_folders_before_the_buttons(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtWidgets import QCheckBox
+
+    from chrono_mail.engine.commands_dav import FoundFolder, FoundServer
+    from chrono_mail.ui.foundfolders import FoundFoldersDialog
+
+    found = FoundServer("https://dav.example.com/", "", (FoundFolder("a", "Work", "events", False, False, True), FoundFolder("b", "Home", "events", False, False, True)), "")
+    dialog = FoundFoldersDialog(found, world.window)
+    qtbot.addWidget(dialog)
+    order = [widget for widget in forms.tab_stops(dialog.folders) if isinstance(widget, QCheckBox)]
+    chain: list[QWidget] = []
+    current = dialog.nextInFocusChain()
+    while current is not None and current is not dialog and len(chain) < 100:
+        chain.append(current)
+        current = current.nextInFocusChain()
+    ok = next(widget for widget in chain if isinstance(widget, QAbstractButton) and widget.text() == "OK")
+    assert len(order) == 2 and all(chain.index(tick) < chain.index(ok) for tick in order)
+
+
+def test_a_backup_s_file_name_is_never_markup(world: World, qtbot: QtBot) -> None:
+    from pathlib import Path
+
+    from PySide6.QtCore import Qt
+
+    from chrono_mail.engine.commands_backup import ContentsResult
+    from chrono_mail.ui.restoredialog import RestoreDialog
+
+    contents = ContentsResult("2026-10-20T10:00:00", "4.0.375", ("messages",), (), 0, 0, False, False)
+    dialog = RestoreDialog(world.backend, world.window.settings, Path("<b>backup.cmz"), None, contents, world.window)
+    qtbot.addWidget(dialog)
+    names = [label for label in dialog.findChildren(QLabel) if label.text() == "<b>backup.cmz"]
+    assert len(names) == 1 and names[0].textFormat() == Qt.TextFormat.PlainText

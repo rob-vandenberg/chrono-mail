@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AddCalendarAccount</class>
+ <widget class="QWidget" name="AddCalendarAccount">
+  <property name="windowTitle">
+   <string>Add account</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout" stretch="0,0,0,1,0">
+   <item>
+    <layout class="QFormLayout" name="fields">
+     <item row="0" column="0">
+      <widget class="QLabel" name="forLabel">
+       <property name="text">
+        <string>For</string>
+       </property>
+       <property name="buddy">
+        <cstring>target</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QComboBox" name="target" />
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="accountNameLabel">
+       <property name="text">
+        <string>Account name</string>
+       </property>
+       <property name="buddy">
+        <cstring>accountName</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QLineEdit" name="accountName" />
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="urlLabel">
+       <property name="text">
+        <string>Server address</string>
+       </property>
+       <property name="buddy">
+        <cstring>url</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QLineEdit" name="url">
+       <property name="placeholderText">
+        <string>https://server.example.com/ (a host name is enough)</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="usernameLabel">
+       <property name="text">
+        <string>User name</string>
+       </property>
+       <property name="buddy">
+        <cstring>username</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QLineEdit" name="username" />
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="passwordLabel">
+       <property name="text">
+        <string>Password</string>
+       </property>
+       <property name="buddy">
+        <cstring>password</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QLineEdit" name="password" />
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="findRow" stretch="0,0,1">
+     <item>
+      <widget class="QPushButton" name="find">
+       <property name="text">
+        <string>Find calendars, contacts and tasks</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="lookAtCertificate">
+       <property name="text">
+        <string>Look at the server's certificate…</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="findRowEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="result">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <spacer name="resultEnd">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeType">
+      <enum>QSizePolicy::Expanding</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>0</width>
+       <height>0</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons" />
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Certificate</class>
+ <widget class="QWidget" name="Certificate">
+  <property name="windowTitle">
+   <string>The server's certificate</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <widget class="QLabel" name="details">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons" />
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AddAccount</class>
+ <widget class="QWidget" name="AddAccount">
+  <property name="windowTitle">
+   <string>Add an account</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <widget class="QLabel" name="welcome">
+     <property name="text">
+      <string>&lt;b&gt;Welcome to Chrono Mail.&lt;/b&gt;&lt;br&gt;Add your first e-mail account to get started, or bring back a backup of Chrono Mail.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item alignment="Qt::AlignLeft">
+    <widget class="QPushButton" name="restoreBackup">
+     <property name="text">
+      <string>Restore a backup…</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="yourAccount">
+     <property name="title">
+      <string>Your account</string>
+     </property>
+     <layout class="QFormLayout" name="yourAccountForm">
+      <item row="0" column="0">
+       <widget class="QLabel" name="kindLabel">
+        <property name="text">
+         <string>Account type</string>
+        </property>
+        <property name="buddy">
+         <cstring>kind</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QComboBox" name="kind" />
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="accountNameLabel">
+        <property name="text">
+         <string>Account name</string>
+        </property>
+        <property name="buddy">
+         <cstring>accountName</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QLineEdit" name="accountName" />
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="yourNameLabel">
+        <property name="text">
+         <string>Your name</string>
+        </property>
+        <property name="buddy">
+         <cstring>yourName</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QLineEdit" name="yourName" />
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="emailLabel">
+        <property name="text">
+         <string>E-mail address</string>
+        </property>
+        <property name="buddy">
+         <cstring>email</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QLineEdit" name="email" />
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="servers" />
+   </item>
+   <item>
+    <widget class="QGroupBox" name="options">
+     <property name="title">
+      <string>Options</string>
+     </property>
+     <layout class="QFormLayout" name="optionsForm">
+      <item row="0" column="0">
+       <widget class="QLabel" name="policyLabel">
+        <property name="text">
+         <string>Server copies</string>
+        </property>
+        <property name="buddy">
+         <cstring>policy</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QComboBox" name="policy" />
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="storageLabel">
+        <property name="text">
+         <string>Keep the mail in</string>
+        </property>
+        <property name="buddy">
+         <cstring>storage</cstring>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QComboBox" name="storage">
+        <property name="toolTip">
+         <string>Only for POP3. You can change this later in the settings of the account.</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QCheckBox" name="encrypt">
+        <property name="text">
+         <string>Encrypt the stored mail on this computer (recommended)</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="result">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="lookAtCertificate">
+     <property name="text">
+      <string>Look at the server's certificate…</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons" />
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

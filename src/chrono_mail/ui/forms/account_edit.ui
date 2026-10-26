@@ -1,0 +1,381 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>EditAccount</class>
+ <widget class="QWidget" name="EditAccount">
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <widget class="QTabWidget" name="tabs">
+     <widget class="QWidget" name="general">
+      <attribute name="title">
+       <string>General</string>
+      </attribute>
+      <layout class="QFormLayout" name="generalForm">
+       <item row="0" column="0">
+        <widget class="QLabel" name="accountNameLabel">
+         <property name="text">
+          <string>Account name</string>
+         </property>
+         <property name="buddy">
+          <cstring>accountName</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QLineEdit" name="accountName" />
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="yourNameLabel">
+         <property name="text">
+          <string>Your name</string>
+         </property>
+         <property name="buddy">
+          <cstring>yourName</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QLineEdit" name="yourName" />
+       </item>
+       <item row="2" column="0">
+        <widget class="QLabel" name="emailLabel">
+         <property name="text">
+          <string>E-mail address</string>
+         </property>
+         <property name="buddy">
+          <cstring>email</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="2" column="1">
+        <widget class="QLineEdit" name="email" />
+       </item>
+       <item row="3" column="0">
+        <widget class="QLabel" name="signatureLabel">
+         <property name="text">
+          <string>Signature</string>
+         </property>
+         <property name="buddy">
+          <cstring>signature</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="3" column="1">
+        <widget class="QPlainTextEdit" name="signature">
+         <property name="placeholderText">
+          <string>Added at the end of new messages, replies and forwards</string>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="1">
+        <widget class="QLabel" name="signatureCount" />
+       </item>
+       <item row="5" column="0">
+        <widget class="QLabel" name="checkMinutesLabel">
+         <property name="text">
+          <string>Check this account every</string>
+         </property>
+         <property name="buddy">
+          <cstring>checkMinutes</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="1">
+        <widget class="QSpinBox" name="checkMinutes">
+         <property name="suffix">
+          <string> minutes</string>
+         </property>
+         <property name="specialValueText">
+          <string>As set in the general settings</string>
+         </property>
+        </widget>
+       </item>
+       <item row="6" column="1">
+        <widget class="QCheckBox" name="junkFilter">
+         <property name="text">
+          <string>Filter junk mail</string>
+         </property>
+         <property name="toolTip">
+          <string>New mail that the server marked as spam, or that looks very much like junk, goes to the Junk folder before your rules run</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="0">
+        <widget class="QLabel" name="storageLabel">
+         <property name="text">
+          <string>Keep the mail in</string>
+         </property>
+         <property name="buddy">
+          <cstring>storage</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="1">
+        <widget class="QComboBox" name="storage">
+         <property name="toolTip">
+          <string>Changing this moves the stored mail of this account. Nothing is deleted before the copy has been checked.</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="serversPage">
+      <attribute name="title">
+       <string>Servers</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="serversLayout" stretch="0,0,0,0,0,0,1">
+       <item>
+        <widget class="QWidget" name="servers" />
+       </item>
+       <item>
+        <widget class="QPushButton" name="testConnection">
+         <property name="text">
+          <string>Test connection</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="certificates">
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="incomingCertificate">
+         <property name="text">
+          <string>Look at the incoming server's certificate…</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="outgoingCertificate">
+         <property name="text">
+          <string>Look at the outgoing server's certificate…</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="forgetCertificates">
+         <property name="text">
+          <string>Forget the accepted certificates</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="serversEnd">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeType">
+          <enum>QSizePolicy::Expanding</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="calendars">
+      <attribute name="title">
+       <string>Calendars and contacts</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="calendarsLayout" stretch="0,0,0,0,0,1">
+       <item>
+        <widget class="QLabel" name="calendarsExplanation">
+         <property name="text">
+          <string>Calendars, task lists and address books of this account are kept in step with a CalDAV and CardDAV server. Leave the address empty if this account has none.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QFormLayout" name="davForm">
+         <item row="0" column="0">
+          <widget class="QLabel" name="davUrlLabel">
+           <property name="text">
+            <string>Server address</string>
+           </property>
+           <property name="buddy">
+            <cstring>davUrl</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="0" column="1">
+          <widget class="QLineEdit" name="davUrl">
+           <property name="placeholderText">
+            <string>https://server.example.com/caldav/</string>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="0">
+          <widget class="QLabel" name="davUsernameLabel">
+           <property name="text">
+            <string>User name</string>
+           </property>
+           <property name="buddy">
+            <cstring>davUsername</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="1" column="1">
+          <widget class="QLineEdit" name="davUsername">
+           <property name="placeholderText">
+            <string>(the same as for incoming mail)</string>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="0">
+          <widget class="QLabel" name="davPasswordLabel">
+           <property name="text">
+            <string>New password</string>
+           </property>
+           <property name="buddy">
+            <cstring>davPassword</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="2" column="1">
+          <widget class="QLineEdit" name="davPassword">
+           <property name="placeholderText">
+            <string>(unchanged; or the mail password)</string>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="0">
+          <widget class="QLabel" name="davFoldersLabel">
+           <property name="text">
+            <string>Folders</string>
+           </property>
+           <property name="buddy">
+            <cstring>davFolders</cstring>
+           </property>
+          </widget>
+         </item>
+         <item row="3" column="1">
+          <widget class="QWidget" name="davFolders" />
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QPushButton" name="findDav">
+         <property name="text">
+          <string>Find calendars, contacts and tasks</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="davCertificate">
+         <property name="text">
+          <string>Look at the server's certificate…</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="davResult">
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="calendarsEnd">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeType">
+          <enum>QSizePolicy::Expanding</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="folders">
+      <attribute name="title">
+       <string>Folders</string>
+      </attribute>
+      <layout class="QVBoxLayout" name="foldersLayout" stretch="0,1">
+       <item>
+        <widget class="QLabel" name="foldersNote">
+         <property name="text">
+          <string>Loading the folders from the server…</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QTableWidget" name="folderTable" />
+       </item>
+      </layout>
+     </widget>
+     <widget class="QWidget" name="copies">
+      <attribute name="title">
+       <string>Server copies</string>
+      </attribute>
+      <layout class="QFormLayout" name="copiesForm">
+       <item row="0" column="0">
+        <widget class="QLabel" name="policyLabel">
+         <property name="text">
+          <string>Mail on the server</string>
+         </property>
+         <property name="buddy">
+          <cstring>policy</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="0" column="1">
+        <widget class="QComboBox" name="policy" />
+       </item>
+       <item row="1" column="0">
+        <widget class="QLabel" name="daysLabel">
+         <property name="text">
+          <string>Delete after</string>
+         </property>
+         <property name="buddy">
+          <cstring>days</cstring>
+         </property>
+        </widget>
+       </item>
+       <item row="1" column="1">
+        <widget class="QSpinBox" name="days">
+         <property name="suffix">
+          <string> days</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="result">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Save|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>
