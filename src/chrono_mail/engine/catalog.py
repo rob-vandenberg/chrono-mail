@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_view, commands_watch, junkfilter, undo
+from chrono_mail.engine import commands_accounts, commands_across, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_view, commands_watch, junkfilter, undo
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 2.4.322"
+__version__ = "catalog.py 3.6.366"
 
 # --- Version history ----------------------------------------------------
+# v3.6.366: moving messages to another account (message.move-across, D-272)
 # v2.4.322: Back up (backup.choices, backup.new-password, backup.make, backup.cancel, D-244)
 # v2.2.313: Undo and Redo of actions on mail (mail.undo, mail.redo, mail.undo-labels, B-18)
 # v2.1.308: The junk filter's first learning of the mail kept (junk.learn-existing, D-238)
@@ -51,6 +52,7 @@ def build_registry() -> CommandRegistry:
     commands_rules.register(registry)
     commands_imap.register(registry)
     commands_many.register(registry)
+    commands_across.register(registry)
     junkfilter.register(registry)
     undo.register(registry)
     commands_combined.register(registry)

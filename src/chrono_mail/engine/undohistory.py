@@ -8,9 +8,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "undohistory.py 2.2.313"
+__version__ = "undohistory.py 3.6.366"
 
 # --- Version history ----------------------------------------------------
+# v3.6.366: an "across" step: a message moved to another account under its own id; its reverse moves it back (D-272)
 # v2.2.313: Initial: the steps of Undo and Redo for mail, the actions kept until the program quits (B-18)
 
 MAXIMUM_ACTIONS: int = 100  # kept for Undo; the oldest go first
@@ -28,13 +29,14 @@ class Notes:
 @dataclass(frozen=True, slots=True)
 class UndoStep:
     """One message's change by an action, from before to after. Doing the step makes it so; its reverse undoes it.
-    kind: "change" (moved, marks, tags, notes, verdict), "copy" (a copy of original made), "uncopy" (that copy removed for good)."""
+    kind: "change" (moved, marks, tags, notes, verdict), "copy" (a copy of original made), "uncopy" (that copy removed for good), "across"
+    (moved from account to other, under the same id: D-272)."""
 
     account: str  # the account the action was given for (the mailbox it opens)
     message: str  # its store id, the same in every folder (a copy: the copy's)
     before: tuple[str, ...]  # the folder it was in (copy: the original's folder; uncopy: the copy's)
     after: tuple[str, ...]  # the folder it is in after (copy: the copy's folder; uncopy: the original's)
-    kind: Literal["change", "copy", "uncopy"] = "change"
+    kind: Literal["change", "copy", "uncopy", "across"] = "change"
     flags_added: frozenset[MessageFlag] = frozenset()
     flags_removed: frozenset[MessageFlag] = frozenset()
     tags_added: tuple[str, ...] = ()
@@ -42,10 +44,13 @@ class UndoStep:
     notes: tuple[Notes, Notes] | None = None  # (before, after) when the action changed them
     verdict: tuple[str | None, str | None] | None = None  # the junk filter's verdict (before, after) when the action changed it
     original: str = ""  # copy and uncopy: the message it is a copy of
+    other: str = ""  # across: the account it went to (before is a folder of account, after a folder of other)
 
     def reversed(self) -> "UndoStep":
         """The step that undoes this one."""
-        kind: Literal["change", "copy", "uncopy"] = "uncopy" if self.kind == "copy" else "copy" if self.kind == "uncopy" else "change"
+        if self.kind == "across":  # back from the other account
+            return replace(self, account=self.other, other=self.account, before=self.after, after=self.before)
+        kind: Literal["change", "copy", "uncopy", "across"] = "uncopy" if self.kind == "copy" else "copy" if self.kind == "uncopy" else "change"
         return replace(
             self, before=self.after, after=self.before, kind=kind, flags_added=self.flags_removed, flags_removed=self.flags_added,
             tags_added=self.tags_removed, tags_removed=self.tags_added, notes=None if self.notes is None else (self.notes[1], self.notes[0]),

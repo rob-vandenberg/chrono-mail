@@ -10,6 +10,7 @@ from chrono_mail.engine.changes import Change, MessageRow
 from chrono_mail.engine.commands_actions import FOLDER_EMPTY, FOLDER_MARK_READ, EmptyResult, FolderActionParameters, MarkReadResult
 from chrono_mail.engine.commands_mail import MessageParameters
 from chrono_mail.engine.commands_schedule import MAIL_UNSCHEDULE, MESSAGE_WAKE, WakeParameters
+from chrono_mail.engine.commands_across import MESSAGE_MOVE_ACROSS, AcrossParameters
 from chrono_mail.engine.commands_many import (
     MESSAGE_ARCHIVE_MANY, MESSAGE_COPY_MANY, MESSAGE_DELETE_MANY, MESSAGE_FLAG_MANY, MESSAGE_JUNK_MANY, MESSAGE_MOVE_MANY, MESSAGE_NOT_JUNK_MANY,
     MESSAGE_SNOOZE_MANY, MESSAGE_UNARCHIVE_MANY, ManyDeleteParameters, ManyFlagParameters, ManyParameters, ManyResult, ManySnoozeParameters,
@@ -30,9 +31,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.364"
+__version__ = "messageactions.py 3.6.366"
 
 # --- Version history ----------------------------------------------------
+# v3.6.366: Move to has a submenu for each other account and a drop may come from another account: those messages are moved message by message (move_to, D-272)
 # v3.6.364: "Preparing to …" and the count are lines about work still running: they never time out
 # v3.6.362: act_many: after its commands are given, the held key's piled-up repeats are thrown away (drop_repeats, D-266)
 # v3.6.361: an action on many messages not done after a second says so: "Preparing to …" until the first message is done, then how many of how many (_Progress, D-266)
@@ -420,30 +422,48 @@ class MessageActions(QObject):
             if path == view.folder or info.role in HERE_ONLY_ROLES or (scheduled and info.role not in SCHEDULED_TARGET_ROLES):
                 continue  # a scheduled message goes back to Drafts or to Trash, nowhere else
             self.move_menu.addAction(path.replace("&", "&&")).triggered.connect(lambda checked=False, target=path: self.move_selected(target))  # "R&D", never "RD"
+        if scheduled:
+            return  # a scheduled message stays in its own account
+        others = [place for place in self._state.folders if place != view.account]
+        if others:
+            self.move_menu.addSeparator()
+        for place in others:  # the other accounts' folders, one submenu each (D-272)
+            submenu = self.move_menu.addMenu(self._state.account_name(place).replace("&", "&&"))
+            for info in self._state.folders.get(place, []):
+                if info.role in HERE_ONLY_ROLES:
+                    continue
+                submenu.addAction(info.path.replace("&", "&&")).triggered.connect(
+                    lambda checked=False, target=info.path, account=place: self.move_selected(target, account),
+                )
 
-    def move_selected(self, target: str) -> None:
-        if self._messages.paused_at_edge(keyed=False, again=lambda: self.move_selected(target)):
+    def move_selected(self, target: str, account: str | None = None) -> None:
+        """Move the selected messages to this folder of the account shown (account None) or of another account (D-272)."""
+        if self._messages.paused_at_edge(keyed=False, again=lambda: self.move_selected(target, account)):
             return
-        if self._messages.deferred(lambda: self.move_selected(target)):
+        if self._messages.deferred(lambda: self.move_selected(target, account)):
             return
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
-        self.move_many(target, self._state.targets(rows))
+        if account is None:
+            self.move_many(target, self._state.targets(rows))
+        else:
+            self.move_to(account, target, [item for item in self._state.targets(rows) if (item[0], item[1]) != (account, target)])
 
-    def messages_dropped(self, account: str, target: str, messages: list[tuple[str, str]], rest: int = -1) -> None:
+    def messages_dropped(self, account: str, target: str, messages: list[tuple[str, str]], rest: int = -1, source: str = "") -> None:
         """Messages were dragged to a folder of the folder list. rest (not -1): the drag was made while the list did not know every
         selected message yet; what was selected is taken once it does, in turn with the actions that wait for it, and all of it moves
         together (RV-206). When the list could not keep those places since the drag began, which messages they held cannot be told:
-        nothing is moved, and that is said."""
+        nothing is moved, and that is said. account: where they go; source: the account they come from (another one: D-272)."""
+        source = source or account
         self._messages.paused_at_edge(keyed=False)  # the next message is loaded and painted before the selection moves to it (D-266)
         if rest < 0:  # in its turn behind anything that waits (in order, D-146)
 
             def known() -> None:  # without those an action made before it has under way by then (no second action, D-146)
                 pending = self._messages.model.pending
-                targets = [(account, folder, message_id) for folder, message_id in messages if message_id not in pending]
+                targets = [(source, folder, message_id) for folder, message_id in messages if message_id not in pending]
                 if targets:
-                    self.move_many(target, targets)
+                    self.move_to(account, target, targets)
                 else:
                     self._status.show("Nothing was moved: an action on the messages is under way")
 
@@ -454,17 +474,34 @@ class MessageActions(QObject):
             return
 
         def go(chosen: list[SelectedMessage]) -> None:
-            targets = [item for item in dict.fromkeys(self._state.targets(chosen)) if item[1] != target]  # pending ones are left out already
-            if any(item[0] != account for item in targets):
-                self._status.show("Nothing was moved: the selected messages are in several accounts, and a folder belongs to one", error=True)
-            elif any(item[1] == SCHEDULED_FOLDER_PATH for item in targets) and self._state.folder_role_of(account, target) not in SCHEDULED_TARGET_ROLES:
+            targets = [item for item in dict.fromkeys(self._state.targets(chosen)) if (item[0], item[1]) != (account, target)]  # pending ones are left out already
+            if any(item[1] == SCHEDULED_FOLDER_PATH and (item[0] != account or self._state.folder_role_of(account, target) not in SCHEDULED_TARGET_ROLES) for item in targets):
                 self._status.show("Nothing was moved: a scheduled message goes only to Drafts or Trash", error=True)  # as the drop refuses it (D-178)
             elif not targets:
                 self._status.show(f"Nothing was moved: the messages are in {target} already, or an action on them is under way")
             else:
-                self.move_many(target, targets)
+                self.move_to(account, target, targets)
 
         self._messages.hold_selected_places(go)
+
+    def move_to(self, account: str, target: str, targets: list[tuple[str, str, str]]) -> None:
+        """Messages to a folder of this account: those of the account itself with an ordinary move, those of other accounts message by
+        message to it (D-272)."""
+        here = [item for item in targets if item[0] == account]
+        across = [item for item in targets if item[0] != account]
+        if here:
+            self.move_many(target, here)
+        if across:
+            if any(item[1] == SCHEDULED_FOLDER_PATH for item in across):
+                self._status.show("Nothing was moved: a scheduled message goes only to Drafts or Trash of its own account", error=True)
+                return
+            number = self._undoing.new_action()
+            name = self._state.account_name(account)
+            self.act_many(
+                MESSAGE_MOVE_ACROSS, lambda source, folder, messages: AcrossParameters(source, folder, account, target, messages, undo=number), across,
+                f"Moved {counted(len(across), 'message')} to {target} of {name}", "Could not move",
+                doing=(f"Preparing to move {counted(len(across), 'message')} to {target} of {name}…", f"Moving to {target} of {name}"),
+            )
 
     def move_many(self, target: str, targets: list[tuple[str, str, str]]) -> None:
         """A move of messages (by the menu or a drag): a scheduled message moved to Drafts goes back to being a draft (D-178), one by one;

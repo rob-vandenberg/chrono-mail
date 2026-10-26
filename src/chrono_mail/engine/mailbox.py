@@ -32,9 +32,10 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 3.6.354"
+__version__ = "mailbox.py 3.6.366"
 
 # --- Version history ----------------------------------------------------
+# v3.6.366: deliver keeps a given id; deliver_moved: a message moved here from another account, under its own id, never stored twice (D-272)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS); Rename never renames one of
 #           them nor gives another folder one of their names, refused before the server is asked (CR-36)
 # v3.6.351: told_after_send: what follows a send never makes it a failed send (a warning instead)
@@ -616,16 +617,27 @@ class Mailbox:
         if role == FolderRole.SENT.value:
             self.forget_sent_marks(moved)  # filed in Sent, however it got there: moved out again it is an ordinary message
 
-    def deliver(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag]) -> MessageRef:
+    def deliver(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag], store_id: str | None = None) -> MessageRef:
         """Store a message (verified) and index it; in an IMAP account it is put into the server folder first. The Outbox and Scheduled are
-        on this computer only: storing there never waits for a server (held under the Outbox lock, it would hold every send, D-262)."""
+        on this computer only: storing there never waits for a server (held under the Outbox lock, it would hold every send, D-262).
+        store_id: a message moved here from another account keeps its id."""
         if not is_imap(self.settings) or (folder and folder[0] in HERE_ONLY):
-            return self._deliver_here(folder, raw, flags)
+            return self._deliver_here(folder, raw, flags, store_id)
         with self._server() as server:
-            commit = server.append(folder, raw, flags)
-            reference = self._deliver_here(folder, raw, flags)
+            commit = server.append(folder, raw, flags)  # offline or refused: stored here, and the next check puts it there (or it is a sync conflict)
+            reference = self._deliver_here(folder, raw, flags, store_id)
             commit(reference.store_id)
         return reference
+
+    def deliver_moved(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag], store_id: str) -> MessageRef:
+        """A message moved here from another account, under its own id (D-272). Already in that folder (a move stopped before its original
+        went, and is done again): that copy is the one, nothing is stored twice."""
+        row = self.index.get(store_id)
+        if row is not None:
+            if row.folder == folder:
+                return self.reference(folder, store_id)
+            raise UsageError("The same message is in another folder of that account already")
+        return self.deliver(folder, raw, flags, store_id)
 
     def restore_here(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag], store_id: str) -> MessageRef:
         """A message from a backup that is not here: stored and indexed here only, under the id it had (its properties keep fitting).
@@ -636,8 +648,8 @@ class Mailbox:
         self._tell_added(reference)
         return reference
 
-    def _deliver_here(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag]) -> MessageRef:
-        placed = self.store.deliver_placed(folder, raw, flags=flags, verify=True)
+    def _deliver_here(self, folder: tuple[str, ...], raw: bytes, flags: frozenset[MessageFlag], store_id: str | None = None) -> MessageRef:
+        placed = self.store.deliver_placed(folder, raw, flags=flags, verify=True, store_id=store_id)
         reference, path = placed.ref, placed.place
         self._index(lambda: self.index.add(entry_from_raw(reference, path, flags, len(raw), raw)))
         self._tell_added(reference)

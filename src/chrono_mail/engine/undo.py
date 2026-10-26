@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 
 from chrono_mail.core import ChronoMailError, MessageRef
 from chrono_mail.engine.commands_accounts import NoParameters
+from chrono_mail.engine.commands_across import move_across
 from chrono_mail.engine.junkfilter import set_verdicts
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError
@@ -15,9 +16,10 @@ from chrono_mail.engine.undorecord import folded
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "undo.py 2.2.313"
+__version__ = "undo.py 3.6.366"
 
 # --- Version history ----------------------------------------------------
+# v3.6.366: a move to another account is undone by moving it back, and redone by moving it again (D-272)
 # v2.2.313: Initial: the steps of an action done again or backwards, mail.undo, mail.redo and mail.undo-labels (B-18)
 
 CHANGED_SINCE: str = "it was moved or deleted since"
@@ -117,6 +119,24 @@ def _do_uncopies(mailbox: Mailbox, steps: list[UndoStep], failed: list[str]) -> 
     return done
 
 
+def _do_across(engine: Engine, steps: list[UndoStep], failed: list[str]) -> list[UndoStep]:
+    """Moves to another account done again, or back (D-272): the same way as the person's move, message by message."""
+    done: list[UndoStep] = []
+    groups: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], list[UndoStep]] = {}
+    for step in steps:
+        groups.setdefault((step.account, step.before, step.other, step.after), []).append(step)
+    for (account, before, other, after), members in groups.items():
+        try:
+            result, _ = move_across(engine, account, "/".join(before), other, "/".join(after), tuple(step.message for step in members))
+        except ChronoMailError as error:
+            failed.extend(str(error) for _ in members)
+            continue
+        moved = set(result.done)
+        done.extend(step for step in members if step.message in moved)
+        failed.extend(item.reason for item in result.failed)
+    return done
+
+
 def _still_before(mailbox: Mailbox, step: UndoStep) -> bool:
     """The message is still where the step starts from (for a copy made again: the original)."""
     row = mailbox.index.get(step.original if step.kind == "copy" else step.message)
@@ -127,8 +147,11 @@ def _do(engine: Engine, steps: list[UndoStep]) -> tuple[list[UndoStep], list[str
     """Do these steps, account by account, the server first; returns the steps done (as done) and a reason for each one not done."""
     done: list[UndoStep] = []
     failed: list[str] = []
+    done.extend(_do_across(engine, [step for step in steps if step.kind == "across"], failed))
     accounts: dict[str, list[UndoStep]] = {}
     for step in steps:
+        if step.kind == "across":
+            continue
         accounts.setdefault(step.account, []).append(step)
     for account, members in accounts.items():
         try:

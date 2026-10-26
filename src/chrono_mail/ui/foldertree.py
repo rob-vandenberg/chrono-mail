@@ -11,9 +11,10 @@ from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, FO
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 3.6.354"
+__version__ = "foldertree.py 3.6.366"
 
 # --- Version history ----------------------------------------------------
+# v3.6.366: messages dropped on a folder of another account are moved there; the drop names the account they come from (D-272)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.350: a drop says when the rest of the selection follows (RV-206)
 # v3.6.349: the drag checks at every pointer move read only the drag's summary, never its whole list; the drop checks the list against
@@ -93,9 +94,9 @@ class FolderItemDelegate(QStyledItemDelegate):
 
 
 class FolderTree(QTreeView):
-    """The folder tree. Messages dragged from the list can be dropped on a folder of the same account."""
+    """The folder tree. Messages dragged from the list can be dropped on a folder of their own account or of another (D-272)."""
 
-    messages_dropped = Signal(str, str, list, int)  # account id, target folder path, [(folder, message id)], the list's places_epoch when the
+    messages_dropped = Signal(str, str, list, int, str)  # account id, target folder path, [(folder, message id)], the list's places_epoch when the
     # rest of the selection follows (-1: nothing follows)
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -155,11 +156,13 @@ class FolderTree(QTreeView):
         index = self.indexAt(event.position().toPoint())
         if dragged is None or not index.isValid() or index.data(KIND_ROLE) != "folder":
             return None
-        account, folder = str(index.data(ACCOUNT_ROLE)), str(index.data(FOLDER_PATH_ROLE))
-        if account != dragged[0] or str(index.data(FOLDER_ROLE_ROLE)) == "outbox" or dragged[1] == {folder}:
-            return None
-        if SCHEDULED_FOLDER_PATH in dragged[1] and str(index.data(FOLDER_ROLE_ROLE)) not in SCHEDULED_TARGET_ROLES:
-            return None  # a scheduled message goes back to Drafts (no longer scheduled) or to Trash, nowhere else
+        account, folder, role = str(index.data(ACCOUNT_ROLE)), str(index.data(FOLDER_PATH_ROLE)), str(index.data(FOLDER_ROLE_ROLE))
+        if not dragged[0] or role == "outbox" or (account == dragged[0] and dragged[1] == {folder}):
+            return None  # (messages of several accounts: no account of their own, "")
+        if SCHEDULED_FOLDER_PATH in dragged[1] and (account != dragged[0] or role not in SCHEDULED_TARGET_ROLES):
+            return None  # a scheduled message goes back to Drafts (no longer scheduled) or to Trash of its own account, nowhere else
+        if account != dragged[0] and (role == "scheduled" or not self._known(dragged[0])):
+            return None  # Scheduled takes only its own account's messages; the others take those of an account of this list (D-272)
         return account, folder
 
     @override
@@ -184,6 +187,11 @@ class FolderTree(QTreeView):
         self._set_drop_row(None)
         super().dragLeaveEvent(event)
 
+    def _known(self, account: str) -> bool:
+        """Whether this account is in the list (a drag from another account: never one of another program or one removed meanwhile)."""
+        model = self.model()
+        return model is not None and bool(model.match(model.index(0, 0), ACCOUNT_ROLE, account, 1, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive))
+
     @override
     def dropEvent(self, event: QDropEvent) -> None:
         self._set_drop_row(None)
@@ -197,4 +205,4 @@ class FolderTree(QTreeView):
             return
         event.setDropAction(Qt.DropAction.CopyAction)  # the cursor with a plus; the messages are moved
         event.accept()
-        self.messages_dropped.emit(target[0], target[1], dragged[1], -1 if rest is None else rest)
+        self.messages_dropped.emit(target[0], target[1], dragged[1], -1 if rest is None else rest, dragged[0])
