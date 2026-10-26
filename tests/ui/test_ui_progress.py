@@ -9,9 +9,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from tests.ui.world import World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_progress.py 3.6.361"
+__version__ = "test_ui_progress.py 3.6.364"
 
 # --- Version history ----------------------------------------------------
+# v3.6.364: the recorded status line takes "running" (a line about work still running)
 # v3.6.361: Initial: an action on many messages that takes longer than a moment says "Preparing to …" until the first message is done,
 #           then how many of how many, then its last line; a quick one shows only its last line (D-266)
 
@@ -20,9 +21,9 @@ def shown_texts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     texts: list[str] = []
     show = StatusReport.show
 
-    def recorded(self: StatusReport, text: str, error: bool = False) -> None:
+    def recorded(self: StatusReport, text: str, error: bool = False, running: bool = False) -> None:
         texts.append(text)
-        show(self, text, error)
+        show(self, text, error, running)
 
     monkeypatch.setattr(StatusReport, "show", recorded)
     return texts

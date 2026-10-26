@@ -30,9 +30,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.362"
+__version__ = "messageactions.py 3.6.364"
 
 # --- Version history ----------------------------------------------------
+# v3.6.364: "Preparing to …" and the count are lines about work still running: they never time out
 # v3.6.362: act_many: after its commands are given, the held key's piled-up repeats are thrown away (drop_repeats, D-266)
 # v3.6.361: an action on many messages not done after a second says so: "Preparing to …" until the first message is done, then how many of how many (_Progress, D-266)
 # v3.6.360: every action that takes messages out of the list first asks paused_at_edge: Delete, Archive, Junk and the Delete icon are forgotten while the next rows load; the others wait for them (D-266)
@@ -92,9 +93,9 @@ class _Progress(QObject):
     def _show(self) -> None:
         self._shown = True
         if self._done:
-            self._status.show(f"{self._counting}: {len(self._done):,} of {len(self._ids):,}")
+            self._status.show(f"{self._counting}: {len(self._done):,} of {len(self._ids):,}", running=True)
         else:
-            self._status.show(self._preparing)
+            self._status.show(self._preparing, running=True)
 
     def end(self) -> None:
         """One routine of the action is done; after the last its own final line follows (the summary or the error)."""

@@ -2998,6 +2998,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.364: A status line has its own one-minute clock (the owner)
+
+1. The owner: "Moved 1,292 messages to Trash" stayed for minutes: the busy bar flashed more often than once a minute (cause still to be found) and each end of work started the minute again.
+2. `ui/statusreport.py`: the minute counts from the line itself, the busy bar plays no part; lines about work still running (running=True: Preparing, the count, backup, import and index progress) never time out. `ui/messageactions.py` marks its Preparing and count lines so.
+3. Tests: test_ui_statusclear.py (4; the flashing one fails on 3.6.363), test_ui_progress.py (2); Pyrefly src (Linux and win32) and the layer check pass.
+
 ## 2026-10-26 3.6.363: An informative status line is cleared after a minute (the owner, D-266)
 
 1. `ui/statusreport.py`: a line that is not red is cleared 60 seconds after it came; red ones (warnings, errors) stay; while work runs nothing is cleared, the minute counts from its end.
