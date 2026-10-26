@@ -25,9 +25,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 3.6.360"
+__version__ = "messagelist.py 3.6.367"
 
 # --- Version history ----------------------------------------------------
+# v3.6.367: a drag of messages of several accounts names each message's account, so a folder takes them all (D-272)
 # v3.6.360: next_row_after: the row a move selects next, or the rows to load first when it has not come yet (D-266)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: leave_now, done_early, come_back: a message whose action needs no server's word leaves the list at its key press and comes back when the action fails (D-266)
@@ -826,11 +827,12 @@ class MessageListModel(QAbstractTableModel):
 
     def drag_data(self, list_rows: Iterable[int]) -> tuple[QMimeData, int]:
         """The drag of the messages at these rows, every one of them, loaded or not (D-218), without those with an action under way, and how
-        many go along (the badge). Messages of several accounts (a Favorites view) are one drag that no folder takes: a folder belongs to one
-        account, and nothing moves halfway without a word (RV-77). Rows whose message is not known yet (the rest of a large view's order is
+        many go along (the badge). Messages of several accounts (a Favorites view) name each one's account: a folder of any account takes
+        them all (D-272). Rows whose message is not known yet (the rest of a large view's order is
         on its way) make the drag say so: the drop waits for them and moves every selected message (RV-206)."""
         default = self._spec.account if self._spec is not None else ""
         messages: list[tuple[str, str]] = []
+        sources: list[str] = []
         accounts: set[str] = set()
         unknown = 0
         for list_row in list_rows:
@@ -844,12 +846,16 @@ class MessageListModel(QAbstractTableModel):
             if message_id in self.pending:
                 continue
             accounts.add(mailbox or default)
+            sources.append(mailbox or default)
             messages.append((folder, message_id))
         if unknown and not accounts and default:
             accounts.add(default)  # a view of one account: the messages not known yet are of that account too
-        account = next(iter(accounts)) if len(accounts) == 1 else ""  # "" is no account: the folder list refuses the drop
+        several = len(accounts) > 1
+        account = "" if several else next(iter(accounts), "")  # several accounts: each message says its own (sources, D-272)
         one_folder = self._spec.folder if self._spec is not None and self._spec.combined is None else None
-        return messages_mime_data(account, messages, rest=self.places_epoch if unknown else None, rest_folder=one_folder), len(messages) + unknown
+        return messages_mime_data(
+            account, messages, rest=self.places_epoch if unknown else None, rest_folder=one_folder, sources=sources if several else None,
+        ), len(messages) + unknown
 
     def unknown_positions(self, list_rows: Iterable[int]) -> list[int]:
         """The places in the view of the messages at these rows that the list does not know yet (the rest of a large view's order is on its

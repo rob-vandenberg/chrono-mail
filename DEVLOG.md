@@ -2998,12 +2998,17 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.367: A drag of messages of several accounts goes to one folder (the owner, D-272)
+
+1. `ui/dragdata.py`: a mixed drag names each message's account (sources; the summary lists the accounts); read_messages_accounts, read_messages_sources. `ui/messagelist.py` drag_data fills them. `ui/foldertree.py` takes such a drag on a folder of any account of the list and gives each message with its account; `ui/messageactions.py` messages_dropped takes (account, folder, id).
+2. Tests: tests/ui/test_ui_across.py (4; the mixed drag fails on 3.6.366); the drag and drop tests (16); Pyrefly src (Linux and win32) and the layer check pass.
+
 ## 2026-10-26 3.6.366: Messages move to a folder of another account (the owner, D-272)
 
 1. `engine/commands_across.py` (new, message.move-across): read with marks and tags, stored in the other account under its own id and read back (IMAP on the server first, offline at the next check), then removed for good from its own (IMAP on the server first); groups of 50, accounts never open at once; the junk filter learns as within an account. `engine/mailbox.py` deliver keeps a given id, deliver_moved never stores twice. `engine/undohistory.py`, `undo.py`: an "across" step, undone by moving back. `engine/catalog.py` registers it.
 2. `ui/foldertree.py`: a drop on another account's folder (an account of the list; not Outbox or Scheduled); `ui/messageactions.py`: Move to submenus per other account, move_to splits own-account and other-account messages, the drop names its source account.
 3. Tests: tests/test_engine_across.py (11: each direction, POP, stopped at each step, done again, offline either side, refused upload, Undo and Redo, Outbox, junk filter), tests/ui/test_ui_across.py (3), tests/live/test_live_across.py (both real servers: about 10 ms per message, so no overlapping uploads); the drop, move menu and undo tests (unchanged; a drag from an account not in the list is still refused). Pyrefly src (Linux and win32) and the layer check pass.
-4. Open: a drag of messages from several accounts at once (Favorites) is still refused; Move to does it.
+4. Open: a drag of messages from several accounts at once (Favorites) is still refused; Move to does it (done in 3.6.367).
 
 ## 2026-10-26 3.6.365: The busy bar moves only for work longer than a second (the owner, D-266)
 

@@ -5,15 +5,16 @@ from PySide6.QtGui import QDragEnterEvent, QDragLeaveEvent, QDragMoveEvent, QDro
 from PySide6.QtWidgets import QAbstractItemView, QApplication, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTreeView, QWidget
 
 from chrono_mail.ui.delegate import _is_selected, _rect, _typed
-from chrono_mail.ui.dragdata import read_messages_mime_data, read_messages_rest, read_messages_summary
+from chrono_mail.ui.dragdata import read_messages_accounts, read_messages_mime_data, read_messages_rest, read_messages_sources, read_messages_summary
 from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
 from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, FOLDER_ROLE_ROLE, KIND_ROLE, SCHEDULED_TARGET_ROLES
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 3.6.366"
+__version__ = "foldertree.py 3.6.367"
 
 # --- Version history ----------------------------------------------------
+# v3.6.367: a drag of messages of several accounts is taken by a folder of any account of the list; the drop gives each message with its account (D-272)
 # v3.6.366: messages dropped on a folder of another account are moved there; the drop names the account they come from (D-272)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.350: a drop says when the rest of the selection follows (RV-206)
@@ -157,12 +158,13 @@ class FolderTree(QTreeView):
         if dragged is None or not index.isValid() or index.data(KIND_ROLE) != "folder":
             return None
         account, folder, role = str(index.data(ACCOUNT_ROLE)), str(index.data(FOLDER_PATH_ROLE)), str(index.data(FOLDER_ROLE_ROLE))
-        if not dragged[0] or role == "outbox" or (account == dragged[0] and dragged[1] == {folder}):
-            return None  # (messages of several accounts: no account of their own, "")
-        if SCHEDULED_FOLDER_PATH in dragged[1] and (account != dragged[0] or role not in SCHEDULED_TARGET_ROLES):
+        sources = frozenset({dragged[0]}) if dragged[0] else read_messages_accounts(event.mimeData())  # several accounts: each message's (D-272)
+        if not sources or role == "outbox" or (sources == {account} and dragged[1] == {folder}):
+            return None
+        if SCHEDULED_FOLDER_PATH in dragged[1] and (sources != {account} or role not in SCHEDULED_TARGET_ROLES):
             return None  # a scheduled message goes back to Drafts (no longer scheduled) or to Trash of its own account, nowhere else
-        if account != dragged[0] and (role == "scheduled" or not self._known(dragged[0])):
-            return None  # Scheduled takes only its own account's messages; the others take those of an account of this list (D-272)
+        if sources != {account} and (role == "scheduled" or not all(self._known(source) for source in sources - {account})):
+            return None  # Scheduled takes only its own account's messages; the others take those of the accounts of this list (D-272)
         return account, folder
 
     @override
@@ -197,12 +199,13 @@ class FolderTree(QTreeView):
         self._set_drop_row(None)
         target = self._target(event)
         dragged = read_messages_mime_data(event.mimeData())
+        sources = read_messages_sources(event.mimeData())
         summary = read_messages_summary(event.mimeData())
         rest = read_messages_rest(event.mimeData()) if event.source() is not None else None  # only a drag of this program's own list
         folders = {folder for folder, _ in dragged[1]} if dragged is not None else set[str]()
-        if target is None or dragged is None or summary is None or dragged[0] != summary[0] or not (folders == summary[1] or (rest is not None and folders <= summary[1])):
+        if target is None or dragged is None or sources is None or summary is None or dragged[0] != summary[0] or not (folders == summary[1] or (rest is not None and folders <= summary[1])):
             event.ignore()  # the list that moves must be the one the checks were made for (a drag from another program)
             return
         event.setDropAction(Qt.DropAction.CopyAction)  # the cursor with a plus; the messages are moved
         event.accept()
-        self.messages_dropped.emit(target[0], target[1], dragged[1], -1 if rest is None else rest, dragged[0])
+        self.messages_dropped.emit(target[0], target[1], sources, -1 if rest is None else rest, dragged[0])  # each as (account, folder, id)

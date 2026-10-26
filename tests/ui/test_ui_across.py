@@ -3,12 +3,17 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID
 from chrono_mail.engine.local import ensure_local_folders
+from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.ui.dragdata import messages_mime_data
+from tests.mailfactory import raw_message
+from tests.ui.test_ui_dragdrop import drop, folder_point, move_probe
 from tests.ui.world import World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_across.py 3.6.366"
+__version__ = "test_ui_across.py 3.6.367"
 
 # --- Version history ----------------------------------------------------
+# v3.6.367: a drag of messages of several accounts goes to one folder
 # v3.6.366: Initial: Move to offers the other accounts' folders, and messages dropped on a folder of another account go there (D-272)
 
 
@@ -48,3 +53,17 @@ def test_the_folder_list_takes_a_drag_only_from_an_account_it_holds(world: World
     with_local_folders(world, qtbot)
     assert world.window.tree._known(world.account_id) and world.window.tree._known(LOCAL_ACCOUNT_ID)  # noqa: SLF001
     assert not world.window.tree._known("someone-else")  # noqa: SLF001 - another program's drag, or an account removed meanwhile
+
+
+def test_a_drag_of_messages_of_several_accounts_goes_to_one_folder(world: World, qtbot: QtBot) -> None:
+    """A Favorites view mixes accounts: the drag names each message's account, and the folder takes them all (D-272)."""
+    with_local_folders(world, qtbot)
+    with open_mailbox(world.engine, LOCAL_ACCOUNT_ID) as mailbox:
+        local = mailbox.deliver(mailbox.folder("Inbox"), raw_message(subject="Local", body="b\r\n", message_id="<mixed@x>"), frozenset()).store_id
+    own = sorted(ids_in(world, world.account_id))[0]
+    data = messages_mime_data("", [("Inbox", own), ("Inbox", local)], sources=[world.account_id, LOCAL_ACCOUNT_ID])
+    assert move_probe(world, folder_point(world, "Junk"), data)
+    assert drop(world, folder_point(world, "Junk"), data)
+    junk = lambda: {row.message_id for row in world.call("message.list", account=world.account_id, folder="Junk").messages}  # noqa: E731
+    wait(qtbot, lambda: world.backend._pending == {} and junk() == {own, local})  # noqa: SLF001
+    assert local not in ids_in(world, LOCAL_ACCOUNT_ID)

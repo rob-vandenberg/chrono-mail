@@ -31,9 +31,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.366"
+__version__ = "messageactions.py 3.6.367"
 
 # --- Version history ----------------------------------------------------
+# v3.6.367: a drop may hold messages of several accounts, each with its account (D-272)
 # v3.6.366: Move to has a submenu for each other account and a drop may come from another account: those messages are moved message by message (move_to, D-272)
 # v3.6.364: "Preparing to …" and the count are lines about work still running: they never time out
 # v3.6.362: act_many: after its commands are given, the held key's piled-up repeats are thrown away (drop_repeats, D-266)
@@ -450,18 +451,20 @@ class MessageActions(QObject):
         else:
             self.move_to(account, target, [item for item in self._state.targets(rows) if (item[0], item[1]) != (account, target)])
 
-    def messages_dropped(self, account: str, target: str, messages: list[tuple[str, str]], rest: int = -1, source: str = "") -> None:
+    def messages_dropped(self, account: str, target: str, messages: Sequence[Sequence[str]], rest: int = -1, source: str = "") -> None:
         """Messages were dragged to a folder of the folder list. rest (not -1): the drag was made while the list did not know every
         selected message yet; what was selected is taken once it does, in turn with the actions that wait for it, and all of it moves
         together (RV-206). When the list could not keep those places since the drag began, which messages they held cannot be told:
-        nothing is moved, and that is said. account: where they go; source: the account they come from (another one: D-272)."""
+        nothing is moved, and that is said. account: where they go; messages: (folder, id) of the account source (default: account), or
+        (account, folder, id) each, as a drag of several accounts gives them (D-272)."""
         source = source or account
+        dropped = [(item[0], item[1], item[2]) if len(item) == 3 else (source, item[0], item[1]) for item in messages]
         self._messages.paused_at_edge(keyed=False)  # the next message is loaded and painted before the selection moves to it (D-266)
         if rest < 0:  # in its turn behind anything that waits (in order, D-146)
 
             def known() -> None:  # without those an action made before it has under way by then (no second action, D-146)
                 pending = self._messages.model.pending
-                targets = [(source, folder, message_id) for folder, message_id in messages if message_id not in pending]
+                targets = [item for item in dropped if item[2] not in pending]
                 if targets:
                     self.move_to(account, target, targets)
                 else:
