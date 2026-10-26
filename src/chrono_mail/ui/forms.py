@@ -3,17 +3,22 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import override
 
-from PySide6.QtCore import QFile, QIODevice, QObject, Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, Qt
 from PySide6.QtUiTools import QUiLoader
-from PySide6.QtWidgets import QLayout, QSpacerItem, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLayout, QVBoxLayout, QWidget
 
 from chrono_mail.ui import theme
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "forms.py 3.6.373"
+__version__ = "forms.py 4.0.375"
 
 # --- Version history ----------------------------------------------------
+# v4.0.375: fill: a window takes its title from its form (the form's windowTitle), so the title is designed with the rest; the spacers are
+#           scaled in the form's text before Qt reads it (asking the layouts for their items left Python stand-ins that outlived the
+#           window and were taken for a part made later at the same address); a spacer of size 0 stays 0 (it took 1 pixel); the layouts
+#           and roles inside the program's own parts are left to them (a form inside a form lost its margins); smallest: a window's own
+#           smallest width at the size factor, never below what its layout needs, never wider than its screen
 # v3.6.373: Initial: dialogs are built from Qt Designer forms (.ui files in ui/forms): the layout, the parts and their texts; the program adds
 #           the look (theme.py), the sizes at the size factor, its own special parts (made by the loader at their placeholders) and
 #           everything that changes (D-276)
@@ -38,7 +43,7 @@ class _Loader(QUiLoader):
     def __init__(self, own_parts: Mapping[str, Callable[[QWidget], QWidget]]) -> None:
         super().__init__()
         self._own_parts: Mapping[str, Callable[[QWidget], QWidget]] = own_parts
-        self.made: set[str] = set()
+        self.made: dict[str, QWidget] = {}
 
     @override
     def createWidget(self, className: str, parent: QWidget | None = None, name: str = "") -> QWidget:  # noqa: N802, N803 - Qt's names
@@ -47,7 +52,7 @@ class _Loader(QUiLoader):
             return super().createWidget(className, parent, name)
         widget = make(parent)
         widget.setObjectName(name)
-        self.made.add(name)
+        self.made[name] = widget
         return widget
 
 
@@ -55,46 +60,61 @@ def load(name: str, parent: QWidget, own_parts: Mapping[str, Callable[[QWidget],
     """The form as a new child of parent, the program's own parts made at their placeholders (own_parts: placeholder name -> how the
     part is made, given its parent), its spacers at the size factor of the windows and its parts with a role given their look."""
     path = form_file(name)
-    file = QFile(str(path))
-    if not file.open(QIODevice.OpenModeFlag.ReadOnly):
-        raise FormError(f"The form {path.name} could not be read: {file.errorString()}")
+    text, in_form, own_margins = _read(path)
+    buffer = QBuffer()
+    buffer.setData(QByteArray(text))
+    buffer.open(QIODevice.OpenModeFlag.ReadOnly)
     wanted = dict(own_parts or {})
-    try:
-        loader = _Loader(wanted)
-        form = loader.load(file, parent)
-    finally:
-        file.close()
+    loader = _Loader(wanted)
+    form = loader.load(buffer, parent)
+    buffer.close()
     if form is None:
         raise FormError(f"The form {path.name} could not be built: {loader.errorString()}")
-    missing = sorted(set(wanted) - loader.made)
+    missing = sorted(set(wanted) - set(loader.made))
     if missing:
         raise FormError(f"The form {path.name} has no placeholder named {', '.join(missing)}")
     form.setProperty("form", name)  # for the error texts of part()
-    in_form, own_margins = _layouts(path)
+    made = list(loader.made.values())
+
+    def own(widget: QWidget | None) -> bool:
+        """Inside a part of the program (which may be built from a form of its own): never touched here."""
+        return widget is not None and any(part is widget or part.isAncestorOf(widget) for part in made)
+
     for layout in form.findChildren(QLayout):
-        if layout.objectName() in in_form:  # never the layouts inside Qt's own parts (the row of OK and Cancel)
-            if layout.objectName() not in own_margins:
-                layout.unsetContentsMargins()  # the loader sets 0; a layout made in code has the style's margins at the size factor
-            _scale_spacers(layout)
+        # never the layouts inside Qt's own parts (the row of OK and Cancel) or inside the program's
+        if layout.objectName() in in_form and layout.objectName() not in own_margins and not own(layout.parentWidget()):
+            layout.unsetContentsMargins()  # the loader sets 0; a layout made in code has the style's margins at the size factor
     for part_with_role in [form, *form.findChildren(QWidget)]:
         role = part_with_role.property(ROLE)
-        if isinstance(role, str) and role:
+        if isinstance(role, str) and role and not own(part_with_role):
             part_with_role.setStyleSheet(theme.form_role_look(role))
     return form
 
 
 def fill(host: QWidget, name: str, own_parts: Mapping[str, Callable[[QWidget], QWidget]] | None = None) -> QWidget:
     """The form as the whole content of host (a page or a dialog): the form's own layout keeps its margins, except in a window, which has
-    the style's margins of a window (wider than those of a part inside it) unless the form sets its own."""
+    the style's margins of a window (wider than those of a part inside it) unless the form sets its own. A window takes the form's title."""
     layout = QVBoxLayout(host)
     layout.setContentsMargins(0, 0, 0, 0)
     form = load(name, host, own_parts)
     layout.addWidget(form)
     root = form.layout()
-    if host.isWindow() and root is not None and root.objectName() not in _layouts(form_file(name))[1]:
+    if host.isWindow() and root is not None and root.objectName() not in _read(form_file(name))[2]:
         layout.unsetContentsMargins()
         root.setContentsMargins(0, 0, 0, 0)
+    if host.isWindow() and form.windowTitle():
+        host.setWindowTitle(form.windowTitle())
     return form
+
+
+def smallest(window: QWidget, width: int) -> None:
+    """A window's smallest width: its own (at the standard size, here at the size factor of the windows) but never below what its layout
+    needs, since a width set on a window overrules its layout and a text would be cut off at a small or a large size; never wider than the
+    screen it opens on (a very long text, from a server for example, is cut off rather than pushing the window off the screen). Called once
+    the window holds its parts."""
+    screen = window.screen()
+    room = screen.availableGeometry().width() if screen is not None else wpx(width)
+    window.setMinimumWidth(min(max(wpx(width), window.minimumSizeHint().width()), max(wpx(width), room)))
 
 
 def part[T: QObject](form: QWidget, kind: type[T], name: str) -> T:
@@ -116,22 +136,24 @@ def tab_stops(form: QWidget) -> list[QWidget]:
     return found
 
 
-def _layouts(path: Path) -> tuple[set[str], set[str]]:
-    """The names of the form's layouts, and of those whose margins the form sets itself (for example 0, edge to edge)."""
+def _read(path: Path) -> tuple[bytes, set[str], set[str]]:
+    """The form's text with its spacers at the size factor of the windows (a size in a form is at the standard size; changed here,
+    before Qt reads it, so the program never takes hold of the layouts' items: Python's stand-ins for them would outlive the window
+    and be taken for a part made later at the same place in memory), the names of its layouts, and of those whose margins the form
+    sets itself (for example 0, edge to edge)."""
+    try:
+        tree = ElementTree.parse(path)
+    except (OSError, ElementTree.ParseError) as error:
+        raise FormError(f"The form {path.name} could not be read: {error}") from error
+    for spacer in tree.iter("spacer"):
+        for size in spacer.iterfind("property[@name='sizeHint']/size"):
+            for length in (size.find("width"), size.find("height")):
+                if length is not None and length.text and length.text.strip().isascii() and length.text.strip().isdigit() and int(length.text) > 0:
+                    length.text = str(wpx(int(length.text)))
     margins = {"leftMargin", "topMargin", "rightMargin", "bottomMargin", "margin"}
-    layouts = list(ElementTree.parse(path).iter("layout"))
+    layouts = list(tree.iter("layout"))
     return (
+        ElementTree.tostring(tree.getroot(), encoding="utf-8", xml_declaration=True),
         {layout.get("name", "") for layout in layouts} - {""},  # a layout without a name could stand for Qt's own unnamed ones
         {layout.get("name", "") for layout in layouts if any(item.get("name") in margins for item in layout.findall("property"))} - {""},
     )
-
-
-def _scale_spacers(layout: QLayout) -> None:
-    """A spacer's size in a form is at the standard size: here it follows the size factor of the windows, as every other size does."""
-    for index in range(layout.count()):
-        item = layout.itemAt(index)
-        spacer = item.spacerItem() if item is not None else None
-        if isinstance(spacer, QSpacerItem):
-            hint, policy = spacer.sizeHint(), spacer.sizePolicy()
-            spacer.changeSize(wpx(hint.width()), wpx(hint.height()), policy.horizontalPolicy(), policy.verticalPolicy())
-    layout.invalidate()

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ErrorRow</class>
+ <widget class="QWidget" name="ErrorRow">
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <layout class="QHBoxLayout" name="top" stretch="1,0">
+     <item>
+      <widget class="QLabel" name="name">
+       <property name="role" stdset="0">
+        <string>heading</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="time" />
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="text">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

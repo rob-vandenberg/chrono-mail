@@ -3,21 +3,24 @@ from typing import override
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QLabel, QMessageBox, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox, QProgressBar, QPushButton, QWidget
 
 from chrono_mail.core import ChronoMailError, RebuildAborted
 from chrono_mail.engine.changes import RebuildStep
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
 from chrono_mail.engine.commands_folders import INDEX_ABORT, INDEX_CHECK, INDEX_FILL_SENT, INDEX_PREPARE, INDEX_REBUILD, IndexState
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "indexrebuilds.py 4.0.374"
+__version__ = "indexrebuilds.py 4.0.375"
 
 # --- Version history ----------------------------------------------------
+# v4.0.375: the rebuild window is built from its Qt Designer form (ui/forms/rebuild_window.ui, D-276); the account's name is plain text (D-259)
 # v4.0.374: the rebuild window is forgotten when it goes with its parent (Settings is deleted once closed); the next one is made fresh
 # v3.5.348: The question Abort rebuilding shows plain text (RV-167, without a filter on the whole program)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -26,9 +29,6 @@ __version__ = "indexrebuilds.py 4.0.374"
 #           the mail is shown, then the Sent dates of upgraded ones are filled in; a window with the account, a wide bar and how many of how
 #           many; Run in background while the old index stays usable; Abort after a question (closes the program when nothing usable is left)
 
-EXPLANATION: str = (
-    "Chrono Mail is updating its index of your mail, so your messages can be listed, sorted and searched. Your mail itself is not changed."
-)
 ABORT_TITLE: str = "Abort rebuilding?"
 ABORT_KEEPS: str = "The rebuild stops and Chrono Mail keeps using the index it has. You can start it again in Settings."
 ABORT_CLOSES: str = (
@@ -58,27 +58,15 @@ class RebuildWindow(QDialog):
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Rebuilding the index")
         self.setModal(True)  # above every window, also Settings; Run in background lets go of it
-        layout = QVBoxLayout(self)
-        explanation = QLabel(EXPLANATION, self)
-        explanation.setWordWrap(True)
-        layout.addWidget(explanation)
-        self.account_label: QLabel = QLabel("", self)
-        layout.addWidget(self.account_label)
-        self.bar: QProgressBar = QProgressBar(self)
-        self.bar.setTextVisible(False)
+        form = forms.fill(self, "rebuild_window")  # why, the account, the bar, the count and the two buttons (D-276)
+        self.account_label: QLabel = part(form, QLabel, "account")
+        self.account_label.setTextFormat(Qt.TextFormat.PlainText)  # an account's name: never markup (D-259)
+        self.bar: QProgressBar = part(form, QProgressBar, "bar")
         self.bar.setMinimumWidth(wpx(520))
-        layout.addWidget(self.bar)
-        self.count_label: QLabel = QLabel("", self)
-        layout.addWidget(self.count_label)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        self.background_button: QPushButton = QPushButton("Run in background", self)
-        self.abort_button: QPushButton = QPushButton("Abort", self)
-        buttons.addWidget(self.background_button)
-        buttons.addWidget(self.abort_button)
-        layout.addLayout(buttons)
+        self.count_label: QLabel = part(form, QLabel, "count")
+        self.background_button: QPushButton = part(form, QPushButton, "runInBackground")
+        self.abort_button: QPushButton = part(form, QPushButton, "abort")
         self.background_button.clicked.connect(self.background_chosen)
         self.abort_button.clicked.connect(self.abort_chosen)
 

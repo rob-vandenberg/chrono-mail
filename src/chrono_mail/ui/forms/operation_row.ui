@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>OperationRow</class>
+ <widget class="QWidget" name="OperationRow">
+  <layout class="QHBoxLayout" name="layout" stretch="0,1">
+   <item alignment="Qt::AlignVCenter">
+    <widget class="QLabel" name="picture" />
+   </item>
+   <item>
+    <layout class="QVBoxLayout" name="texts">
+     <item>
+      <widget class="QLabel" name="name">
+       <property name="role" stdset="0">
+        <string>heading</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="step" />
+     </item>
+     <item>
+      <widget class="QWidget" name="bar" />
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

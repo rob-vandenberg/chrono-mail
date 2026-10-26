@@ -3,22 +3,26 @@ from dataclasses import dataclass, replace
 from typing import override
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QFrame, QLabel, QMainWindow, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_outbox import MAIL_CANCEL_SEND, MAIL_END_COUNTDOWN, CancelSendResult, OutboxMessageParameters
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import theme
+from chrono_mail.ui import forms
 from chrono_mail.ui.composing import Composing
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.mailchecking import MailChecking
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.prefs import InUse
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "sendnotices.py 3.5.348"
+__version__ = "sendnotices.py 4.0.375"
 
 # --- Version history ----------------------------------------------------
+# v4.0.375: the notice is built from its Qt Designer form (ui/forms/send_notice.ui, D-276); its room inside and the outline stay the program's; the
+#           subject is shown as plain text (D-259)
 # v3.5.348: The question on Quit shows plain text (RV-167, without a filter on the whole program)
 # v3.1.341: forget: the notice of a message taken out of the Outbox to be changed goes (RV-156)
 # v2.3.317: the notice as the owner's mockup: the text above, Send now and Cancel below it at the right, a rounded outline, more room
@@ -69,18 +73,14 @@ class SendNotice(QFrame):
         )
         self._subject: str = subject or "(no subject)"
         self.remaining: int = seconds
-        self.label: QLabel = QLabel(self)
-        self.send_button: QPushButton = QPushButton("Send now", self)
-        self.cancel_button: QPushButton = QPushButton("Cancel", self)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(INSIDE, INSIDE, INSIDE, INSIDE)
+        form = forms.fill(self, "send_notice")  # the text above, Send now and Cancel below it (D-276)
+        self.label: QLabel = part(form, QLabel, "text")
+        self.label.setTextFormat(Qt.TextFormat.PlainText)  # the subject is the person's or a sender's text: never markup (D-259)
+        self.send_button: QPushButton = part(form, QPushButton, "sendNow")
+        self.cancel_button: QPushButton = part(form, QPushButton, "cancelSend")
+        layout = part(form, QVBoxLayout, "layout")
+        layout.setContentsMargins(INSIDE, INSIDE, INSIDE, INSIDE)  # the room inside the outline is the program's
         layout.setSpacing(MARGIN)
-        layout.addWidget(self.label)
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        buttons.addWidget(self.send_button)
-        buttons.addWidget(self.cancel_button)
-        layout.addLayout(buttons)
         self.send_button.clicked.connect(self.send_now)
         self.cancel_button.clicked.connect(self.cancel)
         self._timer: QTimer = QTimer(self)

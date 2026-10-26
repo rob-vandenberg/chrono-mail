@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SyncConflict</class>
+ <widget class="QWidget" name="SyncConflict">
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <layout class="QFormLayout" name="details">
+     <item row="0" column="0">
+      <widget class="QLabel" name="whatLabel">
+       <property name="text">
+        <string>What</string>
+       </property>
+       <property name="buddy">
+        <cstring>whatValue</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLabel" name="whatValue" />
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="whereLabel">
+       <property name="text">
+        <string>Where</string>
+       </property>
+       <property name="buddy">
+        <cstring>whereValue</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QLabel" name="whereValue" />
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="whyLabel">
+       <property name="text">
+        <string>Why</string>
+       </property>
+       <property name="buddy">
+        <cstring>whyValue</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QLabel" name="whyValue" />
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="foundLabel">
+       <property name="text">
+        <string>Found</string>
+       </property>
+       <property name="buddy">
+        <cstring>foundValue</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QLabel" name="foundValue" />
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="serverSaidLabel">
+       <property name="text">
+        <string>The server said</string>
+       </property>
+       <property name="buddy">
+        <cstring>serverSaidValue</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QLabel" name="serverSaidValue">
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QWidget" name="fields" />
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="sides" stretch="0,0,0,0,1">
+     <item>
+      <widget class="QPushButton" name="allLocal">
+       <property name="text">
+        <string>All from Chrono Mail</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="allServer">
+       <property name="text">
+        <string>All from Server</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="retrySync">
+       <property name="text">
+        <string>Retry sync</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="keepHereOnly">
+       <property name="text">
+        <string>Keep here only</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="sidesEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Apply|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

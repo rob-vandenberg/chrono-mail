@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGridLayout,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -27,23 +26,26 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTreeWidget,
     QTreeWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_conflicts import CONFLICT_SETTLE, ConflictSummary, SettleParameters, SettleResult
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_WORDS, SyncMarks, paint_why, why_kind, why_pixmap
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 3.6.350"
+__version__ = "syncconflicts.py 4.0.375"
 
 # --- Version history ----------------------------------------------------
+# v4.0.375: the window, its panel and the window of one conflict are built from their Qt Designer forms (ui/forms/sync_conflicts.ui,
+#           sync_conflicts_panel.ui, sync_conflict.ui, D-276); the columns, the field choices and the legend's icons stay the program's
 # v3.6.350: an error text inside markup is escaped, the hover texts and the details of a conflict are plain: a server's or a file's words are
 #           never drawn as markup (D-259)
 # v3.4.344: the problems of Settle are escaped: they hold server replies (RV-167)
@@ -124,28 +126,50 @@ class ConflictDialog(QDialog):
         self.choices: dict[str, str] = {}
         self.side: str = ""
         self.setWindowTitle(f"Sync conflict: {conflict.name}")
-        self.setMinimumWidth(560)
-        layout = QVBoxLayout(self)
-        details = QFormLayout()
-        details.addRow("What", _plain(KIND_WORDS.get(conflict.kind, conflict.kind), self))
-        details.addRow("Where", _plain(_where(conflict), self))
-        details.addRow("Why", _plain(conflict.reason_text, self))
-        details.addRow("Found", _plain(time.strftime("%Y-%m-%d %H:%M", time.localtime(conflict.when)), self))
-        if conflict.detail:
-            reason = _plain(conflict.detail, self)  # the server's own words: an HTML error page stays text
-            reason.setWordWrap(True)
-            details.addRow("The server said", reason)
-        layout.addLayout(details)
-        grid = QGridLayout()
-        for column, title in enumerate(("Field", "Chrono Mail", "Server")):
-            heading = QLabel(f"<b>{title}</b>", self)
-            grid.addWidget(heading, 0, column)
         self.groups: dict[str, tuple[QRadioButton, QRadioButton]] = {}
+        form = forms.fill(self, "sync_conflict", {"fields": self._field_choices})  # the details, the fields, the sides, Apply and Cancel (D-276)
+        details = part(form, QFormLayout, "details")
+        for name, text in (
+            ("what", KIND_WORDS.get(conflict.kind, conflict.kind)), ("where", _where(conflict)), ("why", conflict.reason_text),
+            ("found", time.strftime("%Y-%m-%d %H:%M", time.localtime(conflict.when))), ("serverSaid", conflict.detail),
+        ):
+            value = part(form, QLabel, f"{name}Value")
+            value.setTextFormat(Qt.TextFormat.PlainText)  # names and the server's own words: an HTML error page stays text (D-259)
+            value.setText(text)
+        details.setRowVisible(part(form, QLabel, "serverSaidValue"), bool(conflict.detail))  # only when the server said something
+        self.all_local: QPushButton = part(form, QPushButton, "allLocal")
+        self.all_server: QPushButton = part(form, QPushButton, "allServer")
+        self.all_local.setEnabled(conflict.local_allowed)  # greyed, never hidden: the server does not take Chrono Mail's version
+        self.all_server.setEnabled(conflict.server_allowed)  # greyed: the server's version would delete mail that exists only here
+        self.retry: QPushButton = part(form, QPushButton, "retrySync")  # a refusal: ask the server once more (the owner)
+        self.retry.setEnabled(conflict.retry_allowed)
+        self.keep: QPushButton = part(form, QPushButton, "keepHereOnly")
+        self.keep.setEnabled(conflict.keep_allowed)
+        self.all_local.clicked.connect(lambda: self._all(LOCAL))
+        self.all_server.clicked.connect(lambda: self._all(SERVER))
+        self.keep.clicked.connect(lambda: self._all(KEEP))
+        self.retry.clicked.connect(lambda: self._all(RETRY))
+        box = part(form, QDialogButtonBox, "buttons")
+        self.apply_button = box.button(QDialogButtonBox.StandardButton.Apply)
+        self.apply_button.clicked.connect(self._apply)
+        box.rejected.connect(self.reject)
+        forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
+        self._ready()
+
+    def _field_choices(self, parent: QWidget) -> QWidget:
+        """Each clashing field with Chrono Mail's and the server's value to choose from, made at its place in the form (so Tab reaches
+        the choices before the buttons below them)."""
+        conflict = self.conflict
+        choices = QWidget(parent)
+        grid = QGridLayout(choices)
+        grid.setContentsMargins(0, 0, 0, 0)
+        for column, title in enumerate(("Field", "Chrono Mail", "Server")):
+            grid.addWidget(QLabel(f"<b>{title}</b>", choices), 0, column)
         per_field = not conflict.whole and bool(conflict.fields) and conflict.local_allowed and conflict.server_allowed  # else a whole side
         for row, field in enumerate(conflict.fields, start=1):
-            grid.addWidget(_plain(field.label, self), row, 0)
-            ours = QRadioButton(field.local or "(empty)", self)
-            theirs = QRadioButton(field.server or "(empty)", self)
+            grid.addWidget(_plain(field.label, choices), row, 0)
+            ours = QRadioButton(field.local or "(empty)", choices)
+            theirs = QRadioButton(field.server or "(empty)", choices)
             group = QButtonGroup(self)
             group.addButton(ours)
             group.addButton(theirs)
@@ -156,33 +180,8 @@ class ConflictDialog(QDialog):
             grid.addWidget(theirs, row, 2)
             self.groups[field.key] = (ours, theirs)
         if not conflict.fields:
-            grid.addWidget(_plain(conflict.reason_text, self), 1, 0, 1, 3)
-        layout.addLayout(grid)
-        sides = QHBoxLayout()
-        self.all_local = QPushButton("All from Chrono Mail", self)
-        self.all_server = QPushButton("All from Server", self)
-        self.all_local.setEnabled(conflict.local_allowed)  # greyed, never hidden: the server does not take Chrono Mail's version
-        self.all_server.setEnabled(conflict.server_allowed)  # greyed: the server's version would delete mail that exists only here
-        self.retry = QPushButton("Retry sync", self)  # a refusal: ask the server once more (the owner)
-        self.retry.setEnabled(conflict.retry_allowed)
-        self.keep = QPushButton("Keep here only", self)
-        self.keep.setEnabled(conflict.keep_allowed)
-        self.all_local.clicked.connect(lambda: self._all(LOCAL))
-        self.all_server.clicked.connect(lambda: self._all(SERVER))
-        self.keep.clicked.connect(lambda: self._all(KEEP))
-        self.retry.clicked.connect(lambda: self._all(RETRY))
-        sides.addWidget(self.all_local)
-        sides.addWidget(self.all_server)
-        sides.addWidget(self.retry)
-        sides.addWidget(self.keep)
-        sides.addStretch(1)
-        layout.addLayout(sides)
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Apply | QDialogButtonBox.StandardButton.Cancel, self)
-        self.apply_button = box.button(QDialogButtonBox.StandardButton.Apply)
-        self.apply_button.clicked.connect(self._apply)
-        box.rejected.connect(self.reject)
-        layout.addWidget(box)
-        self._ready()
+            grid.addWidget(_plain(conflict.reason_text, choices), 1, 0, 1, 3)
+        return choices
 
     def _toggled(self, button: QAbstractButton, checked: bool) -> None:
         self._ready()
@@ -219,11 +218,10 @@ class SyncConflictsPanel(QWidget):
         self._settings: QSettings | None = settings
         self._share: float = self._saved_share()
         self._fitting: bool = False
-        layout = QVBoxLayout(self)
-        self.check_all = QCheckBox("Check all", self)
+        form = forms.fill(self, "sync_conflicts_panel")  # Check all, the table, the buttons, the problems and the legend (D-276)
+        self.check_all: QCheckBox = part(form, QCheckBox, "checkAll")
         self.check_all.clicked.connect(self._check_all)
-        layout.addWidget(self.check_all)
-        self.table = QTreeWidget(self)
+        self.table: QTreeWidget = part(form, QTreeWidget, "table")
         self.table.setRootIsDecorated(False)
         self.table.setHeaderLabels(list(COLUMNS))
         self.table.setUniformRowHeights(True)
@@ -244,36 +242,20 @@ class SyncConflictsPanel(QWidget):
         self.table.setItemDelegateForColumn(WHY_COLUMN, WhyDelegate(self.table))
         self.table.itemChanged.connect(self._item_changed)
         self.table.itemDoubleClicked.connect(self._open)
-        layout.addWidget(self.table, 1)
-        buttons = QHBoxLayout()
-        self.use_local = QPushButton("Use Chrono Mail", self)
-        self.use_server = QPushButton("Use Server data", self)
-        self.retry = QPushButton("Retry sync", self)  # a refusal: ask the server once more; refused again, the same row comes back (the owner)
-        self.keep_here = QPushButton("Keep here only", self)  # mail made here that the server will not take: it stays here, never sent (D-195)
-        self.invert = QPushButton("Invert selection", self)
+        self.use_local: QPushButton = part(form, QPushButton, "useLocal")
+        self.use_server: QPushButton = part(form, QPushButton, "useServer")
+        self.retry: QPushButton = part(form, QPushButton, "retrySync")  # a refusal: ask the server once more; refused again, the same row comes back (the owner)
+        self.keep_here: QPushButton = part(form, QPushButton, "keepHereOnly")  # mail made here that the server will not take: it stays here, never sent (D-195)
+        self.invert: QPushButton = part(form, QPushButton, "invertSelection")
         self.use_local.clicked.connect(lambda: self._settle(self.ticked(), LOCAL))
         self.use_server.clicked.connect(lambda: self._settle(self.ticked(), SERVER))
         self.keep_here.clicked.connect(lambda: self._settle(self.ticked(), KEEP))
         self.retry.clicked.connect(lambda: self._settle(self.ticked(), RETRY))
         self.invert.clicked.connect(self._invert)
-        buttons.addWidget(self.use_local)
-        buttons.addWidget(self.use_server)
-        buttons.addWidget(self.retry)
-        buttons.addWidget(self.keep_here)
-        buttons.addWidget(self.invert)
-        buttons.addStretch(1)
-        layout.addLayout(buttons)
-        self.problems = QLabel("", self)
-        self.problems.setWordWrap(True)
-        layout.addWidget(self.problems)
-        legend = QGridLayout()  # what the icons of the Why column mean, at the bottom left, one under the other (the owner)
-        for number, kind in enumerate((BOTH, REFUSED, GONE_THERE, GONE_HERE)):
-            icon = QLabel(self)
-            icon.setPixmap(why_pixmap(kind, 16, self.palette().color(QPalette.ColorRole.Window)))
-            legend.addWidget(icon, number, 0)
-            legend.addWidget(QLabel(WHY_WORDS[kind], self), number, 1)
-        legend.setColumnStretch(2, 1)
-        layout.addLayout(legend)
+        self.problems: QLabel = part(form, QLabel, "problems")
+        for name, kind in (("Both", BOTH), ("Refused", REFUSED), ("GoneThere", GONE_THERE), ("GoneHere", GONE_HERE)):  # what the Why icons mean (the owner)
+            part(form, QLabel, f"why{name}Icon").setPixmap(why_pixmap(kind, 16, self.palette().color(QPalette.ColorRole.Window)))
+            part(form, QLabel, f"why{name}Text").setText(WHY_WORDS[kind])  # the same words as the icons' hover texts
         marks.changed.connect(self._take)
         self._take()
 
@@ -458,17 +440,11 @@ class SyncConflictsWindow(QDialog):
     def __init__(self, backend: Backend, marks: SyncMarks, settings: QSettings | None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._settings: QSettings | None = settings
-        self.setWindowTitle("Sync conflicts")
         self.setModal(False)
-        layout = QVBoxLayout(self)  # the window's own margin all round; the panel inside it none, so the Close button lines up with the rest (the owner)
-        self.panel = SyncConflictsPanel(backend, marks, self, settings)
-        panel_layout = self.panel.layout()
-        if panel_layout is not None:
-            panel_layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.panel)
-        close = QDialogButtonBox(QDialogButtonBox.StandardButton.Close, self)
+        form = forms.fill(self, "sync_conflicts", {"panel": lambda parent: SyncConflictsPanel(backend, marks, parent, settings)})  # D-276
+        self.panel: SyncConflictsPanel = part(form, SyncConflictsPanel, "panel")
+        close = part(form, QDialogButtonBox, "buttons")
         close.rejected.connect(self.close)
-        layout.addWidget(close)
         self.resize(wpx(1100), wpx(520))
         if settings is not None:
             restore_geometry(self, settings, "sync_conflicts_geometry")

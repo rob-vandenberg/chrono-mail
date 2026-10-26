@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>RebuildWindow</class>
+ <widget class="QWidget" name="RebuildWindow">
+  <property name="windowTitle">
+   <string>Rebuilding the index</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <widget class="QLabel" name="explanation">
+     <property name="text">
+      <string>Chrono Mail is updating its index of your mail, so your messages can be listed, sorted and searched. Your mail itself is not changed.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="account" />
+   </item>
+   <item>
+    <widget class="QProgressBar" name="bar">
+     <property name="textVisible">
+      <bool>false</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="count" />
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="buttons" stretch="1,0,0">
+     <item>
+      <spacer name="buttonsStart">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="runInBackground">
+       <property name="text">
+        <string>Run in background</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="abort">
+       <property name="text">
+        <string>Abort</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

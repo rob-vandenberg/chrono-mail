@@ -187,6 +187,8 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (3.6.372) The same text as the User name of each entry in Windows Credential Manager (B-23, D-275).
 - DONE (3.6.373) The Settings window and its 13 pages are built from Qt Designer forms (ui/forms, D-276); other dialogs follow as their mockups come.
 - DONE (4.0.374) A closed Settings window is deleted (every opening kept one in memory).
+- DONE (4.0.375) Forms batch 1: Sync conflicts, one sync conflict, Operations (with its rows), the index rebuild window and the delayed-send notice are Qt Designer forms (D-276); the loader no longer leaves stand-ins behind (opening Settings again crashed).
+- Next: forms batches 2 to 4 (accounts and safety; mail; calendar, contacts and tasks).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

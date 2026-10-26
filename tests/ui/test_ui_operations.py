@@ -6,14 +6,15 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.config import ServerRole
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui import scale
-from chrono_mail.ui.operations import BUSY_STEPS, DONE, FAILED, NO_ERRORS, OperationBar, OperationsWindow
+from chrono_mail.ui.operations import BUSY_STEPS, DONE, FAILED, OperationBar, OperationsWindow
 from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_operations.py 1.9.264"
+__version__ = "test_ui_operations.py 4.0.375"
 
 # --- Version history ----------------------------------------------------
+# v4.0.375: the text of the empty Errors page is the form's (D-276)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.2.253: the Settings window hands back the typed settings (chosen(), R-12)
 # v1.1.229: Sync conflicts left Settings for a window of its own
@@ -167,7 +168,7 @@ def test_a_failed_send_is_an_error_of_its_account(qtbot: QtBot, world: World) ->
 def test_ignore_all_copy_log_and_clear_log(qtbot: QtBot) -> None:
     operations = OperationsWindow(lambda account_id, direction: f"{account_id} (POP3)")
     qtbot.addWidget(operations)
-    assert not operations.ignore_all.isEnabled() and operations.no_errors.text() == NO_ERRORS
+    assert not operations.ignore_all.isEnabled() and operations.no_errors.text() == "There are no errors."
     operations.begin_round()
     operations.add("a", "receive")
     operations.step("a", "receive", "Downloading", 2, 5)
@@ -222,6 +223,7 @@ def test_the_tick_boxes_are_on_a_page_of_their_own(qtbot: QtBot, world: World) -
     ]
     page = dialog.pages.widget(pages.index("Operations window"))
     general = dialog.pages.widget(0)
+    assert general is not None
     for box in (dialog.operations_show, dialog.operations_hide, dialog.operations_error):
         assert box.parent() is page and not general.isAncestorOf(box)
 

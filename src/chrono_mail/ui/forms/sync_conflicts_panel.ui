@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SyncConflictsPanel</class>
+ <widget class="QWidget" name="SyncConflictsPanel">
+  <layout class="QVBoxLayout" name="layout" stretch="0,1,0,0,0">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
+   <item>
+    <widget class="QCheckBox" name="checkAll">
+     <property name="text">
+      <string>Check all</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTreeWidget" name="table" />
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="buttons" stretch="0,0,0,0,0,1">
+     <item>
+      <widget class="QPushButton" name="useLocal">
+       <property name="text">
+        <string>Use Chrono Mail</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="useServer">
+       <property name="text">
+        <string>Use Server data</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="retrySync">
+       <property name="text">
+        <string>Retry sync</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="keepHereOnly">
+       <property name="text">
+        <string>Keep here only</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="invertSelection">
+       <property name="text">
+        <string>Invert selection</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="buttonsEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="problems">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QGridLayout" name="legend" columnstretch="0,0,1">
+     <item row="0" column="0">
+      <widget class="QLabel" name="whyBothIcon" />
+     </item>
+     <item row="0" column="1">
+      <widget class="QLabel" name="whyBothText" />
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="whyRefusedIcon" />
+     </item>
+     <item row="1" column="1">
+      <widget class="QLabel" name="whyRefusedText" />
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="whyGoneThereIcon" />
+     </item>
+     <item row="2" column="1">
+      <widget class="QLabel" name="whyGoneThereText" />
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="whyGoneHereIcon" />
+     </item>
+     <item row="3" column="1">
+      <widget class="QLabel" name="whyGoneHereText" />
+     </item>
+     <item row="0" column="2">
+      <spacer name="legendEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

@@ -10,9 +10,12 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_forms.py 3.6.373"
+__version__ = "test_ui_forms.py 4.0.375"
 
 # --- Version history ----------------------------------------------------
+# v4.0.375: loading leaves no stand-ins for the layouts' items; a form inside a form keeps its margins and sizes; a window takes its form's
+#           title; the texts of the sync conflicts, Operations, rebuild windows and the send notice fit at the smallest and largest size;
+#           a very long text never makes a window wider than its screen; a subject and an account name are never markup
 # v3.6.373: Initial: the dialogs' forms hold only parts, texts and layout; every form is built; every text of the Settings pages fits at the
 #           smallest and the largest size (D-276)
 
@@ -182,3 +185,183 @@ def test_a_placeholder_the_form_does_not_have_is_named(qtbot: QtBot) -> None:
     qtbot.addWidget(host)
     with pytest.raises(FormError, match="^The form settings_general.ui has no placeholder named noSuchPlace$"):
         forms.load("settings_general", host, {"noSuchPlace": QWidget})
+
+
+def test_loading_a_form_leaves_no_stand_ins_for_the_items_of_its_layouts(qtbot: QtBot) -> None:
+    """Python's stand-in for a layout's item outlived the window and was later taken for a part made at the same place in memory
+    (opening Settings again after it was closed crashed the program, 4.0.374)."""
+    import gc
+
+    from PySide6.QtWidgets import QLayout, QLayoutItem
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    forms.fill(host, "settings_general")
+    forms.load("settings_appearance", host)  # spacers of its own, scaled
+    gc.collect()
+    items = [found for found in gc.get_objects() if isinstance(found, QLayoutItem) and not isinstance(found, QLayout)]
+    assert items == []
+
+
+NESTED_OUTER = """<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Outer</class>
+ <widget class="QWidget" name="Outer">
+  <property name="windowTitle"><string>Made in Designer</string></property>
+  <layout class="QVBoxLayout" name="layout">
+   <item><widget class="QWidget" name="inner"/></item>
+  </layout>
+ </widget>
+</ui>
+"""
+NESTED_INNER = """<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Inner</class>
+ <widget class="QWidget" name="Inner">
+  <layout class="QVBoxLayout" name="layout">
+   <property name="leftMargin"><number>0</number></property>
+   <property name="topMargin"><number>0</number></property>
+   <property name="rightMargin"><number>0</number></property>
+   <property name="bottomMargin"><number>0</number></property>
+   <property name="spacing"><number>0</number></property>
+   <item>
+    <spacer name="blank">
+     <property name="orientation"><enum>Qt::Vertical</enum></property>
+     <property name="sizeType"><enum>QSizePolicy::Fixed</enum></property>
+     <property name="sizeHint" stdset="0"><size><width>0</width><height>18</height></size></property>
+    </spacer>
+   </item>
+   <item>
+    <spacer name="none">
+     <property name="orientation"><enum>Qt::Vertical</enum></property>
+     <property name="sizeType"><enum>QSizePolicy::Fixed</enum></property>
+     <property name="sizeHint" stdset="0"><size><width>0</width><height>0</height></size></property>
+    </spacer>
+   </item>
+  </layout>
+ </widget>
+</ui>
+"""
+
+
+def test_a_form_inside_a_form_keeps_its_own_margins_and_sizes(qtbot: QtBot, tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The outer form leaves the layouts of a part of the program alone, also one built from a form of its own with the same layout names;
+    its spacers follow the size factor once, and a spacer of size 0 takes no room."""
+    from pathlib import Path
+
+    assert isinstance(tmp_path, Path)
+    monkeypatch.setattr(forms, "FORMS_DIRECTORY", tmp_path)
+    (tmp_path / "outer.ui").write_text(NESTED_OUTER, "utf-8")
+    (tmp_path / "inner.ui").write_text(NESTED_INNER, "utf-8")
+
+    def inner(parent: QWidget) -> QWidget:
+        made = QWidget(parent)
+        forms.fill(made, "inner")
+        return made
+
+    scale.set_windows(2.0)
+    try:
+        host = QWidget()
+        qtbot.addWidget(host)
+        form = forms.load("outer", host, {"inner": inner})
+        part = forms.part(form, QWidget, "inner")
+        inside = forms.part(part, QWidget, "Inner")
+        layout = inside.layout()
+        assert layout is not None and layout.contentsMargins().left() == 0
+        assert inside.sizeHint().height() == 36  # 18 at the factor 2, once; the spacer of 0 adds nothing
+    finally:
+        scale.set_windows(1.0)
+
+
+def test_a_window_takes_its_title_from_its_form(qtbot: QtBot, tmp_path: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    from pathlib import Path
+
+    from PySide6.QtWidgets import QDialog
+
+    assert isinstance(tmp_path, Path)
+    monkeypatch.setattr(forms, "FORMS_DIRECTORY", tmp_path)
+    (tmp_path / "outer.ui").write_text(NESTED_OUTER.replace('<item><widget class="QWidget" name="inner"/></item>', ""), "utf-8")
+    window = QDialog()
+    qtbot.addWidget(window)
+    forms.fill(window, "outer")
+    assert window.windowTitle() == "Made in Designer"
+
+
+def _texts_fit(window: QWidget, factor: float) -> None:
+    for text in [*window.findChildren(QLabel), *window.findChildren(QAbstractButton)]:
+        if text.isVisible() and text.text() and not (isinstance(text, QLabel) and text.wordWrap()):
+            assert text.width() >= text.minimumSizeHint().width(), f"{window.windowTitle()}: '{text.text()}' is cut off at {factor}"
+
+
+@pytest.mark.parametrize("factor", [0.75, 2.0], ids=["smallest", "largest"])
+def test_every_text_of_the_sync_and_operations_windows_fits(world: World, qtbot: QtBot, factor: float) -> None:
+    from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
+    from chrono_mail.ui.indexrebuilds import RebuildWindow
+    from chrono_mail.ui.operations import OperationsWindow
+    from chrono_mail.ui.sendnotices import SendNotice
+    from chrono_mail.ui.syncconflicts import ConflictDialog, SyncConflictsWindow
+
+    conflict = ConflictSummary(
+        "c-1", "acc", "Account", "cal", "Work", "e1", "events", "both_changed", "Changed here and on the server", "Meeting", "The server said no",
+        False, True, 1700000000.0, (ConflictField("summary", "Title", "Meeting", "Call"),),
+    )
+    world.window.try_windows_scale(factor)
+    try:
+        operations = OperationsWindow(lambda account, direction: f"{account} (POP3)", None, world.window)
+        operations.add("anna@example.com", "receive")
+        operations.add_error("bob@example.com", "The server could not be reached")
+        rebuild = RebuildWindow(world.window)
+        rebuild.setModal(False)
+        rebuild.show_step(2, 3, "anna@example.com", 50, 100, True)
+        windows: list[QWidget] = [
+            SyncConflictsWindow(world.backend, world.window.sync_marks, None, world.window), ConflictDialog(conflict, world.window), operations, rebuild,
+        ]
+        notice = SendNotice("Holiday plans", 7, world.window)
+        notice.stop()
+        for window in windows:
+            qtbot.addWidget(window)
+            window.show()
+        notice.show()
+        notice.adjustSize()
+        qtbot.wait(100)
+        for window in windows:
+            _texts_fit(window, factor)
+            if window is operations:
+                for tab in (1, 2):
+                    operations.tabs.setCurrentIndex(tab)
+                    qtbot.wait(50)
+                    _texts_fit(window, factor)
+        _texts_fit(notice, factor)
+        notice.deleteLater()
+    finally:
+        world.window.try_windows_scale(1.0)
+
+
+def test_a_very_long_text_never_makes_a_window_wider_than_its_screen(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
+    from chrono_mail.ui.syncconflicts import ConflictDialog
+
+    long = "word " * 300
+    conflict = ConflictSummary(
+        "c-1", "acc", "Account", "cal", "Work", "e1", "events", "both_changed", "Changed here and on the server", "Meeting", "x" * 1500,
+        False, True, 1700000000.0, (ConflictField("description", "Description", long, "short"),),
+    )
+    dialog = ConflictDialog(conflict, world.window)
+    qtbot.addWidget(dialog)
+    screen = dialog.screen()
+    assert screen is not None and dialog.minimumWidth() <= screen.availableGeometry().width()
+
+
+def test_a_subject_and_an_account_name_are_never_markup(world: World, qtbot: QtBot) -> None:
+    from PySide6.QtCore import Qt
+
+    from chrono_mail.ui.indexrebuilds import RebuildWindow
+    from chrono_mail.ui.sendnotices import SendNotice
+
+    notice = SendNotice("<b>Holiday</b>", 7, world.window)
+    notice.stop()
+    rebuild = RebuildWindow(world.window)
+    qtbot.addWidget(rebuild)
+    rebuild.show_step(1, 1, "<i>anna</i>", 1, 2, True)
+    assert notice.label.textFormat() == Qt.TextFormat.PlainText and rebuild.account_label.textFormat() == Qt.TextFormat.PlainText
+    notice.deleteLater()

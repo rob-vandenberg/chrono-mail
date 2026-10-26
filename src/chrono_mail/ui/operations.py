@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QScrollArea,
     QSizePolicy,
     QStackedWidget,
     QTabBar,
@@ -23,6 +22,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.ui import forms
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.prefs import Preferences, read_preferences, save_preferences
 from chrono_mail.ui.colours import theme
 from chrono_mail.ui.icons import bundled_icon
@@ -30,9 +31,11 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "operations.py 3.6.352"
+__version__ = "operations.py 4.0.375"
 
 # --- Version history ----------------------------------------------------
+# v4.0.375: the window, an account's row and an error's row are built from their Qt Designer forms (ui/forms/operations.ui, operation_row.ui,
+#           error_row.ui, D-276); the sizes, the bar and the tabs' look stay the program's
 # v3.6.352: the busy bar keeps its place and is empty while nothing runs (shown and hidden, it laid the whole window out again at every action, D-266)
 # v1.2.253: Its tick "Hide when all operations are complete" reads and saves the one settings object (R-12)
 # v1.1.172: The symbol on the blue badge takes the theme's colour for marks on the blue (D-158)
@@ -41,7 +44,6 @@ __version__ = "operations.py 3.6.352"
 
 TABS: tuple[str, ...] = ("Operations", "Errors", "Log")
 MAXIMUM_LOG_LINES: int = 5000  # the log is kept only while the program runs
-NO_ERRORS: str = "There are no errors."
 WAITING: str = "Waiting"
 DONE: str = "Done"
 FAILED: str = "Failed"
@@ -199,28 +201,22 @@ class OperationRow(QFrame):
         self.finished: bool = False
         self.failed: bool = False
         self.step: str = WAITING
-        layout = QHBoxLayout(self)
+        form = forms.fill(self, "operation_row", {"bar": OperationBar})  # the picture, the name, the step and the bar (D-276)
+        layout = part(form, QHBoxLayout, "layout")
         layout.setContentsMargins(wpx(10), wpx(8), wpx(10), wpx(8))
         layout.setSpacing(wpx(12))
-        self.picture = QLabel(self)
+        self.picture: QLabel = part(form, QLabel, "picture")
         size = wpx(40)
         self.picture.setPixmap(account_picture(size, self.palette()))
         self.picture.setFixedSize(QSize(size, size))
-        layout.addWidget(self.picture, 0, Qt.AlignmentFlag.AlignVCenter)
-        texts = QVBoxLayout()
-        texts.setSpacing(wpx(3))
-        self.name_label = QLabel(name, self)
+        part(form, QVBoxLayout, "texts").setSpacing(wpx(3))
+        self.name_label: QLabel = part(form, QLabel, "name")
         self.name_label.setTextFormat(Qt.TextFormat.PlainText)
-        font = self.name_label.font()
-        font.setBold(True)
-        self.name_label.setFont(font)
-        self.step_label = QLabel(WAITING, self)
+        self.name_label.setText(name)
+        self.step_label: QLabel = part(form, QLabel, "step")
         self.step_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.bar = OperationBar(self)
-        texts.addWidget(self.name_label)
-        texts.addWidget(self.step_label)
-        texts.addWidget(self.bar)
-        layout.addLayout(texts, 1)
+        self.step_label.setText(WAITING)
+        self.bar: OperationBar = part(form, OperationBar, "bar")
 
     def show_step(self, step: str, done: int | None, total: int | None) -> None:
         self.step = step
@@ -245,36 +241,18 @@ class ErrorRow(QFrame):
         super().__init__(parent)
         self.setObjectName("errorRow")
         self.setStyleSheet("#errorRow { border-bottom: 1px solid palette(mid); }")
-        layout = QVBoxLayout(self)
+        form = forms.fill(self, "error_row")  # the account and the time above, the error under them (D-276)
+        layout = part(form, QVBoxLayout, "layout")
         layout.setContentsMargins(wpx(10), wpx(8), wpx(10), wpx(8))
         layout.setSpacing(wpx(3))
-        top = QHBoxLayout()
-        self.name_label = QLabel(name, self)
+        self.name_label: QLabel = part(form, QLabel, "name")
         self.name_label.setTextFormat(Qt.TextFormat.PlainText)
-        font = self.name_label.font()
-        font.setBold(True)
-        self.name_label.setFont(font)
-        self.time_label = QLabel(_now(), self)
-        top.addWidget(self.name_label, 1)
-        top.addWidget(self.time_label)
-        self.text_label = QLabel(text, self)
+        self.name_label.setText(name)
+        self.time_label: QLabel = part(form, QLabel, "time")
+        self.time_label.setText(_now())
+        self.text_label: QLabel = part(form, QLabel, "text")
         self.text_label.setTextFormat(Qt.TextFormat.PlainText)  # an error can hold text from a server: never markup
-        self.text_label.setWordWrap(True)
-        layout.addLayout(top)
-        layout.addWidget(self.text_label)
-
-
-def _list_page(parent: QWidget) -> tuple[QScrollArea, QVBoxLayout]:
-    area = QScrollArea(parent)
-    area.setWidgetResizable(True)
-    area.setFrameShape(QFrame.Shape.NoFrame)
-    inside = QWidget(area)
-    layout = QVBoxLayout(inside)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(0)
-    layout.addStretch(1)
-    area.setWidget(inside)
-    return area, layout
+        self.text_label.setText(text)
 
 
 class OperationsWindow(QDialog):
@@ -283,17 +261,14 @@ class OperationsWindow(QDialog):
 
     def __init__(self, names: Names, settings: QSettings | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Operations")
         self.setModal(False)
         self._names = names
         self._settings = settings
         self._rows: dict[tuple[str, str], OperationRow] = {}
         self._errors: list[ErrorRow] = []
         self.round_errors: int = 0  # errors since the last send and receive started
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self.tabs = QTabBar(self)
+        form = forms.fill(self, "operations", {"tabs": QTabBar})  # the tabs, their pages and the row at the bottom (D-276)
+        self.tabs: QTabBar = part(form, QTabBar, "tabs")
         for label in TABS:
             self.tabs.addTab(label)
         self.tabs.setDrawBase(False)
@@ -302,37 +277,19 @@ class OperationsWindow(QDialog):
             "QTabBar::tab { padding: 8px 16px; border: none; border-bottom: 3px solid transparent; }"
             " QTabBar::tab:selected { border-bottom: 3px solid palette(highlight); }"
         )
-        layout.addWidget(self.tabs)
-        self.pages = QStackedWidget(self)
-        operations_area, self._operations_layout = _list_page(self)
-        self.pages.addWidget(operations_area)
-        errors = QStackedWidget(self)
-        self.no_errors = QLabel(NO_ERRORS, errors)
-        self.no_errors.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        errors_area, self._errors_layout = _list_page(errors)
-        errors.addWidget(self.no_errors)
-        errors.addWidget(errors_area)
-        self._errors_stack = errors
-        self.pages.addWidget(errors)
-        self.log = QPlainTextEdit(self)
-        self.log.setReadOnly(True)
+        self.pages: QStackedWidget = part(form, QStackedWidget, "pages")
+        self._operations_layout: QVBoxLayout = part(form, QVBoxLayout, "operationsRows")
+        self.no_errors: QLabel = part(form, QLabel, "noErrors")
+        self._errors_layout: QVBoxLayout = part(form, QVBoxLayout, "errorsRows")
+        self._errors_stack: QStackedWidget = part(form, QStackedWidget, "errors")
+        self.log: QPlainTextEdit = part(form, QPlainTextEdit, "log")
         self.log.setMaximumBlockCount(MAXIMUM_LOG_LINES)
-        self.log.setFrameShape(QFrame.Shape.NoFrame)
-        self.pages.addWidget(self.log)
-        layout.addWidget(self.pages, 1)
-        bottom = QHBoxLayout()
-        bottom.setContentsMargins(wpx(10), wpx(8), wpx(10), wpx(8))
-        self.hide_when_done = QCheckBox("Hide when all operations are complete", self)
+        part(form, QHBoxLayout, "bottom").setContentsMargins(wpx(10), wpx(8), wpx(10), wpx(8))
+        self.hide_when_done: QCheckBox = part(form, QCheckBox, "hideWhenDone")
         self.hide_when_done.setChecked((read_preferences(settings) if settings is not None else Preferences()).operations_hide_when_done)
-        self.ignore_all = QPushButton("Ignore All", self)
-        self.copy_log = QPushButton("Copy Log", self)
-        self.clear_log = QPushButton("Clear Log", self)
-        bottom.addWidget(self.hide_when_done)
-        bottom.addStretch(1)
-        for button in (self.ignore_all, self.copy_log, self.clear_log):
-            button.setAutoDefault(False)
-            bottom.addWidget(button)
-        layout.addLayout(bottom)
+        self.ignore_all: QPushButton = part(form, QPushButton, "ignoreAll")
+        self.copy_log: QPushButton = part(form, QPushButton, "copyLog")
+        self.clear_log: QPushButton = part(form, QPushButton, "clearLog")
         self.tabs.currentChanged.connect(self._tab_changed)
         self.hide_when_done.toggled.connect(self._hide_toggled)
         self.ignore_all.clicked.connect(self.clear_errors)
