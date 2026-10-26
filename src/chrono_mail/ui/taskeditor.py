@@ -11,13 +11,10 @@ from PySide6.QtWidgets import (
     QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
     QSpinBox,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -28,13 +25,18 @@ from chrono_mail.engine.commands_tasklist import TASK_ADD, TASK_EDIT, TaskInfo
 from chrono_mail.engine.commands_tasklist import AddParameters as TaskAdd
 from chrono_mail.engine.commands_tasklist import EditParameters as TaskEdit
 from chrono_mail.core.words import counted
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.forms import part
+from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "taskeditor.py 3.6.350"
+__version__ = "taskeditor.py 4.0.378"
 
 # --- Version history ----------------------------------------------------
+# v4.0.378: the task editor and its date fields are built from their Qt Designer forms (ui/forms/task_editor.ui, task_date.ui, D-276); its
+#           sizes follow the size factor
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v3.6.349: a task's times through the zone the engine reads them back in (also never the platform's conversion, RV-201)
 # v3.2.342: a repeat or reminder the lists do not offer is shown as it is and kept; both are sent only when changed (RV-19); due and start
@@ -61,18 +63,14 @@ class DateField(QWidget):
 
     def __init__(self, label: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.enabled = QCheckBox(label, self)
-        self.stamp = QDateTimeEdit(self)
+        form = forms.fill(self, "task_date")  # the tick, the date and All day (D-276)
+        self.enabled: QCheckBox = part(form, QCheckBox, "enabled")
+        self.enabled.setText(label)
+        self.stamp: QDateTimeEdit = part(form, QDateTimeEdit, "stamp")
         self.stamp.setCalendarPopup(True)
         self.stamp.setDisplayFormat("yyyy-MM-dd HH:mm")
         self.stamp.setDateTime(QDateTime.currentDateTime())
-        self.all_day = QCheckBox("All day", self)
-        layout.addWidget(self.enabled)
-        layout.addWidget(self.stamp)
-        layout.addWidget(self.all_day)
-        layout.addStretch(1)
+        self.all_day: QCheckBox = part(form, QCheckBox, "allDay")
         self.enabled.toggled.connect(self._changed)
         self.all_day.toggled.connect(self._changed)
         self._changed()
@@ -118,63 +116,43 @@ class TaskEditor(QDialog):
         self._reminder_before: str = ""
         self._item: str | None = None if task is None else task.item
         self.setWindowTitle("New task" if task is None else f"Task: {task.summary}")
-        self.setMinimumWidth(520)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.summary = QLineEdit(self)
-        self.list = QComboBox(self)
+        form = forms.fill(self, "task_editor", {"startField": lambda parent: DateField("Start", parent), "dueField": lambda parent: DateField("Due", parent)})  # D-276
+        self.summary: QLineEdit = part(form, QLineEdit, "summary")
+        self.list: QComboBox = part(form, QComboBox, "list")
         for info in lists:
             self.list.addItem(f"{info.account_name} — {info.name}", info.collection)
         self.list.setCurrentIndex(max(0, self.list.findData(collection)))
         self.list.setEnabled(task is None and self.list.count() > 1)
-        self.start = DateField("Start", self)
-        self.due = DateField("Due", self)
-        self.priority = QComboBox(self)
+        self.start: DateField = part(form, DateField, "startField")
+        self.due: DateField = part(form, DateField, "dueField")
+        self.priority: QComboBox = part(form, QComboBox, "priority")
         for value, label in PRIORITIES:
             self.priority.addItem(label, value)
-        self.status = QComboBox(self)
+        self.status: QComboBox = part(form, QComboBox, "status")
         for value, label in STATUSES:
             self.status.addItem(label, value)
-        self.percent = QSpinBox(self)
+        self.percent: QSpinBox = part(form, QSpinBox, "percent")
         self.percent.setRange(0, 100)
-        self.percent.setSuffix(" %")
-        self.repeat = QComboBox(self)
+        self.repeat: QComboBox = part(form, QComboBox, "repeat")
         for value, label in REPEATS:
             self.repeat.addItem(label, value)
         self.repeat.setEditable(False)
-        self.reminder = QComboBox(self)
+        self.reminder: QComboBox = part(form, QComboBox, "reminder")
         for value, label in REMINDERS:
             self.reminder.addItem(label, value)
-        self.location = QLineEdit(self)
-        self.note = QPlainTextEdit(self)
-        self.note.setMinimumHeight(90)
-        self.tags = QLineEdit(self)
-        self.tags.setPlaceholderText("Tags, separated by commas")
+        self.location: QLineEdit = part(form, QLineEdit, "location")
+        self.note: QPlainTextEdit = part(form, QPlainTextEdit, "note")
+        self.note.setMinimumHeight(wpx(90))
+        self.tags: QLineEdit = part(form, QLineEdit, "tags")
         completer = QCompleter(known_tags, self.tags)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.tags.setCompleter(completer)
-        form.addRow("Summary", self.summary)
-        form.addRow("Task list", self.list)
-        form.addRow("", self.start)
-        form.addRow("", self.due)
-        form.addRow("Priority", self.priority)
-        form.addRow("Status", self.status)
-        form.addRow("Done", self.percent)
-        form.addRow("Repeat", self.repeat)
-        form.addRow("Reminder", self.reminder)
-        form.addRow("Location", self.location)
-        form.addRow("Tags", self.tags)
-        layout.addLayout(form)
-        layout.addWidget(QLabel("Note", self))
-        layout.addWidget(self.note)
-        self.result_label = QLabel("", self)
-        self.result_label.setWordWrap(True)
-        layout.addWidget(self.result_label)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
+        self.result_label: QLabel = part(form, QLabel, "result")
+        buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        forms.smallest(self, 520)  # its texts are never cut off, also at the largest size
         if task is not None:
             self._fill(task)
 

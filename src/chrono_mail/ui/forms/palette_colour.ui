@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ColourRow</class>
+ <widget class="QWidget" name="ColourRow">
+  <layout class="QHBoxLayout" name="layout" stretch="0,1,0">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
+   <item>
+    <widget class="QPushButton" name="colour">
+     <property name="text">
+      <string>▾</string>
+     </property>
+     <property name="toolTip">
+      <string>Pick the colour</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLineEdit" name="name" />
+   </item>
+   <item>
+    <widget class="QToolButton" name="delete">
+     <property name="toolTip">
+      <string>Delete this colour</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

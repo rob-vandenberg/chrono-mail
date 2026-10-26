@@ -7,14 +7,11 @@ from PySide6.QtWidgets import (
     QDateEdit,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -25,13 +22,19 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_addressbook import CONTACT_ADD, CONTACT_EDIT, ContactInfo
 from chrono_mail.engine.commands_addressbook import AddParameters as ContactAdd
 from chrono_mail.engine.commands_addressbook import EditParameters as ContactEdit
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.forms import part
+from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "contacteditor.py 3.6.350"
+__version__ = "contacteditor.py 4.0.378"
 
 # --- Version history ----------------------------------------------------
+# v4.0.378: the contact editor, a list of addresses or numbers, one entry of it and one address are built from their Qt Designer forms
+#           (ui/forms/contact_editor.ui, contact_list.ui, contact_entry.ui, contact_address.ui, D-276); Tab goes through the entries and
+#           addresses where they are on screen (they came after Save and Cancel); the sizes follow the size factor
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v3.2.342: a list of e-mail addresses, phone numbers, web or postal addresses is sent only when it changed; an entry without a kind keeps none (RV-20)
 # v3.0.339: a birthday without a year is shown (month and day) and kept; the birthday is sent only when it was changed (RV-16)
@@ -50,18 +53,18 @@ class LabeledRow(QWidget):
 
     def __init__(self, types: tuple[str, ...], placeholder: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.kind = QComboBox(self)
+        form = forms.fill(self, "contact_entry")  # the kind, the value and ✕ (D-276)
+        self.kind: QComboBox = part(form, QComboBox, "kind")
         self.kind.addItems([kind.capitalize() for kind in types])
         self.kind.setEditable(True)
-        self.value = QLineEdit(self)
+        self.value: QLineEdit = part(form, QLineEdit, "value")
         self.value.setPlaceholderText(placeholder)
-        self.remove_button = QPushButton("✕", self)
-        self.remove_button.setFixedWidth(30)
-        layout.addWidget(self.kind)
-        layout.addWidget(self.value, 1)
-        layout.addWidget(self.remove_button)
+        self.remove_button: QPushButton = part(form, QPushButton, "remove")
+        self.remove_button.setFixedWidth(wpx(30))
+
+    def tab_parts(self) -> list[QWidget]:
+        """Its parts in the order Tab goes through them."""
+        return [self.kind, self.value, self.remove_button]
 
     def set_entry(self, types: tuple[str, ...], value: str) -> None:
         first = next((kind for kind in types if kind != "internet"), "")
@@ -86,15 +89,17 @@ class LabeledRow(QWidget):
 class LabeledList(QGroupBox):
     """A list of rows with an Add button."""
 
+    changed = Signal()  # a row came or went: the window puts it in its Tab order
+
     def __init__(self, title: str, types: tuple[str, ...], placeholder: str, parent: QWidget | None = None) -> None:
         super().__init__(title, parent)
         self._types: tuple[str, ...] = types
         self._placeholder: str = placeholder
         self.rows: list[LabeledRow] = []
-        self._layout = QVBoxLayout(self)
-        self.add_button = QPushButton(f"Add", self)
+        form = forms.fill(self, "contact_list")  # the rows and Add (D-276)
+        self._layout: QVBoxLayout = part(form, QVBoxLayout, "layout")
+        self.add_button: QPushButton = part(form, QPushButton, "add")
         self.add_button.clicked.connect(lambda: self.add_row())
-        self._layout.addWidget(self.add_button, 0, Qt.AlignmentFlag.AlignLeft)
 
     def add_row(self, types: tuple[str, ...] = (), value: str = "") -> LabeledRow:
         row = LabeledRow(self._types, self._placeholder, self)
@@ -102,12 +107,18 @@ class LabeledList(QGroupBox):
         self.rows.append(row)
         self._layout.insertWidget(len(self.rows) - 1, row)
         row.remove_button.clicked.connect(lambda: self._remove(row))
+        self.changed.emit()
         return row
 
     def _remove(self, row: LabeledRow) -> None:
         self.rows.remove(row)
         row.setParent(None)
         row.deleteLater()
+        self.changed.emit()
+
+    def tab_parts(self) -> list[QWidget]:
+        """Its rows' parts and Add, in the order Tab goes through them."""
+        return [*(widget for row in self.rows for widget in row.tab_parts()), self.add_button]
 
     def entries(self) -> list[str]:
         return [entry for entry in (row.entry() for row in self.rows) if entry]
@@ -116,23 +127,20 @@ class LabeledList(QGroupBox):
 class AddressRow(QGroupBox):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("", parent)
-        form = QFormLayout(self)
-        self.kind = QComboBox(self)
+        form = forms.fill(self, "contact_address")  # one address (D-276)
+        self.kind: QComboBox = part(form, QComboBox, "kind")
         self.kind.addItems([kind.capitalize() for kind in ADDRESS_TYPES])
         self.kind.setEditable(True)
-        self.street = QLineEdit(self)
-        self.locality = QLineEdit(self)
-        self.region = QLineEdit(self)
-        self.postal_code = QLineEdit(self)
-        self.country = QLineEdit(self)
-        self.remove_button = QPushButton("Remove this address", self)
-        form.addRow("Kind", self.kind)
-        form.addRow("Street", self.street)
-        form.addRow("City", self.locality)
-        form.addRow("State / region", self.region)
-        form.addRow("Postal code", self.postal_code)
-        form.addRow("Country", self.country)
-        form.addRow("", self.remove_button)
+        self.street: QLineEdit = part(form, QLineEdit, "street")
+        self.locality: QLineEdit = part(form, QLineEdit, "locality")
+        self.region: QLineEdit = part(form, QLineEdit, "region")
+        self.postal_code: QLineEdit = part(form, QLineEdit, "postalCode")
+        self.country: QLineEdit = part(form, QLineEdit, "country")
+        self.remove_button: QPushButton = part(form, QPushButton, "remove")
+
+    def tab_parts(self) -> list[QWidget]:
+        """Its parts in the order Tab goes through them."""
+        return [self.kind, self.street, self.locality, self.region, self.postal_code, self.country, self.remove_button]
 
     def entry(self) -> str:
         parts = [self.street.text(), self.locality.text(), self.region.text(), self.postal_code.text(), self.country.text()]
@@ -155,61 +163,35 @@ class ContactEditor(QDialog):
         self._original: ContactInfo | None = contact
         self._item: str | None = None if contact is None else contact.item
         self.setWindowTitle("New contact" if contact is None else f"Contact: {contact.name}")
-        self.setMinimumSize(560, 600)
-        outer = QVBoxLayout(self)
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        inner = QWidget(scroll)
-        layout = QVBoxLayout(inner)
-        scroll.setWidget(inner)
-        outer.addWidget(scroll, 1)
-
-        form = QFormLayout()
-        self.book = QComboBox(inner)
+        lists = {
+            "emails": ("E-mail addresses", EMAIL_TYPES, "name@example.com"), "phones": ("Phone numbers", PHONE_TYPES, "+31 6 12345678"),
+            "urls": ("Web addresses", URL_TYPES, "https://example.com"),
+        }
+        form = forms.fill(self, "contact_editor", {name: (lambda parent, made=made: LabeledList(*made, parent)) for name, made in lists.items()})  # D-276
+        self.book: QComboBox = part(form, QComboBox, "book")
         for info in address_books:
             self.book.addItem(f"{info.account_name} — {info.name}", info.collection)
         self.book.setCurrentIndex(max(0, self.book.findData(collection)))
         self.book.setEnabled(contact is None and self.book.count() > 1)
-        self.prefix = QLineEdit(inner)
-        self.given = QLineEdit(inner)
-        self.additional = QLineEdit(inner)
-        self.family = QLineEdit(inner)
-        self.suffix = QLineEdit(inner)
-        self.display_name = QLineEdit(inner)
-        self.display_name.setPlaceholderText("Made from the parts above when empty")
-        self.nickname = QLineEdit(inner)
-        self.organization = QLineEdit(inner)
-        self.department = QLineEdit(inner)
-        self.title = QLineEdit(inner)
-        form.addRow("Address book", self.book)
-        form.addRow("Title", self.prefix)
-        form.addRow("First name", self.given)
-        form.addRow("Middle names", self.additional)
-        form.addRow("Last name", self.family)
-        form.addRow("Suffix", self.suffix)
-        form.addRow("Display name", self.display_name)
-        form.addRow("Nickname", self.nickname)
-        form.addRow("Company", self.organization)
-        form.addRow("Department", self.department)
-        form.addRow("Job title", self.title)
-        layout.addLayout(form)
-
-        self.emails = LabeledList("E-mail addresses", EMAIL_TYPES, "name@example.com", inner)
-        self.phones = LabeledList("Phone numbers", PHONE_TYPES, "+31 6 12345678", inner)
-        self.urls = LabeledList("Web addresses", URL_TYPES, "https://example.com", inner)
-        for group in (self.emails, self.phones, self.urls):
-            layout.addWidget(group)
+        self.prefix: QLineEdit = part(form, QLineEdit, "prefix")
+        self.given: QLineEdit = part(form, QLineEdit, "given")
+        self.additional: QLineEdit = part(form, QLineEdit, "additional")
+        self.family: QLineEdit = part(form, QLineEdit, "family")
+        self.suffix: QLineEdit = part(form, QLineEdit, "suffix")
+        self.display_name: QLineEdit = part(form, QLineEdit, "displayName")
+        self.nickname: QLineEdit = part(form, QLineEdit, "nickname")
+        self.organization: QLineEdit = part(form, QLineEdit, "organization")
+        self.department: QLineEdit = part(form, QLineEdit, "department")
+        self.title: QLineEdit = part(form, QLineEdit, "jobTitle")
+        self.emails: LabeledList = part(form, LabeledList, "emails")
+        self.phones: LabeledList = part(form, LabeledList, "phones")
+        self.urls: LabeledList = part(form, LabeledList, "urls")
         self.address_rows: list[AddressRow] = []
-        self.address_box = QVBoxLayout()
-        layout.addLayout(self.address_box)
-        self.add_address_button = QPushButton("Add an address", inner)
+        self.address_box: QVBoxLayout = part(form, QVBoxLayout, "addresses")
+        self.add_address_button: QPushButton = part(form, QPushButton, "addAddress")
         self.add_address_button.clicked.connect(lambda: self.add_address())
-        layout.addWidget(self.add_address_button, 0, Qt.AlignmentFlag.AlignLeft)
-
-        dates = QHBoxLayout()
-        self.has_birthday = QCheckBox("Birthday", inner)
-        self.birthday = QDateEdit(inner)
+        self.has_birthday: QCheckBox = part(form, QCheckBox, "hasBirthday")
+        self.birthday: QDateEdit = part(form, QDateEdit, "birthday")
         self.birthday.setCalendarPopup(True)
         self.birthday.setDisplayFormat("yyyy-MM-dd")
         self.birthday.setDate(QDate(1980, 1, 1))
@@ -218,31 +200,21 @@ class ContactEditor(QDialog):
         self._birthday_without_year = False  # a birthday kept without a year (--0415): shown and saved as month and day
         self._birthday_before = ""  # the birthday as it was: it is sent only when the person changed it (RV-16)
         self._lists_before: dict[str, tuple[str, ...]] = {}  # the lists as the contact had them: a list is sent only when it changed (RV-20)
-        dates.addWidget(self.has_birthday)
-        dates.addWidget(self.birthday)
-        dates.addStretch(1)
-        layout.addLayout(dates)
-        layout.addWidget(QLabel("Note", inner))
-        self.note = QPlainTextEdit(inner)
-        self.note.setMinimumHeight(70)
-        layout.addWidget(self.note)
-        tags_row = QFormLayout()
-        self.tags = QLineEdit(inner)
-        self.tags.setPlaceholderText("Tags, separated by commas")
+        self.note: QPlainTextEdit = part(form, QPlainTextEdit, "note")
+        self.note.setMinimumHeight(wpx(70))
+        self.tags: QLineEdit = part(form, QLineEdit, "tags")
         completer = QCompleter(known_tags, self.tags)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.tags.setCompleter(completer)
-        tags_row.addRow("Tags", self.tags)
-        layout.addLayout(tags_row)
-
-        self.result_label = QLabel("", self)
-        self.result_label.setWordWrap(True)
-        outer.addWidget(self.result_label)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
+        self.result_label: QLabel = part(form, QLabel, "result")
+        buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        outer.addWidget(buttons)
+        for group in (self.emails, self.phones, self.urls):
+            group.changed.connect(self._tab_order)
+        self.setMinimumHeight(wpx(600))
+        forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
         if contact is not None:
             self._fill(contact)
         else:
@@ -268,12 +240,23 @@ class ContactEditor(QDialog):
         self.address_rows.append(row)
         self.address_box.addWidget(row)
         row.remove_button.clicked.connect(lambda: self._remove_address(row))
+        self._tab_order()
         return row
 
     def _remove_address(self, row: AddressRow) -> None:
         self.address_rows.remove(row)
         row.setParent(None)
         row.deleteLater()
+        self._tab_order()
+
+    def _tab_order(self) -> None:
+        """Tab goes through the lists and addresses where they are on screen, after the names and before the birthday (rows are made after
+        the window, so they would otherwise come after Save and Cancel)."""
+        anchor: QWidget = self.title
+        for group in (*(group.tab_parts() for group in (self.emails, self.phones, self.urls)), *(row.tab_parts() for row in self.address_rows), [self.add_address_button]):
+            for widget in group:
+                QWidget.setTabOrder(anchor, widget)
+                anchor = widget
 
     def _fill(self, contact: ContactInfo) -> None:
         self.prefix.setText(contact.prefix)

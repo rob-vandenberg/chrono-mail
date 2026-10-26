@@ -2,24 +2,7 @@ import html
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QDate, QDateTime, Qt, QTime, Signal
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QCompleter,
-    QDateEdit,
-    QDateTimeEdit,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMenu,
-    QPlainTextEdit,
-    QToolButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QCheckBox, QComboBox, QCompleter, QDateTimeEdit, QDialog, QDialogButtonBox, QLabel, QLineEdit, QMenu, QPlainTextEdit, QToolButton, QWidget
 
 from chrono_mail.pim.times import in_local_zone
 from chrono_mail.engine.commands_pim import CollectionSummary
@@ -27,16 +10,20 @@ from chrono_mail.core import OWN_COLOUR_ID, ChronoMailError
 from chrono_mail.engine.commands_calendar import EVENT_ADD, EVENT_EDIT, EventInfo
 from chrono_mail.engine.commands_calendar import AddParameters as EventAdd
 from chrono_mail.engine.commands_calendar import EditParameters as EventEdit
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.paletteeditor import OTHER_COLOUR_NAME, PaletteEditor, circle_icon, palette_of_summary
 from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
+from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 3.6.351"
+__version__ = "eventeditor.py 4.0.378"
 
 # --- Version history ----------------------------------------------------
+# v4.0.378: built from its Qt Designer form (ui/forms/event_editor.ui, D-276); its sizes follow the size factor
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError; a first reminder at a set time shows as "At a set time" (it showed "No reminder", and choosing that
 #           kept it)
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
@@ -84,17 +71,15 @@ class EventEditor(QDialog):
         self._item: str | None = None if event is None else event.item
         self._occurrence: str = occurrence
         self.setWindowTitle("New event" if event is None else (f"Occurrence: {event.summary}" if occurrence else f"Event: {event.summary}"))
-        self.setMinimumWidth(540)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.summary = QLineEdit(self)
-        self.calendar = QComboBox(self)
+        form = forms.fill(self, "event_editor")  # D-276
+        self.summary: QLineEdit = part(form, QLineEdit, "summary")
+        self.calendar: QComboBox = part(form, QComboBox, "calendar")
         for info in calendars:
             self.calendar.addItem(f"{info.account_name} — {info.name}", info.collection)
         self.calendar.setCurrentIndex(max(0, self.calendar.findData(collection)))
         self.calendar.setEnabled(event is None and self.calendar.count() > 1)
         self._calendars: list[CollectionSummary] = list(calendars)
-        self.colour = QToolButton(self)  # "● name ▾": the colour of the appointment, one of its calendar's (D-191)
+        self.colour: QToolButton = part(form, QToolButton, "colour")  # "● name ▾": the colour of the appointment, one of its calendar's (D-191)
         self.colour.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.colour.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.colour_menu = QMenu(self.colour)
@@ -102,57 +87,38 @@ class EventEditor(QDialog):
         self._original_colour: str = event.colour_id if event is not None else ""
         self._other_colour: str = event.other_colour if event is not None else ""
         self.colour_id: str = self._original_colour or (OWN_COLOUR_ID if not self._other_colour else "")
-        self.location = QLineEdit(self)
-        self.all_day = QCheckBox("All day", self)
-        self.start = QDateTimeEdit(self)
-        self.end = QDateTimeEdit(self)
+        self.location: QLineEdit = part(form, QLineEdit, "location")
+        self.all_day: QCheckBox = part(form, QCheckBox, "allDay")
+        self.start: QDateTimeEdit = part(form, QDateTimeEdit, "start")
+        self.end: QDateTimeEdit = part(form, QDateTimeEdit, "end")
         for edit in (self.start, self.end):
             edit.setCalendarPopup(True)
             edit.setDisplayFormat(TIME_FORMAT)
         now = QDateTime.currentDateTime()
         self.start.setDateTime(QDateTime(now.date(), QTime(now.time().hour() + 1 if now.time().hour() < 23 else 23, 0)))
         self.end.setDateTime(self.start.dateTime().addSecs(3600))
-        self.repeat = QComboBox(self)
+        self.repeat: QComboBox = part(form, QComboBox, "repeat")
         for value, label in REPEATS:
             self.repeat.addItem(label, value)
-        self.reminder = QComboBox(self)
+        self.reminder: QComboBox = part(form, QComboBox, "reminder")
         for value, label in REMINDERS:
             self.reminder.addItem(label, value)
-        self.busy = QComboBox(self)
+        self.busy: QComboBox = part(form, QComboBox, "busy")
         self.busy.addItem("Busy", True)
         self.busy.addItem("Free", False)
-        self.attendees = QLineEdit(self)
-        self.attendees.setPlaceholderText("Addresses, separated by commas")
-        self.tags = QLineEdit(self)
-        self.tags.setPlaceholderText("Tags, separated by commas")
+        self.attendees: QLineEdit = part(form, QLineEdit, "attendees")
+        self.tags: QLineEdit = part(form, QLineEdit, "tags")
         completer = QCompleter(known_tags, self.tags)
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.tags.setCompleter(completer)
-        self.description = QPlainTextEdit(self)
-        self.description.setMinimumHeight(90)
-        form.addRow("Title", self.summary)
-        form.addRow("Calendar", self.calendar)
-        form.addRow("Colour", self.colour)
-        form.addRow("Location", self.location)
-        form.addRow("", self.all_day)
-        form.addRow("Starts", self.start)
-        form.addRow("Ends", self.end)
-        form.addRow("Repeat", self.repeat)
-        form.addRow("Reminder", self.reminder)
-        form.addRow("Show as", self.busy)
-        form.addRow("Attendees", self.attendees)
-        form.addRow("Tags", self.tags)
-        layout.addLayout(form)
-        layout.addWidget(QLabel("Description", self))
-        layout.addWidget(self.description)
-        self.result_label = QLabel("", self)
-        self.result_label.setWordWrap(True)
-        layout.addWidget(self.result_label)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
+        self.description: QPlainTextEdit = part(form, QPlainTextEdit, "description")
+        self.description.setMinimumHeight(wpx(90))
+        self.result_label: QLabel = part(form, QLabel, "result")
+        buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        forms.smallest(self, 540)  # its texts are never cut off, also at the largest size
         self.calendar.currentIndexChanged.connect(self._calendar_changed)
         self._show_colours()
         self.all_day.toggled.connect(self._all_day_changed)

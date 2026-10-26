@@ -10,9 +10,11 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_forms.py 4.0.377"
+__version__ = "test_ui_forms.py 4.0.378"
 
 # --- Version history ----------------------------------------------------
+# v4.0.378: the texts of the calendar, contacts and tasks windows fit at the smallest and largest size; Tab goes through a contact's entries
+#           and addresses, and a colour added, where they are on screen
 # v4.0.377: the texts of the mail windows fit at the smallest and largest size; Tab goes through the rule rows where they are on screen
 # v4.0.376: the texts of the account, recovery, backup, restore and import windows fit at the smallest and largest size; Edit account shows
 #           nothing of a tab the account has not; Tab reaches the found folders before OK; a backup's file name is never markup
@@ -542,4 +544,84 @@ def test_tab_goes_through_the_rule_rows_where_they_are_on_screen(world: World, q
         current = current.nextInFocusChain()
     first = dialog.condition_rows[0]
     order = [dialog.account, first.field, second.field, dialog.add_condition_button, action.kind, dialog.action_rows[1].kind, dialog.add_action_button, dialog.save_button]
+    assert [chain.index(widget) for widget in order] == sorted(chain.index(widget) for widget in order)
+
+
+def _calendar_summary(read_only: bool = False) -> object:
+    from chrono_mail.core import OWN_COLOUR_ID
+    from chrono_mail.core.pim import PaletteColour
+    from chrono_mail.engine.commands_pim import CollectionSummary
+
+    palette = (PaletteColour(OWN_COLOUR_ID, "Work", "#3366cc"), PaletteColour("c1", "Tomato", "#d50000"))
+    return CollectionSummary("local", "On this computer", "cal1", "events", "Work", "#3366cc", read_only, 3, palette)
+
+
+@pytest.mark.parametrize("factor", [0.75, 2.0], ids=["smallest", "largest"])
+def test_every_text_of_the_calendar_contacts_and_tasks_windows_fits(world: World, qtbot: QtBot, factor: float) -> None:
+    from chrono_mail.engine.commands_pim import CollectionSummary
+    from chrono_mail.ui.contacteditor import ContactEditor
+    from chrono_mail.ui.eventeditor import EventEditor
+    from chrono_mail.ui.newcollection import NewCollectionDialog
+    from chrono_mail.ui.paletteeditor import PaletteEditor
+    from chrono_mail.ui.taskeditor import TaskEditor
+
+    calendar = _calendar_summary()
+    assert isinstance(calendar, CollectionSummary)
+    lists = [CollectionSummary("local", "On this computer", "t1", "tasks", "Tasks", "#3366cc", False, 0)]
+    books = [CollectionSummary("local", "On this computer", "b1", "contacts", "Contacts", "#3366cc", False, 0)]
+    world.window.try_windows_scale(factor)
+    try:
+        contact = ContactEditor(world.backend, books, [], None, "b1", world.window)
+        contact.add_address()
+        windows: list[QWidget] = [
+            EventEditor(world.backend, [calendar], [], None, "cal1", "", "2026-10-28T10:00", "2026-10-28T11:00", world.window),
+            TaskEditor(world.backend, lists, [], None, "t1", world.window), contact, NewCollectionDialog(world.backend, "New calendar", "", world.window),
+            PaletteEditor(world.backend, calendar, world.window),
+        ]
+        for window in windows:
+            qtbot.addWidget(window)
+            window.show()
+            window.resize(window.sizeHint().expandedTo(window.minimumSize()))  # its own size: the test's screen is smaller than a window at the largest size
+            qtbot.wait(50)
+            _texts_fit(window, factor)
+            window.hide()
+    finally:
+        world.window.try_windows_scale(1.0)
+
+
+def _chain(start: QWidget) -> list[QWidget]:
+    chain: list[QWidget] = []
+    current: QWidget | None = start
+    while current is not None and len(chain) < 400 and current not in chain:
+        chain.append(current)
+        current = current.nextInFocusChain()
+    return chain
+
+
+def test_tab_goes_through_the_contact_s_entries_and_addresses_where_they_are_on_screen(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.engine.commands_pim import CollectionSummary
+    from chrono_mail.ui.contacteditor import ContactEditor
+
+    books = [CollectionSummary("local", "On this computer", "b1", "contacts", "Contacts", "#3366cc", False, 0)]
+    editor = ContactEditor(world.backend, books, [], None, "b1", world.window)
+    qtbot.addWidget(editor)
+    email = editor.emails.rows[0]
+    second = editor.emails.add_row()
+    address = editor.add_address()
+    chain = _chain(editor.title)
+    order = [editor.title, email.value, second.value, editor.emails.add_button, editor.phones.rows[0].value, address.street, editor.add_address_button, editor.has_birthday, editor.save_button]
+    assert [chain.index(widget) for widget in order] == sorted(chain.index(widget) for widget in order)
+
+
+def test_a_colour_added_comes_after_the_others_in_the_tab_order(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.engine.commands_pim import CollectionSummary
+    from chrono_mail.ui.paletteeditor import PaletteEditor
+
+    calendar = _calendar_summary()
+    assert isinstance(calendar, CollectionSummary)
+    editor = PaletteEditor(world.backend, calendar, world.window)
+    qtbot.addWidget(editor)
+    editor.add_button.click()
+    chain = _chain(editor.rows[0].colour_button)
+    order = [editor.rows[0].name, editor.rows[1].name, editor.rows[2].name, editor.add_button, editor.save_button]
     assert [chain.index(widget) for widget in order] == sorted(chain.index(widget) for widget in order)

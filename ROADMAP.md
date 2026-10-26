@@ -190,7 +190,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.0.375) Forms batch 1: Sync conflicts, one sync conflict, Operations (with its rows), the index rebuild window and the delayed-send notice are Qt Designer forms (D-276); the loader no longer leaves stand-ins behind (opening Settings again crashed).
 - DONE (4.0.376) Forms batch 2: Add and Edit account (the server boxes one shared form), the calendar account, Found folders, the certificate, both recovery code windows, Backup, Restore and Import are Qt Designer forms (D-276).
 - DONE (4.0.377) Forms batch 3: Advanced search, the Message list window and its column picker, the rule editor and its rows, the tag editor, Send later and View source are Qt Designer forms (D-276).
-- Next: forms batch 4 (calendar, contacts and tasks).
+- DONE (4.0.378) Forms batch 4: the event, task and contact editors, New calendar and Event colours are Qt Designer forms; every dialog is a form (D-276).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

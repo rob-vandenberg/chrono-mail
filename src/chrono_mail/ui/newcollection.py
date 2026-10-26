@@ -1,14 +1,17 @@
-from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QLineEdit, QPushButton, QWidget
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_pim import COLLECTION_ACCOUNTS, PlaceList
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "newcollection.py 1.1.236"
+__version__ = "newcollection.py 4.0.378"
 
 # --- Version history ----------------------------------------------------
+# v4.0.378: built from its Qt Designer form (ui/forms/new_collection.ui, D-276); its smallest width follows the size factor
 # v1.1.236: Initial: the New calendar, task list or address book window with its Account, set to the account it was opened on (R-29, D-198)
 
 
@@ -19,20 +22,15 @@ class NewCollectionDialog(QDialog):
     def __init__(self, backend: Backend, title: str, account: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
-        self.setMinimumWidth(380)
         self._wanted: str = account or LOCAL_ACCOUNT_ID
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.name_field = QLineEdit(self)
-        self.account_field = QComboBox(self)
+        form = forms.fill(self, "new_collection")  # D-276
+        self.name_field: QLineEdit = part(form, QLineEdit, "name")
+        self.account_field: QComboBox = part(form, QComboBox, "account")
         self.account_field.setEnabled(False)  # greyed until the accounts are in
-        form.addRow("Name:", self.name_field)
-        form.addRow("Account:", self.account_field)
-        layout.addLayout(form)
-        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        self.buttons: QDialogButtonBox = part(form, QDialogButtonBox, "buttons")
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
-        layout.addWidget(self.buttons)
+        forms.smallest(self, 380)  # its texts are never cut off, also at the largest size
         self.name_field.textChanged.connect(self._usable)
         self._usable()
         backend.ask(COLLECTION_ACCOUNTS, NoParameters(), self._listed, lambda error: None, owner=self)

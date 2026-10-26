@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>TaskEditor</class>
+ <widget class="QWidget" name="TaskEditor">
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <layout class="QFormLayout" name="fields">
+     <item row="0" column="0">
+      <widget class="QLabel" name="summaryLabel">
+       <property name="text">
+        <string>Summary</string>
+       </property>
+       <property name="buddy">
+        <cstring>summary</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLineEdit" name="summary" />
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="listLabel">
+       <property name="text">
+        <string>Task list</string>
+       </property>
+       <property name="buddy">
+        <cstring>list</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QComboBox" name="list" />
+     </item>
+     <item row="2" column="1">
+      <widget class="QWidget" name="startField" />
+     </item>
+     <item row="3" column="1">
+      <widget class="QWidget" name="dueField" />
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="priorityLabel">
+       <property name="text">
+        <string>Priority</string>
+       </property>
+       <property name="buddy">
+        <cstring>priority</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QComboBox" name="priority" />
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="statusLabel">
+       <property name="text">
+        <string>Status</string>
+       </property>
+       <property name="buddy">
+        <cstring>status</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <widget class="QComboBox" name="status" />
+     </item>
+     <item row="6" column="0">
+      <widget class="QLabel" name="percentLabel">
+       <property name="text">
+        <string>Done</string>
+       </property>
+       <property name="buddy">
+        <cstring>percent</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="6" column="1">
+      <widget class="QSpinBox" name="percent">
+       <property name="suffix">
+        <string> %</string>
+       </property>
+      </widget>
+     </item>
+     <item row="7" column="0">
+      <widget class="QLabel" name="repeatLabel">
+       <property name="text">
+        <string>Repeat</string>
+       </property>
+       <property name="buddy">
+        <cstring>repeat</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="7" column="1">
+      <widget class="QComboBox" name="repeat" />
+     </item>
+     <item row="8" column="0">
+      <widget class="QLabel" name="reminderLabel">
+       <property name="text">
+        <string>Reminder</string>
+       </property>
+       <property name="buddy">
+        <cstring>reminder</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="8" column="1">
+      <widget class="QComboBox" name="reminder" />
+     </item>
+     <item row="9" column="0">
+      <widget class="QLabel" name="locationLabel">
+       <property name="text">
+        <string>Location</string>
+       </property>
+       <property name="buddy">
+        <cstring>location</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="9" column="1">
+      <widget class="QLineEdit" name="location" />
+     </item>
+     <item row="10" column="0">
+      <widget class="QLabel" name="tagsLabel">
+       <property name="text">
+        <string>Tags</string>
+       </property>
+       <property name="buddy">
+        <cstring>tags</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="10" column="1">
+      <widget class="QLineEdit" name="tags">
+       <property name="placeholderText">
+        <string>Tags, separated by commas</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="noteLabel">
+     <property name="text">
+      <string>Note</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="note" />
+   </item>
+   <item>
+    <widget class="QLabel" name="result">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Save|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

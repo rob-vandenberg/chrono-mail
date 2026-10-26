@@ -6,9 +6,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
-    QFrame,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -22,15 +19,19 @@ from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.core import OWN_COLOUR_ID, ChronoMailError, PaletteColour
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR
 from chrono_mail.engine.commands_pim import COLLECTION_SET_PALETTE, CollectionSummary, PaletteParameters
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.icons import theme_icon
-from chrono_mail.ui.scale import px_for
+from chrono_mail.ui.scale import px_for, wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 3.6.350"
+__version__ = "paletteeditor.py 4.0.378"
 
 # --- Version history ----------------------------------------------------
+# v4.0.378: the editor and a colour's row are built from their Qt Designer forms (ui/forms/palette_editor.ui, palette_colour.ui, D-276); the
+#           rows are made at their place, and a colour added comes after the others in the Tab order (it came after Save and Cancel)
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.0.291: A small margin at the right of the list, so the delete buttons do not touch the scrollbar (the owner)
 # v2.0.290: No outline around the list of colours (the owner)
@@ -77,26 +78,21 @@ def colour_from(calendar: CollectionSummary | None, colour_id: str, other: str) 
 class ColourRow(QWidget):
     """One colour in the palette editor: its colour (a click picks another), its name, and a bin (greyed for the calendar's own colour)."""
 
-    def __init__(self, entry: PaletteColour, editor: "PaletteEditor") -> None:
-        super().__init__(editor)
+    def __init__(self, entry: PaletteColour, editor: "PaletteEditor", parent: QWidget | None = None) -> None:
+        super().__init__(parent or editor)
         self.colour_id: str = entry.colour_id
         self.colour: str = entry.colour
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.colour_button = QPushButton("▾", self)
-        self.colour_button.setToolTip("Pick the colour")
-        self.name = QLineEdit(entry.name, self)
+        form = forms.fill(self, "palette_colour")  # one colour of the editor (D-276)
+        self.colour_button: QPushButton = part(form, QPushButton, "colour")
+        self.name: QLineEdit = part(form, QLineEdit, "name")
+        self.name.setText(entry.name)
         self.name.setClearButtonEnabled(True)
-        self.delete_button = QToolButton(self)
+        self.delete_button: QToolButton = part(form, QToolButton, "delete")
         self.delete_button.setIcon(theme_icon("edit-delete", "user-trash"))
-        self.delete_button.setToolTip("Delete this colour")
         own = entry.colour_id == OWN_COLOUR_ID
         self.delete_button.setEnabled(not own)  # the calendar's own colour can be changed, never deleted
         if own:
             self.delete_button.setToolTip("The calendar's own colour cannot be deleted")
-        layout.addWidget(self.colour_button)
-        layout.addWidget(self.name, 1)
-        layout.addWidget(self.delete_button)
         self._show_colour()
         self.colour_button.clicked.connect(self._pick)
         self.delete_button.clicked.connect(lambda: editor.remove_row(self))
@@ -120,56 +116,49 @@ class PaletteEditor(QDialog):
         self._backend: Backend = backend
         self._calendar: CollectionSummary = calendar
         self.result_summary: CollectionSummary | None = None
-        self.setWindowTitle("Event colours")
-        self.setMinimumWidth(440)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.calendar = QComboBox(self)  # the event editor's Calendar row: which calendar's own colour comes first, and whose account's colours follow
+        self.rows: list[ColourRow] = []
+        form = forms.fill(self, "palette_editor", {"rows": self._holder})  # D-276
+        self.calendar: QComboBox = part(form, QComboBox, "calendar")  # the event editor's Calendar row: which calendar's own colour comes first, and whose account's colours follow
         self.calendar.addItem(f"{calendar.account_name} — {calendar.name}")
         self.calendar.setEnabled(False)
-        form.addRow("Calendar", self.calendar)
-        layout.addLayout(form)
-        self.holder = QWidget(self)
-        self.rows_layout = QVBoxLayout(self.holder)
-        self.rows_layout.setContentsMargins(0, 0, px_for(self, LIST_RIGHT_MARGIN), 0)  # room between the delete buttons and the scrollbar (the owner)
-        self.rows_layout.addStretch(1)
-        self.rows: list[ColourRow] = []
-        for entry in palette_of_summary(calendar):
-            self._add_row(entry)
-        scroll = QScrollArea(self)
-        scroll.setWidget(self.holder)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)  # no outline around the list (the owner)
-        scroll.setMinimumHeight(320)
-        layout.addWidget(scroll, 1)
-        self.result_label = QLabel("", self)
-        self.result_label.setWordWrap(True)
-        layout.addWidget(self.result_label)
-        bottom = QHBoxLayout()
-        self.add_button = QToolButton(self)
+        part(form, QScrollArea, "scroll").setMinimumHeight(wpx(320))
+        self.result_label: QLabel = part(form, QLabel, "result")
+        self.add_button: QToolButton = part(form, QToolButton, "add")
         self.add_button.setIcon(theme_icon("list-add"))
-        self.add_button.setToolTip("Add a colour")
         self.add_button.clicked.connect(self._new_row)
-        bottom.addWidget(self.add_button)
-        bottom.addStretch(1)
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
+        box = part(form, QDialogButtonBox, "buttons")
         self.save_button = box.button(QDialogButtonBox.StandardButton.Save)
         box.accepted.connect(self._save)
         box.rejected.connect(self.reject)
-        bottom.addWidget(box)
-        layout.addLayout(bottom)
+        forms.smallest(self, 440)  # its texts are never cut off, also at the largest size
+        if self.rows:
+            self.rows[0].colour_button.setFocus()  # it opens on the first colour, as before (the list's scroll area comes first in the Tab order)
         if calendar.read_only:
             for widget in (self.add_button, self.save_button, self.holder):
                 widget.setEnabled(False)  # a read-only calendar's colours are shown, not changed
 
+    def _holder(self, parent: QWidget) -> QWidget:
+        """The list of colours with a row each, made at its place in the form (so Tab reaches the rows before the buttons below them)."""
+        self.holder = QWidget(parent)
+        self.rows_layout = QVBoxLayout(self.holder)
+        self.rows_layout.setContentsMargins(0, 0, px_for(self, LIST_RIGHT_MARGIN), 0)  # room between the delete buttons and the scrollbar (the owner)
+        self.rows_layout.addStretch(1)
+        for entry in palette_of_summary(self._calendar):
+            self._add_row(entry)
+        return self.holder
+
     def _add_row(self, entry: PaletteColour) -> ColourRow:
-        row = ColourRow(entry, self)
+        row = ColourRow(entry, self, self.holder)
         self.rows_layout.insertWidget(self.rows_layout.count() - 1, row)
         self.rows.append(row)
         return row
 
     def _new_row(self) -> None:
+        last = self.rows[-1].delete_button if self.rows else self.calendar
         row = self._add_row(PaletteColour("", "", COLLECTION_WITHOUT_COLOUR))
+        for widget in (row.colour_button, row.name, row.delete_button):  # Tab reaches it after the colours above it, not after Save and Cancel
+            QWidget.setTabOrder(last, widget)
+            last = widget
         row.name.setFocus()
 
     def remove_row(self, row: ColourRow) -> None:

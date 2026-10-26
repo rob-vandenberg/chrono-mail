@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ContactAddress</class>
+ <widget class="QWidget" name="ContactAddress">
+  <layout class="QFormLayout" name="fields">
+   <item row="0" column="0">
+    <widget class="QLabel" name="kindLabel">
+     <property name="text">
+      <string>Kind</string>
+     </property>
+     <property name="buddy">
+      <cstring>kind</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="QComboBox" name="kind" />
+   </item>
+   <item row="1" column="0">
+    <widget class="QLabel" name="streetLabel">
+     <property name="text">
+      <string>Street</string>
+     </property>
+     <property name="buddy">
+      <cstring>street</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="1">
+    <widget class="QLineEdit" name="street" />
+   </item>
+   <item row="2" column="0">
+    <widget class="QLabel" name="localityLabel">
+     <property name="text">
+      <string>City</string>
+     </property>
+     <property name="buddy">
+      <cstring>locality</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="1">
+    <widget class="QLineEdit" name="locality" />
+   </item>
+   <item row="3" column="0">
+    <widget class="QLabel" name="regionLabel">
+     <property name="text">
+      <string>State / region</string>
+     </property>
+     <property name="buddy">
+      <cstring>region</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="3" column="1">
+    <widget class="QLineEdit" name="region" />
+   </item>
+   <item row="4" column="0">
+    <widget class="QLabel" name="postalCodeLabel">
+     <property name="text">
+      <string>Postal code</string>
+     </property>
+     <property name="buddy">
+      <cstring>postalCode</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="1">
+    <widget class="QLineEdit" name="postalCode" />
+   </item>
+   <item row="5" column="0">
+    <widget class="QLabel" name="countryLabel">
+     <property name="text">
+      <string>Country</string>
+     </property>
+     <property name="buddy">
+      <cstring>country</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="1">
+    <widget class="QLineEdit" name="country" />
+   </item>
+   <item row="6" column="1">
+    <widget class="QPushButton" name="remove">
+     <property name="text">
+      <string>Remove this address</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

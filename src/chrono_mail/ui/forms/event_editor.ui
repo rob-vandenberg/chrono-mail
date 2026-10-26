@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>EventEditor</class>
+ <widget class="QWidget" name="EventEditor">
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <layout class="QFormLayout" name="fields">
+     <item row="0" column="0">
+      <widget class="QLabel" name="summaryLabel">
+       <property name="text">
+        <string>Title</string>
+       </property>
+       <property name="buddy">
+        <cstring>summary</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLineEdit" name="summary" />
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="calendarLabel">
+       <property name="text">
+        <string>Calendar</string>
+       </property>
+       <property name="buddy">
+        <cstring>calendar</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QComboBox" name="calendar" />
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="colourLabel">
+       <property name="text">
+        <string>Colour</string>
+       </property>
+       <property name="buddy">
+        <cstring>colour</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QToolButton" name="colour" />
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="locationLabel">
+       <property name="text">
+        <string>Location</string>
+       </property>
+       <property name="buddy">
+        <cstring>location</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QLineEdit" name="location" />
+     </item>
+     <item row="4" column="1">
+      <widget class="QCheckBox" name="allDay">
+       <property name="text">
+        <string>All day</string>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="startLabel">
+       <property name="text">
+        <string>Starts</string>
+       </property>
+       <property name="buddy">
+        <cstring>start</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <widget class="QDateTimeEdit" name="start" />
+     </item>
+     <item row="6" column="0">
+      <widget class="QLabel" name="endLabel">
+       <property name="text">
+        <string>Ends</string>
+       </property>
+       <property name="buddy">
+        <cstring>end</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="6" column="1">
+      <widget class="QDateTimeEdit" name="end" />
+     </item>
+     <item row="7" column="0">
+      <widget class="QLabel" name="repeatLabel">
+       <property name="text">
+        <string>Repeat</string>
+       </property>
+       <property name="buddy">
+        <cstring>repeat</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="7" column="1">
+      <widget class="QComboBox" name="repeat" />
+     </item>
+     <item row="8" column="0">
+      <widget class="QLabel" name="reminderLabel">
+       <property name="text">
+        <string>Reminder</string>
+       </property>
+       <property name="buddy">
+        <cstring>reminder</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="8" column="1">
+      <widget class="QComboBox" name="reminder" />
+     </item>
+     <item row="9" column="0">
+      <widget class="QLabel" name="busyLabel">
+       <property name="text">
+        <string>Show as</string>
+       </property>
+       <property name="buddy">
+        <cstring>busy</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="9" column="1">
+      <widget class="QComboBox" name="busy" />
+     </item>
+     <item row="10" column="0">
+      <widget class="QLabel" name="attendeesLabel">
+       <property name="text">
+        <string>Attendees</string>
+       </property>
+       <property name="buddy">
+        <cstring>attendees</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="10" column="1">
+      <widget class="QLineEdit" name="attendees">
+       <property name="placeholderText">
+        <string>Addresses, separated by commas</string>
+       </property>
+      </widget>
+     </item>
+     <item row="11" column="0">
+      <widget class="QLabel" name="tagsLabel">
+       <property name="text">
+        <string>Tags</string>
+       </property>
+       <property name="buddy">
+        <cstring>tags</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="11" column="1">
+      <widget class="QLineEdit" name="tags">
+       <property name="placeholderText">
+        <string>Tags, separated by commas</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLabel" name="descriptionLabel">
+     <property name="text">
+      <string>Description</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPlainTextEdit" name="description" />
+   </item>
+   <item>
+    <widget class="QLabel" name="result">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Save|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>
