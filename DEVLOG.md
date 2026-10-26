@@ -2998,6 +2998,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.369: Not junk shows its key in the menus (the owner)
+
+1. `ui/mainwindow.py`: Not junk (move to Inbox) shows the junk key (Ctrl+J; in Junk it brings a message back) in the menus, or its own key when the person gave it one in Settings > Keyboard; shown in the text only, so the key acts once. In Junk the Message menu shows Not junk only, as the right-click menu does (Move to Junk with the same key showed there too).
+   Not junk can be clicked only where it acts: messages selected in Junk or in Favorites > Junk (there it was greyed, while the junk key worked); greyed with nothing selected and in a view without an account (found by the reviewers).
+2. Tests: tests/ui/test_ui_shortcuts.py (2, fail on 3.6.368), tests/ui/test_ui_window.py (the text). Three review rounds. Related window tests (234) and the guard tests pass; Pyrefly 0 on src (Linux and win32); layer check kept.
+
 ## 2026-10-26 3.6.368: A held Ctrl+Z never puts messages under the wrong heading (the owner, D-273)
 
 1. Cause: when a message came back into the list, the engine read the view's order and the heading counts in two reads; with Ctrl+Z held, the next Undo put a message back between them, and the heading worked out from the counts was the one above (C under B). The list then kept heading counts that did not match its messages.

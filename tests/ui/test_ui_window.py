@@ -22,9 +22,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 3.6.360"
+__version__ = "test_ui_window.py 3.6.369"
 
 # --- Version history ----------------------------------------------------
+# v3.6.369: Not junk shows the junk key in its text
 # v3.6.360: after deleting the last message nothing is selected (was: the one before, D-266)
 # v3.6.357: the tests of actions without a server wait for the engine's work, which follows after the row left at the key press (D-267, AGENTS.md 4.5.5.1)
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42)
@@ -515,7 +516,7 @@ def test_move_archive_junk_and_snooze_select_the_next_message(world: World, qtbo
 def test_in_the_archive_folder_archive_is_unarchive(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
     window = world.window
-    assert window.act_archive.text() == "Archive" and window.act_junk.text() == "Move to Junk" and window.act_not_junk.text() == "Not junk (move to Inbox)"
+    assert window.act_archive.text() == "Archive" and window.act_junk.text() == "Move to Junk" and window.act_not_junk.text() == "Not junk (move to Inbox)\tCtrl+J"
     target = message_id_at(window, 0)
     select(window, 0)
     window.act_archive.trigger()

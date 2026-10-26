@@ -1,15 +1,18 @@
 import pytest
 from PySide6.QtCore import QModelIndex, Qt
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QMenu, QMessageBox, QToolButton
 from pytestqt.qtbot import QtBot
 
-from tests.ui.test_ui_window import select, started
+from tests.ui.test_ui_window import open_folder, select, started
 from tests.ui.world import World, menu_named, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_shortcuts.py 2.0.305"
+__version__ = "test_ui_shortcuts.py 3.6.369"
 
 # --- Version history ----------------------------------------------------
+# v3.6.369: Not junk shows the junk key in the menus (or its own key), in Junk the Message menu shows Not junk only, Ctrl+J there brings it back;
+#           Not junk works in Favorites > Junk, greyed with nothing selected and outside Junk
 # v2.0.305: Menu > Message > Go to holds the five ways to move to another message or folder; their keys work as before
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.7.262: The one-letter keys and Insert work in the message list and the reading pane, never in the folder list (R-43)
@@ -212,3 +215,55 @@ def test_enter_and_insert_act_on_messages_only_while_the_message_list_has_the_fo
     wait(qtbot, lambda: "flagged" in row_of(window, 0).flags)
     qtbot.keyClick(window.list_view, Qt.Key.Key_Return)
     wait(qtbot, lambda: len(window.reading.message_windows) == 1)  # noqa: SLF001 - in the message list Enter opens the message
+
+
+def test_not_junk_shows_the_junk_key_and_in_junk_the_message_menu_offers_only_not_junk(world: World, qtbot: QtBot) -> None:
+    """The owner: Not junk showed no key, although in Junk the junk key (Ctrl+J) brings a message back to the Inbox."""
+    window = started(qtbot, world).window
+    assert window.act_not_junk.text() == "Not junk (move to Inbox)\tCtrl+J" and window.act_not_junk.shortcut().isEmpty()  # shown only: the key acts once
+    message_menu = menu_named(window, "Message")
+    message_menu.aboutToShow.emit()
+    actions = message_menu.actions()
+    assert window.act_junk in actions and actions.index(window.act_junk) + 1 == actions.index(window.act_not_junk)  # Not junk greyed below it
+    select(window, 0)
+    window.act_junk.trigger()
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Junk").total == 1)
+    open_folder(world, qtbot, "Junk", 1)
+    message_menu.aboutToShow.emit()
+    assert window.act_junk not in message_menu.actions() and window.act_not_junk in message_menu.actions()
+    window.list_view.setFocus()
+    select(window, 0)
+    QTest.keyClick(window.list_view, Qt.Key.Key_J, Qt.KeyboardModifier.ControlModifier)
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Junk").total == 0)
+    wait(qtbot, lambda: window.list_model.rowCount() == 0)
+    assert not window.act_not_junk.isEnabled()  # nothing selected: nothing to bring back
+    open_folder(world, qtbot, "Inbox", 3)
+    select(window, 0)
+    assert not window.act_not_junk.isEnabled()  # outside Junk
+    message_menu.aboutToShow.emit()
+    actions = message_menu.actions()
+    assert window.act_junk in actions and actions.index(window.act_junk) + 1 == actions.index(window.act_not_junk)  # back at its place
+    window.settings.setValue("shortcuts", '{"junk": "Ctrl+K"}')
+    window._apply_shortcuts()  # noqa: SLF001
+    assert window.act_not_junk.text() == "Not junk (move to Inbox)\tCtrl+K"
+    window.settings.setValue("shortcuts", '{"not_junk": "Ctrl+Alt+J"}')
+    window._apply_shortcuts()  # noqa: SLF001
+    assert window.act_not_junk.text() == "Not junk (move to Inbox)" and window.act_not_junk.shortcut().toString() == "Ctrl+Alt+J"  # its own key shows by itself
+    assert window._shortcut_registry()["not_junk"][0] == "Not junk (move to Inbox)"  # noqa: SLF001 - Settings > Keyboard names it without a key
+
+
+def test_not_junk_works_in_favorites_junk_as_the_junk_key_does(world: World, qtbot: QtBot) -> None:
+    """A reviewer: in Favorites > Junk, Not junk was greyed although the junk key brought the message back there."""
+    window = started(qtbot, world).window
+    select(window, 0)
+    window.act_junk.trigger()
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Junk").total == 1)
+    favorite = window.folders.find_item(("", "favorite", "junk"))
+    assert favorite is not None
+    window.tree.setCurrentIndex(favorite)
+    wait(qtbot, lambda: window.list_model.rowCount() == 1 and window.mail_state.view.folder_role == "junk")
+    assert not window.act_not_junk.isEnabled()  # nothing selected yet
+    select(window, 0)
+    assert window.act_not_junk.isEnabled()
+    window.act_not_junk.trigger()
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Junk").total == 0 and world.call("message.list", account=world.account_id, folder="Inbox").total == 3)

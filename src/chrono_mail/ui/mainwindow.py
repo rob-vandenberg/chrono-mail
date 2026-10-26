@@ -61,9 +61,12 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 3.6.354"
+__version__ = "mainwindow.py 3.6.369"
 
 # --- Version history ----------------------------------------------------
+# v3.6.369: Not junk shows the junk key in the menus (in Junk that key brings a message back), unless it has a key of its own; in Junk the
+#           Message menu shows Not junk only, as the right-click menu does; Not junk works in Favorites > Junk too, as the junk key did,
+#           and is greyed with nothing selected or in a view without an account
 # v3.6.354: Delete folder… greyed for a standard folder, known by its role (CR-36)
 # v3.6.353: the message list knows the roles of the folders (a message that comes back is placed by it, D-266)
 # v3.6.352: the Archive button changes only when it switches between Archive and Unarchive (a new icon at every selection laid out the toolbar again); the sync marks repaint the whole list through repaint_all (D-266)
@@ -260,6 +263,7 @@ __version__ = "mainwindow.py 3.6.354"
 # v0.0.13: Initial main window
 
 MINIMUM_WIDTH: int = 768  # the window is never narrower, in every section (the owner's choice)
+NOT_JUNK: str = "Not junk (move to Inbox)"
 EMPTY_TEXTS: dict[str, str] = {"junk": "Empty Junk folder…", "trash": "Empty Trash…"}  # the Empty item says which folder it empties
 
 
@@ -443,7 +447,7 @@ class MainWindow(QMainWindow):
         self.act_columns = self._action("Message list…", self.edit_columns)
         self.columns.columns_action = self.act_columns
         self.act_junk = self._action("Move to Junk", actions.junk_key, "Ctrl+J", "mail-mark-junk")  # one key does both, as the folder decides
-        self.act_not_junk = self._action("Not junk (move to Inbox)", lambda: actions.junk_selected(False), None, "mail-mark-notjunk")
+        self.act_not_junk = self._action(NOT_JUNK, lambda: actions.junk_selected(False), None, "mail-mark-notjunk")
         self.act_cancel_snooze = self._action("Cancel snooze", actions.cancel_snooze_selected)
         self.act_not_junk.setEnabled(False)
         self.act_undo = self._action("Undo", self.undoing.undo, "Ctrl+Z")  # the text says what it would undo; a text field keeps Ctrl+Z for its typing
@@ -648,6 +652,7 @@ class MainWindow(QMainWindow):
         message_menu.addAction(self.act_not_junk)
         message_menu.addAction(self.act_delete)
         message_menu.addAction(self.act_delete_forever)
+        message_menu.aboutToShow.connect(lambda: self._show_junk_items(message_menu))
         message_menu.addSeparator()
         go_to_menu = message_menu.addMenu("Go to")  # the owner: the menu was very tall; the keys work as before
         for action in (self.act_next_message, self.act_previous_message, self.act_next_unread, self.act_previous_unread, self.act_go_to_folder):
@@ -872,7 +877,8 @@ class MainWindow(QMainWindow):
         self.act_redo.setEnabled(mail and (bool(undoing.redo_label) or undoing.busy))  # pressed while busy it waits in turn, as Undo
         self.act_redo_other.setEnabled(self.act_redo.isEnabled())
 
-    KEY_NAMES: dict[str, str] = {"undo": "Undo", "redo": "Redo"}  # their text says what they would do; Settings > Keyboard shows only the name
+    KEY_NAMES: dict[str, str] = {"undo": "Undo", "redo": "Redo", "not_junk": NOT_JUNK}  # their text says what they would do, or shows another
+    # action's key; Settings > Keyboard shows only the name
 
     def _shortcut_registry(self) -> dict[str, tuple[str, str]]:
         """Every action that can be given keys: its name, the text, and the standard keys."""
@@ -1097,6 +1103,22 @@ class MainWindow(QMainWindow):
             if name.startswith("act_") and isinstance(action, QAction) and name in self._default_shortcuts:
                 action.setShortcut(QKeySequence(chosen.get(name[4:], self._default_shortcuts[name])))
                 self._scope_shortcut(action)
+        self._show_not_junk_key()
+
+    def _show_not_junk_key(self) -> None:
+        """Not junk shows a key in the menus: its own when the person gave it one, else the junk key, which in Junk brings a message
+        back (one key does both). Only shown: the junk key stays the one action that has it, so the key never acts twice."""
+        own, junk = self.act_not_junk.shortcut(), self.act_junk.shortcut()
+        shown = "" if not own.isEmpty() or junk.isEmpty() else junk.toString(QKeySequence.SequenceFormat.NativeText)
+        self.act_not_junk.setText(f"{NOT_JUNK}\t{shown}" if shown else NOT_JUNK)
+
+    def _show_junk_items(self, menu: QMenu) -> None:
+        """In Junk the Message menu shows Not junk only (Move to Junk would bring the message back there), as the right-click menu does."""
+        in_junk = self.mail_state.view.folder_role == "junk"
+        if in_junk and self.act_junk in menu.actions():
+            menu.removeAction(self.act_junk)
+        elif not in_junk and self.act_junk not in menu.actions():
+            menu.insertAction(self.act_not_junk, self.act_junk)
 
     def _scope_shortcut(self, action: QAction) -> None:
         """A key acts on what has the focus (D-217). A key that is a letter by itself (A, N, S ...) and Toggle flag (Insert) act on
@@ -1248,6 +1270,7 @@ class MainWindow(QMainWindow):
         self.messages.open(chosen)
         if chosen.account is None:  # an account without an Inbox: an empty list that says so
             self.act_empty_folder.setEnabled(False)
+            self._show_not_junk()
             self.act_mark_all_read.setEnabled(False)
             self.act_delete_folder.setEnabled(False)
             self.reading.clear()
@@ -1259,7 +1282,7 @@ class MainWindow(QMainWindow):
         self.act_delete_folder.setEnabled(folder_shown and role == "other")  # a standard folder, known by its role, is never deleted (CR-36)
         self.act_new_folder.setEnabled(self.mail_state.can_make_folder())
         self.act_empty_folder.setText(EMPTY_TEXTS.get(role, "Empty folder…") if folder_shown else "Empty folder…")
-        self.act_not_junk.setEnabled(folder_shown and role == "junk")
+        self._show_not_junk()
         self._show_archive_action()
         self.act_mark_all_read.setEnabled(folder_shown)
         self.filters.show_state()
@@ -1289,9 +1312,16 @@ class MainWindow(QMainWindow):
         for name in self.MESSAGE_ACTIONS:
             getattr(self, f"act_{name}").setEnabled(selected)  # getattr: the window's own actions, named in MAIL_ONLY
         self.act_delete.setEnabled(selected)
+        self._show_not_junk()
         self.mark_button.setEnabled(selected)
         self.tag_button.setEnabled(selected)
         self.move_button.setEnabled(selected)
+
+    def _show_not_junk(self) -> None:
+        """Not junk can be clicked only where it acts: messages selected in the Junk folder or in Favorites > Junk (where the junk key
+        brings them back too), never in a view without an account or with nothing selected."""
+        view = self.mail_state.view
+        self.act_not_junk.setEnabled(view.folder_role == "junk" and view.account is not None and self.messages.has_selection())
 
     @property
     def section(self) -> str:
