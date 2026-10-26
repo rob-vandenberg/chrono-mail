@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>TagEditor</class>
+ <widget class="QWidget" name="TagEditor">
+  <property name="windowTitle">
+   <string>Tags</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <layout class="QFormLayout" name="tag">
+     <item row="0" column="0">
+      <widget class="QLabel" name="nameLabel">
+       <property name="text">
+        <string>Name:</string>
+       </property>
+       <property name="buddy">
+        <cstring>name</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLineEdit" name="name" />
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="colourLabel">
+       <property name="text">
+        <string>Color:</string>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <layout class="QHBoxLayout" name="colourRow" stretch="0,0,0,0,1">
+       <item>
+        <widget class="QLabel" name="swatch" />
+       </item>
+       <item>
+        <widget class="QPushButton" name="change">
+         <property name="text">
+          <string>Change…</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="colourGap">
+         <property name="orientation">
+          <enum>Qt::Horizontal</enum>
+         </property>
+         <property name="sizeType">
+          <enum>QSizePolicy::Fixed</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>24</width>
+           <height>0</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
+        <widget class="QLabel" name="shortcutLabel">
+         <property name="text">
+          <string>Shortcut:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QComboBox" name="shortcut" />
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="useFor">
+     <property name="title">
+      <string>Use for</string>
+     </property>
+     <layout class="QVBoxLayout" name="kinds">
+      <item>
+       <widget class="QCheckBox" name="kindMail">
+        <property name="text">
+         <string>Mails</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="kindEvents">
+        <property name="text">
+         <string>Events</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="kindTasks">
+        <property name="text">
+         <string>Tasks</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="kindContacts">
+        <property name="text">
+         <string>Contacts</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="problem" />
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

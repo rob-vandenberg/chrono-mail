@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>RuleEditor</class>
+ <widget class="QWidget" name="RuleEditor">
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <layout class="QFormLayout" name="rule">
+     <item row="0" column="0">
+      <widget class="QLabel" name="nameLabel">
+       <property name="text">
+        <string>Name</string>
+       </property>
+       <property name="buddy">
+        <cstring>name</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLineEdit" name="name" />
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="matchLabel">
+       <property name="text">
+        <string>Conditions</string>
+       </property>
+       <property name="buddy">
+        <cstring>match</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QComboBox" name="match" />
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="accountLabel">
+       <property name="text">
+        <string>For</string>
+       </property>
+       <property name="buddy">
+        <cstring>account</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QComboBox" name="account" />
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QVBoxLayout" name="conditions" />
+   </item>
+   <item>
+    <widget class="QPushButton" name="addCondition">
+     <property name="text">
+      <string>Add a condition</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="then">
+     <property name="text">
+      <string>Then:</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QVBoxLayout" name="actions" />
+   </item>
+   <item>
+    <widget class="QPushButton" name="addAction">
+     <property name="text">
+      <string>Add an action</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="result">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Save|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

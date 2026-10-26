@@ -1,26 +1,19 @@
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem, QPushButton, QWidget
 
+from chrono_mail.ui import forms
 from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS, SNOOZED_COLUMN
+from chrono_mail.ui.forms import part
+from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsdialog.py 2.0.280"
+__version__ = "columnsdialog.py 4.0.377"
 
 # --- Version history ----------------------------------------------------
+# v4.0.377: the column picker (also on Settings > Message list) and the Message list window are built from their Qt Designer forms
+#           (ui/forms/column_picker.ui, message_list.ui, D-276); the window's sizes follow the size factor
 # v2.0.280: Standard columns are those of the kind of folder that is open (B-16)
 # v0.2.100: Snoozed until is not in the column list (it belongs to the Snoozed folder)
 # v0.2.97: Row height (compact, normal, roomy) in the Message list window
@@ -43,27 +36,17 @@ class ListChoice:
     standard: tuple[str, ...] = DEFAULT_COLUMNS  # what Standard columns gives: the columns the open kind of folder starts with
 
 
-COLUMNS_TEXT = "Columns (tick the ones to show; the order is the order from left to right):"
-
-
 class ColumnPicker(QWidget):
     """The columns of the message list: tick the ones to show and put them in order (Move up, Move down, Standard columns)."""
 
     def __init__(self, shown: tuple[str, ...], parent: QWidget | None = None, standard: tuple[str, ...] = DEFAULT_COLUMNS) -> None:
         super().__init__(parent)
         self._standard: tuple[str, ...] = standard  # the columns the open kind of folder starts with
-        body = QHBoxLayout(self)
-        body.setContentsMargins(0, 0, 0, 0)
-        self.list = QListWidget(self)
-        body.addWidget(self.list, 1)
-        side = QVBoxLayout()
-        self.up_button = QPushButton("Move up", self)
-        self.down_button = QPushButton("Move down", self)
-        self.reset_button = QPushButton("Standard columns", self)
-        for button in (self.up_button, self.down_button, self.reset_button):
-            side.addWidget(button)
-        side.addStretch(1)
-        body.addLayout(side)
+        form = forms.fill(self, "column_picker")  # the list and its buttons (D-276)
+        self.list: QListWidget = part(form, QListWidget, "list")
+        self.up_button: QPushButton = part(form, QPushButton, "moveUp")
+        self.down_button: QPushButton = part(form, QPushButton, "moveDown")
+        self.reset_button: QPushButton = part(form, QPushButton, "standardColumns")
         self.up_button.clicked.connect(lambda: self._move(-1))
         self.down_button.clicked.connect(lambda: self._move(1))
         self.reset_button.clicked.connect(lambda: self.fill(self._standard))
@@ -116,40 +99,31 @@ class ColumnsDialog(QDialog):
 
     def __init__(self, current: ListChoice, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Message list")
-        self.setMinimumSize(520, 460)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.layout_box = QComboBox(self)
+        form = forms.fill(self, "message_list", {"picker": lambda parent: ColumnPicker(current.columns, parent, current.standard)})  # D-276
+        self.layout_box: QComboBox = part(form, QComboBox, "layoutBox")
         for value, label in LAYOUTS:
             self.layout_box.addItem(label, value)
         self.layout_box.setCurrentIndex(max(0, self.layout_box.findData(current.layout)))
-        self.pane_box = QComboBox(self)
+        self.pane_box: QComboBox = part(form, QComboBox, "paneBox")
         for value, label in READING_PANES:
             self.pane_box.addItem(label, value)
         self.pane_box.setCurrentIndex(max(0, self.pane_box.findData(current.reading_pane)))
-        self.date_box = QComboBox(self)
+        self.date_box: QComboBox = part(form, QComboBox, "dateBox")
         for value, label in DATE_STYLES:
             self.date_box.addItem(label, value)
         self.date_box.setCurrentIndex(max(0, self.date_box.findData(current.date_style)))
-        self.density_box = QComboBox(self)
+        self.density_box: QComboBox = part(form, QComboBox, "densityBox")
         for value, label in DENSITY_LABELS:
             self.density_box.addItem(label, value)
         self.density_box.setCurrentIndex(max(0, self.density_box.findData(current.density)))
-        form.addRow("Layout", self.layout_box)
-        form.addRow("Reading pane", self.pane_box)
-        form.addRow("Dates", self.date_box)
-        form.addRow("Row height", self.density_box)
-        layout.addLayout(form)
-        layout.addWidget(QLabel(COLUMNS_TEXT, self))
-        self.picker = ColumnPicker(current.columns, self, current.standard)
+        self.picker: ColumnPicker = part(form, ColumnPicker, "picker")
         self.list = self.picker.list  # the tests and the older code know the list, and its buttons, by these names
         self.up_button, self.down_button, self.reset_button = self.picker.up_button, self.picker.down_button, self.picker.reset_button
-        layout.addWidget(self.picker, 1)
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        box = part(form, QDialogButtonBox, "buttons")
         box.accepted.connect(self.accept)
         box.rejected.connect(self.reject)
-        layout.addWidget(box)
+        self.setMinimumHeight(wpx(460))
+        forms.smallest(self, 520)  # its texts are never cut off, also at the largest size
         self.layout_box.currentIndexChanged.connect(self._layout_changed)
         self._layout_changed()
 

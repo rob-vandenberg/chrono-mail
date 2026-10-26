@@ -10,9 +10,10 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_forms.py 4.0.376"
+__version__ = "test_ui_forms.py 4.0.377"
 
 # --- Version history ----------------------------------------------------
+# v4.0.377: the texts of the mail windows fit at the smallest and largest size; Tab goes through the rule rows where they are on screen
 # v4.0.376: the texts of the account, recovery, backup, restore and import windows fit at the smallest and largest size; Edit account shows
 #           nothing of a tab the account has not; Tab reaches the found folders before OK; a backup's file name is never markup
 # v4.0.375: loading leaves no stand-ins for the layouts' items; a form inside a form keeps its margins and sizes; a window takes its form's
@@ -292,6 +293,9 @@ def test_a_window_takes_its_title_from_its_form(qtbot: QtBot, tmp_path: object, 
 def _texts_fit(window: QWidget, factor: float) -> None:
     for text in [*window.findChildren(QLabel), *window.findChildren(QAbstractButton)]:
         if text.isVisible() and text.text() and not (isinstance(text, QLabel) and text.wordWrap()):
+            if text.minimumWidth() == text.maximumWidth():  # a part of a fixed width (a small square button): its text itself fits
+                assert text.fontMetrics().horizontalAdvance(text.text()) <= text.width(), f"{window.windowTitle()}: '{text.text()}' is cut off at {factor}"
+                continue
             assert text.width() >= text.minimumSizeHint().width(), f"{window.windowTitle()}: '{text.text()}' is cut off at {factor}"
 
 
@@ -488,3 +492,54 @@ def test_a_backup_s_file_name_is_never_markup(world: World, qtbot: QtBot) -> Non
     qtbot.addWidget(dialog)
     names = [label for label in dialog.findChildren(QLabel) if label.text() == "<b>backup.cmz"]
     assert len(names) == 1 and names[0].textFormat() == Qt.TextFormat.PlainText
+
+
+@pytest.mark.parametrize("factor", [0.75, 2.0], ids=["smallest", "largest"])
+def test_every_text_of_the_mail_windows_fits(world: World, qtbot: QtBot, factor: float) -> None:
+    from datetime import datetime
+
+    from chrono_mail.engine.commands_export import SourceResult
+    from chrono_mail.engine.commands_rules import RuleInfo
+    from chrono_mail.ui.advancedsearch import AdvancedSearchDialog
+    from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
+    from chrono_mail.ui.ruleedit import RuleEditDialog
+    from chrono_mail.ui.sourcedialog import SourceDialog
+    from chrono_mail.ui.tagsdialog import TagEditor, TagRow
+    from chrono_mail.ui.whendialog import WhenDialog
+
+    rule = RuleInfo("r1", "News", True, "any", (), ("from:contains:news", "header.List-Id:contains:club", "attachment:is:yes"), ("move_to:Archive", "stop"))
+    world.window.try_windows_scale(factor)
+    try:
+        windows: list[QWidget] = [
+            AdvancedSearchDialog(world.window), ColumnsDialog(ListChoice("columns", ("from", "subject"), "right", "short", "normal"), world.window),
+            RuleEditDialog(world.backend, [], ["Inbox"], rule, world.window), TagEditor(TagRow("Work", "#3366cc"), set(), world.window),
+            WhenDialog("Schedule", "Send this message at:", "Schedule", world.window, datetime(2026, 10, 26, 14, 30), True),
+            SourceDialog("Hello", SourceResult("From: a@example.com\n", 20, True), world.window),
+        ]
+        for window in windows:
+            qtbot.addWidget(window)
+            window.show()
+            window.resize(window.sizeHint().expandedTo(window.minimumSize()))  # its own size: the test's screen is smaller than a window at the largest size
+            qtbot.wait(50)
+            _texts_fit(window, factor)
+            window.hide()
+    finally:
+        world.window.try_windows_scale(1.0)
+
+
+def test_tab_goes_through_the_rule_rows_where_they_are_on_screen(world: World, qtbot: QtBot) -> None:
+    from chrono_mail.ui.ruleedit import RuleEditDialog
+
+    dialog = RuleEditDialog(world.backend, [], ["Inbox"], None, world.window)
+    qtbot.addWidget(dialog)
+    second = dialog.add_condition("subject:contains:x")
+    action = dialog.add_action("stop")
+    dialog.move_action(action, -1)  # now the first action
+    chain: list[QWidget] = []
+    current: QWidget | None = dialog.name
+    while current is not None and len(chain) < 200 and current not in chain:
+        chain.append(current)
+        current = current.nextInFocusChain()
+    first = dialog.condition_rows[0]
+    order = [dialog.account, first.field, second.field, dialog.add_condition_button, action.kind, dialog.action_rows[1].kind, dialog.add_action_button, dialog.save_button]
+    assert [chain.index(widget) for widget in order] == sorted(chain.index(widget) for widget in order)

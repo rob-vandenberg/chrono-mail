@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SendLater</class>
+ <widget class="QWidget" name="SendLater">
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <widget class="QLabel" name="question" />
+   </item>
+   <item>
+    <widget class="QWidget" name="quick" />
+   </item>
+   <item>
+    <widget class="QDateTimeEdit" name="edit" />
+   </item>
+   <item>
+    <widget class="QCheckBox" name="repeat">
+     <property name="text">
+      <string>Send it again and again, every</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="repeating">
+     <layout class="QHBoxLayout" name="intervals">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QSpinBox" name="months">
+        <property name="suffix">
+         <string> months</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="weeks">
+        <property name="suffix">
+         <string> weeks</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QSpinBox" name="days">
+        <property name="suffix">
+         <string> days</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="untilWidget">
+     <layout class="QHBoxLayout" name="untilRow" stretch="0,1">
+      <item>
+       <widget class="QCheckBox" name="untilBox">
+        <property name="text">
+         <string>Stop after</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QDateTimeEdit" name="until" />
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

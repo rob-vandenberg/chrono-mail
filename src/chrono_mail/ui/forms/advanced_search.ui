@@ -1,0 +1,241 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>AdvancedSearch</class>
+ <widget class="QWidget" name="AdvancedSearch">
+  <property name="windowTitle">
+   <string>Advanced search</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <layout class="QFormLayout" name="words">
+     <item row="0" column="0">
+      <widget class="QLabel" name="allWordsLabel">
+       <property name="text">
+        <string>All of these words</string>
+       </property>
+       <property name="buddy">
+        <cstring>allWords</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLineEdit" name="allWords" />
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="phraseLabel">
+       <property name="text">
+        <string>This exact phrase</string>
+       </property>
+       <property name="buddy">
+        <cstring>phrase</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QLineEdit" name="phrase" />
+     </item>
+     <item row="2" column="0">
+      <widget class="QLabel" name="anyWordsLabel">
+       <property name="text">
+        <string>Any of these words</string>
+       </property>
+       <property name="buddy">
+        <cstring>anyWords</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QLineEdit" name="anyWords" />
+     </item>
+     <item row="3" column="0">
+      <widget class="QLabel" name="noneWordsLabel">
+       <property name="text">
+        <string>None of these words</string>
+       </property>
+       <property name="buddy">
+        <cstring>noneWords</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QLineEdit" name="noneWords" />
+     </item>
+     <item row="4" column="0">
+      <widget class="QLabel" name="fromWordsLabel">
+       <property name="text">
+        <string>From</string>
+       </property>
+       <property name="buddy">
+        <cstring>fromWords</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QLineEdit" name="fromWords" />
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="toWordsLabel">
+       <property name="text">
+        <string>To</string>
+       </property>
+       <property name="buddy">
+        <cstring>toWords</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <widget class="QLineEdit" name="toWords" />
+     </item>
+     <item row="6" column="0">
+      <widget class="QLabel" name="subjectLabel">
+       <property name="text">
+        <string>Subject contains</string>
+       </property>
+       <property name="buddy">
+        <cstring>subject</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="6" column="1">
+      <widget class="QLineEdit" name="subject" />
+     </item>
+     <item row="7" column="0">
+      <widget class="QLabel" name="bodyLabel">
+       <property name="text">
+        <string>Message text contains</string>
+       </property>
+       <property name="buddy">
+        <cstring>body</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="7" column="1">
+      <widget class="QLineEdit" name="body" />
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="dates">
+     <item>
+      <widget class="QCheckBox" name="useFromDate">
+       <property name="text">
+        <string>Sent on or after</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QDateEdit" name="fromDate" />
+     </item>
+     <item>
+      <widget class="QCheckBox" name="useToDate">
+       <property name="text">
+        <string>Sent on or before</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QDateEdit" name="toDate" />
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="sizes">
+     <item>
+      <widget class="QLabel" name="sizeAtLeast">
+       <property name="text">
+        <string>Size at least</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSpinBox" name="minimumSize">
+       <property name="suffix">
+        <string> KB</string>
+       </property>
+       <property name="specialValueText">
+        <string>no limit</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="sizeAtMost">
+       <property name="text">
+        <string>at most</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSpinBox" name="maximumSize">
+       <property name="suffix">
+        <string> KB</string>
+       </property>
+       <property name="specialValueText">
+        <string>no limit</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="checks" stretch="0,0,0,1">
+     <item>
+      <widget class="QCheckBox" name="unread">
+       <property name="text">
+        <string>Unread</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="flagged">
+       <property name="text">
+        <string>Flagged</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="attachments">
+       <property name="text">
+        <string>With attachments</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="checksEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QComboBox" name="scope" />
+   </item>
+   <item>
+    <widget class="QLabel" name="preview">
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttons">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

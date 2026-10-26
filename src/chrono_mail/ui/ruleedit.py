@@ -1,18 +1,6 @@
 import html
 from PySide6.QtGui import QPalette
-from PySide6.QtWidgets import (
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMessageBox,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.engine.commands_accounts import AccountSummary
@@ -20,14 +8,20 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_pim import TAG_LIST
 from chrono_mail.engine.commands_rules import RULE_ADD, RULE_EDIT, RuleAddParameters, RuleEditParameters, RuleInfo
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.icons import theme_icon
+from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "ruleedit.py 3.6.350"
+__version__ = "ruleedit.py 4.0.377"
 
 # --- Version history ----------------------------------------------------
+# v4.0.377: the rule editor and its condition and action rows are built from their Qt Designer forms (ui/forms/rule_edit.ui, rule_condition.ui,
+#           rule_action.ui, D-276); Tab goes through the rows where they are on screen (they came after Save and Cancel); the sizes follow
+#           the size factor
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.271: R-19: values gives RuleAddParameters; add and edit typed
@@ -58,9 +52,8 @@ ACTIONS: tuple[tuple[str, str], ...] = (
 TAG_ACTIONS: tuple[str, ...] = ("add_tag", "remove_tag")
 
 
-def _tag_box(parent: QWidget) -> QComboBox:
+def _tag_box(box: QComboBox) -> QComboBox:
     """The tags to choose from; a new name can be typed."""
-    box = QComboBox(parent)
     box.setEditable(True)
     entry = box.lineEdit()
     if entry is not None:
@@ -80,23 +73,19 @@ class ConditionRow(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.field = QComboBox(self)
+        form = forms.fill(self, "rule_condition")  # one row of the rule editor (D-276)
+        self.field: QComboBox = part(form, QComboBox, "field")
         for value, label in FIELDS:
             self.field.addItem(label, value)
-        self.header_name = QLineEdit(self)
-        self.header_name.setPlaceholderText("Header name, e.g. List-Id")
-        self.operator = QComboBox(self)
-        self.value = QLineEdit(self)
-        self.choice = QComboBox(self)  # yes or no, for attachments
+        self.header_name: QLineEdit = part(form, QLineEdit, "headerName")
+        self.operator: QComboBox = part(form, QComboBox, "operator")
+        self.value: QLineEdit = part(form, QLineEdit, "value")
+        self.choice: QComboBox = part(form, QComboBox, "choice")  # yes or no, for attachments
         self.choice.addItem("yes", "yes")
         self.choice.addItem("no", "no")
-        self.tag = _tag_box(self)
-        self.remove_button = QPushButton("✕", self)
-        self.remove_button.setFixedWidth(30)
-        for widget in (self.field, self.header_name, self.operator, self.value, self.choice, self.tag, self.remove_button):
-            layout.addWidget(widget)
+        self.tag: QComboBox = _tag_box(part(form, QComboBox, "tag"))
+        self.remove_button: QPushButton = part(form, QPushButton, "remove")
+        self.remove_button.setFixedWidth(wpx(30))
         self.field.currentIndexChanged.connect(self._field_changed)
         self._field_changed()
 
@@ -111,6 +100,10 @@ class ConditionRow(QWidget):
         self.choice.setVisible(kind == "attachment")
         self.tag.setVisible(kind == "tag")
         self.value.setPlaceholderText("kilobytes" if kind == "size" else "text")
+
+    def tab_parts(self) -> list[QWidget]:
+        """Its parts in the order Tab goes through them."""
+        return [self.field, self.header_name, self.operator, self.value, self.choice, self.tag, self.remove_button]
 
     def set_condition(self, text: str) -> None:
         """Fill the row from the written form field:operator:value (header.Name:operator:value)."""
@@ -150,34 +143,35 @@ class ActionRow(QWidget):
 
     def __init__(self, folders: list[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        self.kind = QComboBox(self)
+        form = forms.fill(self, "rule_action")  # one row of the rule editor (D-276)
+        self.kind: QComboBox = part(form, QComboBox, "kind")
         for value, label in ACTIONS:
             self.kind.addItem(label, value)
-        self.folder = QComboBox(self)
+        self.folder: QComboBox = part(form, QComboBox, "folder")
         self.folder.setEditable(True)
         self.folder.addItems(folders)
         self.folder.setCurrentText("")
         entry = self.folder.lineEdit()
         if entry is not None:
             entry.setPlaceholderText("Folder, e.g. Archive/2026")
-        self.tag = _tag_box(self)
-        self.up_button = QPushButton(theme_icon("arrow-up"), "", self)
-        self.up_button.setToolTip("Move up")
-        self.down_button = QPushButton(theme_icon("arrow-down"), "", self)
-        self.down_button.setToolTip("Move down")
-        self.remove_button = QPushButton("✕", self)
+        self.tag: QComboBox = _tag_box(part(form, QComboBox, "tag"))
+        self.up_button: QPushButton = part(form, QPushButton, "moveUp")
+        self.up_button.setIcon(theme_icon("arrow-up"))
+        self.down_button: QPushButton = part(form, QPushButton, "moveDown")
+        self.down_button.setIcon(theme_icon("arrow-down"))
+        self.remove_button: QPushButton = part(form, QPushButton, "remove")
         for button in (self.up_button, self.down_button, self.remove_button):
-            button.setFixedWidth(30)
-        for widget in (self.kind, self.folder, self.tag, self.up_button, self.down_button, self.remove_button):
-            layout.addWidget(widget)
+            button.setFixedWidth(wpx(30))
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self._kind_changed()
 
     def _kind_changed(self) -> None:
         self.folder.setVisible(str(self.kind.currentData()) == "move_to")
         self.tag.setVisible(str(self.kind.currentData()) in TAG_ACTIONS)
+
+    def tab_parts(self) -> list[QWidget]:
+        """Its parts in the order Tab goes through them."""
+        return [self.kind, self.folder, self.tag, self.up_button, self.down_button, self.remove_button]
 
     def set_action(self, text: str) -> None:
         kind, _, value = text.partition(":")
@@ -218,38 +212,24 @@ class RuleEditDialog(QDialog):
         self._folders: list[str] = folders
         self._rule_id: str | None = None if rule is None else rule.rule_id
         self.setWindowTitle("Rule" if rule is None else f"Rule: {rule.name}")
-        self.setMinimumWidth(640)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.name = QLineEdit(self)
-        self.match = QComboBox(self)
+        form = forms.fill(self, "rule_edit")  # the name, the conditions, the actions and Save (D-276)
+        self.name: QLineEdit = part(form, QLineEdit, "name")
+        self.match: QComboBox = part(form, QComboBox, "match")
         self.match.addItem("All of these conditions are true", "all")
         self.match.addItem("Any of these conditions is true", "any")
-        self.account = QComboBox(self)
+        self.account: QComboBox = part(form, QComboBox, "account")
         self.account.addItem("All accounts", "")
         for item in accounts:
             self.account.addItem(item.label, item.account_id)
-        form.addRow("Name", self.name)
-        form.addRow("Conditions", self.match)
-        form.addRow("For", self.account)
-        layout.addLayout(form)
-        self.conditions_layout = QVBoxLayout()
-        layout.addLayout(self.conditions_layout)
-        self.add_condition_button = QPushButton("Add a condition", self)
-        layout.addWidget(self.add_condition_button)
-        layout.addWidget(QLabel("Then:", self))
-        self.actions_layout = QVBoxLayout()
-        layout.addLayout(self.actions_layout)
-        self.add_action_button = QPushButton("Add an action", self)
-        layout.addWidget(self.add_action_button)
-        self.result_label = QLabel("", self)
-        self.result_label.setWordWrap(True)
-        layout.addWidget(self.result_label)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel, self)
+        self.conditions_layout: QVBoxLayout = part(form, QVBoxLayout, "conditions")
+        self.add_condition_button: QPushButton = part(form, QPushButton, "addCondition")
+        self.actions_layout: QVBoxLayout = part(form, QVBoxLayout, "actions")
+        self.add_action_button: QPushButton = part(form, QPushButton, "addAction")
+        self.result_label: QLabel = part(form, QLabel, "result")
+        buttons = part(form, QDialogButtonBox, "buttons")
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
         self.add_condition_button.clicked.connect(lambda: self.add_condition())
         self.add_action_button.clicked.connect(lambda: self.add_action())
         self.condition_rows: list[ConditionRow] = []
@@ -269,6 +249,7 @@ class RuleEditDialog(QDialog):
                 self.add_condition(text)
             for text in rule.actions:
                 self.add_action(text)
+        forms.smallest(self, 640)  # with its rows in: its texts are never cut off, also at the largest size
 
     def _tags_loaded(self, result: tuple[TagInfo, ...]) -> None:
         tags = tuple(result) if isinstance(result, (tuple, list)) else ()
@@ -284,6 +265,7 @@ class RuleEditDialog(QDialog):
         self.condition_rows.append(row)
         self.conditions_layout.addWidget(row)
         row.remove_button.clicked.connect(lambda: self._remove_condition(row))
+        self._tab_order()
         return row
 
     def add_action(self, text: str | None = None) -> ActionRow:
@@ -311,11 +293,21 @@ class RuleEditDialog(QDialog):
         self.actions_layout.insertWidget(place, row)
         self._update_moves()
 
+    def _tab_order(self) -> None:
+        """Tab goes through the rows where they are on screen: after For, each condition, Add a condition, each action in its order, Add an
+        action (rows are made after the window, so they would otherwise come after Save and Cancel)."""
+        anchor: QWidget = self.account
+        for row_parts in (*(row.tab_parts() for row in self.condition_rows), [self.add_condition_button], *(row.tab_parts() for row in self.action_rows), [self.add_action_button]):
+            for widget in row_parts:
+                QWidget.setTabOrder(anchor, widget)
+                anchor = widget
+
     def _update_moves(self) -> None:
         """The first action cannot go up, the last cannot go down."""
         for place, row in enumerate(self.action_rows):
             row.up_button.setEnabled(place > 0)
             row.down_button.setEnabled(place < len(self.action_rows) - 1)
+        self._tab_order()
         self._update_skipped()
 
     def _update_skipped(self) -> None:
@@ -329,6 +321,7 @@ class RuleEditDialog(QDialog):
         self.condition_rows.remove(row)  # a rule may have none: it then acts on all the mail of its account
         row.setParent(None)
         row.deleteLater()
+        self._tab_order()
 
     def _remove_action(self, row: ActionRow) -> None:
         if len(self.action_rows) > 1:

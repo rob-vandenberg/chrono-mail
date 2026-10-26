@@ -1,25 +1,17 @@
 from dataclasses import dataclass
 
-from PySide6.QtCore import QDate
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDateEdit,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QSpinBox,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import QDate, Qt
+from PySide6.QtWidgets import QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QLabel, QLineEdit, QSpinBox, QWidget
+
+from chrono_mail.ui import forms
+from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "advancedsearch.py 0.0.19"
+__version__ = "advancedsearch.py 4.0.377"
 
 # --- Version history ----------------------------------------------------
+# v4.0.377: built from its Qt Designer form (ui/forms/advanced_search.ui, D-276); the preview of the search words is plain text; its smallest
+#           width follows the size factor
 # v0.0.19: Initial advanced search dialog
 
 KIBIBYTE: int = 1024
@@ -70,75 +62,44 @@ class AdvancedSearchDialog(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Advanced search")
-        self.setMinimumWidth(520)
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.all_words = QLineEdit(self)
-        self.phrase = QLineEdit(self)
-        self.any_words = QLineEdit(self)
-        self.none_words = QLineEdit(self)
-        self.from_words = QLineEdit(self)
-        self.to_words = QLineEdit(self)
-        self.subject = QLineEdit(self)
-        self.body = QLineEdit(self)
-        form.addRow("All of these words", self.all_words)
-        form.addRow("This exact phrase", self.phrase)
-        form.addRow("Any of these words", self.any_words)
-        form.addRow("None of these words", self.none_words)
-        form.addRow("From", self.from_words)
-        form.addRow("To", self.to_words)
-        form.addRow("Subject contains", self.subject)
-        form.addRow("Message text contains", self.body)
-        layout.addLayout(form)
-
-        self.use_from_date = QCheckBox("Sent on or after", self)
-        self.from_date = QDateEdit(QDate.currentDate().addMonths(-1), self)
-        self.use_to_date = QCheckBox("Sent on or before", self)
-        self.to_date = QDateEdit(QDate.currentDate(), self)
+        form = forms.fill(self, "advanced_search")  # D-276
+        self.all_words: QLineEdit = part(form, QLineEdit, "allWords")
+        self.phrase: QLineEdit = part(form, QLineEdit, "phrase")
+        self.any_words: QLineEdit = part(form, QLineEdit, "anyWords")
+        self.none_words: QLineEdit = part(form, QLineEdit, "noneWords")
+        self.from_words: QLineEdit = part(form, QLineEdit, "fromWords")
+        self.to_words: QLineEdit = part(form, QLineEdit, "toWords")
+        self.subject: QLineEdit = part(form, QLineEdit, "subject")
+        self.body: QLineEdit = part(form, QLineEdit, "body")
+        self.use_from_date: QCheckBox = part(form, QCheckBox, "useFromDate")
+        self.from_date: QDateEdit = part(form, QDateEdit, "fromDate")
+        self.from_date.setDate(QDate.currentDate().addMonths(-1))
+        self.use_to_date: QCheckBox = part(form, QCheckBox, "useToDate")
+        self.to_date: QDateEdit = part(form, QDateEdit, "toDate")
+        self.to_date.setDate(QDate.currentDate())
         for date_edit, check in ((self.from_date, self.use_from_date), (self.to_date, self.use_to_date)):
             date_edit.setCalendarPopup(True)
             date_edit.setDisplayFormat("yyyy-MM-dd")
             date_edit.setEnabled(False)
             check.toggled.connect(date_edit.setEnabled)
-        dates = QHBoxLayout()
-        for widget in (self.use_from_date, self.from_date, self.use_to_date, self.to_date):
-            dates.addWidget(widget)
-        layout.addLayout(dates)
-
-        self.minimum_size = QSpinBox(self)
-        self.maximum_size = QSpinBox(self)
+        self.minimum_size: QSpinBox = part(form, QSpinBox, "minimumSize")
+        self.maximum_size: QSpinBox = part(form, QSpinBox, "maximumSize")
         for spin in (self.minimum_size, self.maximum_size):
             spin.setRange(0, 10_000_000)
-            spin.setSuffix(" KB")
-            spin.setSpecialValueText("no limit")
-        sizes = QHBoxLayout()
-        for widget in (QLabel("Size at least", self), self.minimum_size, QLabel("at most", self), self.maximum_size):
-            sizes.addWidget(widget)
-        layout.addLayout(sizes)
-
-        checks = QHBoxLayout()
-        self.unread = QCheckBox("Unread", self)
-        self.flagged = QCheckBox("Flagged", self)
-        self.attachments = QCheckBox("With attachments", self)
-        for widget in (self.unread, self.flagged, self.attachments):
-            checks.addWidget(widget)
-        checks.addStretch(1)
-        layout.addLayout(checks)
-
-        self.scope = QComboBox(self)
+        self.unread: QCheckBox = part(form, QCheckBox, "unread")
+        self.flagged: QCheckBox = part(form, QCheckBox, "flagged")
+        self.attachments: QCheckBox = part(form, QCheckBox, "attachments")
+        self.scope: QComboBox = part(form, QComboBox, "scope")
         self.scope.addItem("Search in this folder", False)
         self.scope.addItem("Search in all folders", True)
-        layout.addWidget(self.scope)
-        self.preview = QLabel("", self)
-        self.preview.setWordWrap(True)
+        self.preview: QLabel = part(form, QLabel, "preview")
+        self.preview.setTextFormat(Qt.TextFormat.PlainText)  # the person's own words: never markup
         self.preview.setForegroundRole(self.preview.foregroundRole().PlaceholderText)
-        layout.addWidget(self.preview)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons = part(form, QDialogButtonBox, "buttons")
         buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Search")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        forms.smallest(self, 520)  # its texts are never cut off, also at the largest size
         for edit in (self.all_words, self.phrase, self.any_words, self.none_words, self.from_words, self.to_words, self.subject, self.body):
             edit.textChanged.connect(self._update_preview)
         self.all_words.setFocus()

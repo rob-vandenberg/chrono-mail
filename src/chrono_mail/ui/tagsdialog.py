@@ -17,9 +17,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -28,7 +25,6 @@ from PySide6.QtWidgets import (
     QTabBar,
     QTreeWidget,
     QTreeWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -47,9 +43,10 @@ from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 3.6.373"
+__version__ = "tagsdialog.py 4.0.377"
 
 # --- Version history ----------------------------------------------------
+# v4.0.377: the tag editor is built from its Qt Designer form (ui/forms/tag_editor.ui, D-276); its sizes follow the size factor
 # v3.6.373: the Tags page is built from the form settings_tags.ui (parts, texts, layout; D-276); nothing visible changed
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -76,7 +73,7 @@ def _share(value: object) -> float:
 
 
 TABS: tuple[tuple[str, str], ...] = (("mail", "Mails"), ("events", "Events"), ("contacts", "Contacts"), ("tasks", "Tasks"))
-KIND_NAMES: dict[str, str] = {"mail": "Mails", "events": "Events", "tasks": "Tasks", "contacts": "Contacts"}
+KIND_BOXES: tuple[tuple[str, str], ...] = (("mail", "kindMail"), ("events", "kindEvents"), ("tasks", "kindTasks"), ("contacts", "kindContacts"))  # the editor's ticks
 
 
 @dataclass
@@ -105,46 +102,30 @@ class TagEditor(QDialog):
 
     def __init__(self, row: TagRow, taken: set[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Tags")
         self._colour = row.colour
         self._taken = taken
-        layout = QVBoxLayout(self)
-        form = QFormLayout()
-        self.name = QLineEdit(row.name, self)
-        form.addRow("Name:", self.name)
-        colour_row = QHBoxLayout()
-        self.swatch = QLabel(self)
-        self.swatch.setFixedSize(20, 20)
-        self.change = QPushButton("Change…", self)
+        form = forms.fill(self, "tag_editor")  # D-276
+        self.name: QLineEdit = part(form, QLineEdit, "name")
+        self.name.setText(row.name)
+        self.swatch: QLabel = part(form, QLabel, "swatch")
+        self.swatch.setFixedSize(wpx(20), wpx(20))
+        self.change: QPushButton = part(form, QPushButton, "change")
         self.change.clicked.connect(self._choose_colour)
-        colour_row.addWidget(self.swatch)
-        colour_row.addWidget(self.change)
-        colour_row.addSpacing(24)
-        colour_row.addWidget(QLabel("Shortcut:", self))
-        self.shortcut = QComboBox(self)
+        self.shortcut: QComboBox = part(form, QComboBox, "shortcut")
         self.shortcut.addItem("", "")
         for key in TAG_SHORTCUTS:
             self.shortcut.addItem(key, key)
         self.shortcut.setCurrentIndex(max(0, self.shortcut.findData(row.shortcut)))
-        colour_row.addWidget(self.shortcut, 1)
-        form.addRow("Color:", colour_row)
-        layout.addLayout(form)
-        group = QGroupBox("Use for", self)
-        group_layout = QVBoxLayout(group)
         self.kinds: dict[str, QCheckBox] = {}
-        for kind in ("mail", "events", "tasks", "contacts"):
-            box = QCheckBox(KIND_NAMES[kind], group)
+        for kind, box_name in KIND_BOXES:
+            box = part(form, QCheckBox, box_name)
             box.setChecked(kind in row.kinds)
-            group_layout.addWidget(box)
             self.kinds[kind] = box
-        layout.addWidget(group)
-        self.problem = QLabel("", self)
+        self.problem: QLabel = part(form, QLabel, "problem")
         self.problem.setStyleSheet(red_style())
-        layout.addWidget(self.problem)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons = part(form, QDialogButtonBox, "buttons")
         buttons.accepted.connect(self._check)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
         self._show_colour()
 
     def _show_colour(self) -> None:

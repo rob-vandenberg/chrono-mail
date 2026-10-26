@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ColumnPicker</class>
+ <widget class="QWidget" name="ColumnPicker">
+  <layout class="QHBoxLayout" name="body" stretch="1,0">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
+   <item>
+    <widget class="QListWidget" name="list" />
+   </item>
+   <item>
+    <layout class="QVBoxLayout" name="side" stretch="0,0,0,1">
+     <item>
+      <widget class="QPushButton" name="moveUp">
+       <property name="text">
+        <string>Move up</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="moveDown">
+       <property name="text">
+        <string>Move down</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="standardColumns">
+       <property name="text">
+        <string>Standard columns</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="sideEnd">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

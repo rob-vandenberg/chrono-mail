@@ -1,12 +1,17 @@
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QDate, QDateTime, QTime
-from PySide6.QtWidgets import QCheckBox, QDateTimeEdit, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QSpinBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QDateTimeEdit, QDialog, QDialogButtonBox, QHBoxLayout, QLabel, QPushButton, QSpinBox, QWidget
+
+from chrono_mail.ui import forms
+from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "whendialog.py 1.1.207"
+__version__ = "whendialog.py 4.0.377"
 
 # --- Version history ----------------------------------------------------
+# v4.0.377: built from its Qt Designer form (ui/forms/send_later.ui, D-276), the quick choices at their place; the Tab order follows the
+#           window from top to bottom (the date came before the quick choices)
 # v1.1.207: show_current: opens on the time, interval and end a scheduled message has now (D-177)
 # v0.0.67: Repeating: an interval and an end
 # v0.0.34: Initial dialog for choosing a time (send later, snooze)
@@ -38,61 +43,54 @@ class WhenDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         moment = now or datetime.now()
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(question, self))
-        quick = QHBoxLayout()
+        self._moment: datetime = moment
         self.preset_buttons: list[QPushButton] = []
-        self.edit = QDateTimeEdit(self)
+        form = forms.fill(self, "send_later", {"quick": self._quick})  # D-276
+        part(form, QLabel, "question").setText(question)
+        self.edit: QDateTimeEdit = part(form, QDateTimeEdit, "edit")
         self.edit.setCalendarPopup(True)
         self.edit.setDisplayFormat("yyyy-MM-dd HH:mm")
-        for label, when in presets(moment):
-            button = QPushButton(label, self)
-            button.clicked.connect(lambda checked=False, chosen=when: self.edit.setDateTime(to_qt(chosen)))
-            quick.addWidget(button)
-            self.preset_buttons.append(button)
-        layout.addLayout(quick)
         tomorrow = presets(moment)[-2][1]
         self.edit.setDateTime(to_qt(tomorrow))
         self.edit.setMinimumDateTime(to_qt(moment))
-        layout.addWidget(self.edit)
-        self.repeat_box = QCheckBox("Send it again and again, every", self)
-        self.months = QSpinBox(self)
-        self.weeks = QSpinBox(self)
-        self.days = QSpinBox(self)
-        self.until_box = QCheckBox("Stop after", self)
-        self.until = QDateTimeEdit(self)
+        self.repeat_box: QCheckBox = part(form, QCheckBox, "repeat")
+        self.months: QSpinBox = part(form, QSpinBox, "months")
+        self.weeks: QSpinBox = part(form, QSpinBox, "weeks")
+        self.days: QSpinBox = part(form, QSpinBox, "days")
+        self.until_box: QCheckBox = part(form, QCheckBox, "untilBox")
+        self.until: QDateTimeEdit = part(form, QDateTimeEdit, "until")
         self.until.setCalendarPopup(True)
         self.until.setDisplayFormat("yyyy-MM-dd HH:mm")
         self.until.setDateTime(to_qt(moment + timedelta(days=30)))
-        for spin, suffix, maximum in ((self.months, " months", 120), (self.weeks, " weeks", 520), (self.days, " days", 3650)):
+        for spin, maximum in ((self.months, 120), (self.weeks, 520), (self.days, 3650)):
             spin.setRange(0, maximum)
-            spin.setSuffix(suffix)
         self.days.setValue(7)
-        self.repeating = QWidget(self)
-        row = QHBoxLayout(self.repeating)
-        row.setContentsMargins(0, 0, 0, 0)
-        for widget in (self.months, self.weeks, self.days):
-            row.addWidget(widget)
-        until_row = QHBoxLayout()
-        until_row.addWidget(self.until_box)
-        until_row.addWidget(self.until, 1)
-        self.until_widget = QWidget(self)
-        self.until_widget.setLayout(until_row)
-        if repeat:
-            for widget in (self.repeat_box, self.repeating, self.until_widget):
-                layout.addWidget(widget)
-        else:
+        self.repeating: QWidget = part(form, QWidget, "repeating")
+        self.until_widget: QWidget = part(form, QWidget, "untilWidget")
+        if not repeat:
             for widget in (self.repeat_box, self.repeating, self.until_widget):
                 widget.hide()
         self.repeat_box.toggled.connect(self._repeat_toggled)
         self.until_box.toggled.connect(self.until.setEnabled)
         self._repeat_toggled(False)
         self.until.setEnabled(False)
-        box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        box = part(form, QDialogButtonBox, "buttons")
         box.button(QDialogButtonBox.StandardButton.Ok).setText(ok_text)
         box.accepted.connect(self.accept)
         box.rejected.connect(self.reject)
-        layout.addWidget(box)
+        self.edit.setFocus()  # it opens on the date, as before: Enter schedules at the time shown (a focused quick choice would take Enter)
+
+    def _quick(self, parent: QWidget) -> QWidget:
+        """The quick choices from this moment on, made at their place in the form (they change with the time of day)."""
+        quick = QWidget(parent)
+        row = QHBoxLayout(quick)
+        row.setContentsMargins(0, 0, 0, 0)
+        for label, when in presets(self._moment):
+            button = QPushButton(label, quick)
+            button.clicked.connect(lambda checked=False, chosen=when: self.edit.setDateTime(to_qt(chosen)))
+            row.addWidget(button)
+            self.preset_buttons.append(button)
+        return quick
 
     def show_current(self, moment: datetime, months: int = 0, weeks: int = 0, days: int = 0, end: datetime | None = None) -> None:
         """Open on what a scheduled message has now: its time, and for a repeating one its interval and end."""
