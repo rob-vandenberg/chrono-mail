@@ -9,6 +9,7 @@ from PySide6.QtCore import QCoreApplication, QSettings, Qt, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from chrono_mail.config import AppDirectories, KeyringPasswordStore, default_directories, profile_directories
+from chrono_mail.core import CredentialBackend
 from chrono_mail.config.running import program_is_running, set_process_name
 from chrono_mail.crypto import KeyringKeyStore
 from chrono_mail.engine import Engine
@@ -20,9 +21,11 @@ from chrono_mail.ui.plainboxes import plain_message_boxes
 from chrono_mail.ui.singleinstance import ShowRequests, ask_to_show
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 3.5.348"
+__version__ = "app.py 3.6.370"
 
 # --- Version history ----------------------------------------------------
+# v3.6.370: the passwords and the key are kept under the profile's own wallet name (a demo's are never mixed with the person's own,
+#           credential_stores); --profile is resolved, so one folder has one name
 # v3.5.348: The ready-made message boxes show plain text without an event filter on the whole program (the kind that crashed PySide on 2026-10-21)
 # v3.4.344: every message box shows plain text unless it says otherwise (plainboxes, RV-167)
 # v2.3.320: --profile <folder>: mail, settings and the window's own settings all in that folder, the person's own never touched (the demo for screenshots, D-243)
@@ -65,10 +68,10 @@ def take_profile(arguments: list[str]) -> Path | None:
         if argument == PROFILE_OPTION and position + 1 < len(arguments):
             folder = arguments[position + 1]
             del arguments[position:position + 2]
-            return Path(folder).expanduser().absolute()
+            return Path(folder).expanduser().resolve()  # one folder, one wallet name, however it is written
         if argument.startswith(PROFILE_OPTION + "="):
             del arguments[position]
-            return Path(argument.partition("=")[2]).expanduser().absolute()
+            return Path(argument.partition("=")[2]).expanduser().resolve()
     return None
 
 
@@ -78,6 +81,11 @@ def directories_and_settings(profile: Path | None) -> tuple[AppDirectories, QSet
         return default_directories(), QSettings("chrono-mail", "chrono-mail")
     directories = profile_directories(profile)
     return directories, QSettings(str(directories.config_directory / WINDOW_SETTINGS_FILE), QSettings.Format.IniFormat)
+
+
+def credential_stores(directories: AppDirectories, backend: CredentialBackend | None = None) -> tuple[KeyringPasswordStore, KeyringKeyStore]:
+    """The wallet stores of these directories: the passwords and the key under their own wallet name (a profile's, or the person's)."""
+    return KeyringPasswordStore(directories.credential_service, backend), KeyringKeyStore(directories.credential_service, backend)
 
 
 def second_start() -> int:
@@ -106,7 +114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if program_is_running():  # two copies would change the same mail at once
         return second_start()
     directories, settings = directories_and_settings(profile)
-    engine = Engine(directories, KeyringPasswordStore(), KeyringKeyStore())
+    engine = Engine(directories, *credential_stores(directories))
     backend = Backend(engine)
     appearance.start(app, settings)  # the colour theme and the style, before any window is made
     window = MainWindow(backend, settings)

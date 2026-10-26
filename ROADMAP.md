@@ -182,6 +182,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (3.6.366) Moving messages to a folder of another account (Move to submenus, a drop on another account's folder), message by message, never lost when stopped; Undo and Redo (D-272).
 - DONE (3.6.368) A held Ctrl+Z after a held Delete keeps every message under its own heading (D-273).
 - DONE (3.6.369) Not junk shows its key (Ctrl+J) in the menus; in Junk the Message menu shows Not junk only.
+- DONE (3.6.370) A profile (the demo) keeps its passwords and key under its own wallet name (D-274).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

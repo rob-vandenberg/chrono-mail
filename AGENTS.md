@@ -15,8 +15,6 @@ An account in Chrono Mail is a faithful **copy** of the account on its server (I
 
 Every changelist says how it keeps this rule. Nothing counts as obvious: what the rule does not settle is asked, never chosen.
 
-**Read this file first. Then read `PY-DEVELOPMENT-RULES.md` completely. Then `OWNER-RULES.md`. Then `STATUS.md`.** Those four files are mandatory at the start of every session (`OWNER-RULES.md` is also loaded by itself at every session start). An owner rule outranks everything Claude wrote (OR-41). The others are read when the task needs them.
-
 ## 1. Orientation
 
 | File | Purpose | When to read |
@@ -49,8 +47,8 @@ Every changelist says how it keeps this rule. Nothing counts as obvious: what th
 - **Language:** Python 3 only. The exact minimum version is chosen in task 0.1.
 - **Type checking:** Pyrefly in **strict** mode. Zero type errors is a hard gate, comparable to a compile step. Every function, method and module-level variable carries full type annotations. No `Any` unless unavoidable and commented. Pyrefly's default "basic" preset silences most errors and must never be used.
 - **GUI:** Qt 6 through **PySide6**. No KDE Frameworks, no GTK, no webview shells (Electron, Tauri and the like).
-- **HTML mail display:** Qt WebEngine (part of Qt), with JavaScript disabled and remote content blocked by default.
-- **Storage:** encrypted Maildir plus a rebuildable index (see ARCHITECTURE.md §4).
+- **HTML mail display:** see 4.6.3.
+- **Storage:** encrypted Maildir plus an index, see 4.1.3.
 - **License:** AGPL-3.0. Every dependency must be license-compatible.
 
 ## 4. Golden rules
@@ -61,7 +59,7 @@ With POP3, the local copy is often the only copy. A bug that loses or damages ma
 
 1. Every write to the message store is atomic: write to `tmp`, flush to disk, then move into place in one rename.
 2. Never delete a message from a server before it is safely stored locally and verified (decrypts and parses).
-3. The index is never the source of truth. It can always be deleted and rebuilt from the message store.
+3. The message store is encrypted Maildir (ARCHITECTURE.md §4). The index is never the source of truth: it can always be deleted and rebuilt from the message store.
 4. Anything that could destroy data (delete, purge, compact, key change, migration) needs a test proving it is safe when interrupted at any point.
 5. Losing the encryption key means losing all mail. Key backup and recovery are part of the core design, not an extra.
 
@@ -87,7 +85,7 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 ### 4.5 Tests are the gate
 
 1. Every change comes with tests.
-2. A task is only done when: the tests related to the change pass (never the full suite, the owner's rule), Pyrefly strict reports zero errors, the layer check passes.
+2. A task is only done when: the tests related to the change pass (never the full suite, the owner's rule), the type check of §3 passes, the layer check passes.
 3. Protocol code is tested against a real mail server (SMTP, POP3, later IMAP, including their TLS variants), not only against mocks. No mail server is installed on the development machine: the tests use the Dovecot/Exim servers on the user's DirectAdmin hosts through opt-in `live` tests (`pytest -m live`, D-020). The default run (`pytest`) stays offline and excludes them.
 4. Performance target: the app stays responsive with **500,000 messages**. Heavy operations are measured against a generated test mailbox of that size.
 5. **A test is unambiguous** (the owner, R-45, D-223). Its result never depends on what ran before it, nor on timing; a test that can do that is a gamble, not a test. So:
@@ -102,7 +100,7 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 
 1. Message bodies and attachments are encrypted on disk by default (ARCHITECTURE.md §4).
 2. Passwords and keys are stored in the operating system's credential store, never in plain-text config files.
-3. HTML mail: no JavaScript, no remote content unless the user allows it for that message or sender.
+3. HTML mail is shown in Qt WebEngine (part of Qt): no JavaScript, no remote content unless the user allows it for that message or sender.
 4. TLS certificate verification is always on. A user may accept an exception explicitly; the app never does so silently.
 5. Never log message contents, passwords or keys.
 
@@ -124,12 +122,11 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
    - Stage 3: approve the plan with accept edits; the user reviews the result per task in git.
    - Stage 4 (optional, later): auto mode for routine tasks.
 3. **Within an approved plan**, the agent may run tests and fix its own test failures, as long as the fixes stay inside the approved scope. Anything outside the scope needs a new plan.
-4. **Owner rules.** Every changelist ends with the line "Your rules this touches: OR-…". A test that checks the project itself names the rule it enforces and uses only that rule's numbers (OR-42, `tests/test_owner_rules.py`). A conflict with an owner rule is Claude's fault, reported, never settled by bending the program, a test or the rule.
-5. **Delivery.** In a chat session, files are delivered for download with versioned names (Rule 4/5). In a Claude Code session working in the repository, files are edited in place. In both cases every response that modifies files ends with the Rule 5 summary and release line. The user commits with their own `release` tooling.
+4. **Delivery.** In a chat session, files are delivered for download with versioned names (Rule 4/5). In a Claude Code session working in the repository, files are edited in place. In both cases every response that modifies files ends with the Rule 5 summary and release line. The user commits with their own `release` tooling.
 
 ## 7. Before you finish a task
 
-1. The tests related to the change pass (never the full suite, the owner's rule), Pyrefly strict reports zero errors, the layer check passes.
+1. The task passes the gate of 4.5.2.
 2. `ROADMAP.md`: update the task's status.
 3. `STATUS.md`: rewrite it (current state, next task, open questions).
 4. `DEVLOG.md`: append a short entry (what landed, numbers, what is still open).

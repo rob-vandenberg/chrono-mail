@@ -13,16 +13,16 @@ from pathlib import Path
 from PySide6.QtCore import QSettings
 
 from chrono_mail.core.words import counted
-from chrono_mail.config import AppDirectories, KeyringPasswordStore, Rule, RuleSet, ServerRole, profile_directories, save_rules
+from chrono_mail.config import AppDirectories, Rule, RuleSet, ServerRole, default_directories, load_config, parse_config, profile_directories, save_rules
 from chrono_mail.config import Action, Condition, new_rule_id
 from chrono_mail.config.passwords import PasswordStore
-from chrono_mail.core import LOCAL_ACCOUNT_ID, FolderRole
-from chrono_mail.crypto import KeyringKeyStore, KeyStore
+from chrono_mail.core import LOCAL_ACCOUNT_ID, ConfigurationError, CryptoError, FolderRole
+from chrono_mail.crypto import KeyNotFoundError, KeyStore
 from chrono_mail.engine import Engine
 from chrono_mail.engine.commands_accounts import AccountAddParameters, account_add
 from chrono_mail.engine.commands_folders import FolderParameters, folder_create
 from chrono_mail.sync.imap_state import ImapState
-from chrono_mail.ui.app import WINDOW_SETTINGS_FILE
+from chrono_mail.ui.app import WINDOW_SETTINGS_FILE, credential_stores
 from chrono_mail.ui.prefs import read_preferences, save_preferences
 from tools.demo.cast import ACCOUNTS, PERSON, DemoAccount
 from tools.demo.mail import TOTAL_MESSAGES, build_mail
@@ -30,9 +30,11 @@ from tools.demo.people import make_people
 from tools.demo.pim import PimMaker
 
 # --- Version ------------------------------------------------------------
-__version__ = "build.py 2.4.333"
+__version__ = "build.py 3.6.370"
 
 # --- Version history ----------------------------------------------------
+# v3.6.370: the demo's passwords and key under its own wallet name; --fresh also removes the demo's entries left under the shared name,
+#           never the person's own; a demo built before is built again by itself
 # v2.4.333: the time it took in seconds under a minute and a half ("in 40 seconds", not "in 1 minutes"); about six minutes for 100,000
 #           messages, as measured (the Windows computer's note)
 # v2.3.321: The mail (100,000 messages by default, --messages for fewer), the calendars, tasks and contacts, with progress in the terminal
@@ -70,8 +72,10 @@ def show_progress(what: str, done: int, total: int) -> None:
     print(f"\r{what}: {done:,} of {total:,}   ", end="" if done < total else "\n", flush=True)
 
 
-def remove_demo(folder: Path, passwords: PasswordStore, keys: KeyStore) -> None:
-    """Remove a demo profile with its key and passwords from the wallet, so they never pile up. Refuses a folder that is no demo."""
+def remove_demo(folder: Path, passwords: PasswordStore, keys: KeyStore, shared: tuple[PasswordStore, KeyStore] | None = None, keep: frozenset[str] = frozenset()) -> None:
+    """Remove a demo profile with its key and passwords from the wallet, so they never pile up. Refuses a folder that is no demo.
+    shared: the stores under the wallet name every profile used before 3.6.370; the demo's own entries left there go too (only its own).
+    keep: the account ids and the key id of the person's own settings, never removed (a backup of their own restored into the demo)."""
     if not folder.exists():
         return
     if not (folder / MARKER).is_file():
@@ -79,12 +83,38 @@ def remove_demo(folder: Path, passwords: PasswordStore, keys: KeyStore) -> None:
     directories = profile_directories(folder)
     if directories.config_file.exists():
         config = Engine(directories, passwords, keys).config()
-        for settings in config.accounts:
-            for role in ServerRole:
-                passwords.delete(settings.account.account_id, role)
-        if config.key_id is not None:
-            keys.delete(bytes.fromhex(config.key_id))
+        for password_store, key_store in [(passwords, keys), *([shared] if shared is not None else [])]:
+            for settings in config.accounts:
+                if settings.account.account_id in keep:
+                    continue
+                for role in ServerRole:
+                    password_store.delete(settings.account.account_id, role)
+            if config.key_id is not None and config.key_id not in keep:
+                key_store.delete(bytes.fromhex(config.key_id))
     shutil.rmtree(folder)
+
+
+def built_before_own_name(folder: Path, keys: KeyStore) -> bool:
+    """Whether a demo was built before 3.6.370: its key is not under its own wallet name (the window could not open it). A wallet that
+    cannot be read, or settings that cannot, decide nothing: the window opens as before and says what is wrong."""
+    try:
+        key_id = load_config(profile_directories(folder).config_file).key_id
+        if key_id is not None:
+            keys.load(bytes.fromhex(key_id))
+    except KeyNotFoundError:
+        return True
+    except (ConfigurationError, CryptoError):
+        return False
+    return False
+
+
+def own_entries(own: AppDirectories) -> frozenset[str]:
+    """The account ids and the key id of the person's own settings: a demo's clean-up never removes these. Only read: settings that
+    cannot be read or are damaged stop the clean-up with an error before anything is removed, and nothing is written in the person's own folder."""
+    if not own.config_file.is_file():
+        return frozenset()
+    config = parse_config(own.config_file.read_text(encoding="utf-8"))
+    return frozenset([*(settings.account.account_id for settings in config.accounts), *([config.key_id] if config.key_id is not None else [])])
 
 
 def _server_validity(account: DemoAccount, folder: tuple[str, ...]) -> int:
@@ -176,10 +206,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fresh", action="store_true", help="remove the demo profile first, with its key and passwords in the wallet")
     parser.add_argument("--messages", type=int, default=TOTAL_MESSAGES, help=f"how many messages (default {TOTAL_MESSAGES:,})")
     arguments = parser.parse_args(argv)
-    folder: Path = arguments.folder.expanduser().absolute()
-    passwords, keys = KeyringPasswordStore(), KeyringKeyStore()
-    if arguments.fresh:
-        remove_demo(folder, passwords, keys)
+    folder: Path = arguments.folder.expanduser().resolve()  # the same folder as --profile gives the window: one wallet name
+    passwords, keys = credential_stores(profile_directories(folder))
+    own = default_directories()
+    fresh: bool = arguments.fresh
+    if not fresh and (folder / MARKER).is_file() and built_before_own_name(folder, keys):
+        print("The demo profile was built before it had a wallet name of its own: it is built again.")
+        fresh = True
+    if fresh:
+        remove_demo(folder, passwords, keys, shared=credential_stores(own), keep=own_entries(own))
     if (folder / MARKER).is_file():
         print(f"The demo profile is ready in {folder}.")
         return 0

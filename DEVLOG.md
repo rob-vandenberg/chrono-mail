@@ -2998,6 +2998,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.370: A profile keeps its passwords under its own wallet name (the owner, D-274)
+
+1. Found in the owner's wallet: 84 Chrono Mail entries for 27 accounts. 27 entries and a key belong to the demo profile (14 made-up accounts), kept under the same wallet name "chrono-mail" as the owner's own; 4 entries are left over from three accounts of 15 and 16 October that exist nowhere any more (the owner removes them).
+2. `config/paths.py`: AppDirectories.credential_service, "chrono-mail" for the person's own, "chrono-mail (<folder>)" for a profile. `ui/app.py` stores passwords and the key under it. `tools/demo/build.py` builds the demo under it; --fresh also removes the demo's own entries left under the shared name. The command line keeps the shared name (its folder options may point at the person's own mail).
+3. Found by the reviewers and fixed: a demo built before is built again by itself (its key not under its own name), so ./demo.sh needs no --fresh; the clean-up never removes an account or key the person's own settings name, and only reads those settings; --profile and the builder resolve the folder (one folder, one name); a wallet that cannot be read decides nothing (the window opens as before). The window and the builder make their stores through ui/app.py credential_stores.
+4. Tests: tests/test_demo_profile.py (7, each fails with its fix switched off or on 3.6.369). Related tests (99 engine and demo, 148 window) and the guard tests pass; Pyrefly 0 on src and tools (Linux and win32); layer check kept. Three review rounds.
+
 ## 2026-10-26 3.6.369: Not junk shows its key in the menus (the owner)
 
 1. `ui/mainwindow.py`: Not junk (move to Inbox) shows the junk key (Ctrl+J; in Junk it brings a message back) in the menus, or its own key when the person gave it one in Settings > Keyboard; shown in the text only, so the key acts once. In Junk the Message menu shows Not junk only, as the right-click menu does (Move to Junk with the same key showed there too).

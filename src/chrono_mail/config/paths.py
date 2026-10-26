@@ -4,12 +4,13 @@ from pathlib import Path
 import platformdirs
 
 from chrono_mail.config.model import ACCOUNT_ID_PATTERN
-from chrono_mail.core import ConfigurationError
+from chrono_mail.core import SERVICE_NAME, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 2.3.320"
+__version__ = "paths.py 3.6.370"
 
 # --- Version history ----------------------------------------------------
+# v3.6.370: credential_service: a profile keeps its passwords and key under a wallet name of its own, never mixed with the person's own
 # v2.3.320: profile_directories: everything of one profile in one folder of its own (the demo for screenshots, D-243)
 # v2.1.308: junk_filter_file: what the junk filter learned (D-238)
 # v2.0.302: opened_directory: copies of attachments opened in another program (D-236)
@@ -28,6 +29,7 @@ class AppDirectories:
 
     config_directory: Path
     data_directory: Path
+    credential_service: str = SERVICE_NAME  # the name its passwords and key have in the wallet: a profile's own, never the person's
 
     @property
     def config_file(self) -> Path:
@@ -86,4 +88,4 @@ def default_directories() -> AppDirectories:
 
 def profile_directories(folder: Path) -> AppDirectories:
     """Everything of a profile in one folder of its own (its settings in config, its mail in data), apart from the person's own (D-243)."""
-    return AppDirectories(folder / "config", folder / "data")
+    return AppDirectories(folder / "config", folder / "data", f"{SERVICE_NAME} ({folder})")
