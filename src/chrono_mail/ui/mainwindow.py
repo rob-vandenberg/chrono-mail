@@ -61,9 +61,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 3.6.369"
+__version__ = "mainwindow.py 3.6.371"
 
 # --- Version history ----------------------------------------------------
+# v3.6.371: the wallet's entries get readable labels at start (B-23, D-275)
 # v3.6.369: Not junk shows the junk key in the menus (in Junk that key brings a message back), unless it has a key of its own; in Junk the
 #           Message menu shows Not junk only, as the right-click menu does; Not junk works in Favorites > Junk too, as the junk key did,
 #           and is greyed with nothing selected or in a view without an account
@@ -1157,6 +1158,7 @@ class MainWindow(QMainWindow):
         def ready() -> None:
             self.reload_accounts(select_saved=True, then=check)
             self.checking.learn_existing_junk()  # once per place where mail is kept (D-238)
+            self.checking.label_wallet()  # readable labels for the wallet's entries (B-23)
 
         self._with_key(lambda: self.rebuilds.start(ready))  # every index usable first (D-229)
 

@@ -41,6 +41,7 @@ from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders, take_back
 from chrono_mail.engine.newkey import kept_local_key, kept_other_key, make_data_key, recovery_code_not_stored, recovery_code_stored, usable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine, let_go_kept_indexes
+from chrono_mail.engine.walletlabels import label_account, label_key, label_wallet
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
 from chrono_mail.protocols.tls import context_for, inspect_certificate, valid_fingerprint
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
@@ -49,9 +50,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 3.6.353"
+__version__ = "commands_accounts.py 3.6.371"
 
 # --- Version history ----------------------------------------------------
+# v3.6.371: the passwords and the key get readable labels in the wallet when stored or the account is renamed; wallet.label at start (B-23, D-275)
 # v3.6.353: the kept index connections are let go before the mail kept on this computer is set aside (D-266)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.6.350: key.status names the key of Local Folders kept here when the settings name none (kept), so the start asks for it;
@@ -208,6 +210,7 @@ def account_add(engine: Engine, parameters: AccountAddParameters) -> AccountAddR
         engine.passwords.delete(account_id, ServerRole.OUTGOING)
         shutil.rmtree(engine.directories.account_directory(account_id), ignore_errors=True)
         raise
+    label_account(engine, account_id)  # its passwords named in the wallet as the account is (B-23)
     return AccountAddResult(account_id, key_created or local_key_created, tuple("/".join(path) for path, _ in STANDARD_FOLDERS), recovery_code_not_stored(engine))
 
 
@@ -533,6 +536,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     elif parameters.outgoing_password:
         engine.passwords.set(account.account_id, ServerRole.OUTGOING, parameters.outgoing_password)
     config = engine.change_config(edit)
+    label_account(engine, account.account_id)  # a new name or address, or a password stored again: its labels follow (B-23)
     return _summary(config.find(account.account_id))
 
 
@@ -684,6 +688,7 @@ def _restore(engine: Engine, key: DataKey) -> KeyStatus:
     wanted = config.key_id if config.key_id is not None else kept_local_key(engine)  # settings lost: the key the kept mail was written with
     if config.key_id is not None and key.key_id.hex() == kept_other_key(engine):  # the older key the kept Local Folders was written with
         engine.keys.save(key)  # only stored here: taking Local Folders back is its own step (local.take-back), which the key window runs next
+        label_key(engine, key.key_id)
         if engine.keys.load(key.key_id) != key:
             raise CryptoError("The credential store did not return the key that was just saved")
         return key_status(engine, NoParameters())
@@ -692,6 +697,7 @@ def _restore(engine: Engine, key: DataKey) -> KeyStatus:
     if key.key_id.hex() != wanted:
         raise CryptoError("This is not the key of this installation's accounts")
     engine.keys.save(key)
+    label_key(engine, key.key_id)
     if engine.keys.load(key.key_id) != key:
         raise CryptoError("The credential store did not return the key that was just saved")
     if config.key_id is None:  # the kept Local Folders can be taken into use again with it (RV-177); one key at a time (SETUP_LOCK)
@@ -797,7 +803,26 @@ KEY_START_WITHOUT_KEPT: TypedCommand[NoParameters, KeptSetAside] = TypedCommand(
 LOCAL_TAKE_BACK: TypedCommand[NoParameters, KeyStatus] = TypedCommand("local.take-back", NoParameters, KeyStatus)
 
 
+@dataclass(frozen=True, slots=True)
+class WalletLabelResult:
+    accounts: int  # how many accounts' entries were looked at
+
+
+def wallet_label(engine: Engine, parameters: NoParameters) -> WalletLabelResult:
+    """At start: Chrono Mail's entries in the wallet get labels a person can read (B-23, D-275); only the labels change."""
+    older = kept_other_key(engine)  # the older key Local Folders' kept mail was written with (read from a file: may be no key id at all)
+    try:
+        other_keys = (bytes.fromhex(older),) if older is not None else ()
+    except ValueError:
+        other_keys = ()
+    return WalletLabelResult(label_wallet(engine, other_keys))
+
+
+WALLET_LABEL: TypedCommand[NoParameters, WalletLabelResult] = TypedCommand("wallet.label", NoParameters, WalletLabelResult)
+
+
 def register(registry: CommandRegistry) -> None:
+    registry.register(WALLET_LABEL.id, "Give Chrono Mail's passwords and key a readable name in the wallet (only the names change)", NoParameters, wallet_label, doing="Naming Chrono Mail's passwords in your wallet")
     registry.register(CERTIFICATE_INSPECT.id, "Look at the certificate of a server (nothing is accepted by looking)", CertificateParameters, certificate_inspect, doing="Reading the server's certificate")
     registry.register(ACCOUNT_TRUST_CERTIFICATE.id, "Accept a server certificate for an account (by its fingerprint)", TrustParameters, account_trust_certificate, doing="Accepting a certificate")
     registry.register(ACCOUNT_FORGET_CERTIFICATES.id, "Forget the accepted certificates of an account", AccountParameters, account_forget_certificates, doing="Forgetting the accepted certificates")

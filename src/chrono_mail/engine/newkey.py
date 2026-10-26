@@ -3,12 +3,14 @@ from pathlib import Path
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CryptoError
 from chrono_mail.crypto import CredentialStoreError, DataKey, generate_data_key
 from chrono_mail.engine.session import Engine
+from chrono_mail.engine.walletlabels import label_key
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "newkey.py 3.6.350"
+__version__ = "newkey.py 3.6.371"
 
 # --- Version history ----------------------------------------------------
+# v3.6.371: a new key gets a readable label in the wallet (B-23, D-275)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; kept_other_key and usable: Local
 #           Folders' mail kept with an older key is taken back when that key can be had; no new key while Local Folders' mail kept here
 #           needs its own: that key is used when the password store has it, otherwise nothing is made and the person is told how to bring it
@@ -35,6 +37,7 @@ def make_data_key(engine: Engine) -> DataKey:
         return engine.keys.load(bytes.fromhex(kept))
     key = generate_data_key()
     engine.keys.save(key)
+    label_key(engine, key.key_id)  # B-23
     if engine.keys.load(key.key_id) != key:  # never use a key whose copy in the credential store cannot be read back
         raise CryptoError("The credential store did not return the key that was just saved")
     marker = _marker(engine)

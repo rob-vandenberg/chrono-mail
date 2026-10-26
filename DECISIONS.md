@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-274 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-275 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-275**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-276**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -181,6 +181,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-152** Every fact is numbered per mailbox; a places question says how far the list has heard.
 - **D-273** (the owner) **An answer that gives places with their headings reads the order and the headings of each mailbox in one go, under its lock**, so no change falls between them. Why: an Undo between two reads (a held Ctrl+Z) made every heading one off.
 - **D-274** (the owner) **A profile keeps its passwords and key in the wallet under a name of its own**, "chrono-mail (<folder>)"; the person's own keep "chrono-mail". Why: the demo's made-up passwords were mixed with the person's real ones and looked the same.
+- **D-275** (B-23, the owner) **Every entry of Chrono Mail in the wallet has a label a person can read**: "Chrono Mail: <account name>, <address> (incoming mail server)" (outgoing, calendar and contacts server), "Chrono Mail: the key that encrypts your mail", a profile's with its folder name. Given at every save, when the account's name or address changes, and at every start; only the label changes, never the lookup name or the password; a label that cannot be written fails nothing, and a locked wallet is asked once. Linux (Secret Service) only: Windows and macOS show the lookup name, which must stay. Why: the lookup names told the person nothing.
 
 ## 9. Mail window: list, search, rules, settings
 

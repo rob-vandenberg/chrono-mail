@@ -31,6 +31,7 @@ from chrono_mail.engine.newkey import make_data_key
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import OUTBOX, STANDARD_FOLDERS, Engine, WaitStopped, let_go_kept_indexes
+from chrono_mail.engine.walletlabels import label_account
 from chrono_mail.pimstore.extract import extract
 from chrono_mail.store import SENT_LETTER, Store
 from chrono_mail.store.store import folder_description
@@ -43,9 +44,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 3.6.354"
+__version__ = "restore.py 3.6.371"
 
 # --- Version history ----------------------------------------------------
+# v3.6.371: the restored passwords get readable labels in the wallet (B-23, D-275)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.353: the kept index connections are let go before account files are moved aside or into place (D-266)
 # v3.6.351: this computer's damaged tags file is handled as its rules file (kept as .bad, told), never stopping the restore; a damaged
@@ -1254,6 +1256,7 @@ def _restore_passwords(engine: Engine, passwords: dict[str, dict[str, str]], rep
             role = roles.get(role_name)
             if role is not None and (made or replace_existing or engine.passwords.get(account_id, role) is None):
                 engine.passwords.set(account_id, role, password)
+        label_account(engine, account_id)  # B-23
 
 
 # --- this computer's data set aside (Remove all data on this computer first) ------------------------------------------

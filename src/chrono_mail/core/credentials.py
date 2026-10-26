@@ -1,14 +1,19 @@
 import threading
 from collections.abc import Callable
+from contextlib import closing
 from typing import Protocol, cast
 
 import keyring
 import keyring.errors
+from keyring.backends.SecretService import Keyring as SecretServiceKeyring
+from keyring.backends.chainer import ChainerBackend
 
 # --- Version ------------------------------------------------------------
-__version__ = "credentials.py 2.0.295"
+__version__ = "credentials.py 3.6.371"
 
 # --- Version history ----------------------------------------------------
+# v3.6.371: label: an entry gets a label a person can read in the wallet (Secret Service: KDE Wallet, GNOME Keyring); the lookup name
+#           stays; a store without labels (Windows, macOS) is left as it is (B-23, D-275)
 # v2.0.295: Every call to the store has a time limit (60 s, time to unlock the wallet): the one wait outside our code that had none; after it
 #           the job ends with a clear error instead of waiting for ever (a late answer is ignored) (D-127)
 # v1.8.263: R-16: the one copy of the wallet's service name, the reading, saving and removing of an entry and the reason text (was in crypto/keystore.py and config/passwords.py)
@@ -30,6 +35,36 @@ class CredentialBackend(Protocol):
     def set_password(self, service: str, username: str, password: str) -> None: ...
 
     def delete_password(self, service: str, username: str) -> None: ...
+
+
+class LabelledBackend(Protocol):
+    """A credential store whose entries carry a label of their own, apart from the name they are found by (a test double)."""
+
+    def set_label(self, service: str, username: str, label: str) -> None: ...
+
+
+def _secret_service_labeller(backend: SecretServiceKeyring) -> Callable[[str, str, str], None]:
+    """Labels the entries keyring wrote in the Secret Service: they are found by the same attributes keyring uses, so the lookup is untouched."""
+
+    def set_label(service: str, username: str, label: str) -> None:
+        collection = backend.get_preferred_collection()
+        with closing(collection.connection):
+            for item in collection.search_items(backend._query(service, username)):  # noqa: SLF001 - keyring's own attributes of the entry
+                if item.get_label() != label:
+                    item.set_label(label)
+
+    return set_label
+
+
+def _labeller(backend: object) -> Callable[[str, str, str], None] | None:
+    """How entries of this store get a readable label, or None for a store that shows only the lookup name (Windows, macOS)."""
+    if isinstance(backend, ChainerBackend):  # several stores at once: the first one takes every new entry, so its labels are the ones shown
+        chained = backend.backends
+        backend = chained[0] if chained else None
+    if isinstance(backend, SecretServiceKeyring):
+        return _secret_service_labeller(backend)
+    set_label = getattr(backend, "set_label", None)  # getattr: a test double that keeps labels (LabelledBackend)
+    return cast("LabelledBackend", backend).set_label if callable(set_label) else None
 
 
 class CredentialFailure(Exception):
@@ -92,6 +127,21 @@ class CredentialEntries:
     def write(self, name: str, value: str) -> None:
         try:
             _within(lambda: self._backend.set_password(self._service, name, value), self._limit)
+        except CredentialFailure:
+            raise
+        except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
+            raise CredentialFailure(_cause(error)) from None
+
+    def label(self, name: str, text: str) -> None:
+        """Give the entry a label a person can read in the wallet; the name it is found by stays. Nothing for a store without labels or
+        an entry that is not there."""
+        def work() -> None:  # finding the labeller asks the stores too (a chained store asks each over D-Bus): inside the time limit
+            labeller = _labeller(self._backend)
+            if labeller is not None:
+                labeller(self._service, name, text)
+
+        try:
+            _within(work, self._limit)
         except CredentialFailure:
             raise
         except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)

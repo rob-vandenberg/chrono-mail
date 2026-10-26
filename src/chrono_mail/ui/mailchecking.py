@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
+from chrono_mail.engine.commands_accounts import WALLET_LABEL, AccountParameters, NoParameters, WalletLabelResult
 from chrono_mail.engine.commands_dav import DAV_SYNC, DavSyncSummary, SyncParameters
 from chrono_mail.engine.commands_mail import MAIL_FETCH, MAIL_SETTLE, BlockedFolder, FetchResult, SettleParameters
 from chrono_mail.engine.commands_outbox import MAIL_SEND_OUTBOX, SendOutboxParameters, SendOutboxResult
@@ -24,9 +24,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 3.5.348"
+__version__ = "mailchecking.py 3.6.371"
 
 # --- Version history ----------------------------------------------------
+# v3.6.371: label_wallet at start: readable labels in the wallet (B-23, D-275)
 # v3.5.348: A question with buttons of its own shows plain text (RV-167, without a filter on the whole program)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -412,6 +413,18 @@ class MailChecking(QObject):
             self._status.report("Junk filter: learning from your mail", error)
 
         self._backend.ask(JUNK_LEARN_EXISTING, NoParameters(), done, failed, owner=self)
+
+    def label_wallet(self) -> None:
+        """At start: Chrono Mail's entries in the wallet get labels a person can read (B-23). Silent: only labels change, and one that
+        could not be written is tried again at the next start."""
+
+        def done(result: WalletLabelResult) -> None:
+            pass
+
+        def failed(error: ChronoMailError) -> None:
+            pass
+
+        self._backend.ask(WALLET_LABEL, NoParameters(), done, failed, owner=self)
 
     def ask_about_blocked(self, account_id: str, item: BlockedFolder) -> None:
         """A safety rule held an IMAP folder back: the person decides, and the account is synchronised with that answer."""

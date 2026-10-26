@@ -6,9 +6,10 @@ from chrono_mail.core import SERVICE_NAME, CredentialBackend, CredentialEntries,
 from chrono_mail.crypto.keys import DataKey
 
 # --- Version ------------------------------------------------------------
-__version__ = "keystore.py 1.8.263"
+__version__ = "keystore.py 3.6.371"
 
 # --- Version history ----------------------------------------------------
+# v3.6.371: label: the key's entry gets a label a person can read in the wallet; a label that cannot be written never fails anything (B-23, D-275)
 # v1.8.263: R-16: the credential store is reached through core's one copy (CredentialEntries); the texts are unchanged
 # v1.1.197: KeyNotFoundError (the store answered: no such key) and CredentialStoreError (the store could not be asked), each with the store's own reason
 # v0.5.133: Every failure of the credential store is a normal error with its reason (KDE Wallet's own errors were "unexpected")
@@ -37,12 +38,18 @@ class KeyStore(Protocol):
         """Remove the key. Removing a key that is not there is not an error."""
         ...
 
+    def label(self, key_id: bytes, text: str) -> bool:
+        """Give the key's entry a label a person can read in the wallet. Never raises: a label is a courtesy, tried again at the next start. False when the store
+        could not be asked (locked, refused), so a caller asks no more."""
+        ...
+
 
 class InMemoryKeyStore:
     """Keeps keys in memory only. For tests."""
 
     def __init__(self) -> None:
         self._keys: dict[bytes, DataKey] = {}
+        self.labels: dict[bytes, str] = {}  # the label of each key's entry, for tests
 
     def save(self, key: DataKey) -> None:
         self._keys[key.key_id] = key
@@ -55,6 +62,12 @@ class InMemoryKeyStore:
 
     def delete(self, key_id: bytes) -> None:
         self._keys.pop(key_id, None)
+        self.labels.pop(key_id, None)
+
+    def label(self, key_id: bytes, text: str) -> bool:
+        if key_id in self._keys:
+            self.labels[key_id] = text
+        return True
 
 
 class KeyringKeyStore:
@@ -94,3 +107,10 @@ class KeyringKeyStore:
             self._entries.remove(self._entry_name(key_id))
         except CredentialFailure as failure:
             raise CryptoError(f"The credential store could not delete the key: {failure.reason}") from None
+
+    def label(self, key_id: bytes, text: str) -> bool:
+        try:
+            self._entries.label(self._entry_name(key_id), text)
+        except CredentialFailure:
+            return False  # only the label: the key is stored and found as before; the next start tries again
+        return True

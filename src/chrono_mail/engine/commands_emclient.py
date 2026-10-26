@@ -36,14 +36,16 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
+from chrono_mail.engine.walletlabels import label_account
 from chrono_mail.mime import parse_message
 from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 3.6.350"
+__version__ = "commands_emclient.py 3.6.371"
 
 # --- Version history ----------------------------------------------------
+# v3.6.371: the passwords stored again get readable labels in the wallet (B-23, D-275)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed import.emclient-scan, import.emclient
@@ -662,6 +664,7 @@ def update_passwords(engine: Engine, parameters: PasswordsParameters) -> Passwor
             continue
         engine.passwords.set(account_id, ServerRole.INCOMING, source.incoming.password)
         engine.passwords.set(account_id, ServerRole.OUTGOING, source.outgoing.password or source.incoming.password)
+        label_account(engine, account_id)  # B-23
         updated.append(name)
     return PasswordsResult(tuple(updated), tuple(not_decodable), not_here)
 
