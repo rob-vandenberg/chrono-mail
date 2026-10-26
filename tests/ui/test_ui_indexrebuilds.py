@@ -9,9 +9,10 @@ from tests.test_engine_rebuilds import as_format_11
 from tests.ui.world import World, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_indexrebuilds.py 2.1.311"
+__version__ = "test_ui_indexrebuilds.py 4.0.374"
 
 # --- Version history ----------------------------------------------------
+# v4.0.374: the rebuild window made above Settings is forgotten when Settings is deleted, and the next one belongs to the main window
 # v2.1.311: the hover text's last line says what a click does (the lines above name what runs)
 # v2.1.310: "The index is ready." is read when the rebuild ends: the junk filter's first learning may say more after it (D-238)
 # v2.0.303: a click on the busy bar brings the window back after Run in background; afterwards it opens the Operations window
@@ -134,3 +135,22 @@ def test_the_automatic_checks_wait_while_an_index_is_rebuilt_and_one_runs_after(
     checking.rebuild_running(False)
     assert started == ["automatic"]  # one check when it is done
     wait(qtbot, lambda: not checking.checking and world.backend._pending == {})  # noqa: SLF001
+
+
+def test_the_rebuild_window_made_above_settings_is_forgotten_with_it(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QApplication, QDialog
+
+    settings = QDialog(world.window)  # stands for Settings, in front while a rebuild starts from it
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: settings))
+    rebuilds = world.window.rebuilds
+    made = rebuilds._window()
+    assert made.parent() is settings
+    settings.deleteLater()  # Settings closed: deleted, and its children with it
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert rebuilds.window is None
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: None))
+    again = rebuilds._window()  # the next rebuild, or the busy bar clicked: a window that exists
+    assert again.parent() is world.window
+    again.objectName()
+

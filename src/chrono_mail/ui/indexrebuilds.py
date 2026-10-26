@@ -15,9 +15,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "indexrebuilds.py 3.5.348"
+__version__ = "indexrebuilds.py 4.0.374"
 
 # --- Version history ----------------------------------------------------
+# v4.0.374: the rebuild window is forgotten when it goes with its parent (Settings is deleted once closed); the next one is made fresh
 # v3.5.348: The question Abort rebuilding shows plain text (RV-167, without a filter on the whole program)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.0.303: show_window: the window comes back after Run in background (a click on the bar in the status line, D-229)
@@ -248,10 +249,17 @@ class IndexRebuilds(QObject):
 
     def _window(self) -> RebuildWindow:
         if self.window is None:
-            self.window = RebuildWindow(QApplication.activeModalWidget() or self._parent)
-            self.window.background_chosen.connect(self._into_background)
-            self.window.abort_chosen.connect(self._ask_abort)
+            window = RebuildWindow(QApplication.activeModalWidget() or self._parent)
+            window.background_chosen.connect(self._into_background)
+            window.abort_chosen.connect(self._ask_abort)
+            window.destroyed.connect(lambda: self._forget(window))  # it goes with the window above which it was made (Settings, deleted when closed)
+            self.window = window
         return self.window
+
+    def _forget(self, window: RebuildWindow) -> None:
+        """The window is gone with its parent: a new one is made when it is needed, at the step the work has reached."""
+        if self.window is window:
+            self.window = None
 
     def show_window(self) -> None:
         """Bring the window back after Run in background (a click on the bar in the status line), at the point the work has reached."""

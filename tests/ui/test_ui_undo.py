@@ -17,17 +17,18 @@ def said(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     texts: list[str] = []
     real_show = window.report.show
 
-    def show(text: str, error: bool = False) -> None:
+    def show(text: str, error: bool = False, running: bool = False) -> None:
         texts.append(text)
-        real_show(text, error)
+        real_show(text, error, running)
 
     monkeypatch.setattr(window.report, "show", show)
     return texts
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_undo.py 3.6.368"
+__version__ = "test_ui_undo.py 4.0.374"
 
 # --- Version history ----------------------------------------------------
+# v4.0.374: the stand-in of the status line takes the running flag of 3.6.364 and passes it on
 # v3.6.368: Delete held down and then Ctrl+Z held down in Junk with headings: every message back once, under its own heading
 # v2.3.317: the status line's texts are recorded, never read at one moment (another part may write the line again)
 # v2.2.313: Initial (B-18): Ctrl+Z and Ctrl+Y in the message list, Ctrl+Z right after an action, Ctrl+Z in a text field, greyed outside Mail

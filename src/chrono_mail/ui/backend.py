@@ -11,9 +11,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, TypedCommand, UsageError, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 3.6.353"
+__version__ = "backend.py 4.0.374"
 
 # --- Version history ----------------------------------------------------
+# v4.0.374: alive() is public: work a closed window started looks before it writes into that window
 # v3.6.353: cancel_waiting: the commands of one kind that wait their turn for an account are answered as not done (a failed Delete stops the rest, D-266)
 # v2.1.311: jobs_changed and running(): which commands run (what each is doing, for which account), not only how many: the busy bar names them
 # v2.0.295: A job answers exactly once however it ends (also an error that is no Exception), so a window never waits for ever
@@ -208,7 +209,7 @@ class Backend(QObject):
                     cancelled.append(pending)
         self._tell_busy()
         for pending in cancelled:  # answered once all are out of the queue: an answer may cancel again
-            if pending.on_error is not None and (pending.owner is None or _alive(pending.owner)):
+            if pending.on_error is not None and (pending.owner is None or alive(pending.owner)):
                 pending.on_error(ChronoMailError(reason))
 
     def run_now(self, command: str, values: Mapping[str, object]) -> object:
@@ -231,7 +232,7 @@ class Backend(QObject):
             self._tell_busy()
         if pending is None:
             return
-        if pending.owner is not None and not _alive(pending.owner):
+        if pending.owner is not None and not alive(pending.owner):
             return
         if isinstance(error, ChronoMailError):
             if pending.on_error is not None:
@@ -252,7 +253,8 @@ class Backend(QObject):
         return finished and not self._queued and self._waiting_pool.waitForDone(max(0, int((deadline - time.monotonic()) * 1000)))
 
 
-def _alive(owner: QObject) -> bool:
+def alive(owner: QObject) -> bool:
+    """Whether the Qt object behind this Python object still exists (a closed window is deleted; work it started may answer later)."""
     try:
         owner.objectName()
     except RuntimeError:  # the C++ object has been deleted

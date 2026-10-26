@@ -13,7 +13,7 @@ from chrono_mail.engine.commands_outbox import MAIL_CANCEL_SEND, CancelSendResul
 from chrono_mail.engine.commands_schedule import MAIL_SCHEDULED, AccountOptional, ScheduledInfo
 from chrono_mail.engine.compose import ComposeKind
 from chrono_mail.ui import appearance, prefs, scale, theme
-from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.backend import alive, Backend
 from chrono_mail.ui.columns import OUTBOX_FOLDER_PATH, SCHEDULED_FOLDER_PATH
 from chrono_mail.ui.composer import ComposeOptions, ComposeWindow
 from chrono_mail.ui.mailstate import MailState
@@ -23,9 +23,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 3.6.358"
+__version__ = "composing.py 4.0.374"
 
 # --- Version history ----------------------------------------------------
+# v4.0.374: a message window opened from Settings > Scheduled messages tells the page only while Settings is still open
 # v3.6.358: quitting first lets a running draft save and the decision waiting for it end (CR-03)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.349: an Outbox message that was sent already opens to be read (sent_already), never as a draft (RV-181)
@@ -90,7 +91,11 @@ class Composing(QObject):
         schedules. From Settings, which waits for it, it is modal (or it could not be used), and the new message joins the page."""
         window = self.open_composer(self._state.view.account or "", None, None, schedule_only=True, modal=panel is not None)
         if panel is not None:
-            window.scheduled.connect(panel.add_scheduled)
+            def scheduled(message_id: str) -> None:
+                if alive(panel):  # Settings may be closed by then
+                    panel.add_scheduled(message_id)
+
+            window.scheduled.connect(scheduled)
 
     def edit_scheduled(self, account: str, info: ScheduledInfo, panel: ScheduledPanel | None) -> None:
         """A message that waits in the Scheduled folder, opened to change it: it stays scheduled and keeps its id (D-177). From
@@ -102,7 +107,11 @@ class Composing(QObject):
         def opened(result: DraftOpenResult) -> None:
             window = self.open_composer(account, result, None, resume=(SCHEDULED_FOLDER_PATH, message_id), modal=panel is not None, editing=info)
             if panel is not None:
-                window.scheduled_changed.connect(panel.replace_scheduled)
+                def changed(info: object) -> None:
+                    if alive(panel):  # Settings may be closed by then
+                        panel.replace_scheduled(info)
+
+                window.scheduled_changed.connect(changed)
 
         self._backend.ask(DRAFT_OPEN, DraftOpenParameters(account, message_id, SCHEDULED_FOLDER_PATH), opened, lambda error: self._status.report("Could not open the message", error), owner=self)
 

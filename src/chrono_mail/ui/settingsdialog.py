@@ -42,7 +42,7 @@ from chrono_mail.ui.prefs import Preferences, StartupView, read_preferences, sav
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
-from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.backend import Backend, alive
 from chrono_mail.ui.columns import DEFAULT_COLUMNS, keep_snoozed_column
 from chrono_mail.ui.columnsdialog import DATE_STYLES, DENSITY_LABELS, LAYOUTS, READING_PANES, ColumnPicker
 from chrono_mail.ui.recoverydialog import RecoveryDialog
@@ -56,9 +56,11 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 3.6.373"
+__version__ = "settingsdialog.py 4.0.374"
 
 # --- Version history ----------------------------------------------------
+# v4.0.374: the window is deleted once closed: it cannot be closed while it removes an account or saves the tags, and a rebuild that ends
+#           after it closed writes nothing into it
 # v3.6.373: the window and its pages are built from Qt Designer forms (ui/forms/settings*.ui): their parts, texts and layout; the program
 #           adds its own parts at the placeholders (the form loader makes them there), the values, the sizes and the look (D-276); the window is never smaller than its pages
 #           need (its own smallest size cut texts off at the smallest and the largest size)
@@ -300,6 +302,7 @@ class SettingsDialog(QDialog):
         buttons = part(self.form, QDialogButtonBox, "buttons")
         self._buttons: QDialogButtonBox = buttons
         self._saving_tags: bool = False
+        self._removing_account: bool = False
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         self._add_page("General", self._general_page(known.tray_available))
@@ -670,6 +673,8 @@ class SettingsDialog(QDialog):
         self.maintenance_label.setText("Rebuilding…")
 
         def finished(lines: list[str]) -> None:
+            if not alive(self):
+                return  # Settings was closed while the rebuild ran in the background: the rebuild itself is done
             for button in (self.verify_button, self.repair_button, self.rebuild_button):
                 button.setEnabled(True)
             self.maintenance_label.setText("<br>".join(lines) or "No accounts.")
@@ -838,13 +843,16 @@ class SettingsDialog(QDialog):
             return
 
         def done(result: AccountRemoveResult) -> None:
+            self._removing(False)
             self.status.setText("Account removed")
             self.reload()
             self.accounts_changed.emit()
 
         def failed(error: ChronoMailError) -> None:
+            self._removing(False)
             QMessageBox.warning(self, "Remove account", f"The account could not be removed: {error}")
 
+        self._removing(True)
         self._backend.ask(ACCOUNT_REMOVE, AccountParameters(account.account_id), done, failed, owner=self)
 
     # --- saving -----------------------------------------------------------------------------------------------------
@@ -882,8 +890,15 @@ class SettingsDialog(QDialog):
     def save(self) -> None:
         save_preferences(self._settings, self.chosen())
 
+    def _removing(self, on: bool) -> None:
+        """While an account is removed the window stays open (its answer tells the main window), OK and Cancel greyed."""
+        self._removing_account = on
+        self._buttons.setEnabled(not on)
+
     @override
     def done(self, result: int) -> None:
+        if self._saving_tags or self._removing_account:
+            return  # Cancel, Esc or the close button wait until the tags are saved or the account is removed: never left half done
         if result != QDialog.DialogCode.Accepted:
             self._grow_with(self.interface_scale_saved)  # Cancel: the size it had, before it is remembered
         save_geometry(self, self._settings, "settings_geometry")  # whether the window was closed with OK or with Cancel

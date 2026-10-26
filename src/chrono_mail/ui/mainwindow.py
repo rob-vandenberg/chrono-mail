@@ -15,7 +15,7 @@ from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, 
 from chrono_mail.engine.commands_schedule import ScheduledInfo
 from chrono_mail.ui import appearance, scale, theme
 from chrono_mail.ui.accountdialog import AccountDialog
-from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.backend import Backend, alive
 from chrono_mail.ui.calendaraccount import CalendarAccountDialog
 from chrono_mail.ui.calendarview import CalendarPage
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
@@ -61,9 +61,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 3.6.371"
+__version__ = "mainwindow.py 4.0.374"
 
 # --- Version history ----------------------------------------------------
+# v4.0.374: the Settings window is deleted once it is closed and read (every opening kept one in memory for good); the refresh after an
+#           account added from it reloads it only while it is open
 # v3.6.371: the wallet's entries get readable labels at start (B-23, D-275)
 # v3.6.369: Not junk shows the junk key in the menus (in Junk that key brings a message back), unless it has a key of its own; in Junk the
 #           Message menu shows Not junk only, as the right-click menu does; Not junk works in Favorites > Junk too, as the junk key did,
@@ -934,7 +936,7 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.backend, self.settings, self._settings_context(), self)
         if page is not None:
             dialog.show_page(page)
-        dialog.add_account_requested.connect(lambda: self.add_account(after=dialog.reload))
+        dialog.add_account_requested.connect(lambda: self.add_account(after=lambda: dialog.reload() if alive(dialog) else None))  # it may be closed by then
         dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False, then=self.checking.sync_calendars))
         dialog.restore_key_requested.connect(self.restore_key)
         dialog.rebuild_requested.connect(self.rebuilds.rebuild_all)
@@ -949,7 +951,14 @@ class MainWindow(QMainWindow):
         dialog.windows_scale_tried.connect(self.try_windows_scale)
         dialog.reading_scale_tried.connect(self.try_reading_scale)
         dialog.list_scale_tried.connect(self.try_list_scale)
-        accepted = dialog.exec() == SettingsDialog.DialogCode.Accepted
+        try:
+            self._settings_closed(dialog, dialog.exec() == SettingsDialog.DialogCode.Accepted)
+        finally:
+            dialog.deleteLater()  # it was kept for good with every opening (about 490 parts each time)
+
+    def _settings_closed(self, dialog: SettingsDialog, accepted: bool) -> None:
+        """What the Settings window leaves behind once it is closed: the sizes back on Cancel, what its pages did at once, and on OK the
+        settings themselves."""
         if not accepted:  # Cancel: the sizes they had
             if dialog.interface_slider.value() != scale.slider_position(dialog.interface_scale_saved):
                 self.try_interface_scale(dialog.interface_scale_saved)

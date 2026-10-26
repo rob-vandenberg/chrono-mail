@@ -3156,3 +3156,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 7. The packed program: forms_test.py in scratchpad/nuitka-forms, packed with Nuitka 4.2.2 as the installers are, loads the Settings form with the General page in it; Nuitka takes Qt's form loader (libQt6UiTools) and the 14 forms along.
 8. Not fixed, older: two tests in test_ui_delayed_send.py fail since 3.6.364 (their stand-in of the status line lacks `running`).
 
+## 2026-10-26 4.0.374: A closed Settings window is deleted; two tests that fell behind (the owner chose 4.0)
+
+1. File > Settings made its window as a child of the main window and never deleted it: every opening kept about 490 parts in memory (found by the review of 3.6.373). The window is now deleted once it is closed and the main window has read it; answers for it are dropped as for any closed window (the Backend's owner check). Test: three openings leave no Settings window (fails on 3.6.373).
+2. Work that outlives Settings (found by two review rounds): a rebuild report, the refresh after Add account and a message window from Settings > Scheduled messages write into Settings only while it exists (`backend.alive`); Settings cannot be closed (OK, Cancel, Esc, the close button) while it removes an account or saves the tags, so neither stops half-way; the rebuild window made above Settings goes with it and is forgotten (`IndexRebuilds._forget`), so the next rebuild or a click on the busy bar makes a fresh one. Tests for each, failing without the fix.
+3. test_ui_delayed_send.py (two tests failing since 3.6.364) and test_ui_undo.py: their stand-in of the status line takes and passes on the `running` flag.
+4. Related window tests (Settings, its pages, appearance, delayed send, undo, index rebuilds, the composer and the guards; 488 + 30): all pass; Pyrefly 0 on src (Linux and win32) and the new test; layer check kept.
+

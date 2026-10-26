@@ -10,9 +10,11 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 1.9.271"
+__version__ = "test_ui_settings.py 4.0.374"
 
 # --- Version history ----------------------------------------------------
+# v4.0.374: a closed Settings window is deleted (every opening kept one in memory); it is not closed while it removes an account; a
+#           rebuild that ends after it closed writes nothing into it
 # v1.9.271: The account editor's changes are typed (R-19)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.2.253: the Settings window hands back the typed settings (chosen(), R-12)
@@ -331,3 +333,48 @@ def test_a_separate_outgoing_login_is_saved_and_the_tick_brings_the_incoming_one
     stored = world.call("account.list")[0]
     assert (stored.outgoing_same_login, stored.outgoing_username) == (True, stored.incoming_username)
     assert world.engine.passwords.get(world.account_id, ServerRole.OUTGOING) == world.engine.passwords.get(world.account_id, ServerRole.INCOMING)
+
+
+def test_a_closed_settings_window_is_gone(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    def cancel(dialog: SettingsDialog) -> QDialog.DialogCode:  # Cancel at once
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(SettingsDialog, "exec", cancel)
+    for _ in range(3):
+        world.window.open_settings()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert world.window.findChildren(SettingsDialog) == []
+
+
+def test_settings_stays_open_until_an_account_it_removes_is_removed(world: World, qtbot: QtBot) -> None:
+    dialog = open_settings(world, qtbot)
+    changed: list[bool] = []
+    dialog.accounts_changed.connect(lambda: changed.append(True))
+    world.dialogs.answer = QMessageBox.StandardButton.Yes
+    dialog.remove_button.click()
+    dialog.reject()  # Cancel or Esc right away: the removal is still under way
+    assert dialog.isVisible()
+    wait(qtbot, lambda: changed == [True])  # the main window is told
+    dialog.reject()
+    assert not dialog.isVisible()
+
+
+def test_a_rebuild_that_ends_after_settings_closed_writes_nothing_into_it(world: World, qtbot: QtBot) -> None:
+    from collections.abc import Callable
+
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    from chrono_mail.ui.backend import alive
+
+    dialog = SettingsDialog(world.backend, world.window.settings)
+    reports: list[Callable[[list[str]], None]] = []
+    dialog.rebuild_requested.connect(reports.append)
+    dialog.rebuild_button.click()
+    assert len(reports) == 1
+    dialog.deleteLater()  # Settings closed while the rebuild runs in the background
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert not alive(dialog)
+    reports[0](["Inbox: rebuilt"])  # the rebuild ends: no error
+

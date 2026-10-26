@@ -16,9 +16,10 @@ from tests.ui.test_ui_window import open_folder, started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_delayed_send.py 3.1.341"
+__version__ = "test_ui_delayed_send.py 4.0.374"
 
 # --- Version history ----------------------------------------------------
+# v4.0.374: the stand-in of the status line takes the running flag of 3.6.364 and passes it on
 # v3.1.341: a message opened from the Outbox leaves it first, with its countdown (RV-156)
 # v2.4.327: the check after a restore, a rebuild, an import or a first account never sends; a refresh a rebuild held back runs after it (D-245)
 # v2.3.317: the status line's texts are recorded, never read at one moment; Cancel waits for the window it opens (not the one that sent, which may exist until Qt deletes it); the notice as the owner's mockup: the buttons below the text at the right, the outline from the colour file
@@ -33,9 +34,9 @@ def said(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     texts: list[str] = []
     real_show = window.report.show
 
-    def show(text: str, error: bool = False) -> None:
+    def show(text: str, error: bool = False, running: bool = False) -> None:
         texts.append(text)
-        real_show(text, error)
+        real_show(text, error, running)
 
     monkeypatch.setattr(window.report, "show", show)
     return texts
