@@ -2998,6 +2998,12 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.365: The busy bar moves only for work longer than a second (the owner, D-266)
+
+1. A debug version (3.6.364.1, not pushed, removed again) logged every busy command: the flash every minute is mail.send-due and message.wake (scheduled messages due, snoozed messages back), about 36 ms.
+2. `ui/statusreport.py` busy_changed: the bar starts after 1 second of work and stops as soon as nothing runs.
+3. Tests: test_ui_statusclear.py (6; short work never moves the bar fails on 3.6.364); test_ui_listpainting.py busy bar test waits for the bar; Pyrefly src (Linux and win32) and the layer check pass.
+
 ## 2026-10-26 3.6.364: A status line has its own one-minute clock (the owner)
 
 1. The owner: "Moved 1,292 messages to Trash" stayed for minutes: the busy bar flashed more often than once a minute (cause still to be found) and each end of work started the minute again.

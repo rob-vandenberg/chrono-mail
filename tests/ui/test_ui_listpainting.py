@@ -15,9 +15,10 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_listpainting.py 3.6.353"
+__version__ = "test_ui_listpainting.py 3.6.365"
 
 # --- Version history ----------------------------------------------------
+# v3.6.365: the busy bar test waits for the bar, which moves once work has run for a moment
 # v3.6.353: a Delete without a server takes the row out at the key press; rapid presses take exactly the highlighted messages; a failure brings them back and stops the rest (D-266)
 # v3.6.352: Initial: a Delete moves the rows below up as they are and paints only the new strip and the changed rows, and the list looks
 #           exactly as when painted whole; a removal is painted with the rest of its change; the Archive button and the busy bar move
@@ -219,7 +220,7 @@ def test_the_archive_button_is_left_alone_while_it_stays_archive(unread: World) 
     assert changes == [] and window.act_archive.text() == "Archive"
 
 
-def test_the_busy_bar_keeps_its_place_and_is_empty_while_nothing_runs(unread: World) -> None:
+def test_the_busy_bar_keeps_its_place_and_is_empty_while_nothing_runs(unread: World, qtbot: QtBot) -> None:
     window = unread.window
     report, bar = window.report, window.progress_bar
     status = window.findChild(QStatusBar)
@@ -231,7 +232,9 @@ def test_the_busy_bar_keeps_its_place_and_is_empty_while_nothing_runs(unread: Wo
     bar.clicked.connect(lambda: clicks.append(1))
     QTest.mouseClick(bar, Qt.MouseButton.LeftButton)
     assert clicks == []  # an empty place does nothing
+    window.backend.busy_changed.disconnect(report.busy_changed)  # the test alone says when work runs (the window's own short work would stop the bar)
     report.busy_changed(1)
+    wait(qtbot, lambda: bar.busy)  # it moves once the work has run for a moment (3.6.365)
     QCoreApplication.sendPostedEvents()
     assert bar.busy and bar.isVisible() and report.line.geometry() == line and bar.geometry() == place
     QTest.mouseClick(bar, Qt.MouseButton.LeftButton)

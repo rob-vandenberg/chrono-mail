@@ -12,9 +12,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 3.6.364"
+__version__ = "statusreport.py 3.6.365"
 
 # --- Version history ----------------------------------------------------
+# v3.6.365: the busy bar moves only for work that has run for a second; it stops as soon as nothing runs
 # v3.6.364: a line has its own clock: a minute after it came, whatever else runs (the busy bar plays no part); a line about work still running stays
 # v3.6.363: an informative line is cleared a minute after it came, or a minute after the work that ran; warnings and errors stay
 # v3.6.352: the busy bar is never shown or hidden: it keeps its place and is empty while nothing runs (D-266)
@@ -32,6 +33,7 @@ CLICK_OPERATIONS: str = "Click to show the Operations window"
 CLICK_INDEX: str = "Click to show the index progress"
 CLICK_BACKUP: str = "Click to show the backup progress"
 CLEAR_AFTER_MS: int = 60_000  # an informative line is cleared a minute after it came, by its own clock; a warning, an error or work still running stays
+BUSY_AFTER_MS: int = 1000  # the busy bar moves only for work that runs longer than a moment (a minute check of 36 ms never shows)
 MISSING_WARNING: str = "Some messages no longer exist on disk. Go to Settings > Security and storage and click Repair the search index."
 
 
@@ -64,6 +66,9 @@ class StatusReport(QObject):
         self._clear_timer: QTimer = QTimer(self)
         self._clear_timer.setSingleShot(True)
         self._clear_timer.timeout.connect(self._clear)
+        self._busy_timer: QTimer = QTimer(self)
+        self._busy_timer.setSingleShot(True)
+        self._busy_timer.timeout.connect(lambda: self.progress_bar.set_busy(True))
 
     def install(self, bar: QStatusBar) -> None:
         bar.addWidget(self.line, 1)
@@ -144,7 +149,13 @@ class StatusReport(QObject):
                 QToolTip.hideText()  # nothing runs: the empty place says nothing
 
     def busy_changed(self, count: int) -> None:
-        self.progress_bar.set_busy(count > 0)  # never shown or hidden: that laid the whole window out again at every action (D-266)
+        """Work runs: the bar moves once it has run for a moment, and stops as soon as nothing runs. Never shown or hidden: that laid
+        the whole window out again at every action (D-266)."""
+        if count <= 0:
+            self._busy_timer.stop()
+            self.progress_bar.set_busy(False)
+        elif not self.progress_bar.busy and not self._busy_timer.isActive():
+            self._busy_timer.start(BUSY_AFTER_MS)
 
     def notice(self, text: str) -> None:
         """Something the engine wants the person to know (an IMAP change waits for the server)."""
