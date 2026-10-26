@@ -14,9 +14,11 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 3.6.354"
+__version__ = "commands_combined.py 3.6.368"
 
 # --- Version history ----------------------------------------------------
+# v3.6.368: message.combined-places and message.combined-locate read the rows and the groups of each mailbox together: an Undo between
+#           them put messages under the wrong heading (a held Ctrl+Z)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.280: the sort order sent (the message's own Date) merges and groups like Received (B-16)
@@ -249,13 +251,15 @@ class CombinedLocateParameters(CombinedParameters):
 
 
 def message_combined_locate(engine: Engine, parameters: CombinedLocateParameters) -> LocateResult:
-    """Where a message stands in a Favorites view, and its group heading (asked when a message comes into the view shown)."""
-    everything = message_combined(engine, replace(parameters, offset=0, limit=EVERYTHING))
+    """Where a message stands in a Favorites view, and its group heading (asked when a message comes into the view shown). The rows
+    and the groups of each mailbox are read together: a change between them made the heading wrong."""
+    found = gather(engine, parameters, EVERYTHING, groups=True)
+    everything = in_order(found, parameters)
     wanted = engine.resolve_account(parameters.account).account.account_id if parameters.account else ""
     position = next((number for number, row in enumerate(everything) if row.message_id == parameters.message and (not wanted or row.account == wanted)), None)
     if position is None:
         return LocateResult(None)
-    key, name = group_of(message_combined_groups(engine, parameters), position)
+    key, name = group_of(groups_in_order(found, parameters), position)
     return LocateResult(position, key, name)
 
 
@@ -268,10 +272,12 @@ class CombinedPlacesParameters(CombinedParameters):
 
 
 def message_combined_places(engine: Engine, parameters: CombinedPlacesParameters) -> PlacesResult:
-    """Where several messages stand in a Favorites view; the order is worked out once, however many messages are asked."""
+    """Where several messages stand in a Favorites view; the order is worked out once, however many messages are asked. The rows and
+    the groups of each mailbox are read together: an Undo between them made the headings one off (a held Ctrl+Z)."""
     if len(parameters.mailboxes) != len(parameters.messages):
         raise UsageError("Give the mailbox of each message")
-    everything = message_combined(engine, replace(parameters, offset=0, limit=EVERYTHING))
+    found = gather(engine, parameters, EVERYTHING, groups=parameters.headings)
+    everything = in_order(found, parameters)
     missing = not_heard(engine, parameters.heard, {row.account for row in everything})  # after the reading: a superset of what it counted
     if missing is None:
         return PlacesResult(tuple(None for _ in parameters.messages), known=False)
@@ -287,7 +293,7 @@ def message_combined_places(engine: Engine, parameters: CombinedPlacesParameters
     positions = leave_out(everywhere, left)
     if not parameters.headings or all(position is None for position in positions):
         return PlacesResult(positions, before=before, before_mailboxes=before_mailboxes)
-    return with_headings(positions, message_combined_groups(engine, parameters), tuple(everywhere), before, before_mailboxes)
+    return with_headings(positions, groups_in_order(found, parameters), tuple(everywhere), before, before_mailboxes)
 
 
 MESSAGE_COMBINED_PLACES: TypedCommand[CombinedPlacesParameters, PlacesResult] = TypedCommand("message.combined-places", CombinedPlacesParameters, PlacesResult)

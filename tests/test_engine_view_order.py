@@ -1,15 +1,21 @@
+import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+import pytest
+
 from chrono_mail.core import MessageFlag
+from chrono_mail.engine import commands_combined, commands_mail
 from chrono_mail.engine.mailbox import open_mailbox
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, mail, setup  # noqa: F401 - setup is the fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_view_order.py 3.6.350"
+__version__ = "test_engine_view_order.py 3.6.368"
 
 # --- Version history ----------------------------------------------------
+# v3.6.368: a message that comes in between the reading of the order and of the headings never puts a message under the wrong heading
 # v3.6.350: an answer read while its index was written carries a stamp that matches no other (RV-206)
 # v2.0.280: the sort order sent (the message's own Date) in a folder and in a Favorites view, with its date headings (B-16)
 # v1.6.260: Initial: the order of a folder, a search and a Favorites view in one answer, its start first for a large view; rows asked by the
@@ -144,3 +150,54 @@ def test_a_write_told_at_once_counts_only_when_its_fact_is_lost(tmp_path: Path) 
     with told_at_once():  # flush: whatever its fact did not follow inside counts at its end
         wrote(index)
     assert writes(index) == 2
+
+
+def lettered(setup: Setup) -> dict[str, str]:
+    """Messages with the subjects B, C and D in the Inbox; their ids by subject."""
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        for letter in "BCD":
+            mailbox.deliver(mailbox.folder("Inbox"), raw_message(subject=letter, message_id=f"<{letter}@x>"), frozenset())
+    return {row.subject: row.message_id for row in call(setup.engine, "message.list", account=setup.account_id, folder="Inbox", limit=1000).messages}
+
+
+def comes_in_between[R](setup: Setup, real: Callable[..., R]) -> Callable[..., R]:
+    """real, after another thread delivered a message with the subject A (first in the subject order), as an Undo does while the list
+    asks where a message goes; the other thread delivers only when the mailbox's lock is free (a question holding it is never broken into)."""
+
+    def deliver() -> None:
+        with open_mailbox(setup.engine, setup.account_id) as mailbox:
+            lock = setup.engine.place_lock(mailbox.store.account_id)
+            if lock.acquire(blocking=False):
+                try:
+                    mailbox.deliver(mailbox.folder("Inbox"), raw_message(subject="A", message_id="<A@x>"), frozenset())
+                finally:
+                    lock.release()
+
+    def wrapped(*arguments: object, **keywords: object) -> R:
+        writer = threading.Thread(target=deliver)
+        writer.start()
+        writer.join()  # it never waits: it delivers at once or not at all
+        return real(*arguments, **keywords)
+
+    return wrapped
+
+
+def test_a_message_that_comes_in_while_a_folder_is_asked_where_messages_go_never_shifts_their_headings(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A held Ctrl+Z: an Undo between the reading of the order and of the headings made every heading one off (C under B)."""
+    ids = lettered(setup)
+    monkeypatch.setattr(commands_mail, "message_groups", comes_in_between(setup, commands_mail.message_groups))
+    values = {"account": setup.account_id, "folder": "Inbox", "sort": "subject", "oldest_first": True}
+    found = call(setup.engine, "message.places", messages=(ids["C"], ids["D"]), headings=True, **values)
+    assert found.group_names == ("C", "D")
+    located = call(setup.engine, "message.locate", message=ids["C"], **values)
+    assert located.group_name == "C"
+
+
+def test_a_message_that_comes_in_while_a_favorites_view_is_asked_where_messages_go_never_shifts_their_headings(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    ids = lettered(setup)
+    monkeypatch.setattr(commands_combined, "in_order", comes_in_between(setup, commands_combined.in_order))
+    values = {"view": "inboxes", "sort": "subject", "oldest_first": True}
+    found = call(setup.engine, "message.combined-places", messages=(ids["C"], ids["D"]), mailboxes=(setup.account_id,) * 2, headings=True, **values)
+    assert found.group_names == ("C", "D")
+    located = call(setup.engine, "message.combined-locate", account=setup.account_id, message=ids["C"], **values)
+    assert located.group_name == "C"

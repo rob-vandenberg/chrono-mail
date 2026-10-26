@@ -35,9 +35,11 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 3.6.358"
+__version__ = "commands_mail.py 3.6.368"
 
 # --- Version history ----------------------------------------------------
+# v3.6.368: message.places and message.locate read the order and the headings under one hold of the mailbox's lock: an Undo between them put
+#           messages under the wrong heading (a held Ctrl+Z)
 # v3.6.358: each_kept_attachment says per position what is kept, so a draft save can tell where each attachment went (CR-03)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError; what follows a send the server took never makes it fail (told_after_send: a warning)
@@ -974,16 +976,18 @@ class LocateParameters(SearchParameters):
 
 def message_locate(engine: Engine, parameters: LocateParameters) -> LocateResult:
     """Where a message stands in a folder or a search (as message.list and message.search order it), and its group
-    heading. Asked when a message comes into the view a person looks at, so the list can put it at its place."""
+    heading. Asked when a message comes into the view a person looks at, so the list can put it at its place. The place and the
+    headings are read under one hold of the mailbox's lock: a change between them made the heading wrong."""
     plain = not parameters.query and parameters.folder and _search_filter(parameters) == SearchFilter() and parameters.sort not in ("snoozed", CONTACT_SORT)
-    if plain and parameters.folder is not None:
-        position = message_position(engine, PositionParameters(parameters.account, parameters.folder, parameters.message, parameters.sort, parameters.oldest_first)).position
-    else:
-        everything = message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))
-        position = next((number for number, row in enumerate(everything) if row.message_id == parameters.message), None)
-    if position is None:
-        return LocateResult(None)
-    key, name = group_of(message_groups(engine, parameters), position)
+    with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
+        if plain and parameters.folder is not None:
+            position = message_position(engine, PositionParameters(parameters.account, parameters.folder, parameters.message, parameters.sort, parameters.oldest_first)).position
+        else:
+            everything = message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))
+            position = next((number for number, row in enumerate(everything) if row.message_id == parameters.message), None)
+        if position is None:
+            return LocateResult(None)
+        key, name = group_of(message_groups(engine, parameters), position)
     return LocateResult(position, key, name)
 
 
@@ -1063,14 +1067,16 @@ def leave_out(ordered: list[int | None], left_out: list[int]) -> tuple[int | Non
 def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult:
     """Where several messages stand in a folder or a search (as message.list and message.search order them), and for each
     the message it comes before among those the asker holds; the order is worked out once, however many messages are
-    asked. Asked when messages come into the view a person looks at."""
-    with open_mailbox(engine, parameters.account) as mailbox:
+    asked. Asked when messages come into the view a person looks at. The order and the headings are read under one hold of the
+    mailbox's lock: an Undo between them made the headings one off (a held Ctrl+Z put messages under the wrong heading)."""
+    with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         place = mailbox.store.account_id
-    if parameters.folder is not None and not parameters.query and _search_filter(parameters) == SearchFilter():
-        with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
+        if parameters.folder is not None and not parameters.query and _search_filter(parameters) == SearchFilter():
             ordered = _ordered_ids(engine, mailbox, mailbox.folder(parameters.folder), parameters.sort, parameters.oldest_first)
-    else:
-        ordered = [row.message_id for row in message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))]
+        else:
+            ordered = [row.message_id for row in message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))]
+        shown = set(ordered)
+        groups = message_groups(engine, parameters) if parameters.headings and any(message in shown for message in parameters.messages) else ()
     missing = not_heard(engine, parameters.heard, {place})  # after the reading: a superset of what it counted
     if missing is None:
         return PlacesResult(tuple(None for _ in parameters.messages), known=False)
@@ -1082,7 +1088,7 @@ def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult
     positions = leave_out(everywhere, left)
     if not parameters.headings or all(position is None for position in positions):
         return PlacesResult(positions, before=before)
-    return with_headings(positions, message_groups(engine, parameters), tuple(everywhere), before)
+    return with_headings(positions, groups, tuple(everywhere), before)
 
 
 def message_thread(engine: Engine, parameters: MessageParameters) -> tuple[MessageRow, ...]:

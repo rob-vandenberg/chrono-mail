@@ -1,3 +1,6 @@
+from collections.abc import Generator
+from pathlib import Path
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
@@ -6,7 +9,7 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.engine.commands_mail import ListParameters, message_list
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.sections import CONTACTS, MAIL
-from tests.ui.world import World, dialogs, settle, wait, world  # noqa: F401 - fixtures
+from tests.ui.world import Dialogs, World, build_world, dialogs, mail, settle, wait, world  # noqa: F401 - fixtures
 
 
 def said(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -22,9 +25,10 @@ def said(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return texts
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_undo.py 2.3.317"
+__version__ = "test_ui_undo.py 3.6.368"
 
 # --- Version history ----------------------------------------------------
+# v3.6.368: Delete held down and then Ctrl+Z held down in Junk with headings: every message back once, under its own heading
 # v2.3.317: the status line's texts are recorded, never read at one moment (another part may write the line again)
 # v2.2.313: Initial (B-18): Ctrl+Z and Ctrl+Y in the message list, Ctrl+Z right after an action, Ctrl+Z in a text field, greyed outside Mail
 
@@ -110,3 +114,52 @@ def test_undo_is_greyed_outside_mail_and_settings_name_the_keys_undo_and_redo(wo
     assert window.act_undo.isEnabled()
     keys = window._shortcut_registry()  # noqa: SLF001 - what Settings > Keyboard lists
     assert keys["undo"] == ("Undo", "Ctrl+Z") and keys["redo"] == ("Redo", "Ctrl+Y") and keys["redo_other"] == ("Redo (second key)", "Ctrl+Shift+Z")
+
+
+SPAM: int = 60
+
+
+@pytest.fixture
+def spam(tmp_path: Path, qtbot: QtBot, dialogs: Dialogs) -> Generator[World]:
+    yield from build_world(tmp_path, qtbot, dialogs, {f"uid{number}": mail(number, subject=f"Spam {number:02d}") for number in range(SPAM)})
+
+
+def shown_messages(window: MainWindow) -> list[tuple[str, str]]:
+    """What the list shows from top to bottom, as the view walks its rows: each message's subject with the heading above it."""
+    model, view = window.list_model, window.list_view
+    shown: list[tuple[str, str]] = []
+    heading = ""
+    index = model.index(0, 0)
+    while index.isValid():
+        if model.is_header(index.row()):
+            heading = str(model.data(index))
+        else:
+            row = model.row_at(index.row())
+            shown.append((row.subject if row is not None else "?", heading))
+        index = view.indexBelow(index)
+    return shown
+
+
+def test_delete_held_down_then_ctrl_z_held_down_brings_every_message_back_once_under_its_own_heading(spam: World, qtbot: QtBot) -> None:
+    """A held Ctrl+Z: an Undo between the engine's reading of the order and of the headings put messages under the heading above
+    theirs, and the list showed rows twice."""
+    window = spam.window
+    window.start()
+    settle(qtbot, spam, SPAM)
+    ids = tuple(row.message_id for row in spam.call("message.list", account=spam.account_id, folder="Inbox", limit=SPAM).messages)
+    spam.call("message.move-many", account=spam.account_id, folder="Inbox", target="Junk", messages=ids)
+    junk = window.folders.find_item((spam.account_id, "folder", "Junk"))
+    assert junk is not None
+    window.tree.setCurrentIndex(junk)
+    wait(qtbot, lambda: window.list_model.message_count() == SPAM and window.mail_state.view.folder == "Junk")
+    window.messages.set_sort("subject", True)
+    window.act_show_groups.setChecked(True)
+    wait(qtbot, lambda: len(window.list_model.header_rows()) == SPAM)
+    window.list_view.setFocus()
+    window.list_view.setCurrentIndex(window.list_model.index(1, 0))  # the first message, under the first heading
+    for _ in range(20):
+        QTest.keyClick(window.list_view, Qt.Key.Key_Delete, Qt.KeyboardModifier.NoModifier, 30)  # as a held key repeats
+    for _ in range(22):
+        QTest.keyClick(window.list_view, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier, 30)
+    wanted = [(f"Spam {number:02d}", f"Spam {number:02d}") for number in range(SPAM)]
+    wait(qtbot, lambda: held(spam, "Junk") == SPAM and not window.undoing.busy and shown_messages(window) == wanted, timeout=12000)

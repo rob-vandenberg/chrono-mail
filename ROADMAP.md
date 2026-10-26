@@ -180,6 +180,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - Next: pin any folder to Favorites (add, remove, rename, reorder), account groups with a combined inbox per group, search inside combined views.
 - DONE (0.0.47) Pinned favorites (add, remove, rename, reorder), account groups with a combined inbox, search inside combined views.
 - DONE (3.6.366) Moving messages to a folder of another account (Move to submenus, a drop on another account's folder), message by message, never lost when stopped; Undo and Redo (D-272).
+- DONE (3.6.368) A held Ctrl+Z after a held Delete keeps every message under its own heading (D-273).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

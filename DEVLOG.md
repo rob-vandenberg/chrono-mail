@@ -2998,6 +2998,13 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 - Tests: each fix with a test that fails without it (proved by stashing or breaking the fix). Checks: the related tests by grep (engine and window apart), Pyrefly 0 on src (Linux and win32) and no problem in a new or changed test line, the layer check; the full suite not run.
 
 
+## 2026-10-26 3.6.368: A held Ctrl+Z never puts messages under the wrong heading (the owner, D-273)
+
+1. Cause: when a message came back into the list, the engine read the view's order and the heading counts in two reads; with Ctrl+Z held, the next Undo put a message back between them, and the heading worked out from the counts was the one above (C under B). The list then kept heading counts that did not match its messages.
+2. `engine/commands_mail.py`: message.places and message.locate read the order and the headings under one hold of the mailbox's lock. `engine/commands_combined.py`: message.combined-places and message.combined-locate read each mailbox's rows and groups together in one gather.
+3. Tests: tests/test_engine_view_order.py (2: a message delivered between the reads; all four commands fail on 3.6.367 with B for C), tests/ui/test_ui_undo.py (Delete held 20 times, then Ctrl+Z 22 times in Junk with headings: every message once under its own heading; fails 3 of 3 runs on 3.6.367). Related tests (engine and window apart) and the 9 guard tests pass; Pyrefly 0 on src (Linux and win32); layer check kept.
+4. The owner's mail on disk was never affected: the index held each message once. Not reproduced: the same message shown twice (the old code in a test showed wrong headings and once a missing heading, never a message twice); the owner checks whether the pairs are gone.
+
 ## 2026-10-26 3.6.367: A drag of messages of several accounts goes to one folder (the owner, D-272)
 
 1. `ui/dragdata.py`: a mixed drag names each message's account (sources; the summary lists the accounts); read_messages_accounts, read_messages_sources. `ui/messagelist.py` drag_data fills them. `ui/foldertree.py` takes such a drag on a folder of any account of the list and gives each message with its account; `ui/messageactions.py` messages_dropped takes (account, folder, id).
