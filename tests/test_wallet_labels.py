@@ -1,11 +1,12 @@
 import threading
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from chrono_mail.config import AccountSettings, AppDirectories, InMemoryPasswordStore, KeyringPasswordStore, ServerRole, profile_directories
-from chrono_mail.core import Account, AccountKind, ConnectionSecurity, CredentialEntries, CredentialFailure, ServerSettings
+from chrono_mail.core import Account, AccountKind, ConnectionSecurity, CredentialBackend, CredentialEntries, CredentialFailure, ServerSettings
 from chrono_mail.crypto import InMemoryKeyStore, KeyringKeyStore, generate_data_key
 from chrono_mail.engine import Engine
 from chrono_mail.engine.walletlabels import LABEL_LOCK, key_label, label_wallet, password_label
@@ -15,9 +16,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_wallet_labels.py 3.6.371"
+__version__ = "test_wallet_labels.py 3.6.372"
 
 # --- Version history ----------------------------------------------------
+# v3.6.372: Windows: the label as the User name, the move from the bare service name, removal by the own name
 # v3.6.371: Initial: readable labels for Chrono Mail's entries in the wallet (B-23, D-275)
 
 
@@ -198,3 +200,135 @@ class VanishingChain(ChainerBackend):
 def test_a_store_that_vanished_never_fails_a_label() -> None:
     passwords = KeyringPasswordStore("chrono-mail-test", VanishingChain())
     assert passwords.label("a" * 32, ServerRole.INCOMING, "a label") is False
+
+
+# --- Windows Credential Manager (keyring's own Windows code, over a stand-in for Windows' credential calls) -------------------------------
+
+
+class WindowsError_(Exception):  # noqa: N801, N818 - the shape of pywintypes.error
+    def __init__(self, winerror: int, funcname: str) -> None:
+        super().__init__(winerror, funcname)
+        self.winerror: int = winerror
+        self.funcname: str = funcname
+
+
+class StandInVault:
+    """Windows' generic credentials: one entry per target name, each with a User name and a password (UTF-16, as Windows keeps it)."""
+
+    CRED_TYPE_GENERIC: int = 1
+    CRED_PERSIST_ENTERPRISE: int = 3
+
+    def __init__(self) -> None:
+        self.entries: dict[str, dict[str, object]] = {}
+        self.fail_reading: str | None = None  # a target whose read gives back nothing (an entry written and lost)
+        self.pause_reading: str | None = None  # a target whose next read waits until resumed
+        self.paused: threading.Event = threading.Event()
+        self.resume: threading.Event = threading.Event()
+
+    def CredRead(self, Type: int, TargetName: str) -> dict[str, object]:  # noqa: N802, N803 - Windows' names
+        if TargetName == self.pause_reading:
+            self.pause_reading = None
+            self.paused.set()
+            assert self.resume.wait(5)
+        if TargetName not in self.entries or TargetName == self.fail_reading:
+            raise WindowsError_(1168, "CredRead")
+        return dict(self.entries[TargetName])
+
+    def CredWrite(self, credential: dict[str, object], flags: int) -> None:  # noqa: N802
+        blob = credential["CredentialBlob"]
+        assert isinstance(blob, str)
+        self.entries[str(credential["TargetName"])] = {**credential, "CredentialBlob": blob.encode("utf-16")}
+
+    def CredDelete(self, Type: int, TargetName: str) -> None:  # noqa: N802, N803
+        if TargetName not in self.entries:
+            raise WindowsError_(1168, "CredDelete")
+        del self.entries[TargetName]
+
+    def user_names(self) -> dict[str, object]:
+        return {target: entry["UserName"] for target, entry in self.entries.items()}
+
+
+@pytest.fixture
+def vault(monkeypatch: pytest.MonkeyPatch) -> StandInVault:
+    import keyring.backends.Windows as windows
+
+    stand_in = StandInVault()
+    monkeypatch.setattr(windows, "win32cred", stand_in, raising=False)
+    monkeypatch.setattr(windows, "pywintypes", type("pywintypes", (), {"error": WindowsError_}), raising=False)
+    return stand_in
+
+
+def _windows(vault: StandInVault) -> CredentialEntries:
+    from keyring.backends.Windows import WinVaultKeyring
+
+    return CredentialEntries("chrono-mail", cast("CredentialBackend", WinVaultKeyring()))  # cast: keyring's own types are loose; the program gets it untyped from keyring.get_keyring()
+
+
+def test_windows_shows_the_label_as_the_user_name_and_moves_the_newest_entry_to_its_own_name(vault: StandInVault) -> None:
+    entries = _windows(vault)
+    entries.write("password-a-incoming", "first")
+    entries.write("password-a-outgoing", "second")  # keyring keeps its newest entry under the bare service name
+    assert vault.user_names() == {"password-a-incoming@chrono-mail": "password-a-incoming", "chrono-mail": "password-a-outgoing"}
+    entries.label("password-a-incoming", "Chrono Mail: Work (incoming mail server)")
+    entries.label("password-a-outgoing", "Chrono Mail: Work (outgoing mail server)")
+    assert vault.user_names() == {
+        "password-a-incoming@chrono-mail": "Chrono Mail: Work (incoming mail server)",
+        "password-a-outgoing@chrono-mail": "Chrono Mail: Work (outgoing mail server)",
+    }
+    assert entries.read("password-a-incoming") == "first" and entries.read("password-a-outgoing") == "second"
+
+
+def test_windows_finds_changes_and_removes_a_labelled_entry(vault: StandInVault) -> None:
+    entries = _windows(vault)
+    entries.write("password-a-incoming", "first")
+    entries.label("password-a-incoming", "Chrono Mail: Work (incoming mail server)")
+    entries.write("password-a-incoming", "changed")  # a new password: keyring writes it under the bare name again
+    assert entries.read("password-a-incoming") == "changed"
+    entries.label("password-a-incoming", "Chrono Mail: Work (incoming mail server)")
+    assert vault.user_names() == {"password-a-incoming@chrono-mail": "Chrono Mail: Work (incoming mail server)"}
+    assert entries.read("password-a-incoming") == "changed"
+    entries.write("password-b-incoming", "other")
+    entries.remove("password-a-incoming")
+    entries.remove("password-a-incoming")  # removing it twice is no error
+    assert entries.read("password-a-incoming") is None
+    assert entries.read("password-b-incoming") == "other"  # another entry under the bare name stays
+
+
+def test_windows_never_removes_the_old_entry_before_the_new_one_reads_back(vault: StandInVault) -> None:
+    entries = _windows(vault)
+    entries.write("password-a-incoming", "first")
+    vault.fail_reading = "password-a-incoming@chrono-mail"
+    with pytest.raises(CredentialFailure):
+        entries.label("password-a-incoming", "Chrono Mail: Work (incoming mail server)")
+    assert vault.entries["chrono-mail"]["UserName"] == "password-a-incoming"  # still where it was
+    vault.fail_reading = None
+    assert entries.read("password-a-incoming") == "first"
+    entries.label("password-a-incoming", "Chrono Mail: Work (incoming mail server)")  # the next start finishes it
+    assert vault.user_names() == {"password-a-incoming@chrono-mail": "Chrono Mail: Work (incoming mail server)"}
+
+
+def test_windows_a_password_saved_during_a_label_is_never_lost(vault: StandInVault) -> None:
+    entries = _windows(vault)
+    entries.write("password-a-incoming", "first")  # under the bare name: the label moves it
+    vault.pause_reading = "password-a-incoming@chrono-mail"  # the label waits between writing the new place and removing the bare one
+    labelling = threading.Thread(target=entries.label, args=("password-a-incoming", "Chrono Mail: Work (incoming mail server)"))
+    labelling.start()
+    saving = threading.Thread(target=entries.write, args=("password-b-incoming", "second"))  # another account is added meanwhile
+    try:
+        assert vault.paused.wait(5)
+        saving.start()
+        saving.join(0.3)
+        assert saving.is_alive()  # it waits for the label: one call to the store at a time
+    finally:
+        vault.resume.set()  # never leaves the store held for a later test
+    labelling.join(5)
+    saving.join(5)
+    assert entries.read("password-a-incoming") == "first" and entries.read("password-b-incoming") == "second"
+
+
+def test_windows_a_very_long_name_is_cut_to_what_windows_keeps(vault: StandInVault) -> None:
+    entries = _windows(vault)
+    entries.write("password-a-incoming", "first")
+    entries.label("password-a-incoming", "Chrono Mail: " + "x" * 600)
+    user_name = vault.entries["password-a-incoming@chrono-mail"]["UserName"]
+    assert isinstance(user_name, str) and len(user_name) == 512 and user_name.endswith("…")
