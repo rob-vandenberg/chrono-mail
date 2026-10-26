@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -39,16 +38,19 @@ from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_pim import TAG_COLOUR, TAG_LIST, TAG_RENAME, ColourParameters, RenameParameters, TagInfo
 from chrono_mail.engine.commands_tags import TAG_CREATE, TAG_DELETE, TAG_EDIT, CreateParameters, DeleteParameters, EditParameters
 from chrono_mail.core.colours import NEW_TAG, NEW_TAG_IN_TAGS_WINDOW
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import AnyStep, Backend, Step
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.colours import red_style
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.tagging import tag_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagsdialog.py 3.6.350"
+__version__ = "tagsdialog.py 3.6.373"
 
 # --- Version history ----------------------------------------------------
+# v3.6.373: the Tags page is built from the form settings_tags.ui (parts, texts, layout; D-276); nothing visible changed
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -182,19 +184,14 @@ class TagsPanel(QWidget):
         self.rows: list[TagRow] = rows_from(tags)
         self._first_order: list[str] = [row.name for row in self.rows]
         self.deleted: list[TagRow] = []
-        layout = QVBoxLayout(self)  # as the Accounts and Rules pages: the list at the left, its buttons at the right
-        body = QGridLayout()  # the tabs above the list and exactly as wide as it; the buttons at the right of the list
-        self.tabs = QTabBar(self)
+        form = forms.fill(self, "settings_tags", {"tabs": QTabBar})  # as the Accounts and Rules pages: the list at the left, its buttons at the right (D-276)
+        self.tabs = part(form, QTabBar, "tabs")  # above the list and exactly as wide as it
         self.tabs.setExpanding(True)  # the four tabs share the width of the list
         for _, label in TABS:
             self.tabs.addTab(label)
-        body.addWidget(self.tabs, 0, 0)
-        self.list = QTreeWidget(self)
-        self.list.setHeaderLabels(["Name", "Shortcut"])
-        self.list.setRootIsDecorated(False)
+        self.list = part(form, QTreeWidget, "list")
         # Name and Shortcut always fit the list, never a horizontal scroll bar: Name keeps its share of the width (half at
         # first, then where the person drags the line, remembered); Shortcut takes the rest.
-        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         header = self.list.header()
         header.setStretchLastSection(False)  # Qt never shrinks a stretched last column below its default size: both widths are set here
         header.setMinimumSectionSize(wpx(MINIMUM_COLUMN))
@@ -204,22 +201,12 @@ class TagsPanel(QWidget):
         header.sectionResized.connect(self._column_dragged)
         self.list.viewport().installEventFilter(self)
         self._fit_columns()
-        body.addWidget(self.list, 1, 0)
-        body.setColumnStretch(0, 1)
-        body.setRowStretch(1, 1)
-        side = QVBoxLayout()
-        self.add_button = QPushButton("Add", self)
-        self.edit_button = QPushButton("Edit", self)
-        self.delete_button = QPushButton("Delete", self)
-        self.up_button = QPushButton("Up", self)
-        self.down_button = QPushButton("Down", self)
-        for button in (self.add_button, self.edit_button, self.delete_button, self.up_button, self.down_button):
-            side.addWidget(button)
-        side.addStretch(1)
-        body.addLayout(side, 1, 1)
-        layout.addLayout(body, 1)
-        self.status = QLabel("", self)
-        layout.addWidget(self.status)
+        self.add_button = part(form, QPushButton, "addButton")
+        self.edit_button = part(form, QPushButton, "editButton")
+        self.delete_button = part(form, QPushButton, "deleteButton")
+        self.up_button = part(form, QPushButton, "upButton")
+        self.down_button = part(form, QPushButton, "downButton")
+        self.status = part(form, QLabel, "status")
         self.add_button.clicked.connect(self.add)
         self.edit_button.clicked.connect(self.edit_tag)
         self.delete_button.clicked.connect(self.delete)

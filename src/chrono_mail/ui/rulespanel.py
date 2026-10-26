@@ -6,13 +6,11 @@ from typing import override
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
-    QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -22,15 +20,18 @@ from chrono_mail.engine.commands_rules import (
     RULE_ENABLE, RULE_LIST, RULE_MOVE, RULE_REMOVE, RULE_RUN, NoRuleParameters, RuleEnableParameters, RuleIdParameters, RuleInfo, RuleMoveParameters, RuleRunParameters,
     RuleRunResult,
 )
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.ruleedit import RuleEditDialog
 from chrono_mail.ui.colours import red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "rulespanel.py 3.6.350"
+__version__ = "rulespanel.py 3.6.373"
 
 # --- Version history ----------------------------------------------------
+# v3.6.373: built from the form settings_rules.ui (parts, texts, layout; D-276); nothing visible changed
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -59,26 +60,15 @@ class RulesPanel(QWidget):
         self._folders: Callable[[], list[str]] = folders
         self._current: Callable[[], tuple[str, str] | None] = current
         self.ran: bool = False  # the rules were applied to a folder: the message list is out of date
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Rules are applied in this order to new mail as it arrives in the Inbox. A rule with “Stop processing rules” ends the rules for that message.", self))
-        body = QHBoxLayout()
-        self.list = QListWidget(self)
-        body.addWidget(self.list, 1)
-        side = QVBoxLayout()
-        self.new_button = QPushButton("New…", self)
-        self.edit_button = QPushButton("Edit…", self)
-        self.delete_button = QPushButton("Delete…", self)
-        self.up_button = QPushButton("Move up", self)
-        self.down_button = QPushButton("Move down", self)
-        self.run_button = QPushButton("Apply to this folder", self)
-        for button in (self.new_button, self.edit_button, self.delete_button, self.up_button, self.down_button, self.run_button):
-            side.addWidget(button)
-        side.addStretch(1)
-        body.addLayout(side)
-        layout.addLayout(body)
-        self.status = QLabel("", self)
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        form = forms.fill(self, "settings_rules")  # the parts, texts and layout (D-276)
+        self.list = part(form, QListWidget, "list")
+        self.new_button = part(form, QPushButton, "newButton")
+        self.edit_button = part(form, QPushButton, "editButton")
+        self.delete_button = part(form, QPushButton, "deleteButton")
+        self.up_button = part(form, QPushButton, "upButton")
+        self.down_button = part(form, QPushButton, "downButton")
+        self.run_button = part(form, QPushButton, "runButton")
+        self.status = part(form, QLabel, "status")
         self.new_button.clicked.connect(self.new_rule)
         self.edit_button.clicked.connect(self.edit_selected)
         self.delete_button.clicked.connect(self.delete_selected)

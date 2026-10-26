@@ -3,7 +3,7 @@ from typing import override
 
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QShowEvent
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QLabel, QListWidget, QListWidgetItem, QPushButton, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_mail import MessageParameters
@@ -11,14 +11,17 @@ from chrono_mail.engine.commands_schedule import (
     MAIL_REPEAT_PAUSE, MAIL_REPEAT_RESUME, MAIL_SCHEDULED, MAIL_SEND_DUE, MESSAGE_SNOOZED, MESSAGE_WAKE, AccountOptional, RepeatState, ScheduledInfo, SendDueParameters,
     SendDueResult, SnoozedInfo, WakeParameters, WakeResult,
 )
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
 
 # --- Version ------------------------------------------------------------
-__version__ = "scheduledpanel.py 3.6.354"
+__version__ = "scheduledpanel.py 3.6.373"
 
 # --- Version history ----------------------------------------------------
+# v3.6.373: built from the form settings_scheduled.ui (parts, texts, layout; D-276); nothing visible changed
 # v3.6.354: Chrono Mail's own folders' names written once (CR-36)
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.327: Pause and Resume for a one-off scheduled message too; a paused one says so in its line (D-245)
@@ -69,26 +72,13 @@ class ScheduledPanel(QWidget):
         super().__init__(parent)
         self._backend: Backend = backend
         self.changed: bool = False
-        layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Waiting to be sent, and put away until a time:", self))
-        self.list = QListWidget(self)
-        layout.addWidget(self.list, 1)
-        row = QHBoxLayout()
-        self.new_button = QPushButton("New", self)
-        self.new_button.setToolTip("Write a new message that is sent at a time you choose")
-        row.addWidget(self.new_button)
-        self.edit_button = QPushButton("Edit", self)
-        self.edit_button.setToolTip("Change this message; it stays scheduled")
-        row.addWidget(self.edit_button)
-        self.now_button = QPushButton("Send now", self)  # or Cancel snooze: the one action that applies to the selected line
-        row.addWidget(self.now_button)
-        self.pause_button = QPushButton("Pause", self)
-        row.addWidget(self.pause_button)  # back to drafts: drag it to Drafts in the main window; to stop repeating: Edit (D-178)
-        row.addStretch(1)
-        layout.addLayout(row)
-        self.status = QLabel("", self)
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
+        form = forms.fill(self, "settings_scheduled")  # the parts, texts and layout (D-276)
+        self.list = part(form, QListWidget, "list")
+        self.new_button = part(form, QPushButton, "newButton")
+        self.edit_button = part(form, QPushButton, "editButton")
+        self.now_button = part(form, QPushButton, "nowButton")  # or Cancel snooze: the one action that applies to the selected line
+        self.pause_button = part(form, QPushButton, "pauseButton")  # back to drafts: drag it to Drafts in the main window; to stop repeating: Edit (D-178)
+        self.status = part(form, QLabel, "status")
         self.new_button.clicked.connect(self.new_requested)
         self.edit_button.clicked.connect(self.edit)
         self.list.itemDoubleClicked.connect(self._double_clicked)

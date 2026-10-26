@@ -185,6 +185,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (3.6.370) A profile (the demo) keeps its passwords and key under its own wallet name (D-274).
 - DONE (3.6.371) Readable labels for Chrono Mail's passwords and key in the wallet (Linux; B-23, D-275).
 - DONE (3.6.372) The same text as the User name of each entry in Windows Credential Manager (B-23, D-275).
+- DONE (3.6.373) The Settings window and its 13 pages are built from Qt Designer forms (ui/forms, D-276); other dialogs follow as their mockups come.
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

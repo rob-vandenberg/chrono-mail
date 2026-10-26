@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsReading</class>
+ <widget class="QWidget" name="SettingsReading">
+  <layout class="QVBoxLayout" name="outer" stretch="0,1">
+   <item>
+    <layout class="QFormLayout" name="form">
+     <item row="0" column="0">
+      <widget class="QLabel" name="formLabel0">
+       <property name="text">
+        <string>Mark a message as read</string>
+       </property>
+       <property name="buddy">
+        <cstring>markReadBox</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QComboBox" name="markReadBox" />
+     </item>
+     <item row="1" column="0">
+      <widget class="QLabel" name="formLabel1">
+       <property name="text">
+        <string>…after</string>
+       </property>
+       <property name="buddy">
+        <cstring>markReadDelay</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QSpinBox" name="markReadDelay">
+       <property name="suffix">
+        <string> ms</string>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="0" colspan="2">
+      <widget class="QCheckBox" name="preferPlain">
+       <property name="text">
+        <string>Show the plain text of a message that has both text and HTML</string>
+       </property>
+      </widget>
+     </item>
+     <item row="3" column="0" colspan="2">
+      <widget class="QCheckBox" name="linksAsk">
+       <property name="text">
+        <string>Ask before opening a link in the web browser</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="privacy">
+     <property name="title">
+      <string>Pictures and other content from the internet</string>
+     </property>
+     <layout class="QVBoxLayout" name="privacyLayout">
+      <item>
+       <widget class="QCheckBox" name="remoteAlways">
+        <property name="text">
+         <string>Always show it, for every sender (tells senders that you read their message)</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="sendersLabel">
+        <property name="text">
+         <string>Senders whose content is always shown (one address per line):</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPlainTextEdit" name="remoteSenders" />
+      </item>
+      <item>
+       <widget class="QPushButton" name="forgetSendersButton">
+        <property name="text">
+         <string>Forget all allowed senders</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

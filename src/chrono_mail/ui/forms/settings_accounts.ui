@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsAccounts</class>
+ <widget class="QWidget" name="SettingsAccounts">
+  <layout class="QHBoxLayout" name="outer" stretch="1,0">
+   <item>
+    <widget class="QListWidget" name="accounts" />
+   </item>
+   <item>
+    <layout class="QVBoxLayout" name="side" stretch="0,0,0,1">
+     <item>
+      <widget class="QPushButton" name="addButton">
+       <property name="text">
+        <string>Add…</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="editButton">
+       <property name="text">
+        <string>Edit…</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="removeButton">
+       <property name="text">
+        <string>Remove…</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="sideEnd">
+       <property name="orientation">
+        <enum>Qt::Vertical</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

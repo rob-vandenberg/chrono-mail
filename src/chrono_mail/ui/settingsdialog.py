@@ -13,8 +13,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QGroupBox,
-    QHBoxLayout,
     QKeySequenceEdit,
     QLabel,
     QListWidget,
@@ -22,9 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSizePolicy,
     QSlider,
-    QSpacerItem,
     QSpinBox,
     QStyle,
     QStyleOptionSlider,
@@ -33,7 +29,6 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -41,14 +36,15 @@ from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, ACCOUNT_REMOVE, KEY_STATUS, AccountParameters, AccountRemoveResult, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_folders import INDEX_RECONCILE, STORE_VERIFY, ReconcileResult, VerifyResult
-from chrono_mail.ui import appearance, prefs, scale
+from chrono_mail.ui import appearance, forms, prefs, scale
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.prefs import Preferences, StartupView, read_preferences, save_preferences
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columns import DEFAULT_COLUMNS, keep_snoozed_column
-from chrono_mail.ui.columnsdialog import COLUMNS_TEXT, DATE_STYLES, DENSITY_LABELS, LAYOUTS, READING_PANES, ColumnPicker
+from chrono_mail.ui.columnsdialog import DATE_STYLES, DENSITY_LABELS, LAYOUTS, READING_PANES, ColumnPicker
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
@@ -60,9 +56,12 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 3.6.350"
+__version__ = "settingsdialog.py 3.6.373"
 
 # --- Version history ----------------------------------------------------
+# v3.6.373: the window and its pages are built from Qt Designer forms (ui/forms/settings*.ui): their parts, texts and layout; the program
+#           adds its own parts at the placeholders (the form loader makes them there), the values, the sizes and the look (D-276); the window is never smaller than its pages
+#           need (its own smallest size cut texts off at the smallest and the largest size)
 # v3.6.350: the key line says when Local Folders waits for an older key;
 #           an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -134,8 +133,8 @@ QUOTE_LABELS: tuple[tuple[str, str], ...] = (("above", "My answer above the quot
 SCHEME_LABELS: tuple[tuple[str, str], ...] = (("system", "Follow the system"), ("light", "Light"), ("dark", "Dark"))
 
 
-def _combo(parent: QWidget, choices: tuple[tuple[str, str], ...], current: str) -> QComboBox:
-    box = QComboBox(parent)
+def _fill_combo(box: QComboBox, choices: tuple[tuple[str, str], ...], current: str) -> QComboBox:
+    """A drop-down of a form with its choices (value, text), the current one chosen."""
     for value, label in choices:
         box.addItem(label, value)
     box.setCurrentIndex(max(0, box.findData(current)))
@@ -200,6 +199,10 @@ class SizeSlider(QSlider):
         """The lowest row of the ticks: the top of the track's area, so they touch the track (a style that draws its track
         from that row on covers the last pixel, which touches it as well)."""
         return self._groove().top()
+
+
+def _new_slider(parent: QWidget) -> SizeSlider:
+    return SizeSlider(Qt.Orientation.Horizontal, parent)
 
 
 class TallerRows(QStyledItemDelegate):
@@ -286,26 +289,19 @@ class SettingsDialog(QDialog):
         self._shortcut_actions: dict[str, tuple[str, str]] = dict(known.shortcut_actions)
         self.setWindowTitle("Settings")
         self.setMinimumSize(wpx(MINIMUM_WIDTH), wpx(MINIMUM_HEIGHT))
-        outer = QVBoxLayout(self)
-        body = QHBoxLayout()
-        self.sidebar = QListWidget(self)
+        self.form: QWidget = forms.fill(self, "settings")  # the page list, the place of the pages, the status line and OK and Cancel (D-276)
+        self.sidebar = part(self.form, QListWidget, "pageList")
         self.sidebar.setFixedWidth(wpx(190))
         self.sidebar_rows = TallerRows(self.sidebar)
         self.sidebar.setItemDelegate(self.sidebar_rows)
         self._size_sidebar_text(scale.windows())
-        self.pages = QStackedWidget(self)
-        body.addWidget(self.sidebar)
-        body.addWidget(self.pages, 1)
-        outer.addLayout(body, 1)
-        self.status = QLabel("", self)
-        self.status.setWordWrap(True)
-        outer.addWidget(self.status)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        self.pages = part(self.form, QStackedWidget, "pages")
+        self.status = part(self.form, QLabel, "status")
+        buttons = part(self.form, QDialogButtonBox, "buttons")
         self._buttons: QDialogButtonBox = buttons
         self._saving_tags: bool = False
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        outer.addWidget(buttons)
         self._add_page("General", self._general_page(known.tray_available))
         self._add_page("Appearance", self._appearance_page())
         self.sidebar_page = SidebarPage(
@@ -331,6 +327,7 @@ class SettingsDialog(QDialog):
         self._add_page("Keyboard", self._keyboard_page())
         self.sidebar.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.sidebar.setCurrentRow(0)
+        self.setMinimumSize(self._smallest(scale.windows()))
         self.reload()
         restore_geometry(self, settings, "settings_geometry")
 
@@ -361,76 +358,48 @@ class SettingsDialog(QDialog):
     # --- the pages --------------------------------------------------------------------------------------------------
 
     def _general_page(self, tray_available: bool) -> QWidget:
-        s = self._settings
-        page = QWidget(self)
-        form = QFormLayout(page)
-        self.startup_box = StartupChooser(self._startup_choices, page)  # a folded tree: headings unfold, folders and views are chosen
+        page = forms.load("settings_general", self, {"startupBox": lambda parent: StartupChooser(self._startup_choices, parent)})
+        self.startup_box = part(page, StartupChooser, "startupBox")  # a folded tree: headings unfold, folders and views are chosen
         if not self.startup_box.choose_value(self._chosen.startup.text):
             self.startup_box.choose_value("")  # a folder that is gone: the last selected one
-        form.addRow("Show on startup:", self.startup_box)
-        self.check_on_start = QCheckBox("Refresh when the program starts", page)
+        self.check_on_start = part(page, QCheckBox, "checkOnStart")
         self.check_on_start.setChecked(self._chosen.check_on_start)
-        self.auto_check = QCheckBox("Automatic refresh", page)
+        self.auto_check = part(page, QCheckBox, "autoCheck")
         self.auto_check.setChecked(self._chosen.auto_check)
-        self.interval = QSpinBox(page)
+        self.interval = part(page, QSpinBox, "interval")
         self.interval.setRange(1, 240)
-        self.interval.setSuffix(" minutes")
         self.interval.setValue(self._chosen.auto_check_minutes)
         self.interval.setEnabled(self.auto_check.isChecked())
-        self.start_refresh = self._refresh_choice(self._chosen.start_refresh, self.check_on_start, page)  # the Refresh button always sends and receives
-        self.scheduled_refresh = self._refresh_choice(self._chosen.scheduled_refresh, self.auto_check, page)
-        self.send_delay = QCheckBox("Delay sending a message by", page)
+        self.start_refresh = self._refresh_choice(part(page, QComboBox, "startRefresh"), self._chosen.start_refresh, self.check_on_start)  # the Refresh button always sends and receives
+        self.scheduled_refresh = self._refresh_choice(part(page, QComboBox, "scheduledRefresh"), self._chosen.scheduled_refresh, self.auto_check)
+        self.send_delay = part(page, QCheckBox, "sendDelay")
         self.send_delay.setChecked(self._chosen.send_delay)
-        self.send_delay_seconds = QSpinBox(page)
+        self.send_delay_seconds = part(page, QSpinBox, "sendDelaySeconds")
         self.send_delay_seconds.setRange(1, 999)
-        self.send_delay_seconds.setSuffix(" seconds")
         self.send_delay_seconds.setValue(self._chosen.send_delay_seconds)
         self.send_delay_seconds.setEnabled(self.send_delay.isChecked())
-        self.send_on_refresh = QCheckBox("Delay sending messages until the next refresh", page)
+        self.send_on_refresh = part(page, QCheckBox, "sendOnRefresh")
         self.send_on_refresh.setChecked(self._chosen.send_on_refresh)
-        self.warn_outbox_on_quit = QCheckBox("Warn when quitting with messages in the Outbox", page)
+        self.warn_outbox_on_quit = part(page, QCheckBox, "warnOutboxOnQuit")
         self.warn_outbox_on_quit.setChecked(self._chosen.warn_outbox_on_quit)
-        self.notifications = QCheckBox("Show a notification when new mail arrives (only the number, never the content)", page)
+        self.notifications = part(page, QCheckBox, "notifications")
         self.notifications.setChecked(self._chosen.notifications)
-        self.tray = QCheckBox("Show an icon in the notification area", page)
+        self.tray = part(page, QCheckBox, "tray")
         self.tray.setChecked(self._chosen.tray and tray_available)
-        self.close_to_tray = QCheckBox("Closing the window keeps Chrono Mail running in the notification area", page)
+        self.close_to_tray = part(page, QCheckBox, "closeToTray")
         self.close_to_tray.setChecked(self._chosen.close_to_tray and tray_available)
-        start_row = QHBoxLayout()
-        start_row.addWidget(self.check_on_start)
-        start_row.addWidget(self.start_refresh)
-        start_row.addStretch(1)
-        form.addRow(start_row)
-        automatic_row = QHBoxLayout()  # the owner: one row, "Automatic refresh [Send and Receive] every [20 minutes]"
-        automatic_row.addWidget(self.auto_check)
-        automatic_row.addWidget(self.scheduled_refresh)
-        automatic_row.addWidget(QLabel("every", page))
-        automatic_row.addWidget(self.interval)
-        automatic_row.addStretch(1)
-        form.addRow(automatic_row)
-        delay_row = QHBoxLayout()
-        delay_row.addWidget(self.send_delay)
-        delay_row.addWidget(self.send_delay_seconds)
-        delay_row.addStretch(1)
-        form.addRow(delay_row)
-        for widget in (self.send_on_refresh, self.warn_outbox_on_quit):
-            form.addRow(widget)
-        for widget in (self.notifications, self.tray, self.close_to_tray):
-            form.addRow(widget)
         if not tray_available:
             for widget in (self.tray, self.close_to_tray, self.notifications):
                 widget.setEnabled(False)
-            form.addRow(QLabel("This desktop has no notification area, so there are no icon and no notifications.", page))
-        form.addRow(QLabel("Language: the program is in English; dates and times follow the language of the system.", page))
+        part(page, QFormLayout, "form").setRowVisible(part(page, QLabel, "noTrayNote"), not tray_available)  # only where it is true
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())
         self.auto_check.toggled.connect(self.interval.setEnabled)
         self.send_delay.toggled.connect(self.send_delay_seconds.setEnabled)
         return page
 
-    def _refresh_choice(self, chosen: str, tick: QCheckBox, page: QWidget) -> QComboBox:
+    def _refresh_choice(self, box: QComboBox, chosen: str, tick: QCheckBox) -> QComboBox:
         """What a refresh does (Send and Receive, Receive only, Send only), greyed while its tick is off."""
-        box = QComboBox(page)
         for text, value in (("Send and Receive", "send_receive"), ("Receive only", "receive"), ("Send only", "send")):
             box.addItem(text, value)
         box.setCurrentIndex(max(0, box.findData(chosen)))
@@ -440,17 +409,13 @@ class SettingsDialog(QDialog):
 
     def _operations_page(self) -> QWidget:
         """When the Operations window (the progress of every send and receive) shows itself and hides again."""
-        s = self._settings
-        page = QWidget(self)
-        form = QFormLayout(page)
-        self.operations_show = QCheckBox("Show window on send and receive", page)
+        page = forms.load("settings_operations", self)
+        self.operations_show = part(page, QCheckBox, "operationsShow")
         self.operations_show.setChecked(self._chosen.operations_show_on_send_receive)
-        self.operations_hide = QCheckBox("Hide window when send and receive completes", page)
+        self.operations_hide = part(page, QCheckBox, "operationsHide")
         self.operations_hide.setChecked(self._chosen.operations_hide_when_done)
-        self.operations_error = QCheckBox("Show window when an error occurs", page)
+        self.operations_error = part(page, QCheckBox, "operationsError")
         self.operations_error.setChecked(self._chosen.operations_show_on_error)
-        for widget in (self.operations_show, self.operations_hide, self.operations_error):
-            form.addRow(widget)
         return page
 
     def _tray_toggled(self, on: bool) -> None:
@@ -458,23 +423,18 @@ class SettingsDialog(QDialog):
             self.close_to_tray.setChecked(False)
         self.close_to_tray.setEnabled(on and self.tray.isEnabled())
 
-    def _size_row(self, page: QWidget, factor: float) -> tuple[SizeSlider, QPushButton, QHBoxLayout]:
-        """A size slider from Small to Large with its Reset button. While the handle is dragged nothing changes (a window
-        that grows would move the slider under the pointer); keys and clicks apply each step at once."""
-        slider = SizeSlider(Qt.Orientation.Horizontal, page)
+    def _size_row(self, page: QWidget, key: str, factor: float) -> tuple[SizeSlider, QPushButton]:
+        """A size slider from Small to Large with its Reset button, in the form's row of that key. While the handle is dragged nothing
+        changes (a window that grows would move the slider under the pointer); keys and clicks apply each step at once."""
+        slider = part(page, SizeSlider, f"{key}Slider")
         slider.setRange(0, scale.SLIDER_STEPS)
         slider.setPageStep(4)
         slider.setTracking(False)
         slider.setMinimumWidth(wpx(SLIDER_WIDTH))  # never squeezed down to its handle
         slider.setValue(scale.slider_position(factor))
-        reset = QPushButton("Reset", page)
+        reset = part(page, QPushButton, f"{key}Reset")
         reset.clicked.connect(lambda: slider.setValue(scale.slider_position(scale.STANDARD)))
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Small", page))
-        row.addWidget(slider, 1)
-        row.addWidget(QLabel("Large", page))
-        row.addWidget(reset)
-        return slider, reset, row
+        return slider, reset
 
     def _list_slider_moved(self, position: int) -> None:
         self.list_scale_tried.emit(scale.factor_at(position))
@@ -494,9 +454,15 @@ class SettingsDialog(QDialog):
             slider.setMinimumWidth(wpx(SLIDER_WIDTH))
         self._grow_with(factor)
 
+    def _smallest(self, factor: float) -> QSize:
+        """The smallest size of this window when it opens at this size factor, never smaller than its pages need: a size of its own set on
+        a window overrules what its layout needs, so a text would be cut off at a small or a large size. (While the size slider moves the
+        fonts change after this window is asked, so there _grow_with makes room for the page that is shown.)"""
+        return QSize(round(MINIMUM_WIDTH * factor), round(MINIMUM_HEIGHT * factor)).expandedTo(self.minimumSizeHint())
+
     def _needed_size(self) -> QSize:
         """The smallest size at which the page that is shown fits: the page list, the page, the status line and the buttons."""
-        outer = self.layout()
+        outer = self.form.layout()
         page = self.pages.currentWidget()
         if outer is None or page is None:
             return QSize(0, 0)
@@ -521,7 +487,7 @@ class SettingsDialog(QDialog):
             self._size_at_standard = (self.width() / self._window_factor, self.height() / self._window_factor)
         self._window_factor = factor
         standard_width, standard_height = self._size_at_standard
-        self.setMinimumSize(round(MINIMUM_WIDTH * factor), round(MINIMUM_HEIGHT * factor))  # the smallest size follows too
+        self.setMinimumSize(round(MINIMUM_WIDTH * factor), round(MINIMUM_HEIGHT * factor))  # the smallest size follows too (what the shown page needs: below)
         centre = self.geometry().center()
         needed = self._needed_size()  # never smaller than the page that is shown needs: its parts would overlap
         width, height = max(round(standard_width * factor), needed.width()), max(round(standard_height * factor), needed.height())
@@ -537,46 +503,29 @@ class SettingsDialog(QDialog):
             self.resize(width, height)
 
     def _appearance_page(self) -> QWidget:
-        page = QWidget(self)
-        form = QFormLayout(page)
+        page = forms.load("settings_appearance", self, {f"{key}Slider": _new_slider for key in ("interface", "list", "windows", "reading")})
         s = self._settings
-        self.scheme_box = _combo(page, SCHEME_LABELS, self._chosen.color_scheme)
-        form.addRow("Colours", self.scheme_box)
-        note = QLabel(
-            "Follow the system takes the light or the dark colours as the system is set. Messages in HTML are always shown on a white page: they are written for one.",
-            page,
-        )
-        note.setWordWrap(True)
-        form.addRow(note)
-        form.addItem(QSpacerItem(0, wpx(18), QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))  # a blank line above the sizes
-        sizes = QLabel("Sizes", page)
-        sizes.setStyleSheet("font-weight: bold;")  # the size keeps following the interface
-        form.addRow(sizes)
+        self.scheme_box = _fill_combo(part(page, QComboBox, "schemeBox"), SCHEME_LABELS, self._chosen.color_scheme)
         app = QApplication.instance()
         self.system_points: int = appearance.system_font_size(app) if isinstance(app, QApplication) else appearance.FALLBACK_FONT_POINTS
         self.interface_scale_saved: float = scale.interface()  # what Cancel puts back
         self.windows_scale_saved: float = scale.windows()
         self._window_factor: float = self.windows_scale_saved
         self._size_at_standard: tuple[float, float] | None = None
-        self.interface_slider, self.interface_standard, row = self._size_row(page, self.interface_scale_saved)
+        self.interface_slider, self.interface_standard = self._size_row(page, "interface", self.interface_scale_saved)
         self.interface_slider.valueChanged.connect(self._interface_slider_moved)
-        form.addRow("Main window", row)
         self.list_scale_saved: float = prefs.saved_list(s, self.system_points)
-        self.list_slider, self.list_reset, row = self._size_row(page, self.list_scale_saved)
+        self.list_slider, self.list_reset = self._size_row(page, "list", self.list_scale_saved)
         self.list_slider.valueChanged.connect(self._list_slider_moved)
-        form.addRow("Message list", row)
-        self.windows_slider, self.windows_reset, row = self._size_row(page, self.windows_scale_saved)
+        self.windows_slider, self.windows_reset = self._size_row(page, "windows", self.windows_scale_saved)
         self.windows_slider.valueChanged.connect(self._windows_slider_moved)
-        form.addRow("Other windows and dialogs", row)
         self.reading_scale_saved: float = prefs.saved_reading(s)
-        self.reading_slider, self.reading_reset, row = self._size_row(page, self.reading_scale_saved)
+        self.reading_slider, self.reading_reset = self._size_row(page, "reading", self.reading_scale_saved)  # reading and writing alike
         self.reading_slider.valueChanged.connect(self._reading_slider_moved)
-        form.addRow("Text of messages", row)  # reading and writing alike
-        form.addItem(QSpacerItem(0, wpx(18), QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed))  # a blank line above the accent
-        self._accent_row(page, form)
+        self._accent_row(page)
         return page
 
-    def _accent_row(self, page: QWidget, form: QFormLayout) -> None:
+    def _accent_row(self, page: QWidget) -> None:
         """Accent colour: the one of the theme in use (each theme has its own; the other one is changed while it is in use).
         A button "Sample" in the accent, as wide as Small and the slider of the size rows above it, which opens the colour
         picker (that has the #RRGGBB field), and Reset under the Reset buttons of the size rows, which brings back the
@@ -585,19 +534,13 @@ class SettingsDialog(QDialog):
         self.accent_key: str = "accent_dark" if self.accent_dark_theme else "accent_light"
         self.accent_standard: str = (DARK if self.accent_dark_theme else LIGHT).blue
         self.accent: str = (self._chosen.accent_dark if self.accent_dark_theme else self._chosen.accent_light) or self.accent_standard
-        self.accent_swatch = QPushButton("Sample", page)
-        self.accent_swatch.setToolTip("Pick a colour")
-        self.accent_reset = QPushButton("Reset", page)
-        spacer = QLabel("Large", page)  # takes the room of "Large" in the size rows, unseen, so Reset lines up with theirs
+        self.accent_swatch = part(page, QPushButton, "accentSwatch")
+        self.accent_reset = part(page, QPushButton, "accentReset")
+        spacer = part(page, QLabel, "accentSpacer")  # takes the room of "Large" in the size rows, unseen, so Reset lines up with theirs
         keep = spacer.sizePolicy()
         keep.setRetainSizeWhenHidden(True)
         spacer.setSizePolicy(keep)
         spacer.hide()
-        row = QHBoxLayout()
-        row.addWidget(self.accent_swatch, 1)
-        row.addWidget(spacer)
-        row.addWidget(self.accent_reset)
-        form.addRow("Accent colour", row)
         self.accent_swatch.clicked.connect(self._pick_accent)
         self.accent_reset.clicked.connect(lambda: self._set_accent(self.accent_standard))
         self._set_accent(self.accent)
@@ -620,28 +563,16 @@ class SettingsDialog(QDialog):
             self._set_accent(chosen.name())
 
     def _list_page(self) -> QWidget:
-        s = self._settings
-        page = QWidget(self)
-        form = QFormLayout(page)
-        self.layout_box = _combo(page, LAYOUTS, self._chosen.list_layout)
-        self.pane_box = _combo(page, READING_PANES, self._chosen.reading_pane)
-        self.date_box = _combo(page, DATE_STYLES, self._chosen.date_style)
-        self.density_box = _combo(page, DENSITY_LABELS, self._chosen.list_density)
-        self.conversations = QCheckBox("Show messages grouped as conversations", page)
+        page = forms.load("settings_message_list", self, {"columnsPicker": lambda parent: ColumnPicker(self._columns, parent, self._standard_columns)})
+        self.layout_box = _fill_combo(part(page, QComboBox, "layoutBox"), LAYOUTS, self._chosen.list_layout)
+        self.pane_box = _fill_combo(part(page, QComboBox, "paneBox"), READING_PANES, self._chosen.reading_pane)
+        self.date_box = _fill_combo(part(page, QComboBox, "dateBox"), DATE_STYLES, self._chosen.date_style)
+        self.density_box = _fill_combo(part(page, QComboBox, "densityBox"), DENSITY_LABELS, self._chosen.list_density)
+        self.conversations = part(page, QCheckBox, "conversations")
         self.conversations.setChecked(self._chosen.conversations)
-        self.tag_text_colour = QCheckBox("Use the tag's colour for the text of tagged messages", page)
+        self.tag_text_colour = part(page, QCheckBox, "tagTextColour")
         self.tag_text_colour.setChecked(self._chosen.tag_text_colour)
-        self.columns_picker = ColumnPicker(self._columns, page, self._standard_columns)
-        form.addRow("Layout", self.layout_box)
-        form.addRow("Reading pane", self.pane_box)
-        form.addRow("Dates", self.date_box)
-        form.addRow("Row height", self.density_box)
-        form.addRow(self.conversations)
-        form.addRow(self.tag_text_colour)
-        columns_text = QLabel(COLUMNS_TEXT, page)
-        columns_text.setWordWrap(True)
-        form.addRow(columns_text)
-        form.addRow(self.columns_picker)
+        self.columns_picker = part(page, ColumnPicker, "columnsPicker")
         self.layout_box.currentIndexChanged.connect(self._layout_changed)
         self._layout_changed()
         return page
@@ -650,38 +581,22 @@ class SettingsDialog(QDialog):
         self.columns_picker.set_active(str(self.layout_box.currentData()) == "columns")
 
     def _reading_page(self) -> QWidget:
-        s = self._settings
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
-        form = QFormLayout()
-        self.mark_read_box = _combo(page, MARK_READ_LABELS, self._chosen.mark_read)
-        self.mark_read_delay = QSpinBox(page)
+        page = forms.load("settings_reading", self)
+        self.mark_read_box = _fill_combo(part(page, QComboBox, "markReadBox"), MARK_READ_LABELS, self._chosen.mark_read)
+        self.mark_read_delay = part(page, QSpinBox, "markReadDelay")
         self.mark_read_delay.setRange(0, 10_000)
         self.mark_read_delay.setSingleStep(100)
-        self.mark_read_delay.setSuffix(" ms")
         self.mark_read_delay.setValue(self._chosen.mark_read_delay_ms)
-        self.prefer_plain = QCheckBox("Show the plain text of a message that has both text and HTML", page)
+        self.prefer_plain = part(page, QCheckBox, "preferPlain")
         self.prefer_plain.setChecked(self._chosen.prefer_plain)
-        self.links_ask = QCheckBox("Ask before opening a link in the web browser", page)
+        self.links_ask = part(page, QCheckBox, "linksAsk")
         self.links_ask.setChecked(self._chosen.links_ask)
-        form.addRow("Mark a message as read", self.mark_read_box)
-        form.addRow("…after", self.mark_read_delay)
-        form.addRow(self.prefer_plain)
-        form.addRow(self.links_ask)
-        layout.addLayout(form)
-        privacy = QGroupBox("Pictures and other content from the internet", page)
-        privacy_layout = QVBoxLayout(privacy)
-        self.remote_always = QCheckBox("Always show it, for every sender (tells senders that you read their message)", privacy)
+        self.remote_always = part(page, QCheckBox, "remoteAlways")
         self.remote_always.setChecked(self._chosen.remote_always)
-        privacy_layout.addWidget(self.remote_always)
-        privacy_layout.addWidget(QLabel("Senders whose content is always shown (one address per line):", privacy))
-        self.remote_senders = QPlainTextEdit(privacy)
+        self.remote_senders = part(page, QPlainTextEdit, "remoteSenders")
         self.remote_senders.setPlainText("\n".join(sorted(self._chosen.remote_senders)))
-        privacy_layout.addWidget(self.remote_senders)
-        self.forget_senders_button = QPushButton("Forget all allowed senders", privacy)
-        privacy_layout.addWidget(self.forget_senders_button)
+        self.forget_senders_button = part(page, QPushButton, "forgetSendersButton")
         self.forget_senders_button.clicked.connect(self.remote_senders.clear)
-        layout.addWidget(privacy, 1)
         self.mark_read_box.currentIndexChanged.connect(self._mark_read_changed)
         self._mark_read_changed()
         return page
@@ -690,44 +605,27 @@ class SettingsDialog(QDialog):
         self.mark_read_delay.setEnabled(str(self.mark_read_box.currentData()) == "delay")
 
     def _writing_page(self) -> QWidget:
-        s = self._settings
-        page = QWidget(self)
-        form = QFormLayout(page)
-        self.default_account = QComboBox(page)
+        page = forms.load("settings_writing", self)
+        self.default_account = part(page, QComboBox, "defaultAccount")
         self.default_account.addItem("The account of the folder I am in", "")
-        self.compose_html = QComboBox(page)
+        self.compose_html = part(page, QComboBox, "composeHtml")
         self.compose_html.addItem("Rich text (bold, lists, links; sent as text and HTML)", True)
         self.compose_html.addItem("Plain text", False)
         self.compose_html.setCurrentIndex(0 if self._chosen.compose_html else 1)
-        self.reply_quote_box = _combo(page, QUOTE_LABELS, self._chosen.reply_quote)
-        self.autosave = QSpinBox(page)
+        self.reply_quote_box = _fill_combo(part(page, QComboBox, "replyQuoteBox"), QUOTE_LABELS, self._chosen.reply_quote)
+        self.autosave = part(page, QSpinBox, "autosave")
         self.autosave.setRange(0, 600)
-        self.autosave.setSpecialValueText("Never")
-        self.autosave.setSuffix(" seconds")
         self.autosave.setValue(self._chosen.autosave_seconds)
-        self.warn_no_subject = QCheckBox("Ask before sending a message without a subject", page)
+        self.warn_no_subject = part(page, QCheckBox, "warnNoSubject")
         self.warn_no_subject.setChecked(self._chosen.warn_no_subject)
-        form.addRow("New messages are sent from", self.default_account)
-        form.addRow("New messages are written in", self.compose_html)
-        form.addRow("Replies", self.reply_quote_box)
-        form.addRow("Save a draft every", self.autosave)
-        form.addRow(self.warn_no_subject)
-        form.addRow(QLabel("The signature of each account is set under Accounts.", page))
         return page
 
     def _accounts_page(self) -> QWidget:
-        page = QWidget(self)
-        layout = QHBoxLayout(page)
-        self.accounts = QListWidget(page)
-        layout.addWidget(self.accounts, 1)
-        side = QVBoxLayout()
-        self.add_button = QPushButton("Add…", page)
-        self.edit_button = QPushButton("Edit…", page)
-        self.remove_button = QPushButton("Remove…", page)
-        for button in (self.add_button, self.edit_button, self.remove_button):
-            side.addWidget(button)
-        side.addStretch(1)
-        layout.addLayout(side)
+        page = forms.load("settings_accounts", self)
+        self.accounts = part(page, QListWidget, "accounts")
+        self.add_button = part(page, QPushButton, "addButton")
+        self.edit_button = part(page, QPushButton, "editButton")
+        self.remove_button = part(page, QPushButton, "removeButton")
         self.add_button.clicked.connect(self.add_account_requested)
         self.edit_button.clicked.connect(self.edit_selected)
         self.remove_button.clicked.connect(self.remove_selected)
@@ -736,32 +634,17 @@ class SettingsDialog(QDialog):
         return page
 
     def _security_page(self) -> QWidget:
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
+        page = forms.load("settings_security", self)
         directories = self._backend.engine.directories
-        self.key_label = QLabel("", page)
-        self.key_label.setWordWrap(True)
-        layout.addWidget(QLabel(f"Your mail is stored encrypted in:<br><b>{directories.data_directory}</b><br>Settings: <b>{directories.config_directory}</b>", page))
-        layout.addWidget(self.key_label)
-        row = QHBoxLayout()
-        self.recovery_button = QPushButton("Show the recovery code…", page)
-        self.restore_button = QPushButton("Restore the key…", page)
-        row.addWidget(self.recovery_button)
-        row.addWidget(self.restore_button)
-        row.addStretch(1)
-        layout.addLayout(row)
-        maintenance = QGroupBox("Maintenance", page)
-        maintenance_layout = QVBoxLayout(maintenance)
-        self.verify_button = QPushButton("Check that all stored mail can be read", maintenance)
-        self.repair_button = QPushButton("Repair the search index", maintenance)
-        self.rebuild_button = QPushButton("Rebuild the search index", maintenance)
-        self.maintenance_label = QLabel("", maintenance)
-        self.maintenance_label.setWordWrap(True)
-        self.maintenance_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        for widget in (self.verify_button, self.repair_button, self.rebuild_button, self.maintenance_label):
-            maintenance_layout.addWidget(widget)
-        layout.addWidget(maintenance)
-        layout.addStretch(1)
+        self.key_label = part(page, QLabel, "keyLabel")
+        storage = part(page, QLabel, "storageLabel")  # the form's text, with where this computer keeps the mail and the settings
+        storage.setText(f"{storage.text()}<br><b>{directories.data_directory}</b><br>Settings: <b>{directories.config_directory}</b>")
+        self.recovery_button = part(page, QPushButton, "recoveryButton")
+        self.restore_button = part(page, QPushButton, "restoreButton")
+        self.verify_button = part(page, QPushButton, "verifyButton")
+        self.repair_button = part(page, QPushButton, "repairButton")
+        self.rebuild_button = part(page, QPushButton, "rebuildButton")
+        self.maintenance_label = part(page, QLabel, "maintenanceLabel")
         self.recovery_button.clicked.connect(lambda: RecoveryDialog(self._backend, self).exec())
         self.restore_button.clicked.connect(self.restore_key_requested)
         self.verify_button.clicked.connect(lambda: self._maintain("verify", "Checking"))
@@ -843,13 +726,9 @@ class SettingsDialog(QDialog):
         self._backend.ask(ACCOUNT_LIST, NoParameters(), listed, lambda error: finished(), owner=self)
 
     def _keyboard_page(self) -> QWidget:
-        page = QWidget(self)
-        layout = QVBoxLayout(page)
-        layout.addWidget(QLabel("Click a key field and press the keys you want; Backspace or Delete empties it.", page))
-        self.shortcut_table = QTableWidget(len(self._shortcut_actions), 2, page)
-        self.shortcut_table.setHorizontalHeaderLabels(["Action", "Keys"])
-        self.shortcut_table.verticalHeader().hide()
-        self.shortcut_table.horizontalHeader().setStretchLastSection(True)
+        page = forms.load("settings_keyboard", self)
+        self.shortcut_table = part(page, QTableWidget, "shortcutTable")
+        self.shortcut_table.setRowCount(len(self._shortcut_actions))
         self.shortcut_table.setColumnWidth(0, 300)
         self.shortcut_edits: dict[str, QKeySequenceEdit] = {}
         chosen = dict(self._chosen.shortcuts)
@@ -861,11 +740,13 @@ class SettingsDialog(QDialog):
             edit = QKeySequenceEdit(QKeySequence(chosen.get(action_id, default)), self.shortcut_table)
             self.shortcut_table.setCellWidget(row, 1, edit)
             self.shortcut_edits[action_id] = edit
-        layout.addWidget(self.shortcut_table, 1)
-        self.shortcut_note = QLabel("", page)
-        layout.addWidget(self.shortcut_note)
-        self.reset_keys_button = QPushButton("Standard keys", page)
-        layout.addWidget(self.reset_keys_button)
+        self.shortcut_note = part(page, QLabel, "shortcutNote")
+        self.reset_keys_button = part(page, QPushButton, "resetKeysButton")
+        previous: QWidget = self.shortcut_table  # Tab goes through the key fields, made after the form, before Standard keys
+        for edit in self.shortcut_edits.values():
+            QWidget.setTabOrder(previous, edit)
+            previous = edit
+        QWidget.setTabOrder(previous, self.reset_keys_button)
         self.reset_keys_button.clicked.connect(self._reset_keys)
         return page
 

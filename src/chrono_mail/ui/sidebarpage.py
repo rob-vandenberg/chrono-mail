@@ -1,19 +1,22 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QCheckBox, QFrame, QHBoxLayout, QScrollArea, QVBoxLayout, QWidget
 
 from chrono_mail.engine.commands_sidebar import (
     FAVORITE_SHOW, FAVORITE_UNPIN, SIDEBAR_SHOW_LOCAL_FOLDER, SIDEBAR_SHOW_TREE, LocalFolderParameters, PinnedParameters, SidebarInfo, TreeParameters, VisibleParameters,
 )
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import AnyStep, Step
+from chrono_mail.ui.forms import part
 from chrono_mail.ui.prefs import StartupView
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "sidebarpage.py 1.9.270"
+__version__ = "sidebarpage.py 3.6.373"
 
 # --- Version history ----------------------------------------------------
+# v3.6.373: built from the form settings_sidebar.ui: the heading and the place of the ticks (D-276); nothing visible changed
 # v1.9.270: R-19: commands gives typed steps
 # v1.2.253: startup_forces takes Show on startup as read once (StartupView), never split here (R-12)
 # v1.1.204: A tick for each standard folder of Local Folders that exists (greyed while Local Folders is off; the one
@@ -72,18 +75,10 @@ class SidebarPage(QWidget):
         self._show = (show_favorites, show_tags, show_local_folders)
         self._hidden_local = set(hidden_local or set())
         self._local_paths = {kind: path for kind, path in local_folders or []}
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        scroller = QScrollArea(self)
-        scroller.setWidgetResizable(True)
-        scroller.setFrameShape(QFrame.Shape.NoFrame)
-        inner = QWidget(scroller)
-        self._layout = QVBoxLayout(inner)
-        scroller.setWidget(inner)
-        outer.addWidget(scroller)
-        title = QLabel("Display:", inner)
-        title.setStyleSheet("font-weight: bold;")
-        self._layout.addWidget(title)
+        form = forms.fill(self, "settings_sidebar")  # the heading and the place of the ticks, which are made here from what the folder list holds (D-276)
+        part(form, QScrollArea, "scroller").setFrameShape(QFrame.Shape.NoFrame)
+        inner = part(form, QWidget, "ticks")
+        self._layout = part(form, QVBoxLayout, "ticksLayout")
         self.favorites_box = self._box("Favorites", show_favorites, inner)
         self.standard_boxes: dict[str, QCheckBox] = {view: self._box(label, view not in hidden, inner, indent=True) for view, label in standard}
         self.pin_boxes: dict[str, QCheckBox] = {pin_id: self._box(label, True, inner, indent=True) for pin_id, label in pins}
@@ -93,7 +88,6 @@ class SidebarPage(QWidget):
             kind: self._box(path, kind not in self._hidden_local, inner, indent=True) for kind, path in local_folders or []
         }
         self.account_boxes: dict[str, QCheckBox] = {account: self._box(label, account not in hidden_trees, inner) for account, label in accounts}
-        self._layout.addStretch(1)
         self._chosen: dict[QCheckBox, bool] = {box: box.isChecked() for box in self._boxes()}  # the person's own ticks
         self._applying = False
         self._forces = StartupForces()

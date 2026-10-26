@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsGeneral</class>
+ <widget class="QWidget" name="SettingsGeneral">
+  <layout class="QFormLayout" name="form">
+   <item row="0" column="0">
+    <widget class="QLabel" name="formLabel0">
+     <property name="text">
+      <string>Show on startup:</string>
+     </property>
+     <property name="buddy">
+      <cstring>startupBox</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="QWidget" name="startupBox" />
+   </item>
+   <item row="1" column="0" colspan="2">
+    <layout class="QHBoxLayout" name="startRow" stretch="0,0,1">
+     <item>
+      <widget class="QCheckBox" name="checkOnStart">
+       <property name="text">
+        <string>Refresh when the program starts</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="startRefresh" />
+     </item>
+     <item>
+      <spacer name="startRowEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item row="2" column="0" colspan="2">
+    <layout class="QHBoxLayout" name="automaticRow" stretch="0,0,0,0,1">
+     <item>
+      <widget class="QCheckBox" name="autoCheck">
+       <property name="text">
+        <string>Automatic refresh</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QComboBox" name="scheduledRefresh" />
+     </item>
+     <item>
+      <widget class="QLabel" name="everyLabel">
+       <property name="text">
+        <string>every</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSpinBox" name="interval">
+       <property name="suffix">
+        <string> minutes</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="automaticRowEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item row="3" column="0" colspan="2">
+    <layout class="QHBoxLayout" name="delayRow" stretch="0,0,1">
+     <item>
+      <widget class="QCheckBox" name="sendDelay">
+       <property name="text">
+        <string>Delay sending a message by</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QSpinBox" name="sendDelaySeconds">
+       <property name="suffix">
+        <string> seconds</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="delayRowEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item row="4" column="0" colspan="2">
+    <widget class="QCheckBox" name="sendOnRefresh">
+     <property name="text">
+      <string>Delay sending messages until the next refresh</string>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="0" colspan="2">
+    <widget class="QCheckBox" name="warnOutboxOnQuit">
+     <property name="text">
+      <string>Warn when quitting with messages in the Outbox</string>
+     </property>
+    </widget>
+   </item>
+   <item row="6" column="0" colspan="2">
+    <widget class="QCheckBox" name="notifications">
+     <property name="text">
+      <string>Show a notification when new mail arrives (only the number, never the content)</string>
+     </property>
+    </widget>
+   </item>
+   <item row="7" column="0" colspan="2">
+    <widget class="QCheckBox" name="tray">
+     <property name="text">
+      <string>Show an icon in the notification area</string>
+     </property>
+    </widget>
+   </item>
+   <item row="8" column="0" colspan="2">
+    <widget class="QCheckBox" name="closeToTray">
+     <property name="text">
+      <string>Closing the window keeps Chrono Mail running in the notification area</string>
+     </property>
+    </widget>
+   </item>
+   <item row="9" column="0" colspan="2">
+    <widget class="QLabel" name="noTrayNote">
+     <property name="text">
+      <string>This desktop has no notification area, so there are no icon and no notifications.</string>
+     </property>
+    </widget>
+   </item>
+   <item row="10" column="0" colspan="2">
+    <widget class="QLabel" name="languageNote">
+     <property name="text">
+      <string>Language: the program is in English; dates and times follow the language of the system.</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

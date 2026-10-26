@@ -4,9 +4,10 @@ from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 1.1.215"
+__version__ = "theme.py 3.6.373"
 
 # --- Version history ----------------------------------------------------
+# v3.6.373: form_role_look: the look of a part of a dialog form by its role (heading: bold), never written in the form itself (D-276)
 # v1.1.215: No 1 px black lines between the panes: every separator is the program's own (ui/splitter.py, D-188)
 # v1.1.172: Every colour comes from the theme in use (core/colours.py): the hover, the separators, the search field's orange (D-158)
 # v0.5.167: The toolbar rules apply to the folding toolbar of every section; the chosen calendar view has a blue line under it; "This folder" is a button with its ▾ at its end
@@ -27,6 +28,16 @@ __version__ = "theme.py 1.1.215"
 # v0.0.76: Blue accent, Settings Accounts Rules and Exit in the root of the Menu, plain section icons with the open one in blue, Contacts before Tasks
 # v0.0.73: Initial look of the main window: the Menu button, the toolbar, the search field, the folder list and the section buttons
 
+
+
+FORM_ROLE_LOOKS: dict[str, str] = {
+    "heading": "font-weight: bold;",  # a heading inside a page (Sizes, Display:): its size keeps following the windows' size factor
+}
+
+
+def form_role_look(role: str) -> str:
+    """The look of a part of a dialog form that has this role (a property set in Designer); an unknown role has none (D-276)."""
+    return FORM_ROLE_LOOKS.get(role, "")
 
 
 def show_focus(view: QAbstractItemView, focused: bool) -> None:

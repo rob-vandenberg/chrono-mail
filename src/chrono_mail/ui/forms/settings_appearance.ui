@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsAppearance</class>
+ <widget class="QWidget" name="SettingsAppearance">
+  <layout class="QFormLayout" name="form">
+   <item row="0" column="0">
+    <widget class="QLabel" name="formLabel0">
+     <property name="text">
+      <string>Colours</string>
+     </property>
+     <property name="buddy">
+      <cstring>schemeBox</cstring>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="QComboBox" name="schemeBox" />
+   </item>
+   <item row="1" column="0" colspan="2">
+    <widget class="QLabel" name="schemeNote">
+     <property name="text">
+      <string>Follow the system takes the light or the dark colours as the system is set. Messages in HTML are always shown on a white page: they are written for one.</string>
+     </property>
+     <property name="wordWrap">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="0" colspan="2">
+    <spacer name="blankAboveSizes">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeType">
+      <enum>QSizePolicy::Fixed</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>0</width>
+       <height>18</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item row="3" column="0" colspan="2">
+    <widget class="QLabel" name="sizesHeading">
+     <property name="text">
+      <string>Sizes</string>
+     </property>
+     <property name="role" stdset="0">
+      <string>heading</string>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="0">
+    <widget class="QLabel" name="formLabel4">
+     <property name="text">
+      <string>Main window</string>
+     </property>
+    </widget>
+   </item>
+   <item row="4" column="1">
+    <layout class="QHBoxLayout" name="interfaceRow" stretch="0,1,0,0">
+     <item>
+      <widget class="QLabel" name="interfaceSmall">
+       <property name="text">
+        <string>Small</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="interfaceSlider" />
+     </item>
+     <item>
+      <widget class="QLabel" name="interfaceLarge">
+       <property name="text">
+        <string>Large</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="interfaceReset">
+       <property name="text">
+        <string>Reset</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item row="5" column="0">
+    <widget class="QLabel" name="formLabel5">
+     <property name="text">
+      <string>Message list</string>
+     </property>
+    </widget>
+   </item>
+   <item row="5" column="1">
+    <layout class="QHBoxLayout" name="listRow" stretch="0,1,0,0">
+     <item>
+      <widget class="QLabel" name="listSmall">
+       <property name="text">
+        <string>Small</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="listSlider" />
+     </item>
+     <item>
+      <widget class="QLabel" name="listLarge">
+       <property name="text">
+        <string>Large</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="listReset">
+       <property name="text">
+        <string>Reset</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item row="6" column="0">
+    <widget class="QLabel" name="formLabel6">
+     <property name="text">
+      <string>Other windows and dialogs</string>
+     </property>
+    </widget>
+   </item>
+   <item row="6" column="1">
+    <layout class="QHBoxLayout" name="windowsRow" stretch="0,1,0,0">
+     <item>
+      <widget class="QLabel" name="windowsSmall">
+       <property name="text">
+        <string>Small</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="windowsSlider" />
+     </item>
+     <item>
+      <widget class="QLabel" name="windowsLarge">
+       <property name="text">
+        <string>Large</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="windowsReset">
+       <property name="text">
+        <string>Reset</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item row="7" column="0">
+    <widget class="QLabel" name="formLabel7">
+     <property name="text">
+      <string>Text of messages</string>
+     </property>
+    </widget>
+   </item>
+   <item row="7" column="1">
+    <layout class="QHBoxLayout" name="readingRow" stretch="0,1,0,0">
+     <item>
+      <widget class="QLabel" name="readingSmall">
+       <property name="text">
+        <string>Small</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="readingSlider" />
+     </item>
+     <item>
+      <widget class="QLabel" name="readingLarge">
+       <property name="text">
+        <string>Large</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="readingReset">
+       <property name="text">
+        <string>Reset</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item row="8" column="0" colspan="2">
+    <spacer name="blankAboveAccent">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeType">
+      <enum>QSizePolicy::Fixed</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>0</width>
+       <height>18</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item row="9" column="0">
+    <widget class="QLabel" name="formLabel9">
+     <property name="text">
+      <string>Accent colour</string>
+     </property>
+    </widget>
+   </item>
+   <item row="9" column="1">
+    <layout class="QHBoxLayout" name="accentRow" stretch="1,0,0">
+     <item>
+      <widget class="QPushButton" name="accentSwatch">
+       <property name="text">
+        <string>Sample</string>
+       </property>
+       <property name="toolTip">
+        <string>Pick a colour</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QLabel" name="accentSpacer">
+       <property name="text">
+        <string>Large</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="accentReset">
+       <property name="text">
+        <string>Reset</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

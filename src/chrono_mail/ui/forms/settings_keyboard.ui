@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsKeyboard</class>
+ <widget class="QWidget" name="SettingsKeyboard">
+  <layout class="QVBoxLayout" name="outer" stretch="0,1,0,0">
+   <item>
+    <widget class="QLabel" name="keysNote">
+     <property name="text">
+      <string>Click a key field and press the keys you want; Backspace or Delete empties it.</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTableWidget" name="shortcutTable">
+     <column>
+      <property name="text">
+       <string>Action</string>
+      </property>
+     </column>
+     <column>
+      <property name="text">
+       <string>Keys</string>
+      </property>
+     </column>
+     <attribute name="verticalHeaderVisible">
+      <bool>false</bool>
+     </attribute>
+     <attribute name="horizontalHeaderStretchLastSection">
+      <bool>true</bool>
+     </attribute>
+    </widget>
+   </item>
+   <item>
+    <widget class="QLabel" name="shortcutNote">
+     <property name="text">
+      <string />
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="resetKeysButton">
+     <property name="text">
+      <string>Standard keys</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

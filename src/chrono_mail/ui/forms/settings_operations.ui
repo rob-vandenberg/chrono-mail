@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>SettingsOperations</class>
+ <widget class="QWidget" name="SettingsOperations">
+  <layout class="QFormLayout" name="form">
+   <item row="0" column="0" colspan="2">
+    <widget class="QCheckBox" name="operationsShow">
+     <property name="text">
+      <string>Show window on send and receive</string>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="0" colspan="2">
+    <widget class="QCheckBox" name="operationsHide">
+     <property name="text">
+      <string>Hide window when send and receive completes</string>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="0" colspan="2">
+    <widget class="QCheckBox" name="operationsError">
+     <property name="text">
+      <string>Show window when an error occurs</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>
