@@ -15,9 +15,10 @@ from chrono_mail.pst.reading import file_codepage, items_from, message_of, read_
 from tests.test_pst_helpers import NAMES, Plain, encode, named, props
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pst_reading.py 4.2.385"
+__version__ = "test_pst_reading.py 4.2.387"
 
 # --- Version history ----------------------------------------------------
+# v4.2.387: the Dutch test file names its Sent folder in Dutch: the names of the file's language only (core roles by name)
 # v4.2.385: Initial tests: folders and their roles, the numbered walk, items from the reading library's objects (small fakes of them)
 
 
@@ -392,19 +393,19 @@ def _export(children: list[FolderNode], store_values: dict[int, Plain] | None = 
 
 
 def test_standard_folders_by_name_when_the_file_has_no_pointers() -> None:
-    found = _export([folder(0x8102, "Sent Items"), folder(0x8122, " concepten "), folder(0x8142, "Postvak UIT"), folder(0x8162, "Ongewenste e-mail")])
+    found = _export([folder(0x8102, "Verzonden items"), folder(0x8122, " concepten "), folder(0x8142, "Postvak UIT"), folder(0x8162, "Ongewenste e-mail")])
     assert found[("Postvak IN",)] == (FolderRole.INBOX, False) and found[("Verwijderde items",)] == (FolderRole.TRASH, False)
-    assert found[("Sent Items",)][0] == FolderRole.SENT
+    assert found[("Verzonden items",)][0] == FolderRole.SENT
     assert found[(" concepten ",)][0] == FolderRole.DRAFTS
     assert found[("Postvak UIT",)][0] == FolderRole.OUTBOX
     assert found[("Ongewenste e-mail",)][0] == FolderRole.JUNK
 
 
 def test_a_pointer_always_wins_over_a_name() -> None:
-    found = _export([folder(0x8102, "Sent Items"), folder(0x8122, "Mine")], {0x35E4: entry_id(0x8122)})
-    assert found[("Mine",)][0] == FolderRole.SENT and found[("Sent Items",)][0] is None
-    dangling = _export([folder(0x8102, "Sent Items")], {0x35E4: entry_id(0x9999)})  # a pointer to no folder: the name counts
-    assert dangling[("Sent Items",)][0] == FolderRole.SENT
+    found = _export([folder(0x8102, "Verzonden items"), folder(0x8122, "Mine")], {0x35E4: entry_id(0x8122)})
+    assert found[("Mine",)][0] == FolderRole.SENT and found[("Verzonden items",)][0] is None
+    dangling = _export([folder(0x8102, "Verzonden items")], {0x35E4: entry_id(0x9999)})  # a pointer to no folder: the name counts
+    assert dangling[("Verzonden items",)][0] == FolderRole.SENT
     inbox_by_name = _export([folder(0x8102, "Inbox")])  # the Inbox has its pointer: a second "Inbox" stays plain
     assert inbox_by_name[("Inbox",)][0] is None
 
@@ -444,8 +445,8 @@ def test_a_pointer_to_a_hidden_folder_leaves_the_role_to_the_name() -> None:
 
 
 def test_a_pointer_of_the_wrong_kind_neither_gives_nor_blocks() -> None:
-    sent_to_settings = _export([folder(0x8102, "Cfg", {0x3613: "IPF.Configuration"}), folder(0x8122, "Sent Items")], {0x35E4: entry_id(0x8102)})
-    assert sent_to_settings[("Sent Items",)][0] == FolderRole.SENT and sent_to_settings[("Cfg",)][0] is None  # one Sent, never two
+    sent_to_settings = _export([folder(0x8102, "Cfg", {0x3613: "IPF.Configuration"}), folder(0x8122, "Verzonden items")], {0x35E4: entry_id(0x8102)})
+    assert sent_to_settings[("Verzonden items",)][0] == FolderRole.SENT and sent_to_settings[("Cfg",)][0] is None  # one Sent, never two
     top = folder(0x8022, "Top", children=[folder(0x8062, "Inbox", {0x36D0: entry_id(0x8102)}), folder(0x8102, "Sent Items")])
     found = {item.folder.path: item.folder.role for item in place(props({0x35E0: entry_id(0x8022)}), folder(0x122, "", children=[top]))}
     assert found[("Sent Items",)] == FolderRole.SENT  # a calendar pointer to a mail folder does not keep its name from counting

@@ -10,7 +10,7 @@ import sqlite3
 import tempfile
 import xml.etree.ElementTree as ElementTree
 import zipfile
-from collections.abc import Generator, Iterator
+from collections.abc import Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -22,11 +22,13 @@ from chrono_mail.config import Action, Condition
 from chrono_mail.config.rules import HEADER_NAME
 from chrono_mail.core import ChronoMailError, FolderRole, MessageFlag
 from chrono_mail.core.colours import NEW_TAG
+from chrono_mail.core.folder import roles_by_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "emclient_source.py 1.2.254"
+__version__ = "emclient_source.py 4.2.387"
 
 # --- Version history ----------------------------------------------------
+# v4.2.387: the standard folders by name in ten languages (core roles_by_name) instead of an English table; Outbox still goes to Drafts
 # v1.2.254: A rule that moves to a standard folder by its name ("Junk E-mail", "Deleted Items", "Sent Items" …) goes to Chrono Mail's own
 #           standard folder, as the mail of that folder does (STANDARD_FOLDERS, one table for both): to Junk is Move to Junk, to Trash is Delete;
 #           before, the name was kept and the rule made an ordinary folder of that name
@@ -198,15 +200,12 @@ _SPECIAL_FOLDERS: dict[str, Action] = {
 }
 
 
-# The standard folders of the export by their names (lower case), for its mail and for its rules alike: each goes to Chrono Mail's own.
-STANDARD_FOLDERS: dict[str, FolderRole] = {
-    "inbox": FolderRole.INBOX,
-    "sent": FolderRole.SENT, "sent items": FolderRole.SENT, "sent messages": FolderRole.SENT,
-    "drafts": FolderRole.DRAFTS, "outbox": FolderRole.DRAFTS,  # never sent by importing it
-    "trash": FolderRole.TRASH, "deleted items": FolderRole.TRASH,
-    "junk e-mail": FolderRole.JUNK, "junk": FolderRole.JUNK, "spam": FolderRole.JUNK,
-    "archive": FolderRole.ARCHIVE,
-}
+def standard_roles(names: Sequence[str]) -> dict[int, FolderRole]:
+    """The standard folders of the export by their names (core roles_by_name: the language of all of them), for its mail and for its
+    rules alike: each goes to Chrono Mail's own. Its Outbox goes to Drafts: never sent by importing it."""
+    return {index: FolderRole.DRAFTS if role is FolderRole.OUTBOX else role for index, role in roles_by_name(names).items()}
+
+
 # The name of each standard folder in Local Folders, for a rule that moves into a folder inside one ("Deleted Items/Old" -> "Trash/Old").
 _STANDARD_NAMES: dict[FolderRole, str] = {
     FolderRole.INBOX: "Inbox", FolderRole.SENT: "Sent", FolderRole.DRAFTS: "Drafts", FolderRole.TRASH: "Trash", FolderRole.JUNK: "Junk",
@@ -221,7 +220,7 @@ def _move(text: str) -> Action | None:
     folder = _folder(text)
     if folder is None:
         return None
-    role = STANDARD_FOLDERS.get(folder[0].lower())
+    role = standard_roles([folder[0]]).get(0)  # one name: its own language
     if role is FolderRole.JUNK and len(folder) == 1:
         return Action("mark_junk")  # the same as special://spam: Move to Junk
     if role is FolderRole.TRASH and len(folder) == 1:

@@ -1,15 +1,16 @@
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from chrono_mail.core.folder import FolderRole
+from chrono_mail.core.folder import FolderRole, folder_language, standard_role_in
 from chrono_mail.core.pim import CollectionKind
 from chrono_mail.pst.model import PstFolder
 from chrono_mail.pst.properties import Properties
 
 # --- Version ------------------------------------------------------------
-__version__ = "folders.py 4.2.385"
+__version__ = "folders.py 4.2.387"
 
 # --- Version history ----------------------------------------------------
+# v4.2.387: the mail folders' roles by name in ten languages (core folder_language, standard_role_in), no longer English and Dutch only
 # v4.2.385: Initial version: the data file's folders, their kinds and their roles, known by the data file's own pointers (OR-26)
 
 MAXIMUM_DEPTH: int = 100
@@ -101,17 +102,12 @@ def _find(root: FolderNode, wanted: int | None) -> FolderNode | None:
     return next((node for node in _walk(root) if node.node == wanted), None)
 
 
-# The names the office suite's mail program gives its standard folders in a data file it exports, in English and Dutch. The owner's
-# exception to OR-26 (D-278): its own Export writes the file without the pointers to Sent, Drafts, Outbox, Junk and the main Calendar,
-# Contacts and Tasks (only Inbox and Deleted Items keep theirs). For a data file only, and only for a role the file has no pointer for, a
-# folder directly below the top takes that role by its name. Compared without case, after trimming.
-STANDARD_NAMES: dict[str, FolderRole | CollectionKind] = {
-    "inbox": FolderRole.INBOX, "postvak in": FolderRole.INBOX,
-    "sent items": FolderRole.SENT, "verzonden items": FolderRole.SENT,
-    "drafts": FolderRole.DRAFTS, "concepten": FolderRole.DRAFTS,
-    "deleted items": FolderRole.TRASH, "verwijderde items": FolderRole.TRASH,
-    "junk email": FolderRole.JUNK, "junk e-mail": FolderRole.JUNK, "ongewenste e-mail": FolderRole.JUNK,
-    "outbox": FolderRole.OUTBOX, "postvak uit": FolderRole.OUTBOX,
+# The main Calendar, Contacts and Tasks by their names, in English and Dutch. The owner's exception to OR-26 (D-278): the office suite's
+# mail program's own Export writes the data file without the pointers to Sent, Drafts, Outbox, Junk and the main Calendar, Contacts and
+# Tasks (only Inbox and Deleted Items keep theirs). For a data file only, and only for a role the file has no pointer for, a folder directly
+# below the top takes that role by its name: the mail roles by core roles_by_name's table (the language of all those folders' names), these
+# three by this list. Compared without case, after trimming.
+MAIN_COLLECTION_NAMES: dict[str, CollectionKind] = {
     "calendar": CollectionKind.EVENTS, "agenda": CollectionKind.EVENTS,
     "contacts": CollectionKind.CONTACTS, "contactpersonen": CollectionKind.CONTACTS,
     "tasks": CollectionKind.TASKS, "taken": CollectionKind.TASKS,
@@ -129,12 +125,14 @@ def _by_name(top: FolderNode, roles: dict[int, FolderRole], mains: dict[int, Col
     shown = list(_shown(top))  # a pointer to a hidden folder (the program's own settings) points nowhere the person can see
     taken_roles = {roles[node.node] for node in shown if node.node in roles and _holds_mail(node)}
     taken_kinds = {mains[node.node] for node in shown if node.node in mains and kind_of(node.props.text(CONTAINER_CLASS))[0] == mains[node.node]}
+    language = folder_language([child.name or "" for child in top.children if not child.props.boolean(HIDDEN)])
     for child in top.children:
         in_effect = (child.node in roles and _holds_mail(child)) or (
             child.node in mains and kind_of(child.props.text(CONTAINER_CLASS))[0] == mains[child.node])  # a pointer of the wrong kind gives nothing
         if child.props.boolean(HIDDEN) or in_effect:
             continue
-        wanted = STANDARD_NAMES.get((child.name or "").strip().lower())
+        name = child.name or ""
+        wanted = standard_role_in(language, name) or MAIN_COLLECTION_NAMES.get(name.strip().lower())
         if isinstance(wanted, FolderRole):
             if wanted not in taken_roles and _holds_mail(child):
                 roles[child.node] = wanted

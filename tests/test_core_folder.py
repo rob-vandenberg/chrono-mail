@@ -3,11 +3,13 @@ import dataclasses
 import pytest
 
 from chrono_mail.core import Folder, FolderRole
+from chrono_mail.core.folder import roles_by_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_core_folder.py 0.0.4"
+__version__ = "test_core_folder.py 4.2.387"
 
 # --- Version history ----------------------------------------------------
+# v4.2.387: standard folder names: the language with the most matches wins, the other languages' names stay ordinary folders
 # v0.0.4: Initial core tests
 
 
@@ -33,3 +35,8 @@ def test_folder_is_immutable_and_hashable() -> None:
     with pytest.raises(dataclasses.FrozenInstanceError):
         setattr(folder, "role", FolderRole.SENT)
     assert {folder, Folder("a1", ("Inbox",), FolderRole.INBOX)} == {folder}
+
+
+def test_standard_names_follow_the_language_of_the_source() -> None:
+    names = ["Posteingang", " gesendet ", "Entwürfe", "Papierkorb", "Postvak UIT", "Spam"]
+    assert roles_by_name(names) == {0: FolderRole.INBOX, 1: FolderRole.SENT, 2: FolderRole.DRAFTS, 3: FolderRole.TRASH, 5: FolderRole.JUNK}

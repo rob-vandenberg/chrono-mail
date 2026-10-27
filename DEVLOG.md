@@ -3246,3 +3246,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 3. Export: Menu > File > Export…, one data file per POP3 account and one for Local Folders, written by our own write-once .pst writer (mail with headers, bodies, attachments and marks; calendar items with repeats and time zones; contacts and groups; tasks; categories); accounts as its profile file without passwords; rules into that program while it runs.
 4. Checks: the automatic round trip (2 POP3 and 2 IMAP accounts, mail, a repeating event with a moved and a deleted occurrence, contacts, a group, tasks) exports and imports back the same; a demo export of 7,715 messages, 242 events, 52 contacts and 64 tasks reads back with 0 failures. The touched tests pass; Pyrefly 0 on the program; the layer check kept.
 5. Open: the Windows computer's runs (the program opening our files, its repair tool's check, the registry, passwords and rules, the profile file).
+
+## 2026-10-27 4.2.387: standard folders by name, in 10 languages, one language per source
+
+1. The owner (OR-26 as he worded it, D-280): a folder without a role is matched by name; one table of standard folder names in 10 languages replaces three English-only lists (IMAP folders without a mark, both imports); the language with the most matches wins and is used alone, so a word that happens to exist in another language never matches.
+2. Checks: a new test (German names give German roles, a Dutch name among them none); the folder-role tests of IMAP and both imports pass (three test files of the data-file import changed to one language, as the rule now wants); Pyrefly 0, layer check kept.

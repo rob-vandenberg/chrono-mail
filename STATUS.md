@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-27, version 4.2.386 (steps 3 to 6 of the import and export job with the office suite's mail program: import of accounts with passwords, rules, junk lists and signatures on the Windows computer; export to its data files with our own writer, accounts as its profile file, rules through it; the automatic round trip passes, D-279; 4.2.385: the import from its data files, D-278).*
+*Last updated: 2026-10-27, version 4.2.387 (standard folders by name in 10 languages, one language per source, D-280; B-04 has the owner's 10 languages; 4.2.386: export to the office suite's mail program and its accounts, rules and signatures, D-279).*
 
 ## Where we are
 
@@ -61,6 +61,7 @@ Also open:
 - **B-02** The Import window shows the count of the import ("23,753 of 140,269") at its bottom left; whether the main window's status line then stops showing the import is still to decide.
 - **B-03** The Import window shows a moving busy bar while the exports are read, with the text "Reading the exports… A large mail folder can take a while."
 - **B-04** The interface in several languages (translations). The plan agreed with the owner (2026-10-26), to become a decision when its turn comes:
+  - **The languages** (the owner, 2026-10-27): English, Spanish, French, German, Italian, Dutch, Portuguese, Russian, Japanese, Mandarin (simplified Chinese). The standard folder names in these languages are in one table already (4.2.387), used to recognise standard folders by name.
   - **Gettext everywhere**, Python's own `gettext` module: every user text in the code wrapped once in `_("…")`, plain English (also in the engine, which may not use Qt: its error and busy-bar texts need translating too); counts through `ngettext` in the one count helper of `core/words.py` (D-246); `pgettext` where one English word means two things ("Archive" the folder, "Archive" the action).
   - **The forms** (D-276) stay plain English in Designer: a small hook of our own (a translator Qt's form loader asks for each text) hands their texts to Gettext, so forms and code share one catalog.
   - **Extraction automatic**: `pybabel extract` (or xgettext, or Poedit's Update from Code) for the code, plus a small script for the forms, into one `.pot`; one `.po` per language, kept current by the same tools. The one manual job: wrapping the existing texts (a few thousand), with a test that no user text is left unwrapped.

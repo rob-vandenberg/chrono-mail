@@ -3,7 +3,7 @@ from dataclasses import replace as replace_entry
 from dataclasses import dataclass, field
 
 from chrono_mail.core import ChronoMailError, Folder, FolderRole, MessageFlag, MessageRef, ProtocolError
-from chrono_mail.core.folder import OWN_FOLDERS
+from chrono_mail.core.folder import OWN_FOLDERS, roles_by_name
 from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.mime import parse_message
 from chrono_mail.protocols.imap import FetchedItem, FolderChanges, FolderEntry, ImapClient, ImapRefused, SelectInfo, keyword_to_tag, tag_to_keyword
@@ -15,9 +15,11 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 3.6.354"
+__version__ = "imap_sync.py 4.2.387"
 
 # --- Version history ----------------------------------------------------
+# v4.2.387: a folder the server does not mark is known by its name in the language of the server's folders (core roles_by_name, ten
+#           languages), no longer by English names only
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.351: a message the server will not send (refused, NIL, too large) no longer keeps its folder from a checkpoint: it is asked again from it
 # v3.6.350: the comment on the unknown tags says what None means, as the code does (RV-192)
@@ -69,13 +71,6 @@ Step = Callable[[str], None]  # a step of the sync, named for the person ("Synch
 KEPT_FLAGS: dict[str, MessageFlag] = {flag.imap_name.lower(): flag for flag in MessageFlag}
 SPECIAL_USE: dict[str, FolderRole] = {
     "\\sent": FolderRole.SENT, "\\drafts": FolderRole.DRAFTS, "\\trash": FolderRole.TRASH, "\\junk": FolderRole.JUNK, "\\archive": FolderRole.ARCHIVE,
-}
-USUAL_NAMES: dict[str, FolderRole] = {
-    "sent": FolderRole.SENT, "sent items": FolderRole.SENT, "sent messages": FolderRole.SENT, "sent mail": FolderRole.SENT,
-    "drafts": FolderRole.DRAFTS, "draft": FolderRole.DRAFTS,
-    "trash": FolderRole.TRASH, "deleted items": FolderRole.TRASH, "deleted messages": FolderRole.TRASH, "bin": FolderRole.TRASH,
-    "junk": FolderRole.JUNK, "spam": FolderRole.JUNK, "junk e-mail": FolderRole.JUNK, "junk email": FolderRole.JUNK,
-    "archive": FolderRole.ARCHIVE, "archives": FolderRole.ARCHIVE,
 }
 STANDARD_PATH: dict[FolderRole, tuple[str, ...]] = {
     FolderRole.INBOX: ("Inbox",), FolderRole.SENT: ("Sent",), FolderRole.DRAFTS: ("Drafts",), FolderRole.TRASH: ("Trash",),
@@ -205,11 +200,13 @@ def plan_folders(
             used.add(STANDARD_PATH[chosen])
             plans.append(FolderPlan(entry.name, STANDARD_PATH[chosen], chosen))
     # special-use attributes first, then the usual names, so that an explicit claim always wins
+    unmarked = [entry for entry in choices if _role_of(entry, 0) is None and (entry.delimiter is None or entry.delimiter not in entry.name)]
+    by_name = {unmarked[index].name: role for index, role in roles_by_name([entry.name for entry in unmarked]).items() if role is not FolderRole.INBOX}
     for pass_number in (0, 1, 2):
         for entry in choices:
             if any(plan.server_name == entry.name for plan in plans):
                 continue
-            role = _role_of(entry, pass_number)
+            role = _role_of(entry, pass_number) if pass_number != 1 else by_name.get(entry.name)
             if role is None or role in claimed or role not in STANDARD_PATH:
                 continue
             claimed.add(role)
@@ -307,9 +304,7 @@ def _printable(text: str) -> str:
 def _role_of(entry: FolderEntry, pass_number: int) -> FolderRole | None:
     if pass_number == 0:
         return FolderRole.INBOX if entry.name.upper() == "INBOX" else next((SPECIAL_USE[attribute] for attribute in entry.attributes if attribute in SPECIAL_USE), None)
-    if pass_number == 1:
-        return USUAL_NAMES.get(entry.name.lower()) if entry.delimiter is None or entry.delimiter not in entry.name else None
-    return None
+    return None  # pass 1, the usual names, is read for all folders at once (plan_folders)
 
 
 def _split(entry: FolderEntry) -> tuple[str, ...] | None:

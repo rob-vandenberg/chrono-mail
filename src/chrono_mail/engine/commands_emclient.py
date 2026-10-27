@@ -6,6 +6,7 @@ check of an imported account records mail that is already here instead of downlo
 
 import json
 import threading
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -15,7 +16,6 @@ from chrono_mail.engine.commands_accounts import AccountAddParameters, Policy, a
 from chrono_mail.engine.commands_tags import give_colours
 from chrono_mail.engine.commands_addressbook import AddParameters, AddressesParameters, contact_add, contact_addresses
 from chrono_mail.engine.emclient_source import (
-    STANDARD_FOLDERS,
     MAXIMUM_MESSAGE_BYTES,
     BackupData,
     MessageFile,
@@ -26,6 +26,7 @@ from chrono_mail.engine.emclient_source import (
     message_keys,
     read_backup,
     read_settings,
+    standard_roles,
 )
 from chrono_mail.engine.import_common import EVERYTHING, MAXIMUM_REPORTED, Journal, fingerprint, fingerprint_of_raw, known_messages, still_here  # EVERYTHING and fingerprint: their names here stay
 from chrono_mail.engine.local import ensure_local_folders
@@ -38,9 +39,10 @@ from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 4.2.385"
+__version__ = "commands_emclient.py 4.2.387"
 
 # --- Version history ----------------------------------------------------
+# v4.2.387: the export's standard folders are known by the language of all its folder names (emclient_source.standard_roles)
 # v4.2.385: the journal is written only when the batch was made safe on disk (an error there no longer records the messages as done), and
 #           a failed batch forgets the run, so Import again finds the messages it stored as duplicates; a message whose tags could not be
 #           given stays imported (not failed) and gets its tags with a later import with Tags (tried once per import, not per batch);
@@ -61,7 +63,6 @@ __version__ = "commands_emclient.py 4.2.385"
 
 
 JOURNAL_FILE: str = "import-emclient.log"
-_ROLE_NAMES: dict[str, FolderRole] = STANDARD_FOLDERS  # the same table as the rules (one place)
 _Journal = Journal  # the journal, the fingerprint and the check of a copy on disk are shared by every importer (import_common)
 _still_here = still_here
 
@@ -350,15 +351,17 @@ def _import_contacts(engine: Engine, backup: BackupData, notes: list[str]) -> tu
 class _Folders:
     """Where a folder of the export goes in Local Folders: the standard folders onto their roles, the rest by name."""
 
-    def __init__(self, mailbox: Mailbox) -> None:
+    def __init__(self, mailbox: Mailbox, names: Sequence[str]) -> None:
         self.mailbox = mailbox
         self.made: set[tuple[str, ...]] = set()
+        tops = list(dict.fromkeys(name.strip() for name in names))  # the export's top folders, once each, in order: one language for all
+        self.roles: dict[str, FolderRole] = {tops[index]: role for index, role in standard_roles(tops).items()}
 
     def target(self, folder: tuple[str, ...]) -> tuple[str, ...]:
         if not folder:
             path = self.mailbox.role_folder(FolderRole.INBOX)
         else:
-            role = _ROLE_NAMES.get(folder[0].strip().lower())
+            role = self.roles.get(folder[0].strip())
             base = (folder[0].strip(),)
             if role is not None:
                 try:
@@ -456,7 +459,7 @@ def _import_mail(engine: Engine, mail_path: Path, run: _Run, journal: _Journal, 
         if run.known is None:
             run.known = known_messages(mailbox, journal.imported_ids())
         known = run.known
-        folders = _Folders(mailbox)
+        folders = _Folders(mailbox, [item.folder[0] for item in run.files if item.folder])
         for number, item in enumerate(work, 1):
             engine.progress("Importing mail", done_before + number, len(run.files))
             try:
