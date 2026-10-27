@@ -24,12 +24,16 @@ from chrono_mail.engine.commands_outlook_export import (
 )
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.importdialog import starting_place
+from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "exportdialog.py 4.2.386"
+__version__ = "exportdialog.py 4.2.389"
 
 # --- Version history ----------------------------------------------------
+# v4.2.389: the target folder starts as the one exported to last (remembered when an export starts, on this computer); one that is gone
+#           is left out and Browse opens in the home folder
 # v4.2.386: Initial version: Menu > File > Export: the export to Outlook's data files, built from its Qt Designer form (ui/forms/export.ui,
 #           D-276) as the Import window is; the program's name only in this file (OR-10); Rules greyed off Windows with why (OR-15)
 
@@ -60,8 +64,9 @@ def export_summary(result: ExportResult) -> str:
 class ExportDialog(QDialog):
     """File > Export: what to export, which accounts, where to; then the progress, Stop and what was written. All work is the engine's."""
 
-    def __init__(self, backend: Backend, parent: QWidget | None = None) -> None:
+    def __init__(self, backend: Backend, parent: QWidget | None = None, memory: Remembered | None = None) -> None:
         super().__init__(parent)
+        self._memory = memory  # the folder of the last export, on this computer (None: nothing remembered)
         self._backend = backend
         self._running = False
         form = forms.fill(self, "export")  # D-276
@@ -105,6 +110,8 @@ class ExportDialog(QDialog):
         self.close_button.clicked.connect(self.reject)
         self.stop_button.setEnabled(False)
         self.export_button.setEnabled(False)
+        if memory is not None:
+            self.folder.setText(memory.export_folder)
         self.setMinimumHeight(wpx(560))
         forms.smallest(self, 760)
         backend.progress.connect(self._progress)
@@ -123,7 +130,7 @@ class ExportDialog(QDialog):
         self._show_state()
 
     def _browse(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "The folder to write the files in", self.folder.text())
+        path = QFileDialog.getExistingDirectory(self, "The folder to write the files in", starting_place(self.folder.text()))
         if path:
             self.folder.setText(path)
 
@@ -149,6 +156,8 @@ class ExportDialog(QDialog):
         if not accounts:
             self.summary.setText("Choose at least one account.")
             return
+        if self._memory is not None:
+            self._memory.export_folder = self.folder.text().strip()
         self._running = True
         for widget in (*self._inputs(), self.rules):
             widget.setEnabled(False)

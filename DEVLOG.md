@@ -3258,3 +3258,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 2. The owner: the program is never the boss. An export or data file imported before gives the question "These were imported before. Import them again?" (Import again, Cancel); Import again goes through everything again, adds nothing twice and brings back what was deleted; a stopped import continues without a question. The end message says "Nothing new: everything is already here." when nothing came in, with the counts. Both imports.
 3. After an import the mail check runs only when send and receive at start or at an interval is on.
 4. Checks: the 19 touched tests pass; Pyrefly 0; the layer check kept.
+
+## 2026-10-27 4.2.389: the Import and Export windows remember the last paths
+
+1. The owner: the Import window starts with the paths of the last import (the existing program's three exports; Browse for data files opens in the folder chosen last), the Export window with the last target folder; kept per computer when an import or export starts; a path that is gone is left out.
+2. Checks: the touched tests pass (11); Pyrefly 0; the layer check kept.

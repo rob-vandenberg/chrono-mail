@@ -1,3 +1,4 @@
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import replace
@@ -27,13 +28,16 @@ from chrono_mail.engine.commands_outlook import IMPORT_OUTLOOK, IMPORT_OUTLOOK_S
 from chrono_mail.engine.outlook_settings import WINDOWS_ONLY, ProfileImport, ProfileScan
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.388"
+__version__ = "importdialog.py 4.2.389"
 
 # --- Version history ----------------------------------------------------
+# v4.2.389: the paths of the last import come back (remembered when an import starts, on this computer): the three export fields filled,
+#           each Browse opens there, the data files' Browse opens in their folder; a path that is gone is left out (Browse: the home folder)
 # v4.2.388: exports or data files imported to the end before: Import asks "Import them again?" (Import again starts over, Cancel does
 #           nothing); a stopped import continues without a question; the end says "Nothing new: everything is already here." when nothing
 #           new came in, with the counts of what is already here (the rules too)
@@ -255,11 +259,20 @@ def data_file_import_summary(result: commands_outlook.ImportResult, stopped: boo
     return "\n".join(lines)
 
 
+def starting_place(path: str) -> str:
+    """Where a picker opens: the path given, or the home folder when there is none."""
+    return path or os.path.expanduser("~")
+
+
 class ImportDialog(QDialog):
     """Menu > File > Import…: the program to import from, what to import, from which exports, and the import itself, in one window."""
 
-    def __init__(self, backend: Backend, on_changed: Callable[[], None], parent: QWidget | None = None, on_running: Callable[[bool], None] | None = None) -> None:
+    def __init__(
+        self, backend: Backend, on_changed: Callable[[], None], parent: QWidget | None = None, on_running: Callable[[bool], None] | None = None,
+        memory: Remembered | None = None,
+    ) -> None:
         super().__init__(parent)
+        self._memory = memory  # the paths of the last import, on this computer (None: nothing remembered)
         self._backend = backend
         self._on_changed = on_changed
         self._on_running = on_running  # told True when an import starts and False when it ends (the main window holds its mail checks)
@@ -310,6 +323,10 @@ class ImportDialog(QDialog):
         ):
             forms.part(form, QPushButton, button).clicked.connect(browse)
             field.editingFinished.connect(self.scan)
+        if memory is not None:
+            self.settings_file.setText(memory.import_settings_file)
+            self.mail_folder.setText(memory.import_mail_folder)
+            self.backup_file.setText(memory.import_backup_file)
         self.data_file_mail: QCheckBox = forms.part(form, QCheckBox, "dataFileMail")
         self.data_file_calendar: QCheckBox = forms.part(form, QCheckBox, "dataFileCalendar")
         self.data_file_contacts: QCheckBox = forms.part(form, QCheckBox, "dataFileContacts")
@@ -365,25 +382,28 @@ class ImportDialog(QDialog):
     # --- choosing the exports -----------------------------------------------------------------
 
     def _browse_settings(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "The settings export", self.settings_file.text(), "Settings (*.xml)")
+        path, _ = QFileDialog.getOpenFileName(self, "The settings export", starting_place(self.settings_file.text()), "Settings (*.xml)")
         if path:
             self.settings_file.setText(path)
             self.scan()
 
     def _browse_mail(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "The folder of the mail export", self.mail_folder.text())
+        path = QFileDialog.getExistingDirectory(self, "The folder of the mail export", starting_place(self.mail_folder.text()))
         if path:
             self.mail_folder.setText(path)
             self.scan()
 
     def _browse_backup(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "The backup", self.backup_file.text(), "Backup (*.zip)")
+        path, _ = QFileDialog.getOpenFileName(self, "The backup", starting_place(self.backup_file.text()), "Backup (*.zip)")
         if path:
             self.backup_file.setText(path)
             self.scan()
 
     def _browse_data_files(self) -> None:
         start = self._picked[0] if self._picked else self.data_files.text().strip()
+        if not start and self._memory is not None:
+            start = self._memory.import_data_file_folder
+        start = starting_place(start)
         paths, _ = QFileDialog.getOpenFileNames(self, "The data files", start, "Outlook data files (*.pst)")
         if paths:
             self._picked = tuple(paths)
@@ -479,6 +499,7 @@ class ImportDialog(QDialog):
         self._again = self._imported_before()
         if self._again and not ask_import_again(self):
             return  # Cancel: nothing happens
+        self._remember_paths()
         self._running = True
         if self._on_running is not None:
             self._on_running(True)
@@ -496,6 +517,20 @@ class ImportDialog(QDialog):
             self._done_before = 0
         self.summary.setText("Importing…")
         self._next()
+
+    def _remember_paths(self) -> None:
+        """The paths of this import, for the next Import window on this computer."""
+        if self._memory is None:
+            return
+        if self._reading_data_files():
+            files = self._chosen_data_files()
+            if files:
+                self._memory.import_data_file_folder = os.path.dirname(files[0])
+            return
+        sources = self._sources()
+        self._memory.import_settings_file = sources.settings_file or ""
+        self._memory.import_mail_folder = sources.mail_folder or ""
+        self._memory.import_backup_file = sources.backup_file or ""
 
     def _chosen_parts(self) -> frozenset[str]:
         """The parts of the exports this import goes through (as the engine names them, commands_emclient.PARTS)."""

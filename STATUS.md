@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-27, version 4.2.388 (an import is known by its contents; Import again after a question; the check after an import only when send and receive runs by itself; 4.2.387: standard folders by name in 10 languages, D-280).*
+*Last updated: 2026-10-27, version 4.2.389 (the Import and Export windows remember the last paths; 4.2.388: an import is known by its contents, Import again after a question, the check after an import only when send and receive runs by itself).*
 
 ## Where we are
 

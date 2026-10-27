@@ -4,8 +4,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QObject
-from PySide6.QtWidgets import QMenu
+from PySide6.QtCore import QObject, QSettings
+from PySide6.QtWidgets import QFileDialog, QMenu
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, ChronoMailError
@@ -13,15 +13,17 @@ from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, ImportResult, 
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.ui import importdialog
 from chrono_mail.ui.backend import Backend, Failure, Success
+from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.importdialog import MENU_TEXT, ImportDialog, import_summary, merge, scan_summary
 from tests.enginefactory import make_engine
 from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 4.2.388"
+__version__ = "test_ui_import.py 4.2.389"
 
 # --- Version history ----------------------------------------------------
+# v4.2.389: the paths of the last import come back in a new window and Browse opens there; a path that is gone is left out
 # v4.2.388: exports imported before: Import asks first (Cancel does nothing, Import again starts over and says nothing new came in);
 #           after an import no check when send and receive never runs by itself
 # v3.6.359: CR-07: a failed batch reloads the window, keeps what was imported in the summary, and Import finishes the rest
@@ -349,3 +351,38 @@ def test_after_an_import_no_check_when_send_and_receive_never_runs_by_itself(wor
     window._after_import()
     wait(qtbot, lambda: world.backend._pending == {})
     assert asked == []
+
+
+def test_the_paths_of_the_last_import_come_back_and_a_gone_one_is_left_out(
+    qtbot: QtBot, setup: Setup, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    memory = Remembered(QSettings(str(tmp_path / "window.ini"), QSettings.Format.IniFormat))  # its own file: the program's settings stay as they are
+    opened: list[str] = []
+
+    def open_file(parent: object, title: str, start: str, *rest: object) -> tuple[str, str]:
+        opened.append(start)
+        return str(setup.exports.settings), ""
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(open_file))
+    dialog = ImportDialog(setup.backend, lambda: None, memory=memory)
+    qtbot.addWidget(dialog)
+    assert dialog.settings_file.text() == ""
+    dialog.mail_folder.setText(str(setup.exports.mail))
+    dialog.backup_file.setText(str(setup.exports.backup))
+    dialog._browse_settings()
+    assert opened == [str(Path.home())]  # nothing remembered: the home folder
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    wait(qtbot, lambda: dialog.summary.text().startswith("The import is done."))
+    again = ImportDialog(setup.backend, lambda: None, memory=memory)
+    qtbot.addWidget(again)
+    assert (again.settings_file.text(), again.mail_folder.text(), again.backup_file.text()) == (
+        str(setup.exports.settings), str(setup.exports.mail), str(setup.exports.backup)
+    )
+    again._browse_settings()
+    assert opened[-1] == str(setup.exports.settings)
+    setup.exports.backup.unlink()
+    gone = ImportDialog(setup.backend, lambda: None, memory=memory)
+    qtbot.addWidget(gone)
+    assert gone.backup_file.text() == "" and gone.mail_folder.text() == str(setup.exports.mail)
+

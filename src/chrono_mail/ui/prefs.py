@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import dataclass, field, fields
 
 from PySide6.QtCore import QSettings
@@ -9,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 3.6.350"
+__version__ = "prefs.py 4.2.389"
 
 # --- Version history ----------------------------------------------------
+# v4.2.389: Remembered keeps the paths the Import and Export windows used last (on this computer); a path that is gone reads as ""
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.3.316: start_refresh: what the refresh at start does, apart from the automatic one (the owner)
 # v2.3.315: scheduled_refresh may also be send (only sends, the owner)
@@ -507,3 +509,53 @@ class Remembered:
 
     def remember_sizes(self, key: str, sizes: list[int]) -> None:
         self._settings.setValue(key, sizes)
+
+    def _existing(self, key: str) -> str:
+        """A remembered path, or "" when it no longer exists on this computer."""
+        path = self._text(key)
+        return path if path and os.path.exists(path) else ""
+
+    @property
+    def import_settings_file(self) -> str:
+        """The settings export (.xml) the Import window used last."""
+        return self._existing("import_settings_file")
+
+    @import_settings_file.setter
+    def import_settings_file(self, path: str) -> None:
+        self._settings.setValue("import_settings_file", path)
+
+    @property
+    def import_mail_folder(self) -> str:
+        """The folder of the mail export the Import window used last."""
+        return self._existing("import_mail_folder")
+
+    @import_mail_folder.setter
+    def import_mail_folder(self, path: str) -> None:
+        self._settings.setValue("import_mail_folder", path)
+
+    @property
+    def import_backup_file(self) -> str:
+        """The backup (.zip) the Import window used last."""
+        return self._existing("import_backup_file")
+
+    @import_backup_file.setter
+    def import_backup_file(self, path: str) -> None:
+        self._settings.setValue("import_backup_file", path)
+
+    @property
+    def import_data_file_folder(self) -> str:
+        """The folder of the data files the Import window used last."""
+        return self._existing("import_data_file_folder")
+
+    @import_data_file_folder.setter
+    def import_data_file_folder(self, path: str) -> None:
+        self._settings.setValue("import_data_file_folder", path)
+
+    @property
+    def export_folder(self) -> str:
+        """The folder the Export window wrote to last."""
+        return self._existing("export_folder")
+
+    @export_folder.setter
+    def export_folder(self, path: str) -> None:
+        self._settings.setValue("export_folder", path)
