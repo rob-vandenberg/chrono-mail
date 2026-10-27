@@ -16,9 +16,10 @@ from tests.ui.test_ui_rapid_actions import fill
 from tests.ui.world import Dialogs, World, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_large_selection.py 4.1.381"
+__version__ = "test_ui_large_selection.py 4.1.383"
 
 # --- Version history ----------------------------------------------------
+# v4.1.383: the Undo of a large delete stays under way until its messages have their places (they are placed in one step when it ends)
 # v4.1.381: the stress test of 4.1.380: a delete of every loaded message takes the rows out in one removal at the key press; an Undo of a
 #           large delete selects the messages once per batch that takes its place, each once
 # v4.1.380: the key press test counts the runs of the Archive check that read selected messages, not every run: since 3.6.362 it runs
@@ -1110,10 +1111,11 @@ def test_undo_of_a_large_delete_selects_the_messages_once_per_batch_each_once(em
     window.list_view.selectionModel().selectionChanged.connect(changed)
     model.took_in.connect(lambda: batches.append(1))
     window.act_undo.trigger()
-    wait(qtbot, lambda: held_in(empty, "Inbox") == size and not window.undoing.busy and len(held) == 1)
+    wait(qtbot, lambda: held_in(empty, "Inbox") == size and len(held) == 1)  # the Undo is done; it waits until its messages have their places
+    assert window.undoing.busy
     monkeypatch.setattr(empty.backend, "ask", real_ask)
     held[0]()
-    wait(qtbot, lambda: model.rowCount() == size and len(window.messages.selected_rows()) == size)
+    wait(qtbot, lambda: model.rowCount() == size and len(window.messages.selected_rows()) == size and not window.undoing.busy)
     keys = [place[0] for place in (model.place_at(row) for row in range(model.rowCount())) if place is not None]
     assert len(keys) == len(set(keys)) == size  # every message once
     assert batches and len(changes) <= 2 * len(batches) + 4  # per batch (and once per new order), never per message
@@ -1144,3 +1146,89 @@ def test_a_large_selection_change_does_not_ask_the_model_about_every_cell(empty:
         QAccessible.setActive(was_active)
     assert not empty.window.messages.has_selection()
     assert len(asked) < size  # not once per row, nor per cell
+
+
+def test_an_undo_of_many_messages_puts_them_back_in_one_step(empty: World, qtbot: QtBot) -> None:
+    """The owner (4.1.382): the Undo of 15,346 messages took three times as long as the Delete. The window placed them a few at a time
+    while the Undo ran (1,400 small steps for 3,000 messages), painting the list each time. They now come back in one step when it ends."""
+    size = 300  # more than one batch: one new order
+    opened(qtbot, empty, size)
+    window, model = empty.window, empty.window.list_model
+    wait(qtbot, lambda: model.complete)
+    window.mail_actions.delete_selected()
+    wait(qtbot, lambda: held_in(empty, "Trash") == size and empty.backend._pending == {} and model.rowCount() == 0)  # noqa: SLF001
+    inserted: list[int] = []
+
+    def counted(*_: object) -> None:
+        inserted.append(1)
+
+    model.rowsInserted.connect(counted)
+    window.act_undo.trigger()
+    wait(qtbot, lambda: not window.undoing.busy and model.rowCount() == size and len(window.messages.selected_rows()) == size)
+    keys = [place[0] for place in (model.place_at(row) for row in range(model.rowCount())) if place is not None]
+    assert len(keys) == len(set(keys)) == size and held_in(empty, "Inbox") == size  # every message back, once, selected
+    assert inserted == []  # one new order (the list was empty), no row put in on its own
+
+
+def test_a_failed_undo_lets_the_list_take_in_messages_again(empty: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.core import ChronoMailError
+    from chrono_mail.engine.undo import MAIL_UNDO
+
+    opened(qtbot, empty, 150)
+    window, model = empty.window, empty.window.list_model
+    real_ask = empty.backend.ask
+
+    def ask[P, R](
+        command: TypedCommand[P, R], parameters: P, on_success: Callable[[R], None], on_error: Failure | None = None, owner: QObject | None = None,
+        in_order: bool = False, waiting: bool = False, checking: bool = False,
+    ) -> int:
+        if command is MAIL_UNDO and on_error is not None:
+            on_error(ChronoMailError("Nothing to undo"))
+            return 0
+        return real_ask(command, parameters, on_success, on_error, owner, in_order, waiting, checking)
+
+    monkeypatch.setattr(empty.backend, "ask", ask)
+    window.act_undo.setEnabled(True)
+    window.undoing.undo()
+    wait(qtbot, lambda: not window.undoing.busy)
+    assert model._arrivals_held == 0  # noqa: SLF001 - let go however the Undo ended
+
+
+def test_a_message_that_comes_in_while_arrivals_are_held_is_placed_after(empty: World, qtbot: QtBot) -> None:
+    from chrono_mail.engine.mailbox import open_mailbox
+    from tests.ui.world import mail
+
+    opened(qtbot, empty, 150)
+    model = empty.window.list_model
+    wait(qtbot, lambda: model.complete)
+    release = model.hold_arrivals()
+    done: list[bool] = []
+    with open_mailbox(empty.engine, empty.account_id) as mailbox:
+        mailbox.deliver(("Inbox",), mail(900, subject="Came in meanwhile", message_id="<late@x>"), frozenset())
+    model.after_arrivals(lambda: done.append(True))
+    wait(qtbot, lambda: bool(model._arriving))  # noqa: SLF001 - its fact came: gathered, not placed
+    assert model.rowCount() == 150 and not done
+    release()
+    wait(qtbot, lambda: model.rowCount() == 151 and done == [True])
+
+
+def test_an_undo_of_many_messages_in_favorites_selects_every_one(empty: World, qtbot: QtBot) -> None:
+    """The review of 4.1.383: brought back as one new order, a Favorites view knew only its loaded rows by their ids, and the Undo
+    selected about 100 of 1,000."""
+    size = 300
+    fill(empty, size)
+    window = empty.window
+    window.start()
+    wait(qtbot, lambda: bool(window.mail_state.accounts) and empty.backend._pending == {})  # noqa: SLF001
+    inboxes = window.folders.find_item(("", "favorite", "inboxes"))
+    assert inboxes is not None
+    window.tree.setCurrentIndex(inboxes)
+    model = window.list_model
+    wait(qtbot, lambda: model.spec is not None and model.spec.combined is not None and model.complete and model.message_count() == size)
+    window.list_view.setFocus()
+    window.list_view.selectAll()
+    window.mail_actions.delete_selected()
+    wait(qtbot, lambda: held_in(empty, "Trash") == size and empty.backend._pending == {} and model.message_count() == 0)  # noqa: SLF001
+    window.act_undo.trigger()
+    wait(qtbot, lambda: not window.undoing.busy and model.message_count() == size and len(window.messages.selected_rows()) == size)
+    assert held_in(empty, "Inbox") == size

@@ -25,9 +25,11 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.1.381"
+__version__ = "messagelist.py 4.1.383"
 
 # --- Version history ----------------------------------------------------
+# v4.1.383: hold_arrivals: messages that come in while an Undo runs are placed in one step when it ends; after_arrivals: what waits
+#           until they have their places; rows_of_messages: the rows of messages loaded or not, also in a Favorites view (D-266)
 # v4.1.381: leave_now takes the rows out per run of neighbouring rows (one removal each froze the window for 17 s with 15,875); took_in
 #           once the messages of one moment are placed; arriving_any looks at what waits once
 # v4.1.379: unread_place: the next unread message of the whole view, loaded or not, and whether its place is known yet; a view whose
@@ -209,6 +211,8 @@ class MessageListModel(QAbstractTableModel):
         self._leave_soon: Burst = Burst(self._flush_leaving, self, interval_ms=0)  # those that arrive in the same pass of the event loop go together; none waits (D-266)
         self._arriving: dict[str, MessageRow] = {}  # messages that came in, by key -> their row (kept current by later facts), placed together
         self._arrival_planned: bool = False
+        self._arrivals_held: int = 0  # while above 0 (an Undo runs) messages that come in are gathered, not placed: placed in one step after
+        self._after_arrivals: list[Callable[[], None]] = []  # what waits until every message that came in has its place (after_arrivals)
         self._placing: dict[str, MessageRow] | None = None  # the messages whose places are being asked (one question at a time)
         self._seen: dict[str, int] = {}  # per mailbox: the number of the last fact heard (the engine counts only what came before it, D-152)
         self.selected_rows: Callable[[], list[int]] = lambda: []  # the rows selected in the window and its current row (a new order keeps them)
@@ -342,6 +346,7 @@ class MessageListModel(QAbstractTableModel):
         self.endResetModel()
         if spec is None:
             self.counts_changed.emit(0, 0)
+            self._arrivals_done()
             return
         self._ask_order(spec, whole=False, rows_of=[], purpose="show")
 
@@ -506,6 +511,7 @@ class MessageListModel(QAbstractTableModel):
         except ChronoMailError as error:
             self._failed(error)
             self.settled = True  # nothing more comes for this view: what waits for its answer is not kept waiting
+            self._arrivals_done()
             return
         question, view = self._ask(), self._view
         self._questions += 1
@@ -517,6 +523,7 @@ class MessageListModel(QAbstractTableModel):
                 return  # another view, or another order was asked for meanwhile
             self._ordering = None
             self._take_order(spec, order, facts, purpose)
+            self._arrivals_done()
 
         def failed(error: ChronoMailError) -> None:
             self._answered(question)
@@ -530,6 +537,7 @@ class MessageListModel(QAbstractTableModel):
             self.settled = True
             if purpose == "rearrange":
                 self.show(spec)  # the new order without the rows kept: the error is shown
+            self._arrivals_done()
 
         if isinstance(parameters, CombinedOrderParameters):
             self._backend.ask(MESSAGE_COMBINED_ORDER, parameters, answered, failed, owner=self)
@@ -1017,6 +1025,19 @@ class MessageListModel(QAbstractTableModel):
         waiting = {row.message_id for rows in self._waiting() for row in rows.values()}
         return bool(waiting) and any(message_id in waiting for message_id in message_ids)
 
+    def rows_of_messages(self, message_ids: Iterable[str]) -> list[tuple[int, str]]:
+        """The rows of these messages in the list (row, message id), those it shows: loaded or not, also in a Favorites view (one walk
+        over its order; a message's key there is its mailbox and its id)."""
+        wanted = set(message_ids)
+        if not self._combined():
+            return [(row, message_id) for message_id in wanted if (row := self.find(message_id)) >= 0]
+        found: list[tuple[int, str]] = []
+        for position, key in enumerate(self._order):
+            message_id = split_key(key)[1]
+            if message_id in wanted and (row := self.display_row(position)) >= 0:
+                found.append((row, message_id))
+        return found
+
     def find(self, message_id: str) -> int:
         """The row of a message in the list, or -1 (also while its group is folded)."""
         key = self._loaded_key(message_id)
@@ -1325,17 +1346,55 @@ class MessageListModel(QAbstractTableModel):
             self._arrival_planned = True
             QTimer.singleShot(0, self, self._take_in)  # the facts of one burst arrive one after the other: gathered into one question
 
+    def hold_arrivals(self) -> Callable[[], None]:
+        """Messages that come in are gathered until the returned function is called (once), then placed in one step: up to BURST with
+        one question, more as one new order. An Undo of 15,346 messages placed them a few at a time, painting the list again each time,
+        and took three times as long as the Delete."""
+        self._arrivals_held += 1
+        released: list[bool] = []
+
+        def release() -> None:
+            if released:
+                return
+            released.append(True)
+            self._arrivals_held -= 1
+            if not self._arrivals_held and self._arriving and not self._arrival_planned:
+                self._arrival_planned = True
+                QTimer.singleShot(0, self, self._take_in)
+            self._arrivals_done()
+
+        return release
+
+    def after_arrivals(self, then: Callable[[], None]) -> None:
+        """then runs once every message that came in has its place in the list (none gathered, none whose place is asked, no order on
+        its way; after another view is shown, once its order is in): what comes after an Undo acts on the list with its messages back."""
+        self._after_arrivals.append(then)
+        self._arrivals_done()
+
+    def _arrivals_done(self) -> None:
+        if not self._after_arrivals or self._arrivals_held or self._arrival_planned or self._placing is not None or self._ordering is not None:
+            return
+        if self._arriving and self._spec is not None:
+            self._arrival_planned = True  # still to be placed: in one step, then this is looked at again
+            QTimer.singleShot(0, self, self._take_in)
+            return
+        waiting, self._after_arrivals = self._after_arrivals, list[Callable[[], None]]()
+        for then in waiting:
+            then()
+
     def _take_in(self) -> None:
         """The messages that came in at once: the engine says, in one answer, under which heading each falls and before which
         message the list holds it comes; then each is put at its place. A burst larger than BURST is one new order (it keeps
         the selection). While an order is on its way they wait for it: it may count them already."""
         self._arrival_planned = False
         spec = self._spec
-        if spec is None or not self._arriving or self._placing is not None or self._ordering is not None:
+        if spec is None or not self._arriving or self._placing is not None or self._ordering is not None or self._arrivals_held:
+            self._arrivals_done()
             return
         for key in [key for key in self._arriving if key in self._order]:
             del self._arriving[key]  # the order that came meanwhile counted it already
         if not self._arriving:
+            self._arrivals_done()
             return
         if len(self._arriving) > BURST:
             self._arriving.clear()
@@ -1378,11 +1437,13 @@ class MessageListModel(QAbstractTableModel):
             self.took_in.emit()
             if self._arriving:
                 self._take_in()  # what came in meanwhile, with one question
+            self._arrivals_done()
 
         def failed(error: ChronoMailError) -> None:
             if self._placing is placing:
                 self._placing = None
             self._failed(error)
+            self._arrivals_done()
 
         messages = tuple(split_key(key)[1] for key in keys)
         heard = tuple(f"{mailbox}={number}" for mailbox, number in self._seen.items())  # only what came before these facts is counted: what came later is not here yet (D-152)

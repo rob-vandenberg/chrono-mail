@@ -11,9 +11,11 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "undoing.py 4.1.382"
+__version__ = "undoing.py 4.1.383"
 
 # --- Version history ----------------------------------------------------
+# v4.1.383: the messages an Undo or Redo brings back are placed in one step when it ends, not a few at a time while it runs; what waits
+#           behind it goes on once they have their places (D-266)
 # v4.1.382: an Undo or Redo without an answer after a second says "Preparing to undo…" until the engine counts its messages (D-266)
 # v3.6.350: Undo waits in turn in the message list's queue, right after the action it is meant for (RV-206): it goes with that action
 #           when the action is not done or gives no command; what comes after it waits until it is answered, and is let go however the
@@ -110,6 +112,7 @@ class Undoing(QObject):
         self.started()
         self._preparing_redo = redo
         self._preparing.start(PREPARING_AFTER_MS)
+        let_in = self._messages.model.hold_arrivals()  # the messages it brings back are placed in one step when it ends
 
         def done(result: UndoResult) -> None:
             self._preparing.stop()
@@ -120,19 +123,26 @@ class Undoing(QObject):
                 else:
                     self._status.finished(f"{'Redone' if redo else 'Undone'}: {result.action}")
                 self._messages.select_messages(result.messages)
-            finally:  # always: what waits behind this Undo goes on
-                self.ended()
-                release()
+            finally:  # always: what waits behind this Undo goes on, once the messages it brought back have their places in the list
+                let_in()  # after select_messages: they are selected as they take their places
+                self._messages.model.after_arrivals(lambda: self._done_with(release))
 
         def failed(error: ChronoMailError) -> None:
             self._preparing.stop()
             try:
                 self._status.show(str(error))  # "Nothing to undo": not an error of the mail
             finally:
+                let_in()
                 self.ended()
                 release()
 
         self._backend.ask(MAIL_REDO if redo else MAIL_UNDO, NoParameters(), done, failed, owner=self)
+
+    def _done_with(self, release: Callable[[], None]) -> None:
+        try:
+            self.ended()
+        finally:
+            release()
 
     def _say_preparing(self) -> None:
         self._status.show(f"Preparing to {'redo' if self._preparing_redo else 'undo'}…", running=True)

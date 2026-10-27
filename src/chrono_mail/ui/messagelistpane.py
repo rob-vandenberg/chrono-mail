@@ -27,9 +27,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.1.381"
+__version__ = "messagelistpane.py 4.1.383"
 
 # --- Version history ----------------------------------------------------
+# v4.1.383: the messages Undo brought back are selected also when they come back as a new order whose rest comes later, loaded or not,
+#           also in a Favorites view (D-266)
 # v4.1.381: the messages Undo brought back are selected once per batch that takes its place, only the new ones, one range per run of
 #           neighbouring rows (all of them again at every row froze the window for 29 s with 15,875)
 # v4.1.379: Next and Previous unread find the next unread message of the whole folder, loaded or not; its rows come first; the rest of a large
@@ -191,8 +193,9 @@ class MessageListPane(QObject):
         self.model.rearranged.connect(self._show_current_row)
         self._to_select: list[str] = []  # messages Undo brought back, selected as they take their place in the list
         self._selected_back: set[str] = set()  # those of them selected already (a later batch adds only its own)
+        self.model.load_failed.connect(self._forget_to_select)  # the rest of the order will not come: they are not waited for any longer
         self.model.took_in.connect(self._select_newly_placed)
-        for placed in (self.model.rearranged, self.model.loaded):
+        for placed in (self.model.rearranged, self.model.loaded, self.model.placed):  # placed: the rest of a large view's order came
             placed.connect(self._select_placed)
         self.model.selected_rows = self.selected_and_current_rows
         self.model.shown_rows = self._rows_on_screen
@@ -748,6 +751,12 @@ class MessageListPane(QObject):
         self._selected_back = set()
         self._select_back(True)
 
+    def _forget_to_select(self, *_: object) -> None:
+        if self.model.loading:
+            return  # a page of rows that failed: the order still comes, and with it their places
+        self._to_select = []
+        self._selected_back = set()
+
     def _select_newly_placed(self) -> None:
         """Messages that came in at one moment took their places: those Undo brought back are added to the selection, the others stay
         selected (selecting all of them again at every row froze the window for 29 s with 15,875)."""
@@ -757,12 +766,12 @@ class MessageListPane(QObject):
         wanted = self._to_select
         if not wanted:
             return
-        if not self.model.arriving_any(wanted):
-            self._to_select = []  # every one is placed, or not in this view
+        if not self.model.arriving_any(wanted) and self.model.complete:
+            self._to_select = []  # every one is placed and the whole order is in, or not in this view (a failed order ends it too)
             done, self._selected_back = self._selected_back, set()
         else:
             done = self._selected_back
-        found = [(row, message_id) for message_id in wanted if message_id not in done and (row := self.model.find(message_id)) >= 0]
+        found = self.model.rows_of_messages(message_id for message_id in wanted if message_id not in done)
         if not found:
             return
         fresh = whole or not done  # the first of them to be selected: what was selected before goes
