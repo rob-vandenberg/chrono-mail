@@ -33,6 +33,7 @@ from chrono_mail.ui.restoredialog import MENU_TEXT as RESTORE_MENU_TEXT, Restore
 from chrono_mail.ui.indexrebuilds import IndexRebuilds
 from chrono_mail.ui.mailchecking import MailChecking
 from chrono_mail.ui.mailstate import MailState
+from chrono_mail.ui.heldkey import HeldKey
 from chrono_mail.ui.mailtags import MailTags
 from chrono_mail.ui.messageactions import MessageActions
 from chrono_mail.ui.messagecolumns import MessageColumns
@@ -62,9 +63,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.392"
+__version__ = "mainwindow.py 4.2.394"
 
 # --- Version history ----------------------------------------------------
+# v4.2.394: the window tells whether an action was set off by a held key's repeat (HeldKey): New, Reply, Reply all, Forward, Open, View
+#           source and Print act once per press; Undo, Redo, the marks and the tags throw a repeat away while an action is under way (D-266)
 # v4.2.392: the status bar hears when a command's progress line ends (progress_ended)
 # v4.2.389: the Import and Export windows get the window's Remembered: they keep the paths used last
 # v4.2.388: after an import the mail check runs only when send and receive runs by itself (at startup or at an interval)
@@ -356,7 +359,10 @@ class MainWindow(QMainWindow):
         book = TagColourBook()  # one set of tag colours for the list, the cards and the reading pane
         self.messages = MessageListPane(backend, state, self.report, self.prefs, memory, book, lambda: self.act_conversations.isChecked(), self)
         self.undoing = Undoing(backend, self.report, self.messages, self)  # B-18
+        self.held_key = HeldKey(self)  # whether an action was set off by a held key's repeat, wherever the focus is in this window (D-266)
+        self.undoing.is_repeat = self.held_key.take
         self.tags = MailTags(backend, state, self.report, self.messages, book, self.open_tags, self.undoing, self)
+        self.tags.watch_action = self.held_key.watch  # a held tag shortcut stops when let go (D-266)
         self.folders = FolderPane(backend, state, self.report, self.prefs, memory, self.tags, self.messages, self)
         self.tree, self.tree_model = self.folders.tree, self.folders.model
         self.list_model, self.list_view = self.messages.model, self.messages.view
@@ -438,20 +444,21 @@ class MainWindow(QMainWindow):
 
     def _build_actions(self) -> None:
         actions, composing, messages, reading = self.mail_actions, self.composing, self.messages, self.reading
-        self.act_new = self._action("New", lambda: self._in_section("new"), "Ctrl+N", "mail-message-new")
+        once = self.held_key.once  # a key that opens a window acts once per press: holding it opens no more windows (D-266)
+        self.act_new = self._action("New", once(lambda: self._in_section("new")), "Ctrl+N", "mail-message-new")
         self.act_refresh = self._action("Refresh", lambda: self._in_section("refresh"), "F5", "view-refresh")
-        self.act_reply = self._action("Reply", lambda: composing.compose_from_selection("reply"), "Ctrl+R", "mail-reply-sender")
-        self.act_reply_all = self._action("Reply all", lambda: composing.compose_from_selection("reply_all"), "Ctrl+Shift+R", "mail-reply-all")
-        self.act_forward = self._action("Forward", lambda: composing.compose_from_selection("forward"), "Ctrl+F", "mail-forward")
+        self.act_reply = self._action("Reply", once(lambda: composing.compose_from_selection("reply")), "Ctrl+R", "mail-reply-sender")
+        self.act_reply_all = self._action("Reply all", once(lambda: composing.compose_from_selection("reply_all")), "Ctrl+Shift+R", "mail-reply-all")
+        self.act_forward = self._action("Forward", once(lambda: composing.compose_from_selection("forward")), "Ctrl+F", "mail-forward")
         self.act_forward_attachment = self._action("Forward as attachment", lambda: composing.compose_from_selection("forward_attachment"))
         self.act_edit_draft = self._action("Edit draft", composing.edit_draft, None, "document-edit")
         self.act_edit_scheduled = self._action("Edit", composing.edit_draft, None, "document-edit")  # a scheduled message: it stays scheduled (D-177)
         self.act_new_scheduled = self._action("New", lambda: composing.new_scheduled_message(None), None, "mail-message-new")  # a new scheduled message
         self.act_delete = self._action("Delete", lambda: self._in_section("delete"), "Delete", "edit-delete")
         self.act_save_as = self._action("Save as…", reading.save_selected_as, "Ctrl+Shift+S", "document-save-as")
-        self.act_source = self._action("View source", reading.view_source, "Ctrl+Alt+U")
-        self.act_print = self._action("Print…", reading.print_selected, "Ctrl+P", "document-print")
-        self.act_open = self._action("Open", self.open_selected, "Return", "document-open")
+        self.act_source = self._action("View source", once(lambda: reading.view_source()), "Ctrl+Alt+U")
+        self.act_print = self._action("Print…", once(lambda: reading.print_selected()), "Ctrl+P", "document-print")
+        self.act_open = self._action("Open", once(self.open_selected), "Return", "document-open")
         self.act_columns = self._action("Message list…", self.edit_columns)
         self.columns.columns_action = self.act_columns
         self.act_junk = self._action("Move to Junk", actions.junk_key, "Ctrl+J", "mail-mark-junk")  # one key does both, as the folder decides
@@ -489,6 +496,9 @@ class MainWindow(QMainWindow):
         self.act_toggle_folders.setCheckable(True)
         self.act_toggle_folders.setChecked(True)
         self.act_unread = self._action("Mark as unread", lambda: actions.mark_selected(seen=False), "Ctrl+U")
+        for action in (self.act_undo, self.act_redo, self.act_redo_other, self.act_read, self.act_unread, self.act_toggle_read, self.act_toggle_flag,
+                       self.act_new, self.act_reply, self.act_reply_all, self.act_forward, self.act_open, self.act_source, self.act_print):
+            self.held_key.watch(action)  # told when a held key's repeat sets it off (D-266)
         self.act_flag = self._action("Flag", lambda: actions.mark_selected(flagged=True), icon="mail-mark-important")
         self.act_unflag = self._action("Remove flag", lambda: actions.mark_selected(flagged=False))
         self.act_add_account = self._action("Add an account…", lambda: self.add_account(), icon="list-add")

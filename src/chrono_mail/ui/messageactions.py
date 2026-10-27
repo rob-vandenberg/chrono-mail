@@ -31,9 +31,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 3.6.367"
+__version__ = "messageactions.py 4.2.394"
 
 # --- Version history ----------------------------------------------------
+# v4.2.394: a held mark key (R, Insert, Ctrl+Q, Ctrl+U) stops the moment it is let go: its repeats while an action is under way are thrown away (D-266)
 # v3.6.367: a drop may hold messages of several accounts, each with its account (D-272)
 # v3.6.366: Move to has a submenu for each other account and a drop may come from another account: those messages are moved message by message (move_to, D-272)
 # v3.6.364: "Preparing to …" and the count are lines about work still running: they never time out
@@ -145,6 +146,8 @@ class MessageActions(QObject):
         )
 
     def mark_selected(self, seen: bool | None = None, flagged: bool | None = None) -> None:
+        if self._undoing.held_while_busy():
+            return  # a held key's repeat while an action is under way: thrown away, so it stops when let go (D-266)
         if self._messages.deferred(lambda: self.mark_selected(seen, flagged)):
             return
         self.mark_messages(self._messages.selected_rows(), seen, flagged)
@@ -164,6 +167,8 @@ class MessageActions(QObject):
 
     def toggle_read(self) -> None:
         """All read: unread, else read; counted over every selected message (their rows are asked first when they are not loaded)."""
+        if self._undoing.held_while_busy():
+            return  # a held key's repeat while an action is under way: thrown away, so it stops when let go (D-266)
         if self._messages.deferred(lambda: self.toggle_read()):
             return
         chosen = self._messages.selected_rows()
@@ -171,6 +176,8 @@ class MessageActions(QObject):
             self._messages.with_rows(chosen, lambda still, rows: self.mark_messages(still, seen=any("seen" not in row.flags for row in rows)))
 
     def toggle_flag(self) -> None:
+        if self._undoing.held_while_busy():
+            return  # a held key's repeat while an action is under way: thrown away, so it stops when let go (D-266)
         if self._messages.deferred(lambda: self.toggle_flag()):
             return
         chosen = self._messages.selected_rows()

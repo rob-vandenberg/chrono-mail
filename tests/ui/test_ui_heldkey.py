@@ -12,9 +12,11 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_heldkey.py 3.6.362"
+__version__ = "test_ui_heldkey.py 4.2.394"
 
 # --- Version history ----------------------------------------------------
+# v4.2.394: a held Ctrl+Z, mark key and tag key act once while their action is under way and quick separate Ctrl+Z presses all count;
+#           Reply, Reply all, Forward, New and Open open one window when held (D-266)
 # v3.6.362: a held key is pressed as its automatic repeats; the repeats that piled up during one delete are thrown away, four quick
 #           separate presses delete four messages (D-266)
 # v3.6.360: Initial: a held Delete, Archive or Junk key pauses where the loaded rows end, forgets the presses meanwhile, goes on once the
@@ -163,3 +165,146 @@ def test_four_quick_separate_presses_delete_four_messages(inbox: World, qtbot: Q
     qtbot.wait(50)
     wait(qtbot, lambda: inbox.backend._pending == {})  # noqa: SLF001
     assert keys_in_order(model) == order[:10] + order[14:]
+
+
+
+def key(world: World, key: Qt.Key, modifier: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier, repeat: bool = False) -> None:
+    """A real key press on the focused list, through Qt's own shortcut handling (repeat: the automatic repeat of a held key)."""
+    QCoreApplication.sendEvent(world.window.list_view, QKeyEvent(QEvent.Type.KeyPress, key, modifier, "", repeat))
+
+
+def hold(world: World, pressed: Qt.Key, modifier: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier) -> None:
+    """A held key: its first press, then five automatic repeats that come while the action of the first is still under way."""
+    key(world, pressed, modifier)
+    for _ in range(5):
+        key(world, pressed, modifier, repeat=True)
+
+
+def idle(world: World, qtbot: QtBot) -> None:
+    wait(qtbot, lambda: world.backend._pending == {} and not world.window.undoing.busy)  # noqa: SLF001
+
+
+def start_at_row_ten(world: World) -> None:
+    model = world.window.list_model
+    world.window.list_view.setCurrentIndex(model.index(model.display_row(10), 0))
+
+
+def test_a_held_undo_stops_when_let_go_and_quick_separate_presses_all_count(inbox: World, qtbot: QtBot) -> None:
+    """A held Ctrl+Z: the repeats that come while an Undo is under way are thrown away, so undoing stops the moment the key is let go
+    (it went on for seconds after); four quick separate presses undo four actions (D-266)."""
+    model = inbox.window.list_model
+    start_at_row_ten(inbox)
+    for _ in range(6):
+        before = model.message_count()
+        key(inbox, Qt.Key.Key_Delete)
+        wait(qtbot, lambda: model.message_count() == before - 1)
+        idle(inbox, qtbot)
+    start = model.message_count()
+    hold(inbox, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    idle(inbox, qtbot)
+    assert model.message_count() == start + 1, "the repeats of a held Ctrl+Z were undone too"
+    for _ in range(4):
+        key(inbox, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+    idle(inbox, qtbot)
+    assert model.message_count() == start + 5
+
+
+@pytest.mark.parametrize(("pressed", "modifier"), [(Qt.Key.Key_R, Qt.KeyboardModifier.NoModifier), (Qt.Key.Key_Insert, Qt.KeyboardModifier.NoModifier),
+                                                    (Qt.Key.Key_Q, Qt.KeyboardModifier.ControlModifier), (Qt.Key.Key_U, Qt.KeyboardModifier.ControlModifier)],
+                         ids=["read", "flag", "mark-read", "mark-unread"])
+def test_a_held_mark_key_acts_once_while_its_action_is_under_way(inbox: World, qtbot: QtBot, pressed: Qt.Key, modifier: Qt.KeyboardModifier) -> None:
+    """A held mark key: the repeats that come while its action is under way are thrown away, so it never goes on after it is let go (D-266)."""
+    window = inbox.window
+    start_at_row_ten(inbox)
+    actions = window.undoing.new_action()
+    hold(inbox, pressed, modifier)
+    idle(inbox, qtbot)
+    assert window.undoing.new_action() == actions + 2, "the repeats of a held mark key were done too"
+
+
+def test_a_held_tag_key_acts_once_while_its_action_is_under_way(inbox: World, qtbot: QtBot) -> None:
+    """A held tag shortcut: the repeats that come while its action is under way are thrown away (D-266)."""
+    window = inbox.window
+    inbox.call("tag.create", name="Work", colour="#00aa00")
+    inbox.call("tag.edit", name="Work", shortcut="Ctrl+Alt+1")
+    window.tags.load()
+    wait(qtbot, lambda: any(tag.shortcut for tag in window.mail_state.tags))
+    start_at_row_ten(inbox)
+    actions = window.undoing.new_action()
+    hold(inbox, Qt.Key.Key_1, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
+    idle(inbox, qtbot)
+    assert window.undoing.new_action() == actions + 2, "the repeats of a held tag key were done too"
+
+
+@pytest.mark.parametrize(("pressed", "modifier"), [(Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier),
+                                                    (Qt.Key.Key_R, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier),
+                                                    (Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier), (Qt.Key.Key_N, Qt.KeyboardModifier.ControlModifier),
+                                                    (Qt.Key.Key_Return, Qt.KeyboardModifier.NoModifier),
+                                                    (Qt.Key.Key_U, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier),
+                                                    (Qt.Key.Key_P, Qt.KeyboardModifier.ControlModifier)], ids=["reply", "reply-all", "forward", "new", "open", "source", "print"])
+def test_a_held_key_that_opens_a_window_opens_one(inbox: World, monkeypatch: pytest.MonkeyPatch, pressed: Qt.Key, modifier: Qt.KeyboardModifier) -> None:
+    """Reply, Reply all, Forward, New, Open, View source and Print act once per press: holding the key opens no more windows (D-266)."""
+    window = inbox.window
+    start_at_row_ten(inbox)
+    opened: list[str] = []
+
+    def opening(what: str) -> None:
+        opened.append(what)
+
+    monkeypatch.setattr(window.composing, "compose_from_selection", opening)
+    monkeypatch.setattr(window, "_in_section", opening)
+    monkeypatch.setattr(window.reading, "open_message_window", lambda: opened.append("open"))
+    monkeypatch.setattr(window.reading, "view_source", lambda: opened.append("source"))
+    monkeypatch.setattr(window.reading, "print_selected", lambda: opened.append("print"))
+    hold(inbox, pressed, modifier)
+    assert len(opened) == 1, f"a held key opened {len(opened)} windows: {opened}"
+
+
+@pytest.mark.parametrize("after", ["a held key no shortcut takes", "a held mark key"])
+def test_a_click_after_a_held_key_always_acts(inbox: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, after: str) -> None:
+    """A click (a button, a menu) after a held key always acts, also with an action under way and before anything else happened in
+    between (fresh reviews of 4.2.394 found clicks dropped there)."""
+    window = inbox.window
+    start_at_row_ten(inbox)
+    opened: list[str] = []
+
+    def opening(what: str) -> None:
+        opened.append(what)
+
+    monkeypatch.setattr(window.composing, "compose_from_selection", opening)
+    monkeypatch.setattr(window.undoing, "_running", 1)  # an action under way
+    if after == "a held mark key":
+        key(inbox, Qt.Key.Key_R, repeat=True)
+    else:
+        key(inbox, Qt.Key.Key_Down, repeat=True)
+    actions = window.undoing.new_action()
+    window.act_reply.trigger()  # clicks, right after, with nothing in between
+    window.act_toggle_read.trigger()
+    assert opened == ["reply"], "the click on Reply after a held key was dropped"
+    assert window.undoing.new_action() == actions + 2, "the click on Toggle read after a held key was dropped"
+
+
+
+def test_a_tag_key_works_after_the_tag_menu_was_opened_and_a_held_one_never_drops_a_click(inbox: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once the Tag menu had been opened, a tag's key was there twice (the menu's and the window's) and Qt did neither; a held one then
+    left its answer untaken and the next click was dropped (the third review of 4.2.394). The key works, and a click after it acts."""
+    window = inbox.window
+    inbox.call("tag.create", name="Work", colour="#00aa00")
+    inbox.call("tag.edit", name="Work", shortcut="Ctrl+Alt+1")
+    window.tags.load()
+    wait(qtbot, lambda: any(tag.shortcut for tag in window.mail_state.tags))
+    start_at_row_ten(inbox)
+    window.tags.fill_tag_menu(window.tag_menu)  # the Tag menu opened once, as its button does
+    actions = window.undoing.new_action()
+    key(inbox, Qt.Key.Key_1, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier)
+    idle(inbox, qtbot)
+    assert window.undoing.new_action() == actions + 2, "the tag key did nothing after the Tag menu was opened"
+    opened: list[str] = []
+
+    def opening(what: str) -> None:
+        opened.append(what)
+
+    monkeypatch.setattr(window.composing, "compose_from_selection", opening)
+    key(inbox, Qt.Key.Key_1, Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier, repeat=True)
+    window.act_reply.trigger()  # a click right after
+    assert opened == ["reply"], "the click after a held tag key was dropped"

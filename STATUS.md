@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-27, version 4.2.393 (the message list paints exactly what Qt asks: no more messages shown twice or missing after a Delete, the long-standing duplicates; 4.2.392: a progress line leaves the status bar when its work ends; 4.2.391: reading the exports quick again, a busy notice while the Import and Export windows work).*
+*Last updated: 2026-10-28, version 4.2.394 (a held Ctrl+Z, mark key or tag key stops the moment it is let go; New, Reply, Forward, Open, View source and Print open one window when held; tag keys work after the Tag menu was opened; 4.2.393: the message list paints exactly what Qt asks: no more messages shown twice or missing after a Delete, the long-standing duplicates; 4.2.392: a progress line leaves the status bar when its work ends; 4.2.391: reading the exports quick again, a busy notice while the Import and Export windows work).*
 
 ## Where we are
 

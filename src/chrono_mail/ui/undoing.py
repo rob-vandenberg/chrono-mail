@@ -11,9 +11,11 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "undoing.py 4.1.383"
+__version__ = "undoing.py 4.2.394"
 
 # --- Version history ----------------------------------------------------
+# v4.2.394: a held Ctrl+Z (Ctrl+Y) stops the moment it is let go: its repeats that come while an action is under way are thrown away;
+#           a separate press always counts (held_while_busy, also for the marks and tags, D-266)
 # v4.1.383: the messages an Undo or Redo brings back are placed in one step when it ends, not a few at a time while it runs; what waits
 #           behind it goes on once they have their places (D-266)
 # v4.1.382: an Undo or Redo without an answer after a second says "Preparing to undo…" until the engine counts its messages (D-266)
@@ -53,11 +55,17 @@ class Undoing(QObject):
         self._preparing.timeout.connect(self._say_preparing)
         self._preparing_redo: bool = False
         backend.progress.connect(self._counting)
+        self.is_repeat: Callable[[], bool] = lambda: False  # whether the action acting now was set off by a held key's repeat (the window tells, once)
 
     @property
     def busy(self) -> bool:
         """An action is under way: Undo can be pressed already and waits for it."""
         return self._running > 0 or bool(self._wanted) or self._messages.waiting
+
+    def held_while_busy(self) -> bool:
+        """The key press being handled is the automatic repeat of a held key while an action is still under way: it is thrown away, so
+        a held key stops the moment it is let go; a separate press always counts (D-266)."""
+        return self.is_repeat() and self.busy
 
     def new_action(self) -> int:
         """The number of a new action of the person: the commands it takes are one step of Undo."""
@@ -93,7 +101,10 @@ class Undoing(QObject):
 
     def _press(self, redo: bool) -> None:
         """In turn: behind what waits in the message list (right after the action it is meant for), else behind the commands under way;
-        either way an action made after it waits until it is answered (it never undoes an action made after the press)."""
+        either way an action made after it waits until it is answered (it never undoes an action made after the press). A held key's
+        repeat while an action is under way is thrown away: the undoing stops the moment the key is let go (D-266)."""
+        if self.held_while_busy():
+            return
         if self._messages.queued:
             self._messages.after_waiting(lambda: self._take(redo, self._messages.hold()), undo=True)
             self.labels_changed.emit()

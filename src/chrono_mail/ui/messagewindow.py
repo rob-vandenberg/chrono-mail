@@ -13,15 +13,17 @@ from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, Attachment
 from chrono_mail.ui import scale, theme
 from chrono_mail.ui.attachmentopening import open_attachment
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.heldkey import HeldKey
 from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 2.0.302"
+__version__ = "messagewindow.py 4.2.394"
 
 # --- Version history ----------------------------------------------------
+# v4.2.394: Reply, Reply all and Forward act once per press: holding the key opens no more windows (D-266)
 # v2.0.302: Open attachment from the attachment row and the pictures (D-236)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.9.270: R-19: saving an attachment is a typed call
@@ -55,6 +57,7 @@ class MessageWindow(QMainWindow):
         self.setCentralWidget(self.reader)
         prepare(self.reader)  # the privacy settings come before the message: what is allowed decides what is loaded
         self.reader.show_message(shown)
+        held = HeldKey(self)  # whether an action was set off by a held key's repeat: Reply and Forward act once per press (D-266)
         toolbar = QToolBar("Message", self)
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
@@ -63,7 +66,8 @@ class MessageWindow(QMainWindow):
         ):
             action = toolbar.addAction(theme_icon(icon), label)
             action.setShortcut(QKeySequence(keys))  # the same keys as in the main window
-            action.triggered.connect(lambda checked=False, chosen=kind: compose(chosen, account, folder, message_id))
+            action.triggered.connect(held.once(lambda chosen=kind: compose(chosen, account, folder, message_id)))  # once per press (D-266)
+            held.watch(action)
         close = QAction("Close", self)
         close.setShortcut(QKeySequence("Esc"))
         close.triggered.connect(self.close)

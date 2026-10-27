@@ -18,9 +18,10 @@ from chrono_mail.ui.tagging import fill_tag_menu, offered_for_mail
 from chrono_mail.ui.undoing import Undoing
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailtags.py 3.6.352"
+__version__ = "mailtags.py 4.2.394"
 
 # --- Version history ----------------------------------------------------
+# v4.2.394: a held tag shortcut stops the moment it is let go: its repeats while an action is under way are thrown away (D-266)
 # v3.6.352: new tag colours paint the whole message list through the list's own repaint_all (D-266)
 # v3.6.350: a tag by key acts on the messages still there without an action under way; the menu's ticks never hold Undo (RV-206);
 #           a tag with no message left to act on takes no action number (an Undo after it undoes nothing older); its answer always
@@ -45,6 +46,7 @@ class MailTags(QObject):
     ) -> None:
         super().__init__(parent)
         self._undoing: Undoing = undoing
+        self.watch_action: Callable[[QAction], None] = lambda action: None  # the window watches each tag shortcut for a held key's repeat (D-266)
         self._backend: Backend = backend
         self._state: MailState = state
         self._status: StatusReport = status
@@ -100,12 +102,15 @@ class MailTags(QObject):
             action.setShortcut(QKeySequence(shortcut))
             name = tag.name
             action.triggered.connect(lambda checked=False, chosen=name: self.toggle_tag_by_key(chosen))
+            self.watch_action(action)  # told when a held key's repeat sets it off (D-266)
             self._parent.addAction(action)
             self._shortcuts.append(action)
 
     def toggle_tag_by_key(self, name: str) -> None:
         """A tag's shortcut: give the tag to the selected messages, or take it away when all of them have it (all of them counted, also
         those not loaded yet, W12)."""
+        if self._undoing.held_while_busy():
+            return  # a held key's repeat while an action is under way: thrown away, so it stops when let go (D-266)
         if self._messages.deferred(lambda: self.toggle_tag_by_key(name)):
             return
         chosen = self._messages.selected_rows()

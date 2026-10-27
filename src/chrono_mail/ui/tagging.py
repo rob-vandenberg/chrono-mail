@@ -11,9 +11,10 @@ from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 
 # --- Version ------------------------------------------------------------
-__version__ = "tagging.py 1.9.275"
+__version__ = "tagging.py 4.2.394"
 
 # --- Version history ----------------------------------------------------
+# v4.2.394: a tag's key in the Tag menu only shows there: once the menu had been opened, the key was there twice and Qt did neither
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v0.5.135: Initial version: tag icon, Tag menu, tags in the message list
 
@@ -86,7 +87,8 @@ def fill_tag_menu(
         shortcut = tag.shortcut
         if shortcut:
             action.setShortcut(shortcut)
-            action.setShortcutVisibleInContextMenu(True)
+            action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)  # never competes with the window's own key, which gives the tag (two keys alike, Qt does neither)
+            action.setShortcutVisibleInContextMenu(True)  # the key is shown here
         action.triggered.connect(lambda checked=False, chosen=name, add=not everyone: toggle(chosen, add))
     if menu.actions():
         menu.addSeparator()
