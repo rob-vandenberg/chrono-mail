@@ -9,9 +9,11 @@ from tests.ui.world import account_node, World, row_of, wait
 from tests.ui.test_ui_window import started
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dragdrop.py 3.5.346"
+__version__ = "test_ui_dragdrop.py 4.1.381"
 
 # --- Version history ----------------------------------------------------
+# v4.1.381: the drop test waits for the move it checks; the rows leave at the drop, before the move is done (it read the folder at once and
+#           passed only while the rows left slowly, one removal each)
 # v3.5.346: a drag of messages of several accounts goes to no folder (RV-77)
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.2.105: The badge starts past the cursor, by the desktop's cursor size
@@ -62,8 +64,8 @@ def test_dropping_messages_on_a_folder_moves_them(world: World, qtbot: QtBot) ->
     junk = folder_point(world, "Junk")
     assert move_probe(world, junk, data)
     assert drop(world, junk, data)
-    wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
-    assert world.call("message.list", account=world.account_id, folder="Junk").total == 2
+    assert world.window.list_model.rowCount() == 1  # the rows go at the drop, before the move is done (D-266)
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Junk").total == 2)  # waited for, not assumed (AGENTS.md 4.5.5)
 
 
 def test_drops_that_make_no_sense_are_refused(world: World, qtbot: QtBot) -> None:

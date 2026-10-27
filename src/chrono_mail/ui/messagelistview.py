@@ -14,9 +14,11 @@ from chrono_mail.ui.theme import show_focus
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 3.6.352"
+__version__ = "messagelistview.py 4.1.381"
 
 # --- Version history ----------------------------------------------------
+# v4.1.381: a selection change of more rows than LARGE_SELECTION_CHANGE paints the list once instead of Qt's step, which asked the model
+#           about every cell of it when a screen reader may listen (a second and more with 15,346 rows)
 # v3.6.352: a removal moves the rows below it up as they are on screen and paints only the new strip and the changed rows; the removal is painted in the same moment as the rest of its change (D-266)
 # v3.5.346: The drag is made from the selected rows by their ranges and its badge counts exactly the messages that go along (RV-77)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -35,6 +37,7 @@ __version__ = "messagelistview.py 3.6.352"
 # v0.0.48: Initial message list that drags a small badge instead of the selected rows
 
 STANDARD_CURSOR_SIZE: int = 32  # pixels, when the desktop does not say how large its cursor is
+LARGE_SELECTION_CHANGE: int = 200  # more rows than this changed at once: the whole list is painted, not row by row
 
 
 def cursor_size() -> int:
@@ -244,7 +247,7 @@ class MessageListView(QTreeView):
 
     def _note_rows(self, first: int, last: int) -> None:
         model = self.model()
-        if model is None or last - first > 200:
+        if model is None or last - first > LARGE_SELECTION_CHANGE:
             self.repaint_all()
             return
         self._changed_rows.extend(QPersistentModelIndex(model.index(row, 0)) for row in range(first, last + 1))
@@ -256,9 +259,14 @@ class MessageListView(QTreeView):
 
     @override
     def selectionChanged(self, selected: QItemSelection, deselected: QItemSelection) -> None:
+        rows = 0
         for chosen in (selected, deselected):
             for number in range(chosen.count()):
                 self._note_rows(chosen.at(number).top(), chosen.at(number).bottom())
+                rows += chosen.at(number).bottom() - chosen.at(number).top() + 1
+        if rows > LARGE_SELECTION_CHANGE:
+            self.repaint_all()  # what Qt's own step adds is a paint and, for a screen reader, the first row; it asks the model about every
+            return  # cell of the change for that (15,346 rows: 150,000 questions, a second and more), and the current row tells it anyway
         super().selectionChanged(selected, deselected)
 
     @override

@@ -8,7 +8,7 @@ from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.registry import TypedCommand
-from chrono_mail.engine.commands_mail import ListParameters, message_list
+from chrono_mail.engine.commands_mail import MESSAGE_PLACES, ListParameters, message_list
 from chrono_mail.engine.commands_view import MESSAGE_ORDER, OrderParameters
 from chrono_mail.ui.backend import Failure
 from chrono_mail.ui.mailstate import MailState, Placed
@@ -16,9 +16,11 @@ from tests.ui.test_ui_rapid_actions import fill
 from tests.ui.world import Dialogs, World, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_large_selection.py 4.1.380"
+__version__ = "test_ui_large_selection.py 4.1.381"
 
 # --- Version history ----------------------------------------------------
+# v4.1.381: the stress test of 4.1.380: a delete of every loaded message takes the rows out in one removal at the key press; an Undo of a
+#           large delete selects the messages once per batch that takes its place, each once
 # v4.1.380: the key press test counts the runs of the Archive check that read selected messages, not every run: since 3.6.362 it runs
 #           again inside the action, on the empty selection left (D-266)
 # v3.6.350: a drag made before the list knew every selected message moves them all; a selected range keeps its places when the rest of
@@ -1048,3 +1050,97 @@ def test_a_click_on_the_delete_icon_that_waited_still_counts_after_a_sort(empty:
     wait(qtbot, lambda: empty.backend._pending == {} and not window.undoing.busy and held_in(empty, "Trash") == 1)  # noqa: SLF001
     trashed = message_list(empty.engine, ListParameters(empty.account_id, "Trash")).messages
     assert [row.message_id for row in trashed] == [clicked.message_id]
+
+
+def test_a_delete_of_every_loaded_message_takes_the_rows_out_in_one_step_at_the_key_press(empty: World, qtbot: QtBot) -> None:
+    """The stress test of 4.1.380: Ctrl+A on 15,875 messages and Delete froze the window for 17 s. The rows of an account that needs no
+    server's word leave at the key press (D-266), and they went one removal each, every removal laying the whole list out again."""
+    opened(qtbot, empty, 300)
+    model = empty.window.list_model
+    wait(qtbot, lambda: model.complete)
+    keys = [place[0] for place in (model.place_at(row) for row in range(model.rowCount())) if place is not None]
+    loaded: list[bool] = []
+    model.load_rows(keys, lambda: loaded.append(True))
+    wait(qtbot, lambda: bool(loaded) and model.row_at(299) is not None)
+    removals: list[int] = []
+
+    def removed(parent: QModelIndex, first: int, last: int) -> None:
+        removals.append(last - first + 1)
+
+    model.rowsRemoved.connect(removed)
+    empty.window.mail_actions.delete_selected()
+    assert model.rowCount() == 0  # gone at the key press
+    assert removals == [300]  # one run of neighbouring rows: one removal
+    wait(qtbot, lambda: held_in(empty, "Trash") == 300 and empty.backend._pending == {})  # noqa: SLF001
+    assert held_in(empty, "Inbox") == 0 and model.rowCount() == 0
+
+
+def test_undo_of_a_large_delete_selects_the_messages_once_per_batch_each_once(empty: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stress test of 4.1.380: Undo of that delete froze the window for 29 s. Each message put back at its place selected every message
+    put back so far again. They are now added once per batch that takes its place, and every one comes back selected, once. The places
+    are held back here until the Undo has answered, as with 15,875 messages, whose places came long after."""
+    size = 150  # one batch the list places message by message (more come in as one new order)
+    opened(qtbot, empty, size)
+    window, model = empty.window, empty.window.list_model
+    wait(qtbot, lambda: model.complete)
+    window.mail_actions.delete_selected()
+    wait(qtbot, lambda: held_in(empty, "Trash") == size and empty.backend._pending == {} and model.rowCount() == 0)  # noqa: SLF001
+    held: list[Callable[[], None]] = []
+    real_ask = empty.backend.ask
+
+    def ask[P, R](
+        command: TypedCommand[P, R], parameters: P, on_success: Callable[[R], None], on_error: Failure | None = None, owner: QObject | None = None,
+        in_order: bool = False, waiting: bool = False, checking: bool = False,
+    ) -> int:
+        if command is MESSAGE_PLACES:
+
+            def later() -> None:
+                real_ask(command, parameters, on_success, on_error, owner, in_order, waiting, checking)
+
+            held.append(later)
+            return 0
+        return real_ask(command, parameters, on_success, on_error, owner, in_order, waiting, checking)
+
+    monkeypatch.setattr(empty.backend, "ask", ask)
+    changes: list[int] = []
+    batches: list[int] = []
+    def changed(*_: object) -> None:
+        changes.append(1)
+
+    window.list_view.selectionModel().selectionChanged.connect(changed)
+    model.took_in.connect(lambda: batches.append(1))
+    window.act_undo.trigger()
+    wait(qtbot, lambda: held_in(empty, "Inbox") == size and not window.undoing.busy and len(held) == 1)
+    monkeypatch.setattr(empty.backend, "ask", real_ask)
+    held[0]()
+    wait(qtbot, lambda: model.rowCount() == size and len(window.messages.selected_rows()) == size)
+    keys = [place[0] for place in (model.place_at(row) for row in range(model.rowCount())) if place is not None]
+    assert len(keys) == len(set(keys)) == size  # every message once
+    assert batches and len(changes) <= 2 * len(batches) + 4  # per batch (and once per new order), never per message
+
+
+def test_a_large_selection_change_does_not_ask_the_model_about_every_cell(empty: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The stress test of 4.1.380, after 4.1.381's first fix: with a screen reader possibly listening (the owner's desktop), Qt's step for a
+    changed selection asked the model's flags of every cell of it: 15,346 rows, a second and more at Delete and at Undo."""
+    from PySide6.QtGui import QAccessible
+
+    size = 300
+    opened(qtbot, empty, size)
+    model = empty.window.list_model
+    wait(qtbot, lambda: model.complete)
+    asked: list[int] = []
+    real_flags = model.flags
+
+    def flags(index: QModelIndex | QPersistentModelIndex) -> object:
+        asked.append(1)
+        return real_flags(index)
+
+    monkeypatch.setattr(model, "flags", flags)
+    was_active = QAccessible.isActive()
+    QAccessible.setActive(True)
+    try:
+        empty.window.list_view.selectionModel().clearSelection()
+    finally:
+        QAccessible.setActive(was_active)
+    assert not empty.window.messages.has_selection()
+    assert len(asked) < size  # not once per row, nor per cell

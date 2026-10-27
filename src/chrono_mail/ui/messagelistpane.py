@@ -27,9 +27,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.1.379"
+__version__ = "messagelistpane.py 4.1.381"
 
 # --- Version history ----------------------------------------------------
+# v4.1.381: the messages Undo brought back are selected once per batch that takes its place, only the new ones, one range per run of
+#           neighbouring rows (all of them again at every row froze the window for 29 s with 15,875)
 # v4.1.379: Next and Previous unread find the next unread message of the whole folder, loaded or not; its rows come first; the rest of a large
 #           folder's order is awaited; a folder a step opens gets its first (or last) unread message wherever it is; a held key's repeats are
 #           forgotten while a step waits, one separate press is done after it (CR-15)
@@ -188,7 +190,9 @@ class MessageListPane(QObject):
         self.model.layoutAboutToBeChanged.connect(self._note_selection)
         self.model.rearranged.connect(self._show_current_row)
         self._to_select: list[str] = []  # messages Undo brought back, selected as they take their place in the list
-        for placed in (self.model.rowsInserted, self.model.rearranged, self.model.loaded):
+        self._selected_back: set[str] = set()  # those of them selected already (a later batch adds only its own)
+        self.model.took_in.connect(self._select_newly_placed)
+        for placed in (self.model.rearranged, self.model.loaded):
             placed.connect(self._select_placed)
         self.model.selected_rows = self.selected_and_current_rows
         self.model.shown_rows = self._rows_on_screen
@@ -739,22 +743,51 @@ class MessageListPane(QObject):
         self._select_placed()
 
     def _select_placed(self, *_: object) -> None:
+        """Select every message Undo brought back that the list shows; the first is the current one, in view (a new order or a new load:
+        all of them again, once)."""
+        self._selected_back = set()
+        self._select_back(True)
+
+    def _select_newly_placed(self) -> None:
+        """Messages that came in at one moment took their places: those Undo brought back are added to the selection, the others stay
+        selected (selecting all of them again at every row froze the window for 29 s with 15,875)."""
+        self._select_back(False)
+
+    def _select_back(self, whole: bool) -> None:
         wanted = self._to_select
         if not wanted:
             return
-        if not any(self.model.arriving(message_id) for message_id in wanted):
+        if not self.model.arriving_any(wanted):
             self._to_select = []  # every one is placed, or not in this view
-        rows = sorted(row for row in (self.model.find(message_id) for message_id in wanted) if row >= 0)
-        if not rows:
+            done, self._selected_back = self._selected_back, set()
+        else:
+            done = self._selected_back
+        found = [(row, message_id) for message_id in wanted if message_id not in done and (row := self.model.find(message_id)) >= 0]
+        if not found:
             return
+        fresh = whole or not done  # the first of them to be selected: what was selected before goes
+        if self._to_select:
+            done.update(message_id for _, message_id in found)
+        rows = sorted(row for row, _ in found)
         last_column = self.model.columnCount() - 1
         selection = QItemSelection()
-        for row in rows:
-            selection.select(self.model.index(row, 0), self.model.index(row, last_column))
-        first = self.model.index(rows[0], 0)
+        start = previous = rows[0]
+        for row in rows[1:] + [-1]:
+            if row != previous + 1:  # one range per run of neighbouring rows, not one per row
+                selection.select(self.model.index(start, 0), self.model.index(previous, last_column))
+                start = row
+            previous = row
         flags = QItemSelectionModel.SelectionFlag
-        self.view.selectionModel().setCurrentIndex(first, flags.ClearAndSelect | flags.Rows)
-        self.view.selectionModel().select(selection, flags.Select | flags.Rows)
+        selected = self.view.selectionModel()
+        current = self.view.currentIndex()
+        first = self.model.index(rows[0], 0)
+        if fresh or not current.isValid():
+            selected.setCurrentIndex(first, flags.ClearAndSelect | flags.Rows)
+        elif rows[0] < current.row():
+            selected.setCurrentIndex(first, flags.NoUpdate)  # the first of them is the current one
+        else:
+            first = current
+        selected.select(selection, flags.Select | flags.Rows)
         self.view.scrollTo(first)
 
     def step_message(self, step: int) -> None:
