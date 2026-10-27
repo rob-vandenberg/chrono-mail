@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Callable
 from dataclasses import replace
 from typing import override
@@ -22,15 +23,18 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, IMPORT_EMCLIENT_SCAN, ImportParameters, ImportResult, ScanParameters, ScanResult
 from chrono_mail.engine import commands_outlook
 from chrono_mail.engine.commands_outlook import IMPORT_OUTLOOK, IMPORT_OUTLOOK_SCAN, PROGRESS_TEXT
+from chrono_mail.engine.outlook_settings import WINDOWS_ONLY, ProfileImport, ProfileScan
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.385"
+__version__ = "importdialog.py 4.2.386"
 
 # --- Version history ----------------------------------------------------
+# v4.2.386: Outlook on the Windows computer where it keeps its accounts: Accounts and Signatures offered when its profile is readable, Rules
+#           while Outlook runs (else greyed with why); the profile's data files are listed without asking for a file; the summaries count them
 # v4.2.385: Outlook under Applications: its own page (a page per program in the form), Mail, Calendar, Contacts, Tasks and Tags (categories);
 #           Accounts, Rules and Signatures greyed with a hover text; one or more data files (.pst); the same summary, progress, Stop and end;
 #           the files chosen are kept as the picker gave them (a path may hold "; "), the field only shows them; the items that got their
@@ -48,10 +52,10 @@ __version__ = "importdialog.py 4.2.385"
 MENU_TEXT: str = "Import…"  # the program to import from is chosen in the window (more programs later)
 SOURCE_NAME: str = "eM Client"
 DATA_FILE_SOURCE_NAME: str = "Outlook"
-WINDOWS_ONLY: str = "Only on the Windows computer where Outlook keeps these accounts"
 DATA_FILE_HINT: str = "Choose the data files to see what will be imported."
 DATA_FILE_SEPARATOR: str = "; "  # between the data files shown in their field (only shown: a path may hold this too)
 BATCH: int = 1000  # messages per command; Stop takes effect between batches
+PROFILE_HERE: bool = sys.platform == "win32"  # only on Windows can Outlook's profile be read
 LISTED: int = 10  # names listed in a summary before "and N more"
 
 
@@ -131,9 +135,40 @@ def import_summary(result: ImportResult, stopped: bool) -> str:
     return "\n".join(lines)
 
 
+def profile_scan_lines(profile: ProfileScan) -> list[str]:
+    """What the profile on this computer holds, in plain words (nothing when it cannot be read here)."""
+    if not profile.available:
+        return []
+    lines = [f"Accounts: {_listed(profile.accounts) or 'none'}" + (f" ({profile.accounts_here} already here)." if profile.accounts_here else ".")]
+    if profile.signatures:
+        lines.append(f"Signatures: {profile.signatures}.")
+    if profile.rules_available:
+        lines.append(f"Rules: {profile.rules}" + (f", of which blocked senders: {profile.blocked:,}" if profile.blocked else "") + ".")
+        if profile.rules_not_imported:
+            lines.append(f"Rules not imported: {_listed(profile.rules_not_imported)}")
+    return lines
+
+
+def profile_import_lines(result: ProfileImport) -> list[str]:
+    lines: list[str] = []
+    if result.accounts_added or result.accounts_existing:
+        lines.append(f"Accounts made: {result.accounts_added}; already here: {result.accounts_existing}.")
+    if result.accounts_without_password:
+        lines.append(f"Without a password (type it in Edit account): {_listed(result.accounts_without_password)}")
+    if result.signatures:
+        lines.append(f"Signatures given: {result.signatures}.")
+    if result.rules_added or result.rules_existing:
+        lines.append(f"Rules imported: {result.rules_added}; already here: {result.rules_existing}.")
+    if result.rules_not_imported:
+        lines.append(f"Rules not imported: {_listed(result.rules_not_imported)}")
+    if result.notes:
+        lines.append(f"Notes: {_listed(result.notes)}")
+    return lines
+
+
 def data_file_scan_summary(scan: commands_outlook.ScanResult) -> str:
     """What an import of the data files would bring in and where it goes, in plain words."""
-    lines: list[str] = []
+    lines: list[str] = profile_scan_lines(scan.profile)
     for found in scan.files:
         if found.problem:
             lines.append(f"{found.file}: {found.problem}")
@@ -164,12 +199,14 @@ def merge_data_files(total: commands_outlook.ImportResult, batch: commands_outlo
         groups_imported=total.groups_imported + batch.groups_imported, groups_existing=total.groups_existing + batch.groups_existing,
         groups_failed=total.groups_failed + batch.groups_failed, tasks_imported=total.tasks_imported + batch.tasks_imported,
         tasks_existing=total.tasks_existing + batch.tasks_existing, tasks_failed=total.tasks_failed + batch.tasks_failed, unreadable=total.unreadable + batch.unreadable,
+        profile=batch.profile if batch.profile != ProfileImport() else total.profile,
         failures=total.failures + batch.failures, tags_added=total.tags_added + batch.tags_added, items_tagged=total.items_tagged + batch.items_tagged, done=total.done + batch.done, left=batch.left, notes=total.notes + batch.notes,
     )
 
 
 def data_file_import_summary(result: commands_outlook.ImportResult, stopped: bool) -> str:
     lines = ["The import was stopped; Import continues where it stopped." if stopped else "The import is done."]
+    lines.extend(profile_import_lines(result.profile))
     for label, imported, existing, failed in (
         ("Messages", result.mail_imported, result.mail_existing, result.mail_failed), ("Appointments", result.events_imported, result.events_existing, result.events_failed),
         ("Contacts", result.contacts_imported, result.contacts_existing, result.contacts_failed), ("Groups", result.groups_imported, result.groups_existing, result.groups_failed),
@@ -205,6 +242,8 @@ class ImportDialog(QDialog):
         self._scan_number = 0  # the latest reading of the exports; the answer of an older one is ignored
         self._result = ImportResult()
         self._data_result = commands_outlook.ImportResult()
+        self._profile = ProfileScan()  # what the latest reading found of the profile on this computer
+        self._profile_sent = False  # the accounts, rules and signatures go with the first batch of an import only
         form = forms.fill(self, "import")  # D-276
         self.sources: QTreeWidget = forms.part(form, QTreeWidget, "sources")
         self.sources.setHeaderHidden(True)
@@ -338,10 +377,11 @@ class ImportDialog(QDialog):
         self.import_button.setEnabled(False)
         if self._reading_data_files():
             files = self._chosen_data_files()
-            if files:
+            profile = PROFILE_HERE
+            if files or profile:
                 self.summary.setText("Reading the data files…")
                 self._backend.ask(
-                    IMPORT_OUTLOOK_SCAN, commands_outlook.ScanParameters(files), lambda result: self._data_files_scanned(number, result),
+                    IMPORT_OUTLOOK_SCAN, commands_outlook.ScanParameters(files, profile=profile), lambda result: self._data_files_scanned(number, result),
                     lambda error: self._scan_failed(number, error), owner=self,
                 )
             return
@@ -366,8 +406,25 @@ class ImportDialog(QDialog):
         self._total = result.items
         self._done_before = result.done
         self.progress.setRange(0, max(1, self._total))
+        if not self._chosen_data_files() and result.profile.files:  # the profile's own data files, without asking for a file
+            self._picked = result.profile.files
+            self.data_files.setText(DATA_FILE_SEPARATOR.join(self._picked))
+        self._profile = result.profile
+        self._offer_profile()
         self.summary.setText(data_file_scan_summary(result))
-        self.import_button.setEnabled(any(not found.problem for found in result.files))  # off when no file can be read: nothing to import
+        self.import_button.setEnabled(any(not found.problem for found in result.files) or result.profile.available)  # off when there is nothing to import
+
+    def _offer_profile(self) -> None:
+        """Accounts and Signatures when the profile is readable, Rules while Outlook runs; greyed with why otherwise (OR-15)."""
+        accounts, rules, signatures = self.data_file_later
+        for box, available, reason in (
+            (accounts, self._profile.available, self._profile.reason), (rules, self._profile.rules_available, self._profile.rules_reason),
+            (signatures, self._profile.available, self._profile.reason),
+        ):
+            if available and not box.isEnabled():
+                box.setChecked(True)
+            box.setEnabled(available and not self._running)
+            box.setToolTip("" if available else reason or WINDOWS_ONLY)
 
     def _scan_failed(self, number: int, error: ChronoMailError) -> None:
         if self._running or number != self._scan_number:
@@ -392,6 +449,7 @@ class ImportDialog(QDialog):
         self._stop = False
         self._result = ImportResult()
         self._data_result = commands_outlook.ImportResult()
+        self._profile_sent = False
         for widget in self._inputs():
             widget.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -402,10 +460,10 @@ class ImportDialog(QDialog):
         self._next()
 
     def _inputs(self) -> tuple[QWidget, ...]:
-        """What is off while an import runs (Accounts, Rules and Signatures of the data files stay greyed in any case)."""
+        """What is off while an import runs."""
         return (
             self.import_button, self.close_button, self.sources, self.accounts, self.rules, self.mail, self.contacts, self.tags, self.settings_file, self.mail_folder,
-            self.backup_file, *self._data_file_types(), self.data_files,
+            self.backup_file, *self._data_file_types(), self.data_files, *self.data_file_later,
         )
 
     def _next(self) -> None:
@@ -414,6 +472,13 @@ class ImportDialog(QDialog):
                 self._chosen_data_files(), mail=self.data_file_mail.isChecked(), calendar=self.data_file_calendar.isChecked(),
                 contacts=self.data_file_contacts.isChecked(), tasks=self.data_file_tasks.isChecked(), tags=self.data_file_tags.isChecked(), batch=BATCH,
             )
+            if not self._profile_sent:
+                accounts, rules, signatures = self.data_file_later
+                choice = replace(
+                    choice, accounts=self._profile.available and accounts.isChecked(), rules=self._profile.rules_available and rules.isChecked(),
+                    signatures=self._profile.available and signatures.isChecked(),
+                )
+                self._profile_sent = True
             self._backend.ask(IMPORT_OUTLOOK, choice, self._data_file_batch_done, self._failed, owner=self)
             return
         sources = self._sources()
@@ -458,6 +523,7 @@ class ImportDialog(QDialog):
             self._on_running(False)
         for widget in self._inputs():
             widget.setEnabled(True)
+        self._offer_profile()  # what the profile cannot give stays greyed
         self.stop_button.setEnabled(False)
 
     def _progress(self, what: str, done: int, total: object) -> None:

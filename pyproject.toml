@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chrono-mail"
-version = "4.2.385"
+version = "4.2.386"
 description = "An open-source desktop email client for Linux, with the functions of a full mail program."
 readme = "README.md"
 requires-python = ">=3.14"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = [
+    "pywin32>=311; sys_platform == 'win32'",
     "cryptography>=50",
     "icalendar>=7",
     "keyring>=25.7",

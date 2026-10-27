@@ -13,12 +13,14 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.importdialog import WINDOWS_ONLY, ImportDialog, data_file_import_summary, data_file_scan_summary, merge_data_files
 from tests.enginefactory import make_engine
 from tests.test_import_outlook import FakeFile, data_file, files  # noqa: F401 - files is the fixture of the made-up data files
+from tests.test_import_outlook_profile import machine  # noqa: F401 - the fixture of the made-up profile
 from tests.ui.world import wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import_outlook.py 4.2.385"
+__version__ = "test_ui_import_outlook.py 4.2.386"
 
 # --- Version history ----------------------------------------------------
+# v4.2.386: on the Windows computer with a readable profile: Accounts, Rules and Signatures offered, its data files listed without asking
 # v4.2.385: the items that got their tags later in the end summary
 # v4.2.385: a path holding "; " stays one file
 # v4.2.385: Initial tests: Outlook in the Import window, its page, its greyed choices, the data files, the summary, the batches, Stop (made-up
@@ -161,3 +163,18 @@ def test_a_chosen_path_holding_the_separator_stays_one_file(qtbot: QtBot, setup:
     dialog.data_files.setText(str(odd))  # typed: one file
     assert dialog._chosen_data_files() == (str(odd),)
     wait(qtbot, lambda: setup.backend._pending == {})
+
+
+def test_a_readable_profile_offers_its_accounts_rules_signatures_and_data_files(
+    qtbot: QtBot, tmp_path: Path, files: dict[Path, FakeFile], machine: Path, monkeypatch: pytest.MonkeyPatch,  # noqa: F811 - the fixtures
+) -> None:
+    monkeypatch.setattr(importdialog, "PROFILE_HERE", True)
+    pst = data_file(files, machine, "anna.pst", "anna@example.com")
+    backend = Backend(make_engine(tmp_path / "profile"))
+    dialog = ImportDialog(backend, lambda: None)
+    qtbot.addWidget(dialog)
+    dialog.sources.setCurrentItem(dialog.data_file_item)
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    assert dialog.data_files.text() == str(pst) and dialog.summary.text().startswith("Accounts: anna@example.com (POP3)")
+    assert all(box.isEnabled() and box.isChecked() and box.toolTip() == "" for box in dialog.data_file_later)
+    backend.wait_for_done(5000)

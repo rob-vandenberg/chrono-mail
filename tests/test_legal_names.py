@@ -3,9 +3,12 @@ import subprocess
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_legal_names.py 4.2.385"
+__version__ = "test_legal_names.py 4.2.386"
 
 # --- Version history ----------------------------------------------------
+# v4.2.386: The import and export of the profile, rules and signatures of the second program are part of its import: their files and
+#           module names (outlook_windows, outlook_rules, outlook_settings, outlook_profile) are allowed as its other files
+# v4.2.386: The export to the second program is the mirror of its import: its command, window and tests may name it (OR-10)
 # v4.2.385: The import from a data file may name the program it imports from, in its own files only (OR-10); everywhere else the check
 #           refuses that name as it refuses the first one; also the forms (.ui), the installer and script files (.iss, .sh, .ps1), .yaml and
 #           .xml are checked
@@ -37,12 +40,18 @@ SECOND = "out" + "look"
 SECOND_FORBIDDEN = re.compile(r"(?<![a-z0-9])" + SECOND)
 SECOND_FILES: frozenset[str] = frozenset({
     "src/chrono_mail/engine/commands_" + SECOND + ".py",
+    *("src/chrono_mail/engine/" + SECOND + "_" + part + ".py" for part in ("windows", "rules", "settings", "profile")),
+    "tests/test_import_" + SECOND + "_profile.py",
     "src/chrono_mail/ui/importdialog.py",
     "tests/test_import_" + SECOND + ".py",
     "tests/ui/test_ui_import_" + SECOND + ".py",
+    "src/chrono_mail/engine/commands_" + SECOND + "_export.py",
+    "src/chrono_mail/ui/exportdialog.py",
+    "tests/test_export_" + SECOND + ".py",
+    "tests/ui/test_ui_export_" + SECOND + ".py",
 })
 SECOND_PARTS: tuple[str, ...] = ("src/chrono_mail/pst/", "tests/test_pst_")  # the reader of its data files is part of that import
-SECOND_NAMES = re.compile(r"commands_" + SECOND + r"|test_(?:ui_)?import_" + SECOND + r"|import\." + SECOND + r"[a-z-]*")
+SECOND_NAMES = re.compile(r"commands_" + SECOND + r"|" + SECOND + r"_(?:windows|rules|settings|profile)\b|test_(?:ui_)?(?:im|ex)port_" + SECOND + r"|(?:im|ex)port\." + SECOND + r"[a-z-]*")
 CHECKED_SUFFIXES: frozenset[str] = frozenset({".md", ".toml", ".py", ".desktop", ".svg", ".txt", ".ui", ".iss", ".sh", ".ps1", ".yaml", ".xml"})
 
 

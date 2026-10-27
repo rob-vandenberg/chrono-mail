@@ -3238,3 +3238,11 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 4. Three review rounds by fresh reviewers (about 50 faults found and fixed, each with a test that failed before); a real 56-message file of the owner imported in a throwaway profile (counts only): 56 of 56, nothing twice, resume after a restart the same. Tests: 94 reader tests, 37 import tests, the existing import's tests, the calendar and task tests, the window tests; the 9 guard tests; Pyrefly 0 on Linux and win32; the layer check kept.
 5. The owner's Q1A: that program's own export marks only its Inbox and Deleted Items (a file in use marks all its standard folders), so for a data file only, a standard folder without its mark is known by that program's name for it, English or Dutch; a mark always wins (D-278).
 6. Open: a real test file made by that program with made-up items (the Windows computer); step 3 onward.
+
+## 2026-10-27 4.2.386: export to the office suite's mail program, and its accounts, rules and signatures
+
+1. Steps 3 to 6 of the job (D-279), built the owner's quick way: one build and one check per step, one test round at the end, no review rounds.
+2. Import on the Windows computer: that program's POP3 and IMAP accounts from its profile with their passwords (decrypted by Windows for the same user), its rules (whole or not at all, the reason named), its blocked senders as junk rules, each account's signature; only while that program runs for the rules.
+3. Export: Menu > File > Export…, one data file per POP3 account and one for Local Folders, written by our own write-once .pst writer (mail with headers, bodies, attachments and marks; calendar items with repeats and time zones; contacts and groups; tasks; categories); accounts as its profile file without passwords; rules into that program while it runs.
+4. Checks: the automatic round trip (2 POP3 and 2 IMAP accounts, mail, a repeating event with a moved and a deleted occurrence, contacts, a group, tasks) exports and imports back the same; a demo export of 7,715 messages, 242 events, 52 contacts and 64 tasks reads back with 0 failures. The touched tests pass; Pyrefly 0 on the program; the layer check kept.
+5. Open: the Windows computer's runs (the program opening our files, its repair tool's check, the registry, passwords and rules, the profile file).

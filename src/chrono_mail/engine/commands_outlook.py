@@ -29,6 +29,7 @@ from chrono_mail.engine.groups import groups_of_book
 from chrono_mail.engine.import_common import MAXIMUM_MESSAGE_BYTES, MAXIMUM_REPORTED, Journal, fingerprint_of_raw, known_copies, still_here
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
+from chrono_mail.engine.outlook_settings import ProfileImport, ProfileScan, import_profile, scan_profile
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
@@ -38,9 +39,11 @@ from chrono_mail.pst.model import PstContact, PstError, PstEvent, PstFailure, Ps
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outlook.py 4.2.385"
+__version__ = "commands_outlook.py 4.2.386"
 
 # --- Version history ----------------------------------------------------
+# v4.2.386: Accounts, rules and signatures from Outlook's profile on the Windows computer where it keeps them (outlook_settings); the scan
+#           reads the profile and its data files when asked; a data file of a POP3 account the import makes goes into that account
 # v4.2.385: Initial version: import.outlook-scan and import.outlook (mail where Outlook had it, calendars, contacts, groups, tasks, categories;
 #           in batches, resumable through a journal per data file, nothing stored twice); the review: never into Chrono Mail's own folders,
 #           a blank folder name gets one, one bad item fails only itself, an item number given twice keeps what was stored, one journal per
@@ -89,7 +92,8 @@ def read_items(path: Path, start: int) -> Iterator[tuple[int, PstItem]]:
 
 @dataclass(frozen=True, slots=True)
 class ScanParameters:
-    files: tuple[str, ...] = field(metadata=option("A data file (.pst) to import from (repeat)"))
+    files: tuple[str, ...] = field(default=(), metadata=option("A data file (.pst) to import from (repeat)"))
+    profile: bool = field(default=False, metadata=option("Also read the accounts, rules, signatures and data files of Outlook's profile on this computer (Windows)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +114,7 @@ class FileScan:
 @dataclass(frozen=True, slots=True)
 class ScanResult:
     files: tuple[FileScan, ...]
+    profile: ProfileScan = ProfileScan()
 
     @property
     def items(self) -> int:
@@ -122,13 +127,16 @@ class ScanResult:
 
 @dataclass(frozen=True, slots=True)
 class ImportParameters:
-    files: tuple[str, ...] = field(metadata=option("A data file (.pst) to import from (repeat)"))
+    files: tuple[str, ...] = field(default=(), metadata=option("A data file (.pst) to import from (repeat)"))
     mail: bool = field(default=True, metadata=option("Import the mail"))
     calendar: bool = field(default=True, metadata=option("Import the calendars into Local Folders"))
     contacts: bool = field(default=True, metadata=option("Import the contacts and their groups into Local Folders"))
     tasks: bool = field(default=True, metadata=option("Import the tasks into Local Folders"))
     tags: bool = field(default=True, metadata=option("Import the categories as tags"))
     batch: int = field(default=0, metadata=option("Items per run (0: all); run again to continue"))
+    accounts: bool = field(default=False, metadata=option("Import the POP3 and IMAP accounts of Outlook's profile on this computer (Windows), with their passwords"))
+    rules: bool = field(default=False, metadata=option("Import Outlook's rules and blocked senders (Windows, while Outlook runs)"))
+    signatures: bool = field(default=False, metadata=option("Give the accounts here their signature from Outlook's profile (Windows)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +163,7 @@ class ImportResult:
     done: int = 0  # items this run went through
     left: int = 0  # about how many items are still to do (0: the import is complete)
     notes: tuple[str, ...] = ()
+    profile: ProfileImport = ProfileImport()
 
 
 # --- where things go ------------------------------------------------------------------------------
@@ -298,13 +307,15 @@ def _left_out(store: PstStore) -> tuple[str, ...]:
 # --- the scan -------------------------------------------------------------------------------------
 
 
-def _scan_file(engine: Engine, text: str) -> FileScan:
+def _scan_file(engine: Engine, text: str, coming: frozenset[str] = frozenset()) -> FileScan:
     try:
         path = _checked_path(text)
         store = read_store(path)
     except (UsageError, PstError) as error:
         return FileScan(text, problem=str(error))
     place = _place(engine, store)
+    if place.account == LOCAL_ACCOUNT_ID and place.top and place.top[0].lower() in coming:
+        place = replace(place, words=f"the account {place.top[0]} when Accounts is chosen (else {place.words})")
     counts: dict[CollectionKind | None, int] = {}
     for folder in store.folders:
         if not folder.unsupported:
@@ -319,9 +330,13 @@ def _scan_file(engine: Engine, text: str) -> FileScan:
 def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
     """What an import of these data files would bring in and where it would go; changes nothing."""
     files = tuple(text for text in parameters.files if text.strip())
+    profile = scan_profile(engine) if parameters.profile else ProfileScan()
     if not files:
+        files = profile.files
+    if not files and not profile.available:
         raise UsageError("Choose a data file (.pst) to import from")
-    return ScanResult(tuple(_scan_file(engine, text) for text in files))
+    coming = frozenset(address.lower() for address in profile.coming)
+    return ScanResult(tuple(_scan_file(engine, text, coming) for text in files), profile)
 
 
 # --- one import, kept between its batches ----------------------------------------------------------
@@ -742,13 +757,21 @@ def _close(items: Iterator[tuple[int, PstItem]]) -> None:
 def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
     """Import from the data files, up to batch items per run (0: all); run again until nothing is left."""
     texts = tuple(text for text in parameters.files if text.strip())
-    if not texts:
+    from_profile = parameters.accounts or parameters.rules or parameters.signatures
+    if not texts and not from_profile:
         raise UsageError("Choose a data file (.pst) to import from")
-    if not (parameters.mail or parameters.calendar or parameters.contacts or parameters.tasks):
+    if not (parameters.mail or parameters.calendar or parameters.contacts or parameters.tasks or from_profile):
         raise UsageError("Choose what to import")
+    profile = ProfileImport()
+    if from_profile:
+        profile = import_profile(engine, parameters.accounts, parameters.rules, parameters.signatures)
+        if profile.accounts_added:
+            finished_run()  # a data file named after an account made now goes into that account
+    if not texts or not (parameters.mail or parameters.calendar or parameters.contacts or parameters.tasks):
+        return ImportResult(profile=profile)
     run = _run_for(engine, texts)
     try:
-        return _import_run(engine, parameters, run)
+        return replace(_import_run(engine, parameters, run), profile=profile)
     except BaseException:
         finished_run()  # a batch that failed (it may not be safe on disk): Import again rebuilds the mail here from the index and the journals
         raise

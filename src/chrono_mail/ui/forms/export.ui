@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>Export</class>
+ <widget class="QWidget" name="Export">
+  <property name="windowTitle">
+   <string>Export</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout" stretch="1,0">
+   <item>
+    <layout class="QHBoxLayout" name="body" stretch="0,1">
+     <item>
+      <layout class="QVBoxLayout" name="left" stretch="0,1">
+       <item>
+        <widget class="QLabel" name="exportTo">
+         <property name="text">
+          <string>Export to:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QTreeWidget" name="programs"/>
+       </item>
+      </layout>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="right" stretch="0,0,0,0,0,0,0,0,0,0,1,0,0,1,0">
+       <item>
+        <widget class="QLabel" name="title">
+         <property name="role" stdset="0">
+          <string>heading</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="chooseTypes">
+         <property name="text">
+          <string>Choose what to export:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="mail">
+         <property name="text">
+          <string>Mail</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="calendar">
+         <property name="text">
+          <string>Calendar</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="contacts">
+         <property name="text">
+          <string>Contacts and contact groups</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="tasks">
+         <property name="text">
+          <string>Tasks</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="tags">
+         <property name="text">
+          <string>Tags (as categories)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="accounts">
+         <property name="text">
+          <string>Accounts (a profile file to import)</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="rules">
+         <property name="text">
+          <string>Rules</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="chooseAccounts">
+         <property name="text">
+          <string>Accounts:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QListWidget" name="accountList"/>
+       </item>
+       <item>
+        <widget class="QLabel" name="folderLabel">
+         <property name="text">
+          <string>Folder to write the files in:</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="folderRow" stretch="1,0">
+         <item>
+          <widget class="QLineEdit" name="folder"/>
+         </item>
+         <item>
+          <widget class="QPushButton" name="browseFolder">
+           <property name="text">
+            <string>Browse</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QScrollArea" name="summaryArea">
+         <property name="widgetResizable">
+          <bool>true</bool>
+         </property>
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
+         </property>
+         <widget class="QLabel" name="summary">
+          <property name="text">
+           <string>Choose a folder to export to.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignLeft|Qt::AlignTop</set>
+          </property>
+         </widget>
+        </widget>
+       </item>
+       <item>
+        <widget class="QProgressBar" name="progress"/>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="buttons" stretch="1,0,0,0">
+     <item>
+      <spacer name="buttonsStart">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="export">
+       <property name="text">
+        <string>Export</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="stop">
+       <property name="text">
+        <string>Stop</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="close">
+       <property name="text">
+        <string>Close</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

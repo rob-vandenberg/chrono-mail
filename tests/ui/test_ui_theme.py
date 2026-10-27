@@ -18,9 +18,10 @@ from chrono_mail.ui.toolbar import ToolbarRow
 from tests.ui.world import World, dialogs, menu_named, settle, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 2.4.323"
+__version__ = "test_ui_theme.py 4.2.386"
 
 # --- Version history ----------------------------------------------------
+# v4.2.386: File has Export… below Import…
 # v2.4.323: Backup… is one word (the owner)
 # v2.4.322: the File menu has Back up… and Restore…, and the key items are named after the recovery code (D-244)
 # v2.0.293: the selection colour is the row's most common colour, never one pixel a letter can cover (the Windows computer's report of 2.0.287)
@@ -60,7 +61,7 @@ def test_one_menu_button_holds_the_menus_and_the_heading_follows_the_section(wor
     assert len(bar_actions) == 1 and "Menu" in bar_actions[0].text()
     assert [action.text().replace("&", "") for action in menu_named(window).actions()] == ["Settings…", "Accounts…", "Rules…", "Tags…", "Sync conflicts…", "", "File", "Message", "Folder", "View", "Help", "", "Exit"]
     assert window.act_settings.shortcut().toString() == "Ctrl+," and window.act_quit.text() == "Exit" and window.act_quit.shortcut().toString() == ""
-    assert [action.text() for action in menu_named(window, "File").actions()] == ["New", "Refresh", "", "Backup…", "Restore…", "", "Import…", "", "Show the recovery code…", "Use a recovery code…"]
+    assert [action.text() for action in menu_named(window, "File").actions()] == ["New", "Refresh", "", "Backup…", "Restore…", "", "Import…", "Export…", "", "Show the recovery code…", "Use a recovery code…"]
     assert window.side_heading.text() == "Mail"
     window.section_bar.buttons[CALENDAR].click()
     assert window.side_heading.text() == "Calendar"

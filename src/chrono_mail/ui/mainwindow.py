@@ -28,6 +28,7 @@ from chrono_mail.ui.icons import application_icon, theme_icon
 from chrono_mail.ui.backupdialog import MENU_TEXT as BACKUP_MENU_TEXT, BackupWindow, may_quit
 from chrono_mail.ui.importdialog import MENU_TEXT as IMPORT_MENU_TEXT
 from chrono_mail.ui.importdialog import ImportDialog
+from chrono_mail.ui.exportdialog import ExportDialog
 from chrono_mail.ui.restoredialog import MENU_TEXT as RESTORE_MENU_TEXT, RestoreWindow
 from chrono_mail.ui.indexrebuilds import IndexRebuilds
 from chrono_mail.ui.mailchecking import MailChecking
@@ -61,9 +62,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.0.374"
+__version__ = "mainwindow.py 4.2.386"
 
 # --- Version history ----------------------------------------------------
+# v4.2.386: Menu > File > Export… (the Export window), below Import
 # v4.0.374: the Settings window is deleted once it is closed and read (every opening kept one in memory for good); the refresh after an
 #           account added from it reloads it only while it is open
 # v3.6.371: the wallet's entries get readable labels at start (B-23, D-275)
@@ -491,6 +493,7 @@ class MainWindow(QMainWindow):
         self.act_backup = self._action(BACKUP_MENU_TEXT, lambda: self.backups.show())
         self.act_restore = self._action(RESTORE_MENU_TEXT, lambda: self.restores.start())
         self.act_import = self._action(IMPORT_MENU_TEXT, self.show_import)
+        self.act_export = self._action("Export…", self.show_export)
         self.act_restore_key = self._action("Use a recovery code…", self.restore_key)
         self.act_restore_key.setToolTip("Get the encryption key back with its recovery code or a recovery file")
         self.act_settings = self._action("Settings…", lambda: self.open_settings(), "Ctrl+,", "configure")
@@ -629,6 +632,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.act_restore)
         file_menu.addSeparator()
         file_menu.addAction(self.act_import)
+        file_menu.addAction(self.act_export)
         file_menu.addSeparator()
         file_menu.addAction(self.act_recovery)
         file_menu.addAction(self.act_restore_key)
@@ -1266,6 +1270,10 @@ class MainWindow(QMainWindow):
     def show_import(self) -> None:
         """File > Import: accounts, rules, contacts and mail; the folder list is loaded again after each import."""
         ImportDialog(self.backend, self._after_import, self, on_running=self.checking.import_running).exec()
+
+    def show_export(self) -> None:
+        """File > Export: data files, accounts and rules for another program; nothing here changes."""
+        ExportDialog(self.backend, self).exec()
 
     def _after_import(self) -> None:
         """New accounts, folders and mail: the folder list with its counts, then the list on screen (its selection did not change, so it would keep the old messages)."""
