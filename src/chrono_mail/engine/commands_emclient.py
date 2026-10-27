@@ -5,11 +5,8 @@ where it stopped. A message that was already in Local Folders before the import 
 check of an imported account records mail that is already here instead of downloading it again (skip_known_mail)."""
 
 import json
-import os
-import re
 import threading
 from dataclasses import dataclass, field, replace
-from datetime import datetime
 from pathlib import Path
 
 from chrono_mail.config import Rule, ServerRole, load_rules, load_tags, new_rule_id, save_rules, save_tags
@@ -19,7 +16,6 @@ from chrono_mail.engine.commands_tags import give_colours
 from chrono_mail.engine.commands_addressbook import AddParameters, AddressesParameters, contact_add, contact_addresses
 from chrono_mail.engine.emclient_source import (
     STANDARD_FOLDERS,
-    MAXIMUM_HEADER_BYTES,
     MAXIMUM_MESSAGE_BYTES,
     BackupData,
     MessageFile,
@@ -31,20 +27,25 @@ from chrono_mail.engine.emclient_source import (
     read_backup,
     read_settings,
 )
+from chrono_mail.engine.import_common import EVERYTHING, MAXIMUM_REPORTED, Journal, fingerprint, fingerprint_of_raw, known_messages, still_here  # EVERYTHING and fingerprint: their names here stay
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.engine.walletlabels import label_account
-from chrono_mail.mime import parse_message
 from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 3.6.371"
+__version__ = "commands_emclient.py 4.2.385"
 
 # --- Version history ----------------------------------------------------
+# v4.2.385: the journal is written only when the batch was made safe on disk (an error there no longer records the messages as done), and
+#           a failed batch forgets the run, so Import again finds the messages it stored as duplicates; a message whose tags could not be
+#           given stays imported (not failed) and gets its tags with a later import with Tags (tried once per import, not per batch);
+#           the fingerprint, the mail already here, the journal and the check of a copy on disk moved to import_common (shared with the
+#           import from a data file); their names here stay as they were
 # v3.6.371: the passwords stored again get readable labels in the wallet (B-23, D-275)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -60,113 +61,9 @@ __version__ = "commands_emclient.py 3.6.371"
 
 
 JOURNAL_FILE: str = "import-emclient.log"
-EVERYTHING: int = 2**62
-MAXIMUM_REPORTED: int = 200  # failures listed per run; the rest are counted
 _ROLE_NAMES: dict[str, FolderRole] = STANDARD_FOLDERS  # the same table as the rules (one place)
-
-
-# --- telling the same message apart -----------------------------------------------------------------
-
-
-def _plain(text: str) -> str:
-    return "".join(character for character in text if character >= " ").strip().lower()
-
-
-def _address(sender: str) -> str:
-    """'Name <a@example.com>' or 'a@example.com' -> 'a@example.com'."""
-    found = re.search(r"<([^<>]*)>\s*$", sender)
-    return (found.group(1) if found else sender).strip().lower()
-
-
-def fingerprint(message_id: str | None, date: datetime | None, sender: str, subject: str) -> str | None:
-    """What makes two copies the same message: the Message-ID, or without one the date, the sender and the subject."""
-    if message_id and message_id.strip("<> "):
-        return "id:" + message_id.strip().strip("<>").lower()
-    if date is None:
-        return None
-    return f"m:{int(date.timestamp())}|{_address(sender)}|{_plain(subject)}"
-
-
-def fingerprint_of_raw(raw: bytes) -> str | None:
-    """The fingerprint of a raw message, from its header only (the same parser as the index, without the body)."""
-    end = re.search(rb"\r?\n\r?\n", raw[:MAXIMUM_HEADER_BYTES])
-    parsed = parse_message(raw[: end.end()] if end is not None else raw)
-    sender = parsed.from_addresses[0].address if parsed.from_addresses else ""
-    return fingerprint(parsed.message_id, parsed.date, sender, parsed.subject)
-
-
-def known_messages(mailbox: Mailbox, leave_out: frozenset[str] = frozenset()) -> dict[str, str]:
-    """fingerprint -> store id of every message in the mailbox (from its index), except the store ids left out."""
-    known: dict[str, str] = {}
-    for folder in mailbox.store.list_folders():
-        for message in mailbox.index.page(folder.path, limit=EVERYTHING):
-            if message.store_id in leave_out:
-                continue
-            key = fingerprint(message.message_id, message.date, message.sender, message.subject)
-            if key is not None:
-                known.setdefault(key, message.store_id)
-    return known
-
-
-# --- the journal ----------------------------------------------------------------------------------
-
-
-class _Journal:
-    """What an import has done, one JSON line per step, appended. It belongs to one mail export (or settings file):
-    another source starts a new journal. A last line cut off by a crash is ignored."""
-
-    def __init__(self, path: Path, source: str) -> None:
-        self.path = path
-        self.phases: set[str] = set()
-        self.done: dict[str, str] = {}  # relative path -> store id, "duplicate" or "failed"
-        lines: list[object] = []
-        try:
-            for line in path.read_text("utf-8").splitlines():
-                try:
-                    lines.append(load_json(line))
-                except ValueError:
-                    continue
-        except (OSError, UnicodeDecodeError):
-            lines = []
-        if not lines or lines[0] != ["source", source]:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(["source", source]) + "\n", "utf-8")
-            return
-        for entry in lines[1:]:
-            if isinstance(entry, list) and len(entry) == 2 and entry[0] == "phase" and isinstance(entry[1], str):
-                self.phases.add(entry[1])
-            elif isinstance(entry, list) and len(entry) == 3 and entry[0] == "mail" and isinstance(entry[1], str) and isinstance(entry[2], str):
-                self.done[entry[1]] = entry[2]
-
-    def imported_ids(self) -> frozenset[str]:
-        return frozenset(value for value in self.done.values() if value not in ("duplicate", "failed"))
-
-    def _append(self, entry: list[str]) -> None:
-        with open(self.path, "a", encoding="utf-8") as stream:
-            stream.write(json.dumps(entry) + "\n")
-
-    def phase(self, name: str) -> None:
-        self.phases.add(name)
-        self._append(["phase", name])
-
-    def messages(self, outcomes: list[tuple[str, str]]) -> None:
-        """Several messages done, in one write."""
-        if not outcomes:
-            return
-        with open(self.path, "a", encoding="utf-8") as stream:
-            for relative, outcome in outcomes:
-                self.done[relative] = outcome
-                stream.write(json.dumps(["mail", relative, outcome]) + "\n")
-
-    def finish(self) -> None:
-        try:
-            descriptor = os.open(self.path, os.O_RDONLY)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
-        except OSError:
-            pass  # a lost line only means that message is found again as a duplicate
+_Journal = Journal  # the journal, the fingerprint and the check of a copy on disk are shared by every importer (import_common)
+_still_here = still_here
 
 
 # --- parameters and results -----------------------------------------------------------------------
@@ -486,6 +383,7 @@ class _Run:
     backup: BackupData | None
     known: dict[str, str] | None = None
     with_tags: bool = True  # Tags is chosen: imported mail gets its categories as tags
+    tags_given: bool = False  # the tags waiting from earlier imports were tried by this import (once per import, not per batch)
 
 
 _RUN: list[_Run] = []  # the one import that runs (at most one entry)
@@ -514,68 +412,90 @@ def _finished_run() -> None:
         _RUN.clear()
 
 
-def _still_here(mailbox: Mailbox, store_id: str) -> bool:
-    """Is the copy that makes a message a duplicate really here and readable? (After a crash the index may name a copy
-    that was never made safe on disk; then the message is imported again.)"""
-    row = mailbox.index.get(store_id)
-    if row is None:
-        return False
-    try:
-        mailbox.store.verify(MessageRef(mailbox.store.account_id, row.folder, store_id), hint=row.path)
-    except ChronoMailError:
-        return False
-    return True
+UNTAGGED: str = "untagged:"  # journal value: a message imported whose tags could not be given; a later run with Tags gives them
 
 
-def _import_mail(engine: Engine, mail_path: Path, run: _Run, journal: _Journal, batch: int) -> tuple[int, int, list[str], int]:
-    """Up to batch messages (0: all) that are not done yet. Returns imported, duplicates, failures and how many are left.
-    The batch is made safe on disk at once at its end, and only then written in the journal as done."""
+def _give_waiting_tags(engine: Engine, journal: _Journal) -> tuple[int, int]:
+    """Messages imported whose tags could not be given then get them now (once). Returns (given, still waiting)."""
+    waiting = [(key, value) for key, value in journal.values.items() if key.startswith(UNTAGGED) and value]
+    if not waiting:
+        return 0, 0
+    given = failed = 0
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        for key, value in waiting:
+            try:
+                found = load_json(value)
+                if isinstance(found, list) and len(found) == 2 and isinstance(found[0], str) and isinstance(found[1], list):
+                    row = mailbox.index.get(found[0])
+                    if row is not None:  # deleted since: nothing to give
+                        current = mailbox.tags_of(found[0])
+                        wanted = clean_tags([*current, *(str(tag) for tag in found[1])])
+                        if wanted != current:
+                            mailbox.set_tags(MessageRef(mailbox.store.account_id, row.folder, found[0]), wanted)
+                        given += 1
+            except Exception:  # noqa: BLE001 - tried again by the next import
+                failed += 1
+                continue
+            journal.remember(key, "")
+    return given, failed
+
+
+def _import_mail(engine: Engine, mail_path: Path, run: _Run, journal: _Journal, batch: int) -> tuple[int, int, list[str], int, int]:
+    """Up to batch messages (0: all) that are not done yet. Returns imported, duplicates, failures, how many are left and how many messages
+    are imported whose tags could not be given (they get them with a later run). The batch is made safe on disk at once at its end, and only
+    then written in the journal as done."""
     ensure_local_folders(engine)
     files = [item for item in run.files if item.relative not in journal.done]
     imported = duplicates = 0
     failed: list[str] = []
     outcomes: list[tuple[str, str]] = []
+    untagged: list[tuple[str, str]] = []
     work = files if batch <= 0 else files[:batch]
     done_before = len(run.files) - len(files)  # by earlier batches and earlier imports: the count runs on over the whole import
-    try:
-        with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox, mailbox.store.written_together():
-            if run.known is None:
-                run.known = known_messages(mailbox, journal.imported_ids())
-            known = run.known
-            folders = _Folders(mailbox)
-            for number, item in enumerate(work, 1):
-                engine.progress("Importing mail", done_before + number, len(run.files))
-                try:
-                    path = mail_path / item.relative
-                    if path.stat().st_size > MAXIMUM_MESSAGE_BYTES:
-                        raise UsageError("the message is larger than the limit")
-                    raw = path.read_bytes()
-                    message_id, moment = message_keys(raw)
-                    found = run.backup.take(item.folder, message_id, moment) if run.backup is not None else None
-                    marks, tags = found if found is not None else (None, ())
-                    key = fingerprint_of_raw(raw)
-                    present = known.get(key) if key is not None else None
-                    if present is not None and _still_here(mailbox, present):
-                        outcomes.append((item.relative, "duplicate"))
-                        duplicates += 1
-                        continue
-                    reference = mailbox.deliver(folders.target(item.folder), raw, marks if marks is not None else frozenset({MessageFlag.SEEN}))
-                    if tags and run.with_tags:
-                        mailbox.set_tags(reference, tags)
-                except (ChronoMailError, OSError) as error:
-                    outcomes.append((item.relative, "failed"))
-                    if len(failed) < MAXIMUM_REPORTED:
-                        failed.append(f"{item.relative}: {error}")
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox, mailbox.store.written_together():
+        if run.known is None:
+            run.known = known_messages(mailbox, journal.imported_ids())
+        known = run.known
+        folders = _Folders(mailbox)
+        for number, item in enumerate(work, 1):
+            engine.progress("Importing mail", done_before + number, len(run.files))
+            try:
+                path = mail_path / item.relative
+                if path.stat().st_size > MAXIMUM_MESSAGE_BYTES:
+                    raise UsageError("the message is larger than the limit")
+                raw = path.read_bytes()
+                message_id, moment = message_keys(raw)
+                found = run.backup.take(item.folder, message_id, moment) if run.backup is not None else None
+                marks, tags = found if found is not None else (None, ())
+                key = fingerprint_of_raw(raw)
+                present = known.get(key) if key is not None else None
+                if present is not None and _still_here(mailbox, present):
+                    outcomes.append((item.relative, "duplicate"))
+                    duplicates += 1
                     continue
-                outcomes.append((item.relative, reference.store_id))
-                imported += 1
-    finally:
-        journal.messages(outcomes)  # after written_together made the batch safe on disk
-        journal.finish()
+                reference = mailbox.deliver(folders.target(item.folder), raw, marks if marks is not None else frozenset({MessageFlag.SEEN}))
+                if tags and run.with_tags:
+                    try:
+                        mailbox.set_tags(reference, tags)
+                    except Exception:  # noqa: BLE001 - the message is stored: it stays imported, its tags come with a later run
+                        untagged.append((UNTAGGED + item.relative, json.dumps([reference.store_id, list(tags)])))
+            except (ChronoMailError, OSError) as error:
+                outcomes.append((item.relative, "failed"))
+                if len(failed) < MAXIMUM_REPORTED:
+                    failed.append(f"{item.relative}: {error}")
+                continue
+            outcomes.append((item.relative, reference.store_id))
+            imported += 1
+    # only here, once written_together made the batch safe on disk without an error: an error there leaves the journal as it was (those
+    # messages are found again as duplicates, never recorded as done while not safe)
+    journal.messages(outcomes)
+    for key, value in untagged:
+        journal.remember(key, value)
+    journal.finish()
     left = len(files) - len(work)
     if left == 0:
         _finished_run()
-    return imported, duplicates, failed, left
+    return imported, duplicates, failed, left, len(untagged)
 
 
 def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
@@ -623,11 +543,24 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
             notes.append(f"Tags: {missing} tagged messages are not here yet; they get their tags when they are imported")
         result = replace(result, tags_added=added, messages_tagged=tagged)
         journal.phase("tags")
+    if parameters.tags and (run is None or not run.tags_given):
+        if run is not None:
+            run.tags_given = True  # a record that fails is tried again by a later import, not by the next batch
+        given, waiting = _give_waiting_tags(engine, journal)
+        result = replace(result, messages_tagged=result.messages_tagged + given)
+        if waiting:
+            notes.append(f"Tags: {waiting} imported messages could not get their tags yet; the next import tries again")
     if run is not None:
         run.with_tags = parameters.tags
     if parameters.mail and mail_path is not None and run is not None:
-        imported, duplicates, failed, left = _import_mail(engine, mail_path, run, journal, parameters.batch)
+        try:
+            imported, duplicates, failed, left, tags_later = _import_mail(engine, mail_path, run, journal, parameters.batch)
+        except BaseException:
+            _finished_run()  # a batch that failed (it may not be safe on disk): Import again finds the mail here again from the index
+            raise
         result = replace(result, messages_imported=imported, messages_duplicate=duplicates, messages_failed=tuple(failed), messages_left=left)
+        if tags_later:
+            notes.append(f"Tags: {tags_later} messages are imported; their tags come with the next import")
     return replace(result, notes=tuple(notes))
 
 

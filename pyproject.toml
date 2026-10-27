@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chrono-mail"
-version = "4.1.384"
+version = "4.2.385"
 description = "An open-source desktop email client for Linux, with the functions of a full mail program."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -14,6 +14,7 @@ dependencies = [
     "cryptography>=50",
     "icalendar>=7",
     "keyring>=25.7",
+    "libpff-python>=20260926",
     "platformdirs>=4.3",
     "publicsuffixlist>=1.1",
     "PySide6>=6.12",
@@ -73,7 +74,7 @@ layers = [
     "chrono_mail.engine",
     "chrono_mail.sync",
     "chrono_mail.pimstore",
-    "chrono_mail.store | chrono_mail.index | chrono_mail.protocols",
+    "chrono_mail.store | chrono_mail.index | chrono_mail.protocols | chrono_mail.pst",
     "chrono_mail.crypto | chrono_mail.mime | chrono_mail.config | chrono_mail.pim",
     "chrono_mail.core",
 ]
@@ -89,6 +90,7 @@ source_modules = [
     "chrono_mail.store",
     "chrono_mail.index",
     "chrono_mail.protocols",
+    "chrono_mail.pst",
     "chrono_mail.pim",
     "chrono_mail.pimstore",
     "chrono_mail.sync",

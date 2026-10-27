@@ -9,14 +9,16 @@ from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
-from chrono_mail.pim.ical import Moment, Task, advance_task, complete_task, new_uid, parse_tasks, reopen_task, tasks_to_text
+from chrono_mail.pim.ical import Moment, Task, advance_task, complete_task, new_uid, parse_tasks, reopen_task, given_parts, kept_from, tasks_to_text
 from chrono_mail.pim.times import moment_at, format_moment, local_zone, parse_moment, zone_named
 from chrono_mail.pimstore import IndexedItem, ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_tasklist.py 3.6.351"
+__version__ = "commands_tasklist.py 4.2.385"
 
 # --- Version history ----------------------------------------------------
+# v4.2.385: task.import builds the text afresh as before and keeps from the text given only the time zones the task uses (VTIMEZONE), its
+#           X- properties and its CREATED (pim.ical.kept_from): a zone of its own was lost, so its times became floating after a restart
 # v3.6.351: a task's floating start or due time stays floating on an edit without a zone
 # v3.6.349: a due date without the platform's conversion (RV-201); a task whose due time goes keeps its reminders, counted from the start (RELATED=END needs a due time, RV-189)
 # v3.2.342: a task's reminder in minutes counts back from its due time (RELATED=END), as the window says (RV-99)
@@ -498,9 +500,11 @@ def task_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
             tasks = parse_tasks(parameters.text)
             if not tasks:
                 raise UsageError("No task could be read from this text")
+            given = given_parts(parameters.text, "VTODO")  # read once for the whole text
             for task in tasks:
                 known = store.index.find_uid(info.collection_id, task.uid)
-                items.append(writer.put(info, tasks_to_text(task), known.item_id if known else None))
+                text = kept_from(tasks_to_text(task), given, task.uid, "VTODO")  # its own time zones, X- and CREATED kept
+                items.append(writer.put(info, text, known.item_id if known else None))
                 if known:
                     updated += 1
                 else:

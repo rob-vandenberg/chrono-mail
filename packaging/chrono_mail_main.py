@@ -1,10 +1,12 @@
+import multiprocessing
 import os
 import sys
 
 # --- Version ------------------------------------------------------------
-__version__ = "chrono_mail_main.py 0.5.127"
+__version__ = "chrono_mail_main.py 4.2.385"
 
 # --- Version history ----------------------------------------------------
+# v4.2.385: a copy of the program started to read a data file in a process of its own runs only that (multiprocessing.freeze_support)
 # v0.5.127: Initial: the start of the packaged program (Nuitka builds it into the chrono-mail executable); tells Qt where
 #           the helper program and the files of the HTML viewer are
 
@@ -22,6 +24,7 @@ def _point_qt_to_the_html_viewer() -> None:
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()  # the import reads a data file in a process of its own (pst/isolated.py)
     _point_qt_to_the_html_viewer()
     from chrono_mail.ui import main
 

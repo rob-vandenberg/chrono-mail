@@ -10,14 +10,16 @@ from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
-from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Reminder, MAXIMUM_OCCURRENCES, events_to_text, new_uid, occurrences, parse_events
+from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Reminder, MAXIMUM_OCCURRENCES, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
 from chrono_mail.pim.times import day_bounds, format_moment, local_zone, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 3.6.351"
+__version__ = "commands_calendar.py 4.2.385"
 
 # --- Version history ----------------------------------------------------
+# v4.2.385: event.import builds the text afresh as before and keeps from the text given only the time zones the event uses (VTIMEZONE), its
+#           X- properties and its CREATED (pim.ical.kept_from): a zone of its own was lost, so its times became floating after a restart
 # v3.6.351: an event with floating times keeps them floating on an edit without a zone (it got this computer's zone, its skipped dates not);
 #           an occurrence of a floating series is named floating too (its changed or deleted occurrence got a zone and never matched)
 # v3.6.349: a series whose time of day moves moves its skipped and changed dates by as much on their own day; when its first date or
@@ -690,9 +692,11 @@ def event_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
             if not parsed:
                 raise UsageError("No event could be read from this text")
             with item_writer(engine, account, store) as writer:
+                given = given_parts(parameters.text, "VEVENT")  # read once for the whole text
                 for series in parsed:
                     known = store.index.find_uid(info.collection_id, series.master.uid)
-                    items.append(writer.put(info, events_to_text(series), known.item_id if known else None))
+                    text = kept_from(events_to_text(series), given, series.master.uid, "VEVENT")  # its own time zones, X- and CREATED kept
+                    items.append(writer.put(info, text, known.item_id if known else None))
                     if known:
                         updated += 1
                     else:

@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QStackedWidget,
     QTreeWidget,
     QTreeWidgetItem,
     QWidget,
@@ -19,15 +20,21 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, IMPORT_EMCLIENT_SCAN, ImportParameters, ImportResult, ScanParameters, ScanResult
+from chrono_mail.engine import commands_outlook
+from chrono_mail.engine.commands_outlook import IMPORT_OUTLOOK, IMPORT_OUTLOOK_SCAN, PROGRESS_TEXT
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.0.376"
+__version__ = "importdialog.py 4.2.385"
 
 # --- Version history ----------------------------------------------------
+# v4.2.385: Outlook under Applications: its own page (a page per program in the form), Mail, Calendar, Contacts, Tasks and Tags (categories);
+#           Accounts, Rules and Signatures greyed with a hover text; one or more data files (.pst); the same summary, progress, Stop and end;
+#           the files chosen are kept as the picker gave them (a path may hold "; "), the field only shows them; the items that got their
+#           tags in a later run are counted
 # v4.0.376: built from its Qt Designer form (ui/forms/import.ui, D-276); the source program's name stays in this file (D-046); the summary is plain text (names from the exports); its sizes
 #           follow the size factor
 # v3.6.359: CR-07: a failed batch reloads the window and runs the check after an import; the summary keeps what was imported
@@ -40,6 +47,10 @@ __version__ = "importdialog.py 4.0.376"
 
 MENU_TEXT: str = "Import…"  # the program to import from is chosen in the window (more programs later)
 SOURCE_NAME: str = "eM Client"
+DATA_FILE_SOURCE_NAME: str = "Outlook"
+WINDOWS_ONLY: str = "Only on the Windows computer where Outlook keeps these accounts"
+DATA_FILE_HINT: str = "Choose the data files to see what will be imported."
+DATA_FILE_SEPARATOR: str = "; "  # between the data files shown in their field (only shown: a path may hold this too)
 BATCH: int = 1000  # messages per command; Stop takes effect between batches
 LISTED: int = 10  # names listed in a summary before "and N more"
 
@@ -120,6 +131,65 @@ def import_summary(result: ImportResult, stopped: bool) -> str:
     return "\n".join(lines)
 
 
+def data_file_scan_summary(scan: commands_outlook.ScanResult) -> str:
+    """What an import of the data files would bring in and where it goes, in plain words."""
+    lines: list[str] = []
+    for found in scan.files:
+        if found.problem:
+            lines.append(f"{found.file}: {found.problem}")
+            continue
+        lines.append(f"{found.name}:")
+        if found.place:
+            lines.append(f"  Mail: {counted(found.mail, 'message')}, into {found.place}, in the folders as {DATA_FILE_SOURCE_NAME} showed them.")
+        else:
+            lines.append("  Mail: comes from the account's server, so it is taken from there.")
+        lines.append(
+            f"  Into Local Folders: {counted(found.events, 'appointment')}, {counted(found.contacts, 'contact')} and groups, {counted(found.tasks, 'task')}."
+        )
+        if found.left_out:
+            lines.append(f"  Stays in the data file (Chrono Mail has no place for it): {_listed(found.left_out)}.")
+        if found.done:
+            lines.append(f"  {counted(found.done, 'item')} done by an earlier import (it continues).")
+    return "\n".join(lines) if lines else "Nothing to import was found."
+
+
+def merge_data_files(total: commands_outlook.ImportResult, batch: commands_outlook.ImportResult) -> commands_outlook.ImportResult:
+    """The results of two runs of one import from data files as one."""
+    return replace(
+        total,
+        mail_imported=total.mail_imported + batch.mail_imported, mail_existing=total.mail_existing + batch.mail_existing, mail_failed=total.mail_failed + batch.mail_failed,
+        events_imported=total.events_imported + batch.events_imported, events_existing=total.events_existing + batch.events_existing,
+        events_failed=total.events_failed + batch.events_failed, contacts_imported=total.contacts_imported + batch.contacts_imported,
+        contacts_existing=total.contacts_existing + batch.contacts_existing, contacts_failed=total.contacts_failed + batch.contacts_failed,
+        groups_imported=total.groups_imported + batch.groups_imported, groups_existing=total.groups_existing + batch.groups_existing,
+        groups_failed=total.groups_failed + batch.groups_failed, tasks_imported=total.tasks_imported + batch.tasks_imported,
+        tasks_existing=total.tasks_existing + batch.tasks_existing, tasks_failed=total.tasks_failed + batch.tasks_failed, unreadable=total.unreadable + batch.unreadable,
+        failures=total.failures + batch.failures, tags_added=total.tags_added + batch.tags_added, items_tagged=total.items_tagged + batch.items_tagged, done=total.done + batch.done, left=batch.left, notes=total.notes + batch.notes,
+    )
+
+
+def data_file_import_summary(result: commands_outlook.ImportResult, stopped: bool) -> str:
+    lines = ["The import was stopped; Import continues where it stopped." if stopped else "The import is done."]
+    for label, imported, existing, failed in (
+        ("Messages", result.mail_imported, result.mail_existing, result.mail_failed), ("Appointments", result.events_imported, result.events_existing, result.events_failed),
+        ("Contacts", result.contacts_imported, result.contacts_existing, result.contacts_failed), ("Groups", result.groups_imported, result.groups_existing, result.groups_failed),
+        ("Tasks", result.tasks_imported, result.tasks_existing, result.tasks_failed),
+    ):
+        if imported or existing or failed:
+            lines.append(f"{label} imported: {imported:,}; already here: {existing:,}; failed: {failed:,}.")
+    if result.tags_added:
+        lines.append(f"Tags made: {result.tags_added}.")
+    if result.items_tagged:
+        lines.append(f"Imported earlier, now with their tags: {counted(result.items_tagged, 'item')}.")
+    if result.unreadable:
+        lines.append(f"Items the data file could not give: {result.unreadable:,}.")
+    if result.failures:
+        lines.append(f"Failed: {_listed(result.failures)}")
+    if result.notes:
+        lines.append(f"Notes: {_listed(result.notes)}")
+    return "\n".join(lines)
+
+
 class ImportDialog(QDialog):
     """Menu > File > Import…: the program to import from, what to import, from which exports, and the import itself, in one window."""
 
@@ -134,6 +204,7 @@ class ImportDialog(QDialog):
         self._done_before = 0
         self._scan_number = 0  # the latest reading of the exports; the answer of an older one is ignored
         self._result = ImportResult()
+        self._data_result = commands_outlook.ImportResult()
         form = forms.fill(self, "import")  # D-276
         self.sources: QTreeWidget = forms.part(form, QTreeWidget, "sources")
         self.sources.setHeaderHidden(True)
@@ -144,10 +215,15 @@ class ImportDialog(QDialog):
         font.setBold(True)
         group.setFont(0, font)
         self.source_item = QTreeWidgetItem(group, [SOURCE_NAME])
+        self.data_file_item = QTreeWidgetItem(group, [DATA_FILE_SOURCE_NAME])
         group.setExpanded(True)
         self.sources.setCurrentItem(self.source_item)
         self.sources.setFixedWidth(wpx(220))
-        forms.part(form, QLabel, "title").setText(f"Import data from {SOURCE_NAME}")  # the program's name only here (D-046)
+        self.pages: QStackedWidget = forms.part(form, QStackedWidget, "pages")  # a page per program
+        self.exports_page: QWidget = forms.part(form, QWidget, "exportsPage")
+        self.data_file_page: QWidget = forms.part(form, QWidget, "dataFilePage")
+        forms.part(form, QLabel, "title").setText(f"Import data from {SOURCE_NAME}")  # the programs' names only here (D-046)
+        forms.part(form, QLabel, "dataFileTitle").setText(f"Import data from {DATA_FILE_SOURCE_NAME}")
         self.accounts: QCheckBox = forms.part(form, QCheckBox, "accounts")
         self.rules: QCheckBox = forms.part(form, QCheckBox, "rules")
         self.mail: QCheckBox = forms.part(form, QCheckBox, "mail")
@@ -164,10 +240,26 @@ class ImportDialog(QDialog):
         ):
             forms.part(form, QPushButton, button).clicked.connect(browse)
             field.editingFinished.connect(self.scan)
+        self.data_file_mail: QCheckBox = forms.part(form, QCheckBox, "dataFileMail")
+        self.data_file_calendar: QCheckBox = forms.part(form, QCheckBox, "dataFileCalendar")
+        self.data_file_contacts: QCheckBox = forms.part(form, QCheckBox, "dataFileContacts")
+        self.data_file_tasks: QCheckBox = forms.part(form, QCheckBox, "dataFileTasks")
+        self.data_file_tags: QCheckBox = forms.part(form, QCheckBox, "dataFileTags")
+        for box in self._data_file_types():
+            box.setChecked(True)
+        self.data_file_later: tuple[QCheckBox, ...] = tuple(forms.part(form, QCheckBox, name) for name in ("dataFileAccounts", "dataFileRules", "dataFileSignatures"))
+        for box in self.data_file_later:
+            box.setEnabled(False)  # greyed, never hidden (OR-15): these are read on the Windows computer itself
+            box.setToolTip(WINDOWS_ONLY)
+        self.data_files: QLineEdit = forms.part(form, QLineEdit, "dataFiles")
+        self._picked: tuple[str, ...] = ()  # the files chosen with Browse, as the picker gave them
+        forms.part(form, QPushButton, "browseDataFiles").clicked.connect(self._browse_data_files)
+        self.data_files.editingFinished.connect(self.scan)
         self.summary: QLabel = forms.part(form, QLabel, "summary")
         self.summary.setTextFormat(Qt.TextFormat.PlainText)  # names from the exports: never markup
         self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.summary_area: QScrollArea = forms.part(form, QScrollArea, "summaryArea")  # a long summary scrolls instead of falling off the window
+        self._exports_hint = self.summary.text()
         self.progress: QProgressBar = forms.part(form, QProgressBar, "progress")
         self.progress.setVisible(False)
         self.import_button: QPushButton = forms.part(form, QPushButton, "import")
@@ -181,6 +273,24 @@ class ImportDialog(QDialog):
         self.setMinimumHeight(wpx(560))
         forms.smallest(self, 820)  # its texts are never cut off, also at the largest size
         backend.progress.connect(self._progress)
+        self.sources.currentItemChanged.connect(self._show_page)
+
+    def _data_file_types(self) -> tuple[QCheckBox, ...]:
+        return (self.data_file_mail, self.data_file_calendar, self.data_file_contacts, self.data_file_tasks, self.data_file_tags)
+
+    def _reading_data_files(self) -> bool:
+        """The data file page is shown (else the page of the exports)."""
+        return self.pages.currentWidget() is self.data_file_page
+
+    def _show_page(self, current: QTreeWidgetItem | None, previous: QTreeWidgetItem | None) -> None:
+        if current is None or current not in (self.source_item, self.data_file_item):
+            return  # the heading is never a choice
+        data_files = current is self.data_file_item
+        self.pages.setCurrentWidget(self.data_file_page if data_files else self.exports_page)
+        self._scan_number += 1  # an answer for the other page changes nothing here
+        self.import_button.setEnabled(False)
+        self.summary.setText(DATA_FILE_HINT if data_files else self._exports_hint)
+        self.scan()
 
     # --- choosing the exports -----------------------------------------------------------------
 
@@ -202,6 +312,21 @@ class ImportDialog(QDialog):
             self.backup_file.setText(path)
             self.scan()
 
+    def _browse_data_files(self) -> None:
+        start = self._picked[0] if self._picked else self.data_files.text().strip()
+        paths, _ = QFileDialog.getOpenFileNames(self, "The data files", start, "Outlook data files (*.pst)")
+        if paths:
+            self._picked = tuple(paths)
+            self.data_files.setText(DATA_FILE_SEPARATOR.join(paths))
+            self.scan()
+
+    def _chosen_data_files(self) -> tuple[str, ...]:
+        """The files chosen with Browse while the field shows them; a path typed into the field is one file."""
+        text = self.data_files.text().strip()
+        if self._picked and text == DATA_FILE_SEPARATOR.join(self._picked):
+            return self._picked
+        return (text,) if text else ()
+
     def _sources(self) -> ScanParameters:
         return ScanParameters(self.settings_file.text().strip() or None, self.mail_folder.text().strip() or None, self.backup_file.text().strip() or None)
 
@@ -211,6 +336,15 @@ class ImportDialog(QDialog):
         self._scan_number += 1
         number = self._scan_number
         self.import_button.setEnabled(False)
+        if self._reading_data_files():
+            files = self._chosen_data_files()
+            if files:
+                self.summary.setText("Reading the data files…")
+                self._backend.ask(
+                    IMPORT_OUTLOOK_SCAN, commands_outlook.ScanParameters(files), lambda result: self._data_files_scanned(number, result),
+                    lambda error: self._scan_failed(number, error), owner=self,
+                )
+            return
         sources = self._sources()
         if not (sources.settings_file or sources.mail_folder or sources.backup_file):
             return
@@ -226,6 +360,15 @@ class ImportDialog(QDialog):
         self.summary.setText(scan_summary(result))
         self.import_button.setEnabled(True)
 
+    def _data_files_scanned(self, number: int, result: commands_outlook.ScanResult) -> None:
+        if self._running or number != self._scan_number:
+            return
+        self._total = result.items
+        self._done_before = result.done
+        self.progress.setRange(0, max(1, self._total))
+        self.summary.setText(data_file_scan_summary(result))
+        self.import_button.setEnabled(any(not found.problem for found in result.files))  # off when no file can be read: nothing to import
+
     def _scan_failed(self, number: int, error: ChronoMailError) -> None:
         if self._running or number != self._scan_number:
             return
@@ -234,7 +377,8 @@ class ImportDialog(QDialog):
     def _failed(self, error: ChronoMailError) -> None:
         """A batch failed: the window is reloaded (this batch may have stored part of its work), the summary counts the earlier batches, and the check after an import runs (D-143)."""
         self._finish()
-        self.summary.setText(f"{error}\n{import_summary(self._result, stopped=True)}")
+        done = data_file_import_summary(self._data_result, stopped=True) if self._reading_data_files() else import_summary(self._result, stopped=True)
+        self.summary.setText(f"{error}\n{done}")
         self._on_changed()
 
     # --- the import ---------------------------------------------------------------------------
@@ -247,7 +391,8 @@ class ImportDialog(QDialog):
             self._on_running(True)
         self._stop = False
         self._result = ImportResult()
-        for widget in (self.import_button, self.close_button, self.accounts, self.rules, self.mail, self.contacts, self.tags, self.settings_file, self.mail_folder, self.backup_file):
+        self._data_result = commands_outlook.ImportResult()
+        for widget in self._inputs():
             widget.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.progress.setVisible(True)
@@ -256,7 +401,21 @@ class ImportDialog(QDialog):
         self.summary.setText("Importing…")
         self._next()
 
+    def _inputs(self) -> tuple[QWidget, ...]:
+        """What is off while an import runs (Accounts, Rules and Signatures of the data files stay greyed in any case)."""
+        return (
+            self.import_button, self.close_button, self.sources, self.accounts, self.rules, self.mail, self.contacts, self.tags, self.settings_file, self.mail_folder,
+            self.backup_file, *self._data_file_types(), self.data_files,
+        )
+
     def _next(self) -> None:
+        if self._reading_data_files():
+            choice = commands_outlook.ImportParameters(
+                self._chosen_data_files(), mail=self.data_file_mail.isChecked(), calendar=self.data_file_calendar.isChecked(),
+                contacts=self.data_file_contacts.isChecked(), tasks=self.data_file_tasks.isChecked(), tags=self.data_file_tags.isChecked(), batch=BATCH,
+            )
+            self._backend.ask(IMPORT_OUTLOOK, choice, self._data_file_batch_done, self._failed, owner=self)
+            return
         sources = self._sources()
         parameters = ImportParameters(
             sources.settings_file, sources.mail_folder, sources.backup_file, accounts=self.accounts.isChecked(), rules=self.rules.isChecked(), mail=self.mail.isChecked(),
@@ -276,21 +435,33 @@ class ImportDialog(QDialog):
         self.summary.setText(import_summary(self._result, stopped))
         self._on_changed()
 
+    def _data_file_batch_done(self, result: commands_outlook.ImportResult) -> None:
+        self._data_result = merge_data_files(self._data_result, result)
+        self._done_before += result.done
+        self.progress.setValue(min(self._done_before, self.progress.maximum()))
+        if result.left > 0 and not self._stop:
+            self._next()
+            return
+        stopped = result.left > 0
+        self._finish()
+        self.summary.setText(data_file_import_summary(self._data_result, stopped))
+        self._on_changed()
+
     def request_stop(self) -> None:
         self._stop = True
         self.stop_button.setEnabled(False)
-        self.summary.setText("Stopping after the messages that are being imported now…")
+        self.summary.setText("Stopping after the items that are being imported now…" if self._reading_data_files() else "Stopping after the messages that are being imported now…")
 
     def _finish(self) -> None:
         self._running = False
         if self._on_running is not None:
             self._on_running(False)
-        for widget in (self.import_button, self.close_button, self.accounts, self.rules, self.mail, self.contacts, self.tags, self.settings_file, self.mail_folder, self.backup_file):
+        for widget in self._inputs():
             widget.setEnabled(True)
         self.stop_button.setEnabled(False)
 
     def _progress(self, what: str, done: int, total: object) -> None:
-        if self._running and what == "Importing mail":
+        if self._running and what in ("Importing mail", PROGRESS_TEXT):
             self.progress.setValue(min(done, self.progress.maximum()))  # the engine counts over the whole import
 
     @override

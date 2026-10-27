@@ -15,7 +15,7 @@ from chrono_mail.config import AccountSettings, ServerRole
 from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_addressbook import AddressesParameters, contact_addresses
-from chrono_mail.engine.commands_emclient import fingerprint_of_raw, known_messages
+from chrono_mail.engine.import_common import fingerprint_of_raw, known_messages
 from chrono_mail.engine.changes import Change, MessageRow, flag_names
 from chrono_mail.engine.commands_rules import apply_to_new
 from chrono_mail.engine.recurring import Repeat, repeat_from_text, repeat_text
@@ -35,9 +35,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 3.6.368"
+__version__ = "commands_mail.py 4.2.385"
 
 # --- Version history ----------------------------------------------------
+# v4.2.385: the fingerprint of the mail already here comes from import_common (shared by the importers)
 # v3.6.368: message.places and message.locate read the order and the headings under one hold of the mailbox's lock: an Undo between them put
 #           messages under the wrong heading (a held Ctrl+Z)
 # v3.6.358: each_kept_attachment says per position what is kept, so a draft save can tell where each attachment went (CR-03)

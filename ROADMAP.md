@@ -146,6 +146,17 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | I.1 | Import from the reference client's three exports (settings .xml, mail .eml folder, backup .zip): POP3 accounts with passwords, rules, contacts, all mail into Local Folders with its read, flagged and replied marks; resumable, no duplicates. | done (0.5.132); the owner's own import and check to do |
 | I.2 | The rest of the password key (passwords longer than 12 characters), from a test export with a known long password. | open |
 
+## Import from and export to the office suite's mail program (from 4.2.385, D-278)
+
+| # | Task | Status |
+|---|---|---|
+| O.1 | A read-only check on the Windows computer of where that program keeps accounts, passwords, rules, signatures and junk lists. | done (2026-10-27) |
+| O.2 | Import from its data file (.pst), on Linux and Windows: mail, calendar, contacts, contact groups, tasks, categories as tags; placed as that program showed it. | done (4.2.385); a real test file made by that program with made-up items: the Windows computer |
+| O.3 | Import on the Windows computer where that program keeps its accounts: accounts with passwords, rules, junk lists, signatures. | open |
+| O.4 | Export to a data file (.pst) with our own writer. | open |
+| O.5 | Export of accounts (its profile file) and rules. | open |
+| O.6 | The round trip: exported, opened there, imported back, compared. | open |
+
 ## Backup and restore (B-22, from 2.4.322, D-244)
 
 | # | Task | Status |

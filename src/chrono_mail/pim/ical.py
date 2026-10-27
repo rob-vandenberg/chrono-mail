@@ -8,9 +8,12 @@ import icalendar
 import recurring_ical_events
 
 # --- Version ------------------------------------------------------------
-__version__ = "ical.py 3.6.356"
+__version__ = "ical.py 4.2.385"
 
 # --- Version history ----------------------------------------------------
+# v4.2.385: kept_from: a text built afresh for an import keeps from the text it came in only the time zones it uses (VTIMEZONE), its own
+#           X- properties (CREATED it carries already); never anything a server would refuse; given_parts reads the imported text once for all
+#           its items; a changed occurrence is matched by the moment of its RECURRENCE-ID, in any written form
 # v3.6.356: an event kept with a length (DURATION), or with no end written at all, whose start alone changed keeps its end: the end is
 #           written whenever it was not written as an end (CR-58)
 # v3.6.351: a change of the attendee list keeps each attendee's own line (CUTYPE, DELEGATED-*, SCHEDULE-*), writing afresh only
@@ -555,6 +558,88 @@ def events_to_text(series: EventSeries, original: str | None = None) -> str:
             _write_event(known[1], replace(event, uid=series.master.uid), known[0])
     _add_zones(calendar, [series.master.start, series.master.end, *series.master.exdates, *series.master.rdates, *[m for e in series.overrides for m in (e.start, e.end, e.recurrence_id)]])
     return calendar.to_ical().decode("utf-8")
+
+
+def _key_of(component: icalendar.Component) -> str:
+    """Which component of a series this is: the main one ("") or a changed occurrence, by the moment of its RECURRENCE-ID (the same instant
+    in any written form: UTC or a named zone)."""
+    if component.get("RECURRENCE-ID") is None:
+        return ""
+    moment = _moment(component, "RECURRENCE-ID")
+    if isinstance(moment, datetime):
+        return moment.astimezone(UTC).isoformat() if moment.tzinfo is not None else moment.isoformat()
+    return moment.isoformat() if moment is not None else "unreadable"
+
+
+def _zones_used(calendar: icalendar.Calendar) -> set[str]:
+    used: set[str] = set()
+    for component in calendar.walk():
+        for value in component.values():
+            for each in value if isinstance(value, list) else [value]:
+                params = getattr(each, "params", None)
+                zone = params.get("TZID") if params is not None else None
+                if isinstance(zone, str) and zone:
+                    used.add(zone)
+    return used
+
+
+@dataclass(frozen=True, slots=True)
+class GivenParts:
+    """What an imported text may hand on to the items built from it, read once for the whole text: per UID its components that can be read
+    (by occurrence), and its time zones by TZID."""
+
+    components: dict[str, dict[str, Any]] = field(default_factory=dict)  # icalendar components (untyped)
+    zones: dict[str, Any] = field(default_factory=dict)
+
+
+def given_parts(text: str, kind: str) -> GivenParts:
+    """The parts of an imported text that kept_from may take over. kind: VEVENT or VTODO. Never raises."""
+    parts = GivenParts()
+    try:
+        source = _parse(text)
+        if source is None:
+            return parts
+        reader = _event_from if kind == "VEVENT" else _task_from
+        for component in list(source.walk(kind))[:MAXIMUM_COMPONENTS]:
+            try:
+                reader(component)
+            except Exception:  # noqa: BLE001 - a component that cannot be read gives nothing
+                continue
+            parts.components.setdefault(str(component.get("UID", "")).strip(), {}).setdefault(_key_of(component), component)
+        for zone in source.walk("VTIMEZONE"):
+            parts.zones.setdefault(str(zone.get("TZID", "")), zone)
+    except Exception:  # noqa: BLE001 - nothing to hand on
+        return GivenParts()
+    return parts
+
+
+def kept_from(fresh: str, given: GivenParts, uid: str, kind: str) -> str:
+    """The text built afresh (fresh) for an item of an imported text: with the given text's VTIMEZONE components that the item uses (a zone of
+    its own, which the program cannot write itself), and, from the given component of the same UID and occurrence that can be read, its X-
+    properties (CREATED the fresh text carries already). Nothing else is taken over (no METHOD, no other components, no second main component). kind: VEVENT or
+    VTODO. Never raises: when anything goes wrong, the fresh text."""
+    try:
+        sources = given.components.get(uid, {})
+        if not sources and not given.zones:
+            return fresh
+        built = _parse(fresh)
+        if built is None:
+            return fresh
+        for component in built.walk(kind):
+            found = sources.get(_key_of(component))
+            if found is None:
+                continue
+            for name, value in found.items():
+                if name.upper().startswith("X-") and name not in component:
+                    component[name] = value
+        used = _zones_used(built)
+        zones = [zone for name, zone in given.zones.items() if name in used]
+        if zones:
+            names = {str(part.get("TZID", "")) for part in zones}
+            built.subcomponents = [*zones, *(part for part in built.subcomponents if not (part.name == "VTIMEZONE" and str(part.get("TZID", "")) in names))]
+        return built.to_ical().decode("utf-8")
+    except Exception:  # noqa: BLE001 - a text that cannot be combined is stored as built afresh
+        return fresh
 
 
 def tasks_to_text(task: Task, original: str | None = None) -> str:

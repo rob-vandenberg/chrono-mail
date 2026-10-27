@@ -17,9 +17,10 @@ from tests.test_emclient_source import FakeAccount, FakeContact, FakeItem, categ
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 2.0.287"
+__version__ = "test_import_emclient.py 4.2.385"
 
 # --- Version history ----------------------------------------------------
+# v4.2.385: the journal is written only when the batch was made safe on disk
 # v2.0.287: os.sync replaced also where Windows has none (the Windows computer's report)
 # v0.5.143: The progress of the mail counts over the whole import, not per batch
 # v0.5.141: import.emclient-passwords
@@ -363,3 +364,103 @@ def test_the_progress_counts_over_the_whole_import_not_per_batch(tmp_path: Path)
     for _ in range(3):
         call(engine, "import.emclient", **values)
     assert seen == [(number, 7) for number in range(1, 8)]
+
+
+def test_the_journal_is_written_only_when_the_batch_is_safe_on_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from collections.abc import Generator
+    from contextlib import contextmanager
+
+    from chrono_mail.core import StorageError
+    from chrono_mail.store.store import Store
+
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+
+    @contextmanager
+    def failing(self: Store) -> Generator[None]:
+        yield
+        raise StorageError("The disk is full")
+
+    monkeypatch.setattr(Store, "written_together", failing)
+    with pytest.raises(StorageError):
+        call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False))
+    lines = (engine.directories.data_directory / JOURNAL_FILE).read_text("utf-8").splitlines()
+    assert not any(line.startswith('["mail"') for line in lines)  # nothing recorded as done that was not made safe
+    commands_emclient._finished_run()
+
+
+def test_a_retry_after_a_batch_that_could_not_be_made_safe_stores_nothing_twice(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from collections.abc import Generator
+    from contextlib import contextmanager
+
+    from chrono_mail.core import StorageError
+    from chrono_mail.store.store import Store
+
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+    real = Store.written_together
+    failures = [1]
+
+    @contextmanager
+    def failing_once(self: Store) -> Generator[None]:
+        with real(self):
+            yield
+        if failures:
+            failures.pop()
+            raise StorageError("The disk is full")
+
+    monkeypatch.setattr(Store, "written_together", failing_once)
+    values = exports.values(accounts=False, rules=False, contacts=False)
+    with pytest.raises(StorageError):
+        call(engine, "import.emclient", **values)
+    again = call(engine, "import.emclient", **values)  # Import again in the same session: the run is not forgotten by hand
+    assert (again.messages_imported, again.messages_duplicate) == (0, 7)
+    local_messages(engine)  # asserts that nothing is there twice
+    commands_emclient._finished_run()
+
+
+def test_a_message_whose_tags_could_not_be_given_stays_imported_and_gets_them_later(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.core import MessageRef, StorageError
+    from chrono_mail.engine.mailbox import Mailbox
+
+    engine = make_engine(tmp_path / "profile")
+    exports = tagged_exports(tmp_path)
+    real = Mailbox.set_tags
+    failing = [1]
+
+    def set_tags(self: Mailbox, reference: MessageRef, tags: tuple[str, ...]) -> tuple[str, ...]:
+        if failing:
+            failing.pop()
+            raise StorageError("The properties could not be written")
+        return real(self, reference, tags)
+
+    monkeypatch.setattr(Mailbox, "set_tags", set_tags)
+    values = exports.values(accounts=False, rules=False, contacts=False)
+    first: Any = call(engine, "import.emclient", **values)
+    assert (first.messages_imported, first.messages_failed) == (2, ())
+    assert any("their tags come with the next import" in note for note in first.notes)
+    second: Any = call(engine, "import.emclient", **values)
+    assert second.messages_tagged == 1
+    assert {row.subject: row.tags for row in call(engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Inbox").messages}["Message 1"] == ("Work", "Old name")
+    assert call(engine, "import.emclient", **values).messages_tagged == 0  # once
+
+
+def test_tags_waiting_are_tried_once_per_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.core import MessageRef, StorageError
+    from chrono_mail.engine.mailbox import Mailbox
+
+    engine = make_engine(tmp_path / "profile")
+    exports = tagged_exports(tmp_path)
+    real = Mailbox.set_tags
+
+    def failing(self: Mailbox, reference: MessageRef, tags: tuple[str, ...]) -> tuple[str, ...]:
+        raise StorageError("The properties could not be written")
+
+    monkeypatch.setattr(Mailbox, "set_tags", failing)
+    values = exports.values(accounts=False, rules=False, contacts=False, batch=1)
+    first: Any = call(engine, "import.emclient", **values)  # Message 1 is imported; its tags wait
+    second: Any = call(engine, "import.emclient", **values)  # the next batch of the same import does not try them again
+    assert first.messages_left == 1 and second.messages_left == 0
+    assert not any("could not get their tags yet" in note for note in second.notes)
+    monkeypatch.setattr(Mailbox, "set_tags", real)
+    assert call(engine, "import.emclient", **values).messages_tagged == 1  # a later import

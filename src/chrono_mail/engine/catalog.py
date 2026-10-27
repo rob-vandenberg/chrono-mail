@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_across, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_view, commands_watch, junkfilter, undo
+from chrono_mail.engine import commands_accounts, commands_across, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_outlook, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_view, commands_watch, junkfilter, undo
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 3.6.366"
+__version__ = "catalog.py 4.2.385"
 
 # --- Version history ----------------------------------------------------
+# v4.2.385: the import from a data file (import.outlook-scan, import.outlook)
 # v3.6.366: moving messages to another account (message.move-across, D-272)
 # v2.4.322: Back up (backup.choices, backup.new-password, backup.make, backup.cancel, D-244)
 # v2.2.313: Undo and Redo of actions on mail (mail.undo, mail.redo, mail.undo-labels, B-18)
@@ -68,6 +69,7 @@ def build_registry() -> CommandRegistry:
     commands_schedule.register(registry)
     commands_outbox.register(registry)
     commands_emclient.register(registry)
+    commands_outlook.register(registry)
     commands_tags.register(registry)
     commands_conflicts.register(registry)
     return registry

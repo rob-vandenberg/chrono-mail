@@ -23,133 +23,308 @@
       </layout>
      </item>
      <item>
-      <layout class="QVBoxLayout" name="right" stretch="0,0,0,0,0,0,0,0,0,0,1,0">
+      <layout class="QVBoxLayout" name="right" stretch="0,1,0">
        <item>
-        <widget class="QLabel" name="title">
-         <property name="role" stdset="0">
-          <string>heading</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QLabel" name="chooseTypes">
-         <property name="text">
-          <string>Choose types for import:</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QCheckBox" name="accounts">
-         <property name="text">
-          <string>Accounts and passwords</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QCheckBox" name="rules">
-         <property name="text">
-          <string>Rules</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QCheckBox" name="mail">
-         <property name="text">
-          <string>Mail</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QCheckBox" name="contacts">
-         <property name="text">
-          <string>Contacts</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QCheckBox" name="tags">
-         <property name="text">
-          <string>Tags</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <spacer name="blankAboveExports">
-         <property name="orientation">
-          <enum>Qt::Vertical</enum>
-         </property>
-         <property name="sizeType">
-          <enum>QSizePolicy::Fixed</enum>
-         </property>
-         <property name="sizeHint" stdset="0">
-          <size>
-           <width>0</width>
-           <height>8</height>
-          </size>
-         </property>
-        </spacer>
-       </item>
-       <item>
-        <widget class="QLabel" name="selectExports">
-         <property name="text">
-          <string>Select the exports:</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <layout class="QGridLayout" name="exports">
-         <item row="0" column="0">
-          <widget class="QLabel" name="settingsFileLabel">
-           <property name="text">
-            <string>Settings (.xml):</string>
+        <widget class="QStackedWidget" name="pages">
+         <widget class="QWidget" name="exportsPage">
+          <layout class="QVBoxLayout" name="exportsPageLayout" stretch="0,0,0,0,0,0,0,0,0,0,1">
+           <property name="leftMargin">
+            <number>0</number>
            </property>
-          </widget>
-         </item>
-         <item row="0" column="1">
-          <widget class="QLineEdit" name="settingsFile" />
-         </item>
-         <item row="0" column="2">
-          <widget class="QPushButton" name="browseSettings">
-           <property name="text">
-            <string>Browse</string>
+           <property name="topMargin">
+            <number>0</number>
            </property>
-          </widget>
-         </item>
-         <item row="1" column="0">
-          <widget class="QLabel" name="mailFolderLabel">
-           <property name="text">
-            <string>Mail (.eml folder):</string>
+           <property name="rightMargin">
+            <number>0</number>
            </property>
-          </widget>
-         </item>
-         <item row="1" column="1">
-          <widget class="QLineEdit" name="mailFolder" />
-         </item>
-         <item row="1" column="2">
-          <widget class="QPushButton" name="browseMail">
-           <property name="text">
-            <string>Browse</string>
+           <property name="bottomMargin">
+            <number>0</number>
            </property>
-          </widget>
-         </item>
-         <item row="2" column="0">
-          <widget class="QLabel" name="backupFileLabel">
-           <property name="text">
-            <string>Backup (.zip):</string>
+           <item>
+            <widget class="QLabel" name="title">
+             <property name="role" stdset="0">
+              <string>heading</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="chooseTypes">
+             <property name="text">
+              <string>Choose types for import:</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="accounts">
+             <property name="text">
+              <string>Accounts and passwords</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="rules">
+             <property name="text">
+              <string>Rules</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="mail">
+             <property name="text">
+              <string>Mail</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="contacts">
+             <property name="text">
+              <string>Contacts</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="tags">
+             <property name="text">
+              <string>Tags</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="blankAboveExports">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Fixed</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>8</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <widget class="QLabel" name="selectExports">
+             <property name="text">
+              <string>Select the exports:</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <layout class="QGridLayout" name="exports">
+             <item row="0" column="0">
+              <widget class="QLabel" name="settingsFileLabel">
+               <property name="text">
+                <string>Settings (.xml):</string>
+               </property>
+              </widget>
+             </item>
+             <item row="0" column="1">
+              <widget class="QLineEdit" name="settingsFile" />
+             </item>
+             <item row="0" column="2">
+              <widget class="QPushButton" name="browseSettings">
+               <property name="text">
+                <string>Browse</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="0">
+              <widget class="QLabel" name="mailFolderLabel">
+               <property name="text">
+                <string>Mail (.eml folder):</string>
+               </property>
+              </widget>
+             </item>
+             <item row="1" column="1">
+              <widget class="QLineEdit" name="mailFolder" />
+             </item>
+             <item row="1" column="2">
+              <widget class="QPushButton" name="browseMail">
+               <property name="text">
+                <string>Browse</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="0">
+              <widget class="QLabel" name="backupFileLabel">
+               <property name="text">
+                <string>Backup (.zip):</string>
+               </property>
+              </widget>
+             </item>
+             <item row="2" column="1">
+              <widget class="QLineEdit" name="backupFile" />
+             </item>
+             <item row="2" column="2">
+              <widget class="QPushButton" name="browseBackup">
+               <property name="text">
+                <string>Browse</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <spacer name="exportsPageEnd">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Expanding</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
+         <widget class="QWidget" name="dataFilePage">
+          <layout class="QVBoxLayout" name="dataFilePageLayout" stretch="0,0,0,0,0,0,0,0,0,0,0,0,1">
+           <property name="leftMargin">
+            <number>0</number>
            </property>
-          </widget>
-         </item>
-         <item row="2" column="1">
-          <widget class="QLineEdit" name="backupFile" />
-         </item>
-         <item row="2" column="2">
-          <widget class="QPushButton" name="browseBackup">
-           <property name="text">
-            <string>Browse</string>
+           <property name="topMargin">
+            <number>0</number>
            </property>
-          </widget>
-         </item>
-        </layout>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="dataFileTitle">
+             <property name="role" stdset="0">
+              <string>heading</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="dataFileChooseTypes">
+             <property name="text">
+              <string>Choose types for import:</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="dataFileMail">
+             <property name="text">
+              <string>Mail</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="dataFileCalendar">
+             <property name="text">
+              <string>Calendar</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="dataFileContacts">
+             <property name="text">
+              <string>Contacts</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="dataFileTasks">
+             <property name="text">
+              <string>Tasks</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="dataFileTags">
+             <property name="text">
+              <string>Tags (categories)</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="dataFileAccounts">
+             <property name="text">
+              <string>Accounts</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="dataFileRules">
+             <property name="text">
+              <string>Rules</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QCheckBox" name="dataFileSignatures">
+             <property name="text">
+              <string>Signatures</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <spacer name="blankAboveDataFiles">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Fixed</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>8</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="dataFileRow" stretch="0,1,0">
+             <item>
+              <widget class="QLabel" name="dataFilesLabel">
+               <property name="text">
+                <string>Data files (.pst):</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLineEdit" name="dataFiles" />
+             </item>
+             <item>
+              <widget class="QPushButton" name="browseDataFiles">
+               <property name="text">
+                <string>Browse</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <spacer name="dataFilePageEnd">
+             <property name="orientation">
+              <enum>Qt::Vertical</enum>
+             </property>
+             <property name="sizeType">
+              <enum>QSizePolicy::Expanding</enum>
+             </property>
+             <property name="sizeHint" stdset="0">
+              <size>
+               <width>0</width>
+               <height>0</height>
+              </size>
+             </property>
+            </spacer>
+           </item>
+          </layout>
+         </widget>
+        </widget>
        </item>
        <item>
         <widget class="QScrollArea" name="summaryArea">
