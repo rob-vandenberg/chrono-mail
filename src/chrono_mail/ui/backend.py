@@ -1,5 +1,6 @@
 import dataclasses
 import itertools
+import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -11,9 +12,10 @@ from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, TypedCommand, UsageError, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 4.0.374"
+__version__ = "backend.py 4.2.392"
 
 # --- Version history ----------------------------------------------------
+# v4.2.392: progress_ended: when a command ends (done, stopped or failed), each progress line it posted is told as ended, so its count leaves the status bar
 # v4.0.374: alive() is public: work a closed window started looks before it writes into that window
 # v3.6.353: cancel_waiting: the commands of one kind that wait their turn for an account are answered as not done (a failed Delete stops the rest, D-266)
 # v2.1.311: jobs_changed and running(): which commands run (what each is doing, for which account), not only how many: the busy bar names them
@@ -61,9 +63,12 @@ class _Done(QObject):
 
 
 class _Task(QRunnable):
-    def __init__(self, request: int, engine: Engine, registry: CommandRegistry, command: str, values: Mapping[str, object], done: _Done) -> None:
+    def __init__(
+        self, request: int, engine: Engine, registry: CommandRegistry, command: str, values: Mapping[str, object], done: _Done, current: threading.local,
+    ) -> None:
         super().__init__()
         self._request, self._engine, self._registry, self._command, self._values, self._done = request, engine, registry, command, values, done
+        self._current: threading.local = current  # per worker thread: the request it runs now (its progress lines belong to it)
 
     @property
     def request(self) -> int:
@@ -76,6 +81,7 @@ class _Task(QRunnable):
     @override
     @Slot()
     def run(self) -> None:
+        self._current.request = self._request
         try:
             result = self._registry.run(self._engine, self._command, self._values)
         except ChronoMailError as error:
@@ -86,6 +92,8 @@ class _Task(QRunnable):
             self._done.finished.emit(self._request, None, ChronoMailError(f"The command ended without an answer: {type(error).__name__}"))
         else:
             self._done.finished.emit(self._request, result, None)
+        finally:
+            self._current.request = None
 
 
 class Backend(QObject):
@@ -96,6 +104,7 @@ class Backend(QObject):
     """
 
     progress = Signal(str, int, object)  # what, done, total (None when unknown)
+    progress_ended = Signal(str)  # what: the command that posted this progress line has ended (done, stopped or failed)
     busy_changed = Signal(int)  # number of commands running
     jobs_changed = Signal(object)  # the commands running, as a tuple of RunningJob (the busy bar's hover text names them)
     notice = Signal(str)  # something the person should know, from any thread
@@ -121,7 +130,10 @@ class Backend(QObject):
         self._queued: dict[str, list[_Task]] = {}  # per message changed: the commands waiting for the one that runs
         self._queue_of: dict[int, str] = {}  # request -> its message
         self._jobs: dict[int, _Task] = {}  # every job started, held until its answer is delivered (the pools only borrow it)
-        engine.progress = lambda what, done, total: self.progress.emit(what, done, total)
+        self._current: threading.local = threading.local()  # per worker thread: the request it runs now
+        self._progress_lock: threading.Lock = threading.Lock()
+        self._progress_of: dict[int, set[str]] = {}  # request -> the progress lines it posted (ended when its answer is delivered)
+        engine.progress = self._progress
         engine.notice = self.notice.emit
         engine.activity = lambda account_id, direction, step, done, total: self.activity.emit(account_id, direction, step, done, total)
         engine.changed = self.changed.emit
@@ -138,7 +150,7 @@ class Backend(QObject):
         commands for different messages still run at the same time. A mail check (checking=True) runs in a lane of its own:
         it counts as busy, but the person's actions do not wait behind it."""
         request = next(self._ids)
-        task = _Task(request, self.engine, self.registry, command, dict(values), self._done)
+        task = _Task(request, self.engine, self.registry, command, dict(values), self._done, self._current)
         self._jobs[request] = task
         if waiting:
             self._background[request] = _Pending(on_success, on_error, owner)
@@ -158,6 +170,14 @@ class Backend(QObject):
             self._queued[key] = []
         self._pool.start(task)
         return request
+
+    def _progress(self, what: str, done: int, total: int | None) -> None:
+        """From any thread: how far a command is; the line is remembered for the command that runs on this thread, so its end clears it."""
+        request = getattr(self._current, "request", None)  # getattr: a thread that runs no command of this backend has no request set
+        if isinstance(request, int):
+            with self._progress_lock:
+                self._progress_of.setdefault(request, set()).add(what)
+        self.progress.emit(what, done, total)
 
     def _job(self, command: str, values: Mapping[str, object]) -> RunningJob:
         try:
@@ -219,6 +239,10 @@ class Backend(QObject):
     @Slot(int, object, object)
     def _deliver(self, request: int, result: object, error: object) -> None:
         self._jobs.pop(request, None)  # answered: the job may go now
+        with self._progress_lock:
+            ended = self._progress_of.pop(request, set())
+        for what in sorted(ended):  # its progress lines end with it (the same thread posted them first, so they never come after this)
+            self.progress_ended.emit(what)
         key = self._queue_of.pop(request, None)
         if key is not None:
             waiting = self._queued.get(key, [])

@@ -3274,3 +3274,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 1. The owner on the Windows computer: after 4.2.388, Reading the exports took minutes for about 140,000 files with almost no sign of work, and Import stayed grey. Cause: recognising an export looked up every file on disk, again for every batch. Now the sizes and times come from the folder listing (no extra lookup on Windows) and the result is kept for the whole import; 140,000 files here: 1.0 to 1.2 s before, 0.44 s after.
 2. The owner: busy work is always shown. While exports or data files are read, the Import window shows a moving busy bar and an (i) icon with the text in the accent colour; Import stays grey with a hover text saying why. The Export window shows the same while it prepares. B-03 done.
 3. Checks: the touched tests pass (5); Pyrefly 0; the layer check kept.
+
+## 2026-10-27 4.2.392: a progress line leaves the status bar when its work ends
+
+1. The owner: after an import the status bar kept "Importing mail… 139,593 of 139,593", as if something still ran. Cause: no command told the status bar it had ended. Now the end of a command clears its own progress line (finished, stopped or failed); a newer line or an error stays. For every command that counts, the imports and the export among them.
+2. Checks: the touched tests pass (25); Pyrefly 0; the layer check kept.

@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-27, version 4.2.391 (reading the exports quick again; a busy bar and an (i) notice while the Import and Export windows work, B-03 done; 4.2.390: Browse opens where the last Browse picked).*
+*Last updated: 2026-10-27, version 4.2.392 (a progress line leaves the status bar when its work ends; 4.2.391: reading the exports quick again, a busy notice while the Import and Export windows work).*
 
 ## Where we are
 

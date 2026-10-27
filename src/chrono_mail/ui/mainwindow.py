@@ -62,9 +62,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.389"
+__version__ = "mainwindow.py 4.2.392"
 
 # --- Version history ----------------------------------------------------
+# v4.2.392: the status bar hears when a command's progress line ends (progress_ended)
 # v4.2.389: the Import and Export windows get the window's Remembered: they keep the paths used last
 # v4.2.388: after an import the mail check runs only when send and receive runs by itself (at startup or at an interval)
 # v4.2.386: Menu > File > Export… (the Export window), below Import
@@ -755,6 +756,7 @@ class MainWindow(QMainWindow):
         self.backend.busy_changed.connect(self.report.busy_changed)
         self.backend.jobs_changed.connect(self.report.jobs_changed)
         self.backend.progress.connect(self.report.progress)
+        self.backend.progress_ended.connect(self.report.progress_ended)
         self.backend.notice.connect(self.report.notice)
         self.backend.activity.connect(self.checking.activity)
         self.backend.changed.connect(self.list_model.apply)  # every change of mail, applied to the rows on screen (D-146)

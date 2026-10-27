@@ -12,9 +12,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 3.6.365"
+__version__ = "statusreport.py 4.2.392"
 
 # --- Version history ----------------------------------------------------
+# v4.2.392: progress_ended: the count of a command that ended (an import: done, stopped or failed) leaves the status bar at once
 # v3.6.365: the busy bar moves only for work that has run for a second; it stops as soon as nothing runs
 # v3.6.364: a line has its own clock: a minute after it came, whatever else runs (the busy bar plays no part); a line about work still running stays
 # v3.6.363: an informative line is cleared a minute after it came, or a minute after the work that ran; warnings and errors stay
@@ -163,6 +164,12 @@ class StatusReport(QObject):
 
     def progress(self, what: str, done: int, total: object) -> None:
         self.show(f"{what}… {done:,}" + (f" of {total:,}" if isinstance(total, int) and total else f" of {total}" if total else ""), running=True)
+
+    def progress_ended(self, what: str) -> None:
+        """The command that posted this progress line has ended: its count (\"Importing mail… 139,593 of 139,593\") goes at once, so nothing
+        looks as if it still runs. Another line shown since then stays."""
+        if not self._is_error and self.label.text().startswith(f"{what}… "):
+            self.show("")
 
     def rebuild_progress(self, name: str, done: int, total: int) -> None:
         """How far the index of one account is rebuilt (D-229)."""
