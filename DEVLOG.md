@@ -3268,3 +3268,9 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 1. The owner: after picking the settings export in Downloads, Browse for the backup opened in the home folder. Now every Browse of the Import and Export windows with an empty field opens in the folder of the last pick of any Browse, remembered at once (also for a window opened later); a gone folder gives the home folder.
 2. Checks: the touched tests pass (4); Pyrefly 0; the layer check kept.
+
+## 2026-10-27 4.2.391: reading the exports is quick again, and the window shows it is busy
+
+1. The owner on the Windows computer: after 4.2.388, Reading the exports took minutes for about 140,000 files with almost no sign of work, and Import stayed grey. Cause: recognising an export looked up every file on disk, again for every batch. Now the sizes and times come from the folder listing (no extra lookup on Windows) and the result is kept for the whole import; 140,000 files here: 1.0 to 1.2 s before, 0.44 s after.
+2. The owner: busy work is always shown. While exports or data files are read, the Import window shows a moving busy bar and an (i) icon with the text in the accent colour; Import stays grey with a hover text saying why. The Export window shows the same while it prepares. B-03 done.
+3. Checks: the touched tests pass (5); Pyrefly 0; the layer check kept.

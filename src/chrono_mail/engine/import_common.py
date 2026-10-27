@@ -15,9 +15,11 @@ from chrono_mail.engine.mailbox import Mailbox
 from chrono_mail.mime import parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "import_common.py 4.2.388"
+__version__ = "import_common.py 4.2.391"
 
 # --- Version history ----------------------------------------------------
+# v4.2.391: contents_fingerprint walks with os.scandir and takes size and time from the listing (DirEntry.stat: on Windows no extra disk
+#           access per file); the same inputs (relative name, size, time), sorted
 # v4.2.388: contents_fingerprint: what tells one export from a newer one in the same place (names, sizes and times, nothing read)
 # v4.2.385: Initial version: the fingerprint, the mail already here, the journal and the check of a copy on disk, moved unchanged out of the
 #           first importer so that every importer uses the same; the journal can also remember a value (which collection an import fills);
@@ -115,6 +117,28 @@ def contents_fingerprint(paths: Sequence[Path | None]) -> str:
             return
         add(f"{name}|{status.st_size}|{status.st_mtime_ns}")
 
+    def add_folder(folder: str, here: str) -> None:
+        """Every file below the folder, by name, size and time from the listing itself (on Windows no extra lookup per file)."""
+        try:
+            with os.scandir(folder) as listing:
+                entries = sorted(listing, key=lambda entry: entry.name)
+        except OSError:
+            add(f"{here}|gone")
+            return
+        folders: list[os.DirEntry[str]] = []
+        for entry in entries:
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    folders.append(entry)
+                    continue
+                status = entry.stat()
+            except OSError:
+                add(f"{here}/{entry.name}|gone")
+                continue
+            add(f"{here}/{entry.name}|{status.st_size}|{status.st_mtime_ns}")
+        for entry in folders:
+            add_folder(entry.path, f"{here}/{entry.name}" if here != "." else entry.name)
+
     for path in paths:
         if path is None:
             add("-")
@@ -123,11 +147,7 @@ def contents_fingerprint(paths: Sequence[Path | None]) -> str:
         if not path.is_dir():
             add_file(path, "")
             continue
-        for directory, folders, files in os.walk(path):
-            folders.sort()
-            here = Path(directory).relative_to(path).as_posix()
-            for name in sorted(files):
-                add_file(Path(directory) / name, f"{here}/{name}")
+        add_folder(str(path), ".")
     return digest.hexdigest()
 
 

@@ -24,14 +24,16 @@ from chrono_mail.engine.commands_outlook_export import (
 )
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.importdialog import remember_pick, starting_place
+from chrono_mail.ui.importdialog import place_busy_notice, remember_pick, starting_place
 from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "exportdialog.py 4.2.390"
+__version__ = "exportdialog.py 4.2.391"
 
 # --- Version history ----------------------------------------------------
+# v4.2.391: while the accounts are listed and while an export prepares (before its first count): a moving busy bar, an (i) icon and a
+#           text in the accent colour (importdialog.BusyNotice)
 # v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
 # v4.2.389: the target folder starts as the one exported to last (remembered when an export starts, on this computer); one that is gone
 #           is left out; an empty field's Browse opens in the folder of the last pick of any Browse (importdialog.starting_place),
@@ -42,6 +44,8 @@ __version__ = "exportdialog.py 4.2.390"
 PROGRAM_NAME: str = "Outlook"
 KINDS: dict[str, str] = {"pop3": "POP3: a data file of its own", "imap": "IMAP: the account only", "local": "a data file with the calendars, contacts and tasks"}
 LISTED: int = 10
+READING_ACCOUNTS: str = "Reading the accounts…"
+PREPARING: str = "Preparing the export… A large mailbox can take a while."
 
 
 def export_summary(result: ExportResult) -> str:
@@ -104,6 +108,7 @@ class ExportDialog(QDialog):
         self.summary.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.progress: QProgressBar = forms.part(form, QProgressBar, "progress")
         self.progress.setVisible(False)
+        self.busy = place_busy_notice(form, "right", forms.part(form, QWidget, "summaryArea"))  # while the accounts are read, and before an export's first count
         self.export_button: QPushButton = forms.part(form, QPushButton, "export")
         self.stop_button: QPushButton = forms.part(form, QPushButton, "stop")
         self.close_button: QPushButton = forms.part(form, QPushButton, "close")
@@ -117,9 +122,11 @@ class ExportDialog(QDialog):
         self.setMinimumHeight(wpx(560))
         forms.smallest(self, 760)
         backend.progress.connect(self._progress)
+        self.busy.start(READING_ACCOUNTS, self.progress)
         backend.ask(EXPORT_OUTLOOK_CHOICES, ChoicesParameters(), self._chosen, self._failed, owner=self)
 
     def _chosen(self, choices: ExportChoices) -> None:
+        self.busy.stop(self.progress)
         self.account_list.clear()
         for account in choices.accounts:
             item = QListWidgetItem(f"{account.name} ({KINDS.get(account.kind, account.kind)})", self.account_list)
@@ -165,8 +172,7 @@ class ExportDialog(QDialog):
         for widget in (*self._inputs(), self.rules):
             widget.setEnabled(False)
         self.stop_button.setEnabled(True)
-        self.progress.setVisible(True)
-        self.progress.setRange(0, 0)
+        self.busy.start(PREPARING, self.progress)  # until the first count
         self.summary.setText("Exporting…")
         parameters = ExportParameters(
             self.folder.text().strip(), mail=self.mail.isChecked(), calendar=self.calendar.isChecked(), contacts=self.contacts.isChecked(),
@@ -199,11 +205,12 @@ class ExportDialog(QDialog):
         if was_running:
             self.rules.setEnabled(bool(self.rules.toolTip() == ""))
         self.stop_button.setEnabled(False)
-        self.progress.setVisible(False)
+        self.busy.stop(self.progress)
         self._show_state()
 
     def _progress(self, what: str, done: int, total: object) -> None:
         if self._running and what == PROGRESS_TEXT and isinstance(total, int) and total > 0:
+            self.busy.stop(self.progress, keep_bar=True)  # the first count: the bar counts
             self.progress.setRange(0, total)
             self.progress.setValue(min(done, total))
 

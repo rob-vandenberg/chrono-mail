@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-27, version 4.2.390 (every Browse with an empty field opens where the last Browse picked; 4.2.389: the Import and Export windows remember the last paths).*
+*Last updated: 2026-10-27, version 4.2.391 (reading the exports quick again; a busy bar and an (i) notice while the Import and Export windows work, B-03 done; 4.2.390: Browse opens where the last Browse picked).*
 
 ## Where we are
 
@@ -59,7 +59,7 @@ Also open:
 
 - **B-01** UI restyle step 5: Calendar, Tasks and Contacts.
 - **B-02** The Import window shows the count of the import ("23,753 of 140,269") at its bottom left; whether the main window's status line then stops showing the import is still to decide.
-- **B-03** The Import window shows a moving busy bar while the exports are read, with the text "Reading the exports… A large mail folder can take a while."
+- **B-03** The Import window shows a moving busy bar while the exports are read, with the text "Reading the exports… A large mail folder can take a while." **Done in 4.2.391.**
 - **B-04** The interface in several languages (translations). The plan agreed with the owner (2026-10-26), to become a decision when its turn comes:
   - **The languages** (the owner, 2026-10-27): English, Spanish, French, German, Italian, Dutch, Portuguese, Russian, Japanese, Mandarin (simplified Chinese). The standard folder names in these languages are in one table already (4.2.387), used to recognise standard folders by name.
   - **Gettext everywhere**, Python's own `gettext` module: every user text in the code wrapped once in `_("…")`, plain English (also in the engine, which may not use Qt: its error and busy-bar texts need translating too); counts through `ngettext` in the one count helper of `core/words.py` (D-246); `pgettext` where one English word means two things ("Archive" the folder, "Archive" the action).

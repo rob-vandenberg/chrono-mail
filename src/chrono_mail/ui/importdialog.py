@@ -5,10 +5,12 @@ from dataclasses import replace
 from typing import override
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -16,8 +18,10 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QStackedWidget,
+    QStyle,
     QTreeWidget,
     QTreeWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -33,9 +37,11 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.390"
+__version__ = "importdialog.py 4.2.391"
 
 # --- Version history ----------------------------------------------------
+# v4.2.391: while the exports or data files are read: a moving busy bar, an (i) icon and "A large mail folder can take a while." in the accent
+#           colour (BusyNotice, also used by the Export window); Import stays grey with a hover text saying when it can be used
 # v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
 # v4.2.389: the paths of the last import come back (remembered when an import starts, on this computer): the three export fields filled,
 #           each Browse opens there, the data files' Browse opens in their folder; a path that is gone is left out; a Browse whose field is empty opens in the folder of the
@@ -72,6 +78,52 @@ STOPPED_TEXT: str = "The import was stopped; Import continues where it stopped."
 NOTHING_NEW_TEXT: str = "Nothing new: everything is already here."
 AGAIN_QUESTION: str = "These were imported before. Import them again?"
 AGAIN_BUTTON: str = "Import again"
+READING_EXPORTS: str = "Reading the exports… A large mail folder can take a while."
+READING_DATA_FILES: str = "Reading the data files… A large data file can take a while."
+WAIT_FOR_EXPORTS: str = "Import is possible as soon as the exports have been read"
+WAIT_FOR_DATA_FILES: str = "Import is possible as soon as the data files have been read"
+
+
+class BusyNotice(QWidget):
+    """An (i) icon and a text in the accent colour, shown while a long reading runs; with it the window's progress bar moves as a busy bar."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.icon = QLabel(self)
+        size = self.fontMetrics().height()
+        self.icon.setPixmap(self.style().standardIcon(QStyle.StandardPixmap.SP_MessageBoxInformation).pixmap(size, size))
+        self.text = QLabel(self)
+        self.text.setTextFormat(Qt.TextFormat.PlainText)
+        self.text.setWordWrap(True)
+        layout.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(self.text, 1)
+        self.setVisible(False)
+
+    def start(self, text: str, progress: QProgressBar) -> None:
+        """Shows the text and turns the progress bar into a moving busy bar (no end)."""
+        palette = self.text.palette()
+        palette.setColor(QPalette.ColorRole.WindowText, self.palette().color(QPalette.ColorRole.Accent))  # the theme's accent (core/colours, OR-9)
+        self.text.setPalette(palette)
+        self.text.setText(text)
+        self.setVisible(True)
+        progress.setRange(0, 0)
+        progress.setVisible(True)
+
+    def stop(self, progress: QProgressBar, keep_bar: bool = False) -> None:
+        """Hides the text; the progress bar stops moving (hidden unless keep_bar)."""
+        self.setVisible(False)
+        progress.setRange(0, 1)
+        progress.setVisible(keep_bar)
+
+
+def place_busy_notice(form: QWidget, column: str, above: QWidget) -> BusyNotice:
+    """A BusyNotice in the form's column (a QVBoxLayout by name), right above the part given."""
+    notice = BusyNotice(form)
+    layout = forms.part(form, QVBoxLayout, column)
+    layout.insertWidget(layout.indexOf(above), notice)
+    return notice
 
 
 def ask_import_again(parent: QWidget) -> bool:
@@ -357,6 +409,7 @@ class ImportDialog(QDialog):
         self._exports_hint = self.summary.text()
         self.progress: QProgressBar = forms.part(form, QProgressBar, "progress")
         self.progress.setVisible(False)
+        self.busy = place_busy_notice(form, "right", self.summary_area)  # while the exports are read
         self.import_button: QPushButton = forms.part(form, QPushButton, "import")
         self.stop_button: QPushButton = forms.part(form, QPushButton, "stop")
         self.close_button: QPushButton = forms.part(form, QPushButton, "close")
@@ -442,21 +495,36 @@ class ImportDialog(QDialog):
             files = self._chosen_data_files()
             profile = PROFILE_HERE
             if files or profile:
-                self.summary.setText("Reading the data files…")
+                self._reading(READING_DATA_FILES, WAIT_FOR_DATA_FILES)
                 self._backend.ask(
                     IMPORT_OUTLOOK_SCAN, commands_outlook.ScanParameters(files, profile=profile), lambda result: self._data_files_scanned(number, result),
                     lambda error: self._scan_failed(number, error), owner=self,
                 )
+            else:
+                self._read()
             return
         sources = self._sources()
         if not (sources.settings_file or sources.mail_folder or sources.backup_file):
+            self._read()
             return
-        self.summary.setText("Reading the exports…")
+        self._reading(READING_EXPORTS, WAIT_FOR_EXPORTS)
         self._backend.ask(IMPORT_EMCLIENT_SCAN, sources, lambda result: self._scanned(number, result), lambda error: self._scan_failed(number, error), owner=self)
+
+    def _reading(self, text: str, wait: str) -> None:
+        """A reading runs: a busy bar, the (i) notice in the accent colour, Import grey with when it can be used."""
+        self.summary.setText("")
+        self.busy.start(text, self.progress)
+        self.import_button.setToolTip(wait)
+
+    def _read(self) -> None:
+        """The reading answered or failed (or there is nothing to read): back to normal."""
+        self.busy.stop(self.progress)
+        self.import_button.setToolTip("")
 
     def _scanned(self, number: int, result: ScanResult) -> None:
         if self._running or number != self._scan_number:
             return  # an import runs with the count it started with, or a newer reading was started
+        self._read()
         self._total = result.messages
         self._done_before = result.messages_done
         self._finished_parts = result.finished
@@ -467,6 +535,7 @@ class ImportDialog(QDialog):
     def _data_files_scanned(self, number: int, result: commands_outlook.ScanResult) -> None:
         if self._running or number != self._scan_number:
             return
+        self._read()
         self._total = result.items
         self._done_before = result.done
         self._scanned_files = result.files
@@ -494,6 +563,7 @@ class ImportDialog(QDialog):
     def _scan_failed(self, number: int, error: ChronoMailError) -> None:
         if self._running or number != self._scan_number:
             return
+        self._read()
         self.summary.setText(str(error))  # Import stays off: there is nothing it could import
 
     def _failed(self, error: ChronoMailError) -> None:

@@ -39,9 +39,11 @@ from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 4.2.388"
+__version__ = "commands_emclient.py 4.2.391"
 
 # --- Version history ----------------------------------------------------
+# v4.2.391: the contents fingerprint of the exports is computed once per import run and kept with the run (not again for every batch);
+#           a scan that finds newer exports in the same place forgets the run of the older ones
 # v4.2.388: the journal belongs to the exports by their contents (names, sizes and times of their files), not by the folder alone: a newer
 #           export in the same place is a new import; the scan says which parts an earlier import of these very exports finished; again:
 #           start over (the journal is discarded; what is here already is not added twice, what was deleted since comes back)
@@ -166,6 +168,10 @@ def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
     folders: set[tuple[str, ...]] = set()
     messages = done = 0
     source = _journal_source(settings_path, mail_path, backup_path)
+    places = _places(engine, settings_path, mail_path, backup_path)
+    with _RUN_LOCK:
+        if _RUN and _RUN[0].places == places and _RUN[0].key[1] != source:  # newer exports in the same place: the run of the older ones is gone
+            _RUN.clear()
     journal = _Journal(engine.directories.data_directory / JOURNAL_FILE, source) if _journal_matches(engine, source) else None
     if mail_path is not None:
         for item in message_files(mail_path):
@@ -184,6 +190,20 @@ def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
 def _journal_source(settings_path: Path | None, mail_path: Path | None, backup_path: Path | None) -> str:
     """What the journal belongs to: these exports as they are now (a newer export written into the same place is another source)."""
     return "exports:" + contents_fingerprint((settings_path, mail_path, backup_path))
+
+
+def _places(engine: Engine, settings_path: Path | None, mail_path: Path | None, backup_path: Path | None) -> tuple[str, ...]:
+    """Where the exports are (not what they hold): finds the run of an import of these places."""
+    return (str(engine.directories.data_directory), *(str(path.resolve()) if path is not None else "" for path in (settings_path, mail_path, backup_path)))
+
+
+def _source_of_run(engine: Engine, settings_path: Path | None, mail_path: Path | None, backup_path: Path | None) -> str:
+    """The contents fingerprint of the exports, computed once per import run: the batches after the first reuse it."""
+    places = _places(engine, settings_path, mail_path, backup_path)
+    with _RUN_LOCK:
+        if _RUN and _RUN[0].places == places:
+            return _RUN[0].key[1]
+    return _journal_source(settings_path, mail_path, backup_path)
 
 
 def _journal_matches(engine: Engine, source: str) -> bool:
@@ -398,6 +418,7 @@ class _Run:
     key: tuple[str, ...]
     files: list[MessageFile]
     backup: BackupData | None
+    places: tuple[str, ...] = ()  # where the exports are (_places): the batches find this run, and its fingerprint (key[1]), by them
     known: dict[str, str] | None = None
     with_tags: bool = True  # Tags is chosen: imported mail gets its categories as tags
     tags_given: bool = False  # the tags waiting from earlier imports were tried by this import (once per import, not per batch)
@@ -414,12 +435,12 @@ def _file_key(path: Path | None) -> str:
     return f"{path.resolve()}|{status.st_size}|{status.st_mtime_ns}"
 
 
-def _run_for(engine: Engine, mail_path: Path, backup_path: Path | None, journal_source: str) -> _Run:
+def _run_for(engine: Engine, mail_path: Path, backup_path: Path | None, journal_source: str, places: tuple[str, ...] = ()) -> _Run:
     key = (str(engine.directories.data_directory), journal_source, str(mail_path.resolve()), _file_key(backup_path))
     with _RUN_LOCK:
         if _RUN and _RUN[0].key == key:
             return _RUN[0]
-        run = _Run(key, list(message_files(mail_path)), read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None)
+        run = _Run(key, list(message_files(mail_path)), read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None, places)
         _RUN[:] = [run]
         return run
 
@@ -528,11 +549,11 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         raise UsageError("The contacts come from the backup: choose it, or leave them out")
     if not (parameters.accounts or parameters.rules or parameters.mail or parameters.contacts or parameters.tags):  # tags without their exports: nothing to do
         raise UsageError("Choose what to import")
-    source = _journal_source(settings_path, mail_path, backup_path)
     journal_path = engine.directories.data_directory / JOURNAL_FILE
     if parameters.again:  # start over: everything is gone through again (the duplicate checks keep what is here from being added twice)
         _finished_run()
         journal_path.unlink(missing_ok=True)
+    source = _source_of_run(engine, settings_path, mail_path, backup_path)  # once per run: the batches after the first reuse it
     journal = _Journal(journal_path, source)
     notes: list[str] = []
     result = ImportResult()
@@ -547,7 +568,7 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
             result = replace(result, rules_added=rules_added, rules_existing=rules_existing, rules_not_imported=tuple(not_imported))
         if not not_made:  # an account that could not be made (the password store did not answer) is tried again by the next run
             journal.phase("settings")
-    run = _run_for(engine, mail_path, backup_path, source) if mail_path is not None else None
+    run = _run_for(engine, mail_path, backup_path, source, _places(engine, settings_path, mail_path, backup_path)) if mail_path is not None else None
     backup = run.backup if run is not None else (read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None)
     if parameters.contacts and backup is not None and "contacts" not in journal.phases:
         contacts_added, contacts_existing = _import_contacts(engine, backup, notes)
