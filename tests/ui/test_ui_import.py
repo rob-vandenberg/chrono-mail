@@ -20,10 +20,12 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 4.2.389"
+__version__ = "test_ui_import.py 4.2.390"
 
 # --- Version history ----------------------------------------------------
-# v4.2.389: the paths of the last import come back in a new window and Browse opens there; a path that is gone is left out
+# v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
+# v4.2.389: the paths of the last import come back in a new window and Browse opens there; a path that is gone is left out;
+#           an empty field's Browse opens in the folder of the last pick, also in a new window
 # v4.2.388: exports imported before: Import asks first (Cancel does nothing, Import again starts over and says nothing new came in);
 #           after an import no check when send and receive never runs by itself
 # v3.6.359: CR-07: a failed batch reloads the window, keeps what was imported in the summary, and Import finishes the rest
@@ -385,4 +387,26 @@ def test_the_paths_of_the_last_import_come_back_and_a_gone_one_is_left_out(
     gone = ImportDialog(setup.backend, lambda: None, memory=memory)
     qtbot.addWidget(gone)
     assert gone.backup_file.text() == "" and gone.mail_folder.text() == str(setup.exports.mail)
+
+
+def test_an_empty_fields_browse_opens_where_the_last_browse_picked(qtbot: QtBot, setup: Setup, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    memory = Remembered(QSettings(str(tmp_path / "window.ini"), QSettings.Format.IniFormat))  # its own file: the program's settings stay as they are
+    opened: list[str] = []
+    picks = [str(setup.exports.settings), ""]  # the settings file, then Cancel
+
+    def open_file(parent: object, title: str, start: str, *rest: object) -> tuple[str, str]:
+        opened.append(start)
+        return picks.pop(0) if picks else "", ""
+
+    monkeypatch.setattr(QFileDialog, "getOpenFileName", staticmethod(open_file))
+    dialog = ImportDialog(setup.backend, lambda: None, memory=memory)
+    qtbot.addWidget(dialog)
+    dialog._browse_settings()
+    dialog._browse_backup()
+    folder = str(setup.exports.settings.parent)
+    assert opened == [str(Path.home()), folder]
+    again = ImportDialog(setup.backend, lambda: None, memory=memory)
+    qtbot.addWidget(again)
+    again._browse_backup()
+    assert opened[-1] == folder
 

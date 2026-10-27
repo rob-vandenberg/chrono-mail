@@ -10,10 +10,12 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.2.389"
+__version__ = "prefs.py 4.2.390"
 
 # --- Version history ----------------------------------------------------
-# v4.2.389: Remembered keeps the paths the Import and Export windows used last (on this computer); a path that is gone reads as ""
+# v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
+# v4.2.389: Remembered keeps the paths the Import and Export windows used last (on this computer); a path that is gone reads as "";
+#           last_picked_folder: the folder of the last file or folder any of their Browse buttons picked
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.3.316: start_refresh: what the refresh at start does, apart from the automatic one (the owner)
 # v2.3.315: scheduled_refresh may also be send (only sends, the owner)
@@ -550,6 +552,15 @@ class Remembered:
     @import_data_file_folder.setter
     def import_data_file_folder(self, path: str) -> None:
         self._settings.setValue("import_data_file_folder", path)
+
+    @property
+    def last_picked_folder(self) -> str:
+        """The folder of the file or folder the last Browse of the Import or Export window picked."""
+        return self._existing("last_picked_folder")
+
+    @last_picked_folder.setter
+    def last_picked_folder(self, path: str) -> None:
+        self._settings.setValue("last_picked_folder", path)
 
     @property
     def export_folder(self) -> str:

@@ -3263,3 +3263,8 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 1. The owner: the Import window starts with the paths of the last import (the existing program's three exports; Browse for data files opens in the folder chosen last), the Export window with the last target folder; kept per computer when an import or export starts; a path that is gone is left out.
 2. Checks: the touched tests pass (11); Pyrefly 0; the layer check kept.
+
+## 2026-10-27 4.2.390: Browse opens where the last Browse picked
+
+1. The owner: after picking the settings export in Downloads, Browse for the backup opened in the home folder. Now every Browse of the Import and Export windows with an empty field opens in the folder of the last pick of any Browse, remembered at once (also for a window opened later); a gone folder gives the home folder.
+2. Checks: the touched tests pass (4); Pyrefly 0; the layer check kept.

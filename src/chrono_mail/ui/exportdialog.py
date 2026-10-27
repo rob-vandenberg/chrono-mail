@@ -24,16 +24,18 @@ from chrono_mail.engine.commands_outlook_export import (
 )
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.importdialog import starting_place
+from chrono_mail.ui.importdialog import remember_pick, starting_place
 from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "exportdialog.py 4.2.389"
+__version__ = "exportdialog.py 4.2.390"
 
 # --- Version history ----------------------------------------------------
+# v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
 # v4.2.389: the target folder starts as the one exported to last (remembered when an export starts, on this computer); one that is gone
-#           is left out and Browse opens in the home folder
+#           is left out; an empty field's Browse opens in the folder of the last pick of any Browse (importdialog.starting_place),
+#           else the home folder; a pick is remembered at once
 # v4.2.386: Initial version: Menu > File > Export: the export to Outlook's data files, built from its Qt Designer form (ui/forms/export.ui,
 #           D-276) as the Import window is; the program's name only in this file (OR-10); Rules greyed off Windows with why (OR-15)
 
@@ -130,7 +132,8 @@ class ExportDialog(QDialog):
         self._show_state()
 
     def _browse(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "The folder to write the files in", starting_place(self.folder.text()))
+        path = QFileDialog.getExistingDirectory(self, "The folder to write the files in", starting_place(self.folder.text(), self._memory))
+        remember_pick(self._memory, path)
         if path:
             self.folder.setText(path)
 

@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-27, version 4.2.389 (the Import and Export windows remember the last paths; 4.2.388: an import is known by its contents, Import again after a question, the check after an import only when send and receive runs by itself).*
+*Last updated: 2026-10-27, version 4.2.390 (every Browse with an empty field opens where the last Browse picked; 4.2.389: the Import and Export windows remember the last paths).*
 
 ## Where we are
 

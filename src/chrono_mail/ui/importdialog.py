@@ -33,11 +33,13 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.389"
+__version__ = "importdialog.py 4.2.390"
 
 # --- Version history ----------------------------------------------------
+# v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
 # v4.2.389: the paths of the last import come back (remembered when an import starts, on this computer): the three export fields filled,
-#           each Browse opens there, the data files' Browse opens in their folder; a path that is gone is left out (Browse: the home folder)
+#           each Browse opens there, the data files' Browse opens in their folder; a path that is gone is left out; a Browse whose field is empty opens in the folder of the
+#           last pick of any Browse (remembered at once, also for a new window), else the home folder
 # v4.2.388: exports or data files imported to the end before: Import asks "Import them again?" (Import again starts over, Cancel does
 #           nothing); a stopped import continues without a question; the end says "Nothing new: everything is already here." when nothing
 #           new came in, with the counts of what is already here (the rules too)
@@ -259,9 +261,15 @@ def data_file_import_summary(result: commands_outlook.ImportResult, stopped: boo
     return "\n".join(lines)
 
 
-def starting_place(path: str) -> str:
-    """Where a picker opens: the path given, or the home folder when there is none."""
-    return path or os.path.expanduser("~")
+def starting_place(path: str, memory: Remembered | None) -> str:
+    """Where a picker opens: the path in its own field; else the folder of the last pick of any Browse; else the home folder."""
+    return path or (memory.last_picked_folder if memory is not None else "") or os.path.expanduser("~")
+
+
+def remember_pick(memory: Remembered | None, path: str) -> None:
+    """A Browse picked this file or folder: the next Browse with an empty field opens in its folder, also in a new window."""
+    if memory is not None and path:
+        memory.last_picked_folder = os.path.dirname(os.path.normpath(path))
 
 
 class ImportDialog(QDialog):
@@ -382,19 +390,22 @@ class ImportDialog(QDialog):
     # --- choosing the exports -----------------------------------------------------------------
 
     def _browse_settings(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "The settings export", starting_place(self.settings_file.text()), "Settings (*.xml)")
+        path, _ = QFileDialog.getOpenFileName(self, "The settings export", starting_place(self.settings_file.text(), self._memory), "Settings (*.xml)")
+        remember_pick(self._memory, path)
         if path:
             self.settings_file.setText(path)
             self.scan()
 
     def _browse_mail(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "The folder of the mail export", starting_place(self.mail_folder.text()))
+        path = QFileDialog.getExistingDirectory(self, "The folder of the mail export", starting_place(self.mail_folder.text(), self._memory))
+        remember_pick(self._memory, path)
         if path:
             self.mail_folder.setText(path)
             self.scan()
 
     def _browse_backup(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "The backup", starting_place(self.backup_file.text()), "Backup (*.zip)")
+        path, _ = QFileDialog.getOpenFileName(self, "The backup", starting_place(self.backup_file.text(), self._memory), "Backup (*.zip)")
+        remember_pick(self._memory, path)
         if path:
             self.backup_file.setText(path)
             self.scan()
@@ -402,10 +413,11 @@ class ImportDialog(QDialog):
     def _browse_data_files(self) -> None:
         start = self._picked[0] if self._picked else self.data_files.text().strip()
         if not start and self._memory is not None:
-            start = self._memory.import_data_file_folder
-        start = starting_place(start)
+            start = self._memory.last_picked_folder or self._memory.import_data_file_folder
+        start = starting_place(start, self._memory)
         paths, _ = QFileDialog.getOpenFileNames(self, "The data files", start, "Outlook data files (*.pst)")
         if paths:
+            remember_pick(self._memory, paths[0])
             self._picked = tuple(paths)
             self.data_files.setText(DATA_FILE_SEPARATOR.join(paths))
             self.scan()
