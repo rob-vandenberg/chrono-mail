@@ -37,9 +37,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 3.6.354"
+__version__ = "folderpane.py 4.1.379"
 
 # --- Version history ----------------------------------------------------
+# v4.1.379: Next and Previous unread go on from the folder shown (also opened through its pin or its account's row), never to that folder,
+#           through subfolders and in an account inside a group too (CR-15)
 # v3.6.354: Delete in the folder list: never a standard folder, known by its role, also Snoozed and Recovered (CR-36)
 # v2.4.334: the folder numbers of the facts of one moment are shown once (they laid the list out once per message)
 # v2.0.300: the Favorites menu lists only the favorites that can appear (Snoozed, Scheduled, Archive once a mailbox has them, D-234)
@@ -459,22 +461,30 @@ class FolderPane(QObject):
                 self._messages.view.setFocus()
 
     def unread_in_another_folder(self, step: int) -> bool:
-        """The next (or previous) folder of the account that has unread mail: selected, its first (or last) unread message once it is in."""
-        account_index = self.model.index(0, 0)
-        for position in range(self.model.rowCount()):
-            if str(self.model.index(position, 0).data(ACCOUNT_ROLE)) == (self._state.view.account or ""):
-                account_index = self.model.index(position, 0)
-        folders = [
-            self.model.index(row, 0, account_index) for row in range(self.model.rowCount(account_index))
-            if self.model.index(row, 0, account_index).data(KIND_ROLE) == EntryKind.FOLDER
-        ]
+        """The next (or previous) folder of the account shown that has unread mail, in the order of the folder list (subfolders too,
+        also of an account in a group), from the folder shown (also opened through its pin or its account's row), never that folder
+        itself: selected, its first (or last) unread message once it is in."""
+        view = self._state.view
+        account = view.account or ""
+        folders: list[QModelIndex] = []
+
+        def walk(parent: QModelIndex) -> None:
+            for row in range(self.model.rowCount(parent)):
+                index = self.model.index(row, 0, parent)
+                if str(index.data(KIND_ROLE)) == EntryKind.FOLDER and str(index.data(ACCOUNT_ROLE)) == account:
+                    folders.append(index)
+                walk(index)
+
+        if account:
+            walk(QModelIndex())
         keys = [self._key_of(index) for index in folders]
+        shown = (account, str(EntryKind.FOLDER), view.path) if view.key_kind in (EntryKind.FOLDER, EntryKind.PINLINK) else None
         current = self.tree.currentIndex()
-        selected = self._key_of(current) if current.isValid() else None
+        selected = shown if shown in keys else self._key_of(current) if current.isValid() else None
         here = keys.index(selected) if selected is not None and selected in keys else (-1 if step > 0 else len(folders))
         order = range(here + step, len(folders), step) if step > 0 else range(here + step, -1, step)
         for position in order:
-            if int(folders[position].data(UNREAD_ROLE) or 0) > 0:
+            if keys[position] != shown and int(folders[position].data(UNREAD_ROLE) or 0) > 0:  # never the folder shown: it would not open again
                 self._messages.select_unread_after_next_load(step)
                 self.tree.setCurrentIndex(folders[position])
                 return True

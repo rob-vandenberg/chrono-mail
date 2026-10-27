@@ -18,7 +18,7 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.delegate import ColumnDelegate, MessageDelegate
 from chrono_mail.ui.elidedlabel import ElidedLabel
 from chrono_mail.ui.mailstate import MailState
-from chrono_mail.ui.messagelist import LOST_PLACES, MessageListModel, ViewSpec
+from chrono_mail.ui.messagelist import LOST_PLACES, PAGE_SIZE, MessageListModel, ViewSpec
 from chrono_mail.ui.messageorder import split_key
 from chrono_mail.ui.messagelistview import MessageListView
 from chrono_mail.ui.models import HERE_ONLY_ROLES
@@ -27,9 +27,12 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 3.6.362"
+__version__ = "messagelistpane.py 4.1.379"
 
 # --- Version history ----------------------------------------------------
+# v4.1.379: Next and Previous unread find the next unread message of the whole folder, loaded or not; its rows come first; the rest of a large
+#           folder's order is awaited; a folder a step opens gets its first (or last) unread message wherever it is; a held key's repeats are
+#           forgotten while a step waits, one separate press is done after it (CR-15)
 # v3.6.362: drop_repeats: a held key's repeats that piled up are thrown away after each action and during a pause; a separate press always counts (D-266)
 # v3.6.360: paused_at_edge: a move whose next message has not come yet loads and paints it first; presses meanwhile are forgotten; after the last message nothing is selected (D-266)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
@@ -135,6 +138,10 @@ class MessageListPane(QObject):
         self._refetching: bool = False  # the list is being fetched again after a change from outside (one at a time)
         self._refetch_again: bool = False  # another change from outside came meanwhile: once more afterwards
         self._first_unread_on_load: int = 0  # after the next folder has loaded: select its first (or last) unread message
+        self._unread_busy: bool = False  # a step to an unread message waits for its rows or the rest of the order (CR-15)
+        self._first_unread_view: int = 0  # the view of the folder a step opened (-1: not shown yet)
+        self._first_unread_from: int = 0  # the view that step was made in
+        self._unread_presses: list[tuple[int, int]] = []  # Next or Previous unread pressed (not a held key's repeat) while a step waited: the last one, with its view
         self.unread_elsewhere: Callable[[int], bool] = lambda step: False  # the folder list: the next folder with unread mail
         self.model: MessageListModel = MessageListModel(backend, parent)
         self.delegate: MessageDelegate = MessageDelegate()
@@ -159,6 +166,8 @@ class MessageListPane(QObject):
         self.model.counts_changed.connect(self._counts_changed)
         self.model.load_failed.connect(status.load_failed)
         self.model.loaded.connect(self._select_unread_after_load)
+        self.model.load_failed.connect(self._unread_load_failed)
+        self.model.modelReset.connect(self._unread_view_shown)
         self._rows_check: QTimer = QTimer(self)
         self._rows_check.setSingleShot(True)
         self._rows_check.timeout.connect(self.rows_changed)
@@ -760,33 +769,134 @@ class MessageListPane(QObject):
             self.view.scrollTo(self.model.index(position, 0))
 
     def go_to_unread(self, step: int) -> bool:
-        """Select the next (or previous) unread message of the list; at the end of the list, the first unread one of the next folder that has some."""
-        count = self.model.rowCount()
-        current = self.view.currentIndex().row() if self.view.currentIndex().isValid() else (-1 if step > 0 else count)
-        position = current + step
-        while 0 <= position < count:
-            row = self.model.row_at(position)
-            if row is not None and "seen" not in row.flags:
-                self.view.setCurrentIndex(self.model.index(position, 0))
-                self.view.scrollTo(self.model.index(position, 0))
-                return True
-            position += step
-        return self.unread_elsewhere(step)
+        """Select the next (or previous) unread message of the list; at its end, the first (or last) unread one of the next folder that has
+        some (D-054). The list knows which of its messages are unread, loaded or not (D-218): the rows of one not loaded yet are loaded first and
+        it is selected once they came, never before (D-266); where it may be among places not known yet, the rest of the order is awaited. While
+        a step waits, the repeats of a held key are forgotten and one separate press is kept and done after it (the key's repeats are told
+        apart only while the list has the focus: elsewhere, as in the reading pane, a held key goes on at most one step after it is let go)."""
+        if self._unread_busy or self._first_unread_on_load or not self.model.settled:
+            if not self._repeats.repeat:
+                self._unread_presses[:] = [(step, self.model.view_number)]
+            return True
+        return self._unread_step(step, self._unread_start(step), False)
+
+    def _unread_start(self, step: int) -> int:
+        """The place of the view a step to an unread message starts at (included): the one after (or before) the current message."""
+        model = self.model
+        current = self.view.currentIndex()
+        if not current.isValid():
+            return 0 if step > 0 else model.message_count() - 1
+        position = model.message_position(current.row())
+        if position is not None:
+            return position + step
+        rows = range(current.row() + 1, model.rowCount()) if step > 0 else range(current.row() - 1, -1, -1)  # on a group header
+        return next((found for found in (model.message_position(row) for row in rows) if found is not None), model.message_count() if step > 0 else -1)
+
+    def _unread_step(self, step: int, start: int, edge: bool) -> bool:
+        """Select the first unread message from this place on (edge: the folder was just opened by a step, which ends there). Its rows are
+        loaded first when they have not come; when they could not be read, the step ends there (the list says why)."""
+        model = self.model
+        view = model.view_number
+        position, sure = model.unread_place(start, step)
+        if not sure:
+            self._unread_busy = True  # the rest of the order is on its way: it may hold the next unread message
+            self._unread_after_order(lambda: self._unread_again(view, step, edge))
+            return True
+        if position is None:
+            self._unread_busy = False
+            if not edge and self.unread_elsewhere(step):
+                return True  # its first (or last) unread message is selected once it came (_select_unread_after_load)
+            self._next_unread_press()
+            return False
+        place = model.places_at([position])
+        key = place[0][0] if place else ""
+        if model.loaded_row(key) is not None:
+            index = model.index(model.display_row(position), 0)
+            self.view.setCurrentIndex(index)
+            self.view.scrollTo(index)
+            self._unread_busy = False
+            self._next_unread_press()
+            return True
+        self._unread_busy = True
+        first = position // PAGE_SIZE * PAGE_SIZE  # its page, as the list loads them
+
+        def loaded() -> None:
+            if model.view_number == view and model.holds(key) and model.loaded_row(key) is None:
+                self._unread_busy = False  # its rows could not be read: the step ends here, never on a later message without a word
+                self._unread_presses.clear()
+                return
+            self._unread_again(view, step, edge)  # loaded, or it left the view meanwhile: from where the current message is now
+
+        model.load_rows([each for each, _ in model.places_at(range(first, first + PAGE_SIZE))], loaded)
+        return True
+
+    def _unread_again(self, view: int, step: int, edge: bool) -> None:
+        """A waiting step goes on: from where the current message is now, in the view it was made in (another view: it is not done, and
+        only a press made in the view shown now is kept)."""
+        if self.model.view_number != view:
+            self._unread_busy = False
+            self._unread_presses[:] = [press for press in self._unread_presses if press[1] == self.model.view_number]
+            self._next_unread_press()
+            return
+        start = (0 if step > 0 else self.model.message_count() - 1) if edge else self._unread_start(step)
+        self._unread_step(step, start, edge)
+
+    def _unread_after_order(self, then: Callable[[], None]) -> None:
+        """Call then once the rest of the order came, could not come, or the view went."""
+        signals = (self.model.placed, self.model.load_failed, self.model.modelReset)
+
+        def ended(*_: object) -> None:
+            for signal in signals:
+                signal.disconnect(ended)
+            then()
+
+        for signal in signals:
+            signal.connect(ended)
+
+    def _next_unread_press(self) -> None:
+        """A press made while a step waited is done now."""
+        if self._unread_presses and not self._unread_busy and not self._first_unread_on_load and self.model.settled:
+            step, view = self._unread_presses.pop(0)
+            if view == self.model.view_number:
+                self.go_to_unread(step)
 
     def select_unread_after_next_load(self, step: int) -> None:
         self._first_unread_on_load = step
+        self._first_unread_view = -1  # the next view shown is the folder this step opens
+        self._first_unread_from = self.model.view_number
+
+    def _unread_view_shown(self) -> None:
+        """Another view is shown: the folder a step opens, or one opened by hand before it came, which ends the step (nothing is selected
+        there unasked) and keeps only a press made in it."""
+        if not self._first_unread_on_load:
+            return
+        if self._first_unread_view < 0:
+            if self.model.view_number != self._first_unread_from:  # not a reset of the view it left (its columns)
+                self._first_unread_view = self.model.view_number
+        elif self.model.view_number != self._first_unread_view:
+            self._first_unread_on_load = 0
+            self._unread_presses[:] = [press for press in self._unread_presses if press[1] == self.model.view_number]
 
     def _select_unread_after_load(self) -> None:
+        """The folder a step opened came: its first (or last) unread message is selected, once the question for the rest of its order is
+        on its way (a large view comes start first)."""
         step, self._first_unread_on_load = self._first_unread_on_load, 0
+        if step and self.model.view_number != self._first_unread_view:
+            step = 0  # another folder was opened by hand meanwhile: nothing is selected there unasked
         if not step:
+            if not self._unread_busy:
+                QTimer.singleShot(0, self, self._next_unread_press)  # a press made while the view loaded
             return
-        count = self.model.rowCount()
-        positions = range(count) if step > 0 else range(count - 1, -1, -1)
-        for position in positions:
-            row = self.model.row_at(position)
-            if row is not None and "seen" not in row.flags:
-                self.view.setCurrentIndex(self.model.index(position, 0))
-                return
+        self._unread_busy = True
+        view = self.model.view_number
+        QTimer.singleShot(0, self, lambda: self._unread_again(view, step, True))
+
+    def _unread_load_failed(self) -> None:
+        """The folder a step opened, or one opened by a click, could not be read: the step ends there, and a press made meanwhile with it
+        (it would act later, unasked); a step that waits for its rows goes on by itself."""
+        self._first_unread_on_load = 0
+        if not self._unread_busy:
+            self._unread_presses.clear()
 
     # --- a change from outside ---------------------------------------------------------------------------------
 

@@ -2,9 +2,10 @@ import bisect
 from collections.abc import Iterable, Iterator, Sequence
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageorder.py 1.6.260"
+__version__ = "messageorder.py 4.1.379"
 
 # --- Version history ----------------------------------------------------
+# v4.1.379: walk: the places from one on, one at a time, down or up, without copying the order (CR-15)
 # v1.6.260: Initial: every message of a view in its order, with its folder: found, put in and taken out quickly also with half a million (R-15)
 
 BLOCK: int = 512  # messages per block: a block is split at twice this, so finding a message inside one stays cheap
@@ -94,6 +95,21 @@ class MessageOrder:
             found.extend(self._blocks[number].keys[offset:offset + stop - start - len(found)])
             number, offset = number + 1, 0
         return found
+
+    def walk(self, start: int, step: int) -> Iterator[tuple[int, str]]:
+        """The places from start on (included) with their keys, going down (step 1) or up (-1), one at a time (nothing is copied)."""
+        if not 0 <= start < self._length:
+            return
+        block, offset = self._locate(start)
+        number, position = self._numbers[id(block)], start
+        while 0 <= number < len(self._blocks):
+            keys = self._blocks[number].keys
+            for index in range(offset, len(keys)) if step > 0 else range(offset, -1, -1):
+                yield position, keys[index]
+                position += step
+            number += step
+            if 0 <= number < len(self._blocks):
+                offset = 0 if step > 0 else len(self._blocks[number].keys) - 1
 
     def __iter__(self) -> Iterator[str]:
         for block in self._blocks:

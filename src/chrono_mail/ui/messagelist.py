@@ -25,9 +25,11 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 3.6.367"
+__version__ = "messagelist.py 4.1.379"
 
 # --- Version history ----------------------------------------------------
+# v4.1.379: unread_place: the next unread message of the whole view, loaded or not, and whether its place is known yet; a view whose
+#           order cannot be asked is settled (CR-15)
 # v3.6.367: a drag of messages of several accounts names each message's account, so a folder takes them all (D-272)
 # v3.6.360: next_row_after: the row a move selects next, or the rows to load first when it has not come yet (D-266)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
@@ -393,6 +395,24 @@ class MessageListModel(QAbstractTableModel):
                 return row
         return None
 
+    def unread_place(self, start: int, step: int) -> tuple[int | None, bool]:
+        """The place of the first unread message of the view from this place on (start included), going down (step 1) or up (-1), loaded
+        or not (the order knows which are unread, D-218), shown (not in a folded group); with whether the answer is sure: not while the
+        places it may be among are still on their way (a large view's order comes start first)."""
+        known = len(self._order)
+        if step < 0 and start >= known and not self._complete and self.loading:
+            return None, False  # the last ones are on their way (when the rest could not be read, the places known are all there is)
+        folded: list[tuple[int, int]] = [(group.message_start, group.message_start + group.count) for group in self._groups if group.folded] if self._group_counts is not None else []
+        starts = [first for first, _ in folded]
+        covered = sum(group.count for group in self._groups) if self._group_counts is not None else known  # past the groups nothing is shown
+        for position, key in self._order.walk(max(0, start) if step > 0 else min(start, known - 1), step):
+            if key not in self._unread or position >= covered:
+                continue
+            found = bisect.bisect_right(starts, position) - 1
+            if found < 0 or position >= folded[found][1]:  # not in a folded group
+                return position, True
+        return None, self._complete or step < 0 or not self.loading  # the rest could not be read: the places known are all there is
+
     def loaded_row(self, key: str) -> MessageRow | None:
         return self._rows.get(key)
 
@@ -482,6 +502,7 @@ class MessageListModel(QAbstractTableModel):
             parameters = self._order_parameters(spec, whole, rows_of)
         except ChronoMailError as error:
             self._failed(error)
+            self.settled = True  # nothing more comes for this view: what waits for its answer is not kept waiting
             return
         question, view = self._ask(), self._view
         self._questions += 1

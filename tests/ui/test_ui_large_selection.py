@@ -1,5 +1,5 @@
 import dataclasses
-from collections.abc import Callable, Generator, Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 from pathlib import Path
 
 import pytest
@@ -16,9 +16,11 @@ from tests.ui.test_ui_rapid_actions import fill
 from tests.ui.world import Dialogs, World, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_large_selection.py 3.6.350"
+__version__ = "test_ui_large_selection.py 4.1.380"
 
 # --- Version history ----------------------------------------------------
+# v4.1.380: the key press test counts the selected messages the Archive check reads, not how often it runs: since 3.6.362 it runs again
+#           inside the action, on the selection left (D-266)
 # v3.6.350: a drag made before the list knew every selected message moves them all; a selected range keeps its places when the rest of
 #           the order comes (RV-206); an Undo pressed after a waiting Shift+Delete or unschedule acts as it would at once (B-18); the
 #           Delete icon goes after a held Undo and never deletes another mailbox's message or acts in another view; an empty Mark or Tag takes no number; Redo
@@ -600,13 +602,17 @@ def test_the_key_press_works_once_not_once_per_selected_message(empty: World, qt
         model.row_at(row, fetch=True)
     wait(qtbot, lambda: all(model.row_at(row) is not None for row in range(300)) and empty.backend._pending == {})  # noqa: SLF001
     window.list_view.selectAll()
-    looked: list[int] = []
+    read: list[Placed] = []  # every selected message the Archive button's check reads, over all its runs
     redraws: list[int] = []
     real_all_archived = MailState.all_archived
 
     def all_archived(state: MailState, rows: Iterable[Placed]) -> bool:
-        looked.append(1)
-        return real_all_archived(state, rows)
+        def counted() -> Iterator[Placed]:
+            for row in rows:
+                read.append(row)
+                yield row
+
+        return real_all_archived(state, counted())
 
     def redrawn(first: QModelIndex | QPersistentModelIndex, last: QModelIndex | QPersistentModelIndex) -> None:
         redraws.append(last.row() - first.row() + 1)
@@ -615,7 +621,7 @@ def test_the_key_press_works_once_not_once_per_selected_message(empty: World, qt
     model.dataChanged.connect(redrawn)
     window.mail_actions.delete_selected()
     assert redraws == [300]  # the greyed rows: one redraw for the run of rows, not 300
-    assert len(looked) <= 1  # the selection is looked at once at most
+    assert len(read) <= 300  # the selection is read once at most, however often the check runs (it runs again as the rows turn grey, D-266)
     wait(qtbot, lambda: held_in(empty, "Trash") == 300 and empty.backend._pending == {})  # noqa: SLF001
     model.dataChanged.disconnect(redrawn)
 
