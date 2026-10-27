@@ -28,7 +28,7 @@ from chrono_mail.engine.emclient_source import (
     read_settings,
     standard_roles,
 )
-from chrono_mail.engine.import_common import EVERYTHING, MAXIMUM_REPORTED, Journal, fingerprint, fingerprint_of_raw, known_messages, still_here  # EVERYTHING and fingerprint: their names here stay
+from chrono_mail.engine.import_common import EVERYTHING, MAXIMUM_REPORTED, Journal, contents_fingerprint, fingerprint, fingerprint_of_raw, known_messages, still_here  # EVERYTHING and fingerprint: their names here stay
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
@@ -39,9 +39,12 @@ from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 4.2.387"
+__version__ = "commands_emclient.py 4.2.388"
 
 # --- Version history ----------------------------------------------------
+# v4.2.388: the journal belongs to the exports by their contents (names, sizes and times of their files), not by the folder alone: a newer
+#           export in the same place is a new import; the scan says which parts an earlier import of these very exports finished; again:
+#           start over (the journal is discarded; what is here already is not added twice, what was deleted since comes back)
 # v4.2.387: the export's standard folders are known by the language of all its folder names (emclient_source.standard_roles)
 # v4.2.385: the journal is written only when the batch was made safe on disk (an error there no longer records the messages as done), and
 #           a failed batch forgets the run, so Import again finds the messages it stored as duplicates; a message whose tags could not be
@@ -65,6 +68,8 @@ __version__ = "commands_emclient.py 4.2.387"
 JOURNAL_FILE: str = "import-emclient.log"
 _Journal = Journal  # the journal, the fingerprint and the check of a copy on disk are shared by every importer (import_common)
 _still_here = still_here
+FINISHED: str = "finished:"  # journal phase: a part (PARTS) an import of these exports went through to the end
+PARTS: tuple[str, ...] = ("accounts", "rules", "mail", "contacts", "tags")
 
 
 # --- parameters and results -----------------------------------------------------------------------
@@ -88,6 +93,7 @@ class ImportParameters:
     contacts: bool = field(default=True, metadata=option("Import the contacts (needs the backup)"))
     tags: bool = field(default=True, metadata=option("Import the categories as tags, and the tags of the mail (the settings export and the backup)"))
     batch: int = field(default=0, metadata=option("Messages per run (0: all); run again to continue"))
+    again: bool = field(default=False, metadata=option("Start over: go through everything again (what is here already is not added twice)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +111,7 @@ class ScanResult:
     contacts: int
     tags: int = 0  # categories in the settings export
     tagged: int = 0  # messages with categories in the backup
+    finished: tuple[str, ...] = ()  # the parts (PARTS) an earlier import of these very exports went through to the end
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,8 +165,9 @@ def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
     not_imported = tuple(f"{rule.name}: {rule.problem}" for rule in export.rules if rule.problem is not None)
     folders: set[tuple[str, ...]] = set()
     messages = done = 0
+    source = _journal_source(settings_path, mail_path, backup_path)
+    journal = _Journal(engine.directories.data_directory / JOURNAL_FILE, source) if _journal_matches(engine, source) else None
     if mail_path is not None:
-        journal = _Journal(engine.directories.data_directory / JOURNAL_FILE, str(mail_path.resolve())) if _journal_matches(engine, mail_path) else None
         for item in message_files(mail_path):
             messages += 1
             folders.add(item.folder)
@@ -169,14 +177,20 @@ def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
     return ScanResult(
         len(pop3), existing, len(export.accounts) - len(pop3), missing, len(export.rules) - len(not_imported), not_imported,
         len(folders), messages, done, sum(len(found) for found in backup.marks.values()), len(backup.contacts), len(export.categories), len(backup.tagged),
+        tuple(part for part in PARTS if journal is not None and FINISHED + part in journal.phases),
     )
 
 
-def _journal_matches(engine: Engine, mail_path: Path) -> bool:
-    """Is there a journal of an earlier import of this mail export? (Only then is it opened, so a scan never starts a new one.)"""
+def _journal_source(settings_path: Path | None, mail_path: Path | None, backup_path: Path | None) -> str:
+    """What the journal belongs to: these exports as they are now (a newer export written into the same place is another source)."""
+    return "exports:" + contents_fingerprint((settings_path, mail_path, backup_path))
+
+
+def _journal_matches(engine: Engine, source: str) -> bool:
+    """Is there a journal of an earlier import of these exports? (Only then is it opened, so a scan never starts a new one.)"""
     try:
         first = (engine.directories.data_directory / JOURNAL_FILE).read_text("utf-8").split("\n", 1)[0]
-        return bool(load_json(first) == ["source", str(mail_path.resolve())])
+        return bool(load_json(first) == ["source", source])
     except (OSError, UnicodeDecodeError, ValueError):
         return False
 
@@ -514,9 +528,12 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         raise UsageError("The contacts come from the backup: choose it, or leave them out")
     if not (parameters.accounts or parameters.rules or parameters.mail or parameters.contacts or parameters.tags):  # tags without their exports: nothing to do
         raise UsageError("Choose what to import")
-    source = mail_path or settings_path or backup_path
-    assert source is not None  # one of them is needed for anything chosen above
-    journal = _Journal(engine.directories.data_directory / JOURNAL_FILE, str(source.resolve()))
+    source = _journal_source(settings_path, mail_path, backup_path)
+    journal_path = engine.directories.data_directory / JOURNAL_FILE
+    if parameters.again:  # start over: everything is gone through again (the duplicate checks keep what is here from being added twice)
+        _finished_run()
+        journal_path.unlink(missing_ok=True)
+    journal = _Journal(journal_path, source)
     notes: list[str] = []
     result = ImportResult()
     export = read_settings(settings_path) if settings_path is not None else SettingsExport((), (), False)
@@ -530,7 +547,7 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
             result = replace(result, rules_added=rules_added, rules_existing=rules_existing, rules_not_imported=tuple(not_imported))
         if not not_made:  # an account that could not be made (the password store did not answer) is tried again by the next run
             journal.phase("settings")
-    run = _run_for(engine, mail_path, backup_path, str(source.resolve())) if mail_path is not None else None
+    run = _run_for(engine, mail_path, backup_path, source) if mail_path is not None else None
     backup = run.backup if run is not None else (read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None)
     if parameters.contacts and backup is not None and "contacts" not in journal.phases:
         contacts_added, contacts_existing = _import_contacts(engine, backup, notes)
@@ -564,6 +581,11 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         result = replace(result, messages_imported=imported, messages_duplicate=duplicates, messages_failed=tuple(failed), messages_left=left)
         if tags_later:
             notes.append(f"Tags: {tags_later} messages are imported; their tags come with the next import")
+    if result.messages_left == 0:  # the parts chosen went through to the end (an account not made yet is tried again: not finished)
+        chosen = {"accounts": parameters.accounts, "rules": parameters.rules, "mail": parameters.mail, "contacts": parameters.contacts, "tags": parameters.tags}
+        for part in PARTS:
+            if chosen[part] and (part not in ("accounts", "rules") or "settings" in journal.phases) and FINISHED + part not in journal.phases:
+                journal.phase(FINISHED + part)
     return replace(result, notes=tuple(notes))
 
 

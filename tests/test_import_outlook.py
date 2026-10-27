@@ -23,9 +23,10 @@ from tests.mailfactory import raw_message
 from tests.test_engine_commands import REGISTRY
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_outlook.py 4.2.385"
+__version__ = "test_import_outlook.py 4.2.388"
 
 # --- Version history ----------------------------------------------------
+# v4.2.388: the scan says a file was finished and what it left out; again starts over without doubles
 # v4.2.385: the reader's note that not every contact could be looked through is told once per file, not once per batch
 # v4.2.385: Tags ticked in a later run: what was imported before gets its categories, once
 # v4.2.385: the review: never into Chrono Mail's own folders; a blank folder name; one bad item fails only itself; an item number given twice;
@@ -764,3 +765,14 @@ def test_the_note_that_not_every_contact_was_looked_through_is_told_once_per_fil
     commands_outlook.finished_run()  # a resumed import of the first file, and a second file with its own note
     both = run(engine, (first, second))
     assert both.unreadable == 1 and both.failures == (f"Contactpersonen: {CONTACTS_PARTIAL}",) and both.mail_imported == 2
+
+
+def test_the_scan_says_a_file_was_finished_and_again_starts_over(tmp_path: Path, files: dict[Path, FakeFile]) -> None:
+    engine = make_engine(tmp_path / "profile")
+    path = data_file(files, tmp_path, "personal.pst", "Personal Folders")
+    run(engine, path, tasks=False)
+    found = scan(engine, str(path)).files[0]
+    assert (found.finished, found.left_out_kinds) == (True, ("tasks",))
+    again = run(engine, path, again=True)
+    assert (again.mail_imported, again.mail_existing, again.events_existing, again.tasks_imported) == (0, 6, 2, 1)
+    assert len(messages(engine, LOCAL_ACCOUNT_ID)) == 6

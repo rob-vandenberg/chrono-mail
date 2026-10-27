@@ -17,9 +17,10 @@ from tests.test_import_outlook_profile import machine  # noqa: F401 - the fixtur
 from tests.ui.world import wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import_outlook.py 4.2.386"
+__version__ = "test_ui_import_outlook.py 4.2.388"
 
 # --- Version history ----------------------------------------------------
+# v4.2.388: a data file imported before: Import asks first; Import again says nothing new came in
 # v4.2.386: on the Windows computer with a readable profile: Accounts, Rules and Signatures offered, its data files listed without asking
 # v4.2.385: the items that got their tags later in the end summary
 # v4.2.385: a path holding "; " stays one file
@@ -178,3 +179,22 @@ def test_a_readable_profile_offers_its_accounts_rules_signatures_and_data_files(
     assert dialog.data_files.text() == str(pst) and dialog.summary.text().startswith("Accounts: anna@example.com (POP3)")
     assert all(box.isEnabled() and box.isChecked() and box.toolTip() == "" for box in dialog.data_file_later)
     backend.wait_for_done(5000)
+
+
+def test_a_data_file_imported_before_asks_first_and_import_again_says_nothing_new(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    dialog = setup.dialog(qtbot)
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    wait(qtbot, lambda: dialog.summary.text().startswith("The import is done."))
+    asked: list[QWidget] = []
+
+    def answer(parent: QWidget) -> bool:
+        asked.append(parent)
+        return True
+
+    monkeypatch.setattr(importdialog, "ask_import_again", answer)
+    dialog.import_button.click()
+    wait(qtbot, lambda: dialog.summary.text().startswith("Nothing new: everything is already here."))
+    assert asked == [dialog] and "Messages imported: 0; already here: 6; failed: 0." in dialog.summary.text()
+    assert setup.messages() == 6

@@ -39,9 +39,11 @@ from chrono_mail.pst.model import PstContact, PstError, PstEvent, PstFailure, Ps
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outlook.py 4.2.386"
+__version__ = "commands_outlook.py 4.2.388"
 
 # --- Version history ----------------------------------------------------
+# v4.2.388: the scan says whether an earlier import went through a data file to the end, and which kinds it left out then; again: start
+#           over for the chosen files (their journals are discarded; what is here already is not added twice, what was deleted since comes back)
 # v4.2.386: Accounts, rules and signatures from Outlook's profile on the Windows computer where it keeps them (outlook_settings); the scan
 #           reads the profile and its data files when asked; a data file of a POP3 account the import makes goes into that account
 # v4.2.385: Initial version: import.outlook-scan and import.outlook (mail where Outlook had it, calendars, contacts, groups, tasks, categories;
@@ -109,6 +111,8 @@ class FileScan:
     left_out: tuple[str, ...] = ()  # folders of a kind Chrono Mail has no place for, with their counts
     items: int = 0  # everything the file holds (for the progress)
     done: int = 0  # items done by an earlier import of this file
+    finished: bool = False  # an earlier import of this very file went through it to the end
+    left_out_kinds: tuple[str, ...] = ()  # the kinds (mail, events, contacts, tasks) that earlier import left out: imported when chosen now
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +141,7 @@ class ImportParameters:
     accounts: bool = field(default=False, metadata=option("Import the POP3 and IMAP accounts of Outlook's profile on this computer (Windows), with their passwords"))
     rules: bool = field(default=False, metadata=option("Import Outlook's rules and blocked senders (Windows, while Outlook runs)"))
     signatures: bool = field(default=False, metadata=option("Give the accounts here their signature from Outlook's profile (Windows)"))
+    again: bool = field(default=False, metadata=option("Start over for these data files: go through everything again (what is here already is not added twice)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,6 +329,8 @@ def _scan_file(engine: Engine, text: str, coming: frozenset[str] = frozenset()) 
     return FileScan(
         text, store.display_name, "", place.words, counts.get(None, 0) if place.mail else 0, counts.get(CollectionKind.EVENTS, 0), counts.get(CollectionKind.CONTACTS, 0),
         counts.get(CollectionKind.TASKS, 0), _left_out(store), sum(folder.items for folder in store.folders), len(journal.done) if journal is not None else 0,
+        journal is not None and "finished" in journal.phases,
+        tuple(sorted({outcome[len(SKIPPED):] for outcome in journal.done.values() if outcome.startswith(SKIPPED)})) if journal is not None else (),
     )
 
 
@@ -769,6 +776,10 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
             finished_run()  # a data file named after an account made now goes into that account
     if not texts or not (parameters.mail or parameters.calendar or parameters.contacts or parameters.tasks):
         return ImportResult(profile=profile)
+    if parameters.again:  # start over: every chosen file is gone through again (the duplicate checks keep what is here from being added twice)
+        finished_run()
+        for text in texts:
+            _journal_path(engine, _checked_path(text)).unlink(missing_ok=True)
     run = _run_for(engine, texts)
     try:
         return replace(_import_run(engine, parameters, run), profile=profile)

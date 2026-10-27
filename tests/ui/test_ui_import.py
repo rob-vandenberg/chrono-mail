@@ -19,9 +19,11 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 3.6.359"
+__version__ = "test_ui_import.py 4.2.388"
 
 # --- Version history ----------------------------------------------------
+# v4.2.388: exports imported before: Import asks first (Cancel does nothing, Import again starts over and says nothing new came in);
+#           after an import no check when send and receive never runs by itself
 # v3.6.359: CR-07: a failed batch reloads the window, keeps what was imported in the summary, and Import finishes the rest
 # v2.4.327: the check after an import only receives (D-245)
 # v2.3.316: the one refresh after an import sends the Outbox first, as the automatic refresh does (D-030, since 2.2.314)
@@ -307,3 +309,43 @@ def test_no_mail_is_checked_while_an_import_runs_and_once_when_it_is_done(world:
     wait(qtbot, lambda: asked == ["mail.fetch"])  # one check after it, which only receives: an import never sends (D-245)
     wait(qtbot, lambda: not window.checking.checking and world.backend._pending == {})
     assert window.act_refresh.isEnabled()
+
+
+def test_exports_imported_before_ask_first_and_import_again_says_nothing_new(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    wait(qtbot, lambda: dialog.summary.text().startswith("The import is done."))
+    later = setup.dialog()  # the window opened again: the reading finds the same exports imported to the end
+    qtbot.addWidget(later)
+    later.scan()
+    wait(qtbot, lambda: later.import_button.isEnabled())
+    answers = [False, True]
+    asked: list[bool] = []
+
+    def answer(parent: object) -> bool:
+        asked.append(answers[len(asked)])
+        return asked[-1]
+
+    monkeypatch.setattr(importdialog, "ask_import_again", answer)
+    later.import_button.click()
+    assert asked == [False] and not later.progress.isVisible() and setup.changed == 1  # Cancel: nothing happens
+    later.import_button.click()
+    wait(qtbot, lambda: later.summary.text().startswith("Nothing new: everything is already here."))
+    text = later.summary.text()
+    assert "Messages imported: 0; already here: 7; failed: 0." in text and "Contacts imported: 0; already here: 2." in text
+    assert "Rules imported: 0; already here: 2" in text and "Accounts made: 0; already here: 2." in text
+    assert setup.messages() == 7
+
+
+def test_after_an_import_no_check_when_send_and_receive_never_runs_by_itself(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.start()
+    wait(qtbot, lambda: bool(window.mail_state.accounts) and world.backend._pending == {})
+    window.prefs.keep(replace(window.prefs.read(), check_on_start=False, auto_check=False))
+    asked = fetches(world, monkeypatch)
+    window._after_import()
+    wait(qtbot, lambda: world.backend._pending == {})
+    assert asked == []

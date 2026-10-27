@@ -1,9 +1,11 @@
 """What every import from another program needs: telling the same message apart (the fingerprint), the mail that is here
 already, the journal that lets a stopped import continue where it stopped, and the check that a copy is really on disk."""
 
+import hashlib
 import json
 import os
 import re
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -13,9 +15,10 @@ from chrono_mail.engine.mailbox import Mailbox
 from chrono_mail.mime import parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "import_common.py 4.2.385"
+__version__ = "import_common.py 4.2.388"
 
 # --- Version history ----------------------------------------------------
+# v4.2.388: contents_fingerprint: what tells one export from a newer one in the same place (names, sizes and times, nothing read)
 # v4.2.385: Initial version: the fingerprint, the mail already here, the journal and the check of a copy on disk, moved unchanged out of the
 #           first importer so that every importer uses the same; the journal can also remember a value (which collection an import fills);
 #           known_copies: every copy of a message, for an import that tells copies of its own source apart from mail that was here
@@ -91,6 +94,41 @@ def still_here(mailbox: Mailbox, store_id: str) -> bool:
     except ChronoMailError:
         return False
     return True
+
+
+# --- telling one export apart from a newer one in the same place -------------------------------------
+
+
+def contents_fingerprint(paths: Sequence[Path | None]) -> str:
+    """The paths and what they hold, by name, size and time of every file (a folder: every file below it); nothing is read. A newer export
+    written into the same place gives another fingerprint."""
+    digest = hashlib.sha256()
+
+    def add(text: str) -> None:
+        digest.update(text.encode("utf-8", "surrogateescape") + b"\0")
+
+    def add_file(path: Path, name: str) -> None:
+        try:
+            status = path.stat()
+        except OSError:
+            add(f"{name}|gone")
+            return
+        add(f"{name}|{status.st_size}|{status.st_mtime_ns}")
+
+    for path in paths:
+        if path is None:
+            add("-")
+            continue
+        add(str(path.resolve()))
+        if not path.is_dir():
+            add_file(path, "")
+            continue
+        for directory, folders, files in os.walk(path):
+            folders.sort()
+            here = Path(directory).relative_to(path).as_posix()
+            for name in sorted(files):
+                add_file(Path(directory) / name, f"{here}/{name}")
+    return digest.hexdigest()
 
 
 # --- the journal ----------------------------------------------------------------------------------

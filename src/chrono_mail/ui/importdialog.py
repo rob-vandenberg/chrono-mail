@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError
-from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, IMPORT_EMCLIENT_SCAN, ImportParameters, ImportResult, ScanParameters, ScanResult
+from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, IMPORT_EMCLIENT_SCAN, PARTS, ImportParameters, ImportResult, ScanParameters, ScanResult
 from chrono_mail.engine import commands_outlook
 from chrono_mail.engine.commands_outlook import IMPORT_OUTLOOK, IMPORT_OUTLOOK_SCAN, PROGRESS_TEXT
 from chrono_mail.engine.outlook_settings import WINDOWS_ONLY, ProfileImport, ProfileScan
@@ -30,9 +31,12 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.386"
+__version__ = "importdialog.py 4.2.388"
 
 # --- Version history ----------------------------------------------------
+# v4.2.388: exports or data files imported to the end before: Import asks "Import them again?" (Import again starts over, Cancel does
+#           nothing); a stopped import continues without a question; the end says "Nothing new: everything is already here." when nothing
+#           new came in, with the counts of what is already here (the rules too)
 # v4.2.386: Outlook on the Windows computer where it keeps its accounts: Accounts and Signatures offered when its profile is readable, Rules
 #           while Outlook runs (else greyed with why); the profile's data files are listed without asking for a file; the summaries count them
 # v4.2.385: Outlook under Applications: its own page (a page per program in the form), Mail, Calendar, Contacts, Tasks and Tags (categories);
@@ -57,6 +61,24 @@ DATA_FILE_SEPARATOR: str = "; "  # between the data files shown in their field (
 BATCH: int = 1000  # messages per command; Stop takes effect between batches
 PROFILE_HERE: bool = sys.platform == "win32"  # only on Windows can Outlook's profile be read
 LISTED: int = 10  # names listed in a summary before "and N more"
+DONE_TEXT: str = "The import is done."
+STOPPED_TEXT: str = "The import was stopped; Import continues where it stopped."
+NOTHING_NEW_TEXT: str = "Nothing new: everything is already here."
+AGAIN_QUESTION: str = "These were imported before. Import them again?"
+AGAIN_BUTTON: str = "Import again"
+
+
+def ask_import_again(parent: QWidget) -> bool:
+    """These were imported to the end before: True when Import again is clicked (Cancel or closing the box: False)."""
+    box = QMessageBox(QMessageBox.Icon.Question, "Import", AGAIN_QUESTION, QMessageBox.StandardButton.NoButton, parent)
+    again = box.addButton(AGAIN_BUTTON, QMessageBox.ButtonRole.AcceptRole)
+    box.addButton(QMessageBox.StandardButton.Cancel)
+    box.exec()
+    return box.clickedButton() is again
+
+
+def _first_line(stopped: bool, nothing_new: bool) -> str:
+    return STOPPED_TEXT if stopped else NOTHING_NEW_TEXT if nothing_new else DONE_TEXT
 
 
 def _listed(items: tuple[str, ...]) -> str:
@@ -115,13 +137,14 @@ def merge(total: ImportResult, batch: ImportResult) -> ImportResult:
 
 
 def import_summary(result: ImportResult, stopped: bool) -> str:
-    lines = ["The import was stopped; Import continues where it stopped." if stopped else "The import is done."]
+    nothing_new = not (result.accounts_added or result.rules_added or result.contacts_added or result.messages_imported or result.tags_added or result.messages_tagged)
+    lines = [_first_line(stopped, nothing_new)]
     if result.accounts_added or result.accounts_existing:
         lines.append(f"Accounts made: {result.accounts_added}; already here: {result.accounts_existing}.")
     if result.accounts_without_password:
         lines.append(f"Type the password in Settings > Accounts for: {_listed(result.accounts_without_password)}.")
     if result.rules_added or result.rules_existing or result.rules_not_imported:
-        lines.append(f"Rules imported: {result.rules_added}" + (f"; not imported: {_listed(result.rules_not_imported)}" if result.rules_not_imported else "") + ".")
+        lines.append(f"Rules imported: {result.rules_added}; already here: {result.rules_existing}" + (f"; not imported: {_listed(result.rules_not_imported)}" if result.rules_not_imported else "") + ".")
     if result.contacts_added or result.contacts_existing:
         lines.append(f"Contacts imported: {result.contacts_added}; already here: {result.contacts_existing}.")
     if result.tags_added or result.messages_tagged:
@@ -205,7 +228,12 @@ def merge_data_files(total: commands_outlook.ImportResult, batch: commands_outlo
 
 
 def data_file_import_summary(result: commands_outlook.ImportResult, stopped: bool) -> str:
-    lines = ["The import was stopped; Import continues where it stopped." if stopped else "The import is done."]
+    profile = result.profile
+    nothing_new = not (
+        result.mail_imported or result.events_imported or result.contacts_imported or result.groups_imported or result.tasks_imported or result.tags_added
+        or result.items_tagged or profile.accounts_added or profile.rules_added or profile.signatures
+    )
+    lines = [_first_line(stopped, nothing_new)]
     lines.extend(profile_import_lines(result.profile))
     for label, imported, existing, failed in (
         ("Messages", result.mail_imported, result.mail_existing, result.mail_failed), ("Appointments", result.events_imported, result.events_existing, result.events_failed),
@@ -244,6 +272,9 @@ class ImportDialog(QDialog):
         self._data_result = commands_outlook.ImportResult()
         self._profile = ProfileScan()  # what the latest reading found of the profile on this computer
         self._profile_sent = False  # the accounts, rules and signatures go with the first batch of an import only
+        self._finished_parts: tuple[str, ...] = ()  # what an earlier import of the chosen exports went through to the end
+        self._scanned_files: tuple[commands_outlook.FileScan, ...] = ()  # the latest reading of the chosen data files
+        self._again = False  # this import starts over (sent with its first batch only)
         form = forms.fill(self, "import")  # D-276
         self.sources: QTreeWidget = forms.part(form, QTreeWidget, "sources")
         self.sources.setHeaderHidden(True)
@@ -396,6 +427,7 @@ class ImportDialog(QDialog):
             return  # an import runs with the count it started with, or a newer reading was started
         self._total = result.messages
         self._done_before = result.messages_done
+        self._finished_parts = result.finished
         self.progress.setRange(0, max(1, self._total))
         self.summary.setText(scan_summary(result))
         self.import_button.setEnabled(True)
@@ -405,6 +437,7 @@ class ImportDialog(QDialog):
             return
         self._total = result.items
         self._done_before = result.done
+        self._scanned_files = result.files
         self.progress.setRange(0, max(1, self._total))
         if not self._chosen_data_files() and result.profile.files:  # the profile's own data files, without asking for a file
             self._picked = result.profile.files
@@ -443,6 +476,9 @@ class ImportDialog(QDialog):
     def start(self) -> None:
         if self._running or not self.import_button.isEnabled():
             return  # only after the reading of the exports has answered
+        self._again = self._imported_before()
+        if self._again and not ask_import_again(self):
+            return  # Cancel: nothing happens
         self._running = True
         if self._on_running is not None:
             self._on_running(True)
@@ -455,9 +491,30 @@ class ImportDialog(QDialog):
         self.stop_button.setEnabled(True)
         self.progress.setVisible(True)
         self.progress.setRange(0, max(1, self._total))
-        self.progress.setValue(self._done_before)
+        self.progress.setValue(0 if self._again else self._done_before)
+        if self._again:
+            self._done_before = 0
         self.summary.setText("Importing…")
         self._next()
+
+    def _chosen_parts(self) -> frozenset[str]:
+        """The parts of the exports this import goes through (as the engine names them, commands_emclient.PARTS)."""
+        sources = self._sources()
+        chosen = (
+            (self.accounts, sources.settings_file), (self.rules, sources.settings_file), (self.mail, sources.mail_folder), (self.contacts, sources.backup_file),
+            (self.tags, "tags come from any export"),
+        )
+        return frozenset(part for part, (box, export) in zip(PARTS, chosen, strict=True) if box.isChecked() and export)
+
+    def _imported_before(self) -> bool:
+        """Everything chosen was imported to the end by an earlier import of these very exports or data files (a stopped one just continues)."""
+        if self._reading_data_files():
+            readable = [found for found in self._scanned_files if not found.problem]
+            kinds = {"mail": self.data_file_mail, "events": self.data_file_calendar, "contacts": self.data_file_contacts, "tasks": self.data_file_tasks}
+            chosen = {kind for kind, box in kinds.items() if box.isChecked()}
+            return bool(readable) and all(found.finished and not chosen & set(found.left_out_kinds) for found in readable)
+        parts = self._chosen_parts()
+        return bool(parts) and parts <= set(self._finished_parts)
 
     def _inputs(self) -> tuple[QWidget, ...]:
         """What is off while an import runs."""
@@ -471,7 +528,9 @@ class ImportDialog(QDialog):
             choice = commands_outlook.ImportParameters(
                 self._chosen_data_files(), mail=self.data_file_mail.isChecked(), calendar=self.data_file_calendar.isChecked(),
                 contacts=self.data_file_contacts.isChecked(), tasks=self.data_file_tasks.isChecked(), tags=self.data_file_tags.isChecked(), batch=BATCH,
+                again=self._again,
             )
+            self._again = False  # the first batch starts over; the next ones continue
             if not self._profile_sent:
                 accounts, rules, signatures = self.data_file_later
                 choice = replace(
@@ -484,8 +543,9 @@ class ImportDialog(QDialog):
         sources = self._sources()
         parameters = ImportParameters(
             sources.settings_file, sources.mail_folder, sources.backup_file, accounts=self.accounts.isChecked(), rules=self.rules.isChecked(), mail=self.mail.isChecked(),
-            contacts=self.contacts.isChecked(), tags=self.tags.isChecked(), batch=BATCH,
+            contacts=self.contacts.isChecked(), tags=self.tags.isChecked(), batch=BATCH, again=self._again,
         )
+        self._again = False  # the first batch starts over; the next ones continue
         self._backend.ask(IMPORT_EMCLIENT, parameters, self._batch_done, self._failed, owner=self)
 
     def _batch_done(self, result: ImportResult) -> None:
@@ -496,6 +556,8 @@ class ImportDialog(QDialog):
             self._next()
             return
         stopped = result.messages_left > 0
+        if not stopped:  # Import once more in this window asks too
+            self._finished_parts = tuple(sorted({*self._finished_parts, *self._chosen_parts()}))
         self._finish()
         self.summary.setText(import_summary(self._result, stopped))
         self._on_changed()
@@ -508,6 +570,10 @@ class ImportDialog(QDialog):
             self._next()
             return
         stopped = result.left > 0
+        if not stopped:  # Import once more in this window asks too
+            kinds = {"mail": self.data_file_mail, "events": self.data_file_calendar, "contacts": self.data_file_contacts, "tasks": self.data_file_tasks}
+            left_out = tuple(kind for kind, box in kinds.items() if not box.isChecked())
+            self._scanned_files = tuple(replace(found, finished=True, left_out_kinds=left_out) for found in self._scanned_files)
         self._finish()
         self.summary.setText(data_file_import_summary(self._data_result, stopped))
         self._on_changed()

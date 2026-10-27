@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-27, version 4.2.387 (standard folders by name in 10 languages, one language per source, D-280; B-04 has the owner's 10 languages; 4.2.386: export to the office suite's mail program and its accounts, rules and signatures, D-279).*
+*Last updated: 2026-10-27, version 4.2.388 (an import is known by its contents; Import again after a question; the check after an import only when send and receive runs by itself; 4.2.387: standard folders by name in 10 languages, D-280).*
 
 ## Where we are
 

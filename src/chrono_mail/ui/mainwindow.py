@@ -62,9 +62,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.386"
+__version__ = "mainwindow.py 4.2.388"
 
 # --- Version history ----------------------------------------------------
+# v4.2.388: after an import the mail check runs only when send and receive runs by itself (at startup or at an interval)
 # v4.2.386: Menu > File > Export… (the Export window), below Import
 # v4.0.374: the Settings window is deleted once it is closed and read (every opening kept one in memory for good); the refresh after an
 #           account added from it reloads it only while it is open
@@ -1277,7 +1278,9 @@ class MainWindow(QMainWindow):
 
     def _after_import(self) -> None:
         """New accounts, folders and mail: the folder list with its counts, then the list on screen (its selection did not change, so it would keep the old messages)."""
-        self.reload_accounts(select_saved=True, then=self.checking.check_mail)  # the checks that waited for the import: once, with the accounts it made
+        prefs = self.prefs.read()
+        check = prefs.check_on_start or prefs.auto_check  # send and receive only when the owner lets it run by itself (at startup or at an interval)
+        self.reload_accounts(select_saved=True, then=self.checking.check_mail if check else None)  # the checks that waited for the import: once, with the accounts it made
 
     # --- an entry of the folder list is opened ---------------------------------------------------------------------
 

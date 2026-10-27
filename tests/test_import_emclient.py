@@ -6,7 +6,7 @@ from typing import Any  # command results are command-specific dataclasses
 import pytest
 
 from chrono_mail.config import ServerRole, load_rules
-from chrono_mail.core import LOCAL_ACCOUNT_ID, MessageFlag
+from chrono_mail.core import LOCAL_ACCOUNT_ID, MessageFlag, MessageRef
 from chrono_mail.engine import Engine, UsageError
 from chrono_mail.engine import commands_emclient
 from chrono_mail.engine.commands_emclient import JOURNAL_FILE, fingerprint, fingerprint_of_raw
@@ -17,9 +17,10 @@ from tests.test_emclient_source import FakeAccount, FakeContact, FakeItem, categ
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 4.2.385"
+__version__ = "test_import_emclient.py 4.2.388"
 
 # --- Version history ----------------------------------------------------
+# v4.2.388: a newer export in the same place is a new import; the scan says what was finished; again starts over without doubles
 # v4.2.385: the journal is written only when the batch was made safe on disk
 # v2.0.287: os.sync replaced also where Windows has none (the Windows computer's report)
 # v0.5.143: The progress of the mail counts over the whole import, not per batch
@@ -143,8 +144,8 @@ def test_the_mail_comes_in_batches_and_a_stopped_import_continues(tmp_path: Path
     values = exports.values(accounts=False, rules=False, contacts=False, batch=3)
     first: Any = call(engine, "import.emclient", **values)
     assert (first.messages_imported, first.messages_left) == (3, 4)
-    scan: Any = call(engine, "import.emclient-scan", settings_file=None, mail_folder=str(exports.mail), backup_file=None)
-    assert (scan.messages, scan.messages_done) == (7, 3)
+    scan: Any = call(engine, "import.emclient-scan", settings_file=str(exports.settings), mail_folder=str(exports.mail), backup_file=str(exports.backup))
+    assert (scan.messages, scan.messages_done, scan.finished) == (7, 3, ())  # stopped: not finished, it continues
     second: Any = call(engine, "import.emclient", **values)
     third: Any = call(engine, "import.emclient", **values)
     assert (second.messages_imported, second.messages_left, third.messages_imported, third.messages_left) == (3, 1, 1, 0)
@@ -464,3 +465,30 @@ def test_tags_waiting_are_tried_once_per_import(tmp_path: Path, monkeypatch: pyt
     assert not any("could not get their tags yet" in note for note in second.notes)
     monkeypatch.setattr(Mailbox, "set_tags", real)
     assert call(engine, "import.emclient", **values).messages_tagged == 1  # a later import
+
+
+def test_a_newer_export_in_the_same_place_is_a_new_import(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+    call(engine, "import.emclient", **exports.values())
+    sources = {"settings_file": str(exports.settings), "mail_folder": str(exports.mail), "backup_file": str(exports.backup)}
+    assert call(engine, "import.emclient-scan", **sources).finished == commands_emclient.PARTS
+    (exports.mail / "Inbox" / "008.eml").write_bytes(mail(8))  # the newer export, written into the same folder
+    scan: Any = call(engine, "import.emclient-scan", **sources)
+    assert (scan.messages, scan.messages_done, scan.finished) == (8, 0, ())
+    result: Any = call(engine, "import.emclient", **exports.values())
+    assert (result.messages_imported, result.messages_duplicate, result.accounts_existing, result.contacts_existing) == (1, 7, 2, 2)
+    assert len(local_messages(engine)) == 8
+
+
+def test_import_again_starts_over_and_brings_back_what_was_deleted(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    exports = make_exports(tmp_path)
+    call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False))
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        row = next(message for message in mailbox.index.page(("Inbox",), limit=100) if message.subject == "Message 1")
+        mailbox.delete(MessageRef(mailbox.store.account_id, row.folder, row.store_id), permanent=True)
+    assert call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False)).messages_imported == 0
+    again: Any = call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False, again=True))
+    assert (again.messages_imported, again.messages_duplicate) == (1, 6)
+    assert len(local_messages(engine)) == 7

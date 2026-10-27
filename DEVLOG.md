@@ -3251,3 +3251,10 @@ Append-only. One entry per completed task or session. Newest at the bottom.
 
 1. The owner (OR-26 as he worded it, D-280): a folder without a role is matched by name; one table of standard folder names in 10 languages replaces three English-only lists (IMAP folders without a mark, both imports); the language with the most matches wins and is used alone, so a word that happens to exist in another language never matches.
 2. Checks: a new test (German names give German roles, a Dutch name among them none); the folder-role tests of IMAP and both imports pass (three test files of the data-file import changed to one language, as the rule now wants); Pyrefly 0, layer check kept.
+
+## 2026-10-27 4.2.388: an import is known by its contents, and Import again
+
+1. Found by the owner on the Windows computer: the existing import knew an export only by its folder, so a newer export in the same place counted as done; his new mail was not imported and the window just said it was done. Now an export is known by its files (names, sizes, last changes); a newer one is a new import.
+2. The owner: the program is never the boss. An export or data file imported before gives the question "These were imported before. Import them again?" (Import again, Cancel); Import again goes through everything again, adds nothing twice and brings back what was deleted; a stopped import continues without a question. The end message says "Nothing new: everything is already here." when nothing came in, with the counts. Both imports.
+3. After an import the mail check runs only when send and receive at start or at an interval is on.
+4. Checks: the 19 touched tests pass; Pyrefly 0; the layer check kept.
