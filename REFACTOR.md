@@ -244,7 +244,7 @@ The order is the numbers. How it was chosen: bugs first, above all what can lose
 - A double click on a row opens a popup with every detail that helps to choose (dates, times, folder, account), one row per clashing field with a choice Chrono Mail / Server, "All from Chrono Mail", "All from Server", Apply and Cancel.
 - No Ignore button: leaving a row is ignoring it.
 - The sidebar shows an entry **Sync conflicts** (with its count) only while there are any; a click opens Settings > Sync conflicts.
-- Rejected: last change wins (it depends on clocks agreeing), server or Chrono Mail always wins (silent loss), a question every time (nagging, Thunderbird), a bug icon (too much work for its gain), a colour mark (clashes with the person's own colours).
+- Rejected: last change wins (it depends on clocks agreeing), server or Chrono Mail always wins (silent loss), a question every time (nagging, as some mail programs do), a bug icon (too much work for its gain), a colour mark (clashes with the person's own colours).
 
 ### R-25 A calendar, task list or address book deleted on the server stays here (S–M)
 - **Status:** DONE in 1.1.234 (step A, D-196): only on the server's confirmation of the deletion (the owner); a home that could not be listed is an error (found while doing it: it looked like "no calendars"); changed here: a sync conflict, Use Chrono Mail makes it again on the server
@@ -389,7 +389,7 @@ The order is the numbers. How it was chosen: bugs first, above all what can lose
 
 - 2026-10-22, R-39, 1.10.277: contact groups, kept in step like every card; the composer offers a group by name; a vCard 4 card stays vCard 4 (D-227). The refactor list is done.
 
-- 2026-10-22, outside the refactor (the owner), 1.9.276: Received is when the mail server received the message, as Thunderbird (D-226); "1 message".
+- 2026-10-22, outside the refactor (the owner), 1.9.276: Received is when the mail server received the message, as a widely used open-source mail program does (D-226); "1 message".
 - 2026-10-22, R-19 round 5, 1.9.275: R-19 done: every answer is kept as its type and read by its fields; 22 getattr left, each with its reason; two guards.
 - 2026-10-22, R-19 round 4, 1.9.274: the mail parts keep the engine's answers as their real types and read them by name (485 → 305 guessed reads); nothing visible changed.
 - 2026-10-22, R-19 round 3, 1.9.273: the calendar, contacts and tasks windows typed; no untyped engine call left in the window, a guard keeps it so. 1.9.272: the sections' certificate look works (kind https).

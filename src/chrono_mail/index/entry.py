@@ -6,9 +6,10 @@ from chrono_mail.index.text import clean_preview, searchable_body
 from chrono_mail.mime import Address, ParsedMessage, parse_message, send_time
 
 # --- Version ------------------------------------------------------------
-__version__ = "entry.py 2.0.280"
+__version__ = "entry.py 4.1.384"
 
 # --- Version history ----------------------------------------------------
+# v4.1.384: no other mail program named in a docstring (OR-10)
 # v2.0.280: sent: the moment the message carries itself (its Date line), for the Sent column (B-16)
 # v1.9.276: date is when the mail server received the message (D-226): the topmost Received line, else Delivery-date, else Date, else when it was stored here
 # v1.1.196: the moment a scheduled message is to be sent; a message that cannot be read gets 0 (not known: looked at every time)
@@ -49,7 +50,7 @@ def _people(message: ParsedMessage) -> tuple[tuple[str, str, bool], ...]:
 
 
 def received_moment(message: ParsedMessage, stored: datetime | None) -> datetime | None:
-    """The moment the Received column shows (D-226, as Thunderbird): when the mail server received the message (the topmost
+    """The moment the Received column shows (D-226, as a widely used open-source mail program does): when the mail server received the message (the topmost
     Received line, else Delivery-date); for a message no server received (own mail) the sender's Date; else when it was stored here."""
     return message.received or message.date or stored
 

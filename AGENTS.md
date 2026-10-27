@@ -21,7 +21,7 @@ Every changelist says how it keeps this rule. Nothing counts as obvious: what th
 |---|---|---|
 | `AGENTS.md` | Project-specific technical rules (this file) | Every session, first |
 | `PY-DEVELOPMENT-RULES.md` | How we work together: the owner's working rules for this project | Every session, second |
-| `OWNER-RULES.md` | Every rule the owner set, numbered (OR-nn); only the owner changes it | Every session, third (also loaded by itself) |
+| `OWNER-RULES.md` | Every rule the owner set, numbered (OR-nn); only the owner changes it; private: on this computer only, not in git | Every session, third (also loaded by itself) |
 | `STATUS.md` | Where we are now, the next task, open questions | Every session, fourth |
 | `STATUS-ARCHIVE.md` | Old text of STATUS.md (every version since 0.0.73); git-ignored | Never read whole; search when history is needed |
 | `ARCHITECTURE.md` | Module map, layers, storage design, account model | Before any code task |

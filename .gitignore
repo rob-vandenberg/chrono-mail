@@ -44,3 +44,6 @@ enforce_gitignore.sh
 
 # the whole-program code review: progress and findings (private)
 CODE-REVIEW.md
+
+# the owner's rules (private)
+OWNER-RULES.md

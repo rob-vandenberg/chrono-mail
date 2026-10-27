@@ -6,10 +6,13 @@ import ast
 import re
 from pathlib import Path
 
+import pytest
+
 # --- Version ------------------------------------------------------------
-__version__ = "test_owner_rules.py 3.6.355"
+__version__ = "test_owner_rules.py 4.1.384"
 
 # --- Version history ----------------------------------------------------
+# v4.1.384: OWNER-RULES.md is private (the owner, 2026-10-27): a copy of the project without it skips the check instead of failing
 # v3.6.355: Initial: every project check names its owner rule, and its numbers are the rule's (OR-42)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -18,9 +21,12 @@ TOOLS = re.compile(r'"src"|"(git|lint-imports|pyrefly)"|ls-files')  # what a che
 SMALLEST_NUMBER = 10  # below it a number is a count of things in the test itself (0, 1, 2 …), not a limit
 
 
-def owner_rules() -> dict[str, str]:
-    """OR-nn -> its text, from OWNER-RULES.md."""
-    text = (ROOT / "OWNER-RULES.md").read_text(encoding="utf-8")
+def owner_rules(root: Path = ROOT) -> dict[str, str] | None:
+    """OR-nn -> its text, from OWNER-RULES.md; None in a copy of the project without it (the file is private, not in git)."""
+    path = root / "OWNER-RULES.md"
+    if not path.is_file():
+        return None
+    text = path.read_text(encoding="utf-8")
     return {match.group(1): line for line in text.splitlines() for match in [re.match(r"- \*\*OR-(\d+)\*\*", line)] if match}
 
 
@@ -104,6 +110,8 @@ def faults(path: str, source: str, rules: dict[str, str]) -> list[str]:
 def test_every_check_of_the_project_names_its_owner_rule_and_uses_only_his_numbers() -> None:
     """OR-42: the check that keeps every other check honest."""
     rules = owner_rules()
+    if rules is None:
+        pytest.skip("OWNER-RULES.md is private and not in this copy of the project")
     found: list[str] = []
     for path in sorted((ROOT / "tests").rglob("test_*.py")):
         found.extend(faults(path.relative_to(ROOT).as_posix(), path.read_text(encoding="utf-8-sig"), rules))
@@ -119,3 +127,10 @@ def test_the_check_catches_a_limit_the_owner_never_set() -> None:
     assert faults("a.py", invented, rules) == ["a.py::test_small checks the project but names no owner rule (OR-nn)"]
     assert faults("a.py", cited, rules) == ["a.py::test_small compares against [1100.0], which no cited rule sets"]
     assert faults("a.py", kept, rules) == []
+
+
+def test_a_copy_of_the_project_without_the_rules_file_gives_no_rules(tmp_path: Path) -> None:
+    """The rules file is private (not in git): a fresh clone has none, which is no fault of the project."""
+    assert owner_rules(tmp_path) is None
+    (tmp_path / "OWNER-RULES.md").write_text("- **OR-8** A code file may have up to 2,000 lines\n", encoding="utf-8")
+    assert owner_rules(tmp_path) == {"8": "- **OR-8** A code file may have up to 2,000 lines"}

@@ -5,9 +5,10 @@ from chrono_mail.index import UNREADABLE_SUBJECT, IndexEntry, entry_from_raw, un
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_entry.py 1.9.276"
+__version__ = "test_index_entry.py 4.1.384"
 
 # --- Version history ----------------------------------------------------
+# v4.1.384: no other mail program named in a docstring (OR-10)
 # v1.9.276: The date is when the mail server received the message: Received, Delivery-date, Date, stored (D-226)
 # v1.1.196: The send time of a scheduled message; a message that cannot be read gets 0 (R-01)
 # v0.0.14: Changes after the first real use (see DEVLOG.md)
@@ -107,7 +108,7 @@ def with_lines(raw: bytes, *lines: str) -> bytes:
 
 
 def test_received_is_when_the_mail_server_received_it() -> None:
-    """D-226, as Thunderbird: the topmost Received line (the receiver's own server, which adds its line above the others), for
+    """D-226, as a widely used open-source mail program does: the topmost Received line (the receiver's own server, which adds its line above the others), for
     IMAP and POP3 alike; not the sender's Date and not the moment Chrono Mail fetched it."""
     raw = with_lines(
         raw_message(date=WHEN),
