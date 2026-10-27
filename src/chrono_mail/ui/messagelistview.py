@@ -1,9 +1,9 @@
 import os
-from collections.abc import Callable, Iterable, Sequence
-from typing import cast, override
+from collections.abc import Callable
+from typing import override
 
 from PySide6.QtCore import QAbstractItemModel, QEvent, QItemSelection, QModelIndex, QObject, QPersistentModelIndex, QPoint, QRect, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QFocusEvent, QFontMetrics, QIcon, QMouseEvent, QPainter, QPaintEvent, QPalette, QPixmap, QRegion, QResizeEvent, QShowEvent, QHideEvent
+from PySide6.QtGui import QColor, QDrag, QFocusEvent, QFontMetrics, QIcon, QMouseEvent, QPainter, QPaintEvent, QPalette, QPixmap, QResizeEvent
 from PySide6.QtWidgets import QApplication, QHeaderView, QStyleOptionViewItem, QTreeView, QWidget
 
 from chrono_mail.ui.colours import theme
@@ -14,9 +14,11 @@ from chrono_mail.ui.theme import show_focus
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistview.py 4.1.381"
+__version__ = "messagelistview.py 4.2.393"
 
 # --- Version history ----------------------------------------------------
+# v4.2.393: the list paints exactly what Qt asks; the rows are no longer moved on screen after a removal (at a scale such as 125 % Qt
+#           cannot move them, and the list painted as if it had: messages shown twice, others missing, D-266)
 # v4.1.381: a selection change of more rows than LARGE_SELECTION_CHANGE paints the list once instead of Qt's step, which asked the model
 #           about every cell of it when a screen reader may listen (a second and more with 15,346 rows)
 # v3.6.352: a removal moves the rows below it up as they are on screen and paints only the new strip and the changed rows; the removal is painted in the same moment as the rest of its change (D-266)
@@ -139,11 +141,6 @@ class ListHeader(QHeaderView):
 EMPTY_TEXT: str = "There are no messages to show in this view."
 
 
-def rectangles(region: QRegion) -> list[QRect]:
-    """The rectangles a region is made of."""
-    return list(cast(Iterable[QRect], region))  # cast: the stubs do not tell that a region gives its rectangles
-
-
 class MessageListView(QTreeView):
     """The message list. Dragging messages shows a small badge with their number, never the rows. The selection is grey while the list has no focus."""
 
@@ -161,146 +158,32 @@ class MessageListView(QTreeView):
         self.column_of: Callable[[int], str] = lambda column: ""  # the column id at a model column
         self.is_header: Callable[[int], bool] = lambda row: False  # whether a row is a group header
         self._watched: QAbstractItemModel | None = None
-        # A removal moves the rows below it up as they are on screen, and only what really changed is painted (D-266). While _moved
-        # is None every paint is whole; it holds what must be painted at the next paint: the strip that came into view.
-        self._moved: QRegion | None = None
-        self._kept = False  # nothing changed on screen since the last paint other than what _changed_rows names: a move is allowed
-        self._changed_rows: list[QPersistentModelIndex] = []  # rows changed since the last paint (their look, their selection)
-        self.viewport().setAutoFillBackground(False)  # the view fills the background of what it paints itself: moved rows stay
-        self.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
-        self.entered.connect(self.repaint_all)
-        self.viewportEntered.connect(self.repaint_all)
-        self.list_header.sectionResized.connect(self.repaint_all)
-        self.list_header.sectionMoved.connect(self.repaint_all)
-
-    _WHOLE_SIGNALS: tuple[str, ...] = ("layoutChanged", "modelReset", "rowsInserted", "rowsMoved", "headerDataChanged", "columnsInserted",
-                                       "columnsRemoved", "columnsMoved", "groups_changed", "header_rows_added")
 
     @override
     def setModel(self, model: QAbstractItemModel | None) -> None:
         if self._watched is not None:
-            self._watched.rowsAboutToBeRemoved.disconnect(self._rows_leaving)
             self._watched.rowsRemoved.disconnect(self._rows_left)
-            for name in self._WHOLE_SIGNALS:
-                if hasattr(self._watched, name):
-                    getattr(self._watched, name).disconnect(self.repaint_all)  # getattr: the signals by their names
-        if model is not None:
-            model.rowsAboutToBeRemoved.connect(self._rows_leaving)  # before the view's own: it forgets where its rows are
         super().setModel(model)
         self._watched = model
-        self.repaint_all()
         if model is not None:
             model.rowsRemoved.connect(self._rows_left)  # after the view's own
-            for name in self._WHOLE_SIGNALS:
-                if hasattr(model, name):
-                    getattr(model, name).connect(self.repaint_all)  # getattr: the signals by their names
 
     def repaint_all(self, *_: object) -> None:
-        """The whole list is painted at the next paint (something changed that may touch every row)."""
-        self._moved = None
-        self._kept = False
-        self._changed_rows.clear()
+        """The whole list is painted again (something changed that the model does not tell: the tag colours, the sync marks)."""
         self.viewport().update()
-
-    def _rows_leaving(self, parent: QModelIndex | QPersistentModelIndex, first: int, last: int) -> None:
-        """Rows leave the list: the rows below them are moved up on screen as they are, not painted again, so a Delete shows at once
-        and a held Delete key keeps up. Only the strip that comes into view at the bottom is painted (with the rows whose look changed)."""
-        model = self.model()
-        if not self._kept or model is None or parent.isValid() or not self.isVisible():
-            self.repaint_all()
-            return
-        column = self.header().logicalIndexAt(0)
-        top_rect = self.visualRect(model.index(first, column)) if column >= 0 else QRect()
-        bottom_rect = self.visualRect(model.index(last, column)) if column >= 0 else QRect()
-        height = self.viewport().height()
-        if not top_rect.isValid() or not bottom_rect.isValid() or top_rect.top() < 0:
-            self.repaint_all()  # the rows above the view move too, or the place is not known: all of it
-            return
-        top, gone = top_rect.top(), bottom_rect.bottom() + 1 - top_rect.top()
-        if top >= height:
-            return  # below what is shown: nothing on screen changes
-        width = self.viewport().width()
-        moved = self._moved if self._moved is not None else QRegion()
-        above, below = QRegion(0, 0, width, top), QRegion(0, top + gone, width, max(0, height - top - gone))
-        self._moved = moved.intersected(above).united(moved.intersected(below).translated(0, -gone)).united(QRegion(0, max(top, height - gone), width, height - max(top, height - gone)))
-        self.viewport().scroll(0, -gone, QRect(0, top, width, height - top))  # within the rows from the removed one down
-        self.viewport().update(QRect(0, max(top, height - gone), width, height - max(top, height - gone)))
 
     def _rows_left(self, *_: object) -> None:
         """Rows left: the view lays its rows out now, not in a later pass of its own, so the removal is painted in one moment with
-        the rest of its change (the folder numbers) and that later pass paints nothing again (D-266)."""
+        the rest of its change (the folder numbers) and that later pass paints nothing again (D-266). What is painted is what Qt asks."""
         self.executeDelayedItemsLayout()
-
-    def _whole_rows(self, region: QRegion) -> QRegion:
-        """The region grown to the whole rows it touches: Qt paints every row it touches whole, and its background must be filled first."""
-        whole = QRegion()
-        width = self.viewport().width()
-        for rect in rectangles(region):
-            top, bottom = rect.top(), rect.bottom()
-            first, last = self.indexAt(QPoint(0, top)), self.indexAt(QPoint(0, bottom))
-            if first.isValid():
-                top = self.visualRect(first).top()
-            if last.isValid():
-                bottom = self.visualRect(last).bottom()
-            whole = whole.united(QRegion(QRect(0, top, width, bottom - top + 1)))
-        return whole
-
-    def _note_rows(self, first: int, last: int) -> None:
-        model = self.model()
-        if model is None or last - first > LARGE_SELECTION_CHANGE:
-            self.repaint_all()
-            return
-        self._changed_rows.extend(QPersistentModelIndex(model.index(row, 0)) for row in range(first, last + 1))
-
-    @override
-    def dataChanged(self, topLeft: QModelIndex | QPersistentModelIndex, bottomRight: QModelIndex | QPersistentModelIndex, /, roles: Sequence[int] = ()) -> None:
-        self._note_rows(topLeft.row(), bottomRight.row())
-        super().dataChanged(topLeft, bottomRight, roles)
 
     @override
     def selectionChanged(self, selected: QItemSelection, deselected: QItemSelection) -> None:
-        rows = 0
-        for chosen in (selected, deselected):
-            for number in range(chosen.count()):
-                self._note_rows(chosen.at(number).top(), chosen.at(number).bottom())
-                rows += chosen.at(number).bottom() - chosen.at(number).top() + 1
+        rows = sum(chosen.at(number).bottom() - chosen.at(number).top() + 1 for chosen in (selected, deselected) for number in range(chosen.count()))
         if rows > LARGE_SELECTION_CHANGE:
             self.repaint_all()  # what Qt's own step adds is a paint and, for a screen reader, the first row; it asks the model about every
             return  # cell of the change for that (15,346 rows: 150,000 questions, a second and more), and the current row tells it anyway
         super().selectionChanged(selected, deselected)
-
-    @override
-    def currentChanged(self, current: QModelIndex | QPersistentModelIndex, previous: QModelIndex | QPersistentModelIndex) -> None:
-        for index in (current, previous):
-            if index.isValid():
-                self._note_rows(index.row(), index.row())
-        super().currentChanged(current, previous)
-
-    @override
-    def scrollContentsBy(self, dx: int, dy: int) -> None:
-        self.repaint_all()
-        super().scrollContentsBy(dx, dy)
-
-    @override
-    def showEvent(self, event: QShowEvent) -> None:
-        self.repaint_all()
-        super().showEvent(event)
-
-    @override
-    def hideEvent(self, event: QHideEvent) -> None:
-        self.repaint_all()
-        super().hideEvent(event)
-
-    @override
-    def changeEvent(self, event: QEvent) -> None:
-        self.repaint_all()  # the palette, the style, the font
-        super().changeEvent(event)
-
-    @override
-    def viewportEvent(self, event: QEvent) -> bool:
-        if event.type() in (QEvent.Type.Leave, QEvent.Type.Resize):
-            self.repaint_all()  # the pointer left (no row is hovered any more), or the room changed
-        return super().viewportEvent(event)
 
     @override
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -348,26 +231,7 @@ class MessageListView(QTreeView):
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:
-        region = event.region()
-        if self._moved is not None:  # after a removal: the moved rows stay as they are; the new strip and the changed rows are painted
-            region = QRegion(self._moved)
-            model = self.model()
-            rows = [kept.row() for kept in self._changed_rows if kept.isValid()]
-            rows += model.header_rows() if isinstance(model, MessageListModel) else []  # a group header may tell its new count
-            for row in rows:
-                rect = self.visualRect(model.index(row, 0)) if model is not None else QRect()
-                if rect.isValid():
-                    region = region.united(QRegion(QRect(0, rect.top() - 1, self.viewport().width(), rect.height() + 2)))  # with its neighbours (a selection draws over their edge)
-            region = self._whole_rows(region.intersected(QRegion(self.viewport().rect())))
-        painter = QPainter(self.viewport())
-        brush = self.viewport().palette().brush(self.viewport().backgroundRole())
-        for rect in rectangles(region):
-            painter.fillRect(rect, brush)  # the background of what is painted now (the view fills it itself: moved rows stay)
-        painter.end()
-        super().paintEvent(QPaintEvent(region) if self._moved is not None else event)
-        self._moved = None
-        self._changed_rows.clear()
-        self._kept = True
+        super().paintEvent(event)  # exactly what Qt asks to be painted
         model = self.model()
         if model is None or model.rowCount() > 0 or (isinstance(model, MessageListModel) and not model.settled):
             return  # never while the list is still loading
@@ -381,14 +245,12 @@ class MessageListView(QTreeView):
     def focusInEvent(self, event: QFocusEvent) -> None:
         super().focusInEvent(event)
         show_focus(self, True)
-        self.repaint_all()
 
     @override
     def focusOutEvent(self, event: QFocusEvent) -> None:
         super().focusOutEvent(event)
         if event.reason() != Qt.FocusReason.PopupFocusReason:  # a context menu leaves the selection as it is
             show_focus(self, False)
-            self.repaint_all()
 
     @override
     def startDrag(self, supportedActions: Qt.DropAction) -> None:

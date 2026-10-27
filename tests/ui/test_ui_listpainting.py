@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 from collections.abc import Generator
 from pathlib import Path
 from typing import override
@@ -5,7 +8,7 @@ from typing import override
 import pytest
 
 from PySide6.QtCore import QCoreApplication, QEvent, QObject, QPoint, Qt
-from PySide6.QtGui import QImage, QPaintEvent
+from PySide6.QtGui import QImage
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QStatusBar, QWidget
 from pytestqt.qtbot import QtBot
@@ -15,9 +18,11 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from tests.ui.world import Dialogs, World, build_world, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_listpainting.py 3.6.365"
+__version__ = "test_ui_listpainting.py 4.2.393"
 
 # --- Version history ----------------------------------------------------
+# v4.2.393: a removal looks as painted whole at 100, 125 and 150 % screen scale, each in a process of its own; the test of the partial
+#           painting after a Delete became: after each Delete the list on screen looks as painted whole (D-266)
 # v3.6.365: the busy bar test waits for the bar, which moves once work has run for a moment
 # v3.6.353: a Delete without a server takes the row out at the key press; rapid presses take exactly the highlighted messages; a failure brings them back and stops the rest (D-266)
 # v3.6.352: Initial: a Delete moves the rows below up as they are and paints only the new strip and the changed rows, and the list looks
@@ -84,31 +89,32 @@ def same_but_antialiasing(first: QImage, second: QImage) -> bool:
     return True
 
 
-def test_a_delete_moves_the_rows_below_and_paints_only_what_changed(unread: World, qtbot: QtBot) -> None:
-    """A Delete moves the rows below the removed one up as they are on screen: only the strip that came into view and the rows whose
-    selection changed are painted, and the list looks exactly as when it is painted whole. A row painted again costs Python code per
-    cell, and a whole list of them took longer than a held Delete key gives (D-266)."""
+def test_after_a_delete_the_list_on_screen_looks_as_painted_whole(unread: World, qtbot: QtBot) -> None:
+    """After each Delete the list on screen is exactly the list painted whole: the list paints what Qt asks for and never leaves rows
+    of an earlier picture on screen (messages twice, others missing, D-266)."""
     model, view = unread.window.list_model, unread.window.list_view
     viewport = view.viewport()
-    heights: list[int] = []
-    real_paint = view.paintEvent
-
-    def counting_paint(event: QPaintEvent) -> None:
-        heights.append(view._whole_rows(event.region()).boundingRect().height() if view._moved is None else view._moved.boundingRect().height())  # noqa: SLF001
-        real_paint(event)
-
-    view.paintEvent = counting_paint  # type: ignore[method-assign]
     for _ in range(3):
         before = model.rowCount()
-        heights.clear()
         QTest.keyClick(view, Qt.Key.Key_Delete)
-        wait(qtbot, lambda: model.rowCount() == before - 1)
-        qtbot.wait(60)
+        wait(qtbot, lambda: model.rowCount() == before - 1 and unread.backend._pending == {})  # noqa: SLF001
+        QCoreApplication.sendPostedEvents()  # the paint the removal asked for
         shown = on_screen(viewport)
         view.repaint_all()
-        qtbot.wait(60)
-        assert same_but_antialiasing(shown, on_screen(viewport)), "the moved rows differ from the list painted whole"
-    assert heights and min(heights) < viewport.height() // 3, f"the rows below were painted again: {heights}"
+        viewport.repaint()
+        assert same_but_antialiasing(shown, on_screen(viewport)), "the list on screen differs from the list painted whole"
+
+
+@pytest.mark.parametrize("scale", ["1", "1.25", "1.5"])
+def test_a_removal_looks_as_painted_whole_at_every_screen_scale(scale: str) -> None:
+    """At 125 % two rows of 17 are 42.5 screen pixels, which no screen can move. Before 4.2.393 the list moved its rows after a removal
+    and painted only a strip; Qt could not move them, and the old rows stayed on screen (messages twice, others missing). The list must
+    look as painted whole at every scale (D-266)."""
+    project = Path(__file__).resolve().parents[2]
+    environment = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "QT_SCALE_FACTOR": scale}
+    result = subprocess.run([sys.executable, "-m", "tests.ui.scaled_removal"], cwd=project, env=environment, capture_output=True, text=True,
+                            timeout=15, check=False)
+    assert result.returncode == 0, f"the list on screen differs from the list painted whole:\n{result.stdout}{result.stderr}"
 
 
 def test_a_removal_is_painted_with_the_rest_of_its_change(unread: World, qtbot: QtBot) -> None:

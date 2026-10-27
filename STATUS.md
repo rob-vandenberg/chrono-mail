@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-10-27, version 4.2.392 (a progress line leaves the status bar when its work ends; 4.2.391: reading the exports quick again, a busy notice while the Import and Export windows work).*
+*Last updated: 2026-10-27, version 4.2.393 (the message list paints exactly what Qt asks: no more messages shown twice or missing after a Delete, the long-standing duplicates; 4.2.392: a progress line leaves the status bar when its work ends; 4.2.391: reading the exports quick again, a busy notice while the Import and Export windows work).*
 
 ## Where we are
 
@@ -94,11 +94,12 @@ Also open:
 
 ## Problems
 
+- 2026-10-27 (the owner, agreed as the next job after 4.2.393): a single Delete shows about 100 to 125 ms after the key press, not "instant" (a few ms); the program's own work at the key press takes 60 to 90 ms. To measure where that time goes in the owner's own program, then remove the cause.
 - 2026-10-27, the owner's stress test (private `scratchpad/STRESS-TEST-REPORT.md`): the freezes are fixed in 4.1.381. Left: the delete of 15,346 Local Folders messages takes 130 s and its Undo 126 s (4.1.383), about 135 messages a second, most of it the index's small saves per message. The owner (2026-10-27): Undo's 100 steps are by design (D-240); mail of a removed account stays on disk by design (D-029); lost separate key presses at 30 ms set aside.
-- 2026-10-26 (the owner): after Delete held down and then Ctrl+Z held down in Junk, the list showed messages twice (the index held each once). 3.6.368 fixed the wrong headings this caused; the same message twice was not reproduced in a test; the owner checks whether it comes back.
+- 2026-10-26 (the owner): messages shown twice on screen after a held Delete and Ctrl+Z, while the index held each once: **explained and fixed in 4.2.393** (the list moved its rows on screen after a removal and painted only a strip; at the owner's 125 % screens Qt cannot move rows of part pixels, so old rows stayed until the list was painted again; D-266). 3.6.368 fixed a separate fault (wrong headings).
 - 3.6.358, found by reviewers, not related to CR-03 (the owner decides): Take back from the Outbox or Scheduled loses a rich message's inline pictures; a draft that keeps a delivery report part cannot be saved; a draft of about 1,000 attachments loses the last ones, and one file over 256 MB is dropped from a draft (the limits of D-022).
 - 3.6.354, open: a server may mark a folder Scheduled or Snoozed (IMAP roles Chrono Mail ignores); an older version cannot read the new roles. The window tests that read right after a row left at the key press wait for the engine since 3.6.357 (D-267).
-- 3.6.353: Delete held in Favorites > Unread checked by the owner (2026-10-26): works; after letting go the list sometimes needs a moment to finish, which the owner accepts. Still open: IMAP deletes in turn as one server command (Undo numbers), the Windows computer with the kept index connection; on the Windows computer at 125 % rows whose height is not whole screen pixels are painted as before (correct, not faster).
+- 3.6.353: Delete held in Favorites > Unread checked by the owner (2026-10-26): works; after letting go the list sometimes needs a moment to finish, which the owner accepts. Still open: IMAP deletes in turn as one server command (Undo numbers), the Windows computer with the kept index connection; "the list sometimes needs a moment to finish" was the same fault at 125 % (old rows left on screen), fixed in 4.2.393.
 - 2026-10-26 (the owner): after a restore everything is back exactly as the backup holds it (D-244); RV-220 and RV-235 are settled that way. Minor, left: RV-214, RV-215, RV-229 (CODE-REVIEW.md).
 - Found 2026-10-25, older, not fixed: an IMAP folder renamed offline with a subfolder deleted offline gives a false "delete refused" conflict; recurring-ical-events drops occurrences of an hourly series with a changed occurrence; an event saved on a computer in another zone takes that zone (RV-30, Minor).
 
