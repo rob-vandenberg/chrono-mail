@@ -2,6 +2,7 @@
 (UndoRecorder); Undo makes each message as it was before, Redo as it was after. Both are new actions through the mailbox, so on
 IMAP the server first and offline sent later (D-193, D-117); a message that is no longer where the action left it is left alone."""
 
+import time
 from dataclasses import dataclass, replace
 
 from chrono_mail.core import ChronoMailError, MessageRef
@@ -16,13 +17,34 @@ from chrono_mail.engine.undorecord import folded
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "undo.py 3.6.366"
+__version__ = "undo.py 4.1.382"
 
 # --- Version history ----------------------------------------------------
+# v4.1.382: an Undo or Redo that runs longer than a second says how far it is: "Undoing Move to Trash… 400 of 15,346" (D-266)
 # v3.6.366: a move to another account is undone by moving it back, and redone by moving it again (D-272)
 # v2.2.313: Initial: the steps of an action done again or backwards, mail.undo, mail.redo and mail.undo-labels (B-18)
 
 CHANGED_SINCE: str = "it was moved or deleted since"
+PROGRESS_AFTER: float = 1.0  # seconds: an Undo done sooner says only its last line (D-266)
+PROGRESS_EVERY: float = 0.2  # seconds between two counts in the status line
+
+
+class _Counter:
+    """How many messages of the action were handled (done or not): said in the status line once the Undo has run a second, a few
+    times a second, never once per message."""
+
+    def __init__(self, engine: Engine, what: str, total: int) -> None:
+        self._engine, self._what, self._total = engine, what, total
+        self._handled = 0
+        self._started = time.monotonic()
+        self._said = 0.0
+
+    def add(self, count: int = 1) -> None:
+        self._handled += count
+        now = time.monotonic()
+        if count and now - self._started >= PROGRESS_AFTER and now - self._said >= PROGRESS_EVERY:
+            self._said = now
+            self._engine.progress(self._what, min(self._handled, self._total), self._total)
 
 
 # --- doing the steps ---------------------------------------------------------------------------------------------------------------------------
@@ -39,7 +61,7 @@ def _sets_notes(step: UndoStep) -> bool:
     return step.notes is not None and any(value is not None for value in (step.notes[1].snoozed_until, step.notes[1].snoozed_from, step.notes[1].archived_from))
 
 
-def _do_changes(mailbox: Mailbox, steps: list[UndoStep], failed: list[str]) -> list[UndoStep]:
+def _do_changes(mailbox: Mailbox, steps: list[UndoStep], failed: list[str], counter: _Counter) -> list[UndoStep]:
     done: list[UndoStep] = []
     moves: dict[tuple[tuple[str, ...], tuple[str, ...]], list[UndoStep]] = {}
     for step in steps:
@@ -52,6 +74,7 @@ def _do_changes(mailbox: Mailbox, steps: list[UndoStep], failed: list[str]) -> l
                     _write_notes(mailbox, step.message, step.notes[1])
             except ChronoMailError as error:
                 failed.append(str(error))
+                counter.add()
                 continue
             ready.append(step)
         refs = {step.message: mailbox.reference(before, step.message) for step in ready}
@@ -61,6 +84,7 @@ def _do_changes(mailbox: Mailbox, steps: list[UndoStep], failed: list[str]) -> l
                 mailbox.prepare_moves(list(refs.values()), after)
             except ChronoMailError as error:  # the server said no for the whole group: nothing was done there or here
                 failed.extend(str(error) for _ in ready)
+                counter.add(len(ready))
                 continue
         for step in ready:
             try:
@@ -70,8 +94,10 @@ def _do_changes(mailbox: Mailbox, steps: list[UndoStep], failed: list[str]) -> l
                     _write_notes(mailbox, step.message, step.notes[1])
             except ChronoMailError as error:
                 failed.append(str(error))
+                counter.add()
                 continue
             done.append(step)
+            counter.add()
     verdicts = [(mailbox.reference(step.after, step.message), step.verdict[1]) for step in done if step.verdict is not None]
     set_verdicts(mailbox, verdicts)
     return done
@@ -91,7 +117,7 @@ def _marks_and_tags(mailbox: Mailbox, reference: MessageRef, step: UndoStep) -> 
             mailbox.set_tags(reference, wanted_tags)
 
 
-def _do_copies(mailbox: Mailbox, steps: list[UndoStep], failed: list[str]) -> list[UndoStep]:
+def _do_copies(mailbox: Mailbox, steps: list[UndoStep], failed: list[str], counter: _Counter) -> list[UndoStep]:
     """Copies made again (Redo of Copy): each gets a new id."""
     done: list[UndoStep] = []
     for step in steps:
@@ -99,12 +125,14 @@ def _do_copies(mailbox: Mailbox, steps: list[UndoStep], failed: list[str]) -> li
             copy = mailbox.copy(mailbox.reference(step.before, step.original), step.after)
         except ChronoMailError as error:
             failed.append(str(error))
+            counter.add()
             continue
         done.append(replace(step, message=copy.store_id))
+        counter.add()
     return done
 
 
-def _do_uncopies(mailbox: Mailbox, steps: list[UndoStep], failed: list[str]) -> list[UndoStep]:
+def _do_uncopies(mailbox: Mailbox, steps: list[UndoStep], failed: list[str], counter: _Counter) -> list[UndoStep]:
     """Copies removed for good (Undo of Copy): the original was never touched."""
     refs = [mailbox.reference(step.before, step.message) for step in steps]
     mailbox.prepare_deletes(refs, permanent=True)
@@ -114,12 +142,14 @@ def _do_uncopies(mailbox: Mailbox, steps: list[UndoStep], failed: list[str]) -> 
             mailbox.delete(reference, permanent=True)
         except ChronoMailError as error:
             failed.append(str(error))
+            counter.add()
             continue
         done.append(step)
+        counter.add()
     return done
 
 
-def _do_across(engine: Engine, steps: list[UndoStep], failed: list[str]) -> list[UndoStep]:
+def _do_across(engine: Engine, steps: list[UndoStep], failed: list[str], counter: _Counter) -> list[UndoStep]:
     """Moves to another account done again, or back (D-272): the same way as the person's move, message by message."""
     done: list[UndoStep] = []
     groups: dict[tuple[str, tuple[str, ...], str, tuple[str, ...]], list[UndoStep]] = {}
@@ -130,7 +160,9 @@ def _do_across(engine: Engine, steps: list[UndoStep], failed: list[str]) -> list
             result, _ = move_across(engine, account, "/".join(before), other, "/".join(after), tuple(step.message for step in members))
         except ChronoMailError as error:
             failed.extend(str(error) for _ in members)
+            counter.add(len(members))
             continue
+        counter.add(len(members))
         moved = set(result.done)
         done.extend(step for step in members if step.message in moved)
         failed.extend(item.reason for item in result.failed)
@@ -143,11 +175,13 @@ def _still_before(mailbox: Mailbox, step: UndoStep) -> bool:
     return row is not None and row.folder == step.before
 
 
-def _do(engine: Engine, steps: list[UndoStep]) -> tuple[list[UndoStep], list[str]]:
-    """Do these steps, account by account, the server first; returns the steps done (as done) and a reason for each one not done."""
+def _do(engine: Engine, steps: list[UndoStep], what: str) -> tuple[list[UndoStep], list[str]]:
+    """Do these steps, account by account, the server first; returns the steps done (as done) and a reason for each one not done.
+    what: how the status line names the work ("Undoing Move to Trash"), said with a count once it runs longer than a second."""
     done: list[UndoStep] = []
     failed: list[str] = []
-    done.extend(_do_across(engine, [step for step in steps if step.kind == "across"], failed))
+    counter = _Counter(engine, what, len(steps))
+    done.extend(_do_across(engine, [step for step in steps if step.kind == "across"], failed, counter))
     accounts: dict[str, list[UndoStep]] = {}
     for step in steps:
         if step.kind == "across":
@@ -158,9 +192,10 @@ def _do(engine: Engine, steps: list[UndoStep]) -> tuple[list[UndoStep], list[str
             with open_mailbox(engine, account) as mailbox, mailbox.together():
                 ready = [step for step in members if _still_before(mailbox, step)]
                 failed.extend(CHANGED_SINCE for _ in range(len(members) - len(ready)))
-                done.extend(_do_uncopies(mailbox, [step for step in ready if step.kind == "uncopy"], failed))
-                done.extend(_do_copies(mailbox, [step for step in ready if step.kind == "copy"], failed))
-                done.extend(_do_changes(mailbox, [step for step in ready if step.kind == "change"], failed))
+                counter.add(len(members) - len(ready))
+                done.extend(_do_uncopies(mailbox, [step for step in ready if step.kind == "uncopy"], failed, counter))
+                done.extend(_do_copies(mailbox, [step for step in ready if step.kind == "copy"], failed, counter))
+                done.extend(_do_changes(mailbox, [step for step in ready if step.kind == "change"], failed, counter))
         except ChronoMailError as error:
             failed.extend(str(error) for step in members if step not in done)
     return done, failed
@@ -189,7 +224,7 @@ def _run(engine: Engine, redo: bool) -> UndoResult:
         raise UsageError("Nothing to redo" if redo else "Nothing to undo")
     label = action.label()
     try:
-        done, failed = _do(engine, [step if redo else step.reversed() for step in action.steps])
+        done, failed = _do(engine, [step if redo else step.reversed() for step in action.steps], f"{'Redoing' if redo else 'Undoing'} {action.name}")
     except BaseException:
         engine.undo.put(action, redo=redo)  # a fault of the program: the action stays where it was
         raise

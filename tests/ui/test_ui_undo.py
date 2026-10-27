@@ -1,12 +1,14 @@
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt
 from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_mail import ListParameters, message_list
+from chrono_mail.engine.registry import TypedCommand
+from chrono_mail.ui.backend import Failure
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.sections import CONTACTS, MAIL
 from tests.ui.world import Dialogs, World, build_world, dialogs, mail, settle, wait, world  # noqa: F401 - fixtures
@@ -25,9 +27,10 @@ def said(window: MainWindow, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return texts
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_undo.py 4.0.374"
+__version__ = "test_ui_undo.py 4.1.382"
 
 # --- Version history ----------------------------------------------------
+# v4.1.382: an Undo not answered after a second says "Preparing to undo…", not once the engine counts its messages, then its last line (D-266)
 # v4.0.374: the stand-in of the status line takes the running flag of 3.6.364 and passes it on
 # v3.6.368: Delete held down and then Ctrl+Z held down in Junk with headings: every message back once, under its own heading
 # v2.3.317: the status line's texts are recorded, never read at one moment (another part may write the line again)
@@ -164,3 +167,54 @@ def test_delete_held_down_then_ctrl_z_held_down_brings_every_message_back_once_u
         QTest.keyClick(window.list_view, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier, 30)
     wanted = [(f"Spam {number:02d}", f"Spam {number:02d}") for number in range(SPAM)]
     wait(qtbot, lambda: held(spam, "Junk") == SPAM and not window.undoing.busy and shown_messages(window) == wanted, timeout=12000)
+
+
+def held_undo(world: World, monkeypatch: pytest.MonkeyPatch) -> list[Callable[[], None]]:
+    """Every Undo asked from now on waits until the test lets it through (a long one: the engine still works on it)."""
+    from chrono_mail.engine.undo import MAIL_UNDO
+
+    held_back: list[Callable[[], None]] = []
+    real_ask = world.backend.ask
+
+    def ask[P, R](
+        command: TypedCommand[P, R], parameters: P, on_success: Callable[[R], None], on_error: Failure | None = None, owner: QObject | None = None,
+        in_order: bool = False, waiting: bool = False, checking: bool = False,
+    ) -> int:
+        if command is MAIL_UNDO:
+
+            def later() -> None:
+                real_ask(command, parameters, on_success, on_error, owner, in_order, waiting, checking)
+
+            held_back.append(later)
+            return 0
+        return real_ask(command, parameters, on_success, on_error, owner, in_order, waiting, checking)
+
+    monkeypatch.setattr(world.backend, "ask", ask)
+    return held_back
+
+
+def test_an_undo_not_done_after_a_second_says_it_is_preparing_then_its_last_line(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The owner (4.1.381): an Undo of 15,346 messages ran for minutes with only the busy bar to show it."""
+    window = world.window
+    deleted_first(qtbot, world)
+    texts = said(window, monkeypatch)
+    waiting = held_undo(world, monkeypatch)
+    press(window, Qt.Key.Key_Z)
+    wait(qtbot, lambda: "Preparing to undo…" in texts, timeout=5000)
+    waiting[0]()
+    wait(qtbot, lambda: texts[-1:] == ["Undone: Move to Trash (1 message)"] and held(world, "Trash") == 0)
+
+
+def test_an_undo_the_engine_counts_does_not_say_preparing(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    deleted_first(qtbot, world)
+    texts = said(window, monkeypatch)
+    waiting = held_undo(world, monkeypatch)
+    press(window, Qt.Key.Key_Z)
+    assert window.undoing._preparing.isActive()  # noqa: SLF001 - it would say it after a second
+    world.backend.progress.emit("Undoing Move to Trash", 1, 2)  # the engine's count came first
+    assert not window.undoing._preparing.isActive()  # noqa: SLF001 - waited for by its clock, not by the test's
+    assert "Preparing to undo…" not in texts
+    waiting[0]()
+    wait(qtbot, lambda: texts[-1:] == ["Undone: Move to Trash (1 message)"])
+

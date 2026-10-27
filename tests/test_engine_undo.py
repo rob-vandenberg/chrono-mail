@@ -24,9 +24,10 @@ from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_undo.py 2.2.313"
+__version__ = "test_engine_undo.py 4.1.382"
 
 # --- Version history ----------------------------------------------------
+# v4.1.382: an Undo or Redo that runs longer than a second counts its messages for the status line; a quick one says nothing (D-266)
 # v2.2.313: Initial (B-18): every action on mail undone and redone on the IMAP server first; changed since, offline, refused; the junk filter as before
 
 
@@ -265,3 +266,54 @@ def test_a_step_reversed_twice_is_itself() -> None:
     step = UndoStep("a", "m", ("Inbox",), ("Junk",), flags_added=frozenset({MessageFlag.SEEN}), tags_added=("Work",), verdict=(None, "j"))
     assert step.reversed().reversed() == step
     assert step.reversed().before == ("Junk",) and step.reversed().flags_removed == frozenset({MessageFlag.SEEN}) and step.reversed().verdict == ("j", None)
+
+
+class Clock:
+    """The time the Undo reads: it moves on by step seconds at every look (0: it stands still)."""
+
+    def __init__(self, step: float) -> None:
+        self.now, self.step = 0.0, step
+
+    def monotonic(self) -> float:
+        self.now += self.step
+        return self.now
+
+
+def counted(world: World) -> list[tuple[str, int, int | None]]:
+    """Every count the engine gives the status line from now on."""
+    said: list[tuple[str, int, int | None]] = []
+
+    def progress(what: str, done: int, total: int | None) -> None:
+        said.append((what, done, total))
+
+    world.engine.progress = progress
+    return said
+
+
+def test_a_long_undo_and_redo_count_their_messages_for_the_status_line(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The owner (4.1.381): an Undo of 15,346 messages ran for minutes with nothing in the status line but the busy bar."""
+    from chrono_mail.engine import undo as undo_module
+
+    monkeypatch.setattr(undo_module, "time", Clock(1.0))  # each message takes a second: every one is counted
+    ids = fill(world, 5)
+    message_delete_many(world.engine, ManyDeleteParameters(world.account, "Inbox", tuple(ids), undo=1))
+    said = counted(world)
+    undo(world.engine)
+    assert said and {what for what, _, _ in said} == {"Undoing Move to Trash"} and {total for _, _, total in said} == {5}
+    counts = [done for _, done, _ in said]
+    assert counts == sorted(set(counts)) and counts[-1] == 5  # only up, and every message counted
+    said.clear()
+    redo(world.engine)
+    assert said and {what for what, _, _ in said} == {"Redoing Move to Trash"} and said[-1][1:] == (5, 5)
+
+
+def test_a_quick_undo_says_only_its_last_line(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    from chrono_mail.engine import undo as undo_module
+
+    monkeypatch.setattr(undo_module, "time", Clock(0.0))  # done within the second
+    ids = fill(world, 2)
+    message_delete_many(world.engine, ManyDeleteParameters(world.account, "Inbox", tuple(ids), undo=1))
+    said = counted(world)
+    assert undo(world.engine).not_done == 0
+    assert said == []
+

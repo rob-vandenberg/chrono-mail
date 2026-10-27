@@ -1,6 +1,6 @@
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QWidget
 
 from chrono_mail.core import ChronoMailError
@@ -11,13 +11,16 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "undoing.py 3.6.350"
+__version__ = "undoing.py 4.1.382"
 
 # --- Version history ----------------------------------------------------
+# v4.1.382: an Undo or Redo without an answer after a second says "Preparing to undo…" until the engine counts its messages (D-266)
 # v3.6.350: Undo waits in turn in the message list's queue, right after the action it is meant for (RV-206): it goes with that action
 #           when the action is not done or gives no command; what comes after it waits until it is answered, and is let go however the
 #           answer ends
 # v2.2.313: Initial: Undo and Redo of the actions on mail: each action numbered, Undo waits for the actions under way, the menu says what it would do (B-18)
+
+PREPARING_AFTER_MS: int = 1000  # an Undo not answered by then says it is under way (a shorter one shows only its last line, D-266)
 
 
 class Undoing(QObject):
@@ -43,6 +46,11 @@ class Undoing(QObject):
         messages.actions = lambda: self._number  # whether an action that waited gave a command
         self.undo_label: str = ""  # "Move to Trash (3 messages)": what Undo would do; "" for nothing
         self.redo_label: str = ""
+        self._preparing = QTimer(self)  # "Preparing to undo…" once an Undo has run a second without a count from the engine
+        self._preparing.setSingleShot(True)
+        self._preparing.timeout.connect(self._say_preparing)
+        self._preparing_redo: bool = False
+        backend.progress.connect(self._counting)
 
     @property
     def busy(self) -> bool:
@@ -100,8 +108,11 @@ class Undoing(QObject):
             return
         redo, release = self._wanted.pop(0)
         self.started()
+        self._preparing_redo = redo
+        self._preparing.start(PREPARING_AFTER_MS)
 
         def done(result: UndoResult) -> None:
+            self._preparing.stop()
             try:
                 if result.not_done:
                     count = result.not_done + len(result.messages)
@@ -114,6 +125,7 @@ class Undoing(QObject):
                 release()
 
         def failed(error: ChronoMailError) -> None:
+            self._preparing.stop()
             try:
                 self._status.show(str(error))  # "Nothing to undo": not an error of the mail
             finally:
@@ -121,6 +133,14 @@ class Undoing(QObject):
                 release()
 
         self._backend.ask(MAIL_REDO if redo else MAIL_UNDO, NoParameters(), done, failed, owner=self)
+
+    def _say_preparing(self) -> None:
+        self._status.show(f"Preparing to {'redo' if self._preparing_redo else 'undo'}…", running=True)
+
+    def _counting(self, what: str, done: int, total: object) -> None:
+        """The engine counts the messages of the Undo under way: its count follows (the status line shows it), not "Preparing"."""
+        if what.startswith(("Undoing ", "Redoing ")):
+            self._preparing.stop()
 
     def refresh(self) -> None:
         """Ask the engine what Undo and Redo would do now."""
