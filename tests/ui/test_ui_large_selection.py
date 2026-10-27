@@ -19,8 +19,8 @@ from tests.ui.world import Dialogs, World, build_world, wait
 __version__ = "test_ui_large_selection.py 4.1.380"
 
 # --- Version history ----------------------------------------------------
-# v4.1.380: the key press test counts the selected messages the Archive check reads, not how often it runs: since 3.6.362 it runs again
-#           inside the action, on the selection left (D-266)
+# v4.1.380: the key press test counts the runs of the Archive check that read selected messages, not every run: since 3.6.362 it runs
+#           again inside the action, on the empty selection left (D-266)
 # v3.6.350: a drag made before the list knew every selected message moves them all; a selected range keeps its places when the rest of
 #           the order comes (RV-206); an Undo pressed after a waiting Shift+Delete or unschedule acts as it would at once (B-18); the
 #           Delete icon goes after a held Undo and never deletes another mailbox's message or acts in another view; an empty Mark or Tag takes no number; Redo
@@ -602,14 +602,16 @@ def test_the_key_press_works_once_not_once_per_selected_message(empty: World, qt
         model.row_at(row, fetch=True)
     wait(qtbot, lambda: all(model.row_at(row) is not None for row in range(300)) and empty.backend._pending == {})  # noqa: SLF001
     window.list_view.selectAll()
-    read: list[Placed] = []  # every selected message the Archive button's check reads, over all its runs
+    looked: list[int] = []  # per run of the Archive button's check: how many selected messages it read
     redraws: list[int] = []
     real_all_archived = MailState.all_archived
 
     def all_archived(state: MailState, rows: Iterable[Placed]) -> bool:
+        looked.append(0)
+
         def counted() -> Iterator[Placed]:
             for row in rows:
-                read.append(row)
+                looked[-1] += 1
                 yield row
 
         return real_all_archived(state, counted())
@@ -621,7 +623,8 @@ def test_the_key_press_works_once_not_once_per_selected_message(empty: World, qt
     model.dataChanged.connect(redrawn)
     window.mail_actions.delete_selected()
     assert redraws == [300]  # the greyed rows: one redraw for the run of rows, not 300
-    assert len(read) <= 300  # the selection is read once at most, however often the check runs (it runs again as the rows turn grey, D-266)
+    assert len([run for run in looked if run]) <= 1  # the selection is looked at once at most (a run on the selection left after the action reads nothing: D-266)
+    assert len(looked) <= 2  # and the check runs once per moment, not once per row: the key press, and the moment the rows turn grey
     wait(qtbot, lambda: held_in(empty, "Trash") == 300 and empty.backend._pending == {})  # noqa: SLF001
     model.dataChanged.disconnect(redrawn)
 
