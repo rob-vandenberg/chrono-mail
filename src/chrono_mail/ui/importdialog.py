@@ -37,9 +37,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.391"
+__version__ = "importdialog.py 4.2.404"
 
 # --- Version history ----------------------------------------------------
+# v4.2.404: the "Import again" box shows its text as plain text, as every message box (RV-167, D-259)
 # v4.2.391: while the exports or data files are read: a moving busy bar, an (i) icon and "A large mail folder can take a while." in the accent
 #           colour (BusyNotice, also used by the Export window); Import stays grey with a hover text saying when it can be used
 # v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
@@ -129,6 +130,7 @@ def place_busy_notice(form: QWidget, column: str, above: QWidget) -> BusyNotice:
 def ask_import_again(parent: QWidget) -> bool:
     """These were imported to the end before: True when Import again is clicked (Cancel or closing the box: False)."""
     box = QMessageBox(QMessageBox.Icon.Question, "Import", AGAIN_QUESTION, QMessageBox.StandardButton.NoButton, parent)
+    box.setTextFormat(Qt.TextFormat.PlainText)  # never markup (RV-167)
     again = box.addButton(AGAIN_BUTTON, QMessageBox.ButtonRole.AcceptRole)
     box.addButton(QMessageBox.StandardButton.Cancel)
     box.exec()

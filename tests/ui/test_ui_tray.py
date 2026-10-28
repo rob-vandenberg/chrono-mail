@@ -13,9 +13,10 @@ from tests.mailfactory import raw_message
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tray.py 4.2.402"
+__version__ = "test_ui_tray.py 4.2.404"
 
 # --- Version history ----------------------------------------------------
+# v4.2.404: a maximized window closed to the tray comes back maximized from the tray icon (the owner's report from Windows)
 # v4.2.402: a window minimized while maximized is opened maximized again, from the tray and by a second start; a recovery code or
 #           the first account asked at a minimized start opens the window first; a window started out of sight (Wayland says nothing
 #           about minimized) is opened by the tray, never hidden (D-284)
@@ -217,3 +218,15 @@ def test_the_first_account_asked_at_a_minimized_start_opens_the_window_first(wor
     monkeypatch.setattr(mainwindow.AccountDialog, "exec", asked)
     window.add_account(first=True)
     assert minimized_when_asked == [False]
+
+
+def test_a_maximized_window_closed_to_the_tray_comes_back_maximized(shown: list[tuple[str, str]], world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.settings.setValue("close_to_tray", True)
+    window.showMaximized()
+    event = QCloseEvent()
+    window.closeEvent(event)
+    assert not event.isAccepted() and not window.isVisible()  # in the notification area
+    window.tray._activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001 - a click on the tray icon, as the tray reports it
+    assert window.isVisible() and window.isMaximized()
+
