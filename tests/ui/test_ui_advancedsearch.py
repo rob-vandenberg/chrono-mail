@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QDialog
 from pytestqt.qtbot import QtBot
 from PySide6.QtWidgets import QFormLayout, QLabel, QWidget
 
+from chrono_mail.core import MessageFlag
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog, SearchScope
 from chrono_mail.ui.savedsearches import SavedSearches
@@ -16,15 +17,17 @@ from chrono_mail.ui.searchform import DateChoice, SearchForm, SearchLine
 from chrono_mail.ui.searchlines import DateRow
 from chrono_mail.engine.commands_view import OrderParameters
 from chrono_mail.ui.messagelist import MessageListModel, ViewSpec
+from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.searchfield import SearchField
 from tests.mailfactory import raw_message
 from tests.ui.test_ui_window import select, subjects
-from tests.ui.world import account_node, World, wait
+from tests.ui.world import account_node, row_of, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_advancedsearch.py 4.2.412"
+__version__ = "test_ui_advancedsearch.py 4.2.413"
 
 # --- Version history ----------------------------------------------------
+# v4.2.413: All folders from a Favorites view searches every folder: read mail in Junk is found from Unread (the owner's case, D-287)
 # v4.2.412: the line choices in lower case
 # v4.2.411: Received below More..., "of these conditions", ALL and ANY, AND and OR, the window 80 px wider at its opening
 # v4.2.410: the search builder: the lines and their joining words, the first line without [−], the date choices, the saved
@@ -244,7 +247,7 @@ def _labels(dialog: AdvancedSearchDialog, name: str) -> list[str]:
 
 
 def test_snoozed_until_and_send_at_are_greyed_where_such_mail_cannot_be(qtbot: QtBot) -> None:
-    """D-288: usable in all folders, in Snoozed (Snoozed until) and in Scheduled or the Outbox (Send at), and in their Favorites
+    """D-288: usable in all folders (from a Favorites entry too, D-287), in Snoozed (Snoozed until) and in Scheduled or the Outbox (Send at), and in their Favorites
     entries; greyed elsewhere, and a greyed row asks for nothing."""
     cases: list[tuple[str, str | None, SearchScope, bool, bool]] = [
         ("inbox", None, SearchScope.FOLDER, False, False),
@@ -253,9 +256,10 @@ def test_snoozed_until_and_send_at_are_greyed_where_such_mail_cannot_be(qtbot: Q
         ("snoozed", None, SearchScope.FOLDER, True, False),
         ("scheduled", None, SearchScope.FOLDER, False, True),
         ("outbox", None, SearchScope.FOLDER, False, True),
-        ("other", "inboxes", SearchScope.ALL, False, False),
-        ("other", "snoozed", SearchScope.ALL, True, False),
-        ("other", "scheduled", SearchScope.ALL, False, True),
+        ("other", "inboxes", SearchScope.ALL, True, True),  # All folders from a Favorites view: every folder (D-287)
+        ("other", "inboxes", SearchScope.FOLDER, False, False),
+        ("other", "snoozed", SearchScope.FOLDER, True, False),
+        ("other", "scheduled", SearchScope.FOLDER, False, True),
     ]
     for role, combined, scope, snoozed, send_at in cases:
         dialog = AdvancedSearchDialog(scope=scope, folder_role=role, combined=combined)
@@ -419,3 +423,33 @@ def test_the_window_opens_as_it_was_last_left_also_after_a_restart(qtbot: QtBot,
     assert form.scope is SearchScope.FOLDER and not form.unread  # the field's choice and the filters on now
     assert SavedSearches(path).last == dialog.current_form()
     assert isinstance(SearchForm(), SearchForm)
+
+
+def test_all_folders_from_a_favorites_view_looks_in_every_folder(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-287 (the owner): in Favorites > Unread, a search of All folders finds read mail in Junk; This folder only searches Unread only."""
+    with open_mailbox(world.engine, world.account_id) as mailbox:
+        junk = mailbox.folder("Junk")
+        for number in range(2):
+            raw = raw_message(subject=f"Sleep well {number}", sender="Derila ERGO <offer@shop.example>", body="b\n", message_id=f"<d{number}@x>", date=datetime(2026, 10, 26, tzinfo=UTC))
+            mailbox.deliver(junk, raw, frozenset({MessageFlag.SEEN}))
+    world.window.start()
+    wait(qtbot, lambda: world.window.list_model.rowCount() > 0)
+    world.window.messages.change_view(CurrentView(account="", kind=EntryKind.FAVORITE, key_kind=EntryKind.FAVORITE, path="unread", combined="unread"))
+    model = world.window.list_model
+    wait(qtbot, lambda: (shown := model.spec) is not None and shown.combined == "unread")
+    chosen: list[SearchScope] = [SearchScope.ALL]
+
+    def fake_exec(self: AdvancedSearchDialog) -> QDialog.DialogCode:
+        set_line(self, 0, "from", "any", "Derila")
+        self.scope.setCurrentIndex(self.scope.findData(chosen[0]))
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(AdvancedSearchDialog, "exec", fake_exec)
+    world.window.act_advanced.trigger()
+    wait(qtbot, lambda: sorted(subjects(world.window)) == ["Sleep well 0", "Sleep well 1"])
+    select(world.window, 0)
+    world.window.mail_actions.move_selected("Trash")  # Trash is one of every folder: the row stays, now in Trash
+    wait(qtbot, lambda: sorted(row_of(world.window, number).folder for number in range(world.window.list_model.rowCount())) == ["Junk", "Trash"])
+    chosen[0] = SearchScope.FOLDER
+    world.window.act_advanced.trigger()
+    wait(qtbot, lambda: world.window.messages._state.view.scope is SearchScope.FOLDER and world.window.list_model.rowCount() == 0)

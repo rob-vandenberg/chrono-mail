@@ -10,7 +10,7 @@ from PySide6.QtGui import QBrush, QFont, QGuiApplication, QPalette
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.changes import Change, MessageRow
-from chrono_mail.engine.commands_combined import MESSAGE_COMBINED_PLACES, VIEWS, CombinedPlacesParameters, CombinedSort, ViewName
+from chrono_mail.engine.commands_combined import EVERYWHERE, MESSAGE_COMBINED_PLACES, VIEWS, CombinedPlacesParameters, CombinedSort, ViewName
 from chrono_mail.engine.commands_mail import MESSAGE_PLACES, ListSort, PlacesParameters, PlacesResult
 from chrono_mail.engine.commands_view import MESSAGE_COMBINED_ORDER, MESSAGE_ORDER, MESSAGE_ROWS, CombinedOrderParameters, OrderParameters, RowsAnswer, RowsParameters, ViewOrder
 from chrono_mail.index.model import GroupCount
@@ -26,9 +26,11 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.408"
+__version__ = "messagelist.py 4.2.413"
 
 # --- Version history ----------------------------------------------------
+# v4.2.413: the view everywhere (a search of All folders from a Favorites view) is asked like a Favorites view and holds a message in any
+#           folder: a moved message stays, Undo and new mail bring it in (D-287)
 # v4.2.408: ViewSpec carries Advanced search's Sent, Snoozed until and Send at days (with_days); a view narrowed by those days is fetched
 #           again when a message's time changes where it is (D-288)
 # v4.2.406: ViewSpec.subfolders: a search of a folder and every folder inside it; a message of such a folder belongs in it and joins it
@@ -524,7 +526,7 @@ class MessageListModel(QAbstractTableModel):
         headings = self.show_groups and spec.sort not in YES_NO_SORTS
         stay: list[str] = sorted(self._stay) if _filters_marks(spec) else []
         if spec.combined is not None:
-            if spec.combined not in VIEWS or spec.sort not in typing.get_args(CombinedSort):
+            if spec.combined not in (*VIEWS, EVERYWHERE) or spec.sort not in typing.get_args(CombinedSort):
                 raise ChronoMailError(f"A Favorites view {spec.combined} sorted by {spec.sort} does not exist")
             named = [split_key(key) for key in rows_of]
             kept = [split_key(key) for key in stay]
@@ -1464,7 +1466,7 @@ class MessageListModel(QAbstractTableModel):
                 "inboxes": role == "inbox", "sent": role == "sent", "drafts": role == "drafts", "junk": role == "junk", "trash": role == "trash",
                 "outbox": role == "outbox", "scheduled": role == "scheduled", "unread": everywhere and "seen" not in flags, "flagged": everywhere and "flagged" in flags,
                 "snoozed": role == "snoozed", "unreplied": role == "inbox" and "replied" not in flags, "archive": role == "archive",
-                "tagged": everywhere and (spec.combined_tag or "").casefold() in tags,
+                "tagged": everywhere and (spec.combined_tag or "").casefold() in tags, EVERYWHERE: True,  # every folder: a move stays, new mail comes in
             }
             if not wanted.get(spec.combined, False):
                 return False

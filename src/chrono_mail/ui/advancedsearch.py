@@ -21,9 +21,10 @@ from chrono_mail.ui.searchlines import DateRow, SearchLines
 __all__ = ["DEFAULT_SCOPE", "SCOPE_CHOICES", "AdvancedSearch", "AdvancedSearchDialog", "MoreBar", "SearchScope"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "advancedsearch.py 4.2.412"
+__version__ = "advancedsearch.py 4.2.413"
 
 # --- Version history ----------------------------------------------------
+# v4.2.413: Snoozed until and Send at can be chosen with All folders from a Favorites view too: it looks in every folder (D-287)
 # v4.2.412: the too-many text names the choice as it is now written
 # v4.2.411: Received is the first row below More...; "of these conditions"; the window opens 80 px wider than its smallest width
 #           (the owner)
@@ -375,8 +376,8 @@ class AdvancedSearchDialog(QDialog):
 
     def _grey_timed(self) -> None:
         """Snoozed until and Send at are greyed unless the search looks where such mail can be: Snoozed, Scheduled or the Outbox
-        shown, or all folders (a Favorites entry looks only in its own kind of folder)."""
-        everywhere = self._combined is None and SearchScope(self.scope.currentData()) is SearchScope.ALL
+        shown, or all folders (from a Favorites entry too)."""
+        everywhere = SearchScope(self.scope.currentData()) is SearchScope.ALL  # also from a Favorites view: All folders is every folder (D-287)
         place = self._combined if self._combined is not None else self._folder_role
         for row, label, roles in ((self.snoozed, self._snoozed_label, SNOOZED_ROLES), (self.send_at, self._send_at_label, SEND_AT_ROLES)):
             usable = everywhere or place in roles

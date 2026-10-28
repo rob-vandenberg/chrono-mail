@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QMenu, QToolButton
 
 from chrono_mail.engine.changes import Change, MessageRow
 from chrono_mail.engine.commands_addressbook import CONTACT_ADDRESSES, AddressesParameters, ContactAddress
+from chrono_mail.engine.commands_combined import EVERYWHERE
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columnfit import MINIMUM_ICON
 from chrono_mail.ui.columns import SAVED_LABEL
@@ -28,9 +29,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.408"
+__version__ = "messagelistpane.py 4.2.413"
 
 # --- Version history ----------------------------------------------------
+# v4.2.413: a search of All folders from a Favorites or Tags view looks in every folder of every account (the view everywhere), not in the
+#           view's own folders (D-287)
 # v4.2.408: Advanced search's days (Received, Sent, Snoozed until, Send at) and sizes go to the list in one step (with_days, D-288)
 # v4.2.406: a search with This folder + subfolders asks for the folder and every folder inside it; a folder fact that changes what the
 #           view holds fetches it again through refetch, once, one at a time (D-287)
@@ -279,6 +282,10 @@ class MessageListPane(QObject):
         flagged = True if view.flagged else None
         attachments = True if view.attachments else None
         advanced = view.advanced
+        if view.combined is not None and view.searching and view.scope is SearchScope.ALL:  # All folders is every folder of every account (D-287)
+            return with_days(ViewSpec(
+                "", None, query, self.effective_sort(), self.oldest_first, unread, flagged, attachments, combined=EVERYWHERE, tag=view.tag,
+            ), advanced)
         if view.combined is not None:  # the filters narrow a Favorites or Tags view as they narrow a folder (R-03)
             return with_days(ViewSpec(
                 "", None, query, self.effective_sort(), self.oldest_first, unread, flagged, attachments,

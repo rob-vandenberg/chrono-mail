@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_search.py 4.2.408"
+__version__ = "test_engine_search.py 4.2.413"
 
 # --- Version history ----------------------------------------------------
+# v4.2.413: the view everywhere looks in every folder, Junk and Trash too, without the mark of a Favorites view (D-287)
 # v4.2.408: the Sent days, the days a snoozed message comes back and the days a waiting message is sent (D-288)
 # v4.2.406: message.search, message.groups and message.order with subfolders: the folder and every folder inside it (D-287)
 # v3.6.351: a search date at the edge of the calendar is a usage error, never a crash; one before 1970 in the named zone
@@ -152,6 +153,26 @@ def test_a_search_with_subfolders_through_the_commands(setup: Setup) -> None:
     assert sum(group.count for group in groups) == 2
     order: Any = call(setup.engine, "message.order", account=setup.account_id, query="about", folder="Inbox", subfolders=True)
     assert order.total == 2 and sorted(order.folders) == ["Inbox", "Inbox/Old/2025"]
+
+
+def test_the_view_everywhere_looks_in_every_folder_without_a_mark_of_its_own(setup: Setup) -> None:
+    """D-287: All folders from a Favorites view is every folder of every account, Junk and Trash too; the Unread view leaves them out."""
+    fill(setup)
+    call(setup.engine, "folder.create", account=setup.account_id, folder="Other")
+    rows: list[Any] = list(call(setup.engine, "message.search", account=setup.account_id, folder="Inbox"))
+    by_subject = {row.subject: row.message_id for row in rows}
+    for subject, target in (("Cats", "Junk"), ("Dogs", "Trash"), ("Both", "Other")):
+        call(setup.engine, "message.move", account=setup.account_id, folder="Inbox", message=by_subject[subject], target=target)
+
+    def combined(view: str, **values: object) -> list[str]:
+        return sorted(row.subject for row in list[Any](call(setup.engine, "message.combined", view=view, **values)))
+
+    assert combined("everywhere", query="about") == ["Cats", "Dogs"]
+    assert combined("everywhere", query="from:ann") == ["Both", "Cats"]
+    assert combined("unread", query="from:ann") == ["Both"]  # the Unread view never holds Junk or Trash
+    call(setup.engine, "message.flag", account=setup.account_id, folder="Junk", message=by_subject["Cats"], seen=True)
+    assert combined("everywhere", query="cats") == ["Both", "Cats"]  # a read message too: everywhere has no mark of its own
+    assert combined("everywhere", query="cats", unread=True) == ["Both"]  # a filter the person chose still narrows it
 
 
 NOW = 1_800_000_000.0  # 2027-01-15

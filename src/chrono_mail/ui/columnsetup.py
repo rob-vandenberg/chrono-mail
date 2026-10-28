@@ -8,9 +8,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 4.2.408"
+__version__ = "columnsetup.py 4.2.413"
 
 # --- Version history ----------------------------------------------------
+# v4.2.413: a search of All folders from a Favorites or Tags view is a search of several folders too (D-287)
 # v4.2.408: a search of several folders is a kind of its own: it starts with From, To and Folder beside the incoming columns (D-288)
 # v4.2.406: a search of a folder and its subfolders has the setup of a search in all folders: it shows several folders (D-287)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
@@ -59,16 +60,16 @@ FALLBACK_SORTS: tuple[str, ...] = ("date", "sent", "subject", "to", "sender", "s
 
 
 def _searching_everywhere(view: CurrentView) -> bool:
-    """A search that shows the messages of several folders of one account (all of them, or a folder and its subfolders)."""
-    return view.searching and view.scope is not SearchScope.FOLDER and view.combined is None
+    """A search that shows the messages of several folders: all of them (also from a Favorites view), or a folder and its subfolders."""
+    return view.searching and (view.scope is SearchScope.ALL or (view.scope is SearchScope.SUBFOLDERS and view.combined is None))
 
 
 def folder_type(view: CurrentView) -> FolderType:
     """The kind of folder a view shows: an outgoing folder (or its Favorites entry, or a pin of it) is a kind of its own, the rest is incoming."""
-    if view.combined is not None:
-        return _OUTGOING_FAVORITES.get(view.combined, "incoming") if view.key_kind is EntryKind.FAVORITE else "incoming"
     if _searching_everywhere(view):
         return "search"
+    if view.combined is not None:
+        return _OUTGOING_FAVORITES.get(view.combined, "incoming") if view.key_kind is EntryKind.FAVORITE else "incoming"
     if view.kind is not EntryKind.FOLDER or view.folder is None:
         return "incoming"
     if view.folder_role in ("sent", "drafts"):

@@ -210,6 +210,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.407) A search starts on All folders; Advanced search opens on the field's choice and is in the field's ▾ menu (D-287).
 - DONE (4.2.410) Advanced search is a search builder: saved searches, search lines joined by all or any, date spans counted from today (D-289).
 - DONE (4.2.408) Advanced search: Where to search and the main fields first, the rest below More...; Sent, Tag, Snoozed until and Send at; a search of several folders shows From, To and Folder (D-288).
+- DONE (4.2.413) All folders from a Favorites or Tags view searches every folder of every account, Junk and Trash too (D-287).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

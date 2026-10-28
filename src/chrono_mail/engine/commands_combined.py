@@ -14,9 +14,10 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 4.2.408"
+__version__ = "commands_combined.py 4.2.413"
 
 # --- Version history ----------------------------------------------------
+# v4.2.413: the view everywhere: every folder of every account, for a search of All folders shown from a Favorites or Tags view (D-287)
 # v4.2.408: the Favorites and Tags views take sent_from and sent_to, snoozed_from and snoozed_to, send_at_from and send_at_to (days,
 #           D-288); the filters are made once per mailbox
 # v3.6.368: message.combined-places and message.combined-locate read the rows and the groups of each mailbox together: an Undo between
@@ -45,9 +46,10 @@ __version__ = "commands_combined.py 4.2.408"
 # v0.0.47: Pinned favorites, account groups and search in combined views
 # v0.0.46: Initial combined views over the mailboxes of all accounts (Favorites)
 
-ViewName = Literal["inboxes", "unread", "flagged", "outbox", "scheduled", "sent", "drafts", "snoozed", "unreplied", "archive", "junk", "trash", "tagged"]  # the Favorites and Tags views
+ViewName = Literal["inboxes", "unread", "flagged", "outbox", "scheduled", "sent", "drafts", "snoozed", "unreplied", "archive", "junk", "trash", "tagged", "everywhere"]  # the Favorites and Tags views, and every folder
 CombinedSort = Literal["date", "sent", "subject", "sender", "to", "size", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview"]  # their sort orders
-VIEWS: tuple[str, ...] = typing.get_args(ViewName)
+EVERYWHERE: str = "everywhere"  # every folder of every account, Junk and Trash too: a search of All folders from a Favorites view (D-287)
+VIEWS: tuple[str, ...] = tuple(view for view in typing.get_args(ViewName) if view != EVERYWHERE)  # the standard favorites
 _ROLE_OF_VIEW: dict[str, FolderRole] = {
     "inboxes": FolderRole.INBOX, "unreplied": FolderRole.INBOX, "sent": FolderRole.SENT, "drafts": FolderRole.DRAFTS, "archive": FolderRole.ARCHIVE,
     "junk": FolderRole.JUNK, "trash": FolderRole.TRASH, "outbox": FolderRole.OUTBOX, "snoozed": FolderRole.SNOOZED, "scheduled": FolderRole.SCHEDULED,
@@ -57,7 +59,7 @@ _ROLE_OF_VIEW: dict[str, FolderRole] = {
 @dataclass(frozen=True, slots=True)
 class CombinedParameters:
     view: ViewName = field(
-        metadata=option("inboxes, unread, flagged, outbox, scheduled, sent, drafts, snoozed, unreplied (inbox mail without the Replied mark), archive, junk, trash, or tagged (with tag)")
+        metadata=option("inboxes, unread, flagged, outbox, scheduled, sent, drafts, snoozed, unreplied (inbox mail without the Replied mark), archive, junk, trash, tagged (with tag), or everywhere (every folder)")
     )
     tag: str = field(default="", metadata=option("For the view tagged: the tag"))
     accounts: tuple[str, ...] = field(default=(), metadata=option("Only the mailboxes of these accounts (default: all)"))
@@ -121,6 +123,8 @@ def _row_key(row: MessageRow, sort: str) -> tuple[bool, float] | int | str:
 
 
 def _chosen(view: str, folder: Folder) -> bool:
+    if view == EVERYWHERE:
+        return True
     if view in _ROLE_OF_VIEW:
         return folder.role is _ROLE_OF_VIEW[view]
     return folder.role not in (FolderRole.TRASH, FolderRole.JUNK, FolderRole.OUTBOX, FolderRole.SCHEDULED)

@@ -10,9 +10,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import World, menu_named, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columnsetup.py 4.2.406"
+__version__ = "test_ui_columnsetup.py 4.2.413"
 
 # --- Version history ----------------------------------------------------
+# v4.2.413: a search of All folders from a Favorites view has the setup of a search of several folders (D-287)
 # v4.2.406: where a search looks is a scope; a search of a folder and its subfolders has the search setup (D-287)
 # v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
 # v2.0.280: Initial version: columns and sort per folder, the six kinds of folder, Apply to all folders (B-16)
@@ -48,6 +49,10 @@ def test_each_folder_and_view_has_its_kind_and_its_own_key() -> None:
     assert setup_key(inside) == SEARCH_KEY and folder_type(inside) == "search"  # a folder and its subfolders: several folders, as all folders (D-287)
     in_sent = CurrentView(account=ACCOUNT, kind=EntryKind.FOLDER, path="Sent", folder="Sent", folder_role="sent", advanced=AdvancedSearch(), scope=SearchScope.FOLDER)
     assert setup_key(in_sent) == folder_key(ACCOUNT, "Sent")  # a search in one folder: that folder's setup
+    from_favorite = CurrentView(account="", kind=EntryKind.FAVORITE, key_kind=EntryKind.FAVORITE, path="sent", combined="sent", query="x", scope=SearchScope.ALL)
+    assert setup_key(from_favorite) == SEARCH_KEY and folder_type(from_favorite) == "search"  # All folders from a Favorites view: every folder (D-287)
+    in_favorite = CurrentView(account="", kind=EntryKind.FAVORITE, key_kind=EntryKind.FAVORITE, path="sent", combined="sent", query="x", scope=SearchScope.SUBFOLDERS)
+    assert setup_key(in_favorite) == setup_key(favorite_view("sent")) and folder_type(in_favorite) == "sent"  # the view itself
 
 
 def test_the_sort_falls_back_to_the_first_shown_of_received_sent_subject_to_from_size() -> None:
