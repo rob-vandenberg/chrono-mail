@@ -37,9 +37,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.2.397"
+__version__ = "folderpane.py 4.2.398"
 
 # --- Version history ----------------------------------------------------
+# v4.2.398: New folder and Rename folder ask only for the folder's name (New: inside the folder chosen, else at the top of
+#           its account; Rename: the folder stays where it is); a name with / is refused
 # v4.2.397: the Tags heading starts closed until the person opens it
 # v4.1.379: Next and Previous unread go on from the folder shown (also opened through its pin or its account's row), never to that folder,
 #           through subfolders and in an account inside a group too (CR-15)
@@ -745,20 +747,32 @@ class FolderPane(QObject):
         view = self._state.view
         if not self._state.can_make_folder() or view.account is None:  # it has one account (can_make_folder); said so for the type checker
             return
-        start = f"{view.folder}/" if view.folder and view.kind == EntryKind.FOLDER else ""
-        name, ok = QInputDialog.getText(self._parent, "New folder", "Path of the new folder (use / for a subfolder, for example Archive/2026):", text=start)
-        if not ok or not name.strip().strip("/"):
+        name, ok = QInputDialog.getText(self._parent, "New folder", "Name of the new folder:")
+        name = name.strip()
+        if not ok or not name or not self._folder_name_allowed(name):
             return
-        self._backend.ask(FOLDER_CREATE, FolderParameters(view.account, name.strip().strip("/")), lambda result: self._status.show("Folder created"), lambda error: self._status.report("Could not create the folder", error), owner=self)
+        row = str(self.tree.currentIndex().data(KIND_ROLE))  # the row chosen (a right-click makes it current), not the view: an account row shows its Inbox
+        path = f"{view.folder}/{name}" if view.folder and row in (EntryKind.FOLDER, EntryKind.PINLINK) else name  # inside that folder; an account, Unread or Flagged: at the top
+        self._backend.ask(FOLDER_CREATE, FolderParameters(view.account, path), lambda result: self._status.show("Folder created"), lambda error: self._status.report("Could not create the folder", error), owner=self)
 
     def rename_folder(self) -> None:
         view = self._state.view
         if view.account is None or view.folder is None:
             return
-        name, ok = QInputDialog.getText(self._parent, "Rename folder", "New name (with its path, for example Archive/Old):", text=view.folder)
-        if not ok or not name.strip() or name.strip() == view.folder:
+        parent, _, current = view.folder.rpartition("/")
+        name, ok = QInputDialog.getText(self._parent, "Rename folder", "New name of the folder:", text=current)
+        name = name.strip()
+        if not ok or not name or name == current or not self._folder_name_allowed(name):
             return
-        self._backend.ask(FOLDER_RENAME, FolderRenameParameters(view.account, view.folder, name.strip()), lambda result: self._status.show("Folder renamed"), lambda error: self._status.report("Could not rename the folder", error), owner=self)
+        path = f"{parent}/{name}" if parent else name  # the folder stays where it is
+        self._backend.ask(FOLDER_RENAME, FolderRenameParameters(view.account, view.folder, path), lambda result: self._status.show("Folder renamed"), lambda error: self._status.report("Could not rename the folder", error), owner=self)
+
+    def _folder_name_allowed(self, name: str) -> bool:
+        """A folder's name is one name: "/" nests folders, so it would quietly make folders the person did not ask for."""
+        if "/" in name:
+            self._status.show("A folder name cannot contain /", error=True)
+            return False
+        return True
 
     def _delete_key_pressed(self) -> None:
         """Delete (or Shift+Delete) while the folder list has the keyboard: the folder selected, as Delete folder… does (it asks

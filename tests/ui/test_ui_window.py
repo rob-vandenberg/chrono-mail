@@ -22,9 +22,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 3.6.369"
+__version__ = "test_ui_window.py 4.2.398"
 
 # --- Version history ----------------------------------------------------
+# v4.2.398: New folder and Rename folder type only the name; a name with / is refused
 # v3.6.369: Not junk shows the junk key in its text
 # v3.6.360: after deleting the last message nothing is selected (was: the one before, D-266)
 # v3.6.357: the tests of actions without a server wait for the engine's work, which follows after the row left at the key press (D-267, AGENTS.md 4.5.5.1)
@@ -713,14 +714,16 @@ def test_automatic_checking_can_be_turned_off(world: World, qtbot: QtBot) -> Non
 
 def test_create_rename_and_delete_a_folder(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     started(qtbot, world)
-    answer_input(monkeypatch, [("Projects", True), ("Projects/Alpha", True)])
-    world.window.folders.new_folder()
+    select_account_row(world)
+    answer_input(monkeypatch, [("Projects", True)])
+    world.window.folders.new_folder()  # the account row: a folder at the top of the account
     wait(qtbot, lambda: "  Projects" in tree_labels(world.window))
-    world.window.folders.new_folder()
-    wait(qtbot, lambda: "    Alpha" in tree_labels(world.window))
     projects = world.window.folders.find_item((world.account_id, "folder", "Projects"))  # noqa: SLF001
     assert projects is not None
     world.window.tree.setCurrentIndex(projects)
+    answer_input(monkeypatch, [("Alpha", True)])
+    world.window.folders.new_folder()  # a folder: only the name is asked, the new folder goes inside it
+    wait(qtbot, lambda: world.window.folders.find_item((world.account_id, "folder", "Projects/Alpha")) is not None)  # noqa: SLF001
     answer_input(monkeypatch, [("Work", True)])
     world.window.folders.rename_folder()
     wait(qtbot, lambda: "  Work" in tree_labels(world.window) and "    Alpha" in tree_labels(world.window))
@@ -735,10 +738,47 @@ def test_create_rename_and_delete_a_folder(world: World, qtbot: QtBot, monkeypat
 
 def test_a_folder_that_cannot_be_created_reports_why(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     started(qtbot, world)
+    select_account_row(world)
     answer_input(monkeypatch, [("Inbox", True)])
     world.window.folders.new_folder()
     wait(qtbot, lambda: "already exists" in world.window.status_label.text())
     assert "c0392b" in world.window.status_label.styleSheet()
+
+
+def select_account_row(world: World) -> None:
+    account = world.window.folders.find_item((world.account_id, "account", ""))  # noqa: SLF001
+    assert account is not None
+    world.window.tree.setCurrentIndex(account)
+
+
+def test_a_renamed_subfolder_stays_inside_its_folder(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started(qtbot, world)
+    select_account_row(world)
+    answer_input(monkeypatch, [("Projects", True)])
+    world.window.folders.new_folder()
+    wait(qtbot, lambda: world.window.folders.find_item((world.account_id, "folder", "Projects")) is not None)  # noqa: SLF001
+    projects = world.window.folders.find_item((world.account_id, "folder", "Projects"))  # noqa: SLF001
+    assert projects is not None
+    world.window.tree.setCurrentIndex(projects)
+    answer_input(monkeypatch, [("Alpha", True)])
+    world.window.folders.new_folder()
+    wait(qtbot, lambda: world.window.folders.find_item((world.account_id, "folder", "Projects/Alpha")) is not None)  # noqa: SLF001
+    alpha = world.window.folders.find_item((world.account_id, "folder", "Projects/Alpha"))  # noqa: SLF001
+    assert alpha is not None
+    world.window.tree.setCurrentIndex(alpha)
+    answer_input(monkeypatch, [("Beta", True)])  # only the name: no path typed
+    world.window.folders.rename_folder()
+    wait(qtbot, lambda: world.window.folders.find_item((world.account_id, "folder", "Projects/Beta")) is not None)  # noqa: SLF001
+    assert world.window.folders.find_item((world.account_id, "folder", "Beta")) is None  # noqa: SLF001
+
+
+def test_a_folder_name_with_a_slash_is_refused(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started(qtbot, world)
+    select_account_row(world)
+    answer_input(monkeypatch, [("Projects/Alpha", True)])
+    world.window.folders.new_folder()
+    assert "cannot contain /" in world.window.status_label.text()
+    assert world.window.folders.find_item((world.account_id, "folder", "Projects")) is None  # noqa: SLF001
 
 
 # --- composing, attachments, links -------------------------------------------------------------------------------------------
@@ -1299,9 +1339,7 @@ def test_a_right_click_in_favorites_ticks_every_standard_favorite_and_a_click_sh
     assert ticks()["Trash"] == (True, False)  # the last one left in Favorites cannot be hidden: the heading and its menu stay
     assert ticks()["Sent"] == (False, True)
     assert "Snoozed" not in ticks()  # no Snoozed folder anywhere: no Snoozed favorite, so no tick
-    inbox = world.window.folders.find_item((world.account_id, "folder", "Inbox"))  # noqa: SLF001
-    assert inbox is not None
-    world.window.tree.setCurrentIndex(inbox)
+    select_account_row(world)
     answer_input(monkeypatch, [("Snoozed", True)])
     world.window.folders.new_folder()  # a Snoozed folder appears: so do its favorite and its tick, in their place
     wait(qtbot, lambda: "Snoozed" in ticks())

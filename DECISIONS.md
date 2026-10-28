@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-282 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-283 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-283**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-284**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -255,6 +255,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-166** Page order of Settings: General, Appearance, Sidebar, Message list, Reading, Writing, Accounts, Rules, Tags, Scheduled messages, Operations window, Security and storage, Keyboard.
 - **D-167** Settings > Sidebar decides what the folder list shows (Favorites entries, Tags, Local Folders, an account's own tree); no ticks for the person's own folders; what Show on startup chose is always shown; the last visible thing cannot be switched off.
 - **D-173** Settings > Sidebar also has a tick per standard folder of Local Folders that exists.
+- **D-283** (the owner) **New folder and Rename folder ask only for the folder's name**, never a path: New makes it inside the folder row chosen (a right-click chooses it), or at the top of the account from its account row, Unread or Flagged; Rename keeps the folder where it is. A name with "/" is refused (it would nest folders unasked). Why: typing behind a shown path was not what anyone would guess.
 - **D-232** (the owner) **Every standard folder comes before the person's folders**, in one order from one definition: Inbox, Unread, Outbox, Sent, Drafts, Flagged, Snoozed, Scheduled, Recovered, Archive, Junk, Trash; then the person's folders by name. Unread and Flagged keep their place when a folder before them is missing.
 - **D-168** → D-209.
 - **D-141** The Operations bars are our own widget (Windows' style ignores stylesheet colours).
