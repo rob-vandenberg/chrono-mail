@@ -35,9 +35,11 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.2.406"
+__version__ = "commands_mail.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: the searches take sent_from and sent_to (the message's own Date), snoozed_from and snoozed_to, send_at_from and
+#           send_at_to (days, D-288)
 # v4.2.406: message.search, message.groups and message.order take subfolders: a folder's search also looks in the folders inside it (D-287)
 # v4.2.385: the fingerprint of the mail already here comes from import_common (shared by the importers)
 # v3.6.368: message.places and message.locate read the order and the headings under one hold of the mailbox's lock: an Undo between them put
@@ -873,6 +875,12 @@ class SearchParameters:
     date_to: str | None = field(default=None, metadata=option("Only messages up to and including this day (YYYY-MM-DD)"))
     minimum_size: int | None = field(default=None, metadata=option("Only messages of at least this many bytes"))
     maximum_size: int | None = field(default=None, metadata=option("Only messages of at most this many bytes"))
+    sent_from: str | None = field(default=None, metadata=option("Only messages sent from this day on, by their own date (YYYY-MM-DD)"))
+    sent_to: str | None = field(default=None, metadata=option("Only messages sent up to and including this day, by their own date (YYYY-MM-DD)"))
+    snoozed_from: str | None = field(default=None, metadata=option("Only snoozed messages that come back from this day on (YYYY-MM-DD)"))
+    snoozed_to: str | None = field(default=None, metadata=option("Only snoozed messages that come back up to and including this day (YYYY-MM-DD)"))
+    send_at_from: str | None = field(default=None, metadata=option("Only messages waiting to be sent from this day on (YYYY-MM-DD)"))
+    send_at_to: str | None = field(default=None, metadata=option("Only messages waiting to be sent up to and including this day (YYYY-MM-DD)"))
     tag: str | None = field(default=None, metadata=option("Only messages with this tag (or type tag:name in the words)"))
     conversations: bool = field(default=False, metadata=option("Show only the newest message of each conversation (not together with words to find)"))
     sort: ListSort = field(
@@ -912,12 +920,33 @@ def _day(text: str | None, name: str, end: bool) -> datetime | None:
     return moment
 
 
-def _search_filter(parameters: SearchParameters) -> SearchFilter:
+def timed_only(
+    mailbox: Mailbox, snoozed: tuple[str | None, str | None], send_at: tuple[str | None, str | None],
+) -> frozenset[str] | None:
+    """The messages that come back (snoozed) or are to be sent (Scheduled, a delayed send in the Outbox) within these days, or None
+    when no such days are asked; both asked: those that match both (D-288)."""
+    found: frozenset[str] | None = None
+    for (first, last), name, times in (
+        (snoozed, "snoozed", lambda: mailbox.snoozed()),
+        (send_at, "send_at", lambda: {**(mailbox.timed((SCHEDULED_FOLDER,)) or {}), **(mailbox.timed(OUTBOX) or {})}),
+    ):
+        start, end = _day(first, f"{name}_from", end=False), _day(last, f"{name}_to", end=True)
+        if start is None and end is None:
+            continue
+        low, high = start.timestamp() if start else float("-inf"), end.timestamp() if end else float("inf")
+        within = frozenset(store_id for store_id, moment in times().items() if low <= moment <= high)
+        found = within if found is None else found & within
+    return found
+
+
+def _search_filter(parameters: SearchParameters, mailbox: Mailbox) -> SearchFilter:
     return SearchFilter(
         unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments,
         date_from=_day(parameters.date_from, "date_from", end=False), date_to=_day(parameters.date_to, "date_to", end=True),
         minimum_size=parameters.minimum_size, maximum_size=parameters.maximum_size, newest_per_thread=parameters.conversations, tag=parameters.tag,
         stay=frozenset(parameters.stay), subfolders=parameters.subfolders and parameters.folder is not None,
+        sent_from=_day(parameters.sent_from, "sent_from", end=False), sent_to=_day(parameters.sent_to, "sent_to", end=True),
+        only=timed_only(mailbox, (parameters.snoozed_from, parameters.snoozed_to), (parameters.send_at_from, parameters.send_at_to)),
     )
 
 
@@ -926,13 +955,13 @@ def message_search(engine: Engine, parameters: SearchParameters) -> tuple[Messag
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         times = mailbox.timed(folder)
         if times is not None and _snooze_sort(parameters.sort, folder) and folder is not None:
-            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, EVERYTHING if parameters.subfolders else mailbox.index.count(folder), SortField.DATE, True)
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), 0, EVERYTHING if parameters.subfolders else mailbox.index.count(folder), SortField.DATE, True)
             found = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         elif parameters.sort == CONTACT_SORT:
-            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, EVERYTHING, SortField.DATE, True)
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), 0, EVERYTHING, SortField.DATE, True)
             found = _by_contact(engine, mailbox, everything, not parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         else:
-            found = mailbox.index.search(parameters.query, folder, _search_filter(parameters), parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first)
+            found = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first)
         return _rows(mailbox, found, times)
 
 
@@ -944,14 +973,14 @@ def message_groups(engine: Engine, parameters: SearchParameters) -> tuple[GroupC
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         if folder is not None and _snooze_sort(parameters.sort, folder):
             times, now = mailbox.timed(folder) or {}, datetime.fromtimestamp(engine.clock()).astimezone()
-            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, EVERYTHING if parameters.subfolders else mailbox.index.count(folder), SortField.DATE, True)
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), 0, EVERYTHING if parameters.subfolders else mailbox.index.count(folder), SortField.DATE, True)
             counts: dict[str, int] = {}
             for message in everything:
                 key = snooze_group(times.get(message.store_id), now)
                 counts[key] = counts.get(key, 0) + 1
             order = SNOOZE_GROUPS if parameters.oldest_first else tuple(reversed(SNOOZE_GROUPS))
             return tuple(GroupCount(key, name, counts[key]) for key, name in order if counts.get(key))
-        found = mailbox.index.groups(date_bounds(datetime.now()), parameters.query, folder, _search_filter(parameters), _sort_field(parameters.sort), not parameters.oldest_first)
+        found = mailbox.index.groups(date_bounds(datetime.now()), parameters.query, folder, _search_filter(parameters, mailbox), _sort_field(parameters.sort), not parameters.oldest_first)
         return tuple(found)
 
 
@@ -981,8 +1010,8 @@ def message_locate(engine: Engine, parameters: LocateParameters) -> LocateResult
     """Where a message stands in a folder or a search (as message.list and message.search order it), and its group
     heading. Asked when a message comes into the view a person looks at, so the list can put it at its place. The place and the
     headings are read under one hold of the mailbox's lock: a change between them made the heading wrong."""
-    plain = not parameters.query and parameters.folder and _search_filter(parameters) == SearchFilter() and parameters.sort not in ("snoozed", CONTACT_SORT)
     with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
+        plain = not parameters.query and parameters.folder and _search_filter(parameters, mailbox) == SearchFilter() and parameters.sort not in ("snoozed", CONTACT_SORT)
         if plain and parameters.folder is not None:
             position = message_position(engine, PositionParameters(parameters.account, parameters.folder, parameters.message, parameters.sort, parameters.oldest_first)).position
         else:
@@ -1074,7 +1103,7 @@ def message_places(engine: Engine, parameters: PlacesParameters) -> PlacesResult
     mailbox's lock: an Undo between them made the headings one off (a held Ctrl+Z put messages under the wrong heading)."""
     with open_mailbox(engine, parameters.account) as mailbox, mailbox.reading():
         place = mailbox.store.account_id
-        if parameters.folder is not None and not parameters.query and _search_filter(parameters) == SearchFilter():
+        if parameters.folder is not None and not parameters.query and _search_filter(parameters, mailbox) == SearchFilter():
             ordered = _ordered_ids(engine, mailbox, mailbox.folder(parameters.folder), parameters.sort, parameters.oldest_first)
         else:
             ordered = [row.message_id for row in message_search(engine, replace(parameters, offset=0, limit=EVERYTHING))]

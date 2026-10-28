@@ -6,17 +6,19 @@ from datetime import datetime
 import string
 
 from chrono_mail.core import Folder, FolderRole, shown_name
-from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, neighbours, not_heard, with_headings, _day, _rows, contact_address_set, date_bounds, from_contacts, group_of
-from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.engine.commands_mail import CONTACT_SORT, timed_only, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, neighbours, not_heard, with_headings, _day, _rows, contact_address_set, date_bounds, from_contacts, group_of
+from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 3.6.368"
+__version__ = "commands_combined.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: the Favorites and Tags views take sent_from and sent_to, snoozed_from and snoozed_to, send_at_from and send_at_to (days,
+#           D-288); the filters are made once per mailbox
 # v3.6.368: message.combined-places and message.combined-locate read the rows and the groups of each mailbox together: an Undo between
 #           them put messages under the wrong heading (a held Ctrl+Z)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
@@ -68,6 +70,12 @@ class CombinedParameters:
     date_to: str | None = field(default=None, metadata=option("Only messages up to and including this day (YYYY-MM-DD)"))
     minimum_size: int | None = field(default=None, metadata=option("Only messages of at least this many bytes"))
     maximum_size: int | None = field(default=None, metadata=option("Only messages of at most this many bytes"))
+    sent_from: str | None = field(default=None, metadata=option("Only messages sent from this day on, by their own date (YYYY-MM-DD)"))
+    sent_to: str | None = field(default=None, metadata=option("Only messages sent up to and including this day, by their own date (YYYY-MM-DD)"))
+    snoozed_from: str | None = field(default=None, metadata=option("Only snoozed messages that come back from this day on (YYYY-MM-DD)"))
+    snoozed_to: str | None = field(default=None, metadata=option("Only snoozed messages that come back up to and including this day (YYYY-MM-DD)"))
+    send_at_from: str | None = field(default=None, metadata=option("Only messages waiting to be sent from this day on (YYYY-MM-DD)"))
+    send_at_to: str | None = field(default=None, metadata=option("Only messages waiting to be sent up to and including this day (YYYY-MM-DD)"))
     sort: CombinedSort = field(
         default="date", metadata=option("The sort order (unread ... contact: yes first unless oldest_first)")
     )
@@ -125,7 +133,7 @@ def _narrowed(name: str, own: bool | None, chosen: bool | None) -> bool | None:
     return own if own is not None else chosen
 
 
-def _filters(view: str, parameters: CombinedParameters, account: str) -> SearchFilter:
+def _filters(view: str, parameters: CombinedParameters, mailbox: Mailbox, account: str) -> SearchFilter:
     """What the view holds (its own marks or tag), narrowed by the filters chosen (R-03)."""
     if len(parameters.stay_mailboxes) != len(parameters.stay_messages):
         raise UsageError("Give the mailbox of each message that stays")
@@ -139,6 +147,8 @@ def _filters(view: str, parameters: CombinedParameters, account: str) -> SearchF
         replied=False if view == "unreplied" else None, has_attachments=parameters.has_attachments,
         date_from=_day(parameters.date_from, "date_from", end=False), date_to=_day(parameters.date_to, "date_to", end=True),
         minimum_size=parameters.minimum_size, maximum_size=parameters.maximum_size, tag=tag, also_tag=also_tag, stay=stay,
+        sent_from=_day(parameters.sent_from, "sent_from", end=False), sent_to=_day(parameters.sent_to, "sent_to", end=True),
+        only=timed_only(mailbox, (parameters.snoozed_from, parameters.snoozed_to), (parameters.send_at_from, parameters.send_at_to)),
     )
 
 
@@ -182,10 +192,10 @@ def gather(engine: Engine, parameters: CombinedParameters, want: int | None, gro
     found = Gathered()
     for account in _places(engine, parameters.accounts):
         with open_mailbox(engine, account) as mailbox, mailbox.reading():
+            filters = _filters(view, parameters, mailbox, account)  # once per mailbox: the same for each of its folders
             for folder in mailbox.folders():
                 if not _chosen(view, folder):
                     continue
-                filters = _filters(view, parameters, account)
                 if want is not None:
                     rows = mailbox.index.search(parameters.query, folder.path, filters, 0, EVERYTHING if contact else want, sort, descending)
                     if contact:  # the index does not know the contacts: every message is looked at

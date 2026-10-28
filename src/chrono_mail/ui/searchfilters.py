@@ -16,9 +16,11 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import offered_for_mail, tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchfilters.py 4.2.407"
+__version__ = "searchfilters.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: Advanced search is given the tags and where the list looks (Snoozed until and Send at greyed elsewhere); its Tag is
+#           Filter > Tagged with; it opens with the filters that are on (D-288)
 # v4.2.407: Advanced search opens on where the search field looks (D-287)
 # v4.2.406: where the search looks is one of three: This folder only, This folder + subfolders, All folders (D-287)
 # v1.9.274: R-19 round 4: the tags are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -59,7 +61,7 @@ class ListFilters(QObject):
         self.chip: QToolButton = QToolButton(parent)
         self.chip.setAutoRaise(True)
         self.chip.setText("Advanced filters ✕")
-        self.chip.setToolTip("Click to remove the dates and sizes of the advanced search")
+        self.chip.setToolTip("Click to remove the days and sizes of the advanced search")
         self.chip.hide()
         self.chip.clicked.connect(lambda: self._messages.change_view(changed(self._state.view, advanced=None)))
         for entry in (self.unread, self.flagged, self.attachments):
@@ -201,13 +203,16 @@ class MailSearch(QObject):
         """Ask for several conditions at once and show the result in the message list."""
         if self._state.view.account is None:
             return
-        dialog = AdvancedSearchDialog(self._parent, self._state.view.scope)  # it opens on where the search field looks
+        view = self._state.view
+        tags = [tag.name for tag in self._state.tags if offered_for_mail(tag)]
+        marks = (view.unread, view.flagged, view.attachments, view.tag)  # the filters on now: Search keeps them unless the person changes them
+        dialog = AdvancedSearchDialog(self._parent, view.scope, tags, view.folder_role, view.combined, marks)  # it opens on where the search field looks
         if dialog.exec() != AdvancedSearchDialog.DialogCode.Accepted:
             return
         wanted: AdvancedSearch = dialog.search()
         self._messages.change_view(changed(
             self._state.view, query=wanted.query.strip(), scope=wanted.scope, advanced=wanted if wanted.extra_filters else None,
-            unread=wanted.unread, flagged=wanted.flagged, attachments=wanted.attachments,
+            unread=wanted.unread, flagged=wanted.flagged, attachments=wanted.attachments, tag=wanted.tag,
         ))
         self.box.setText(wanted.query)  # the words of the search that was run
 

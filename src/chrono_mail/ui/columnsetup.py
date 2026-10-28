@@ -8,9 +8,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 4.2.406"
+__version__ = "columnsetup.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: a search of several folders is a kind of its own: it starts with From, To and Folder beside the incoming columns (D-288)
 # v4.2.406: a search of a folder and its subfolders has the setup of a search in all folders: it shows several folders (D-287)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
@@ -18,7 +19,7 @@ __version__ = "columnsetup.py 4.2.406"
 # v2.0.280: Columns per folder (B-16): the six kinds of folder, the columns and sort each kind starts with, which setup a view
 #           uses, the sort a folder falls back to when its sorted column goes, the setups kept as text
 
-FolderType = Literal["incoming", "sent", "drafts", "outbox", "scheduled", "snoozed"]
+FolderType = Literal["incoming", "sent", "drafts", "outbox", "scheduled", "snoozed", "search"]
 FOLDER_TYPES: tuple[FolderType, ...] = get_args(FolderType)
 SEARCH_KEY: str = "search"  # a search in all folders of an account, or of a folder and its subfolders: one setup of its own
 
@@ -42,6 +43,8 @@ STARTING: dict[FolderType, ColumnSetup] = {
     "outbox": ColumnSetup(("attachment", "to", "subject", SNOOZED_COLUMN, "sent", "size", "trash"), "sent"),  # Send at: a delayed send (B-21)
     "scheduled": ColumnSetup(("attachment", "to", "subject", SNOOZED_COLUMN, "size", "trash"), "snoozed", oldest_first=True),  # the next to go first
     "snoozed": ColumnSetup(("flag", "attachment", "from_to", "subject", SNOOZED_COLUMN, "size", "trash"), "snoozed", oldest_first=True),
+    # a search of several folders: sent and received mail together, so both From and To, and where each message is (D-288)
+    "search": ColumnSetup(("flag", "status", "attachment", "from", "to", "subject", "folder", "date", "size", "contact", "trash"), "date"),
 }
 _OUTGOING_FAVORITES: dict[str, FolderType] = {"sent": "sent", "drafts": "drafts", "outbox": "outbox", "scheduled": "scheduled", "snoozed": "snoozed"}
 _LOCAL_FOLDERS: dict[str, FolderType] = {"outbox": "outbox", "scheduled": "scheduled", "snoozed": "snoozed"}  # by the folder's role (CR-36)
@@ -64,7 +67,9 @@ def folder_type(view: CurrentView) -> FolderType:
     """The kind of folder a view shows: an outgoing folder (or its Favorites entry, or a pin of it) is a kind of its own, the rest is incoming."""
     if view.combined is not None:
         return _OUTGOING_FAVORITES.get(view.combined, "incoming") if view.key_kind is EntryKind.FAVORITE else "incoming"
-    if view.kind is not EntryKind.FOLDER or view.folder is None or _searching_everywhere(view):
+    if _searching_everywhere(view):
+        return "search"
+    if view.kind is not EntryKind.FOLDER or view.folder is None:
         return "incoming"
     if view.folder_role in ("sent", "drafts"):
         return "sent" if view.folder_role == "sent" else "drafts"

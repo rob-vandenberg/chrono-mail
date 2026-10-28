@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_search.py 4.2.406"
+__version__ = "test_engine_search.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: the Sent days, the days a snoozed message comes back and the days a waiting message is sent (D-288)
 # v4.2.406: message.search, message.groups and message.order with subfolders: the folder and every folder inside it (D-287)
 # v3.6.351: a search date at the edge of the calendar is a usage error, never a crash; one before 1970 in the named zone
 # v0.5.166: the groups by sender are named and counted by the name the From column shows
@@ -151,3 +152,33 @@ def test_a_search_with_subfolders_through_the_commands(setup: Setup) -> None:
     assert sum(group.count for group in groups) == 2
     order: Any = call(setup.engine, "message.order", account=setup.account_id, query="about", folder="Inbox", subfolders=True)
     assert order.total == 2 and sorted(order.folders) == ["Inbox", "Inbox/Old/2025"]
+
+
+NOW = 1_800_000_000.0  # 2027-01-15
+
+
+def day(seconds_from_now: float) -> str:
+    return datetime.fromtimestamp(NOW + seconds_from_now).strftime("%Y-%m-%d")
+
+
+def test_the_sent_days_the_snoozed_days_and_the_send_days_through_the_commands(setup: Setup) -> None:
+    """D-288: Sent searches the message's own date; Snoozed until the day a snoozed message comes back; Send at the day a waiting
+    message goes; both of the last two: only what matches both; in a Favorites view too."""
+    fill(setup)
+    setup.engine.clock = lambda: NOW
+    assert found(setup, sent_from="2026-04-01") == ["Both", "Dogs"]
+    assert found(setup, sent_to="2026-04-30") == ["Cats", "Dogs"]
+    rows: list[Any] = list(call(setup.engine, "message.search", account=setup.account_id, folder="Inbox"))
+    by_subject = {row.subject: row.message_id for row in rows}
+    soon = datetime.fromtimestamp(NOW + 86400).strftime("%Y-%m-%dT%H:%M")
+    later = datetime.fromtimestamp(NOW + 10 * 86400).strftime("%Y-%m-%dT%H:%M")
+    call(setup.engine, "message.snooze", account=setup.account_id, folder="Inbox", message=by_subject["Cats"], until=soon)
+    call(setup.engine, "message.snooze", account=setup.account_id, folder="Inbox", message=by_subject["Dogs"], until=later)
+    call(setup.engine, "mail.send", account=setup.account_id, to="you@example.com", subject="Later", body="see you", send_at=soon)
+    assert found(setup, snoozed_from=day(5 * 86400)) == ["Dogs"]
+    assert found(setup, snoozed_to=day(2 * 86400)) == ["Cats"]
+    assert found(setup, send_at_from=day(0), send_at_to=day(2 * 86400)) == ["Later"]
+    assert found(setup, send_at_from=day(5 * 86400)) == []
+    assert found(setup, snoozed_to=day(2 * 86400), send_at_to=day(2 * 86400)) == []  # nothing is both
+    combined: list[Any] = list(call(setup.engine, "message.combined", view="snoozed", snoozed_from=day(5 * 86400)))
+    assert [row.subject for row in combined] == ["Dogs"]

@@ -43,9 +43,9 @@ def test_each_folder_and_view_has_its_kind_and_its_own_key() -> None:
     tag = CurrentView(account="", kind=EntryKind.TAGVIEW, key_kind=EntryKind.TAGVIEW, path="Work", combined="tagged", combined_tag="Work")
     assert folder_type(tag) == "incoming" and setup_key(tag) != setup_key(favorite_view("inboxes")) != setup_key(favorite_view("sent"))
     everywhere = CurrentView(account=ACCOUNT, kind=EntryKind.FOLDER, path="Sent", folder="Sent", folder_role="sent", query="x", scope=SearchScope.ALL)
-    assert setup_key(everywhere) == SEARCH_KEY and folder_type(everywhere) == "incoming"  # a search in all folders: one setup of its own
+    assert setup_key(everywhere) == SEARCH_KEY and folder_type(everywhere) == "search"  # a search in all folders: one setup of its own (D-288)
     inside = CurrentView(account=ACCOUNT, kind=EntryKind.FOLDER, path="Sent", folder="Sent", folder_role="sent", query="x", scope=SearchScope.SUBFOLDERS)
-    assert setup_key(inside) == SEARCH_KEY and folder_type(inside) == "incoming"  # a folder and its subfolders: several folders, as all folders (D-287)
+    assert setup_key(inside) == SEARCH_KEY and folder_type(inside) == "search"  # a folder and its subfolders: several folders, as all folders (D-287)
     in_sent = CurrentView(account=ACCOUNT, kind=EntryKind.FOLDER, path="Sent", folder="Sent", folder_role="sent", advanced=AdvancedSearch(), scope=SearchScope.FOLDER)
     assert setup_key(in_sent) == folder_key(ACCOUNT, "Sent")  # a search in one folder: that folder's setup
 

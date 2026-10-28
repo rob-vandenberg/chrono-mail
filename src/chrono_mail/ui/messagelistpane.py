@@ -19,7 +19,7 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.delegate import ColumnDelegate, MessageDelegate
 from chrono_mail.ui.elidedlabel import ElidedLabel
 from chrono_mail.ui.mailstate import MailState
-from chrono_mail.ui.messagelist import LOST_PLACES, PAGE_SIZE, MessageListModel, ViewSpec
+from chrono_mail.ui.messagelist import LOST_PLACES, PAGE_SIZE, MessageListModel, ViewSpec, with_days
 from chrono_mail.ui.messageorder import split_key
 from chrono_mail.ui.messagelistview import MessageListView
 from chrono_mail.ui.models import HERE_ONLY_ROLES
@@ -28,9 +28,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.406"
+__version__ = "messagelistpane.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: Advanced search's days (Received, Sent, Snoozed until, Send at) and sizes go to the list in one step (with_days, D-288)
 # v4.2.406: a search with This folder + subfolders asks for the folder and every folder inside it; a folder fact that changes what the
 #           view holds fetches it again through refetch, once, one at a time (D-287)
 # v4.2.396: reads_away: Remove messages from Unread when I mark them as read is on and the list shows only unread mail (D-282)
@@ -279,12 +280,10 @@ class MessageListPane(QObject):
         attachments = True if view.attachments else None
         advanced = view.advanced
         if view.combined is not None:  # the filters narrow a Favorites or Tags view as they narrow a folder (R-03)
-            return ViewSpec(
+            return with_days(ViewSpec(
                 "", None, query, self.effective_sort(), self.oldest_first, unread, flagged, attachments,
-                date_from=advanced.date_from if advanced else None, date_to=advanced.date_to if advanced else None,
-                minimum_size=advanced.minimum_size if advanced else None, maximum_size=advanced.maximum_size if advanced else None,
                 combined=view.combined, combined_accounts=view.combined_accounts, combined_tag=view.combined_tag or None, tag=view.tag,
-            )
+            ), advanced)
         folder = view.folder
         if view.searching and view.scope is SearchScope.ALL:
             folder = None
@@ -292,12 +291,10 @@ class MessageListPane(QObject):
             folder = None
         subfolders = folder is not None and view.searching and view.scope is SearchScope.SUBFOLDERS
         grouped = self._conversations_on() and view.kind == EntryKind.FOLDER and not (query or unread or flagged or attachments or view.advanced is not None)
-        return ViewSpec(
+        return with_days(ViewSpec(
             view.account, folder, query, self.effective_sort(), self.oldest_first, unread, flagged, attachments,
-            date_from=advanced.date_from if advanced else None, date_to=advanced.date_to if advanced else None,
-            minimum_size=advanced.minimum_size if advanced else None, maximum_size=advanced.maximum_size if advanced else None,
             conversations=grouped and view.tag is None, tag=view.tag, subfolders=subfolders,
-        )
+        ), advanced)
 
     def apply_view(self) -> None:
         view = self._state.view

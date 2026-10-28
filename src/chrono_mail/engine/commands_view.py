@@ -14,9 +14,10 @@ from chrono_mail.index.database import writes
 from chrono_mail.index.model import GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_view.py 3.6.350"
+__version__ = "commands_view.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: the filters are read with the mailbox (the days of snoozed and waiting messages, D-288)
 # v3.6.350: every order answer carries a write stamp of its index files (how many changes were written), read before the order (RV-206)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.6.260: Initial: message.order and message.combined-order (the whole order of a view: every message's id, folder and unread mark, the
@@ -97,7 +98,7 @@ def message_order(engine: Engine, parameters: OrderParameters) -> ViewOrder:
                 len(everything), sum(1 for row in everything if "seen" not in row.flags), True, groups, tuple(row for row in everything if row.message_id in wanted),
                 settled_stamp(before, [mailbox.index.path]),
             )
-        filters = _search_filter(parameters)
+        filters = _search_filter(parameters, mailbox)
         found = mailbox.index.ordered(parameters.query, folder, filters, _sort_field(parameters.sort), not parameters.oldest_first, None if parameters.whole else first)
         if parameters.whole:
             total, unread_total = len(found), sum(1 for _, _, unread in found if unread)

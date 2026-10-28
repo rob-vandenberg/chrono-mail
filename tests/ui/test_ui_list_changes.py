@@ -11,9 +11,10 @@ from chrono_mail.ui.messagelist import MessageListModel, ViewSpec
 from tests.ui.world import World, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_list_changes.py 4.2.406"
+__version__ = "test_ui_list_changes.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: a view narrowed by Send at days follows a scheduled message whose time moved out of them (D-288)
 # v4.2.406: a search of a folder and its subfolders takes in a message that came into a subfolder, and lets go of one that left; it
 #           follows a folder moved out or in and one deleted with its mail (D-287)
 # v2.4.334: a delete right after another comes within a tenth of a second: the test waits for it (D-223)
@@ -156,6 +157,24 @@ def test_a_search_with_subfolders_follows_a_folder_moved_out_or_in_and_one_delet
     world.call("folder.delete", account=world.account_id, folder="Inbox/Old", with_messages=True)
     wait(qtbot, lambda: sorted(watched.subjects()) == ["Message 2", "Message 3"])
     assert watched.model.spec is not None and watched.model.spec.folder == "Inbox"
+
+
+def test_a_view_of_send_days_lets_go_of_a_message_whose_time_moved_out_of_them(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-288: a scheduled message edited to go later leaves a view narrowed by Send at days (its fact only says it changed)."""
+    from datetime import datetime, timedelta
+
+    now = datetime.fromtimestamp(world.engine.clock())
+    soon, later = now + timedelta(days=1), now + timedelta(days=30)
+    sent = world.call("mail.send", account=world.account_id, to="you@example.com", subject="Later", body="x", send_at=soon.strftime("%Y-%m-%dT%H:%M"))
+    days = (now.strftime("%Y-%m-%d"), (now + timedelta(days=3)).strftime("%Y-%m-%d"))
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, None, send_at_from=days[0], send_at_to=days[1]))
+    watched.model.refetch_wanted.connect(watched.model.reload)  # what the pane does, one fetch at a time
+    assert watched.subjects() == ["Later"]
+    world.call(
+        "mail.edit-scheduled", account=world.account_id, message=getattr(sent, "message_id"), to="you@example.com", subject="Later", body="x",
+        send_at=later.strftime("%Y-%m-%dT%H:%M"),
+    )
+    wait(qtbot, lambda: watched.subjects() == [])
 
 
 def test_folder_read_emptied_and_renamed(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

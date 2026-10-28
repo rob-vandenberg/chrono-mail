@@ -33,9 +33,10 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.2.406"
+__version__ = "index.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: a search narrowed by the message's own Date (sent_from, sent_to) and to named messages (only, D-288)
 # v4.2.406: a search of a folder with filters.subfolders also finds the messages of every folder inside it (This folder + subfolders, D-287)
 # v3.6.350: a rebuilt index put in place counts as written (database.writes)
 # v3.4.344: a stored moment before 1970 is read by adding seconds (Windows refused a negative time, so its folder could not be listed, RV-36);
@@ -715,6 +716,16 @@ class Index(IndexDatabase):
         if filters.date_to is not None:
             conditions.append(f"{steer}m.date <= ?")
             parameters.append(_epoch(filters.date_to))
+        if filters.sent_from is not None:
+            conditions.append(f"{steer}m.sent >= ?")
+            parameters.append(_epoch(filters.sent_from))
+        if filters.sent_to is not None:
+            conditions.append(f"{steer}m.sent <= ?")
+            parameters.append(_epoch(filters.sent_to))
+        if filters.only is not None:  # a few messages (snoozed or waiting to be sent): none named, none found
+            named = sorted(filters.only)
+            conditions.append(f"m.store_id IN ({', '.join('?' * len(named))})" if named else "0")
+            parameters.extend(named)
         if filters.newest_per_thread and not expression:
             conditions.append(
                 "NOT EXISTS (SELECT 1 FROM messages n WHERE n.thread_key = m.thread_key AND n.folder = m.folder AND n.id != m.id"

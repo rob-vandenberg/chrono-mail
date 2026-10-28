@@ -14,6 +14,7 @@ from chrono_mail.engine.commands_combined import MESSAGE_COMBINED_PLACES, VIEWS,
 from chrono_mail.engine.commands_mail import MESSAGE_PLACES, ListSort, PlacesParameters, PlacesResult
 from chrono_mail.engine.commands_view import MESSAGE_COMBINED_ORDER, MESSAGE_ORDER, MESSAGE_ROWS, CombinedOrderParameters, OrderParameters, RowsAnswer, RowsParameters, ViewOrder
 from chrono_mail.index.model import GroupCount
+from chrono_mail.ui.advancedsearch import AdvancedSearch
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.burst import Burst
 from chrono_mail.ui.columns import BY_ID, CARD, SEND_AT_FOLDERS, SEND_AT_LABEL, SNOOZED_COLUMN, SYMBOLS, cell_text, display_name, person_address
@@ -25,9 +26,11 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.406"
+__version__ = "messagelist.py 4.2.408"
 
 # --- Version history ----------------------------------------------------
+# v4.2.408: ViewSpec carries Advanced search's Sent, Snoozed until and Send at days (with_days); a view narrowed by those days is fetched
+#           again when a message's time changes where it is (D-288)
 # v4.2.406: ViewSpec.subfolders: a search of a folder and every folder inside it; a message of such a folder belongs in it and joins it
 #           at once; that view is never taken for one folder (marked read, emptied, dragged); a folder deleted with its mail, or one the
 #           server moved into or out of such a search, fetches the view again (D-287)
@@ -142,6 +145,23 @@ class ViewSpec:
     combined_tag: str | None = None  # the tag of the combined view "tagged" (Tags in the folder list)
     tag: str | None = None  # Filter > Tagged with
     subfolders: bool = False  # with folder: also every folder inside it, at any depth (a search, D-287)
+    sent_from: str | None = None  # YYYY-MM-DD, the message's own Date (D-288)
+    sent_to: str | None = None
+    snoozed_from: str | None = None  # when a snoozed message comes back
+    snoozed_to: str | None = None
+    send_at_from: str | None = None  # when a waiting message is sent
+    send_at_to: str | None = None
+
+
+def with_days(spec: ViewSpec, advanced: AdvancedSearch | None) -> ViewSpec:
+    """The view narrowed by Advanced search's days and sizes, when it has them."""
+    if advanced is None:
+        return spec
+    return dataclasses.replace(
+        spec, date_from=advanced.date_from, date_to=advanced.date_to, minimum_size=advanced.minimum_size, maximum_size=advanced.maximum_size,
+        sent_from=advanced.sent_from, sent_to=advanced.sent_to, snoozed_from=advanced.snoozed_from, snoozed_to=advanced.snoozed_to,
+        send_at_from=advanced.send_at_from, send_at_to=advanced.send_at_to,
+    )
 
 
 def _holds_folder(spec: ViewSpec, folder: str) -> bool:
@@ -512,6 +532,8 @@ class MessageListModel(QAbstractTableModel):
                 view=typing.cast(ViewName, spec.combined), tag=spec.combined_tag or "", accounts=spec.combined_accounts, query=spec.query, unread=spec.unread,
                 flagged=spec.flagged, has_attachments=spec.has_attachments, filter_tag=spec.tag, date_from=spec.date_from, date_to=spec.date_to,
                 minimum_size=spec.minimum_size, maximum_size=spec.maximum_size, sort=typing.cast(CombinedSort, spec.sort), oldest_first=spec.oldest_first,
+                sent_from=spec.sent_from, sent_to=spec.sent_to, snoozed_from=spec.snoozed_from, snoozed_to=spec.snoozed_to,
+                send_at_from=spec.send_at_from, send_at_to=spec.send_at_to,
                 stay_messages=tuple(message for _, message in kept), stay_mailboxes=tuple(mailbox for mailbox, _ in kept),
                 whole=whole, first=PAGE_SIZE, rows_of=tuple(message for _, message in named), rows_of_mailboxes=tuple(mailbox for mailbox, _ in named), headings=headings,
             )
@@ -520,6 +542,8 @@ class MessageListModel(QAbstractTableModel):
         return OrderParameters(
             account=spec.account, query=spec.query, folder=spec.folder, subfolders=spec.subfolders, unread=spec.unread, flagged=spec.flagged, has_attachments=spec.has_attachments,
             date_from=spec.date_from, date_to=spec.date_to, minimum_size=spec.minimum_size, maximum_size=spec.maximum_size, tag=spec.tag,
+            sent_from=spec.sent_from, sent_to=spec.sent_to, snoozed_from=spec.snoozed_from, snoozed_to=spec.snoozed_to,
+            send_at_from=spec.send_at_from, send_at_to=spec.send_at_to,
             conversations=spec.conversations, sort=typing.cast(ListSort, spec.sort), oldest_first=spec.oldest_first, stay=tuple(stay),
             whole=whole, first=PAGE_SIZE, rows_of=tuple(rows_of), headings=headings,
         )
@@ -1096,10 +1120,13 @@ class MessageListModel(QAbstractTableModel):
             self.refetch_wanted.emit()  # many folders deleted at once give one fetch, not one each
 
     def _folder_changes_view(self, change: Change) -> bool:
-        """Whether a folder fact changes which messages the view holds, so that it is fetched again: a folder deleted with its mail
-        (no fact per message comes), or a folder the server moved into or out of the folder a search with subfolders looks in. Never
+        """Whether a fact changes which messages the view holds, so that it is fetched again: a folder deleted with its mail
+        (no fact per message comes), a folder the server moved into or out of the folder a search with subfolders looks in, or a
+        message whose send or return time changed in a view narrowed by those days. Never
         for the folder shown itself or one above it: the window then opens another view, or the view follows the new name (D-287)."""
         spec, kind, folder = self._spec, str(change.kind), change.folder
+        if spec is not None and kind == "changed" and any((spec.sent_from, spec.sent_to, spec.snoozed_from, spec.snoozed_to, spec.send_at_from, spec.send_at_to)):
+            return True  # a waiting message changed where it is (edited, its next send, a countdown ended): in or out of the days (D-288)
         if spec is None or kind not in ("folder_deleted", "folder_renamed"):
             return False
         if spec.combined is None and spec.folder is not None and (spec.folder == folder or spec.folder.startswith(f"{folder}/")):
