@@ -23,9 +23,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 4.0.374"
+__version__ = "composing.py 4.2.414"
 
 # --- Version history ----------------------------------------------------
+# v4.2.414: Edit draft goes by the message's own folder in a search of several folders (D-287)
 # v4.0.374: a message window opened from Settings > Scheduled messages tells the page only while Settings is still open
 # v3.6.358: quitting first lets a running draft save and the decision waiting for it end (CR-03)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
@@ -172,7 +173,7 @@ class Composing(QObject):
     def edit_draft(self) -> None:
         """Open the selected message of Drafts (or Outbox) in the composer, to continue writing or to send it."""
         row = self._messages.current_row()
-        if row is None or self._state.view.account is None or not self._state.in_drafts():
+        if row is None or self._state.view.account is None or not self._state.in_drafts(row):
             return
         account, folder, message_id = self._state.account_of(row), row.folder, row.message_id
         if folder == SCHEDULED_FOLDER_PATH:  # it stays scheduled while it is changed: never a draft (an autosave made it one before 1.1.207)

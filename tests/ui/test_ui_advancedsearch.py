@@ -1,4 +1,5 @@
-from datetime import UTC, date, datetime
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -24,9 +25,10 @@ from tests.ui.test_ui_window import select, subjects
 from tests.ui.world import account_node, row_of, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_advancedsearch.py 4.2.413"
+__version__ = "test_ui_advancedsearch.py 4.2.414"
 
 # --- Version history ----------------------------------------------------
+# v4.2.414: in a search of several folders each message acts as in its own folder (open, menus, Move to, From; D-287)
 # v4.2.413: All folders from a Favorites view searches every folder: read mail in Junk is found from Unread (the owner's case, D-287)
 # v4.2.412: the line choices in lower case
 # v4.2.411: Received below More..., "of these conditions", ALL and ANY, AND and OR, the window 80 px wider at its opening
@@ -453,3 +455,40 @@ def test_all_folders_from_a_favorites_view_looks_in_every_folder(world: World, q
     chosen[0] = SearchScope.FOLDER
     world.window.act_advanced.trigger()
     wait(qtbot, lambda: world.window.messages._state.view.scope is SearchScope.FOLDER and world.window.list_model.rowCount() == 0)
+
+
+def test_in_a_search_of_several_folders_each_message_acts_as_in_its_own_folder(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-287 (the owner): a search of All folders started in Drafts is not Drafts: an Inbox message opens in a window of its own, a
+    draft in the editor; the menus and Move to follow the message; From shows the sender. A search in Drafts only stays Drafts."""
+    moment = datetime(2026, 10, 26, tzinfo=UTC)
+    with open_mailbox(world.engine, world.account_id) as mailbox:
+        mailbox.deliver(mailbox.folder("Inbox"), raw_message(subject="Plan inbox", body="b\n", message_id="<pi@x>", date=moment), frozenset())
+        mailbox.deliver(mailbox.folder("Drafts"), raw_message(subject="Plan draft", body="b\n", message_id="<pd@x>", date=moment + timedelta(hours=1)), frozenset())
+        mailbox.deliver(mailbox.folder("Junk"), raw_message(subject="Plan junk", body="b\n", message_id="<pj@x>", date=moment - timedelta(hours=1)), frozenset())
+    world.window.start()
+    wait(qtbot, lambda: world.window.list_model.rowCount() > 0)
+    opened: list[str] = []
+    monkeypatch.setattr(world.window.composing, "edit_draft", lambda: opened.append("editor"))
+    monkeypatch.setattr(world.window.reading, "open_message_window", lambda: opened.append("window"))
+    drafts = CurrentView(account=world.account_id, kind=EntryKind.FOLDER, key_kind=EntryKind.FOLDER, path="Drafts", folder="Drafts", folder_role="drafts")
+    world.window.messages.change_view(replace(drafts, query="plan", scope=SearchScope.ALL))
+    wait(qtbot, lambda: subjects(world.window) == ["Plan draft", "Plan inbox", "Plan junk"])
+    state = world.window.mail_state
+    assert not world.window.messages.delegate.show_recipients
+    select(world.window, 1)  # the Inbox message
+    world.window.open_selected()
+    world.window.mail_actions.fill_move_menu()
+    targets = [action.text() for action in world.window.move_menu.actions()]
+    assert "Drafts" in targets and "Inbox" not in targets and not state.in_drafts(row_of(world.window, 1)) and not world.window.act_not_junk.isEnabled()
+    select(world.window, 2)  # the Junk message: Not junk follows the focused message
+    assert world.window.act_not_junk.isEnabled() and state.in_junk(row_of(world.window, 2))
+    select(world.window, 0)  # the draft
+    world.window.open_selected()
+    assert opened == ["window", "editor"] and state.in_drafts(row_of(world.window, 0))
+    world.window.messages.change_view(replace(drafts, query="plan", scope=SearchScope.FOLDER))
+    wait(qtbot, lambda: subjects(world.window) == ["Plan draft"])
+    assert world.window.messages.delegate.show_recipients and state.in_drafts(None)  # Drafts only: Drafts as before
+    scheduled = CurrentView(account="", kind=EntryKind.FAVORITE, key_kind=EntryKind.FAVORITE, path="scheduled", combined="scheduled", query="plan", scope=SearchScope.ALL)
+    world.window.messages.change_view(scheduled)
+    wait(qtbot, lambda: len(subjects(world.window)) == 3)
+    assert not world.window.messages.delegate.show_recipients  # from Favorites > Scheduled too: the sender in From

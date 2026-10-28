@@ -4,9 +4,10 @@ from enum import StrEnum
 from chrono_mail.ui.advancedsearch import DEFAULT_SCOPE, AdvancedSearch, SearchScope
 
 # --- Version ------------------------------------------------------------
-__version__ = "currentview.py 4.2.407"
+__version__ = "currentview.py 4.2.414"
 
 # --- Version history ----------------------------------------------------
+# v4.2.414: several_folders: a search that shows the messages of several folders (each acts as in its own folder, D-287)
 # v4.2.407: a search looks in all folders until another choice is made (DEFAULT_SCOPE, D-287)
 # v4.2.406: where the search looks is one of three (scope: this folder only, with its subfolders, all folders, D-287)
 # v1.5.256: What the message list shows, kept as one value (R-14): the entry of the folder list, the search that was run, where it
@@ -55,6 +56,11 @@ class CurrentView:
     def searching(self) -> bool:
         """A search is shown (words, or Advanced search with days or sizes): only then does the scope matter."""
         return bool(self.query or self.advanced is not None)
+
+    @property
+    def several_folders(self) -> bool:
+        """A search that shows the messages of several folders: all of them (also from a Favorites view, D-287), or a folder and its subfolders."""
+        return self.searching and (self.scope is SearchScope.ALL or (self.scope is SearchScope.SUBFOLDERS and self.combined is None))
 
     @property
     def filtered(self) -> bool:

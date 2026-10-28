@@ -10,9 +10,11 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.models import FAVORITES, HERE_ONLY_ROLES, USED_ONLY, favorite_in_use, local_folder_kind
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailstate.py 3.6.354"
+__version__ = "mailstate.py 4.2.414"
 
 # --- Version history ----------------------------------------------------
+# v4.2.414: in a search of several folders a message acts as in its own folder: in_drafts, in_scheduled_view, in_snoozed and the new
+#           in_junk take the message (role_of_message, the owner, D-287)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.353: confirmed_by_server: whether an action waits for a server's word (IMAP) or is done here (POP3, Local Folders, D-266)
 # v3.6.349: deleted_for_good: in Trash, or a mailbox without a Trash folder (RV-173)
@@ -145,8 +147,17 @@ class MailState:
         account = self.view.account or ""
         return [(self.account_of(row) or account, row.folder, row.message_id) for row in rows]
 
-    def in_snoozed(self) -> bool:
-        """The Snoozed folder of an account is shown (its messages know when they come back)."""
+    def role_of_message(self, row: Placed | None) -> str | None:
+        """In a search of several folders a message acts as in the folder it lives in (the owner, D-287): the role of that folder
+        ("other" without a message); else None, and the view decides."""
+        if not self.view.several_folders:
+            return None
+        return self.folder_role_of(self.account_of(row), row.folder) if row is not None else "other"
+
+    def in_snoozed(self, row: Placed | None = None) -> bool:
+        """The Snoozed folder of an account is shown (its messages know when they come back); in a search of several folders: the message is in one."""
+        if (role := self.role_of_message(row)) is not None:
+            return role == "snoozed"
         view = self.view
         return view.combined is None and view.kind == EntryKind.FOLDER and view.folder_role == "snoozed"
 
@@ -155,14 +166,25 @@ class MailState:
         view = self.view
         return view.combined is None and view.kind == EntryKind.FOLDER and view.folder_role in ("snoozed", "scheduled", "outbox")
 
-    def in_drafts(self) -> bool:
+    def in_drafts(self, row: Placed | None = None) -> bool:
+        """A message here opens in the editor: Drafts, the Outbox, Scheduled; in a search of several folders: the message is in one."""
+        if (role := self.role_of_message(row)) is not None:
+            return role == "drafts" or role in HERE_ONLY_ROLES
         view = self.view
         return view.folder_role == "drafts" or view.folder_role in HERE_ONLY_ROLES or view.combined == "scheduled"
 
-    def in_scheduled_view(self) -> bool:
-        """Local Folders > Scheduled (or an account's), or Favorites > Scheduled."""
+    def in_scheduled_view(self, row: Placed | None = None) -> bool:
+        """Local Folders > Scheduled (or an account's), or Favorites > Scheduled; in a search of several folders: the message is in one."""
+        if (role := self.role_of_message(row)) is not None:
+            return role == "scheduled"
         view = self.view
         return view.combined == "scheduled" or (view.combined is None and view.kind == EntryKind.FOLDER and view.folder_role == "scheduled")
+
+    def in_junk(self, row: Placed | None = None) -> bool:
+        """Junk (an account's, or Favorites > Junk) is shown: Not junk brings a message back; in a search of several folders: the message is in Junk."""
+        if (role := self.role_of_message(row)) is not None:
+            return role == "junk"
+        return self.view.folder_role == "junk"
 
     def archived(self, row: Placed) -> bool:
         """The message is in an archive folder of its account (by the folder's role, not its name)."""

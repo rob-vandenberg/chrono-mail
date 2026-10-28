@@ -64,9 +64,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.410"
+__version__ = "mainwindow.py 4.2.414"
 
 # --- Version history ----------------------------------------------------
+# v4.2.414: in a search of several folders a message opens, and its right-click menu and Junk or Not junk follow, as in its own folder (D-287)
 # v4.2.410: Advanced search's saved searches are kept beside the window's settings, on this computer only (D-289)
 # v4.2.407: Advanced search… also in the search field's ▾ menu, below its three choices (D-287)
 # v4.2.405: Wayland: a tray click hides the window only while it or one of its dialogs has the focus, else brings it back; a second
@@ -772,6 +773,7 @@ class MainWindow(QMainWindow):
         self.act_conversations.toggled.connect(self.messages.toggle_conversations)
         self.act_show_groups.toggled.connect(self.messages.toggle_groups)
         self.list_view.selectionModel().selectionChanged.connect(self._update_message_actions)
+        self.list_view.selectionModel().currentChanged.connect(self._show_not_junk)  # in a search of several folders it follows the focused message (D-287)
         self.list_view.selectionModel().selectionChanged.connect(self._show_archive_action)  # it follows the messages (D-101)
         self.messages.rows_changed.connect(self._show_archive_action)  # a selected message moved to or from an archive folder
         self.list_model.modelReset.connect(self._show_archive_action)
@@ -1212,7 +1214,7 @@ class MainWindow(QMainWindow):
 
     def _show_junk_items(self, menu: QMenu) -> None:
         """In Junk the Message menu shows Not junk only (Move to Junk would bring the message back there), as the right-click menu does."""
-        in_junk = self.mail_state.view.folder_role == "junk"
+        in_junk = self.mail_state.in_junk(self.messages.current_row())
         if in_junk and self.act_junk in menu.actions():
             menu.removeAction(self.act_junk)
         elif not in_junk and self.act_junk not in menu.actions():
@@ -1431,7 +1433,7 @@ class MainWindow(QMainWindow):
         """Not junk can be clicked only where it acts: messages selected in the Junk folder or in Favorites > Junk (where the junk key
         brings them back too), never in a view without an account or with nothing selected."""
         view = self.mail_state.view
-        self.act_not_junk.setEnabled(view.folder_role == "junk" and view.account is not None and self.messages.has_selection())
+        self.act_not_junk.setEnabled(self.mail_state.in_junk(self.messages.current_row()) and view.account is not None and self.messages.has_selection())
 
     @property
     def section(self) -> str:
@@ -1486,7 +1488,7 @@ class MainWindow(QMainWindow):
 
     def open_selected(self) -> None:
         """Enter or a double click: edit a draft, or read a message in a window of its own."""
-        if self.mail_state.in_drafts():
+        if self.mail_state.in_drafts(self.messages.current_row()):  # in a search of several folders: as in the message's own folder (D-287)
             self.composing.edit_draft()
         else:
             self.reading.open_message_window()
@@ -1524,12 +1526,14 @@ class MainWindow(QMainWindow):
     def _list_menu(self, position: QPoint) -> None:
         menu = QMenu(self)
         state = self.mail_state
-        scheduled = state.in_scheduled_view()
+        clicked = self.list_view.indexAt(position)
+        row = self.list_model.row_at(clicked.row()) if clicked.isValid() else None  # in a search of several folders the menu follows this message (D-287)
+        scheduled = state.in_scheduled_view(row)
         if scheduled and not self.list_view.indexAt(position).isValid():  # the empty area: only a new scheduled message
             menu.addAction(self.act_new_scheduled)
             menu.exec(self.list_view.viewport().mapToGlobal(position))
             return
-        if state.in_drafts():
+        if state.in_drafts(row):
             menu.addAction(self.act_edit_scheduled if scheduled else self.act_edit_draft)
             menu.addSeparator()
         for action in (self.act_reply, self.act_reply_all, self.act_forward):
@@ -1543,9 +1547,10 @@ class MainWindow(QMainWindow):
         menu.addMenu(self.move_menu).setText("Move to")
         menu.addAction(self.act_archive)
         menu.addAction(self.act_snooze)
-        if state.in_snoozed():
+        if state.in_snoozed(row):
             menu.addAction(self.act_cancel_snooze)
-        menu.addAction(self.act_not_junk if state.view.folder_role == "junk" else self.act_junk)
+        self._show_not_junk()  # as the message the menu is for: the click made it the current one
+        menu.addAction(self.act_not_junk if state.in_junk(row) else self.act_junk)
         menu.addAction(self.act_delete)
         menu.addSeparator()
         for action in (self.act_save_as, self.act_print, self.act_source):

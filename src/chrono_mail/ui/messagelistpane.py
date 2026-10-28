@@ -29,9 +29,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.413"
+__version__ = "messagelistpane.py 4.2.414"
 
 # --- Version history ----------------------------------------------------
+# v4.2.414: a search of several folders shows the sender in From, also when it starts from Sent, Drafts, the Outbox or Scheduled (D-287)
 # v4.2.413: a search of All folders from a Favorites or Tags view looks in every folder of every account (the view everywhere), not in the
 #           view's own folders (D-287)
 # v4.2.408: Advanced search's days (Received, Sent, Snoozed until, Send at) and sizes go to the list in one step (with_days, D-288)
@@ -305,7 +306,7 @@ class MessageListPane(QObject):
 
     def apply_view(self) -> None:
         view = self._state.view
-        self.delegate.show_recipients = view.folder_role in ("sent", "drafts", *HERE_ONLY_ROLES) or view.combined in HERE_ONLY_ROLES
+        self.delegate.show_recipients = not view.several_folders and (view.folder_role in ("sent", "drafts", *HERE_ONLY_ROLES) or view.combined in HERE_ONLY_ROLES)
         self.model.recipients_first = self.delegate.show_recipients
         self.model.show(self.view_spec())
 

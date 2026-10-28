@@ -31,9 +31,10 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 4.2.396"
+__version__ = "messageactions.py 4.2.414"
 
 # --- Version history ----------------------------------------------------
+# v4.2.414: in a search of several folders each message acts as in its own folder: the junk key, Cancel snooze and Move to (D-287)
 # v4.2.396: with Remove messages from Unread when I mark them as read, Mark as read (and Toggle read to read) in a list of unread mail
 #           takes the messages out of it as Junk does: the next message is selected, a held key stops when let go (D-282)
 # v4.2.394: a held mark key (R, Insert, Ctrl+Q, Ctrl+U) stops the moment it is let go: its repeats while an action is under way are thrown away (D-266)
@@ -341,14 +342,14 @@ class MessageActions(QObject):
 
     def junk_key(self) -> None:
         """One key does both, as the folder decides: Move to Junk, or in Junk back to the Inbox."""
-        self.junk_selected(self._state.view.folder_role != "junk")
+        self.junk_selected(not self._state.in_junk(self._messages.current_row()))
 
     # --- snooze ----------------------------------------------------------------------------------------------------------
 
     def fill_snooze_menu(self, menu: QMenu, cancel: QAction) -> None:
         """The ready-made times, counted from now, and a choice of one's own."""
         menu.clear()
-        if self._state.in_snoozed():
+        if self._state.in_snoozed(self._messages.current_row()):
             menu.addAction(cancel)
             menu.addSeparator()
         for name, moment in snooze_presets(datetime.now()):
@@ -388,8 +389,8 @@ class MessageActions(QObject):
             return
         if self._messages.deferred(lambda: self.cancel_snooze_selected()):
             return
-        rows = self._messages.selected_rows()
-        if not rows or self._state.view.account is None or not self._state.in_snoozed():
+        rows = [row for row in self._messages.selected_rows() if self._state.in_snoozed(row)]  # in a search of several folders: the snoozed ones
+        if not rows or self._state.view.account is None:
             return
         account = self._state.view.account
         remaining = len(rows)
@@ -451,15 +452,20 @@ class MessageActions(QObject):
         view = self._state.view
         if view.account is None:
             return
-        scheduled = self._state.in_scheduled_view()
-        for info in self._state.folders.get(view.account, []):
+        row = self._messages.current_row()
+        scheduled = self._state.in_scheduled_view(row)
+        own, home = view.folder, view.account
+        if row is not None and view.several_folders:  # in a search of several folders: as in the message's own folder and account (D-287)
+            own, home = row.folder, self._state.account_of(row)
+        across = None if home == view.account else home  # a folder of the account shown, or of the message's own account
+        for info in self._state.folders.get(home, []):
             path = info.path
-            if path == view.folder or info.role in HERE_ONLY_ROLES or (scheduled and info.role not in SCHEDULED_TARGET_ROLES):
+            if path == own or info.role in HERE_ONLY_ROLES or (scheduled and info.role not in SCHEDULED_TARGET_ROLES):
                 continue  # a scheduled message goes back to Drafts or to Trash, nowhere else
-            self.move_menu.addAction(path.replace("&", "&&")).triggered.connect(lambda checked=False, target=path: self.move_selected(target))  # "R&D", never "RD"
+            self.move_menu.addAction(path.replace("&", "&&")).triggered.connect(lambda checked=False, target=path: self.move_selected(target, across))  # "R&D", never "RD"
         if scheduled:
             return  # a scheduled message stays in its own account
-        others = [place for place in self._state.folders if place != view.account]
+        others = [place for place in self._state.folders if place != home]
         if others:
             self.move_menu.addSeparator()
         for place in others:  # the other accounts' folders, one submenu each (D-272)
