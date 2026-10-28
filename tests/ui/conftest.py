@@ -5,8 +5,9 @@ from typing import cast
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QEvent, Qt
-from PySide6.QtGui import QColor, QFont, QPalette
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtPrintSupport import QPrintDialog
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QColorDialog, QDialog, QFileDialog, QInputDialog, QMessageBox, QStyle, QWidget
 
 from chrono_mail.ui import appearance, colours, scale, sendnotices
@@ -15,9 +16,11 @@ from tests.ui.world import dialogs, world
 __all__ = ["dialogs", "world"]  # fixtures, found by pytest in this directory
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 3.6.349"
+__version__ = "conftest.py 4.2.409"
 
 # --- Version history ----------------------------------------------------
+# v4.2.409: after every test no key is held: a simulated Ctrl+Z left Qt sure that Ctrl was still down, so a later test's selection in
+#           code was a Ctrl-click that selected nothing (let_go_of_keys)
 # v3.6.349: the About boxes and the print window too (they run without QDialog.exec; the reviewer of 3.5.348)
 # v3.5.347: every window that waits for a click (a dialog's exec, a message box made by hand, the text, file, folder and colour
 #           pickers) is never shown for real either: noted, answered with Cancel, and the test fails (a restore's recovery code window hung a run)
@@ -80,6 +83,20 @@ def _put_back(app: QApplication, look: _ProgramLook) -> None:
     for state, fields in ((scale._state, look.scale_state), (appearance._state, look.appearance_state)):  # noqa: SLF001 - in place: others hold them
         vars(state).clear()
         vars(state).update(fields)
+
+
+MODIFIER_KEYS: tuple[Qt.Key, ...] = (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta)
+
+
+def let_go_of_keys() -> None:
+    """A key pressed with a modifier through QTest leaves Qt sure that the modifier is still down (the release carries it): every
+    modifier is let go, so no later test starts with a key held (a selection made in code would be a Ctrl-click)."""
+    if QGuiApplication.keyboardModifiers() == Qt.KeyboardModifier.NoModifier:
+        return
+    stand_in = QWidget()  # never shown: it takes no window, focus or activation from the next test
+    for key in MODIFIER_KEYS:
+        QTest.keyRelease(stand_in, key, Qt.KeyboardModifier.NoModifier)
+    stand_in.deleteLater()
 
 
 def _unanswered_box(kind: str) -> object:
@@ -167,6 +184,7 @@ def every_test_starts_clean(qapp: QApplication) -> Generator[None]:
         _first_look.append(_look_now(app))
     _unanswered.shown.clear()
     yield
+    let_go_of_keys()
     for window in app.topLevelWidgets():  # what the test left open (a message window keeps its autosave timer while it exists)
         window.hide()
         window.deleteLater()
