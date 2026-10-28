@@ -19,9 +19,10 @@ from chrono_mail.engine.undorecord import UndoRecorder, Verdicts
 from chrono_mail.store import MessageNotFoundError
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_many.py 3.6.349"
+__version__ = "commands_many.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: message.flag-many leaves: the messages leave the person's list, so one already marked is noted for Undo too (D-282)
 # v3.6.349: deleting many messages of the Outbox or Scheduled for good never waits for or connects to the IMAP server (RV-183, RV-184)
 # v2.2.313: undo: an action given with a number notes each message before and after, so Undo can put it back (B-18)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -67,6 +68,7 @@ class ManyFlagParameters:
     flagged: bool | None = field(default=None, metadata=option("Flag (true) or unflag (false)"))
     replied: bool | None = field(default=None, metadata=option("Mark as replied to (true) or not (false)"))
     undo: int = field(default=0, metadata=option("The number of the action, so Undo can put it back (0: it is not undone)"))
+    leaves: bool = field(default=False, metadata=option("The messages leave the list they are shown in, so Undo brings back also those already marked"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,10 +103,12 @@ def _each(
     engine: Engine, account: str, folder: str, messages: tuple[str, ...], prepare: Callable[[Mailbox, list[MessageRef]], None],
     act: Callable[[Mailbox, MessageRef], object], after: Callable[[Mailbox, list[tuple[MessageRef, object]]], Verdicts] | None = None,
     undo: tuple[int, str] = (0, ""), needs_server: Callable[[Mailbox, tuple[str, ...]], bool] = lambda mailbox, folder: True,
+    unchanged_too: bool = False,
 ) -> tuple[ManyResult, list[tuple[MessageRef, object]]]:
     """The group: the messages named, prepared on the server together, then each one's own step; a failure is that message's alone.
     after: what follows for the ones done, once for the group (the junk filter learns them, and says what it learned).
-    undo: the action's number and name: each message is noted before and after, so Undo can put it back (B-18)."""
+    undo: the action's number and name: each message is noted before and after, so Undo can put it back (B-18); unchanged_too: also
+    one the action left as it was (D-282)."""
     if len(messages) > MAXIMUM_MESSAGES:
         raise UsageError(f"At most {MAXIMUM_MESSAGES:,} messages at once")
     failed: list[NotDone] = []
@@ -117,7 +121,7 @@ def _each(
                 refs.append(mailbox.reference(source, _check_id(message)))
             except ChronoMailError as error:
                 failed.append(_not_done(message, error))
-        recorder = UndoRecorder(mailbox, account, undo[0])
+        recorder = UndoRecorder(mailbox, account, undo[0], unchanged_too)
         recorder.before(ref.store_id for ref in refs)
         with mailbox.together(server=needs_server(mailbox, source)):
             try:
@@ -198,7 +202,9 @@ def message_flag_many(engine: Engine, parameters: ManyFlagParameters) -> ManyRes
         flags = wanted.get(ref.store_id) or flags_wanted(mailbox.current_flags(ref), parameters.seen, parameters.flagged, parameters.replied)
         return mailbox.set_flags(ref, flags)
 
-    result, answers = _each(engine, parameters.account, parameters.folder, parameters.messages, prepare, act, undo=(parameters.undo, _marks_name(parameters)))
+    result, answers = _each(
+        engine, parameters.account, parameters.folder, parameters.messages, prepare, act, undo=(parameters.undo, _marks_name(parameters)), unchanged_too=parameters.leaves,
+    )
     marks = tuple((ref.store_id, flag_names(flags)) for ref, flags in answers if isinstance(flags, frozenset))
     return ManyResult(result.done, result.failed, flags=marks)
 

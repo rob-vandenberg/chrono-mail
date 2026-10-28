@@ -70,6 +70,13 @@
     </widget>
    </item>
    <item row="6" column="0" colspan="2">
+    <widget class="QCheckBox" name="unreadLeavesOnRead">
+     <property name="text">
+      <string>Remove messages from Unread when I mark them as read</string>
+     </property>
+    </widget>
+   </item>
+   <item row="7" column="0" colspan="2">
     <widget class="QLabel" name="columnsText">
      <property name="text">
       <string>Columns (tick the ones to show; the order is the order from left to right):</string>
@@ -79,7 +86,7 @@
      </property>
     </widget>
    </item>
-   <item row="7" column="0" colspan="2">
+   <item row="8" column="0" colspan="2">
     <widget class="QWidget" name="columnsPicker" />
    </item>
   </layout>

@@ -10,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.2.390"
+__version__ = "prefs.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: unread_leaves_on_read: a message the person marks as read leaves a list of unread mail (off by default, D-282)
 # v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
 # v4.2.389: Remembered keeps the paths the Import and Export windows used last (on this computer); a path that is gone reads as "";
 #           last_picked_folder: the folder of the last file or folder any of their Browse buttons picked
@@ -76,6 +77,7 @@ DEFAULTS: dict[str, object] = {
     "show_local_folders": True,
     "show_tags": True,  # the Tags at the bottom of the folder list
     "tag_text_colour": False,  # the text of a tagged message in the colour of its first tag
+    "unread_leaves_on_read": False,  # a message the person marks as read leaves a list of unread mail (D-282)
     # reading
     "mark_read": "delay",  # delay: after a moment, never: only when I mark it, window: only when opened in a window of its own
     "mark_read_delay_ms": 700,
@@ -276,6 +278,7 @@ class Preferences:
     show_local_folders: bool = True
     show_tags: bool = True
     tag_text_colour: bool = False
+    unread_leaves_on_read: bool = False
     mark_read: str = "delay"
     mark_read_delay_ms: int = 700
     reading_scale: float = 1.0
@@ -339,6 +342,7 @@ def read_preferences(settings: QSettings) -> Preferences:
         show_local_folders=get_bool(settings, "show_local_folders"),
         show_tags=get_bool(settings, "show_tags"),
         tag_text_colour=get_bool(settings, "tag_text_colour"),
+        unread_leaves_on_read=get_bool(settings, "unread_leaves_on_read"),
         mark_read=choice("mark_read"),
         mark_read_delay_ms=number("mark_read_delay_ms"),
         reading_scale=_factor(settings, "reading_scale"),

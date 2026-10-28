@@ -56,9 +56,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.0.374"
+__version__ = "settingsdialog.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: Message list: Remove messages from Unread when I mark them as read (D-282)
 # v4.0.374: the window is deleted once closed: it cannot be closed while it removes an account or saves the tags, and a rebuild that ends
 #           after it closed writes nothing into it
 # v3.6.373: the window and its pages are built from Qt Designer forms (ui/forms/settings*.ui): their parts, texts and layout; the program
@@ -575,6 +576,8 @@ class SettingsDialog(QDialog):
         self.conversations.setChecked(self._chosen.conversations)
         self.tag_text_colour = part(page, QCheckBox, "tagTextColour")
         self.tag_text_colour.setChecked(self._chosen.tag_text_colour)
+        self.unread_leaves_on_read = part(page, QCheckBox, "unreadLeavesOnRead")
+        self.unread_leaves_on_read.setChecked(self._chosen.unread_leaves_on_read)
         self.columns_picker = part(page, ColumnPicker, "columnsPicker")
         self.layout_box.currentIndexChanged.connect(self._layout_changed)
         self._layout_changed()
@@ -874,7 +877,7 @@ class SettingsDialog(QDialog):
             list_layout=str(self.layout_box.currentData()), reading_pane=str(self.pane_box.currentData()), date_style=str(self.date_box.currentData()),
             list_density=str(self.density_box.currentData()), list_scale=scale.factor_at(self.list_slider.value()), conversations=self.conversations.isChecked(),
             show_favorites=bool(sidebar["show_favorites"]), show_local_folders=bool(sidebar["show_local_folders"]), show_tags=bool(sidebar["show_tags"]),
-            tag_text_colour=self.tag_text_colour.isChecked(),
+            tag_text_colour=self.tag_text_colour.isChecked(), unread_leaves_on_read=self.unread_leaves_on_read.isChecked(),
             mark_read=str(self.mark_read_box.currentData()), mark_read_delay_ms=self.mark_read_delay.value(), reading_scale=scale.factor_at(self.reading_slider.value()),
             prefer_plain=self.prefer_plain.isChecked(), remote_always=self.remote_always.isChecked(), remote_senders=senders, links_ask=self.links_ask.isChecked(),
             default_account=str(self.default_account.currentData() or ""), compose_html=bool(self.compose_html.currentData()),

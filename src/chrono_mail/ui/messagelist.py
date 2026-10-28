@@ -25,9 +25,12 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.1.383"
+__version__ = "messagelist.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: leave_when_read: in a list of unread mail, the messages the person marks as read leave it when their read mark comes (or at
+#           the key press, leave_now), and come back at their place when they are unread again or Undo names them (one read already comes
+#           back read and stays, D-149) while the list is shown; Redo takes them out again (undone); one that left is no longer kept (D-282)
 # v4.1.383: hold_arrivals: messages that come in while an Undo runs are placed in one step when it ends; after_arrivals: what waits
 #           until they have their places; rows_of_messages: the rows of messages loaded or not, also in a Favorites view (D-266)
 # v4.1.381: leave_now takes the rows out per run of neighbouring rows (one removal each froze the window for 17 s with 15,875); took_in
@@ -205,6 +208,10 @@ class MessageListModel(QAbstractTableModel):
         self._display_rows: int = 0
         self.pending: set[str] = set()  # message ids with an action under way: greyed, and no second action (D-146)
         self._stay: set[str] = set()  # keys of messages read, unflagged or untagged while this view showed them: they stay until it is left
+        self._leave_on_read: dict[str, MessageRow | None] = {}  # keys of messages the person marks as read in a list of unread mail -> their row: they leave with their read mark (D-282)
+        self._read_out: dict[str, MessageRow | None] = {}  # keys of messages that left that way -> their row: unread again, they come back (Undo)
+        self._brought_back: dict[str, MessageRow] = {}  # keys of those Undo brought back -> their row: Redo takes them out again
+        self._was_kept: dict[str, str] = {}  # keys of messages kept by D-149 that left the view -> the folder they were in: back there, kept again
         self._leaving: list[Change] = []  # messages that left the view in this moment: their rows go together (16,000 one by one took minutes)
         self._left_early: dict[str, tuple[str, MessageRow]] = {}  # message id -> its key and row: taken out at the key press, its action not done yet (D-266)
         self.role_of: Callable[[str, str], str] = lambda account, folder: "other"  # the role of an account's folder (a row brought back is placed by it)
@@ -333,6 +340,10 @@ class MessageListModel(QAbstractTableModel):
         """Start showing something else (or nothing). The order is asked (for a large view, its start first)."""
         self.pending.clear()
         self._stay.clear()  # the view is left: what was changed in it no longer stays
+        self._leave_on_read.clear()
+        self._read_out.clear()
+        self._brought_back.clear()
+        self._was_kept.clear()
         self._arriving.clear()
         self._placing = None
         self.settled = spec is None or (self.settled and spec == self._spec and self._display_rows == 0)  # an empty view reloaded stays settled; one with messages waits for them
@@ -1005,6 +1016,9 @@ class MessageListModel(QAbstractTableModel):
     def replace_flags(self, message_id: str, flags: tuple[str, ...]) -> None:
         """Show new marks on a message without fetching anything (after a change of marks)."""
         key = self._loaded_key(message_id)
+        if key is not None and self._read_away(key, flags):
+            self._counts_changed()
+            return
         if key is not None:
             self._set_flags(key, flags)
             self._counts_changed()
@@ -1059,7 +1073,7 @@ class MessageListModel(QAbstractTableModel):
             self._log.append(change)  # applied again to the answers on their way
         if not self._complete and self._touches_view(change):
             self._changed_while_loading = True  # selected places not known yet can no longer be told by their number (_swap_in)
-        if str(change.kind) == "removed" or (str(change.kind) == "moved" and not self._may_hold(change)):  # it only leaves this view
+        if str(change.kind) == "removed" or (str(change.kind) == "moved" and not self._may_hold(change)) or self._reads_away(change):  # it only leaves this view
             if self._leave_soon.busy:
                 self._leaving.append(change)  # more leave in the same moment (a large delete): they go together when it ends
                 self._leave_soon.wait_for_end()
@@ -1090,6 +1104,9 @@ class MessageListModel(QAbstractTableModel):
             if str(change.kind) == "moved":
                 coming.append(change)
         self._take_out_runs(keys)
+        for change in changes:
+            if str(change.kind) == "flags":
+                self._read_away(self._key(change.mailbox, change.message_id), tuple(change.flags))  # it left: kept to come back on Undo (D-282)
         for change in coming:
             self._bring_in(change)
 
@@ -1102,6 +1119,9 @@ class MessageListModel(QAbstractTableModel):
         mailbox, folder = change.mailbox, change.folder
         key = self._key(mailbox, change.message_id)
         if kind == "flags":
+            if self._read_away(key, tuple(change.flags)):
+                self._counts_changed()
+                return
             self._keep_here(key)
             self._set_flags(key, tuple(change.flags))
             self._counts_changed()
@@ -1182,6 +1202,73 @@ class MessageListModel(QAbstractTableModel):
         if row is not None:
             self._replace(key, dataclasses.replace(row, flags=flags))
 
+    def shows_unread_only(self) -> bool:
+        """Whether the list shows only unread mail: Unread (in Favorites or under an account) or Filter > Unread."""
+        spec = self._spec
+        return spec is not None and (spec.combined == "unread" or spec.unread is True)
+
+    def leave_when_read(self, message_ids: list[str]) -> None:
+        """The person marks these messages as read in a list of unread mail: each leaves it when its read mark comes, also one read
+        already, instead of staying until the list is left (D-282, D-149). Call before the action: leave_now may take them out at once."""
+        for message_id in message_ids:
+            key = self._loaded_key(message_id)
+            if key is not None:
+                self._leave_on_read[key] = self._row_of(key)
+                self._read_out.pop(key, None)
+                self._brought_back.pop(key, None)
+
+    def _reads_away(self, change: Change) -> bool:
+        """Whether this fact is the read mark of a message the person marked as read in this list: it leaves with the others that leave
+        in the same moment (Mark as read on 1,000 messages lays the list out once per run of rows, not once per message)."""
+        return str(change.kind) == "flags" and "seen" in change.flags and (key := self._key(change.mailbox, change.message_id)) in self._order and (
+            key in self._leave_on_read or key in self._read_out)
+
+    def _read_away(self, key: str, flags: tuple[str, ...]) -> bool:
+        """New marks of a message the person marked as read in this list (D-282): read, it leaves the list (when it is still there);
+        unread again (Undo), it comes back at its place. True: the marks were dealt with here."""
+        if key not in self._leave_on_read and key not in self._read_out:
+            return False
+        row = self._row_of(key) or self._leave_on_read.get(key) or self._read_out.get(key)  # gone from the rows when taken out at the key press
+        if "seen" in flags:
+            self._leave_on_read.pop(key, None)
+            self._stay.discard(key)  # it left: a sort or a fetch of the list no longer keeps it (D-149)
+            self._read_out[key] = dataclasses.replace(row, flags=flags) if row is not None else None
+            if key in self._order:
+                self._take_out(key, key in self._unread)
+            return True
+        if key in self._leave_on_read:
+            return False  # not read yet (its other marks changed): it stays until its read mark comes
+        return self._come_back(key, flags)
+
+    def _come_back(self, key: str, flags: tuple[str, ...] | None) -> bool:
+        """A message that left this list as read comes back at its place (Undo): unread again, or with its marks (None: as it left)."""
+        kept, spec = self._read_out.pop(key, None), self._spec
+        if key in self._order or kept is None or spec is None:
+            return False
+        mailbox = split_key(key)[0] or spec.account or ""
+        back = kept if flags is None else dataclasses.replace(kept, flags=flags)
+        self._brought_back[key] = back
+        if not _unread(back):
+            self._stay.add(key)  # read already when it left: back as it was, a message read while shown, which stays (D-149)
+        self._bring_in(Change("added", mailbox, folder=back.folder, message_id=back.message_id, row=back, unread=_unread(back), role=self.role_of(mailbox, back.folder)), kept=True)
+        return True
+
+    def undone(self, message_ids: Iterable[str], redo: bool) -> None:
+        """Undo or Redo of an action named these messages (D-282): Undo brings back those that left this list as read and were read
+        already (no new marks come for them), Redo takes out again those Undo brought back. A message whose marks changed came or went
+        with its fact already."""
+        wanted = set(message_ids)
+        if redo:
+            keys = [key for key in self._brought_back if split_key(key)[1] in wanted and key in self._order]
+            for key in keys:
+                self._stay.discard(key)
+                self._read_out[key] = self._row_of(key) or self._brought_back[key]
+                del self._brought_back[key]
+            self._take_out_runs(keys)
+            return
+        for key in [key for key in self._read_out if split_key(key)[1] in wanted]:
+            self._come_back(key, None)
+
     def _keep_here(self, key: str) -> None:
         """A message shown in a view filtered by unread, flagged or a tag got other marks or tags: it stays in the view until
         the view is left, also when the view is fetched again or sorted (the engine is told, D-149)."""
@@ -1230,6 +1317,9 @@ class MessageListModel(QAbstractTableModel):
             else:
                 self._group_counts[number] = (group_key, name, count - 1)
         row = self._rows.get(key)
+        if key in self._stay:  # it left the view (moved, deleted): no later sort or fetch brings it back from where it went (D-149);
+            self._stay.discard(key)  # back in the folder it was kept in (a failed action, Undo), it is kept again
+            self._was_kept[key] = self._order.folder_of(key) or ""
         self._order.remove(key)
         self._forget(key)
         self._unread.discard(key)
@@ -1279,6 +1369,7 @@ class MessageListModel(QAbstractTableModel):
     def come_back(self, message_id: str) -> None:
         """The action of a message taken out at its key press was not done: it comes back at its place, the engine says where."""
         left = self._left_early.pop(message_id, None)
+        self._leave_on_read.pop(left[0] if left is not None else self._loaded_key(message_id) or "", None)  # not read: it stays, as any other
         spec = self._spec
         if left is None or spec is None:
             return
@@ -1330,15 +1421,21 @@ class MessageListModel(QAbstractTableModel):
             return False
         return spec.tag is None or spec.tag.casefold() in tags
 
-    def _bring_in(self, change: Change) -> None:
+    def _bring_in(self, change: Change, kept: bool = False) -> None:
         """A message came into a folder: when it may belong in this view it is taken in together with the others that came at
-        the same moment (a mail check brings several), with one question for all of them."""
+        the same moment (a mail check brings several), with one question for all of them. kept: Undo brings back a message read
+        already that a Mark as read took out (D-282): placed although read, as one the view keeps."""
         row = change.row
-        if row is None or not self._may_hold(change):
+        if row is None:
             return
         mailbox = change.mailbox
         held = self._held(row, mailbox)
         key = self._row_key(held)
+        if self._was_kept.get(key) == (change.to_folder or change.folder):
+            del self._was_kept[key]
+            self._stay.add(key)  # kept by D-149 and back in that folder (a failed action, Undo of a move or delete): kept again
+        elif not self._may_hold(change) and not (kept and key in self._stay):  # Undo's read one (D-282) is placed too: the engine is told it stays
+            return
         if key in self._order or (self._placing is not None and key in self._placing):
             return  # it is there already (the order counted it), or its place is being asked
         self._arriving[key] = held
@@ -1405,14 +1502,18 @@ class MessageListModel(QAbstractTableModel):
         self._placing = placing
         keys = list(placing)
         view = self._view
+        asked_stay = frozenset(self._stay)
 
         def located(result: PlacesResult) -> None:
             if view != self._view or self._placing is not placing:
                 return
             self._placing = None
-            if self._ordering is not None:  # an order went out meanwhile: they are placed after it (it may count them)
-                for key, row in placing.items():
-                    self._arriving.setdefault(key, row)
+            if self._ordering is not None or not self._stay <= asked_stay:  # an order went out meanwhile: they are placed after it (it may count
+                for key, row in placing.items():  # them); or a message the list holds was kept meanwhile (read while shown, D-149): the answer
+                    self._arriving.setdefault(key, row)  # left it out, so what comes before it is asked again
+                if self._ordering is None:
+                    self._arrival_planned = True
+                    QTimer.singleShot(0, self, self._take_in)
                 return
             if not result.known:
                 self.rearrange(self._spec)  # what came in is no longer known one by one: the order is asked once

@@ -31,9 +31,11 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 4.2.394"
+__version__ = "messageactions.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: with Remove messages from Unread when I mark them as read, Mark as read (and Toggle read to read) in a list of unread mail
+#           takes the messages out of it as Junk does: the next message is selected, a held key stops when let go (D-282)
 # v4.2.394: a held mark key (R, Insert, Ctrl+Q, Ctrl+U) stops the moment it is let go: its repeats while an action is under way are thrown away (D-266)
 # v3.6.367: a drop may hold messages of several accounts, each with its account (D-272)
 # v3.6.366: Move to has a submenu for each other account and a drop may come from another account: those messages are moved message by message (move_to, D-272)
@@ -135,19 +137,26 @@ class MessageActions(QObject):
         account_id = account or self._state.view.account
         if account_id is None or not targets:
             return
+        self._act_flags([(account_id, folder, message_id) for folder, message_id in targets], values, undo, take_away=False)
+
+    def _act_flags(self, targets: list[tuple[str, str, str]], values: dict[str, bool], undo: int, take_away: bool) -> None:
+        """The marks of these messages (account, folder, message); take_away: they leave the list, as with Junk (D-282)."""
 
         def answered(result: ManyResult) -> None:
             for message_id, flags in result.flags:
                 self._messages.model.replace_flags(message_id, flags)  # the folder list's numbers follow the facts (D-146)
 
         self.act_many(
-            MESSAGE_FLAG_MANY, lambda account, folder, messages: ManyFlagParameters(account, folder, messages, seen=values.get("seen"), flagged=values.get("flagged"), undo=undo),
-            [(account_id, folder, message_id) for folder, message_id in targets], "", "Could not change", take_away=False, each=answered,
+            MESSAGE_FLAG_MANY, lambda account, folder, messages: ManyFlagParameters(account, folder, messages, seen=values.get("seen"), flagged=values.get("flagged"), undo=undo, leaves=take_away),
+            targets, "", "Could not change", take_away=take_away, each=answered,
         )
 
     def mark_selected(self, seen: bool | None = None, flagged: bool | None = None) -> None:
         if self._undoing.held_while_busy():
             return  # a held key's repeat while an action is under way: thrown away, so it stops when let go (D-266)
+        if seen and flagged is None and self._messages.reads_away():
+            self._mark_read_away()
+            return
         if self._messages.deferred(lambda: self.mark_selected(seen, flagged)):
             return
         self.mark_messages(self._messages.selected_rows(), seen, flagged)
@@ -162,13 +171,31 @@ class MessageActions(QObject):
             return
         account_of = self._state.account_of
         number = self._undoing.new_action()  # one key press, however many accounts: one step of Undo
+        if seen is True and self._messages.reads_away():  # they leave the list of unread mail, all in one action (D-282)
+            self._messages.model.leave_when_read([row.message_id for row in rows])
+            self._act_flags(self._state.targets(rows), values, number, take_away=True)
+            return
         for account in dict.fromkeys(account_of(row) for row in rows):  # the combined views mix accounts
             self.set_flags([(row.folder, row.message_id) for row in rows if account_of(row) == account], values, account, number)
+
+    def _mark_read_away(self) -> None:
+        """Mark as read in a list of unread mail, with Remove messages from Unread when I mark them as read (D-282): the messages leave it,
+        as with Junk; the next message below is selected only once it is loaded and painted (D-266). Their rows are asked first, so each
+        one can come back at its place on Undo."""
+        if self._messages.paused_at_edge(keyed=True, again=self._mark_read_away):
+            return
+        if self._messages.deferred(self._mark_read_away):
+            return
+        chosen = self._messages.selected_rows()
+        if chosen:
+            self._messages.with_rows(chosen, lambda still, rows: self.mark_messages(still, seen=True))
 
     def toggle_read(self) -> None:
         """All read: unread, else read; counted over every selected message (their rows are asked first when they are not loaded)."""
         if self._undoing.held_while_busy():
             return  # a held key's repeat while an action is under way: thrown away, so it stops when let go (D-266)
+        if self._messages.reads_away() and self._messages.paused_at_edge(keyed=True, again=self.toggle_read):
+            return  # it may take them out of the list of unread mail (D-282)
         if self._messages.deferred(lambda: self.toggle_read()):
             return
         chosen = self._messages.selected_rows()

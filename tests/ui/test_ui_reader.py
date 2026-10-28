@@ -20,9 +20,10 @@ PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_reader.py 3.6.357"
+__version__ = "test_ui_reader.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: a right-click on a link offers Copy link address, which puts the link on the clipboard; on a linked picture after Open attachment and Save as… (D-281)
 # v3.6.357: a link in <...> or quotes stops at its closing character; an apostrophe inside an address stays (CR-19)
 # v3.5.346: HTML mail and its pictures come through chrono-message: addresses; an HTML message over 2 MB is shown (RV-158)
 # v2.0.302: a click on a file selects it, a double click opens it, a right-click on it or on a picture offers Open attachment and Save as… (D-236)
@@ -439,10 +440,10 @@ def test_a_right_click_on_a_picture_offers_open_and_save_and_on_the_text_the_tex
     view = reader.text_view
     requests: list[int] = []
 
-    def record(position: int, where: QPoint) -> None:
+    def record(position: int, link: str, where: QPoint) -> None:
         requests.append(position)
 
-    view.picture_menu_requested.connect(record)
+    view.menu_requested.connect(record)
     layout = view.document().documentLayout()
     block = view.document().lastBlock()
     while block.isValid() and not layout.blockBoundingRect(block).height():
@@ -467,3 +468,42 @@ def test_an_html_message_over_two_megabytes_is_shown(reader: ReaderWidget, qtbot
     text = page_text(qtbot, reader)
     assert "The start" in text and "The end" in text
 
+
+
+def test_a_right_click_on_a_link_offers_copy_link_address(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """D-281: in a plain-text message the link under the pointer; the menu puts it on the clipboard as the bottom bar shows it."""
+    reader.show_message(shown(text="Read https://example.org/news?id=7 today."))
+    view = reader.text_view
+    menus: list[tuple[int, str]] = []
+
+    def record(position: int, link: str, where: QPoint) -> None:
+        menus.append((position, link))
+
+    view.menu_requested.connect(record)
+    cursor = view.document().find("example.org")
+    on_link = view.cursorRect(cursor).center()
+    assert view.anchorAt(on_link) == "https://example.org/news?id=7"
+    view.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Reason.Mouse, on_link, view.mapToGlobal(on_link)))
+    assert menus == [(-1, "https://example.org/news?id=7")]
+    menu = reader.message_menu(-1, "https://example.org/news?id=7")
+    assert [action.text() for action in menu.actions()] == ["Copy link address", "", "Copy", "Select All"]  # the text's own two stay
+    assert not menu.actions()[2].isEnabled()  # nothing selected
+    menu.actions()[0].trigger()
+    assert QApplication.clipboard().text() == "https://example.org/news?id=7"
+    menu.close()
+    spaced = reader.message_menu(-1, "https://example.org/a b?q=é")
+    spaced.actions()[0].trigger()
+    assert QApplication.clipboard().text() == "https://example.org/a%20b?q=%C3%A9"  # fully encoded: it works wherever it is pasted
+    spaced.close()
+    linked_picture = reader.message_menu(0, "https://example.org/")
+    assert [action.text() for action in linked_picture.actions()] == ["Open attachment", "Save as…", "Copy link address", "", "Copy", "Select All"]
+    linked_picture.close()
+    own = reader.message_menu(-1, "chrono-message:/1/page#top")  # a link within the message itself: no address to copy
+    assert "Copy link address" not in [action.text() for action in own.actions()]
+    own.close()
+    reader.show_message(shown(html='<p><a href="https://example.org/x">x</a></p>', text=None))
+    html_menu = reader.message_menu(-1, "https://example.org/x")
+    assert [action.text() for action in html_menu.actions()] == ["Copy link address"]  # HTML: no plain-text items
+    html_menu.close()
+    text_end = view.cursorRect(view.document().find("today")).center()
+    assert view.anchorAt(text_end) == ""  # plain text: Qt's own menu (Copy, Select All), not ours

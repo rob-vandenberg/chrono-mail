@@ -24,9 +24,10 @@ from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_undo.py 4.1.382"
+__version__ = "test_engine_undo.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: a Mark as read whose messages leave the list (leaves) notes also those read already, so Undo and Redo name them (D-282)
 # v4.1.382: an Undo or Redo that runs longer than a second counts its messages for the status line; a quick one says nothing (D-266)
 # v2.2.313: Initial (B-18): every action on mail undone and redone on the IMAP server first; changed since, offline, refused; the junk filter as before
 
@@ -99,6 +100,20 @@ def test_an_action_without_a_number_is_never_undone(world: World) -> None:
     message_flag_many(world.engine, ManyFlagParameters(world.account, "Inbox", (first,), seen=True))  # a message opened in the reading pane
     with pytest.raises(UsageError, match="Nothing to undo"):
         undo(world.engine)
+
+
+def test_a_mark_as_read_that_takes_messages_out_of_the_list_names_also_those_read_already(world: World) -> None:
+    """D-282: the list takes every message out, so Undo must name each one to bring it back; one read already stays read."""
+    first, second, _ = fill(world, 3)
+    message_flag_many(world.engine, ManyFlagParameters(world.account, "Inbox", (first,), seen=True))  # read by showing it
+    message_flag_many(world.engine, ManyFlagParameters(world.account, "Inbox", (first, second), seen=True, undo=1, leaves=True))
+    undone = undo(world.engine)
+    assert undone.action == "Mark as read (2 messages)" and set(undone.messages) == {first, second} and undone.not_done == 0
+    assert MessageFlag.SEEN in flags(world, "Inbox", first) and MessageFlag.SEEN not in flags(world, "Inbox", second)
+    redone = redo(world.engine)
+    assert set(redone.messages) == {first, second} and MessageFlag.SEEN in flags(world, "Inbox", second)
+    message_flag_many(world.engine, ManyFlagParameters(world.account, "Inbox", (first,), seen=True, undo=2))  # without leaves: nothing noted
+    assert undo(world.engine).action == "Mark as read (2 messages)"  # the action before it
 
 
 def test_marks_and_mark_all_as_read_come_back_as_they_were(world: World) -> None:

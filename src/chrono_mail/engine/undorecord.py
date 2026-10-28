@@ -9,9 +9,10 @@ from chrono_mail.engine.mailbox import Mailbox
 from chrono_mail.engine.undohistory import Notes, UndoStep
 
 # --- Version ------------------------------------------------------------
-__version__ = "undorecord.py 2.2.313"
+__version__ = "undorecord.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: unchanged_too: a message the action left as it was is noted too, when the action took it out of the person's list (D-282)
 # v2.2.313: Initial: UndoRecorder notes the messages of one action before and after it (B-18)
 
 type Verdicts = dict[str, tuple[str | None, str | None]]  # store id -> the junk filter's verdict (before, after), as junkfilter.learn says
@@ -44,8 +45,8 @@ def folded(tags: Iterable[str]) -> set[str]:
     return {tag.casefold() for tag in tags}
 
 
-def _step(account: str, store_id: str, was: _State, now: _State, verdict: tuple[str | None, str | None] | None) -> UndoStep | None:
-    """What the action changed of one message; None when nothing."""
+def _step(account: str, store_id: str, was: _State, now: _State, verdict: tuple[str | None, str | None] | None, unchanged_too: bool = False) -> UndoStep | None:
+    """What the action changed of one message; None when nothing (unless unchanged_too: then a step that changes nothing)."""
     step = UndoStep(
         account, store_id, was.folder, now.folder, flags_added=now.flags - was.flags, flags_removed=was.flags - now.flags,
         tags_added=tuple(tag for tag in now.tags if tag.casefold() not in folded(was.tags)),
@@ -53,14 +54,16 @@ def _step(account: str, store_id: str, was: _State, now: _State, verdict: tuple[
         notes=None if was.notes == now.notes else (was.notes, now.notes), verdict=verdict,
     )
     changed = step.before != step.after or step.flags_added or step.flags_removed or step.tags_added or step.tags_removed or step.notes or step.verdict
-    return step if changed else None
+    return step if changed or unchanged_too else None
 
 
 class UndoRecorder:
     """Notes the messages of one action before and after it, and keeps the action for Undo. Without a number (0) it notes nothing:
-    only what the person did is undone, never what the rules, the junk filter or a timer did."""
+    only what the person did is undone, never what the rules, the junk filter or a timer did. unchanged_too: a message the action left
+    as it was is noted too (the action took it out of the person's list, D-282): its Undo and Redo name it, so the list brings it back."""
 
-    def __init__(self, mailbox: Mailbox, account: str, number: int) -> None:
+    def __init__(self, mailbox: Mailbox, account: str, number: int, unchanged_too: bool = False) -> None:
+        self._unchanged_too: bool = unchanged_too
         self._mailbox: Mailbox = mailbox
         self._account: str = account
         self._number: int = number
@@ -83,7 +86,7 @@ class UndoRecorder:
             now = _state(self._mailbox, store_id)
             if was is None or now is None:
                 continue  # gone for good, or never known: nothing to put back
-            step = _step(self._account, store_id, was, now, (verdicts or {}).get(store_id))
+            step = _step(self._account, store_id, was, now, (verdicts or {}).get(store_id), self._unchanged_too)
             if step is not None:
                 self._steps.append(step)
 

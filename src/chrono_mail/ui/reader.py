@@ -6,7 +6,7 @@ from email.utils import parseaddr
 from typing import override
 
 from PySide6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QObject, QPoint, QPointF, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPalette, QResizeEvent, QTextCursor
+from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QGuiApplication, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPalette, QResizeEvent, QTextCursor
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -38,9 +38,11 @@ from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 3.6.357"
+__version__ = "reader.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: a right-click on a link of the message (HTML or plain text) offers Copy link address (the link fully encoded; not for a link within
+#           the message itself); on a picture that is a link too, after Open attachment and Save as…; in plain text Copy and Select All follow (D-281)
 # v3.6.357: linkify finds the addresses in the text as written, so a link in <...> or quotes stops at its closing character; an apostrophe belongs to the address unless it opened with one; punctuation that ends the sentence after an address is not part of it; a scheme in any case (CR-19)
 # v3.5.346: An HTML message and its pictures are handed to the page from memory through Chrono Mail's own address (chrono-message:), not
 #           inside one data: address, which Qt refuses above 2 MB: a large message showed an empty page (RV-158)
@@ -291,7 +293,7 @@ def _decoded(data_base64: str) -> bytes:
 class PlainTextView(QTextBrowser):
     """A plain-text message, with the attached pictures below the text: as wide as the view at most, never enlarged (B-11)."""
 
-    picture_menu_requested = Signal(int, QPoint)  # a right-click on a picture: its place among the attachments, where on the screen
+    menu_requested = Signal(int, str, QPoint)  # a right-click on a picture or a link: the picture's place among the attachments (-1: none), the link ("": none), where on the screen
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -338,9 +340,9 @@ class PlainTextView(QTextBrowser):
 
     @override
     def contextMenuEvent(self, e: QContextMenuEvent, /) -> None:
-        position = self.picture_at(e.pos())
-        if position >= 0:
-            self.picture_menu_requested.emit(position, e.globalPos())  # a picture: Open attachment and Save as… (D-236)
+        position, link = self.picture_at(e.pos()), self.anchorAt(e.pos())
+        if position >= 0 or link:
+            self.menu_requested.emit(position, link, e.globalPos())  # a picture: Open attachment and Save as… (D-236); a link: Copy link address (D-281)
         else:
             super().contextMenuEvent(e)  # the text: Copy, Select All
 
@@ -467,9 +469,9 @@ class ReaderWidget(QWidget):
         self._text.setFrameShape(QFrame.Shape.NoFrame)
         self._text.anchorClicked.connect(self.link_activated)
         self._text.highlighted.connect(self._text_hovered)
-        self._text.picture_menu_requested.connect(self._picture_menu)
+        self._text.menu_requested.connect(self._message_menu)
         self._web, self._page, self._blocker, self._content = make_safe_view(self._stack)
-        self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)  # only a picture of the message has a menu (D-236)
+        self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)  # only a picture of the message and a link have a menu (D-236, D-281)
         self._web.customContextMenuRequested.connect(self._page_menu)
         self._picture_positions: dict[str, int] = {}  # the address a picture is shown by -> its place among the attachments
         self._chips: QButtonGroup = QButtonGroup(self)
@@ -617,17 +619,42 @@ class ReaderWidget(QWidget):
         menu.addAction("Save as…", partial(self.attachment_save_requested.emit, position, name))
         return menu
 
-    def _picture_menu(self, position: int, where: QPoint) -> None:
-        self.attachment_menu(position).popup(where)
+    def message_menu(self, position: int, link: str) -> QMenu:
+        """What a right-click in the text offers: on a picture of the message Open attachment and Save as… (D-236), on a link
+        Copy link address (D-281), which copies the link fully encoded, so it works wherever it is pasted; a picture that is a link
+        has both. A link within the message itself (#top, an empty one, a picture's own address) is no address to copy. In plain text
+        Copy (of the selected text) and Select All follow, as on the rest of the text."""
+        menu = self.attachment_menu(position) if position >= 0 else QMenu(self)
+        menu.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        address = QUrl(link)
+        if link and address.scheme().lower() not in _LOCAL_SCHEMES:
+            menu.addAction("Copy link address", partial(QGuiApplication.clipboard().setText, address.toString(QUrl.ComponentFormattingOption.FullyEncoded)))
+        if link and self._stack.currentWidget() is self._text:
+            menu.addSeparator()
+            copy = menu.addAction("Copy", self._text.copy)
+            copy.setEnabled(self._text.textCursor().hasSelection())
+            menu.addAction("Select All", self._text.selectAll)
+        return menu
+
+    def _message_menu(self, position: int, link: str, where: QPoint) -> None:
+        menu = self.message_menu(position, link)
+        if menu.actions():
+            menu.popup(where)
+        else:
+            menu.deleteLater()  # a link within the message itself: nothing to offer, as before
 
     def _page_menu(self, point: QPoint) -> None:
-        """A right-click in an HTML message: a picture of the message offers Open attachment and Save as…; elsewhere nothing, as before."""
+        """A right-click in an HTML message: a picture of the message offers Open attachment and Save as…, a link Copy link address;
+        elsewhere nothing, as before."""
         request = self._web.lastContextMenuRequest()
-        if request is None or request.mediaType() != request.MediaType.MediaTypeImage:
+        if request is None:
             return
-        position = self._picture_positions.get(request.mediaUrl().toString(), -1)
-        if position >= 0:
-            self._picture_menu(position, self._web.mapToGlobal(point))
+        position = -1
+        if request.mediaType() == request.MediaType.MediaTypeImage:
+            position = self._picture_positions.get(request.mediaUrl().toString(), -1)
+        link = request.linkUrl().toString() if request.linkUrl().isValid() else ""
+        if position >= 0 or link:
+            self._message_menu(position, link, self._web.mapToGlobal(point))
 
     def _after_load(self, ok: bool) -> None:
         if ok and self._blocker.blocked and not self._blocker.allow_remote:

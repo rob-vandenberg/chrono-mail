@@ -11,9 +11,10 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "undoing.py 4.2.394"
+__version__ = "undoing.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: Undo brings back the messages a Mark as read took out of Unread, Redo takes them out again (D-282)
 # v4.2.394: a held Ctrl+Z (Ctrl+Y) stops the moment it is let go: its repeats that come while an action is under way are thrown away;
 #           a separate press always counts (held_while_busy, also for the marks and tags, D-266)
 # v4.1.383: the messages an Undo or Redo brings back are placed in one step when it ends, not a few at a time while it runs; what waits
@@ -133,6 +134,7 @@ class Undoing(QObject):
                     self._status.show(f"{'Redone' if redo else 'Undone'}: {result.action}. {result.not_done:,} of {count:,} stayed as they are: {result.reason}")
                 else:
                     self._status.finished(f"{'Redone' if redo else 'Undone'}: {result.action}")
+                self._messages.model.undone(result.messages, redo)  # those a Mark as read took out of Unread (D-282)
                 self._messages.select_messages(result.messages)
             finally:  # always: what waits behind this Undo goes on, once the messages it brought back have their places in the list
                 let_in()  # after select_messages: they are selected as they take their places

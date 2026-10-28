@@ -27,9 +27,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.1.383"
+__version__ = "messagelistpane.py 4.2.396"
 
 # --- Version history ----------------------------------------------------
+# v4.2.396: reads_away: Remove messages from Unread when I mark them as read is on and the list shows only unread mail (D-282)
 # v4.1.383: the messages Undo brought back are selected also when they come back as a new order whose rest comes later, loaded or not,
 #           also in a Favorites view (D-266)
 # v4.1.381: the messages Undo brought back are selected once per batch that takes its place, only the new ones, one range per run of
@@ -677,6 +678,11 @@ class MessageListPane(QObject):
         else:  # the rest of the order comes, cannot come, or the view goes
             for signal in (self.model.placed, self.model.load_failed, self.model.modelReset):
                 signal.connect(loaded)
+
+    def reads_away(self) -> bool:
+        """Whether a message the person marks as read leaves the list now: Remove messages from Unread when I mark them as read is on,
+        and the list shows only unread mail (D-282)."""
+        return self._prefs.applied.unread_leaves_on_read and self.model.shows_unread_only()
 
     def drop_repeats(self) -> None:
         """After an action that took messages out of the list: the automatic repeats of a held key that piled up meanwhile are thrown
