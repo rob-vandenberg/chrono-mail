@@ -10,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.2.396"
+__version__ = "prefs.py 4.2.397"
 
 # --- Version history ----------------------------------------------------
+# v4.2.397: automatic refresh every 30 minutes by default (was 5)
 # v4.2.396: unread_leaves_on_read: a message the person marks as read leaves a list of unread mail (off by default, D-282)
 # v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
 # v4.2.389: Remembered keeps the paths the Import and Export windows used last (on this computer); a path that is gone reads as "";
@@ -47,7 +48,7 @@ DEFAULTS: dict[str, object] = {
     # general
     "check_on_start": True,
     "auto_check": True,
-    "auto_check_minutes": 5,
+    "auto_check_minutes": 30,
     "start_refresh": "send_receive",  # what the refresh when the program starts does: send_receive, receive or send
     "scheduled_refresh": "send_receive",  # what a refresh the person did not click does: send_receive, receive (only fetches) or send (only sends)
     "send_delay": False,  # Send puts the message in the Outbox for send_delay_seconds, with a notice to send it now or cancel (B-21)
@@ -250,7 +251,7 @@ class Preferences:
 
     check_on_start: bool = True
     auto_check: bool = True
-    auto_check_minutes: int = 5
+    auto_check_minutes: int = 30
     start_refresh: str = "send_receive"
     scheduled_refresh: str = "send_receive"
     send_delay: bool = False

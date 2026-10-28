@@ -37,9 +37,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.1.379"
+__version__ = "folderpane.py 4.2.397"
 
 # --- Version history ----------------------------------------------------
+# v4.2.397: the Tags heading starts closed until the person opens it
 # v4.1.379: Next and Previous unread go on from the folder shown (also opened through its pin or its account's row), never to that folder,
 #           through subfolders and in an account inside a group too (CR-15)
 # v3.6.354: Delete in the folder list: never a standard folder, known by its role, also Snoozed and Recovered (CR-36)
@@ -321,10 +322,10 @@ class FolderPane(QObject):
 
     def _opened_by_itself(self, index: QModelIndex, holding: frozenset[str] = frozenset()) -> bool:
         """How the list shows a node the person never opened or closed: headings open, accounts open (with more than three
-        accounts only the one holding the selection), folders closed."""
+        accounts only the one holding the selection), folders closed; the Tags heading closed."""
         kind = str(index.data(KIND_ROLE))
         accounts = sum(1 for row in range(self.model.rowCount()) if self.model.index(row, 0).data(KIND_ROLE) == EntryKind.ACCOUNT)
-        return kind == EntryKind.SECTION or (kind == EntryKind.ACCOUNT and accounts <= 3) or self._node_key(index) in holding
+        return (kind == EntryKind.SECTION and index.data(Qt.ItemDataRole.DisplayRole) != "Tags") or (kind == EntryKind.ACCOUNT and accounts <= 3) or self._node_key(index) in holding
 
     def _open_as_left(self, new: list[FolderNode], selected: QModelIndex | None) -> None:
         """New entries of the folder list open and close as the person left them (or as the list does by itself); entries that
