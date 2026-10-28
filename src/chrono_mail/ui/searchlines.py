@@ -6,9 +6,10 @@ from PySide6.QtWidgets import QComboBox, QDateEdit, QGridLayout, QHBoxLayout, QL
 from chrono_mail.ui.searchform import KINDS, MAXIMUM_TEXT, PARTS, DateChoice, SearchLine, example
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchlines.py 4.2.410"
+__version__ = "searchlines.py 4.2.411"
 
 # --- Version history ----------------------------------------------------
+# v4.2.411: the lines after the first start with AND or OR, in capitals; their hover texts call them conditions (the owner)
 # v4.2.410: Initial: the search lines of Advanced search (Where / and / or, where in the message, contains, how the words count, the
 #           words, [+] and [−]; the first line has no [−], its place kept so the buttons line up) and a date row (a span or fixed
 #           days) (D-289)
@@ -29,10 +30,10 @@ class _Line:
         self.text.setMaxLength(MAXIMUM_TEXT)  # a pasted book stays out: the search words are worked out at every key press
         self.add: QToolButton = QToolButton(parent)
         self.add.setText("+")
-        self.add.setToolTip("Add a line below this one")
+        self.add.setToolTip("Add a condition below this one")
         self.remove: QToolButton = QToolButton(parent)
         self.remove.setText("−")
-        self.remove.setToolTip("Remove this line")
+        self.remove.setToolTip("Remove this condition")
         keeps_place = self.remove.sizePolicy()
         keeps_place.setRetainSizeWhenHidden(True)  # the first line's [−] is absent, its place kept: every [+] stays in one column
         self.remove.setSizePolicy(keeps_place)
@@ -54,7 +55,7 @@ class _Line:
 
 class SearchLines(QWidget):
     """The search lines: each says where in the message it looks, how its words count and the words. The first starts with Where, the
-    others with and or or, following Find messages that match all or any. [+] adds a line below its own, [−] removes its line; the
+    others with AND or OR, following Find messages that match ALL or ANY. [+] adds a line below its own, [−] removes its line; the
     first line cannot be removed and has no [−], but its place stays, so that every [+] is in one column (the owner, D-289)."""
 
     changed = Signal()  # a line, a choice or a word changed
@@ -88,7 +89,7 @@ class SearchLines(QWidget):
         self._lay_out()
 
     def set_match(self, match: str) -> None:
-        """all: the lines after the first start with and; any: with or."""
+        """all: the lines after the first start with AND; any: with OR."""
         self._match = match
         self._show_joining()
 
@@ -143,7 +144,7 @@ class SearchLines(QWidget):
 
     def _show_joining(self) -> None:
         for row, line in enumerate(self._lines):
-            line.joining.setText("Where" if row == 0 else ("or" if self._match == "any" else "and"))
+            line.joining.setText("Where" if row == 0 else ("OR" if self._match == "any" else "AND"))
 
 
 class DateRow(QWidget):

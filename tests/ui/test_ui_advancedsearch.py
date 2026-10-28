@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QFormLayout, QLabel, QWidget
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog, SearchScope
 from chrono_mail.ui.savedsearches import SavedSearches
+from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.searchform import DateChoice, SearchForm, SearchLine
 from chrono_mail.ui.searchlines import DateRow
 from chrono_mail.engine.commands_view import OrderParameters
@@ -21,9 +22,10 @@ from tests.ui.test_ui_window import select, subjects
 from tests.ui.world import account_node, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_advancedsearch.py 4.2.410"
+__version__ = "test_ui_advancedsearch.py 4.2.411"
 
 # --- Version history ----------------------------------------------------
+# v4.2.411: Received below More..., "of these conditions", ALL and ANY, AND and OR, the window 80 px wider at its opening
 # v4.2.410: the search builder: the lines and their joining words, the first line without [−], the date choices, the saved
 #           searches (Save, Save as, Rename, Delete, Reset), the form kept for the next time (D-289)
 # v4.2.408: the lower fields line up with the upper ones; closing More gives the room back; the filters on are kept;
@@ -303,8 +305,11 @@ def test_the_builder_s_rows_its_lines_and_more(qtbot: QtBot) -> None:
     dialog = AdvancedSearchDialog(marks=(True, False, True, "Work"), tags=["work"])
     qtbot.addWidget(dialog)
     dialog.show()
-    assert _labels(dialog, "main") == ["Saved searches", "Where to search"] and _labels(dialog, "dates") == ["Received"]
-    assert _labels(dialog, "extra") == ["Sent", "Size", "Only", "Tag", "Snoozed until", "Send at"]
+    assert _labels(dialog, "main") == ["Saved searches", "Where to search"] and dialog.findChild(QFormLayout, "dates") is None
+    assert _labels(dialog, "extra") == ["Received", "Sent", "Size", "Only", "Tag", "Snoozed until", "Send at"]  # Received below More...
+    texts = [label.text() for label in dialog.findChildren(QLabel)]
+    assert "of these conditions:" in texts and [dialog.match.itemText(number) for number in range(2)] == ["ALL", "ANY"]
+    assert dialog.width() == dialog.minimumWidth() + wpx(80)  # it opens 80 px wider than it must be
     first = dialog.lines.line(0)
     assert first.joining.text() == "Where" and first.remove.isHidden() and first.part.currentText() == "Anywhere"
     assert first.kind.currentText() == "All of these words" and first.text.placeholderText() == "e.g. invoice march"
@@ -313,11 +318,11 @@ def test_the_builder_s_rows_its_lines_and_more(qtbot: QtBot) -> None:
     first.add.click()  # the second new line comes right below the first, above the other new one
     set_line(dialog, 1, "from", "any", "ann")
     qtbot.wait(20)
-    assert [dialog.lines.line(number).joining.text() for number in range(3)] == ["Where", "and", "and"]
+    assert [dialog.lines.line(number).joining.text() for number in range(3)] == ["Where", "AND", "AND"]
     assert dialog.lines.line(1).text.placeholderText() == "e.g. ann or ann@example.com" and dialog.lines.line(2).text.text() == ""
     assert {dialog.lines.line(number).add.mapTo(dialog, QPoint(0, 0)).x() for number in range(3)} == {alone}  # one column, [−] or not
     dialog.match.setCurrentIndex(dialog.match.findData("any"))
-    assert [dialog.lines.line(number).joining.text() for number in range(3)] == ["Where", "or", "or"]
+    assert [dialog.lines.line(number).joining.text() for number in range(3)] == ["Where", "OR", "OR"]
     order: list[QWidget] = [dialog.lines.line(1).part]
     walker: QWidget | None = order[0]
     while len(order) < 6 and walker is not None:  # where Tab stops: the parts that take the keyboard by Tab and are shown
@@ -338,7 +343,7 @@ def test_the_builder_s_rows_its_lines_and_more(qtbot: QtBot) -> None:
         qtbot.mouseClick(dialog.more, Qt.MouseButton.LeftButton, pos=place)
         assert dialog.more_fields.isVisible() != before and dialog.more.arrow.text() == ("▴" if not before else "▾")
     assert dialog.height() == closed
-    for upper, lower in (("scopeLabel", "sentLabel"), ("receivedLabel", "tagLabel")):
+    for upper, lower in (("scopeLabel", "sentLabel"), ("savedLabel", "receivedLabel")):
         above, below = dialog.findChild(QLabel, upper), dialog.findChild(QLabel, lower)
         assert above is not None and below is not None and above.mapTo(dialog, QPoint(0, 0)).x() == below.mapTo(dialog, QPoint(0, 0)).x()
     found = dialog.search()

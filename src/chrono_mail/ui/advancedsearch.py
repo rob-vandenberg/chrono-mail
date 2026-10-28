@@ -15,14 +15,17 @@ from chrono_mail.ui.savedsearches import SavedSearches
 from chrono_mail.ui.searchform import (
     DEFAULT_SCOPE, FUTURE_CHOICES, MATCHES, PAST_CHOICES, SCOPE_CHOICES, SearchForm, SearchScope, build_query, days, too_big,
 )
+from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.searchlines import DateRow, SearchLines
 
 __all__ = ["DEFAULT_SCOPE", "SCOPE_CHOICES", "AdvancedSearch", "AdvancedSearchDialog", "MoreBar", "SearchScope"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "advancedsearch.py 4.2.410"
+__version__ = "advancedsearch.py 4.2.411"
 
 # --- Version history ----------------------------------------------------
+# v4.2.411: Received is the first row below More...; "of these conditions"; the window opens 80 px wider than its smallest width
+#           (the owner)
 # v4.2.410: a search builder (D-289): Saved searches (Save, Save as, Rename, Delete), Where to search, Find messages that match all or
 #           any of the lines, the search lines, Received; below More... Sent, Size, Only, Tag, Snoozed until and Send at; the dates a
 #           span counted from today or fixed days; Reset; Search and Close; it opens as it was last left (the lines and choices in
@@ -40,7 +43,8 @@ __version__ = "advancedsearch.py 4.2.410"
 
 KIBIBYTE: int = 1024
 NO_SAVED_SEARCH: str = "No saved search chosen"
-TOO_BIG: str = "Fewer words in the \"Any of these words\" lines, please: together the lines make more combinations than a search can take."
+OPENING_EXTRA_WIDTH: int = 80  # the window opens this much wider than its smallest width, at the standard size (the owner)
+TOO_BIG: str = "Fewer words in the \"Any of these words\" conditions, please: together the conditions make more combinations than a search can take."
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,7 +173,7 @@ class AdvancedSearchDialog(QDialog):
         self.search_button.setText("Search")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        self._line_up(part(form, QFormLayout, "main"), part(form, QFormLayout, "dates"), part(form, QFormLayout, "extra"))
+        self._line_up(part(form, QFormLayout, "main"), part(form, QFormLayout, "extra"))
         start = self._saved.last or SearchForm()
         unread, flagged, attachments, tag = marks
         self.set_form(replace(start, scope=scope, unread=unread, flagged=flagged, attachments=attachments, tag=tag))
@@ -185,6 +189,7 @@ class AdvancedSearchDialog(QDialog):
         self.lines.lines_changed.connect(self._order_tabs)
         self.scope.currentIndexChanged.connect(self._grey_timed)
         forms.smallest(self, 640)  # its texts are never cut off, also at the largest size
+        self.resize(self.minimumWidth() + wpx(OPENING_EXTRA_WIDTH), self.sizeHint().height())  # it opens wider than it must be (the owner)
         self._order_tabs()
         self.lines.line(0).text.setFocus()
 
@@ -352,7 +357,7 @@ class AdvancedSearchDialog(QDialog):
 
     def _order_tabs(self) -> None:
         """Tab goes through the parts in the order of the screen, also after a line was added in the middle."""
-        chain: list[QWidget] = [self.saved_choice, self.scope, self.match, *self.lines.focus_chain(), self.received.choice]
+        chain: list[QWidget] = [self.saved_choice, self.scope, self.match, *self.lines.focus_chain(), self.more, self.received.choice]
         for before, after in zip(chain, chain[1:], strict=False):
             QWidget.setTabOrder(before, after)
 

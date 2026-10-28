@@ -5,9 +5,10 @@ from enum import StrEnum
 import itertools
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchform.py 4.2.410"
+__version__ = "searchform.py 4.2.411"
 
 # --- Version history ----------------------------------------------------
+# v4.2.411: the match choices are shown as ALL and ANY (the owner)
 # v4.2.410: Initial: what Advanced search holds as one value (SearchForm): where to search, all or any of the lines, each line (where in
 #           the message, how the words count, the words), the date choices (a span counted from today, or fixed days) and the filters;
 #           the search words the lines make; the days a date choice stands for; to and from what the saved searches file keeps (D-289)
@@ -31,7 +32,7 @@ PARTS: tuple[tuple[str, str], ...] = (("anywhere", "Anywhere"), ("from", "From")
 KINDS: tuple[tuple[str, str], ...] = (
     ("all", "All of these words"), ("any", "Any of these words"), ("exact", "This exact phrase"), ("none", "None of these words"),
 )
-MATCHES: tuple[tuple[str, str], ...] = (("all", "all"), ("any", "any"))  # Find messages that match [all/any] of these lines
+MATCHES: tuple[tuple[str, str], ...] = (("all", "ALL"), ("any", "ANY"))  # Find messages that match [ALL/ANY] of these conditions
 
 # The date choices: of what was (Received, Sent) and of what is to come (Snoozed until, Send at); between, before and after have days
 PAST_CHOICES: tuple[tuple[str, str], ...] = (
