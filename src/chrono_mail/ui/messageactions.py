@@ -31,9 +31,12 @@ from chrono_mail.ui.whendialog import WhenDialog
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "messageactions.py 4.2.414"
+__version__ = "messageactions.py 4.2.415"
 
 # --- Version history ----------------------------------------------------
+# v4.2.415: a selection is moved as single messages in principle (the owner, D-178, D-287): each is checked as if moved alone (in memory),
+#           those that may go are moved together, one command per folder; the rest stay and the status line says why; a drop no longer
+#           refuses all for one scheduled message; Junk and Not junk take only the messages they apply to
 # v4.2.414: in a search of several folders each message acts as in its own folder: the junk key, Cancel snooze and Move to (D-287)
 # v4.2.396: with Remove messages from Unread when I mark them as read, Mark as read (and Toggle read to read) in a list of unread mail
 #           takes the messages out of it as Junk does: the next message is selected, a held key stops when let go (D-282)
@@ -73,6 +76,8 @@ _WEEKDAYS: tuple[str, ...] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  
 
 PROGRESS_AFTER_MS: int = 1000  # an action not done by then says what it does in the status line (shorter ones show only their last line)
 
+
+_THERE: str = "the messages are in "  # "… {target} already": not an error, nothing to do for that message
 
 class _Progress(QObject):
     """What an action on many messages is doing, in the status line, once it takes longer than a moment: first what it prepares (the undo
@@ -328,10 +333,21 @@ class MessageActions(QObject):
             return
         if self._messages.deferred(lambda: self.junk_selected(junk)):
             return
-        rows = self._messages.selected_rows()
-        if not rows or self._state.view.account is None:
+        selected = self._messages.selected_rows()
+        if not selected or self._state.view.account is None:
             return
-        finished = f"Moved {counted(len(rows), 'message')} to Junk" if junk else f"Moved {counted(len(rows), 'message')} back to the Inbox"
+        roles: dict[tuple[str, str], bool] = {}  # (account, folder): in Junk, looked up once per folder (a selection may hold 100,000 messages)
+        rows: list[SelectedMessage] = []
+        if self._state.view.several_folders:  # each message as if it were moved alone: to Junk if not there, back if there (D-287)
+            rows = [row for row in selected if self._in_junk(row, roles) != junk]
+        elif self._state.in_junk() != junk:  # one folder or a Favorites view: the view says it for all of them, as before
+            rows = selected
+        if not rows:
+            self._status.show("Nothing was moved: the messages are in Junk already" if junk else "Nothing was moved: only a message in Junk goes back to the Inbox")
+            return
+        stayed = len(selected) - len(rows)
+        kept = f". {counted(stayed, 'message')} stayed: " + ("in Junk already" if junk else "not in Junk") if stayed else ""
+        finished = (f"Moved {counted(len(rows), 'message')} to Junk" if junk else f"Moved {counted(len(rows), 'message')} back to the Inbox") + kept
         number = self._undoing.new_action()
         self.act_many(
             MESSAGE_JUNK_MANY if junk else MESSAGE_NOT_JUNK_MANY, lambda account, folder, messages: ManyParameters(account, folder, messages, undo=number),
@@ -339,6 +355,12 @@ class MessageActions(QObject):
             doing=(f"Preparing to move {counted(len(rows), 'message')} to Junk…", "Moving to Junk") if junk
             else (f"Preparing to move {counted(len(rows), 'message')} back to the Inbox…", "Moving back to the Inbox"),
         )
+
+    def _in_junk(self, row: SelectedMessage, known: dict[tuple[str, str], bool]) -> bool:
+        place = (self._state.account_of(row), row.folder)
+        if place not in known:
+            known[place] = self._state.folder_role_of(*place) == "junk"
+        return known[place]
 
     def junk_key(self) -> None:
         """One key does both, as the folder decides: Move to Junk, or in Junk back to the Inbox."""
@@ -486,10 +508,45 @@ class MessageActions(QObject):
         rows = self._messages.selected_rows()
         if not rows or self._state.view.account is None:
             return
+        self.move_allowed(account, target, self._state.targets(rows))
+
+    def move_allowed(self, account: str | None, target: str, targets: list[tuple[str, str, str]]) -> None:
+        """Each message is checked as if the person moved it alone (in memory); those that may go are moved together, one command per
+        folder, the others stay and the status line says why (the owner, D-178, D-287). account None: the folder of each message's own account."""
+        going: list[tuple[str, str, str]] = []
+        stayed: dict[str, int] = {}
+        roles: dict[str, str] = {}  # the target's kind per account, looked up once (a selection may hold 100,000 messages)
+        for item in dict.fromkeys(targets):
+            place = item[0] if account is None else account
+            if place not in roles:
+                roles[place] = self._state.folder_role_of(place, target)
+            why = self._may_not_go(item, place, target, roles[place])
+            if why is None:
+                going.append(item)
+            else:
+                stayed[why] = stayed.get(why, 0) + 1
+        if not going:
+            self._status.show(f"Nothing was moved: {next(iter(stayed), 'nothing was selected')}", error=any(not why.startswith(_THERE) for why in stayed))
+            return
+        kept = "".join(f". {counted(number, 'message')} stayed: {why}" for why, number in stayed.items())
         if account is None:
-            self.move_many(target, self._state.targets(rows))
+            self.move_many(target, going, kept)
         else:
-            self.move_to(account, target, [item for item in self._state.targets(rows) if (item[0], item[1]) != (account, target)])
+            self.move_to(account, target, going, kept)
+
+    @staticmethod
+    def _may_not_go(item: tuple[str, str, str], account: str, target: str, role: str) -> str | None:
+        """Why this message may not go to this folder (of this account, of this kind) when moved alone; None when it may."""
+        source, folder, _message_id = item
+        if (source, folder) == (account, target):
+            return f"{_THERE}{target} already"
+        if role == "outbox":
+            return "a message is never moved into the Outbox"
+        if role == "scheduled" and source != account:
+            return "Scheduled takes only its own account's messages"  # as the folder list's drop allows (D-272)
+        if folder == SCHEDULED_FOLDER_PATH and (source != account or role not in SCHEDULED_TARGET_ROLES):
+            return "a scheduled message goes only to Drafts or Trash of its own account"
+        return None
 
     def messages_dropped(self, account: str, target: str, messages: Sequence[Sequence[str]], rest: int = -1, source: str = "") -> None:
         """Messages were dragged to a folder of the folder list. rest (not -1): the drag was made while the list did not know every
@@ -506,7 +563,7 @@ class MessageActions(QObject):
                 pending = self._messages.model.pending
                 targets = [item for item in dropped if item[2] not in pending]
                 if targets:
-                    self.move_to(account, target, targets)
+                    self.move_allowed(account, target, targets)
                 else:
                     self._status.show("Nothing was moved: an action on the messages is under way")
 
@@ -517,41 +574,36 @@ class MessageActions(QObject):
             return
 
         def go(chosen: list[SelectedMessage]) -> None:
-            targets = [item for item in dict.fromkeys(self._state.targets(chosen)) if (item[0], item[1]) != (account, target)]  # pending ones are left out already
-            if any(item[1] == SCHEDULED_FOLDER_PATH and (item[0] != account or self._state.folder_role_of(account, target) not in SCHEDULED_TARGET_ROLES) for item in targets):
-                self._status.show("Nothing was moved: a scheduled message goes only to Drafts or Trash", error=True)  # as the drop refuses it (D-178)
-            elif not targets:
-                self._status.show(f"Nothing was moved: the messages are in {target} already, or an action on them is under way")
+            targets = self._state.targets(chosen)  # pending ones are left out already
+            if not targets:
+                self._status.show("Nothing was moved: an action on the messages is under way")
             else:
-                self.move_to(account, target, targets)
+                self.move_allowed(account, target, targets)  # each message as if dropped alone (D-178, D-287)
 
         self._messages.hold_selected_places(go)
 
-    def move_to(self, account: str, target: str, targets: list[tuple[str, str, str]]) -> None:
-        """Messages to a folder of this account: those of the account itself with an ordinary move, those of other accounts message by
-        message to it (D-272)."""
+    def move_to(self, account: str, target: str, targets: list[tuple[str, str, str]], kept: str = "") -> None:
+        """Messages that may go (move_allowed) to a folder of this account: those of the account itself with an ordinary move, those of
+        other accounts message by message to it (D-272). kept: what stayed, for the status line."""
         here = [item for item in targets if item[0] == account]
         across = [item for item in targets if item[0] != account]
         if here:
-            self.move_many(target, here)
+            self.move_many(target, here, kept)
         if across:
-            if any(item[1] == SCHEDULED_FOLDER_PATH for item in across):
-                self._status.show("Nothing was moved: a scheduled message goes only to Drafts or Trash of its own account", error=True)
-                return
             number = self._undoing.new_action()
             name = self._state.account_name(account)
             self.act_many(
                 MESSAGE_MOVE_ACROSS, lambda source, folder, messages: AcrossParameters(source, folder, account, target, messages, undo=number), across,
-                f"Moved {counted(len(across), 'message')} to {target} of {name}", "Could not move",
+                f"Moved {counted(len(across), 'message')} to {target} of {name}{kept}", "Could not move",  # whichever line comes last says what stayed
                 doing=(f"Preparing to move {counted(len(across), 'message')} to {target} of {name}…", f"Moving to {target} of {name}"),
             )
 
-    def move_many(self, target: str, targets: list[tuple[str, str, str]]) -> None:
+    def move_many(self, target: str, targets: list[tuple[str, str, str]], kept: str = "") -> None:
         """A move of messages (by the menu or a drag): a scheduled message moved to Drafts goes back to being a draft (D-178), one by one;
         the others in one command per folder (R-08)."""
         unschedule = [item for item in targets if self._unschedules(item[0], item[1], target)]
         moves = [item for item in targets if item not in unschedule]
-        finished = f"Moved {counted(len(targets), 'message')} to {target}"
+        finished = f"Moved {counted(len(targets), 'message')} to {target}{kept}"
         progress = _Progress(self._backend, self._status, [message_id for _, _, message_id in targets], f"Preparing to move {counted(len(targets), 'message')} to {target}…",
                              f"Moving to {target}", self, parts=int(bool(unschedule)) + int(bool(moves)))
         if unschedule:

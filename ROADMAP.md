@@ -212,6 +212,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.408) Advanced search: Where to search and the main fields first, the rest below More...; Sent, Tag, Snoozed until and Send at; a search of several folders shows From, To and Folder (D-288).
 - DONE (4.2.413) All folders from a Favorites or Tags view searches every folder of every account, Junk and Trash too (D-287).
 - DONE (4.2.414) In a search of several folders each message acts as in the folder it lives in (D-287).
+- DONE (4.2.415) A selection moves as single messages, each by its own rules; the allowed ones together (D-178, D-287).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

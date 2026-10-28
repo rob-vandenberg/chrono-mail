@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QFormLayout, QLabel, QWidget
 
 from chrono_mail.core import MessageFlag
 from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.ui.columns import SCHEDULED_FOLDER_PATH
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog, SearchScope
 from chrono_mail.ui.savedsearches import SavedSearches
 from chrono_mail.ui.scale import wpx
@@ -25,9 +26,10 @@ from tests.ui.test_ui_window import select, subjects
 from tests.ui.world import account_node, row_of, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_advancedsearch.py 4.2.414"
+__version__ = "test_ui_advancedsearch.py 4.2.415"
 
 # --- Version history ----------------------------------------------------
+# v4.2.415: a selection moves as single messages, each by its own rules (scheduled, Outbox, Not junk; D-178, D-287)
 # v4.2.414: in a search of several folders each message acts as in its own folder (open, menus, Move to, From; D-287)
 # v4.2.413: All folders from a Favorites view searches every folder: read mail in Junk is found from Unread (the owner's case, D-287)
 # v4.2.412: the line choices in lower case
@@ -492,3 +494,40 @@ def test_in_a_search_of_several_folders_each_message_acts_as_in_its_own_folder(w
     world.window.messages.change_view(scheduled)
     wait(qtbot, lambda: len(subjects(world.window)) == 3)
     assert not world.window.messages.delegate.show_recipients  # from Favorites > Scheduled too: the sender in From
+
+
+def test_a_selection_moves_as_single_messages_each_by_its_own_rules(world: World, qtbot: QtBot) -> None:
+    """The owner (D-178, D-287): each message as if moved alone; those that may go move together, the rest stay and the line says why:
+    a scheduled message never to an Inbox, a message never into the Outbox (as the folder list's drop); Not junk only for messages in Junk."""
+    moment = datetime(2026, 10, 26, tzinfo=UTC)
+    world.call("folder.create", account=world.account_id, folder="Other")
+    with open_mailbox(world.engine, world.account_id) as mailbox:
+        mailbox.deliver(mailbox.folder("Junk"), raw_message(subject="Plan junk", body="b\n", message_id="<pj@x>", date=moment), frozenset())
+        mailbox.deliver(mailbox.folder("Other"), raw_message(subject="Plan other", body="b\n", message_id="<po@x>", date=moment + timedelta(hours=1)), frozenset())
+    world.window.start()
+    wait(qtbot, lambda: world.window.list_model.rowCount() > 0)
+    inbox = CurrentView(account=world.account_id, kind=EntryKind.FOLDER, key_kind=EntryKind.FOLDER, path="Inbox", folder="Inbox", folder_role="inbox")
+    world.window.messages.change_view(replace(inbox, query="plan", scope=SearchScope.ALL))
+    wait(qtbot, lambda: subjects(world.window) == ["Plan other", "Plan junk"])
+    junk = row_of(world.window, 1)
+    actions, status = world.window.mail_actions, world.window.status_label
+    scheduled = (world.account_id, SCHEDULED_FOLDER_PATH, "not-a-real-message")
+    actions.move_allowed(None, "Inbox", [scheduled])  # alone it may not go: nothing is asked of the engine
+    assert status.text() == "Nothing was moved: a scheduled message goes only to Drafts or Trash of its own account"
+    actions.move_allowed(None, "Inbox", [scheduled, (world.account_id, "Junk", junk.message_id)])  # the other one goes
+    wait(qtbot, lambda: sorted(row_of(world.window, number).folder for number in range(world.window.list_model.rowCount())) == ["Inbox", "Other"])
+    assert "1 message stayed: a scheduled message goes only to Drafts or Trash of its own account" in status.text()
+    world.window.messages.change_view(replace(inbox, query="plan", scope=SearchScope.ALL))
+    world.window.list_view.selectAll()
+    world.window.mail_actions.junk_selected(False)  # Not junk: the Other message is not in Junk, it stays
+    wait(qtbot, lambda: "Nothing was moved" in status.text() or "back to the Inbox" in status.text())
+    assert sorted(row_of(world.window, number).folder for number in range(world.window.list_model.rowCount())) == ["Inbox", "Other"]
+    actions.move_allowed(None, "Outbox", [(world.account_id, "Other", row_of(world.window, 0).message_id)])
+    assert status.text() == "Nothing was moved: a message is never moved into the Outbox"
+    other = row_of(world.window, [row_of(world.window, number).folder for number in range(2)].index("Other")).message_id
+    actions.messages_dropped(world.account_id, "Inbox", [scheduled, (world.account_id, "Other", other)])  # a mixed drop: each as if dropped alone
+    wait(qtbot, lambda: [row_of(world.window, number).folder for number in range(world.window.list_model.rowCount())] == ["Inbox", "Inbox"])
+    assert "1 message stayed: a scheduled message goes only to Drafts or Trash of its own account" in status.text()
+    may_not_go = type(actions)._may_not_go  # into Scheduled only from its own account, as the folder list's drop (D-272)
+    assert may_not_go(("a", "Inbox", "m"), "a", SCHEDULED_FOLDER_PATH, "scheduled") is None
+    assert may_not_go(("b", "Inbox", "m"), "a", SCHEDULED_FOLDER_PATH, "scheduled") == "Scheduled takes only its own account's messages"

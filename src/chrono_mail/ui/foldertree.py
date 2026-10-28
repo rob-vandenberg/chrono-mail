@@ -11,9 +11,10 @@ from chrono_mail.ui.models import ACCOUNT_ROLE, COUNT_ROLE, FOLDER_PATH_ROLE, FO
 from chrono_mail.ui.theme import show_focus
 
 # --- Version ------------------------------------------------------------
-__version__ = "foldertree.py 3.6.367"
+__version__ = "foldertree.py 4.2.415"
 
 # --- Version history ----------------------------------------------------
+# v4.2.415: a drop of a mix is taken when one of its messages may go there; each message is then moved by its own rules (D-287)
 # v3.6.367: a drag of messages of several accounts is taken by a folder of any account of the list; the drop gives each message with its account (D-272)
 # v3.6.366: messages dropped on a folder of another account are moved there; the drop names the account they come from (D-272)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
@@ -161,10 +162,15 @@ class FolderTree(QTreeView):
         sources = frozenset({dragged[0]}) if dragged[0] else read_messages_accounts(event.mimeData())  # several accounts: each message's (D-272)
         if not sources or role == "outbox" or (sources == {account} and dragged[1] == {folder}):
             return None
-        if SCHEDULED_FOLDER_PATH in dragged[1] and (sources != {account} or role not in SCHEDULED_TARGET_ROLES):
-            return None  # a scheduled message goes back to Drafts (no longer scheduled) or to Trash of its own account, nowhere else
-        if sources != {account} and (role == "scheduled" or not all(self._known(source) for source in sources - {account})):
-            return None  # Scheduled takes only its own account's messages; the others take those of the accounts of this list (D-272)
+        moving = dragged[1] - {folder} if sources == {account} else dragged[1]  # of one account: those not in the target already; no folders
+        # known yet (a large selection whose places come later, RV-206): taken, the drop waits for them as before
+        if (dragged[1] and not moving) or (moving == {SCHEDULED_FOLDER_PATH} and (account not in sources or role not in SCHEDULED_TARGET_ROLES)):
+            return None  # only scheduled messages: they go back to Drafts (no longer scheduled) or to Trash of their own account, nowhere else
+        if role == "scheduled" and account not in sources:
+            return None  # Scheduled takes only its own account's messages
+        if not all(self._known(source) for source in sources - {account}):
+            return None  # the other folders take the messages of the accounts of this list (D-272)
+        # a mix: the drop is taken when one message may go; each is then moved as if dropped alone (messageactions.move_allowed, D-287)
         return account, folder
 
     @override
