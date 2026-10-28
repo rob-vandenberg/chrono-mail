@@ -28,7 +28,7 @@ from chrono_mail.engine.emclient_source import (
     read_settings,
     standard_roles,
 )
-from chrono_mail.engine.import_common import EVERYTHING, MAXIMUM_REPORTED, Journal, contents_fingerprint, fingerprint, fingerprint_of_raw, known_messages, still_here  # EVERYTHING and fingerprint: their names here stay
+from chrono_mail.engine.import_common import EVERYTHING, MAXIMUM_REPORTED, PROGRESS_STEP, Journal, contents_fingerprint, fingerprint, fingerprint_of_raw, known_messages, still_here  # EVERYTHING and fingerprint: their names here stay
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
@@ -39,9 +39,10 @@ from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 4.2.391"
+__version__ = "commands_emclient.py 4.2.395"
 
 # --- Version history ----------------------------------------------------
+# v4.2.395: the count of the mail goes to the window every 100 messages and at the last of each batch (the owner)
 # v4.2.391: the contents fingerprint of the exports is computed once per import run and kept with the run (not again for every batch);
 #           a scan that finds newer exports in the same place forgets the run of the older ones
 # v4.2.388: the journal belongs to the exports by their contents (names, sizes and times of their files), not by the folder alone: a newer
@@ -496,7 +497,8 @@ def _import_mail(engine: Engine, mail_path: Path, run: _Run, journal: _Journal, 
         known = run.known
         folders = _Folders(mailbox, [item.folder[0] for item in run.files if item.folder])
         for number, item in enumerate(work, 1):
-            engine.progress("Importing mail", done_before + number, len(run.files))
+            if (done_before + number) % PROGRESS_STEP == 0 or number == len(work):
+                engine.progress("Importing mail", done_before + number, len(run.files))
             try:
                 path = mail_path / item.relative
                 if path.stat().st_size > MAXIMUM_MESSAGE_BYTES:

@@ -17,9 +17,10 @@ from tests.test_emclient_source import FakeAccount, FakeContact, FakeItem, categ
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 4.2.388"
+__version__ = "test_import_emclient.py 4.2.395"
 
 # --- Version history ----------------------------------------------------
+# v4.2.395: the count comes every 100 messages and at the last of each batch
 # v4.2.388: a newer export in the same place is a new import; the scan says what was finished; again starts over without doubles
 # v4.2.385: the journal is written only when the batch was made safe on disk
 # v2.0.287: os.sync replaced also where Windows has none (the Windows computer's report)
@@ -364,7 +365,7 @@ def test_the_progress_counts_over_the_whole_import_not_per_batch(tmp_path: Path)
     engine.progress = lambda what, done, total: seen.append((done, total)) if what == "Importing mail" else None
     for _ in range(3):
         call(engine, "import.emclient", **values)
-    assert seen == [(number, 7) for number in range(1, 8)]
+    assert seen == [(3, 7), (6, 7), (7, 7)]  # the last of each batch (a step of 100 is never reached here)
 
 
 def test_the_journal_is_written_only_when_the_batch_is_safe_on_disk(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

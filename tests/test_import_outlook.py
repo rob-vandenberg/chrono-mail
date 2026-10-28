@@ -23,9 +23,10 @@ from tests.mailfactory import raw_message
 from tests.test_engine_commands import REGISTRY
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_outlook.py 4.2.388"
+__version__ = "test_import_outlook.py 4.2.395"
 
 # --- Version history ----------------------------------------------------
+# v4.2.395: the count comes every 100 items and once at the end of the run
 # v4.2.388: the scan says a file was finished and what it left out; again starts over without doubles
 # v4.2.385: the reader's note that not every contact could be looked through is told once per file, not once per batch
 # v4.2.385: Tags ticked in a later run: what was imported before gets its categories, once
@@ -605,10 +606,19 @@ def test_giving_tags_later_goes_in_batches_with_progress(tmp_path: Path, files: 
     seen: list[tuple[str, int]] = []
     engine.progress = lambda what, done, total: seen.append((what, done))
     first = run(engine, path, batch=2)
-    assert (first.items_tagged, first.done) == (2, 2) and first.left > 0 and [done for _, done in seen][-2:] == [6, 7]
+    assert (first.items_tagged, first.done) == (2, 2) and first.left > 0 and [done for _, done in seen] == [7]
     second = run(engine, path, batch=2)
     third = run(engine, path, batch=2)
     assert (second.items_tagged, third.items_tagged, third.left) == (2, 1, 0)
+
+
+def test_the_count_comes_every_100_items_and_at_the_end(tmp_path: Path, files: dict[Path, FakeFile]) -> None:
+    engine = make_engine(tmp_path / "profile")
+    path = data_file(files, tmp_path, "personal.pst", "Personal Folders", [mail(number, INBOX) for number in range(1, 251)])
+    seen: list[int] = []
+    engine.progress = lambda what, done, total: seen.append(done)
+    run(engine, path)
+    assert seen == [100, 200, 250]
 
 
 # --- event.import and task.import keep only what is safe of the text they are given ---------------------------------------------------

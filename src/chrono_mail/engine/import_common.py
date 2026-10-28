@@ -15,9 +15,10 @@ from chrono_mail.engine.mailbox import Mailbox
 from chrono_mail.mime import parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "import_common.py 4.2.391"
+__version__ = "import_common.py 4.2.395"
 
 # --- Version history ----------------------------------------------------
+# v4.2.395: PROGRESS_STEP: an import's count goes to the window every 100 items (the owner)
 # v4.2.391: contents_fingerprint walks with os.scandir and takes size and time from the listing (DirEntry.stat: on Windows no extra disk
 #           access per file); the same inputs (relative name, size, time), sorted
 # v4.2.388: contents_fingerprint: what tells one export from a newer one in the same place (names, sizes and times, nothing read)
@@ -26,6 +27,7 @@ __version__ = "import_common.py 4.2.391"
 #           known_copies: every copy of a message, for an import that tells copies of its own source apart from mail that was here
 
 EVERYTHING: int = 2**62
+PROGRESS_STEP: int = 100  # items between two counts of an import in the window (and always its last count)
 MAXIMUM_HEADER_BYTES: int = 256 * 1024  # how much of a message is read for its fingerprint
 MAXIMUM_MESSAGE_BYTES: int = 256 * 1024 * 1024  # the same limit as a download
 MAXIMUM_REPORTED: int = 200  # failures listed per run; the rest are counted

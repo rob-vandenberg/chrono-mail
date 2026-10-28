@@ -26,7 +26,7 @@ from chrono_mail.engine.commands_pim import CreateParameters, KindName, collecti
 from chrono_mail.engine.commands_tags import give_colours
 from chrono_mail.engine.commands_tasklist import task_import
 from chrono_mail.engine.groups import groups_of_book
-from chrono_mail.engine.import_common import MAXIMUM_MESSAGE_BYTES, MAXIMUM_REPORTED, Journal, fingerprint_of_raw, known_copies, still_here
+from chrono_mail.engine.import_common import MAXIMUM_MESSAGE_BYTES, MAXIMUM_REPORTED, PROGRESS_STEP, Journal, fingerprint_of_raw, known_copies, still_here
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.outlook_settings import ProfileImport, ProfileScan, import_profile, scan_profile
@@ -39,9 +39,10 @@ from chrono_mail.pst.model import PstContact, PstError, PstEvent, PstFailure, Ps
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outlook.py 4.2.388"
+__version__ = "commands_outlook.py 4.2.395"
 
 # --- Version history ----------------------------------------------------
+# v4.2.395: the count goes to the window every 100 items and once at the end of the run (the owner)
 # v4.2.388: the scan says whether an earlier import went through a data file to the end, and which kinds it left out then; again: start
 #           over for the chosen files (their journals are discarded; what is here already is not added twice, what was deleted since comes back)
 # v4.2.386: Accounts, rules and signatures from Outlook's profile on the Windows computer where it keeps them (outlook_settings); the scan
@@ -812,10 +813,19 @@ def _import_run(engine: Engine, parameters: ImportParameters, run: _Run) -> Impo
     left = 0
     for why in run.unreadable.values():
         batch.notes.append(why)
+    shown = 0
+    def tell(last: bool = False) -> None:
+        """The count in the window: every 100 items, and the last one (last)."""
+        nonlocal shown
+        done = done_before + handled
+        if done != shown and (last or done % PROGRESS_STEP == 0):
+            shown = done
+            engine.progress(PROGRESS_TEXT, done, max(total, done))
+
     def step() -> None:
         nonlocal handled
         handled += 1
-        engine.progress(PROGRESS_TEXT, done_before + handled, max(total, done_before + handled))
+        tell()
 
     if parameters.tags:
         for journal in journals.values():
@@ -859,7 +869,7 @@ def _import_run(engine: Engine, parameters: ImportParameters, run: _Run) -> Impo
                                 handled += 1
                                 batch.number = key
                             outcomes[key] = _better(outcomes.get(key), _one_item(batch, mailboxes, journal, file, item))
-                            engine.progress(PROGRESS_TEXT, done_before + handled, max(total, done_before + handled))
+                            tell()
                         else:
                             complete = True
                     finally:
@@ -888,6 +898,8 @@ def _import_run(engine: Engine, parameters: ImportParameters, run: _Run) -> Impo
             journal.phase("finished")
         else:
             left += max(1, file_items - final(journal))
+    if handled:
+        tell(last=True)
     if batch.tags:
         before = len(load_tags(engine.directories.tags_file).entries)
         give_colours(engine, tuple(batch.tags))
