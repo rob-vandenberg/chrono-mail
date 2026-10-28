@@ -22,9 +22,10 @@ from tests.ui.test_ui_window import select, subjects
 from tests.ui.world import account_node, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_advancedsearch.py 4.2.411"
+__version__ = "test_ui_advancedsearch.py 4.2.412"
 
 # --- Version history ----------------------------------------------------
+# v4.2.412: the line choices in lower case
 # v4.2.411: Received below More..., "of these conditions", ALL and ANY, AND and OR, the window 80 px wider at its opening
 # v4.2.410: the search builder: the lines and their joining words, the first line without [−], the date choices, the saved
 #           searches (Save, Save as, Rename, Delete, Reset), the form kept for the next time (D-289)
@@ -311,8 +312,8 @@ def test_the_builder_s_rows_its_lines_and_more(qtbot: QtBot) -> None:
     assert "of these conditions:" in texts and [dialog.match.itemText(number) for number in range(2)] == ["ALL", "ANY"]
     assert dialog.width() == dialog.minimumWidth() + wpx(80)  # it opens 80 px wider than it must be
     first = dialog.lines.line(0)
-    assert first.joining.text() == "Where" and first.remove.isHidden() and first.part.currentText() == "Anywhere"
-    assert first.kind.currentText() == "All of these words" and first.text.placeholderText() == "e.g. invoice march"
+    assert first.joining.text() == "Where" and first.remove.isHidden() and first.part.currentText() == "anywhere"
+    assert first.kind.currentText() == "all of these words" and first.text.placeholderText() == "e.g. invoice march"
     alone = first.add.mapTo(dialog, QPoint(0, 0)).x()
     first.add.click()
     first.add.click()  # the second new line comes right below the first, above the other new one

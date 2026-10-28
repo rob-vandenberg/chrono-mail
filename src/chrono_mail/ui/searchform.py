@@ -5,9 +5,10 @@ from enum import StrEnum
 import itertools
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchform.py 4.2.411"
+__version__ = "searchform.py 4.2.412"
 
 # --- Version history ----------------------------------------------------
+# v4.2.412: the parts and kinds of a line in lower case: a line reads as a sentence (the owner)
 # v4.2.411: the match choices are shown as ALL and ANY (the owner)
 # v4.2.410: Initial: what Advanced search holds as one value (SearchForm): where to search, all or any of the lines, each line (where in
 #           the message, how the words count, the words), the date choices (a span counted from today, or fixed days) and the filters;
@@ -28,9 +29,9 @@ SCOPE_CHOICES: tuple[tuple[str, SearchScope], ...] = (
 DEFAULT_SCOPE: SearchScope = SearchScope.ALL  # where a search looks at every start, until the person chooses another (D-287)
 
 # Where in the message a line looks, and how its words count (value, the text the drop-down shows), in the order shown
-PARTS: tuple[tuple[str, str], ...] = (("anywhere", "Anywhere"), ("from", "From"), ("to", "To"), ("subject", "Subject"), ("body", "Body"))
+PARTS: tuple[tuple[str, str], ...] = (("anywhere", "anywhere"), ("from", "from"), ("to", "to"), ("subject", "subject"), ("body", "body"))
 KINDS: tuple[tuple[str, str], ...] = (
-    ("all", "All of these words"), ("any", "Any of these words"), ("exact", "This exact phrase"), ("none", "None of these words"),
+    ("all", "all of these words"), ("any", "any of these words"), ("exact", "this exact phrase"), ("none", "none of these words"),
 )
 MATCHES: tuple[tuple[str, str], ...] = (("all", "ALL"), ("any", "ANY"))  # Find messages that match [ALL/ANY] of these conditions
 

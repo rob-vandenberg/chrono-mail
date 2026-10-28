@@ -21,9 +21,10 @@ from chrono_mail.ui.searchlines import DateRow, SearchLines
 __all__ = ["DEFAULT_SCOPE", "SCOPE_CHOICES", "AdvancedSearch", "AdvancedSearchDialog", "MoreBar", "SearchScope"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "advancedsearch.py 4.2.411"
+__version__ = "advancedsearch.py 4.2.412"
 
 # --- Version history ----------------------------------------------------
+# v4.2.412: the too-many text names the choice as it is now written
 # v4.2.411: Received is the first row below More...; "of these conditions"; the window opens 80 px wider than its smallest width
 #           (the owner)
 # v4.2.410: a search builder (D-289): Saved searches (Save, Save as, Rename, Delete), Where to search, Find messages that match all or
@@ -44,7 +45,7 @@ __version__ = "advancedsearch.py 4.2.411"
 KIBIBYTE: int = 1024
 NO_SAVED_SEARCH: str = "No saved search chosen"
 OPENING_EXTRA_WIDTH: int = 80  # the window opens this much wider than its smallest width, at the standard size (the owner)
-TOO_BIG: str = "Fewer words in the \"Any of these words\" conditions, please: together the conditions make more combinations than a search can take."
+TOO_BIG: str = "Fewer words in the \"any of these words\" conditions, please: together the conditions make more combinations than a search can take."
 
 
 @dataclass(frozen=True, slots=True)

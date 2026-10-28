@@ -3366,3 +3366,7 @@ The owner's design (D-289), worked out together: a Saved searches drop-down (jum
 
 The owner, after trying 4.2.410: Received is the first row below More... (above Sent); "Find messages that match ALL/ANY of these conditions:"; the lines after the first start with AND or OR; the window opens 80 px wider than its smallest width (at the size factor). Saved searches keep "all" and "any" as before. Tab goes from the lines to the More... bar, then Received. Tests: test_ui_advancedsearch (the builder test checks the new rows, texts and width; fails on 4.2.410). Related, window and guard tests pass; Pyrefly 0 errors on the program (Linux, win32); layer check kept.
 
+
+## 2026-10-28, 4.2.412: The choices of a search line in lower case
+
+The owner: anywhere, from, to, subject, body and all/any of these words, this exact phrase, none of these words in lower case, so a line reads as a sentence. Texts only; the one test that read them updated; related tests, Pyrefly and the layer check pass.
