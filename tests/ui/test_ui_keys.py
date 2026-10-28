@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_keys.py 2.2.313"
+__version__ = "test_ui_keys.py 4.2.399"
 
 # --- Version history ----------------------------------------------------
+# v4.2.399: F2 on the Inbox renames nothing: a standard folder's Rename folder is greyed (D-269)
 # v2.2.313: Undo and Redo (B-18): window-wide in Mail and in the read-only text of a message, never in a text field, whose own undo they are
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.7.262: Initial (R-43): every key of the window pressed in every part (the folder list, the message list, the search field, the reading
@@ -97,7 +98,7 @@ def test_in_the_folder_list_no_key_acts_on_the_messages_and_delete_is_the_folder
     monkeypatch.setattr(window.folders, "delete_folder", lambda: folders.append(str(window.mail_state.view.folder)))  # noqa: SLF001
     in_tree = fired_by(qtbot, window, window.tree, actions, fired)
     for name in actions:
-        expected: list[str] = [name] if name in NO_TARGET | MESSAGE_COMMANDS | UNDO_KEYS | {"rename_folder"} else []
+        expected: list[str] = [name] if name in NO_TARGET | MESSAGE_COMMANDS | UNDO_KEYS else []  # F2 too: the Inbox is never renamed (D-269)
         assert in_tree[name] == expected, (name, in_tree[name])  # before: Delete trashed the messages, Shift+Delete deleted them for good, the letters acted on them
     assert folders == []  # the Inbox is a standard folder: Delete there does nothing
     projects = window.tree_model.find_item(world.account_id, "folder", "Projects")

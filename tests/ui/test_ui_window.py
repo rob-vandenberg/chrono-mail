@@ -22,9 +22,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 4.2.398"
+__version__ = "test_ui_window.py 4.2.399"
 
 # --- Version history ----------------------------------------------------
+# v4.2.399: a top row's menu has no Rename or Delete folder; a standard folder's are greyed
 # v4.2.398: New folder and Rename folder type only the name; a name with / is refused
 # v3.6.369: Not junk shows the junk key in its text
 # v3.6.360: after deleting the last message nothing is selected (was: the one before, D-266)
@@ -614,6 +615,14 @@ def test_f2_in_the_folder_list_renames_the_folder(world: World, qtbot: QtBot, mo
     qtbot.keyClick(window.list_view, Qt.Key.Key_F2)
     qtbot.wait(50)
     assert asked == []  # not in the message list
+    select_account_row(world)
+    answer_input(monkeypatch, [("Projects", True)])
+    window.folders.new_folder()
+    wait(qtbot, lambda: window.folders.find_item((world.account_id, "folder", "Projects")) is not None)  # noqa: SLF001
+    projects = window.folders.find_item((world.account_id, "folder", "Projects"))  # noqa: SLF001
+    assert projects is not None
+    window.tree.setCurrentIndex(projects)  # one of the person's own folders: a standard folder is never renamed (D-269)
+    monkeypatch.setattr(QInputDialog, "getText", staticmethod(get_text))
     window.tree.setFocus()
     wait(qtbot, lambda: window.tree.hasFocus())
     qtbot.keyClick(window.tree, Qt.Key.Key_F2)
@@ -770,6 +779,40 @@ def test_a_renamed_subfolder_stays_inside_its_folder(world: World, qtbot: QtBot,
     world.window.folders.rename_folder()
     wait(qtbot, lambda: world.window.folders.find_item((world.account_id, "folder", "Projects/Beta")) is not None)  # noqa: SLF001
     assert world.window.folders.find_item((world.account_id, "folder", "Beta")) is None  # noqa: SLF001
+
+
+def folder_menu(world: World, monkeypatch: pytest.MonkeyPatch, row: QModelIndex) -> dict[str, bool]:
+    """A right-click on that row of the folder list: the menu's items, each with whether it can be used (read, never shown)."""
+    shown: dict[str, bool] = {}
+
+    class Recorded(QMenu):
+        def exec(self, *arguments: object) -> None:  # type: ignore[override]  # the menu is read, never shown
+            shown.update((action.text(), action.isEnabled()) for action in self.actions() if action.text())
+
+    monkeypatch.setattr("chrono_mail.ui.folderpane.QMenu", Recorded)
+    world.window.folders._tree_menu(world.window.tree.visualRect(row).center())  # noqa: SLF001 - as a right click does
+    return shown
+
+
+def test_a_top_row_offers_no_rename_or_delete_and_a_standard_folder_has_them_greyed(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started(qtbot, world)
+    account = world.window.folders.find_item((world.account_id, "account", ""))  # noqa: SLF001
+    assert account is not None
+    menu = folder_menu(world, monkeypatch, account)
+    assert "New folder…" in menu and "Rename folder…" not in menu and "Delete folder…" not in menu
+    assert not world.window.act_rename_folder.isEnabled()  # F2 and Menu > Folder rename nothing: the row shows its Inbox
+    inbox = world.window.folders.find_item((world.account_id, "folder", "Inbox"))  # noqa: SLF001
+    assert inbox is not None
+    menu = folder_menu(world, monkeypatch, inbox)
+    assert menu["Rename folder…"] is False and menu["Delete folder…"] is False  # a standard folder: shown, greyed (D-269)
+    select_account_row(world)
+    answer_input(monkeypatch, [("Projects", True)])
+    world.window.folders.new_folder()
+    wait(qtbot, lambda: world.window.folders.find_item((world.account_id, "folder", "Projects")) is not None)  # noqa: SLF001
+    projects = world.window.folders.find_item((world.account_id, "folder", "Projects"))  # noqa: SLF001
+    assert projects is not None
+    menu = folder_menu(world, monkeypatch, projects)
+    assert menu["Rename folder…"] is True and menu["Delete folder…"] is True  # the person's own folder: both usable
 
 
 def test_a_folder_name_with_a_slash_is_refused(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

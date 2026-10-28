@@ -10,9 +10,10 @@ from chrono_mail.ui.prefs import DEFAULTS, Preferences, Remembered, StartupView,
 from tests.ui.world import World, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_prefs.py 3.6.355"
+__version__ = "test_ui_prefs.py 4.2.400"
 
 # --- Version history ----------------------------------------------------
+# v4.2.400: the automatic refresh defaults to every 30 minutes (4.2.397)
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v2.0.280: the columns are kept per folder by Remembered (folder_columns, type_columns); the one setup of earlier versions is handed over once (B-16)
 # v1.2.253: Initial version: every setting read and written in one place, typed, checked the same way at start and after OK (R-12)
@@ -61,7 +62,7 @@ def test_a_damaged_or_unknown_value_gives_its_default(tmp_path: Path) -> None:
                        ("shortcuts", "{not json"), ("tray", "maybe")):
         settings.setValue(key, value)
     chosen = read_preferences(settings)
-    assert (chosen.list_layout, chosen.reading_pane, chosen.date_style, chosen.auto_check_minutes) == ("columns", "right", "short", 5)
+    assert (chosen.list_layout, chosen.reading_pane, chosen.date_style, chosen.auto_check_minutes) == ("columns", "right", "short", 30)
     assert (chosen.mark_read_delay_ms, chosen.accent_dark, chosen.startup, chosen.shortcuts, chosen.tray) == (10_000, "", StartupView(), {}, False)
 
 

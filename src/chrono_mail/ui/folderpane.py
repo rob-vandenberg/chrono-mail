@@ -37,9 +37,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.2.398"
+__version__ = "folderpane.py 4.2.399"
 
 # --- Version history ----------------------------------------------------
+# v4.2.399: a top row (an account, Local Folders) offers no Rename folder or Delete folder; one place says whether the row
+#           chosen is a folder
 # v4.2.398: New folder and Rename folder ask only for the folder's name (New: inside the folder chosen, else at the top of
 #           its account; Rename: the folder stays where it is); a name with / is refused
 # v4.2.397: the Tags heading starts closed until the person opens it
@@ -730,8 +732,9 @@ class FolderPane(QObject):
             if self._state.can_make_folder():  # only a row of one account: Favorites, tags and groups have no account to make it in
                 menu.addAction(actions.new_folder)
             if view.kind == EntryKind.FOLDER:
-                menu.addAction(actions.rename_folder)
-                menu.addAction(actions.delete_folder)
+                if self.chosen_row_is_folder():  # never on a top row: an account or Local Folders shows its Inbox
+                    menu.addAction(actions.rename_folder)
+                    menu.addAction(actions.delete_folder)
                 menu.addSeparator()
                 menu.addAction(actions.mark_all_read)
                 if view.folder_role in ("trash", "junk"):
@@ -743,6 +746,11 @@ class FolderPane(QObject):
 
     # --- folders ------------------------------------------------------------------------------------------------------------------
 
+    def chosen_row_is_folder(self) -> bool:
+        """The row chosen in the folder list (a right-click makes it current) is a folder or a pinned folder, not the view: an
+        account row shows its Inbox, yet it is no folder to make a folder in, rename or delete."""
+        return str(self.tree.currentIndex().data(KIND_ROLE)) in (EntryKind.FOLDER, EntryKind.PINLINK)
+
     def new_folder(self) -> None:
         view = self._state.view
         if not self._state.can_make_folder() or view.account is None:  # it has one account (can_make_folder); said so for the type checker
@@ -751,8 +759,7 @@ class FolderPane(QObject):
         name = name.strip()
         if not ok or not name or not self._folder_name_allowed(name):
             return
-        row = str(self.tree.currentIndex().data(KIND_ROLE))  # the row chosen (a right-click makes it current), not the view: an account row shows its Inbox
-        path = f"{view.folder}/{name}" if view.folder and row in (EntryKind.FOLDER, EntryKind.PINLINK) else name  # inside that folder; an account, Unread or Flagged: at the top
+        path = f"{view.folder}/{name}" if view.folder and self.chosen_row_is_folder() else name  # inside that folder; an account, Unread or Flagged: at the top
         self._backend.ask(FOLDER_CREATE, FolderParameters(view.account, path), lambda result: self._status.show("Folder created"), lambda error: self._status.report("Could not create the folder", error), owner=self)
 
     def rename_folder(self) -> None:

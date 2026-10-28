@@ -63,9 +63,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.394"
+__version__ = "mainwindow.py 4.2.400"
 
 # --- Version history ----------------------------------------------------
+# v4.2.400: the new-mail notification writes its count with the one count helper (D-246)
+# v4.2.399: Rename folder (F2, Menu > Folder) is greyed on a standard folder and on a top row, as Delete folder
 # v4.2.394: the window tells whether an action was set off by a held key's repeat (HeldKey): New, Reply, Reply all, Forward, Open, View
 #           source and Print act once per press; Undo, Redo, the marks and the tags throw a repeat away while an action is under way (D-266)
 # v4.2.392: the status bar hears when a command's progress line ends (progress_ended)
@@ -879,7 +881,7 @@ class MainWindow(QMainWindow):
             lines = [f"{count} new in {names.get(account, account)}" for account, count in sorted(counts.items()) if count]
             self.tray.notify("New mail", "\n".join(lines))
         else:
-            self.tray.notify("New mail", f"{total} new message{'s' if total != 1 else ''}")
+            self.tray.notify("New mail", counted(total, "new message"))
 
     def open_menu(self) -> None:
         """Alt+M: open the Menu button of the section that is shown."""
@@ -1308,13 +1310,16 @@ class MainWindow(QMainWindow):
             self._show_not_junk()
             self.act_mark_all_read.setEnabled(False)
             self.act_delete_folder.setEnabled(False)
+            self.act_rename_folder.setEnabled(False)
             self.reading.clear()
             self.messages.show_empty()
             self._update_unread_summary()
             return
         folder_shown, role = chosen.kind is EntryKind.FOLDER, chosen.folder_role
         self.act_empty_folder.setEnabled(folder_shown and role in ("trash", "junk"))
-        self.act_delete_folder.setEnabled(folder_shown and role == "other")  # a standard folder, known by its role, is never deleted (CR-36)
+        own_folder = folder_shown and role == "other" and self.folders.chosen_row_is_folder()  # never a top row, which shows its Inbox
+        self.act_delete_folder.setEnabled(own_folder)  # a standard folder, known by its role, is never deleted (CR-36)
+        self.act_rename_folder.setEnabled(own_folder)  # nor renamed (D-269)
         self.act_new_folder.setEnabled(self.mail_state.can_make_folder())
         self.act_empty_folder.setText(EMPTY_TEXTS.get(role, "Empty folder…") if folder_shown else "Empty folder…")
         self._show_not_junk()
