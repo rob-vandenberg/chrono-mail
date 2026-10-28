@@ -16,9 +16,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import offered_for_mail, tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchfilters.py 4.2.406"
+__version__ = "searchfilters.py 4.2.407"
 
 # --- Version history ----------------------------------------------------
+# v4.2.407: Advanced search opens on where the search field looks (D-287)
 # v4.2.406: where the search looks is one of three: This folder only, This folder + subfolders, All folders (D-287)
 # v1.9.274: R-19 round 4: the tags are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.264: R-17: the filters and the search of the mail as parts of their own (out of ui/mainwindow.py): the Filter menu and its chip
@@ -200,7 +201,7 @@ class MailSearch(QObject):
         """Ask for several conditions at once and show the result in the message list."""
         if self._state.view.account is None:
             return
-        dialog = AdvancedSearchDialog(self._parent)
+        dialog = AdvancedSearchDialog(self._parent, self._state.view.scope)  # it opens on where the search field looks
         if dialog.exec() != AdvancedSearchDialog.DialogCode.Accepted:
             return
         wanted: AdvancedSearch = dialog.search()

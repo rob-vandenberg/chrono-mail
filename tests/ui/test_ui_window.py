@@ -23,9 +23,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 4.2.406"
+__version__ = "test_ui_window.py 4.2.407"
 
 # --- Version history ----------------------------------------------------
+# v4.2.407: a search starts on All folders; the tests of one folder choose This folder only (D-287)
 # v4.2.406: All folders is the third choice of where the search looks (D-287)
 # v4.2.403: a folder that was only the parent of others is renamed from its right-click menu (D-285)
 # v4.2.399: a top row's menu has no Rename or Delete folder; a standard folder's are greyed
@@ -265,6 +266,7 @@ def test_sorting_by_to_and_a_search_follows_the_sort(world: World, qtbot: QtBot)
     assert window.sort_button.text() == "Sorted by To ▾" and window.messages.view_spec() is not None and getattr(window.messages.view_spec(), "sort") == "to"
     wait(qtbot, lambda: len(message_subjects(window)) == 3)
     window.messages.set_sort("subject", True)  # noqa: SLF001
+    window.scope.set_current_index(0)  # This folder only: the folder's own sort (a search of all folders has a setup of its own)
     window.search_box.setText("Message")
     window.search_box.returnPressed.emit()
     wait(qtbot, lambda: message_subjects(window) == ["Message 1", "Message 2", "Message 3"])
@@ -407,6 +409,8 @@ def test_the_tree_has_unread_and_flagged_views(world: World, qtbot: QtBot) -> No
 
 def test_search_in_the_folder_and_in_all_folders(world: World, qtbot: QtBot) -> None:
     started(qtbot, world)
+    assert world.window.scope.toolTip() == "All folders"  # where a search looks at every start (D-287; the button may show only its ▾)
+    world.window.scope.set_current_index(0)  # This folder only
     world.window.search_box.setText("number 2")
     world.window.search_box.returnPressed.emit()
     wait(qtbot, lambda: subjects(world.window) == ["Message 2"])

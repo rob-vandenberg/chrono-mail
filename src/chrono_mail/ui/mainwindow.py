@@ -63,9 +63,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.405"
+__version__ = "mainwindow.py 4.2.407"
 
 # --- Version history ----------------------------------------------------
+# v4.2.407: Advanced search… also in the search field's ▾ menu, below its three choices (D-287)
 # v4.2.405: Wayland: a tray click hides the window only while it or one of its dialogs has the focus, else brings it back; a second
 #           start brings it back and to the front (shown again, never while a dialog waits for an answer or while it has the focus):
 #           Wayland never says a window is minimized (D-286)
@@ -626,6 +627,7 @@ class MainWindow(QMainWindow):
         self.toolbar.add_center(self.act_delete)
         self.search = MailSearch(self.mail_state, self.messages, self.memory, self)
         self.search_pill, self.search_box, self.scope = self.search.pill, self.search.box, self.search.scope
+        self.scope.add_command(self.act_advanced)  # below where the search looks, after a line
         self.search_history, self.search_help = self.search.history, self.search.help
         self.toolbar.set_search(self.search_pill)
         for page in self.pages.values():  # the rows of the other sections, in the same toolbar

@@ -4,14 +4,15 @@ from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QAction, QActionGroup, QResizeEvent
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QToolButton, QWidget
 
-from chrono_mail.ui.advancedsearch import SCOPE_CHOICES, SearchScope
+from chrono_mail.ui.advancedsearch import DEFAULT_SCOPE, SCOPE_CHOICES, SearchScope
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import px
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchfield.py 4.2.406"
+__version__ = "searchfield.py 4.2.407"
 
 # --- Version history ----------------------------------------------------
+# v4.2.407: ScopeButton starts on All folders (DEFAULT_SCOPE); add_command puts a command below the choices, after a line (Advanced search…)
 # v4.2.406: ScopeButton has three choices: This folder only, This folder + subfolders, All folders (D-287)
 # v1.5.256: ScopeButton.show_choice shows a choice without telling it (the window shows its current view, R-14)
 # v0.5.168: a field without "This folder" is as wide as Mail's field without that part
@@ -44,7 +45,7 @@ class ScopeButton(QToolButton):
         self.setAutoRaise(True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.compact: bool = False
-        self._index: int = 0
+        self._index: int = next(number for number, (_label, data) in enumerate(self.CHOICES) if data is DEFAULT_SCOPE)
         menu = QMenu(self)
         group = QActionGroup(menu)
         group.setExclusive(True)
@@ -52,15 +53,22 @@ class ScopeButton(QToolButton):
         for number, (label, _data) in enumerate(self.CHOICES):
             action = menu.addAction(label)
             action.setCheckable(True)
-            action.setChecked(number == 0)
+            action.setChecked(number == self._index)
             action.triggered.connect(lambda checked=False, chosen=number: self._chosen(chosen))
             group.addAction(action)
             self.choice_actions.append(action)
         self.setMenu(menu)
-        self.setToolTip(self.CHOICES[0][0])
+        self.setToolTip(self.CHOICES[self._index][0])
         self.full_width: int = 0  # measured: the width with the name written out
         self.compact_width: int = 0  # measured: the width of the ▾ alone
         self.measure()
+
+    def add_command(self, action: QAction) -> None:
+        """A command below the choices, after a line (Advanced search…): it is no choice, so the button keeps showing where the search looks."""
+        menu = self.menu()
+        if menu is not None:
+            menu.addSeparator()
+            menu.addAction(action)
 
     def current_index(self) -> int:
         return self._index

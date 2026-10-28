@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 from PySide6.QtCore import QDate
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QDialog
 from pytestqt.qtbot import QtBot
 
@@ -15,9 +16,10 @@ from tests.ui.test_ui_window import select, subjects
 from tests.ui.world import account_node, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_advancedsearch.py 4.2.406"
+__version__ = "test_ui_advancedsearch.py 4.2.407"
 
 # --- Version history ----------------------------------------------------
+# v4.2.407: All folders at start; the dialog opens on the search field's choice; Advanced search… in the field's menu (D-287)
 # v4.2.406: Scope has the search field's three choices in its order; a search with This folder + subfolders runs from the dialog (D-287)
 # v2.0.298: the folders under an account in the owner's new order (D-232)
 # v2.0.292: the folders under an account in the owner's order (D-232)
@@ -129,6 +131,44 @@ def test_the_scope_offers_the_same_three_choices_as_the_search_field(qtbot: QtBo
     assert dialog.search().scope is SearchScope.SUBFOLDERS
 
 
+def test_both_start_on_all_folders_and_the_dialog_opens_on_the_choice_given(qtbot: QtBot) -> None:
+    """D-287: All folders at every start, in the search field and in Advanced search; the dialog opens where the field looks;
+    the field's menu ends with Advanced search… after a line, which is no choice."""
+    assert AdvancedSearch().scope is SearchScope.ALL
+    field = SearchField()
+    qtbot.addWidget(field)
+    assert field.scope.current_data() is SearchScope.ALL and field.scope.text() == "All folders" and field.scope.toolTip() == "All folders"
+    for scope in SearchScope:
+        dialog = AdvancedSearchDialog(scope=scope)
+        qtbot.addWidget(dialog)
+        assert dialog.search().scope is scope
+    command = QAction("Advanced search…", field)
+    field.scope.add_command(command)
+    menu = field.scope.menu()
+    assert menu is not None
+    actions = menu.actions()
+    assert [action.text() for action in actions[:3]] == ["This folder only", "This folder + subfolders", "All folders"]
+    assert actions[3].isSeparator() and actions[4] is command and not command.isCheckable()
+
+
+def test_the_search_fields_menu_opens_advanced_search(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-287: Advanced search… in the search field's ▾ menu opens the dialog; the button keeps showing where the search looks."""
+    world.window.start()
+    wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
+    opened: list[bool] = []
+
+    def fake_exec(self: AdvancedSearchDialog) -> QDialog.DialogCode:
+        opened.append(True)
+        return QDialog.DialogCode.Rejected
+
+    monkeypatch.setattr(AdvancedSearchDialog, "exec", fake_exec)
+    menu = world.window.scope.menu()
+    assert menu is not None
+    (item,) = [action for action in menu.actions() if action.text().startswith("Advanced search")]
+    item.trigger()
+    assert opened == [True] and world.window.scope.current_data() is SearchScope.ALL
+
+
 def test_the_window_searches_a_folder_and_its_subfolders(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     """D-287: This folder + subfolders, from the search field and from Advanced search, shows the folder's matches and those of
     every folder inside it, and a message moved into a subfolder joins the list at once."""
@@ -140,6 +180,8 @@ def test_the_window_searches_a_folder_and_its_subfolders(world: World, qtbot: Qt
     world.call("message.move", account=world.account_id, folder="Inbox", message=first, target="Inbox/Old")
     world.call("message.move", account=world.account_id, folder="Inbox", message=second, target="Projects")
     wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
+    assert world.window.scope.current_data() is SearchScope.ALL  # at every start
+    world.window.scope.set_current_index(0)  # This folder only
     world.window.search_box.setText("Message")
     world.window.search_box.returnPressed.emit()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
@@ -151,7 +193,10 @@ def test_the_window_searches_a_folder_and_its_subfolders(world: World, qtbot: Qt
     world.window.scope.set_current_index(0)  # This folder only
     wait(qtbot, lambda: world.window.list_model.rowCount() == 1)
 
+    opened_on: list[SearchScope] = []
+
     def fake_exec(self: AdvancedSearchDialog) -> QDialog.DialogCode:
+        opened_on.append(SearchScope(self.scope.currentData()))
         self.all_words.setText("Message")
         self.scope.setCurrentIndex(1)
         return QDialog.DialogCode.Accepted
@@ -160,6 +205,8 @@ def test_the_window_searches_a_folder_and_its_subfolders(world: World, qtbot: Qt
     world.window.act_advanced.trigger()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
     assert world.window.scope.text() in ("This folder + subfolders", "")  # the field shows where the search looks (or only its ▾)
-    assert world.window.scope.current_data() is SearchScope.SUBFOLDERS
+    assert world.window.scope.current_data() is SearchScope.SUBFOLDERS and opened_on == [SearchScope.FOLDER]  # it opened on the field's choice
+    world.window.act_advanced.trigger()  # again: now on This folder + subfolders, which it keeps
+    assert opened_on == [SearchScope.FOLDER, SearchScope.SUBFOLDERS]
     world.call("folder.delete", account=world.account_id, folder="Inbox/Old", with_messages=True)  # its mail leaves the list
     wait(qtbot, lambda: world.window.list_model.rowCount() == 1)

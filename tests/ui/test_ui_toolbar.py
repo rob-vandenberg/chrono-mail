@@ -12,9 +12,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_toolbar.py 4.2.406"
+__version__ = "test_ui_toolbar.py 4.2.407"
 
 # --- Version history ----------------------------------------------------
+# v4.2.407: the search field starts on All folders (D-287)
 # v4.2.406: the search field's first choice is called This folder only (D-287)
 # v1.9.265: the minimum right after the start is the minimum after Settings; a long count line is cut with "…" and never holds the window wider (R-44)
 # v1.1.173: The window's minimum is 768 px in every section (more only when the contents need it at a larger size), also when it is shown in Calendar before Mail was ever on screen
@@ -65,7 +66,7 @@ def test_more_is_shown_only_when_a_button_does_not_fit(qtbot: QtBot) -> None:
     row.arrange()
     assert row.more.isHidden() and not row.folded and not row.compact
     assert all(not row.button_for(action).isHidden() for action in actions)
-    assert field.scope.text() == "This folder only"
+    assert field.scope.text() == "All folders"
     row.resize(row.minimumSizeHint().width(), row.height())
     row.arrange()
     assert not row.more.isHidden() and len(row.folded) == len(actions)
@@ -106,7 +107,7 @@ def test_everything_comes_back_as_the_row_gets_wider(qtbot: QtBot) -> None:
     down = [state_at(row, width) for width in reversed(widths)]
     up = [state_at(row, width) for width in widths]
     assert up == list(reversed(down))  # a width always gives the same state, whichever way the window was resized
-    assert not row.folded and row.more.isHidden() and field.scope.text() == "This folder only"
+    assert not row.folded and row.more.isHidden() and field.scope.text() == "All folders"
 
 
 def test_more_comes_right_after_the_last_button_shown(qtbot: QtBot) -> None:
@@ -161,7 +162,7 @@ def test_the_mail_toolbar_keeps_menu_and_the_search_field_at_the_narrowest_windo
     window.show()
     window.resize(3000, 700)
     qtbot.wait(50)
-    assert window.toolbar.more.isHidden() and window.scope.text() == "This folder only"
+    assert window.toolbar.more.isHidden() and window.scope.text() == "All folders"
     window.resize(200, 700)  # the window stops at its minimum
     qtbot.wait(50)
     assert window.width() >= window.toolbar.minimumSizeHint().width()

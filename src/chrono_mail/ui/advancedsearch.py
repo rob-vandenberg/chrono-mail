@@ -8,9 +8,11 @@ from chrono_mail.ui import forms
 from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "advancedsearch.py 4.2.406"
+__version__ = "advancedsearch.py 4.2.407"
 
 # --- Version history ----------------------------------------------------
+# v4.2.407: All folders is where a search looks unless another is chosen (DEFAULT_SCOPE); the dialog opens on the choice it is given
+#           (the search field's, D-287)
 # v4.2.406: where a search looks has three choices, the same as the search field's: This folder only, This folder + subfolders,
 #           All folders (SearchScope, SCOPE_CHOICES, D-287)
 # v4.0.377: built from its Qt Designer form (ui/forms/advanced_search.ui, D-276); the preview of the search words is plain text; its smallest
@@ -32,6 +34,7 @@ class SearchScope(StrEnum):
 SCOPE_CHOICES: tuple[tuple[str, SearchScope], ...] = (
     ("This folder only", SearchScope.FOLDER), ("This folder + subfolders", SearchScope.SUBFOLDERS), ("All folders", SearchScope.ALL),
 )
+DEFAULT_SCOPE: SearchScope = SearchScope.ALL  # where a search looks at every start, until the person chooses another (D-287)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +42,7 @@ class AdvancedSearch:
     """What the dialog asks for: words in the search box's own language, plus the filters the box cannot express."""
 
     query: str = ""
-    scope: SearchScope = SearchScope.FOLDER
+    scope: SearchScope = DEFAULT_SCOPE
     unread: bool = False
     flagged: bool = False
     attachments: bool = False
@@ -77,7 +80,7 @@ def build_query(
 class AdvancedSearchDialog(QDialog):
     """Search with several conditions at once; the words go into the search box, so that they can be edited there."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, scope: SearchScope = DEFAULT_SCOPE) -> None:
         super().__init__(parent)
         form = forms.fill(self, "advanced_search")  # D-276
         self.all_words: QLineEdit = part(form, QLineEdit, "allWords")
@@ -107,8 +110,9 @@ class AdvancedSearchDialog(QDialog):
         self.flagged: QCheckBox = part(form, QCheckBox, "flagged")
         self.attachments: QCheckBox = part(form, QCheckBox, "attachments")
         self.scope: QComboBox = part(form, QComboBox, "scope")
-        for label, scope in SCOPE_CHOICES:
-            self.scope.addItem(label, scope)
+        for label, choice in SCOPE_CHOICES:
+            self.scope.addItem(label, choice)
+        self.scope.setCurrentIndex(self.scope.findData(scope))  # where the search field looks now
         self.preview: QLabel = part(form, QLabel, "preview")
         self.preview.setTextFormat(Qt.TextFormat.PlainText)  # the person's own words: never markup
         self.preview.setForegroundRole(self.preview.foregroundRole().PlaceholderText)
