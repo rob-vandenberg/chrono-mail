@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import replace as changed
 from typing import override
 
-from PySide6.QtCore import QModelIndex, QPoint, QSettings, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QLabel, QLayout, QMainWindow, QMenu, QMessageBox, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
@@ -63,9 +63,13 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.401"
+__version__ = "mainwindow.py 4.2.402"
 
 # --- Version history ----------------------------------------------------
+# v4.2.402: the start at login with the window minimized (start_minimized, D-284); the window opened from the tray or by a second
+#           start keeps being maximized (it lost it after a minimize); a recovery code or the first account asked at a minimized start
+#           opens the window first, so the question is seen; on Wayland, which never says whether a window is minimized, the window
+#           remembers it was started out of sight until it is opened or activated
 # v4.2.401: Settings > Message list is shown at once while it is changed, Cancel puts it back (D-104)
 # v4.2.400: the new-mail notification writes its count with the one count helper (D-246)
 # v4.2.399: Rename folder (F2, Menu > Folder) is greyed on a standard folder and on a top row, as Delete folder
@@ -281,6 +285,11 @@ NOT_JUNK: str = "Not junk (move to Inbox)"
 EMPTY_TEXTS: dict[str, str] = {"junk": "Empty Junk folder…", "trash": "Empty Trash…"}  # the Empty item says which folder it empties
 
 
+def on_wayland() -> bool:
+    """Whether the program runs on Wayland, which never tells a window that it is minimized or no longer minimized."""
+    return QApplication.platformName().startswith("wayland")
+
+
 class MainWindow(QMainWindow):
     """The three-pane window: folders, the messages of a folder, and the message being read.
 
@@ -315,6 +324,7 @@ class MainWindow(QMainWindow):
         self._tried_interface: float | None = None  # sizes being tried out in Settings (not saved yet)
         self._tried_windows: float | None = None
         self._quitting: bool = False
+        self.out_of_sight: bool = False  # started minimized at login and not opened since (D-284): Wayland never says a window is minimized
         self.setProperty(scale.MAIN_WINDOW_PROPERTY, True)  # this window and its menus follow the Main window slider
         self._apply_main_font()
         self.setStyleSheet(theme.stylesheet())  # only this window: a stylesheet on the application would hide the style from appearance.py
@@ -848,18 +858,41 @@ class MainWindow(QMainWindow):
             self._quitting = False
 
     def toggle_visibility(self) -> None:
-        if self.isVisible() and not self.isMinimized():
+        if self.isVisible() and not self.isMinimized() and not self.out_of_sight:
             self.hide()
         else:
-            self.showNormal()
-            self.raise_()
-            self.activateWindow()
+            self.open_window()
 
     def bring_forward(self) -> None:
         """A second start of the program asked for the window: show it (also when it was hidden in the tray), raise it and give it the focus."""
-        self.showNormal()
+        self.open_window()
+
+    def open_window(self) -> None:
+        """Show the window as it was before it was minimized or hidden (a maximized one stays maximized), raised, with the focus."""
+        if self.out_of_sight:
+            self.hide()  # Wayland: a minimized window comes back only by being shown again
+        self.out_of_sight = False
+        if self.isMinimized():
+            self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
+        self.show()
         self.raise_()
         self.activateWindow()
+
+    def start_minimized(self) -> None:
+        """The start at login with the window minimized (D-284): minimized from its first moment; a maximized one stays maximized when opened."""
+        self.out_of_sight = on_wayland()  # X11 and Windows say when a window is minimized; Wayland never does
+        self.setWindowState(self.windowState() | Qt.WindowState.WindowMinimized)
+
+    def _in_sight(self) -> None:
+        """Before the start asks the person something: a window started minimized is opened, so the question is seen."""
+        if self.isMinimized() or self.out_of_sight:
+            self.open_window()
+
+    @override
+    def changeEvent(self, event: QEvent) -> None:
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            self.out_of_sight = False  # the person opened it from the taskbar
+        super().changeEvent(event)
 
     def _settings_from_tray(self) -> None:
         if not self.isVisible():
@@ -1224,6 +1257,7 @@ class MainWindow(QMainWindow):
         self.backend.ask(KEY_STATUS, NoParameters(), got, failed, owner=self)
 
     def _ask_for_key(self, then: Callable[[], None], status: KeyStatus | None = None) -> None:
+        self._in_sight()  # a start at login with the window minimized (D-284): the question must be seen, not wait under the taskbar
         dialog = RestoreKeyDialog(self.backend, self, status)  # status: why the key could not be had (None when it could not be asked)
         accepted = dialog.exec() == RestoreKeyDialog.DialogCode.Accepted
         self.backend.engine.forget_keys()
@@ -1249,6 +1283,7 @@ class MainWindow(QMainWindow):
         self.backend.ask(ACCOUNT_LIST, NoParameters(), listed, lambda error: self.report.report("Accounts", error), owner=self)
 
     def add_account(self, first: bool = False, after: Callable[[], None] | None = None) -> None:
+        self._in_sight()
         dialog = AccountDialog(self.backend, first_account=first, parent=self, restore=self.restores.start)  # Restore a backup… (W2)
         if dialog.exec() != AccountDialog.DialogCode.Accepted:
             return

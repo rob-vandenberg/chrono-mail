@@ -1,8 +1,10 @@
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QDialog, QSystemTrayIcon
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.ui import mainwindow
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.prefs import read_preferences
 from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
@@ -11,9 +13,12 @@ from tests.mailfactory import raw_message
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tray.py 1.9.265"
+__version__ = "test_ui_tray.py 4.2.402"
 
 # --- Version history ----------------------------------------------------
+# v4.2.402: a window minimized while maximized is opened maximized again, from the tray and by a second start; a recovery code or
+#           the first account asked at a minimized start opens the window first; a window started out of sight (Wayland says nothing
+#           about minimized) is opened by the tray, never hidden (D-284)
 # v1.9.265: the tray choices are read as the program reads them (a setting at its standard is not written since R-12, D-211)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v0.0.85: The window title names the open folder and its unread messages
@@ -159,3 +164,56 @@ def test_the_settings_dialog_explains_a_missing_tray(world: World, qtbot: QtBot)
     assert not available.close_to_tray.isChecked() and not available.close_to_tray.isEnabled()
     available.tray.setChecked(True)
     assert available.close_to_tray.isEnabled()
+
+
+def test_a_minimized_maximized_window_opens_maximized(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    for opening in (window.toggle_visibility, window.bring_forward):
+        window.showMaximized()
+        window.setWindowState(window.windowState() | Qt.WindowState.WindowMinimized)
+        assert window.isMinimized()
+        opening()
+        assert not window.isMinimized() and window.isMaximized() and window.isVisible()
+
+
+def test_a_recovery_code_asked_at_a_minimized_start_opens_the_window_first(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.show()
+    window.setWindowState(window.windowState() | Qt.WindowState.WindowMinimized)
+    minimized_when_asked: list[bool] = []
+
+    def asked(dialog: QDialog) -> int:
+        minimized_when_asked.append(window.isMinimized())
+        return QDialog.DialogCode.Rejected.value
+
+    monkeypatch.setattr(mainwindow.RestoreKeyDialog, "exec", asked)
+    window._ask_for_key(lambda: None)  # noqa: SLF001 - the question the start asks when the key is missing
+    assert minimized_when_asked == [False]
+
+
+def test_a_window_started_minimized_is_opened_by_the_tray_also_when_the_desktop_does_not_say_it_is_minimized(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mainwindow, "on_wayland", lambda: True)
+    window = world.window
+    window.start_minimized()
+    window.show()
+    assert window.isMinimized() and window.out_of_sight
+    window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)  # Wayland: the window never hears it is minimized
+    window.toggle_visibility()
+    assert window.isVisible() and not window.out_of_sight  # opened, not hidden
+    window.toggle_visibility()
+    assert not window.isVisible()  # opened, the next click hides it as always
+
+
+def test_the_first_account_asked_at_a_minimized_start_opens_the_window_first(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.start_minimized()
+    window.show()
+    minimized_when_asked: list[bool] = []
+
+    def asked(dialog: QDialog) -> int:
+        minimized_when_asked.append(window.isMinimized() or window.out_of_sight)
+        return QDialog.DialogCode.Rejected.value
+
+    monkeypatch.setattr(mainwindow.AccountDialog, "exec", asked)
+    window.add_account(first=True)
+    assert minimized_when_asked == [False]

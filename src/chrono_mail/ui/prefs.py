@@ -10,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.2.401"
+__version__ = "prefs.py 4.2.402"
 
 # --- Version history ----------------------------------------------------
+# v4.2.402: start_minimized: the window choice of the start at login, kept while the start at login is off (D-284)
 # v4.2.401: settings can be tried without being saved: Settings > Message list shows its changes at once (D-104)
 # v4.2.397: automatic refresh every 30 minutes by default (was 5)
 # v4.2.396: unread_leaves_on_read: a message the person marks as read leaves a list of unread mail (off by default, D-282)
@@ -59,6 +60,7 @@ DEFAULTS: dict[str, object] = {
     "notifications": True,
     "tray": True,
     "close_to_tray": False,
+    "start_minimized": False,  # a start at login opens the window minimized; the start itself is the system's own entry (D-284)
     "operations_show_on_send_receive": True,  # the Operations window opens when a send and receive starts
     "operations_hide_when_done": True,  # it closes itself when everything is done (not after an error while operations_show_on_error is on)
     "operations_show_on_error": True,  # it opens for an error, and stays open after one
@@ -262,6 +264,7 @@ class Preferences:
     notifications: bool = True
     tray: bool = True
     close_to_tray: bool = False
+    start_minimized: bool = False
     operations_show_on_send_receive: bool = True
     operations_hide_when_done: bool = True
     operations_show_on_error: bool = True
@@ -326,6 +329,7 @@ def read_preferences(settings: QSettings) -> Preferences:
         notifications=get_bool(settings, "notifications"),
         tray=get_bool(settings, "tray"),
         close_to_tray=get_bool(settings, "close_to_tray"),
+        start_minimized=get_bool(settings, "start_minimized"),
         operations_show_on_send_receive=get_bool(settings, "operations_show_on_send_receive"),
         operations_hide_when_done=get_bool(settings, "operations_hide_when_done"),
         operations_show_on_error=get_bool(settings, "operations_show_on_error"),

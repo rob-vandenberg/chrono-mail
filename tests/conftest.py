@@ -14,9 +14,10 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu 
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 3.6.353"
+__version__ = "conftest.py 4.2.402"
 
 # --- Version history ----------------------------------------------------
+# v4.2.402: no test touches the start at login of the computer it runs on: it goes to the test's own folder (D-284)
 # v3.6.353: the kept index connections are let go after every test (D-266)
 # v2.0.293: on Windows the run without a screen gets Windows' own fonts (the Windows computer's report of 2.0.287)
 # v1.9.266: R-45: no test may take longer than 20 seconds (setup, run and clean-up together); a longer one fails, and where
@@ -70,3 +71,22 @@ def _kept_indexes_let_go() -> Generator[None]:
     from chrono_mail.engine.session import let_go_kept_indexes
 
     let_go_kept_indexes()
+
+
+@pytest.fixture(autouse=True)
+def _own_start_at_login(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The start at login (D-284) of a test is an autostart folder of its own, never the system's: a test that opens Settings reads it,
+    one that presses OK may write it; the computer's own entry would make the result depend on the computer, and be changed by it."""
+    from chrono_mail.config.autostart import Autostart, read_entry, write_entry
+    from chrono_mail.engine import commands_autostart
+
+    folder = tmp_path_factory.mktemp("autostart")
+
+    def read() -> Autostart:
+        return read_entry(folder)
+
+    def write(wanted: Autostart) -> None:
+        write_entry(folder, wanted, ["chrono-mail"])
+
+    monkeypatch.setattr(commands_autostart, "read_autostart", read)
+    monkeypatch.setattr(commands_autostart, "write_autostart", write)

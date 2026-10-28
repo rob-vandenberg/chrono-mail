@@ -1,6 +1,7 @@
 ; --- Version ------------------------------------------------------------
-; chrono-mail.iss 0.5.127
+; chrono-mail.iss 4.2.402
 ; --- Version history ----------------------------------------------------
+; v4.2.402: the uninstaller removes the start at login of the person who uninstalls (D-284)
 ; v0.5.127: Initial: the Windows installer (Inno Setup 6), made by packaging\build_windows.ps1
 ;
 ; packaging\build_windows.ps1 passes Version (from pyproject.toml) and Source (the program folder Nuitka made).
@@ -50,3 +51,14 @@ Name: "{autodesktop}\Chrono Mail"; Filename: "{app}\chrono-mail.exe"; Tasks: des
 
 [Run]
 Filename: "{app}\chrono-mail.exe"; Description: "{cm:LaunchProgram,Chrono Mail}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+{ The start at login is the person's own entry in their Run list (Settings > General, D-284); it goes with the program. }
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Chrono Mail');
+    RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run', 'Chrono Mail');
+  end;
+end;

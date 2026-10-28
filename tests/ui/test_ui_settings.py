@@ -1,18 +1,23 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QCheckBox, QDialog, QFormLayout, QGroupBox, QLabel, QLineEdit, QMessageBox
+from PySide6.QtWidgets import QCheckBox, QDialog, QFormLayout, QHBoxLayout, QGroupBox, QLabel, QLineEdit, QMessageBox
 from pytestqt.qtbot import QtBot
 
+import dataclasses
+
 from chrono_mail.config import ServerRole
+from chrono_mail.config.autostart import Autostart
+from chrono_mail.engine import commands_autostart
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 4.0.374"
+__version__ = "test_ui_settings.py 4.2.402"
 
 # --- Version history ----------------------------------------------------
+# v4.2.402: General: Start Chrono Mail when I log in, with the window open or minimized (D-284)
 # v4.0.374: a closed Settings window is deleted (every opening kept one in memory); it is not closed while it removes an account; a
 #           rebuild that ends after it closed writes nothing into it
 # v1.9.271: The account editor's changes are typed (R-19)
@@ -378,3 +383,60 @@ def test_a_rebuild_that_ends_after_settings_closed_writes_nothing_into_it(world:
     assert not alive(dialog)
     reports[0](["Inbox: rebuilt"])  # the rebuild ends: no error
 
+
+def opened_with_the_start_at_login(world: World, qtbot: QtBot) -> SettingsDialog:
+    dialog = open_settings(world, qtbot)
+    wait(qtbot, lambda: dialog.autostart_now is not None)
+    return dialog
+
+
+def test_the_start_at_login_sits_between_the_icon_and_closing_to_the_icon(world: World, qtbot: QtBot) -> None:
+    dialog = opened_with_the_start_at_login(world, qtbot)
+    page = dialog.tray.parentWidget()
+    form = page.layout() if page is not None else None
+    row_layout = page.findChild(QHBoxLayout, "startAtLoginRow") if page is not None else None
+    assert isinstance(form, QFormLayout) and row_layout is not None
+    rows = [form.getWidgetPosition(dialog.tray)[0], form.getWidgetPosition(dialog.close_to_tray)[0]]
+    row = form.getLayoutPosition(row_layout)[0]
+    assert rows[0] < row < rows[1]
+    assert dialog.start_at_login.text() == "Start Chrono Mail when I log in:"
+    assert [dialog.start_window.itemText(index) for index in range(dialog.start_window.count())] == ["with the window open", "with the window minimized"]
+
+
+def test_off_greys_the_window_choice_and_ok_switches_it_on_minimized(world: World, qtbot: QtBot) -> None:
+    dialog = opened_with_the_start_at_login(world, qtbot)
+    assert not dialog.start_at_login.isChecked() and dialog.start_at_login.isEnabled() and not dialog.start_window.isEnabled()
+    dialog.start_at_login.setChecked(True)
+    assert dialog.start_window.isEnabled()
+    dialog.start_window.setCurrentIndex(1)
+    assert commands_autostart.read_autostart() == Autostart(False, False)  # nothing changes before OK
+    dialog.accept()
+    wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
+    assert commands_autostart.read_autostart() == Autostart(True, True)
+    assert dialog.chosen().start_minimized is True
+
+
+def test_the_window_shows_the_systems_start_at_login_and_cancel_changes_nothing(world: World, qtbot: QtBot) -> None:
+    commands_autostart.write_autostart(Autostart(True, True))
+    dialog = opened_with_the_start_at_login(world, qtbot)
+    assert dialog.start_at_login.isChecked() and dialog.start_window.isEnabled() and dialog.start_window.currentIndex() == 1
+    dialog.start_at_login.setChecked(False)
+    assert not dialog.start_window.isEnabled() and dialog.start_window.currentIndex() == 1  # greyed, the choice kept
+    dialog.reject()
+    assert commands_autostart.read_autostart() == Autostart(True, True)
+
+
+def test_ok_switches_the_start_at_login_off(world: World, qtbot: QtBot) -> None:
+    commands_autostart.write_autostart(Autostart(True, False))
+    dialog = opened_with_the_start_at_login(world, qtbot)
+    dialog.start_at_login.setChecked(False)
+    dialog.accept()
+    wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
+    assert commands_autostart.read_autostart() == Autostart(False, False)
+
+
+def test_a_profile_greys_the_start_at_login(world: World, qtbot: QtBot) -> None:
+    world.engine.directories = dataclasses.replace(world.engine.directories, profile_name="demo")
+    dialog = opened_with_the_start_at_login(world, qtbot)
+    assert not dialog.start_at_login.isEnabled() and not dialog.start_window.isEnabled()
+    assert dialog.start_at_login.toolTip() == "Not available for this copy of Chrono Mail"

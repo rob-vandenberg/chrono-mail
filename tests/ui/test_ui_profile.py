@@ -1,12 +1,13 @@
 from pathlib import Path
 
 from chrono_mail.config import default_directories
-from chrono_mail.ui.app import WINDOW_SETTINGS_FILE, directories_and_settings, take_profile
+from chrono_mail.ui.app import WINDOW_SETTINGS_FILE, directories_and_settings, take_minimized, take_profile
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_profile.py 2.3.320"
+__version__ = "test_ui_profile.py 4.2.402"
 
 # --- Version history ----------------------------------------------------
+# v4.2.402: --minimized is taken out of the arguments (the start at login with the window minimized, D-284)
 # v2.3.320: Initial: --profile keeps everything in its own folder, the person's own never touched (D-243)
 
 
@@ -39,3 +40,10 @@ def test_without_a_profile_the_persons_own_folders_are_used() -> None:
     directories, settings = directories_and_settings(None)
     assert directories == default_directories()
     assert settings.applicationName() == "chrono-mail" and settings.organizationName() == "chrono-mail"
+
+
+def test_the_minimized_option_is_taken_out_of_the_arguments() -> None:
+    arguments = ["chrono-mail", "--minimized", "-style", "fusion"]
+    assert take_minimized(arguments) is True
+    assert arguments == ["chrono-mail", "-style", "fusion"]  # Qt never sees it
+    assert take_minimized(arguments) is False and arguments == ["chrono-mail", "-style", "fusion"]

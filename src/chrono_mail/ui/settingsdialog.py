@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.core import ChronoMailError
+from chrono_mail.engine.commands_autostart import AUTOSTART_SET, AUTOSTART_SHOW, AutostartInfo, AutostartParameters
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, ACCOUNT_REMOVE, KEY_STATUS, AccountParameters, AccountRemoveResult, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_folders import INDEX_RECONCILE, STORE_VERIFY, ReconcileResult, VerifyResult
 from chrono_mail.ui import appearance, forms, prefs, scale
@@ -56,9 +57,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.401"
+__version__ = "settingsdialog.py 4.2.402"
 
 # --- Version history ----------------------------------------------------
+# v4.2.402: General: Start Chrono Mail when I log in, with the window open or minimized; set on OK, the window waits for it (D-284)
 # v4.2.401: Message list: Layout, Reading pane, Dates, Row height, conversations and the tag's colour are shown at once (D-104)
 # v4.2.396: Message list: Remove messages from Unread when I mark them as read (D-282)
 # v4.0.374: the window is deleted once closed: it cannot be closed while it removes an account or saves the tags, and a rebuild that ends
@@ -305,6 +307,7 @@ class SettingsDialog(QDialog):
         buttons = part(self.form, QDialogButtonBox, "buttons")
         self._buttons: QDialogButtonBox = buttons
         self._saving_tags: bool = False
+        self._saving_autostart: bool = False
         self._removing_account: bool = False
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -400,6 +403,16 @@ class SettingsDialog(QDialog):
         part(page, QFormLayout, "form").setRowVisible(part(page, QLabel, "noTrayNote"), not tray_available)  # only where it is true
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())
+        self.start_at_login = part(page, QCheckBox, "startAtLogin")
+        self.start_window = part(page, QComboBox, "startWindow")
+        for text, minimized in (("with the window open", False), ("with the window minimized", True)):
+            self.start_window.addItem(text, minimized)
+        self.start_window.setCurrentIndex(1 if self._chosen.start_minimized else 0)
+        self.autostart_now: AutostartInfo | None = None  # the start at login as the system has it; None until it answered
+        self.start_at_login.setEnabled(False)  # greyed until the system's answer is here
+        self.start_window.setEnabled(False)
+        self.start_at_login.toggled.connect(self.start_window.setEnabled)
+        self._backend.ask(AUTOSTART_SHOW, NoParameters(), self._autostart_shown, self._autostart_unknown, owner=self)
         self.auto_check.toggled.connect(self.interval.setEnabled)
         self.send_delay.toggled.connect(self.send_delay_seconds.setEnabled)
         return page
@@ -423,6 +436,33 @@ class SettingsDialog(QDialog):
         self.operations_error = part(page, QCheckBox, "operationsError")
         self.operations_error.setChecked(self._chosen.operations_show_on_error)
         return page
+
+    def _autostart_shown(self, info: AutostartInfo) -> None:
+        """The start at login as the system has it: the tick, and the window choice while it is on."""
+        self.autostart_now = info
+        if not info.available:
+            for widget in (self.start_at_login, self.start_window):
+                widget.setToolTip("Not available for this copy of Chrono Mail")
+            return
+        self.start_at_login.setChecked(info.on)
+        if info.on:
+            self.start_window.setCurrentIndex(1 if info.minimized else 0)
+        self.start_at_login.setEnabled(True)
+        self.start_window.setEnabled(info.on)
+
+    def _autostart_unknown(self, error: ChronoMailError) -> None:
+        for widget in (self.start_at_login, self.start_window):
+            widget.setToolTip(f"The start at login could not be read: {error}")
+
+    def autostart_wanted(self) -> AutostartParameters | None:
+        """What OK must change in the start at login; None when nothing changes (or it is not known or not available)."""
+        now = self.autostart_now
+        if now is None or not now.available:
+            return None
+        on, minimized = self.start_at_login.isChecked(), bool(self.start_window.currentData())
+        if on == now.on and (not on or minimized == now.minimized):
+            return None
+        return AutostartParameters(on, minimized and on)
 
     def _tray_toggled(self, on: bool) -> None:
         if not on:
@@ -879,6 +919,7 @@ class SettingsDialog(QDialog):
             start_refresh=str(self.start_refresh.currentData()), scheduled_refresh=str(self.scheduled_refresh.currentData()), send_delay=self.send_delay.isChecked(), send_delay_seconds=self.send_delay_seconds.value(),
             send_on_refresh=self.send_on_refresh.isChecked(), warn_outbox_on_quit=self.warn_outbox_on_quit.isChecked(),
             notifications=self.notifications.isChecked(), tray=self.tray.isChecked(), close_to_tray=self.close_to_tray.isChecked(),
+            start_minimized=bool(self.start_window.currentData()),
             operations_show_on_send_receive=self.operations_show.isChecked(), operations_hide_when_done=self.operations_hide.isChecked(),
             operations_show_on_error=self.operations_error.isChecked(),
             color_scheme=str(self.scheme_box.currentData()), accent_dark=accent_dark, accent_light=accent_light,
@@ -909,8 +950,8 @@ class SettingsDialog(QDialog):
 
     @override
     def done(self, result: int) -> None:
-        if self._saving_tags or self._removing_account:
-            return  # Cancel, Esc or the close button wait until the tags are saved or the account is removed: never left half done
+        if self._saving_tags or self._saving_autostart or self._removing_account:
+            return  # Cancel, Esc or the close button wait until the tags or the start at login are saved or the account is removed: never left half done
         if result != QDialog.DialogCode.Accepted:
             self._grow_with(self.interface_scale_saved)  # Cancel: the size it had, before it is remembered
         save_geometry(self, self._settings, "settings_geometry")  # whether the window was closed with OK or with Cancel
@@ -923,8 +964,12 @@ class SettingsDialog(QDialog):
             self.show_page("Keyboard")
             self.shortcut_note.setText(f"<span style='color:{red()}'>The same keys are used twice: " + "; ".join(conflicts) + "</span>")
             return
-        if self._saving_tags:
-            return  # OK was pressed again while the tags are being saved
+        if self._saving_tags or self._saving_autostart:
+            return  # OK was pressed again while the tags or the start at login are being saved
+        wanted = self.autostart_wanted()
+        if wanted is not None:
+            self._save_autostart(wanted)
+            return
         if not self.tags_panel.changed():
             super().accept()
             return
@@ -944,3 +989,25 @@ class SettingsDialog(QDialog):
             self.show_page("Tags")
 
         self.tags_panel.save(saved, failed)
+
+    def _save_autostart(self, wanted: AutostartParameters) -> None:
+        """OK: the start at login first, as the system's own entry; then the rest of OK. A failure keeps the window open on General."""
+        self._saving_autostart = True
+        self._buttons.setEnabled(False)
+
+        def failed(error: ChronoMailError) -> None:
+            self._saving_autostart = False
+            self._buttons.setEnabled(True)
+            self.show_page("General")
+            self.status.setText(f"The start at login could not be changed: {error}")
+
+        def done(info: AutostartInfo) -> None:
+            self._saving_autostart = False
+            self._buttons.setEnabled(True)
+            self.autostart_now = info
+            if self.autostart_wanted() is not None:  # the system has it otherwise than asked: never asked again in a loop
+                failed(ChronoMailError("the system kept it as it was"))
+                return
+            self.accept()  # nothing left to change in the start at login: on with the rest of OK
+
+        self._backend.ask(AUTOSTART_SET, wanted, done, failed, owner=self)

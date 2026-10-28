@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 
 from chrono_mail.config import AppDirectories, KeyringPasswordStore, default_directories, profile_directories
 from chrono_mail.core import CredentialBackend
+from chrono_mail.config.autostart import MINIMIZED_OPTION
 from chrono_mail.config.running import program_is_running, set_process_name
 from chrono_mail.crypto import KeyringKeyStore
 from chrono_mail.engine import Engine
@@ -21,9 +22,11 @@ from chrono_mail.ui.plainboxes import plain_message_boxes
 from chrono_mail.ui.singleinstance import ShowRequests, ask_to_show
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 3.6.370"
+__version__ = "app.py 4.2.402"
 
 # --- Version history ----------------------------------------------------
+# v4.2.402: --minimized (the start at login with the window minimized, D-284): the window starts minimized (MainWindow.start_minimized), a
+#           maximized one stays maximized when it is opened; while the program runs already such a start does nothing
 # v3.6.370: the passwords and the key are kept under the profile's own wallet name (a demo's are never mixed with the person's own,
 #           credential_stores); --profile is resolved, so one folder has one name
 # v3.5.348: The ready-made message boxes show plain text without an event filter on the whole program (the kind that crashed PySide on 2026-10-21)
@@ -75,6 +78,14 @@ def take_profile(arguments: list[str]) -> Path | None:
     return None
 
 
+def take_minimized(arguments: list[str]) -> bool:
+    """Whether --minimized was given (the start at login with the window minimized, D-284), taken out of the arguments so Qt never sees it."""
+    if MINIMIZED_OPTION not in arguments:
+        return False
+    arguments[:] = [argument for argument in arguments if argument != MINIMIZED_OPTION]
+    return True
+
+
 def directories_and_settings(profile: Path | None) -> tuple[AppDirectories, QSettings]:
     """Where the mail and settings are, and the window's own settings: the person's own, or all of them inside the profile's folder."""
     if profile is None:
@@ -101,6 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     arguments = list(argv) if argv is not None else list(sys.argv)
     profile = take_profile(arguments)
+    minimized = take_minimized(arguments)
     set_process_name()  # Linux: another start recognises this process by its name
     appearance.keep_web_pages_light()
     set_application_id()
@@ -112,7 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     app.setWindowIcon(application_icon())
     plain_message_boxes()  # text from mail and servers in a message box is never markup (RV-167); nothing watches every event
     if program_is_running():  # two copies would change the same mail at once
-        return second_start()
+        return 0 if minimized else second_start()  # a start at login while it runs already: it is there, nothing to show
     directories, settings = directories_and_settings(profile)
     engine = Engine(directories, *credential_stores(directories))
     backend = Backend(engine)
@@ -122,6 +134,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     requests = ShowRequests()
     requests.show_requested.connect(window.bring_forward)
     requests.listen()  # without it a second start only says that the program is running
+    if minimized:
+        window.start_minimized()
     window.show()
     QTimer.singleShot(0, window.start)
     return app.exec()
