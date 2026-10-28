@@ -10,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.2.397"
+__version__ = "prefs.py 4.2.401"
 
 # --- Version history ----------------------------------------------------
+# v4.2.401: settings can be tried without being saved: Settings > Message list shows its changes at once (D-104)
 # v4.2.397: automatic refresh every 30 minutes by default (was 5)
 # v4.2.396: unread_leaves_on_read: a message the person marks as read leaves a list of unread mail (off by default, D-282)
 # v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
@@ -388,19 +389,31 @@ class InUse:
     def __init__(self, settings: QSettings) -> None:
         self.settings: QSettings = settings
         self.applied: Preferences = read_preferences(settings)
+        self.trying: Preferences | None = None  # Settings open: what it shows at once, in use without being saved (D-104)
 
     def read(self) -> Preferences:
-        """The settings as they are in the settings file now, each checked."""
+        """The settings in use: as they are in the settings file now, each checked; while Settings tries some, the tried ones."""
+        return self.trying if self.trying is not None else read_preferences(self.settings)
+
+    def saved(self) -> Preferences:
+        """The settings as they are in the settings file now, also while Settings tries some."""
         return read_preferences(self.settings)
 
+    def try_out(self, chosen: Preferences | None) -> None:
+        """Settings open: these settings are in use without being saved; None: the file's again (Settings closed)."""
+        self.trying = chosen
+
     def keep(self, chosen: Preferences) -> None:
-        """Save a change of the settings made in the window itself."""
+        """Save a change of the settings made in the window itself. While Settings tries some, it stays a try: OK or Cancel decides."""
+        if self.trying is not None:
+            self.trying = self.applied = chosen
+            return
         save_preferences(self.settings, chosen)
         self.applied = read_preferences(self.settings)
 
     def take_in(self) -> tuple[Preferences, Preferences]:
-        """Settings OK: what was in use and what the file holds now, which is in use from now on."""
-        before, self.applied = self.applied, read_preferences(self.settings)
+        """Settings OK, Cancel or a try: what was in use and what is in use from now on (the file's, or the tried ones)."""
+        before, self.applied = self.applied, self.read()
         return before, self.applied
 
 

@@ -31,9 +31,11 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 3.6.349"
+__version__ = "readingpane.py 4.2.401"
 
 # --- Version history ----------------------------------------------------
+# v4.2.401: the list and the pane get back the widths or heights they had at a place when the pane returns there
+#           (Settings > Message list tries a place, Cancel)
 # v3.6.349: an Outbox message that was sent already opens in a message window to be read (RV-181)
 # v2.0.302: Open attachment from the attachment row and the pictures (D-236)
 # v1.9.274: R-19 round 4: the rows and tags are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
@@ -74,6 +76,7 @@ class ReadingPane(QObject):
         layout.addWidget(self.reader, 1)
         place = prefs_in_use.read().reading_pane
         self.place: str = place if place in ("right", "bottom", "off") else "right"
+        self._place_sizes: dict[str, list[int]] = {}  # per place, the widths or heights the list and the pane had there last
         self.pane_actions: dict[str, QAction] = {}
         self.shown: tuple[str, str, str] | None = None  # account, folder, message id of what the reader shows
         self._show_request: int = 0
@@ -201,6 +204,8 @@ class ReadingPane(QObject):
             self.pane_actions[value] = action
 
     def set_place(self, where: str) -> None:
+        if self.place != "off" and self.widget.isVisible():
+            self._place_sizes[self.place] = self._splitter.sizes()  # coming back to this place (Settings Cancel, the menu) gives them again
         self.place = where if where in READING_PANES else "right"
         self._prefs.keep(changed(self._prefs.read(), reading_pane=self.place))
         self.apply_place()
@@ -214,7 +219,7 @@ class ReadingPane(QObject):
             return
         self._splitter.setOrientation(Qt.Orientation.Horizontal if self.place == "right" else Qt.Orientation.Vertical)
         self.widget.show()
-        self._splitter.setSizes(([640, 400] if self._wide() else [400, 640]) if self.place == "right" else [320, 380])
+        self._splitter.setSizes(self._place_sizes.get(self.place) or (([640, 400] if self._wide() else [400, 640]) if self.place == "right" else [320, 380]))
         self.show_current()
 
     # --- the readers' settings ------------------------------------------------------------------------------------------

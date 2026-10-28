@@ -56,9 +56,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.396"
+__version__ = "settingsdialog.py 4.2.401"
 
 # --- Version history ----------------------------------------------------
+# v4.2.401: Message list: Layout, Reading pane, Dates, Row height, conversations and the tag's colour are shown at once (D-104)
 # v4.2.396: Message list: Remove messages from Unread when I mark them as read (D-282)
 # v4.0.374: the window is deleted once closed: it cannot be closed while it removes an account or saves the tags, and a rebuild that ends
 #           after it closed writes nothing into it
@@ -277,6 +278,7 @@ class SettingsDialog(QDialog):
     windows_scale_tried = Signal(float)  # the same for the other windows and dialogs (this one too)
     list_scale_tried = Signal(float)  # the same for the message list
     reading_scale_tried = Signal(float)  # the same for the text of messages, read and written
+    list_settings_tried = Signal(object)  # Message list: Layout, Reading pane, Dates, Row height, conversations or the tag's colour changed: shown at once (not saved yet)
 
     def __init__(
         self, backend: Backend, settings: QSettings, context: SettingsContext | None = None, parent: QWidget | None = None,
@@ -581,7 +583,14 @@ class SettingsDialog(QDialog):
         self.columns_picker = part(page, ColumnPicker, "columnsPicker")
         self.layout_box.currentIndexChanged.connect(self._layout_changed)
         self._layout_changed()
+        for box in (self.layout_box, self.pane_box, self.date_box, self.density_box):
+            box.currentIndexChanged.connect(self._list_settings_changed)
+        for tick in (self.conversations, self.tag_text_colour):
+            tick.toggled.connect(self._list_settings_changed)
         return page
+
+    def _list_settings_changed(self) -> None:
+        self.list_settings_tried.emit(self.chosen())
 
     def _layout_changed(self) -> None:
         self.columns_picker.set_active(str(self.layout_box.currentData()) == "columns")

@@ -278,7 +278,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-066** → D-158; still valid: HTML mail stays on a white page.
 - **D-070** Refresh: circular arrows, F5. Accounts are added in Settings > Accounts.
 - **D-069** Windows: app id `chrono-mail.ChronoMail` set before the first window.
-- **D-104** Sizes are factors 0.75–2.00 on sliders, shown live; Cancel restores.
+- **D-104** Sizes are factors 0.75–2.00 on sliders, shown live; Cancel restores. **Settings > Message list's Layout, Reading pane, Dates, Row height, conversations and the tag's colour show at once too** (the owner): tried without being saved, applied by the same steps as OK (only what differs); Cancel puts them back, OK saves. The reading pane gets back the size it had at a place when it returns there.
 - **D-135** Four sliders: main window, message list, other windows, text of messages; a menu takes the size of its window.
 - **D-154** Each section's toolbar is one folding row; under pressure it folds in fixed steps, computed from widths (no flicker).
 - **D-155** The sections' search field is Mail's minus This folder; the month calendar's minimum is 240 px.

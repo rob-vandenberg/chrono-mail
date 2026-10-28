@@ -40,7 +40,7 @@ from chrono_mail.ui.messagecolumns import MessageColumns
 from chrono_mail.ui.messagelist import CONTACT_ROLE
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.pimpages import PimPage
-from chrono_mail.ui.prefs import InUse, Remembered
+from chrono_mail.ui.prefs import InUse, Preferences, Remembered
 from chrono_mail.ui.readingpane import ReadingPane
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.restorekeydialog import RestoreKeyDialog, worth_telling
@@ -63,9 +63,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.400"
+__version__ = "mainwindow.py 4.2.401"
 
 # --- Version history ----------------------------------------------------
+# v4.2.401: Settings > Message list is shown at once while it is changed, Cancel puts it back (D-104)
 # v4.2.400: the new-mail notification writes its count with the one count helper (D-246)
 # v4.2.399: Rename folder (F2, Menu > Folder) is greyed on a standard folder and on a top row, as Delete folder
 # v4.2.394: the window tells whether an action was set off by a held key's repeat (HeldKey): New, Reply, Reply all, Forward, Open, View
@@ -971,9 +972,11 @@ class MainWindow(QMainWindow):
         dialog.windows_scale_tried.connect(self.try_windows_scale)
         dialog.reading_scale_tried.connect(self.try_reading_scale)
         dialog.list_scale_tried.connect(self.try_list_scale)
+        dialog.list_settings_tried.connect(self.try_list_settings)
         try:
             self._settings_closed(dialog, dialog.exec() == SettingsDialog.DialogCode.Accepted)
         finally:
+            self.prefs.try_out(None)  # never a try left behind
             dialog.deleteLater()  # it was kept for good with every opening (about 490 parts each time)
 
     def _settings_closed(self, dialog: SettingsDialog, accepted: bool) -> None:
@@ -993,7 +996,11 @@ class MainWindow(QMainWindow):
             self.report.finished("Scheduled messages changed")  # each action told its facts: the rows already follow (D-146)
         if dialog.tags_saved:
             self.tags.load()  # the rows follow the "mailbox changed" of renaming or deleting a tag (D-146)
+        tried = self.prefs.trying is not None
+        self.prefs.try_out(None)
         if not accepted:
+            if tried:
+                self.apply_preferences()  # Cancel: the Message list settings as they were, in the same steps that showed the try
             return
         dialog.save()
         self.apply_preferences()
@@ -1055,7 +1062,7 @@ class MainWindow(QMainWindow):
         if differ("list_layout", "date_style", "tag_text_colour"):
             self.columns.take_in()  # in place: the rows and the selection stay
         if looks or differ("list_scale", "list_density"):
-            self.columns.apply_list_look()
+            self.columns.apply_list_look(after.list_scale if self.prefs.trying is not None else None)  # tried: the size the slider shows
         if differ("reading_pane"):
             self.reading.set_place(after.reading_pane)  # only then: a width the person dragged stays
         if differ("remote_always", "remote_senders", "prefer_plain", "reading_scale"):
@@ -1065,6 +1072,16 @@ class MainWindow(QMainWindow):
             self._apply_shortcuts()
         if differ("show_favorites", "show_tags", "show_local_folders") and self.mail_state.accounts:
             self.folders.lay_out()  # the sections of the folder list follow the settings
+
+    def try_list_settings(self, chosen: object) -> None:
+        """Settings > Message list changed: shown now without saving, by the same steps as OK (only what differs); Cancel puts it
+        back, OK keeps it (D-104). Only the Message list's own settings are tried; the other pages wait for OK."""
+        if not isinstance(chosen, Preferences):
+            return
+        self.prefs.try_out(changed(self.prefs.saved(), list_layout=chosen.list_layout, reading_pane=chosen.reading_pane, date_style=chosen.date_style,
+                                   list_density=chosen.list_density, conversations=chosen.conversations, tag_text_colour=chosen.tag_text_colour,
+                                   list_scale=chosen.list_scale))  # the size its slider tries too: a Row height redraws the list at it
+        self.apply_preferences()
 
     def try_interface_scale(self, factor: float) -> None:
         """Show the main window at this size factor now, without saving it (the slider in Settings moves, or Cancel)."""
