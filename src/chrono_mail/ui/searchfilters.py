@@ -5,6 +5,7 @@ from PySide6.QtGui import QAction, QKeyEvent
 from PySide6.QtWidgets import QMenu, QToolButton, QWidget
 
 from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog
+from chrono_mail.ui.savedsearches import SavedSearches
 from chrono_mail.ui.icons import section_icon, theme_icon
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelistpane import MessageListPane
@@ -16,9 +17,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import offered_for_mail, tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchfilters.py 4.2.408"
+__version__ = "searchfilters.py 4.2.410"
 
 # --- Version history ----------------------------------------------------
+# v4.2.410: Advanced search is given the saved searches and the form last left (D-289)
 # v4.2.408: Advanced search is given the tags and where the list looks (Snoozed until and Send at greyed elsewhere); its Tag is
 #           Filter > Tagged with; it opens with the filters that are on (D-288)
 # v4.2.407: Advanced search opens on where the search field looks (D-287)
@@ -115,8 +117,9 @@ class ListFilters(QObject):
 class MailSearch(QObject):
     """The search field of the mail in the toolbar: its history, its help and where it looks; Advanced search."""
 
-    def __init__(self, state: MailState, messages: MessageListPane, memory: Remembered, parent: QWidget) -> None:
+    def __init__(self, state: MailState, messages: MessageListPane, memory: Remembered, parent: QWidget, saved: SavedSearches | None = None) -> None:
         super().__init__(parent)
+        self._saved: SavedSearches = saved if saved is not None else SavedSearches(None)  # Advanced search's saved searches and the form last left
         self._state: MailState = state
         self._messages: MessageListPane = messages
         self._memory: Remembered = memory
@@ -206,10 +209,12 @@ class MailSearch(QObject):
         view = self._state.view
         tags = [tag.name for tag in self._state.tags if offered_for_mail(tag)]
         marks = (view.unread, view.flagged, view.attachments, view.tag)  # the filters on now: Search keeps them unless the person changes them
-        dialog = AdvancedSearchDialog(self._parent, view.scope, tags, view.folder_role, view.combined, marks)  # it opens on where the search field looks
-        if dialog.exec() != AdvancedSearchDialog.DialogCode.Accepted:
-            return
+        dialog = AdvancedSearchDialog(self._parent, view.scope, tags, view.folder_role, view.combined, marks, self._saved)  # it opens on where the search field looks
+        accepted = dialog.exec() == AdvancedSearchDialog.DialogCode.Accepted
         wanted: AdvancedSearch = dialog.search()
+        dialog.deleteLater()  # one window per opening, gone when done (each opening made a new one that stayed)
+        if not accepted:
+            return
         self._messages.change_view(changed(
             self._state.view, query=wanted.query.strip(), scope=wanted.scope, advanced=wanted if wanted.extra_filters else None,
             unread=wanted.unread, flagged=wanted.flagged, attachments=wanted.attachments, tag=wanted.tag,

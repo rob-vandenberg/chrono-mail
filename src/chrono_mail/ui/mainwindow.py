@@ -22,6 +22,7 @@ from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
 from chrono_mail.ui.composing import Composing
 from chrono_mail.ui.contactsview import ContactsPage
 from chrono_mail.ui.currentview import CurrentView, EntryKind
+from chrono_mail.ui.savedsearches import SAVED_SEARCHES_FILE, SavedSearches
 from chrono_mail.ui.folderpane import FolderMenu, FolderPane
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
 from chrono_mail.ui.icons import application_icon, theme_icon
@@ -63,9 +64,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.407"
+__version__ = "mainwindow.py 4.2.410"
 
 # --- Version history ----------------------------------------------------
+# v4.2.410: Advanced search's saved searches are kept beside the window's settings, on this computer only (D-289)
 # v4.2.407: Advanced search… also in the search field's ▾ menu, below its three choices (D-287)
 # v4.2.405: Wayland: a tray click hides the window only while it or one of its dialogs has the focus, else brings it back; a second
 #           start brings it back and to the front (shown again, never while a dialog waits for an answer or while it has the focus):
@@ -625,7 +627,8 @@ class MainWindow(QMainWindow):
         self.move_button.setMenu(self.move_menu)
         self.toolbar.add_center(self.move_button)
         self.toolbar.add_center(self.act_delete)
-        self.search = MailSearch(self.mail_state, self.messages, self.memory, self)
+        saved = SavedSearches(self.backend.engine.directories.config_directory / SAVED_SEARCHES_FILE)  # on this computer only (OR-21)
+        self.search = MailSearch(self.mail_state, self.messages, self.memory, self, saved)
         self.search_pill, self.search_box, self.scope = self.search.pill, self.search.box, self.search.scope
         self.scope.add_command(self.act_advanced)  # below where the search looks, after a line
         self.search_history, self.search_help = self.search.history, self.search.help

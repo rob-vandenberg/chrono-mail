@@ -9,6 +9,19 @@
    <item>
     <layout class="QFormLayout" name="main">
      <item row="0" column="0">
+      <widget class="QLabel" name="savedLabel">
+       <property name="text">
+        <string>Saved searches</string>
+       </property>
+       <property name="buddy">
+        <cstring>saved</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QComboBox" name="saved" />
+     </item>
+     <item row="1" column="0">
       <widget class="QLabel" name="scopeLabel">
        <property name="text">
         <string>Where to search</string>
@@ -18,105 +31,32 @@
        </property>
       </widget>
      </item>
-     <item row="0" column="1">
+     <item row="1" column="1">
       <widget class="QComboBox" name="scope" />
      </item>
-     <item row="1" column="0">
-      <widget class="QLabel" name="allWordsLabel">
-       <property name="text">
-        <string>Words</string>
-       </property>
-       <property name="buddy">
-        <cstring>allWords</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="1" column="1">
-      <widget class="QLineEdit" name="allWords" />
-     </item>
-     <item row="2" column="0">
-      <widget class="QLabel" name="fromWordsLabel">
-       <property name="text">
-        <string>From</string>
-       </property>
-       <property name="buddy">
-        <cstring>fromWords</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="2" column="1">
-      <widget class="QLineEdit" name="fromWords" />
-     </item>
-     <item row="3" column="0">
-      <widget class="QLabel" name="toWordsLabel">
-       <property name="text">
-        <string>To</string>
-       </property>
-       <property name="buddy">
-        <cstring>toWords</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="3" column="1">
-      <widget class="QLineEdit" name="toWords" />
-     </item>
-     <item row="4" column="0">
-      <widget class="QLabel" name="subjectLabel">
-       <property name="text">
-        <string>Subject contains</string>
-       </property>
-       <property name="buddy">
-        <cstring>subject</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="4" column="1">
-      <widget class="QLineEdit" name="subject" />
-     </item>
-     <item row="5" column="0">
-      <widget class="QLabel" name="bodyLabel">
-       <property name="text">
-        <string>Body contains</string>
-       </property>
-       <property name="buddy">
-        <cstring>body</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="5" column="1">
-      <widget class="QLineEdit" name="body" />
-     </item>
-     <item row="6" column="0">
-      <widget class="QLabel" name="receivedLabel">
-       <property name="text">
-        <string>Received</string>
-       </property>
-      </widget>
-     </item>
-     <item row="6" column="1">
-      <layout class="QHBoxLayout" name="receivedDays" stretch="0,0,0,0,1">
-      <item>
-        <widget class="QCheckBox" name="receivedUseFrom">
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="matchRow" stretch="0,0,0,1">
+    <item>
+        <widget class="QLabel" name="matchBefore">
          <property name="text">
-          <string>from</string>
+          <string>Find messages that match</string>
          </property>
         </widget>
-      </item>
-      <item>
-        <widget class="QDateEdit" name="receivedFrom" />
-      </item>
-      <item>
-        <widget class="QCheckBox" name="receivedUseTo">
+    </item>
+    <item>
+        <widget class="QComboBox" name="match" />
+    </item>
+    <item>
+        <widget class="QLabel" name="matchAfter">
          <property name="text">
-          <string>to</string>
+          <string>of these lines:</string>
          </property>
         </widget>
-      </item>
+    </item>
       <item>
-        <widget class="QDateEdit" name="receivedTo" />
-      </item>
-      <item>
-       <spacer name="receivedEnd">
+       <spacer name="matchEnd">
         <property name="orientation">
          <enum>Qt::Horizontal</enum>
         </property>
@@ -131,7 +71,25 @@
         </property>
        </spacer>
       </item>
-      </layout>
+    </layout>
+   </item>
+   <item>
+    <widget class="QWidget" name="lines" />
+   </item>
+   <item>
+    <layout class="QFormLayout" name="dates">
+     <item row="0" column="0">
+      <widget class="QLabel" name="receivedLabel">
+       <property name="text">
+        <string>Received</string>
+       </property>
+       <property name="buddy">
+        <cstring>received</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QWidget" name="received" />
      </item>
     </layout>
    </item>
@@ -156,99 +114,26 @@
       <item>
        <layout class="QFormLayout" name="extra">
      <item row="0" column="0">
-      <widget class="QLabel" name="phraseLabel">
-       <property name="text">
-        <string>This exact phrase</string>
-       </property>
-       <property name="buddy">
-        <cstring>phrase</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="0" column="1">
-      <widget class="QLineEdit" name="phrase" />
-     </item>
-     <item row="1" column="0">
-      <widget class="QLabel" name="anyWordsLabel">
-       <property name="text">
-        <string>Any of these words</string>
-       </property>
-       <property name="buddy">
-        <cstring>anyWords</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="1" column="1">
-      <widget class="QLineEdit" name="anyWords" />
-     </item>
-     <item row="2" column="0">
-      <widget class="QLabel" name="noneWordsLabel">
-       <property name="text">
-        <string>None of these words</string>
-       </property>
-       <property name="buddy">
-        <cstring>noneWords</cstring>
-       </property>
-      </widget>
-     </item>
-     <item row="2" column="1">
-      <widget class="QLineEdit" name="noneWords" />
-     </item>
-     <item row="3" column="0">
       <widget class="QLabel" name="sentLabel">
        <property name="text">
         <string>Sent</string>
        </property>
+       <property name="buddy">
+        <cstring>sent</cstring>
+       </property>
       </widget>
      </item>
-     <item row="3" column="1">
-      <layout class="QHBoxLayout" name="sentDays" stretch="0,0,0,0,1">
-      <item>
-        <widget class="QCheckBox" name="sentUseFrom">
-         <property name="text">
-          <string>from</string>
-         </property>
-        </widget>
-      </item>
-      <item>
-        <widget class="QDateEdit" name="sentFrom" />
-      </item>
-      <item>
-        <widget class="QCheckBox" name="sentUseTo">
-         <property name="text">
-          <string>to</string>
-         </property>
-        </widget>
-      </item>
-      <item>
-        <widget class="QDateEdit" name="sentTo" />
-      </item>
-      <item>
-       <spacer name="sentEnd">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeType">
-         <enum>QSizePolicy::Expanding</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>0</width>
-          <height>0</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
-      </layout>
+     <item row="0" column="1">
+      <widget class="QWidget" name="sent" />
      </item>
-     <item row="4" column="0">
+     <item row="1" column="0">
       <widget class="QLabel" name="sizeLabel">
        <property name="text">
         <string>Size</string>
        </property>
       </widget>
      </item>
-     <item row="4" column="1">
+     <item row="1" column="1">
       <layout class="QHBoxLayout" name="sizes" stretch="0,0,0,0,1">
       <item>
         <widget class="QLabel" name="sizeAtLeast">
@@ -302,14 +187,14 @@
       </item>
       </layout>
      </item>
-     <item row="5" column="0">
+     <item row="2" column="0">
       <widget class="QLabel" name="marksLabel">
        <property name="text">
         <string>Only</string>
        </property>
       </widget>
      </item>
-     <item row="5" column="1">
+     <item row="2" column="1">
       <layout class="QHBoxLayout" name="checks" stretch="0,0,0,1">
       <item>
         <widget class="QCheckBox" name="unread">
@@ -350,7 +235,7 @@
       </item>
       </layout>
      </item>
-     <item row="6" column="0">
+     <item row="3" column="0">
       <widget class="QLabel" name="tagLabel">
        <property name="text">
         <string>Tag</string>
@@ -360,102 +245,34 @@
        </property>
       </widget>
      </item>
-     <item row="6" column="1">
+     <item row="3" column="1">
       <widget class="QComboBox" name="tag" />
      </item>
-     <item row="7" column="0">
+     <item row="4" column="0">
       <widget class="QLabel" name="snoozedLabel">
        <property name="text">
         <string>Snoozed until</string>
        </property>
+       <property name="buddy">
+        <cstring>snoozed</cstring>
+       </property>
       </widget>
      </item>
-     <item row="7" column="1">
-      <layout class="QHBoxLayout" name="snoozedDays" stretch="0,0,0,0,1">
-      <item>
-        <widget class="QCheckBox" name="snoozedUseFrom">
-         <property name="text">
-          <string>from</string>
-         </property>
-        </widget>
-      </item>
-      <item>
-        <widget class="QDateEdit" name="snoozedFrom" />
-      </item>
-      <item>
-        <widget class="QCheckBox" name="snoozedUseTo">
-         <property name="text">
-          <string>to</string>
-         </property>
-        </widget>
-      </item>
-      <item>
-        <widget class="QDateEdit" name="snoozedTo" />
-      </item>
-      <item>
-       <spacer name="snoozedEnd">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeType">
-         <enum>QSizePolicy::Expanding</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>0</width>
-          <height>0</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
-      </layout>
+     <item row="4" column="1">
+      <widget class="QWidget" name="snoozed" />
      </item>
-     <item row="8" column="0">
+     <item row="5" column="0">
       <widget class="QLabel" name="sendAtLabel">
        <property name="text">
         <string>Send at</string>
        </property>
+       <property name="buddy">
+        <cstring>sendAt</cstring>
+       </property>
       </widget>
      </item>
-     <item row="8" column="1">
-      <layout class="QHBoxLayout" name="sendAtDays" stretch="0,0,0,0,1">
-      <item>
-        <widget class="QCheckBox" name="sendAtUseFrom">
-         <property name="text">
-          <string>from</string>
-         </property>
-        </widget>
-      </item>
-      <item>
-        <widget class="QDateEdit" name="sendAtFrom" />
-      </item>
-      <item>
-        <widget class="QCheckBox" name="sendAtUseTo">
-         <property name="text">
-          <string>to</string>
-         </property>
-        </widget>
-      </item>
-      <item>
-        <widget class="QDateEdit" name="sendAtTo" />
-      </item>
-      <item>
-       <spacer name="sendAtEnd">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeType">
-         <enum>QSizePolicy::Expanding</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>0</width>
-          <height>0</height>
-         </size>
-        </property>
-       </spacer>
-      </item>
-      </layout>
+     <item row="5" column="1">
+      <widget class="QWidget" name="sendAt" />
      </item>
        </layout>
       </item>
@@ -470,11 +287,66 @@
     </widget>
    </item>
    <item>
-    <widget class="QDialogButtonBox" name="buttons">
-     <property name="standardButtons">
-      <set>QDialogButtonBox::Ok|QDialogButtonBox::Cancel</set>
-     </property>
-    </widget>
+    <layout class="QHBoxLayout" name="bottom" stretch="0,0,0,0,0,1,0">
+    <item>
+        <widget class="QPushButton" name="save">
+         <property name="text">
+          <string>Save</string>
+         </property>
+        </widget>
+    </item>
+    <item>
+        <widget class="QPushButton" name="saveAs">
+         <property name="text">
+          <string>Save as</string>
+         </property>
+        </widget>
+    </item>
+    <item>
+        <widget class="QPushButton" name="rename">
+         <property name="text">
+          <string>Rename</string>
+         </property>
+        </widget>
+    </item>
+    <item>
+        <widget class="QPushButton" name="delete">
+         <property name="text">
+          <string>Delete</string>
+         </property>
+        </widget>
+    </item>
+    <item>
+        <widget class="QPushButton" name="reset">
+         <property name="text">
+          <string>Reset</string>
+         </property>
+        </widget>
+    </item>
+      <item>
+       <spacer name="bottomMiddle">
+        <property name="orientation">
+         <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="sizeType">
+         <enum>QSizePolicy::Expanding</enum>
+        </property>
+        <property name="sizeHint" stdset="0">
+         <size>
+          <width>0</width>
+          <height>0</height>
+         </size>
+        </property>
+       </spacer>
+      </item>
+    <item>
+        <widget class="QDialogButtonBox" name="buttons">
+         <property name="standardButtons">
+          <set>QDialogButtonBox::Ok|QDialogButtonBox::Close</set>
+         </property>
+        </widget>
+    </item>
+    </layout>
    </item>
   </layout>
  </widget>

@@ -208,6 +208,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.405) Wayland: one tray click or a second start brings a minimized window back (D-286).
 - DONE (4.2.406) Search in This folder only, This folder + subfolders or All folders, in the search field and in Advanced search (D-287).
 - DONE (4.2.407) A search starts on All folders; Advanced search opens on the field's choice and is in the field's ▾ menu (D-287).
+- DONE (4.2.410) Advanced search is a search builder: saved searches, search lines joined by all or any, date spans counted from today (D-289).
 - DONE (4.2.408) Advanced search: Where to search and the main fields first, the rest below More...; Sent, Tag, Snoozed until and Send at; a search of several folders shows From, To and Folder (D-288).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)

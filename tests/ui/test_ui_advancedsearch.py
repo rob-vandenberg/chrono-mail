@@ -1,14 +1,18 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QDate, QPoint, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QDialog
 from pytestqt.qtbot import QtBot
-from PySide6.QtWidgets import QFormLayout, QLabel
+from PySide6.QtWidgets import QFormLayout, QLabel, QWidget
 
 from chrono_mail.engine.mailbox import open_mailbox
-from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog, SearchScope, build_query
+from chrono_mail.ui.advancedsearch import AdvancedSearch, AdvancedSearchDialog, SearchScope
+from chrono_mail.ui.savedsearches import SavedSearches
+from chrono_mail.ui.searchform import DateChoice, SearchForm, SearchLine
+from chrono_mail.ui.searchlines import DateRow
 from chrono_mail.engine.commands_view import OrderParameters
 from chrono_mail.ui.messagelist import MessageListModel, ViewSpec
 from chrono_mail.ui.searchfield import SearchField
@@ -17,9 +21,11 @@ from tests.ui.test_ui_window import select, subjects
 from tests.ui.world import account_node, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_advancedsearch.py 4.2.408"
+__version__ = "test_ui_advancedsearch.py 4.2.410"
 
 # --- Version history ----------------------------------------------------
+# v4.2.410: the search builder: the lines and their joining words, the first line without [−], the date choices, the saved
+#           searches (Save, Save as, Rename, Delete, Reset), the form kept for the next time (D-289)
 # v4.2.408: the lower fields line up with the upper ones; closing More gives the room back; the filters on are kept;
 #           Where to search and the main fields first, the rest below More... (opens and closes wherever it is clicked); Sent, Tag,
 #           Snoozed until and Send at, greyed where such mail cannot be; the new days and the tag reach the list (D-288)
@@ -33,35 +39,42 @@ __version__ = "test_ui_advancedsearch.py 4.2.408"
 # v0.0.19: Initial advanced search tests
 
 
-def test_build_query_spreads_alternatives_over_the_other_terms() -> None:
-    assert build_query() == ""
-    assert build_query("x y") == "x y"
-    assert build_query("x", any_words="a b") == "x a OR x b"
-    assert build_query("x", "big cat", "a b", "dog", sender="ann", subject="plan b") == 'x "big cat" from:ann subject:plan subject:b a OR x "big cat" from:ann subject:plan subject:b b -dog'
-    assert build_query(none_words="spam junk") == "-spam -junk"
-    assert build_query('say "hi"', phrase='"quoted" OR NOT') == 'say hi "quoted"'
+def set_line(dialog: AdvancedSearchDialog, number: int, part: str, kind: str, text: str) -> None:
+    """Fill a search line as the person would: its two choices and its words (lines are added with [+] first)."""
+    line = dialog.lines.line(number)
+    line.part.setCurrentIndex(line.part.findData(part))
+    line.kind.setCurrentIndex(line.kind.findData(kind))
+    line.text.setText(text)
+
+
+def choose_days(row: DateRow, choice: str, first: QDate | None = None, last: QDate | None = None) -> None:
+    for day, edit in ((first, row.first_day), (last, row.last_day)):
+        if day is not None:
+            edit.setDate(day)
+    row.choice.setCurrentIndex(row.choice.findData(choice))
 
 
 def test_the_dialog_collects_its_fields(qtbot: QtBot) -> None:
-    dialog = AdvancedSearchDialog()
+    dialog = AdvancedSearchDialog(today=date(2026, 10, 28))
     qtbot.addWidget(dialog)
     assert dialog.search() == AdvancedSearch()
-    dialog.all_words.setText("budget")
-    dialog.from_words.setText("ann")
-    dialog.none_words.setText("draft")
-    dialog.received.use_from.setChecked(True)
-    dialog.received.day_from.setDate(QDate(2026, 2, 1))
-    dialog.received.use_to.setChecked(True)
-    dialog.received.day_to.setDate(QDate(2026, 3, 31))
+    set_line(dialog, 0, "anywhere", "all", "budget")
+    dialog.lines.line(0).add.click()
+    set_line(dialog, 1, "from", "all", "ann")
+    dialog.lines.line(1).add.click()
+    set_line(dialog, 2, "anywhere", "none", "draft")
+    choose_days(dialog.received, "between", QDate(2026, 2, 1), QDate(2026, 3, 31))
+    choose_days(dialog.sent, "last7")
     dialog.minimum_size.setValue(2)
     dialog.maximum_size.setValue(500)
     dialog.unread.setChecked(True)
     dialog.scope.setCurrentIndex(2)
-    assert "from:ann" in dialog.preview.text()
+    assert dialog.preview.text() == "Search words: budget from:ann -draft"
     found = dialog.search()
-    assert found == AdvancedSearch("budget from:ann -draft", SearchScope.ALL, True, False, False, "2026-02-01", "2026-03-31", 2048, 512000)
+    assert found == AdvancedSearch(
+        "budget from:ann -draft", SearchScope.ALL, True, False, False, "2026-02-01", "2026-03-31", 2048, 512000, sent_from="2026-10-22", sent_to="2026-10-28",
+    )
     assert found.extra_filters and not AdvancedSearch("x").extra_filters
-
 
 def test_a_view_with_dates_or_sizes_asks_for_them(world: World) -> None:
     model = MessageListModel(world.backend)
@@ -83,10 +96,10 @@ def test_the_window_runs_an_advanced_search_and_clears_it(world: World, qtbot: Q
     wait(qtbot, lambda: world.window.list_model.rowCount() == 6)
 
     def fake_exec(self: AdvancedSearchDialog) -> QDialog.DialogCode:
-        self.any_words.setText("cats dogs")
-        self.none_words.setText("only")
-        self.received.use_from.setChecked(True)
-        self.received.day_from.setDate(QDate(2026, 1, 1))
+        set_line(self, 0, "anywhere", "any", "cats dogs")
+        self.lines.line(0).add.click()
+        set_line(self, 1, "anywhere", "none", "only")
+        choose_days(self.received, "after", QDate(2025, 12, 31))
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(AdvancedSearchDialog, "exec", fake_exec)
@@ -107,8 +120,7 @@ def test_changing_folder_drops_the_advanced_dates(world: World, qtbot: QtBot, mo
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
 
     def fake_exec(self: AdvancedSearchDialog) -> QDialog.DialogCode:
-        self.received.use_to.setChecked(True)
-        self.received.day_to.setDate(QDate(2001, 1, 1))
+        choose_days(self.received, "before", last=QDate(2001, 1, 2))
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(AdvancedSearchDialog, "exec", fake_exec)
@@ -201,7 +213,7 @@ def test_the_window_searches_a_folder_and_its_subfolders(world: World, qtbot: Qt
 
     def fake_exec(self: AdvancedSearchDialog) -> QDialog.DialogCode:
         opened_on.append(SearchScope(self.scope.currentData()))
-        self.all_words.setText("Message")
+        set_line(self, 0, "anywhere", "all", "Message")
         self.scope.setCurrentIndex(1)
         return QDialog.DialogCode.Accepted
 
@@ -228,30 +240,6 @@ def _labels(dialog: AdvancedSearchDialog, name: str) -> list[str]:
     return found
 
 
-def test_where_to_search_and_the_main_fields_come_first_and_more_opens_wherever_it_is_clicked(qtbot: QtBot) -> None:
-    """D-288: Where to search, Words, From, To, Subject, Body and Received; the rest below More..., a bar that opens and closes
-    wherever it is clicked, its arrow pointing the way it goes."""
-    dialog = AdvancedSearchDialog(tags=["Work", "Home"])
-    qtbot.addWidget(dialog)
-    dialog.show()
-    assert _labels(dialog, "main") == ["Where to search", "Words", "From", "To", "Subject contains", "Body contains", "Received"]
-    assert _labels(dialog, "extra") == [
-        "This exact phrase", "Any of these words", "None of these words", "Sent", "Size", "Only", "Tag", "Snoozed until", "Send at",
-    ]
-    assert dialog.more.text_label.text() == "More..." and dialog.more.arrow.text() == "▾" and not dialog.more_fields.isVisible()
-    for place in (QPoint(dialog.more.width() - 3, dialog.more.height() // 2), QPoint(dialog.more.width() // 2, dialog.more.height() // 2), QPoint(3, 3)):
-        before = dialog.more_fields.isVisible()
-        qtbot.mouseClick(dialog.more, Qt.MouseButton.LeftButton, pos=place)
-        assert dialog.more_fields.isVisible() != before
-        assert dialog.more.arrow.text() == ("▴" if dialog.more_fields.isVisible() else "▾")
-    assert [dialog.tag.itemText(number) for number in range(dialog.tag.count())] == ["No tag chosen", "Work", "Home"]
-    dialog.tag.setCurrentIndex(1)
-    dialog.sent.use_from.setChecked(True)
-    dialog.sent.day_from.setDate(QDate(2026, 4, 1))
-    found = dialog.search()
-    assert found.tag == "Work" and found.sent_from == "2026-04-01" and found.sent_to is None and found.extra_filters
-
-
 def test_snoozed_until_and_send_at_are_greyed_where_such_mail_cannot_be(qtbot: QtBot) -> None:
     """D-288: usable in all folders, in Snoozed (Snoozed until) and in Scheduled or the Outbox (Send at), and in their Favorites
     entries; greyed elsewhere, and a greyed row asks for nothing."""
@@ -269,13 +257,13 @@ def test_snoozed_until_and_send_at_are_greyed_where_such_mail_cannot_be(qtbot: Q
     for role, combined, scope, snoozed, send_at in cases:
         dialog = AdvancedSearchDialog(scope=scope, folder_role=role, combined=combined)
         qtbot.addWidget(dialog)
-        assert (dialog.snoozed.use_from.isEnabled(), dialog.send_at.use_from.isEnabled()) == (snoozed, send_at), (role, combined, scope)
+        assert (dialog.snoozed.isEnabled(), dialog.send_at.isEnabled()) == (snoozed, send_at), (role, combined, scope)
     dialog = AdvancedSearchDialog(scope=SearchScope.ALL, folder_role="inbox")
     qtbot.addWidget(dialog)
-    dialog.snoozed.use_to.setChecked(True)
+    choose_days(dialog.snoozed, "next7")
     assert dialog.search().snoozed_to is not None
-    dialog.scope.setCurrentIndex(0)  # This folder only: greyed, the tick kept, nothing asked
-    assert not dialog.snoozed.use_to.isEnabled() and dialog.snoozed.use_to.isChecked() and dialog.search().snoozed_to is None
+    dialog.scope.setCurrentIndex(0)  # This folder only: greyed, the choice kept, nothing asked
+    assert not dialog.snoozed.isEnabled() and dialog.snoozed.value().choice == "next7" and dialog.search().snoozed_to is None
 
 
 def test_the_window_passes_the_sent_days_and_the_tag_to_the_list(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -286,9 +274,8 @@ def test_the_window_passes_the_sent_days_and_the_tag_to_the_list(world: World, q
     wait(qtbot, lambda: world.window.list_model.rowCount() == 5)
 
     def fake_exec(self: AdvancedSearchDialog) -> QDialog.DialogCode:
-        self.all_words.setText("cats")
-        self.sent.use_from.setChecked(True)
-        self.sent.day_from.setDate(QDate(2026, 1, 1))
+        set_line(self, 0, "anywhere", "all", "cats")
+        choose_days(self.sent, "after", QDate(2025, 12, 31))
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(AdvancedSearchDialog, "exec", fake_exec)
@@ -299,8 +286,7 @@ def test_the_window_passes_the_sent_days_and_the_tag_to_the_list(world: World, q
     assert {"from", "to", "folder"} <= set(world.window.columns.columns)  # a search of all folders: sent and received mail, and where each is
 
     def tagged_exec(self: AdvancedSearchDialog) -> QDialog.DialogCode:
-        self.tag.addItem("Work", "Work")  # a tag of the window's own would come from the tags kept
-        self.tag.setCurrentIndex(self.tag.count() - 1)
+        self._choose_tag("Work")  # a tag of the window's own would come from the tags kept
         return QDialog.DialogCode.Accepted
 
     monkeypatch.setattr(AdvancedSearchDialog, "exec", tagged_exec)
@@ -308,27 +294,122 @@ def test_the_window_passes_the_sent_days_and_the_tag_to_the_list(world: World, q
     wait(qtbot, lambda: world.window.mail_state.view.tag == "Work" and world.window.filters.button.isChecked())
 
 
-def test_the_lower_fields_line_up_with_the_upper_ones_and_closing_more_gives_the_room_back(qtbot: QtBot) -> None:
-    """D-288: the labels and fields below More... start where those above it do; the window grows when More opens and shrinks back
-    when it closes; it opens with the filters that are on."""
-    dialog = AdvancedSearchDialog(tags=["Work"], marks=(True, False, True, "Work"))
+
+
+def test_the_builder_s_rows_its_lines_and_more(qtbot: QtBot) -> None:
+    """D-289: Saved searches and Where to search, all or any of the lines, Received, then More...; a line starts with Where, the
+    others with and or or; [+] adds a line right below its own; the first line has no [−] but keeps its place, so every [+] is in
+    one column; Tab follows the screen; More... opens and closes wherever it is clicked; the labels are one column."""
+    dialog = AdvancedSearchDialog(marks=(True, False, True, "Work"), tags=["work"])
     qtbot.addWidget(dialog)
     dialog.show()
+    assert _labels(dialog, "main") == ["Saved searches", "Where to search"] and _labels(dialog, "dates") == ["Received"]
+    assert _labels(dialog, "extra") == ["Sent", "Size", "Only", "Tag", "Snoozed until", "Send at"]
+    first = dialog.lines.line(0)
+    assert first.joining.text() == "Where" and first.remove.isHidden() and first.part.currentText() == "Anywhere"
+    assert first.kind.currentText() == "All of these words" and first.text.placeholderText() == "e.g. invoice march"
+    alone = first.add.mapTo(dialog, QPoint(0, 0)).x()
+    first.add.click()
+    first.add.click()  # the second new line comes right below the first, above the other new one
+    set_line(dialog, 1, "from", "any", "ann")
+    qtbot.wait(20)
+    assert [dialog.lines.line(number).joining.text() for number in range(3)] == ["Where", "and", "and"]
+    assert dialog.lines.line(1).text.placeholderText() == "e.g. ann or ann@example.com" and dialog.lines.line(2).text.text() == ""
+    assert {dialog.lines.line(number).add.mapTo(dialog, QPoint(0, 0)).x() for number in range(3)} == {alone}  # one column, [−] or not
+    dialog.match.setCurrentIndex(dialog.match.findData("any"))
+    assert [dialog.lines.line(number).joining.text() for number in range(3)] == ["Where", "or", "or"]
+    order: list[QWidget] = [dialog.lines.line(1).part]
+    walker: QWidget | None = order[0]
+    while len(order) < 6 and walker is not None:  # where Tab stops: the parts that take the keyboard by Tab and are shown
+        walker = walker.nextInFocusChain()
+        if walker is not None and walker.focusPolicy() & Qt.FocusPolicy.TabFocus and walker.isVisible():
+            order.append(walker)
+    second, third = dialog.lines.line(1), dialog.lines.line(2)
+    assert order == [second.part, second.kind, second.text, second.add, second.remove, third.part]
+    dialog.lines.line(2).remove.click()
+    assert dialog.lines.line_count() == 2 and dialog.search().query == "from:ann"
+    set_line(dialog, 0, "anywhere", "any", "x " * 300)  # more combinations than a search takes
+    assert not dialog.search_button.isEnabled() and "Fewer words" in dialog.preview.text()
+    set_line(dialog, 0, "anywhere", "all", "")
+    assert dialog.search_button.isEnabled() and dialog.preview.text() == "Search words: from:ann"
     closed = dialog.height()
-    dialog.more.click()
-    qtbot.wait(20)
-    assert dialog.height() > closed
-    for upper, lower in ((dialog.scope, dialog.phrase), (dialog.all_words, dialog.any_words)):
-        assert upper.mapTo(dialog, QPoint(0, 0)).x() == lower.mapTo(dialog, QPoint(0, 0)).x()
-    upper_label, lower_label = dialog.findChild(QLabel, "scopeLabel"), dialog.findChild(QLabel, "phraseLabel")
-    assert upper_label is not None and lower_label is not None and upper_label.mapTo(dialog, QPoint(0, 0)).x() == lower_label.mapTo(dialog, QPoint(0, 0)).x()
-    dialog.resize(dialog.width() + 80, dialog.height())  # the person makes it wider: that width stays
-    wide = dialog.width()
-    dialog.more.click()
-    qtbot.wait(20)
-    assert dialog.height() == closed and dialog.width() == wide
+    for place in (QPoint(dialog.more.width() - 3, dialog.more.height() // 2), QPoint(3, 3)):
+        before = dialog.more_fields.isVisible()
+        qtbot.mouseClick(dialog.more, Qt.MouseButton.LeftButton, pos=place)
+        assert dialog.more_fields.isVisible() != before and dialog.more.arrow.text() == ("▴" if not before else "▾")
+    assert dialog.height() == closed
+    for upper, lower in (("scopeLabel", "sentLabel"), ("receivedLabel", "tagLabel")):
+        above, below = dialog.findChild(QLabel, upper), dialog.findChild(QLabel, lower)
+        assert above is not None and below is not None and above.mapTo(dialog, QPoint(0, 0)).x() == below.mapTo(dialog, QPoint(0, 0)).x()
     found = dialog.search()
-    assert (found.unread, found.flagged, found.attachments, found.tag) == (True, False, True, "Work")
-    other = AdvancedSearchDialog(tags=["Work"], marks=(False, False, False, "work"))  # the same tag in other letters: not listed twice
-    qtbot.addWidget(other)
-    assert other.tag.count() == 2 and other.search().tag == "Work"
+    assert (found.unread, found.flagged, found.attachments, found.tag) == (True, False, True, "work")  # the filters on, a tag in any letters
+
+
+def test_saving_renaming_deleting_and_resetting_saved_searches(qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-289: Save as asks a name and asks before replacing; Save puts the form over the chosen search; Rename and Delete act on it;
+    Save, Rename and Delete are greyed while none is chosen; Reset empties the form and keeps the saved searches; picking one fills
+    the whole form."""
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    names: list[str] = []
+    questions: list[str] = []
+    answers: list[QMessageBox.StandardButton] = []
+    def name_given(*args: object, **kwargs: object) -> tuple[str, bool]:
+        return names.pop(0), True
+
+    def answered(parent: object, title: str, text: str, *args: object) -> QMessageBox.StandardButton:
+        questions.append(text)
+        return answers.pop(0)
+
+    monkeypatch.setattr(QInputDialog, "getText", name_given)
+    monkeypatch.setattr(QMessageBox, "question", answered)
+    saved = SavedSearches(tmp_path / "saved-searches.json")
+    dialog = AdvancedSearchDialog(saved=saved)
+    qtbot.addWidget(dialog)
+    assert not any(button.isEnabled() for button in (dialog.save_button, dialog.rename_button, dialog.delete_button))
+    assert dialog.save_as_button.isEnabled() and dialog.reset_button.isEnabled() and dialog.saved_choice.placeholderText() == "No saved search chosen"
+    set_line(dialog, 0, "subject", "exact", "monthly invoice")
+    choose_days(dialog.received, "last30")
+    names.append("Invoices")
+    dialog.save_as_button.click()
+    assert dialog.chosen_name() == "Invoices" and dialog.save_button.isEnabled() and questions == []
+    set_line(dialog, 0, "from", "all", "ann")
+    dialog.save_button.click()  # over Invoices
+    stored = saved.form("Invoices")
+    assert stored is not None and stored.lines == (SearchLine("from", "all", "ann"),) and stored.received == DateChoice("last30")
+    names.append("invoices")
+    answers.append(QMessageBox.StandardButton.No)
+    dialog.save_as_button.click()  # the same name in other letters: asked, and kept
+    assert len(questions) == 1 and saved.names() == ["Invoices"]
+    names.append("Bills")
+    dialog.rename_button.click()
+    assert saved.names() == ["Bills"] and dialog.chosen_name() == "Bills"
+    dialog.reset_button.click()
+    assert dialog.lines.lines() == (SearchLine(),) and dialog.received.value() == DateChoice() and dialog.chosen_name() is None
+    assert saved.names() == ["Bills"] and not dialog.delete_button.isEnabled()
+    dialog.saved_choice.setCurrentIndex(0)
+    dialog.saved_choice.activated.emit(0)
+    assert dialog.lines.lines() == (SearchLine("from", "all", "ann"),) and dialog.received.value() == DateChoice("last30")
+    answers.append(QMessageBox.StandardButton.Yes)
+    dialog.delete_button.click()
+    assert saved.names() == [] and dialog.chosen_name() is None and questions[-1] == "Delete the saved search “Bills”?"
+
+
+def test_the_window_opens_as_it_was_last_left_also_after_a_restart(qtbot: QtBot, tmp_path: Path) -> None:
+    """D-289: Search and Close keep the form; the next time (another start too) it opens with it, on the search field's choice of
+    where to search and with the filters that are on now."""
+    path = tmp_path / "saved-searches.json"
+    dialog = AdvancedSearchDialog(saved=SavedSearches(path))
+    qtbot.addWidget(dialog)
+    set_line(dialog, 0, "body", "any", "a b")
+    dialog.match.setCurrentIndex(dialog.match.findData("any"))
+    choose_days(dialog.sent, "this_year")
+    dialog.unread.setChecked(True)
+    dialog.reject()  # Close
+    again = AdvancedSearchDialog(scope=SearchScope.FOLDER, saved=SavedSearches(path))  # a new start reads the file again
+    qtbot.addWidget(again)
+    form = again.current_form()
+    assert form.lines == (SearchLine("body", "any", "a b"),) and form.match == "any" and form.sent == DateChoice("this_year")
+    assert form.scope is SearchScope.FOLDER and not form.unread  # the field's choice and the filters on now
+    assert SavedSearches(path).last == dialog.current_form()
+    assert isinstance(SearchForm(), SearchForm)
