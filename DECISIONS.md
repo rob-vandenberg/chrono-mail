@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-285 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-286 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-286**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-287**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -234,6 +234,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-097** The Message list window has Row height. The search field's ends are round.
 - **D-042** Tray icon with the unread count; close to tray only while the icon is really visible; Quit always quits.
 - **D-284** (the owner) **Settings > General: "Start Chrono Mail when I log in:" with "with the window open" or "with the window minimized"**, between the notification area icon and closing to it; off by default; the choice greyed, never forgotten, while off. The tick is the system's own start-at-login entry (Linux autostart folder, Windows Run list), read when Settings opens and set on OK; switched off in the system's settings, it shows off. Minimized is a minimized window, never the notification area. Greyed in a profile (D-243); the uninstaller removes it on Windows. Why: the system's list is what really happens at login.
+- **D-286** **Wayland never says a window is minimized**, so there a tray click hides Chrono Mail only while its main window, or a dialog waiting for an answer, has the focus; otherwise it brings the window back and to the front (shown again), as a second start does. Never shown again under a dialog waiting for an answer. X11 and Windows unchanged. Why: the first click on a minimized window hid it, and a second start could not bring it back. Known limit: minimized together with an open dialog, the taskbar brings it back.
 - **D-041** Empty password fields keep the stored password; validation before storing. The signature is plain text after `-- `.
 - **D-057** Settings is one window with a page list; OK applies only what changed.
 - **D-213** (R-13) **Settings OK takes into use only what changed**; nothing without a change. The list holds every column and shows or hides them, so a column change keeps the selection. Rejected: inserting and removing model columns (the selection breaks).

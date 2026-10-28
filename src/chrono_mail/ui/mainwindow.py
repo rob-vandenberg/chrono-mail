@@ -63,9 +63,12 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.402"
+__version__ = "mainwindow.py 4.2.405"
 
 # --- Version history ----------------------------------------------------
+# v4.2.405: Wayland: a tray click hides the window only while it or one of its dialogs has the focus, else brings it back; a second
+#           start brings it back and to the front (shown again, never while a dialog waits for an answer or while it has the focus):
+#           Wayland never says a window is minimized (D-286)
 # v4.2.402: the start at login with the window minimized (start_minimized, D-284); the window opened from the tray or by a second
 #           start keeps being maximized (it lost it after a minimize); a recovery code or the first account asked at a minimized start
 #           opens the window first, so the question is seen; on Wayland, which never says whether a window is minimized, the window
@@ -858,7 +861,12 @@ class MainWindow(QMainWindow):
             self._quitting = False
 
     def toggle_visibility(self) -> None:
-        if self.isVisible() and not self.isMinimized() and not self.out_of_sight:
+        """A click on the tray icon: hide the window that is in sight, else bring it back. Wayland never says a window is minimized
+        (Qt reports it as not minimized at once), so there it counts as in sight only while it, or a dialog waiting for an answer, has the focus (D-286)."""
+        in_sight = self.isVisible() and not self.isMinimized() and not self.out_of_sight
+        modal = QApplication.activeModalWidget()  # the last dialog opened that waits for an answer, whether it has the focus or not
+        in_use = self.isActiveWindow() or (modal is not None and modal.isActiveWindow())  # never another window of the program (a message window)
+        if in_sight and (in_use or not on_wayland()):
             self.hide()
         else:
             self.open_window()
@@ -869,14 +877,19 @@ class MainWindow(QMainWindow):
 
     def open_window(self) -> None:
         """Show the window as it was before it was minimized or hidden (a maximized one stays maximized), raised, with the focus."""
-        if self.out_of_sight:
-            self.hide()  # Wayland: a minimized window comes back only by being shown again
+        modal = QApplication.activeModalWidget()  # a dialog waiting for an answer stays in front of its window; it is never hidden (that answers it)
+        dialog_in_use = modal is not None and modal.isActiveWindow()
+        if on_wayland() and self.isVisible() and not dialog_in_use and not self.isActiveWindow():
+            self.hide()  # Wayland: a window that may be minimized comes back only by being shown again (D-286)
         self.out_of_sight = False
         if self.isMinimized():
             self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized)
         self.show()
         self.raise_()
         self.activateWindow()
+        if modal is not None:
+            modal.raise_()
+            modal.activateWindow()
 
     def start_minimized(self) -> None:
         """The start at login with the window minimized (D-284): minimized from its first moment; a maximized one stays maximized when opened."""

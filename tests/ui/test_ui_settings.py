@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QDialog, QFormLayout, QHBoxLayout, QGroupBox, QLabel, QLineEdit, QMessageBox
@@ -14,9 +16,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 4.2.402"
+__version__ = "test_ui_settings.py 4.2.405"
 
 # --- Version history ----------------------------------------------------
+# v4.2.405: the row test of the start at login is Pyrefly-clean (a position of the form is typed as object)
 # v4.2.402: General: Start Chrono Mail when I log in, with the window open or minimized (D-284)
 # v4.0.374: a closed Settings window is deleted (every opening kept one in memory); it is not closed while it removes an account; a
 #           rebuild that ends after it closed writes nothing into it
@@ -396,7 +399,7 @@ def test_the_start_at_login_sits_between_the_icon_and_closing_to_the_icon(world:
     form = page.layout() if page is not None else None
     row_layout = page.findChild(QHBoxLayout, "startAtLoginRow") if page is not None else None
     assert isinstance(form, QFormLayout) and row_layout is not None
-    rows = [form.getWidgetPosition(dialog.tray)[0], form.getWidgetPosition(dialog.close_to_tray)[0]]
+    rows = [cast(tuple[int, QFormLayout.ItemRole], form.getWidgetPosition(part))[0] for part in (dialog.tray, dialog.close_to_tray)]  # PySide6 types it as object
     row = form.getLayoutPosition(row_layout)[0]
     assert rows[0] < row < rows[1]
     assert dialog.start_at_login.text() == "Start Chrono Mail when I log in:"

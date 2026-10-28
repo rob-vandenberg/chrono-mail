@@ -1,7 +1,9 @@
+from typing import override
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QDialog, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QSystemTrayIcon, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import mainwindow
@@ -13,9 +15,11 @@ from tests.mailfactory import raw_message
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tray.py 4.2.404"
+__version__ = "test_ui_tray.py 4.2.405"
 
 # --- Version history ----------------------------------------------------
+# v4.2.405: Wayland (simulated): a tray click brings back a window without the focus and hides one with it (or with a dialog that has
+#           it); a second start shows the window again, never under its dialog nor while it has the focus (D-286)
 # v4.2.404: a maximized window closed to the tray comes back maximized from the tray icon (the owner's report from Windows)
 # v4.2.402: a window minimized while maximized is opened maximized again, from the tray and by a second start; a recovery code or
 #           the first account asked at a minimized start opens the window first; a window started out of sight (Wayland says nothing
@@ -201,8 +205,9 @@ def test_a_window_started_minimized_is_opened_by_the_tray_also_when_the_desktop_
     window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)  # Wayland: the window never hears it is minimized
     window.toggle_visibility()
     assert window.isVisible() and not window.out_of_sight  # opened, not hidden
+    given_focus(monkeypatch, window, True)  # the person works in it
     window.toggle_visibility()
-    assert not window.isVisible()  # opened, the next click hides it as always
+    assert not window.isVisible()  # opened and in use, the next click hides it as always (D-286)
 
 
 def test_the_first_account_asked_at_a_minimized_start_opens_the_window_first(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -229,4 +234,110 @@ def test_a_maximized_window_closed_to_the_tray_comes_back_maximized(shown: list[
     assert not event.isAccepted() and not window.isVisible()  # in the notification area
     window.tray._activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001 - a click on the tray icon, as the tray reports it
     assert window.isVisible() and window.isMaximized()
+
+
+def has_the_focus(window: MainWindow) -> bool:
+    return True
+
+
+def has_no_focus(window: MainWindow) -> bool:
+    return False
+
+
+def given_focus(monkeypatch: pytest.MonkeyPatch, window: MainWindow, focus: bool) -> None:
+    """Whether the window (and so the program) has the focus, as the desktop would say it."""
+    monkeypatch.setattr(MainWindow, "isActiveWindow", has_the_focus if focus else has_no_focus)
+    active: QWidget | None = window if focus else None
+    monkeypatch.setattr(QApplication, "activeWindow", staticmethod(lambda: active))
+
+
+def on_wayland_with_focus(monkeypatch: pytest.MonkeyPatch, window: MainWindow, focus: bool) -> list[str]:
+    """Wayland simulated: the window says it is not minimized, as Qt reports it there; whether it has the focus is given. Returns the
+    calls to hide and show, in order."""
+    monkeypatch.setattr(mainwindow, "on_wayland", lambda: True)
+    given_focus(monkeypatch, window, focus)
+    calls: list[str] = []
+    real_hide, real_show = MainWindow.hide, MainWindow.show
+
+    def hide(self: MainWindow) -> None:
+        calls.append("hide")
+        real_hide(self)
+
+    def show(self: MainWindow) -> None:
+        calls.append("show")
+        real_show(self)
+
+    monkeypatch.setattr(MainWindow, "hide", hide)
+    monkeypatch.setattr(MainWindow, "show", show)
+    return calls
+
+
+def test_on_wayland_a_tray_click_brings_back_a_window_without_the_focus(shown: list[tuple[str, str]], world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.show()  # minimized by the person: Wayland still reports it visible and not minimized
+    calls = on_wayland_with_focus(monkeypatch, window, focus=False)
+    window.tray._activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001 - a click on the tray icon
+    assert window.isVisible() and calls == ["hide", "show"]  # shown again: the only way back from minimized on Wayland
+
+
+def test_on_wayland_a_tray_click_hides_the_window_that_has_the_focus(shown: list[tuple[str, str]], world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.show()
+    on_wayland_with_focus(monkeypatch, window, focus=True)
+    window.tray._activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001
+    assert not window.isVisible()
+
+
+def test_on_wayland_a_second_start_brings_the_window_back(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.show()
+    calls = on_wayland_with_focus(monkeypatch, window, focus=False)
+    window.bring_forward()
+    assert window.isVisible() and calls == ["hide", "show"]
+
+
+class DialogWithTheFocus(QDialog):
+    """Settings, Import or a question, open and with the focus, as the desktop would say it."""
+
+    @override
+    def isActiveWindow(self) -> bool:  # noqa: N802 - Qt's name
+        return True
+
+
+def test_on_wayland_a_dialog_with_the_focus_keeps_its_window_where_it_is(shown: list[tuple[str, str]], world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.show()
+    dialog = DialogWithTheFocus(window)
+    calls = on_wayland_with_focus(monkeypatch, window, focus=False)
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: dialog))
+    window.bring_forward()
+    assert window.isVisible() and "hide" not in calls  # never shown again under its dialog
+    window.tray._activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001 - the program is in use: the click hides it, as everywhere
+    assert not window.isVisible()
+
+
+def test_on_wayland_a_window_whose_dialog_has_no_focus_is_brought_back(shown: list[tuple[str, str]], world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.show()  # minimized with Settings open, or behind another program
+    dialog = QDialog(window)  # open, without the focus (never shown here: its isActiveWindow is False)
+    calls = on_wayland_with_focus(monkeypatch, window, focus=False)
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: dialog))
+    window.tray._activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001
+    assert window.isVisible() and calls == ["hide", "show"]  # brought back, never hidden by the click; the dialog itself is never hidden
+
+
+def test_on_wayland_a_window_with_the_focus_is_only_raised(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.show()
+    calls = on_wayland_with_focus(monkeypatch, window, focus=True)
+    window.bring_forward()
+    assert window.isVisible() and "hide" not in calls  # no flicker
+
+
+def test_on_wayland_a_tray_click_brings_the_window_back_from_behind_another_window_of_the_program(shown: list[tuple[str, str]], world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    window = world.window
+    window.show()  # minimized; the person works in a message window
+    calls = on_wayland_with_focus(monkeypatch, window, focus=False)
+    window.tray._activated(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001 - the main window has no focus: another window of the program has it
+    assert window.isVisible() and calls == ["hide", "show"]  # brought back, never hidden by the first click
 
