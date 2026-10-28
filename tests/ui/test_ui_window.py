@@ -12,6 +12,7 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.config import ServerRole
 from chrono_mail.engine.commands_sidebar import FAVORITE_PIN, PinParameters
 from chrono_mail.engine.registry import UsageError
+from chrono_mail.store import Store
 from chrono_mail.ui.sections import CALENDAR, MAIL
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.backend import Failure, Success
@@ -22,9 +23,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 4.2.399"
+__version__ = "test_ui_window.py 4.2.403"
 
 # --- Version history ----------------------------------------------------
+# v4.2.403: a folder that was only the parent of others is renamed from its right-click menu (D-285)
 # v4.2.399: a top row's menu has no Rename or Delete folder; a standard folder's are greyed
 # v4.2.398: New folder and Rename folder type only the name; a name with / is refused
 # v3.6.369: Not junk shows the junk key in its text
@@ -1394,3 +1396,19 @@ def test_the_count_line_says_one_message_not_one_messages(world: World, qtbot: Q
     assert world.window.count_label.text() == "1 message, 1 unread"
     world.window.messages._counts_changed(2, 0)  # noqa: SLF001
     assert world.window.count_label.text() == "2 messages"
+
+
+def test_a_folder_that_was_only_a_parent_is_renamed_from_its_menu(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = world.engine
+    old = Store.open(engine.store_directory(engine.resolve_account(world.account_id)), engine.data_key(engine.config()), durable=False)
+    old.create_folder(("@acme", "admin@example.nl"))  # as an import made it before 4.2.403: @acme only implied by its subfolder
+    started(qtbot, world)
+    wait(qtbot, lambda: world.window.folders.find_item((world.account_id, "folder", "@acme")) is not None)  # noqa: SLF001
+    parent = world.window.folders.find_item((world.account_id, "folder", "@acme"))  # noqa: SLF001
+    assert parent is not None
+    world.window.tree.setCurrentIndex(parent)
+    assert world.window.act_rename_folder.isEnabled()
+    answer_input(monkeypatch, [("@example", True)])
+    world.window.act_rename_folder.trigger()
+    wait(qtbot, lambda: world.window.folders.find_item((world.account_id, "folder", "@example/admin@example.nl")) is not None)  # noqa: SLF001
+    assert world.window.folders.find_item((world.account_id, "folder", "@acme")) is None  # noqa: SLF001

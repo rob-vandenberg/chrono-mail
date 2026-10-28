@@ -32,9 +32,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 3.6.354"
+__version__ = "session.py 4.2.403"
 
 # --- Version history ----------------------------------------------------
+# v4.2.403: mail kept on this computer: a folder that is only the parent of others becomes a folder of its own when the store opens (D-285)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.353: IndexGate keeps one connection to the index open between commands, let go before a replace or removal: closing the last one wrote the whole change log back, 18 ms of every 23 ms Delete (D-266)
 # v3.6.350: sent_unfiled: the messages the server took in this run whose move to Sent is left (never sent again, also on a full disk)
@@ -550,7 +551,10 @@ class Engine:
         store = Store.open(self.store_directory(settings), key, durable=self.durable)
         if store.damaged_folders:
             store.merge_duplicate_folders()  # folders made twice by commands that ran at the same time (before 0.2.101)
-        store.make_own_parents()  # Recovered only the parent of the recovered folders: a folder of its own, with its role (CR-36)
+        if settings.account.kind is AccountKind.IMAP:
+            store.make_own_parents()  # Recovered only the parent of the recovered folders: a folder of its own, with its role (CR-36)
+        else:
+            store.make_parents_real()  # mail kept here: every folder that is only a parent becomes a folder of its own (D-285); the server decides for IMAP
         return store
 
     def open_index(self, settings: AccountSettings, store: Store) -> Index:

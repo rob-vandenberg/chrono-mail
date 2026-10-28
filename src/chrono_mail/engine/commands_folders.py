@@ -13,9 +13,10 @@ from chrono_mail.mime import parse_message
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 3.6.354"
+__version__ = "commands_folders.py 4.2.403"
 
 # --- Version history ----------------------------------------------------
+# v4.2.403: folder.delete refuses a folder with subfolders unless they go too (they would be left inside a folder that is gone, D-285)
 # v3.6.354: A standard folder (any folder with a role) is never deleted, also not inside a folder that is; no longer six English names (CR-36)
 # v3.6.349: a folder with its subfolders is deleted only when none of them holds mail on the server this computer never had: never half-way (RV-176)
 # v2.5.335: index.prepare tells how many messages it indexed (it always said 0: the index window's report read "0 messages indexed")
@@ -111,6 +112,8 @@ def folder_delete(engine: Engine, parameters: FolderDeleteParameters) -> FolderD
         standard = next((path for path in sorted(targets, key=len) if roles.get(path, FolderRole.OTHER) is not FolderRole.OTHER), None)
         if standard is not None:  # known by its role, whatever its name (CR-36): deleting it would break sending, Trash or Junk
             raise UsageError(f"The standard folder “{'/'.join(standard)}” cannot be deleted")
+        if not parameters.include_subfolders and any(len(info.path) > len(folder) and info.path[: len(folder)] == folder for info in mailbox.folders()):
+            raise UsageError("The folder has subfolders: delete it with its subfolders")  # they would be left inside a folder that is gone, which comes back empty (D-285)
         if not parameters.with_messages:
             for path in targets:
                 if mailbox.store.list_messages(path):

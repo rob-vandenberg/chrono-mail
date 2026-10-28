@@ -19,9 +19,12 @@ from chrono_mail.core.folder import OWN_FOLDERS, own_role
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 3.6.354"
+__version__ = "store.py 4.2.403"
 
 # --- Version history ----------------------------------------------------
+# v4.2.403: make_parents_real: a folder that is only the parent of others becomes a folder of its own (D-285); a rename takes the
+#           folder lock, refuses a move into itself, and (noted: mail kept here) keeps RENAME_NOTE while its folders move:
+#           finish_rename_under_way finishes an interrupted one at the next opening; RenameRefused: refused before anything was written
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) carry their role: given when made, once to the ones made
 #           before, and by a rename to the folder that takes their place; one of them that is only the parent of others is made a folder (CR-36)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash; folder_description: one way to read
@@ -64,6 +67,12 @@ Checkpoint = Callable[[str], None]
 _FOLDER_LOCKS: dict[str, threading.RLock] = {}
 _FOLDER_LOCKS_GUARD = threading.Lock()
 
+
+class RenameRefused(StorageError):
+    """A folder rename refused before anything was written (no such folder, the new path taken, into itself)."""
+
+
+RENAME_NOTE: str = "folder-rename"  # a private note: the rename of mail kept here that is under way (old and new path), D-285
 
 def _folder_lock(root: Path) -> threading.RLock:
     """One lock per store for changes to its list of folders: commands of this program that run at the same time take turns."""
@@ -235,6 +244,62 @@ class Store:
         if RECOVERED_PATH in self.virtual_parent_paths():
             self.ensure_folder(RECOVERED_PATH)
 
+    def _rename_note_left(self) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+        """The rename named by RENAME_NOTE (old, new); None when there is none. A note that cannot be read is dropped: it names
+        nothing that can be finished, and the folders stay exactly as they are."""
+        try:
+            data = json.loads(self.read_private(RENAME_NOTE) or "null")
+            if data is None:
+                return None
+            old, new = tuple(str(part) for part in data["old"]), tuple(str(part) for part in data["new"])
+            if old and new:
+                return old, new
+        except (StorageError, ValueError, KeyError, TypeError):
+            pass
+        self._drop_rename_note()
+        return None
+
+    def _drop_rename_note(self) -> None:
+        try:
+            self.drop_private(RENAME_NOTE)
+        except StorageError:
+            pass  # left: finishing it again later changes nothing
+
+    def finish_rename_under_way(self) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+        """A rename that was interrupted (the program stopped halfway) is finished; returns it (old, new) so the index can follow, None
+        when none was under way or it could not be finished now. Refused (its folder gone meanwhile): forgotten, nothing moves. Another
+        failure (a full disk): the note stays and it is tried again at the next opening (D-285)."""
+        with _folder_lock(self.root):
+            under_way = self._rename_note_left()
+            if under_way is None:
+                return None
+            self.refresh()
+            try:
+                self._move_folders(self._rename_moves(*under_way))
+            except RenameRefused:
+                self._drop_rename_note()
+                return None
+            except StorageError:
+                return None
+            self._drop_rename_note()
+            return under_way
+
+    def make_parents_real(self) -> None:
+        """Every folder that is only the parent of others (made by an import, or by a folder made inside it before 4.2.403) becomes
+        a folder of its own, empty, so it is a normal folder like every other: it holds mail, is renamed and deleted (D-285).
+        Only for mail kept on this computer: in an IMAP account the server decides which folders exist (D-193). Each folder is
+        made in one atomic step; an interruption or a failure (a full disk) leaves the rest for the next opening, and never stops
+        the account from opening."""
+        with _folder_lock(self.root):  # never from a stale view of the folders while a rename runs
+            self.refresh()
+            if self._private_path(RENAME_NOTE).exists():
+                return  # a rename under way leaves its new parent implied until it is finished (finish_rename_under_way)
+            try:
+                for path in sorted(self.virtual_parent_paths(), key=len):
+                    self.ensure_folder(path)
+            except StorageError:
+                pass  # tried again at the next opening
+
     def list_folders(self) -> list[Folder]:
         return sorted((entry.folder for entry in self._folders.values()), key=lambda folder: folder.path)
 
@@ -332,18 +397,57 @@ class Store:
             self.refresh()
         return moved
 
-    def rename_folder(self, old: tuple[str, ...], new: tuple[str, ...]) -> None:
-        """Rename a folder and everything below it. Safe to repeat after an interruption."""
+    def rename_folder(self, old: tuple[str, ...], new: tuple[str, ...], noted: bool = False) -> None:
+        """Rename a folder and everything below it. Safe to repeat after an interruption. Noted (mail kept on this computer, D-285):
+        RENAME_NOTE is written after the checks and dropped when every folder has its new path, so an interrupted rename is finished
+        at the next opening; refused while an earlier one could not be finished yet. An IMAP account's renames are followed by the
+        synchronisation instead (D-193)."""
         Folder(self.account_id, new, FolderRole.OTHER)  # validates the new path
+        if new[: len(old)] == old:
+            raise RenameRefused("A folder cannot be moved into itself")
+        with _folder_lock(self.root):  # one rename at a time, and another command's opening never makes the new parent while it is only implied here
+            self.refresh()
+            if noted:
+                self._earlier_rename_first()  # its note is never replaced
+            moves = self._rename_moves(old, new)  # every refusal before anything is written
+            if not moves:
+                return  # an interrupted rename that had in fact finished: repeating it is harmless
+            if noted:
+                self.write_private(RENAME_NOTE, json.dumps({"old": list(old), "new": list(new)}))
+            self._move_folders(moves)
+            if noted:
+                self._drop_rename_note()
+
+    def _earlier_rename_first(self) -> None:
+        """Before a noted rename: an earlier one that could not be finished yet is tried once more. Refused (its folder gone): forgotten.
+        Still failing: refused with the real cause. Finished here: refused all the same, as the index has yet to follow at the next
+        opening (finish_rename_under_way names it once more and moves nothing)."""
+        earlier = self._rename_note_left()
+        if earlier is None:
+            return
+        try:
+            self._move_folders(self._rename_moves(*earlier))
+        except RenameRefused:
+            self._drop_rename_note()
+            return
+        except StorageError as error:
+            raise StorageError(f"An earlier rename of a folder could not be finished: {error}") from None
+        raise StorageError("An earlier rename of a folder was just finished: try again")
+
+    def _rename_moves(self, old: tuple[str, ...], new: tuple[str, ...]) -> dict[tuple[str, ...], tuple[str, ...]]:
+        """Each folder of the rename with its new path; empty when it is done already. Refused before anything is written."""
         affected = sorted(path for path in self._folders if path[: len(old)] == old)
         if not affected:
             if any(path[: len(new)] == new for path in self._folders):
-                return  # an interrupted rename that had in fact finished: repeating it is harmless
-            raise StorageError("Folder not found")
+                return {}
+            raise RenameRefused("Folder not found")
         moves = {path: new + path[len(old) :] for path in affected}
         for target in moves.values():
             if target in self._folders and target not in moves:
-                raise StorageError("A folder with the new path already exists")
+                raise RenameRefused("A folder with the new path already exists")
+        return moves
+
+    def _move_folders(self, moves: dict[tuple[str, ...], tuple[str, ...]]) -> None:
         for source, target in sorted(moves.items(), key=lambda item: len(item[0]), reverse=True):
             entry = self._folders[source]
             kept = FolderRole.OTHER if entry.folder.role in OWN_FOLDERS else entry.folder.role  # the role goes with the place for Chrono Mail's own

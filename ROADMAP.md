@@ -204,6 +204,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.396) A right-click on a link of a message offers Copy link address (D-281); Settings > Message list: Remove messages from Unread when I mark them as read, off by default (D-282).
 - DONE (4.0.378) Forms batch 4: the event, task and contact editors, New calendar and Event colours are Qt Designer forms; every dialog is a form (D-276).
 - DONE (4.2.402) Settings > General: Start Chrono Mail when I log in, with the window open or minimized (D-284).
+- DONE (4.2.403) A folder that was only the parent of others is a normal folder: it holds mail, is renamed and deleted (D-285).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

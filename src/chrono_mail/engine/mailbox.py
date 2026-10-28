@@ -32,9 +32,11 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 3.6.366"
+__version__ = "mailbox.py 4.2.403"
 
 # --- Version history ----------------------------------------------------
+# v4.2.403: a folder made here inside folders that are not there yet makes them first, each a folder of its own, told (D-285);
+#           an interrupted folder rename is finished at the next opening, the index following
 # v3.6.366: deliver keeps a given id; deliver_moved: a message moved here from another account, under its own id, never stored twice (D-272)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS); Rename never renames one of
 #           them nor gives another folder one of their names, refused before the server is asked (CR-36)
@@ -941,6 +943,10 @@ class Mailbox:
         """The folder with this path, made when there is none (and whether it was made): on the server first."""
         if len(path) > 1 and path[:1] == OWN_FOLDERS[FolderRole.RECOVERED]:
             self._made(self.store.ensure_folder(path[:1]))  # Recovered itself first, told, so the folder list knows its role (CR-36)
+        if not is_imap(self.settings):  # mail kept here: the folders above it are folders of their own first (D-285); the server decides for IMAP
+            Folder(self.store.account_id, path, role)  # a name that cannot be used is refused before any folder above it is made
+            for length in range(1, len(path)):
+                self._made(self.store.ensure_folder(path[:length]))
         if self._on_server(path) and path not in {folder.path for folder in self.store.list_folders()}:
             Folder(self.store.account_id, path, role)  # a name that cannot be used is refused before the server is asked
             with self._server() as server:
@@ -962,11 +968,15 @@ class Mailbox:
 
     def rename_folder(self, old: tuple[str, ...], new: tuple[str, ...]) -> None:
         """Rename a folder and everything below it; in an IMAP account on the server first, and only while it can be reached."""
+        if new == old:
+            return  # nothing to rename
+        if new[: len(old)] == old:
+            raise UsageError("A folder cannot be moved into itself")  # before the server is asked
         known = self.store.list_folders()
         if new in OWN_FOLDERS.values() or any(folder.path[: len(old)] == old and folder.role in OWN_FOLDERS for folder in known):
             raise UsageError("Chrono Mail's own folders keep their names, and no other folder takes one of them")  # before the server is asked (CR-36)
         if not self._on_server(old):
-            self.store.rename_folder(old, new)
+            self.store.rename_folder(old, new, noted=not is_imap(self.settings))  # mail kept here: an interruption is finished at the next opening
             self.index.rename_folder(old, new)
             self._tell(Change("folder_renamed", self._place, "/".join(old), to_folder="/".join(new)))
             return
@@ -981,6 +991,20 @@ class Mailbox:
             self.index.rename_folder(old, new)
             commit()
         self._tell(Change("folder_renamed", self._place, "/".join(old), to_folder="/".join(new)))
+
+    def finish_interrupted_rename(self) -> None:
+        """A folder rename that was interrupted (the program stopped halfway) is finished in the store, and the index follows, before
+        anything else; then the folders that are only parents become folders of their own (D-285)."""
+        finished = self.store.finish_rename_under_way()
+        if finished is not None:
+            old, new = finished
+            try:
+                self.index.rename_folder(old, new)
+            except StorageError:
+                pass  # the index is never the truth: Repair the search index puts it right
+            self._tell(Change("folder_renamed", self._place, "/".join(old), to_folder="/".join(new)))
+        if not is_imap(self.settings):
+            self.store.make_parents_real()
 
     def refuse_unseen(self, paths: list[tuple[str, ...]]) -> None:
         """Before several folders are deleted: refused, with nothing deleted, when one of them holds mail on the server this computer never
@@ -1072,6 +1096,7 @@ def open_mailbox(engine: Engine, account: str) -> Generator[Mailbox]:
     settle_old_files(engine, storage, store, index)  # once per run: the side files of before 1.1.206 move into the messages and their properties
     mailbox = Mailbox(engine, settings, store, index)
     try:
+        mailbox.finish_interrupted_rename()  # before anything looks at the folders (D-285)
         yield mailbox
     finally:
         mailbox.let_go()  # a change that failed between its index write and its fact never keeps the lock
