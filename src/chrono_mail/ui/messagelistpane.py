@@ -14,6 +14,7 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columnfit import MINIMUM_ICON
 from chrono_mail.ui.columns import SAVED_LABEL
 from chrono_mail.ui.columnsetup import STARTING, folder_type
+from chrono_mail.ui.advancedsearch import SearchScope
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.delegate import ColumnDelegate, MessageDelegate
 from chrono_mail.ui.elidedlabel import ElidedLabel
@@ -27,9 +28,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.396"
+__version__ = "messagelistpane.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: a search with This folder + subfolders asks for the folder and every folder inside it; a folder fact that changes what the
+#           view holds fetches it again through refetch, once, one at a time (D-287)
 # v4.2.396: reads_away: Remove messages from Unread when I mark them as read is on and the list shows only unread mail (D-282)
 # v4.1.383: the messages Undo brought back are selected also when they come back as a new order whose rest comes later, loaded or not,
 #           also in a Favorites view (D-266)
@@ -187,6 +190,7 @@ class MessageListPane(QObject):
         self.actions: Callable[[], int] = lambda: 0  # how many actions the person made so far (Undoing gives it): whether one gave a command
         self._selection_unknown: bool = False  # the selection held places not known yet when the list was last laid out again
         self.model.placed.connect(self._placed)
+        self.model.refetch_wanted.connect(self.refetch)
         self.model.placed.connect(self._rows_check.start)  # the Archive or Unarchive label counts every selected message then
         self.model.modelReset.connect(lambda: self._places_lost(LOST_PLACES, reset=True))  # another view: what was selected is gone, its actions too
         self.model.places_lost.connect(self._places_lost)
@@ -282,16 +286,17 @@ class MessageListPane(QObject):
                 combined=view.combined, combined_accounts=view.combined_accounts, combined_tag=view.combined_tag or None, tag=view.tag,
             )
         folder = view.folder
-        if (query or advanced is not None) and view.all_folders:
+        if view.searching and view.scope is SearchScope.ALL:
             folder = None
         elif view.kind in (EntryKind.UNREAD, EntryKind.FLAGGED):
             folder = None
+        subfolders = folder is not None and view.searching and view.scope is SearchScope.SUBFOLDERS
         grouped = self._conversations_on() and view.kind == EntryKind.FOLDER and not (query or unread or flagged or attachments or view.advanced is not None)
         return ViewSpec(
             view.account, folder, query, self.effective_sort(), self.oldest_first, unread, flagged, attachments,
             date_from=advanced.date_from if advanced else None, date_to=advanced.date_to if advanced else None,
             minimum_size=advanced.minimum_size if advanced else None, maximum_size=advanced.maximum_size if advanced else None,
-            conversations=grouped and view.tag is None, tag=view.tag,
+            conversations=grouped and view.tag is None, tag=view.tag, subfolders=subfolders,
         )
 
     def apply_view(self) -> None:

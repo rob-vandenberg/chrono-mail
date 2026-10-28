@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
-from chrono_mail.ui.advancedsearch import AdvancedSearch
+from chrono_mail.ui.advancedsearch import AdvancedSearch, SearchScope
 
 # --- Version ------------------------------------------------------------
-__version__ = "currentview.py 1.5.256"
+__version__ = "currentview.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: where the search looks is one of three (scope: this folder only, with its subfolders, all folders, D-287)
 # v1.5.256: What the message list shows, kept as one value (R-14): the entry of the folder list, the search that was run, where it
 #           looks, Advanced search and the filters; the kinds of entry by name (EntryKind)
 
@@ -42,12 +43,17 @@ class CurrentView:
     combined_accounts: tuple[str, ...] = ()  # the accounts of the group whose All Inboxes is shown
     combined_tag: str = ""  # the tag of a Tags entry
     query: str = ""  # the search that was run (Enter, the history, Advanced search); text being typed is not part of it
-    all_folders: bool = False  # the search looks in every folder of the account
+    scope: SearchScope = SearchScope.FOLDER  # where the search looks: the folder, the folder and those inside it, or every folder of the account
     advanced: AdvancedSearch | None = None  # Advanced search with days or sizes
     unread: bool = False  # Filter > Unread
     flagged: bool = False  # Filter > Flagged
     attachments: bool = False  # Filter > With attachments
     tag: str | None = None  # Filter > Tagged with
+
+    @property
+    def searching(self) -> bool:
+        """A search is shown (words, or Advanced search with days or sizes): only then does the scope matter."""
+        return bool(self.query or self.advanced is not None)
 
     @property
     def filtered(self) -> bool:

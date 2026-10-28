@@ -5,9 +5,10 @@ from enum import Enum
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 2.0.280"
+__version__ = "model.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: SearchFilter.subfolders: a folder's search also looks in every folder inside it (This folder + subfolders, D-287)
 # v2.0.280: SortField.SENT and the sent moment of IndexEntry and IndexedMessage: the message's own Date (the Sent column, B-16)
 # v1.1.242: SearchFilter.also_tag: a second tag the messages must carry too (Filter > Tagged with in a Tags view, R-03)
 # v1.1.196: IndexEntry.send_at: when a message kept in the Outbox is to be sent (0: it could not be read)
@@ -171,4 +172,5 @@ class SearchFilter:
     newest_per_thread: bool = False  # only the newest message of each conversation in its folder (ignored with a text query)
     tag: str | None = None  # only messages with this tag (compared without regard to case)
     also_tag: str | None = None  # ... and with this one too (Filter > Tagged with in a Tags view)
+    subfolders: bool = False  # a folder's search also looks in every folder inside it, at any depth (This folder + subfolders, D-287)
     stay: frozenset[str] = frozenset()  # messages that are found although they no longer match unread, flagged or tag (changed while a view showed them)

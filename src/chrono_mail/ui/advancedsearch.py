@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import StrEnum
 
 from PySide6.QtCore import QDate, Qt
 from PySide6.QtWidgets import QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QLabel, QLineEdit, QSpinBox, QWidget
@@ -7,9 +8,11 @@ from chrono_mail.ui import forms
 from chrono_mail.ui.forms import part
 
 # --- Version ------------------------------------------------------------
-__version__ = "advancedsearch.py 4.0.377"
+__version__ = "advancedsearch.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: where a search looks has three choices, the same as the search field's: This folder only, This folder + subfolders,
+#           All folders (SearchScope, SCOPE_CHOICES, D-287)
 # v4.0.377: built from its Qt Designer form (ui/forms/advanced_search.ui, D-276); the preview of the search words is plain text; its smallest
 #           width follows the size factor
 # v0.0.19: Initial advanced search dialog
@@ -17,12 +20,26 @@ __version__ = "advancedsearch.py 4.0.377"
 KIBIBYTE: int = 1024
 
 
+class SearchScope(StrEnum):
+    """Where a search of a folder looks."""
+
+    FOLDER = "folder"  # the folder only
+    SUBFOLDERS = "subfolders"  # the folder and every folder inside it, at any depth
+    ALL = "all"  # every folder of the account
+
+
+# The choices in the search field's menu and in Advanced search, in this order (D-287)
+SCOPE_CHOICES: tuple[tuple[str, SearchScope], ...] = (
+    ("This folder only", SearchScope.FOLDER), ("This folder + subfolders", SearchScope.SUBFOLDERS), ("All folders", SearchScope.ALL),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class AdvancedSearch:
     """What the dialog asks for: words in the search box's own language, plus the filters the box cannot express."""
 
     query: str = ""
-    all_folders: bool = False
+    scope: SearchScope = SearchScope.FOLDER
     unread: bool = False
     flagged: bool = False
     attachments: bool = False
@@ -90,8 +107,8 @@ class AdvancedSearchDialog(QDialog):
         self.flagged: QCheckBox = part(form, QCheckBox, "flagged")
         self.attachments: QCheckBox = part(form, QCheckBox, "attachments")
         self.scope: QComboBox = part(form, QComboBox, "scope")
-        self.scope.addItem("Search in this folder", False)
-        self.scope.addItem("Search in all folders", True)
+        for label, scope in SCOPE_CHOICES:
+            self.scope.addItem(label, scope)
         self.preview: QLabel = part(form, QLabel, "preview")
         self.preview.setTextFormat(Qt.TextFormat.PlainText)  # the person's own words: never markup
         self.preview.setForegroundRole(self.preview.foregroundRole().PlaceholderText)
@@ -118,7 +135,7 @@ class AdvancedSearchDialog(QDialog):
         """What was asked for (valid after the dialog was accepted)."""
         return AdvancedSearch(
             query=self._query(),
-            all_folders=bool(self.scope.currentData()),
+            scope=SearchScope(self.scope.currentData()),
             unread=self.unread.isChecked(),
             flagged=self.flagged.isChecked(),
             attachments=self.attachments.isChecked(),

@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.ui.advancedsearch import AdvancedSearch
+from chrono_mail.ui.advancedsearch import AdvancedSearch, SearchScope
 from chrono_mail.ui.columnsetup import (
     SEARCH_KEY, STARTING, ColumnSetup, fallback_sort, folder_key, folder_type, read_setups, renamed_key, setup_key, setups_text,
 )
@@ -10,9 +10,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import World, menu_named, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columnsetup.py 3.6.354"
+__version__ = "test_ui_columnsetup.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: where a search looks is a scope; a search of a folder and its subfolders has the search setup (D-287)
 # v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
 # v2.0.280: Initial version: columns and sort per folder, the six kinds of folder, Apply to all folders (B-16)
 
@@ -41,9 +42,11 @@ def test_each_folder_and_view_has_its_kind_and_its_own_key() -> None:
     assert folder_type(pinned) == "sent" and setup_key(pinned) == setup_key(folder_view("Sent", "sent")) == folder_key(ACCOUNT, "Sent")  # a pin is its folder
     tag = CurrentView(account="", kind=EntryKind.TAGVIEW, key_kind=EntryKind.TAGVIEW, path="Work", combined="tagged", combined_tag="Work")
     assert folder_type(tag) == "incoming" and setup_key(tag) != setup_key(favorite_view("inboxes")) != setup_key(favorite_view("sent"))
-    everywhere = CurrentView(account=ACCOUNT, kind=EntryKind.FOLDER, path="Sent", folder="Sent", folder_role="sent", query="x", all_folders=True)
+    everywhere = CurrentView(account=ACCOUNT, kind=EntryKind.FOLDER, path="Sent", folder="Sent", folder_role="sent", query="x", scope=SearchScope.ALL)
     assert setup_key(everywhere) == SEARCH_KEY and folder_type(everywhere) == "incoming"  # a search in all folders: one setup of its own
-    in_sent = CurrentView(account=ACCOUNT, kind=EntryKind.FOLDER, path="Sent", folder="Sent", folder_role="sent", advanced=AdvancedSearch(), all_folders=False)
+    inside = CurrentView(account=ACCOUNT, kind=EntryKind.FOLDER, path="Sent", folder="Sent", folder_role="sent", query="x", scope=SearchScope.SUBFOLDERS)
+    assert setup_key(inside) == SEARCH_KEY and folder_type(inside) == "incoming"  # a folder and its subfolders: several folders, as all folders (D-287)
+    in_sent = CurrentView(account=ACCOUNT, kind=EntryKind.FOLDER, path="Sent", folder="Sent", folder_role="sent", advanced=AdvancedSearch(), scope=SearchScope.FOLDER)
     assert setup_key(in_sent) == folder_key(ACCOUNT, "Sent")  # a search in one folder: that folder's setup
 
 

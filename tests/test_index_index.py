@@ -17,9 +17,10 @@ from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 2.0.280"
+__version__ = "test_index_index.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: a search with subfolders finds every folder inside, at any depth, and no sibling whose name starts the same (D-287)
 # v2.0.280: sent, the moment the message carries itself, kept beside Received, sorted and grouped by (the Sent column, B-16)
 # v1.9.276: Every older format (6 to 10 too) is rebuilt: format 11's date is when the server received the message (D-226); the in-place upgrade tests are gone
 # v1.1.250: Format 10: the numbers of every folder, kept by the database with every change, also through a rebuild and the upgrade from 9 (R-10)
@@ -221,6 +222,24 @@ def test_search_in_one_folder_and_with_filters(tmp_path: Path) -> None:
     assert len(index.search("", filters=SearchFilter(minimum_size=1))) == 3
     assert index.search("", filters=SearchFilter(maximum_size=1)) == []
     assert len(index.search("")) == 3
+
+
+def test_a_search_with_subfolders_finds_every_folder_inside_and_no_sibling(tmp_path: Path) -> None:
+    """D-287: This folder + subfolders looks in the folder and every folder inside it, at any depth; never in a folder whose
+    name only starts the same (Archive2, "Archive 1")."""
+    index = Index(tmp_path / "index.sqlite")
+    folders: tuple[tuple[str, ...], ...] = (ARCHIVE, ("Archive", "2026"), ("Archive", "2026", "Q1"), ("Archive2",), ("Archive 1",), INBOX)
+    for number, folder in enumerate(folders, start=1):
+        index.add(make_entry(number, folder=folder, subject=f"alpha {number}"))
+    inside = SearchFilter(subfolders=True)
+    assert sorted(subjects(index.search("alpha", folder=ARCHIVE, filters=inside))) == ["alpha 1", "alpha 2", "alpha 3"]
+    assert sorted(subjects(index.search("", folder=ARCHIVE, filters=inside))) == ["alpha 1", "alpha 2", "alpha 3"]
+    assert sorted(subjects(index.search("alpha", folder=("Archive", "2026"), filters=inside))) == ["alpha 2", "alpha 3"]
+    assert subjects(index.search("alpha", folder=ARCHIVE)) == ["alpha 1"]  # This folder only
+    ordered = index.ordered("alpha", ARCHIVE, inside)
+    assert sorted(folder for _, folder, _ in ordered) == [ARCHIVE, ("Archive", "2026"), ("Archive", "2026", "Q1")]  # each message its own folder
+    assert index.tally("alpha", ARCHIVE, inside) == (3, 3)
+    assert sum(group.count for group in index.groups(bounds_at(0), "alpha", ARCHIVE, inside)) == 3
 
 
 def test_text_search_with_a_folder_looks_up_the_words_first(tmp_path: Path) -> None:

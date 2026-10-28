@@ -12,9 +12,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_search.py 3.6.351"
+__version__ = "test_engine_search.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: message.search, message.groups and message.order with subfolders: the folder and every folder inside it (D-287)
 # v3.6.351: a search date at the edge of the calendar is a usage error, never a crash; one before 1970 in the named zone
 # v0.5.166: the groups by sender are named and counted by the name the From column shows
 # v0.3.109: Sorting by contact, attachment and preview through the commands; no groups for the yes/no sorts
@@ -132,3 +133,21 @@ def test_a_search_date_at_the_edge_of_the_calendar_is_a_usage_error_never_a_cras
         except UsageError as error:
             assert "must be a date between" in str(error)
     assert found(setup, date_from="1960-01-01") == found(setup)
+
+
+def test_a_search_with_subfolders_through_the_commands(setup: Setup) -> None:
+    """D-287: subfolders makes a folder's search look in every folder inside it; without it only the folder itself."""
+    fill(setup)
+    for name in ("Inbox/Old", "Inbox/Old/2025", "Other"):
+        call(setup.engine, "folder.create", account=setup.account_id, folder=name)
+    rows: list[Any] = list(call(setup.engine, "message.search", account=setup.account_id, folder="Inbox"))
+    by_subject = {row.subject: row.message_id for row in rows}
+    call(setup.engine, "message.move", account=setup.account_id, folder="Inbox", message=by_subject["Dogs"], target="Inbox/Old/2025")
+    call(setup.engine, "message.move", account=setup.account_id, folder="Inbox", message=by_subject["Both"], target="Other")
+    assert found(setup, query="about", folder="Inbox") == ["Cats"]
+    assert found(setup, query="about", folder="Inbox", subfolders=True) == ["Cats", "Dogs"]
+    assert found(setup, query="dogs", folder="Inbox", subfolders=True) == ["Dogs"]  # Other is not inside Inbox
+    groups: list[Any] = list(call(setup.engine, "message.groups", account=setup.account_id, query="about", folder="Inbox", subfolders=True))
+    assert sum(group.count for group in groups) == 2
+    order: Any = call(setup.engine, "message.order", account=setup.account_id, query="about", folder="Inbox", subfolders=True)
+    assert order.total == 2 and sorted(order.folders) == ["Inbox", "Inbox/Old/2025"]

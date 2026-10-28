@@ -206,6 +206,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.402) Settings > General: Start Chrono Mail when I log in, with the window open or minimized (D-284).
 - DONE (4.2.403) A folder that was only the parent of others is a normal folder: it holds mail, is renamed and deleted (D-285).
 - DONE (4.2.405) Wayland: one tray click or a second start brings a minimized window back (D-286).
+- DONE (4.2.406) Search in This folder only, This folder + subfolders or All folders, in the search field and in Advanced search (D-287).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

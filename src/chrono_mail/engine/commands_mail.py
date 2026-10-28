@@ -35,9 +35,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.2.385"
+__version__ = "commands_mail.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: message.search, message.groups and message.order take subfolders: a folder's search also looks in the folders inside it (D-287)
 # v4.2.385: the fingerprint of the mail already here comes from import_common (shared by the importers)
 # v3.6.368: message.places and message.locate read the order and the headings under one hold of the mailbox's lock: an Undo between them put
 #           messages under the wrong heading (a held Ctrl+Z)
@@ -864,6 +865,7 @@ class SearchParameters:
     account: str = field(metadata=option("The account"))
     query: str = field(default="", metadata=option("Words to find; from:, to:, subject: and body: limit a word to one field; tag:name finds a tag"))
     folder: str | None = field(default=None, metadata=option("Only in this folder"))
+    subfolders: bool = field(default=False, metadata=option("With folder: also in every folder inside it"))
     unread: bool | None = field(default=None, metadata=option("Only unread (true) or only read (false) messages"))
     flagged: bool | None = field(default=None, metadata=option("Only flagged (true) or only unflagged (false) messages"))
     has_attachments: bool | None = field(default=None, metadata=option("Only messages with (true) or without (false) attachments"))
@@ -915,7 +917,7 @@ def _search_filter(parameters: SearchParameters) -> SearchFilter:
         unread=parameters.unread, flagged=parameters.flagged, has_attachments=parameters.has_attachments,
         date_from=_day(parameters.date_from, "date_from", end=False), date_to=_day(parameters.date_to, "date_to", end=True),
         minimum_size=parameters.minimum_size, maximum_size=parameters.maximum_size, newest_per_thread=parameters.conversations, tag=parameters.tag,
-        stay=frozenset(parameters.stay),
+        stay=frozenset(parameters.stay), subfolders=parameters.subfolders and parameters.folder is not None,
     )
 
 
@@ -924,7 +926,7 @@ def message_search(engine: Engine, parameters: SearchParameters) -> tuple[Messag
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         times = mailbox.timed(folder)
         if times is not None and _snooze_sort(parameters.sort, folder) and folder is not None:
-            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, mailbox.index.count(folder), SortField.DATE, True)
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, EVERYTHING if parameters.subfolders else mailbox.index.count(folder), SortField.DATE, True)
             found = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         elif parameters.sort == CONTACT_SORT:
             everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, EVERYTHING, SortField.DATE, True)
@@ -942,7 +944,7 @@ def message_groups(engine: Engine, parameters: SearchParameters) -> tuple[GroupC
         folder = mailbox.folder(parameters.folder) if parameters.folder else None
         if folder is not None and _snooze_sort(parameters.sort, folder):
             times, now = mailbox.timed(folder) or {}, datetime.fromtimestamp(engine.clock()).astimezone()
-            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, mailbox.index.count(folder), SortField.DATE, True)
+            everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters), 0, EVERYTHING if parameters.subfolders else mailbox.index.count(folder), SortField.DATE, True)
             counts: dict[str, int] = {}
             for message in everything:
                 key = snooze_group(times.get(message.store_id), now)

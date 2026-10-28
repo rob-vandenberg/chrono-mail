@@ -4,13 +4,15 @@ from PySide6.QtCore import QEvent, QObject, Qt, Signal
 from PySide6.QtGui import QAction, QActionGroup, QResizeEvent
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QToolButton, QWidget
 
+from chrono_mail.ui.advancedsearch import SCOPE_CHOICES, SearchScope
 from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import px
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchfield.py 1.5.256"
+__version__ = "searchfield.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: ScopeButton has three choices: This folder only, This folder + subfolders, All folders (D-287)
 # v1.5.256: ScopeButton.show_choice shows a choice without telling it (the window shows its current view, R-14)
 # v0.5.168: a field without "This folder" is as wide as Mail's field without that part
 # v0.5.167: "This folder / All folders" is a button that can show only its ▾ (ScopeButton); a field without it that searches while typing, for Calendar, Contacts and Tasks; the toolbar sets its width (preferred and minimum width)
@@ -27,11 +29,12 @@ MINIMUM_WIDTH: int = 200  # when nothing else on the toolbar can give way any mo
 
 
 class ScopeButton(QToolButton):
-    """Where a search looks: "This folder ▾" or "All folders ▾", a menu to choose. Compact, only the ▾ is shown."""
+    """Where a search looks: "This folder only ▾", "This folder + subfolders ▾" or "All folders ▾", a menu to choose. Compact,
+    only the ▾ is shown."""
 
-    changed = Signal()  # the person chose the other one
+    changed = Signal()  # the person chose another one
 
-    CHOICES: tuple[tuple[str, str], ...] = (("This folder", "folder"), ("All folders", "all"))
+    CHOICES: tuple[tuple[str, SearchScope], ...] = SCOPE_CHOICES
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -62,8 +65,12 @@ class ScopeButton(QToolButton):
     def current_index(self) -> int:
         return self._index
 
-    def current_data(self) -> str:
+    def current_data(self) -> SearchScope:
         return self.CHOICES[self._index][1]
+
+    def show_scope(self, scope: SearchScope) -> None:
+        """Show this scope without telling it."""
+        self.show_choice(next(number for number, (_label, data) in enumerate(self.CHOICES) if data is scope))
 
     def set_current_index(self, index: int) -> None:
         """Choose by number, as if the person chose it."""
@@ -107,7 +114,7 @@ class ScopeButton(QToolButton):
 
 
 class SearchField(QFrame):
-    """The rounded search field, in Mail with "This folder / All folders" at its end.
+    """The rounded search field, in Mail with where it looks (This folder only ▾) at its end.
 
     Not in use: a magnifying glass at the start and the hint in italics. Clicked in: a blue border, the magnifying glass at the
     end. A search is active (after Enter, until it is cleared): an orange border and a red ✕ at the end that clears it.

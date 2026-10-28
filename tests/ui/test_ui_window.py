@@ -23,9 +23,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 4.2.403"
+__version__ = "test_ui_window.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: All folders is the third choice of where the search looks (D-287)
 # v4.2.403: a folder that was only the parent of others is renamed from its right-click menu (D-285)
 # v4.2.399: a top row's menu has no Rename or Delete folder; a standard folder's are greyed
 # v4.2.398: New folder and Rename folder type only the name; a name with / is refused
@@ -415,7 +416,7 @@ def test_search_in_the_folder_and_in_all_folders(world: World, qtbot: QtBot) -> 
     world.window.search_box.setText("Message")
     world.window.search_box.returnPressed.emit()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 2)
-    world.window.scope.set_current_index(1)
+    world.window.scope.set_current_index(2)  # All folders
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
     world.window.search_box.setText("zzzzzz")
     world.window.search_box.returnPressed.emit()

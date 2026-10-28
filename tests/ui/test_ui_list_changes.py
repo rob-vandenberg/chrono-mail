@@ -11,9 +11,11 @@ from chrono_mail.ui.messagelist import MessageListModel, ViewSpec
 from tests.ui.world import World, mail, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_list_changes.py 2.4.334"
+__version__ = "test_ui_list_changes.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: a search of a folder and its subfolders takes in a message that came into a subfolder, and lets go of one that left; it
+#           follows a folder moved out or in and one deleted with its mail (D-287)
 # v2.4.334: a delete right after another comes within a tenth of a second: the test waits for it (D-223)
 # v1.6.260: One way of holding rows (R-15): a row asked before a change shows the change and is never asked again; a message gone from a part
 #           not loaded asks nothing; rows asked before a message came in go to their own messages
@@ -125,6 +127,35 @@ def test_a_search_of_all_folders_keeps_a_message_that_moved_and_puts_it_at_its_n
     wait(qtbot, lambda: len(watched.subjects()) == 3 and watched.asked == ["message.places"])  # one question for the messages that came in
     assert watched.subjects() == ["Message 3", "Message 2", "Message 1"]
     assert str(getattr(watched.model.row_at(1), "folder")) == "Trash"
+
+
+def test_a_search_with_subfolders_takes_in_a_message_of_a_subfolder_and_lets_go_of_one_that_left(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-287: a message moved into a folder inside the one searched joins the list at once; one moved out of them all leaves."""
+    world.call("folder.create", account=world.account_id, folder="Inbox/Old/2025")
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, "Inbox", query="Message", subfolders=True))
+    assert len(watched.subjects()) == 3
+    world.call("message.move", account=world.account_id, folder="Inbox", message=ids(world)["Message 2"], target="Junk")
+    wait(qtbot, lambda: len(watched.subjects()) == 2)
+    world.call("message.move", account=world.account_id, folder="Junk", message=ids(world, "Junk")["Message 2"], target="Inbox/Old/2025")
+    wait(qtbot, lambda: len(watched.subjects()) == 3)
+    assert "Inbox/Old/2025" in {str(getattr(watched.model.row_at(row), "folder")) for row in range(3)}
+
+
+def test_a_search_with_subfolders_follows_a_folder_moved_out_or_in_and_one_deleted(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-287: a folder moved out of the folder searched with its subfolders (as a server may do) takes its mail out of the list,
+    moved back in brings it back, and a folder deleted with its mail takes it out (no fact per message comes then)."""
+    world.call("folder.create", account=world.account_id, folder="Inbox/Old")
+    world.call("message.move", account=world.account_id, folder="Inbox", message=ids(world)["Message 1"], target="Inbox/Old")
+    watched = Watched(world, qtbot, monkeypatch, ViewSpec(world.account_id, "Inbox", query="Message", subfolders=True))
+    watched.model.refetch_wanted.connect(watched.model.reload)  # what the pane does, one fetch at a time
+    assert len(watched.subjects()) == 3
+    world.call("folder.rename", account=world.account_id, folder="Inbox/Old", new_name="Elsewhere")
+    wait(qtbot, lambda: sorted(watched.subjects()) == ["Message 2", "Message 3"])
+    world.call("folder.rename", account=world.account_id, folder="Elsewhere", new_name="Inbox/Old")
+    wait(qtbot, lambda: len(watched.subjects()) == 3)
+    world.call("folder.delete", account=world.account_id, folder="Inbox/Old", with_messages=True)
+    wait(qtbot, lambda: sorted(watched.subjects()) == ["Message 2", "Message 3"])
+    assert watched.model.spec is not None and watched.model.spec.folder == "Inbox"
 
 
 def test_folder_read_emptied_and_renamed(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

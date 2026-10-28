@@ -16,9 +16,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 from chrono_mail.ui.tagging import offered_for_mail, tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "searchfilters.py 1.9.274"
+__version__ = "searchfilters.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: where the search looks is one of three: This folder only, This folder + subfolders, All folders (D-287)
 # v1.9.274: R-19 round 4: the tags are their real types (MessageRow, AccountSummary, FolderInfo, TagInfo, Change); the fields are read by name, checked by Pyrefly
 # v1.9.264: R-17: the filters and the search of the mail as parts of their own (out of ui/mainwindow.py): the Filter menu and its chip
 #           over the list; the search field with its history and help, This folder or All folders, Advanced search; they change the
@@ -136,7 +137,7 @@ class MailSearch(QObject):
     def show_state(self) -> None:
         """Where it looks and the field's look show the current view."""
         view = self._state.view
-        self.scope.show_choice(1 if view.all_folders else 0)
+        self.scope.show_scope(view.scope)
         self.pill.set_active(bool(view.query))
 
     def ended(self) -> None:
@@ -192,8 +193,8 @@ class MailSearch(QObject):
         send_key(self.box, event)
 
     def _scope_changed(self) -> None:
-        """The person chose This folder or All folders (it matters only while a search is shown)."""
-        self._messages.change_view(changed(self._state.view, all_folders=self.scope.current_data() == "all"))
+        """The person chose where the search looks (it matters only while a search is shown)."""
+        self._messages.change_view(changed(self._state.view, scope=self.scope.current_data()))
 
     def advanced(self) -> None:
         """Ask for several conditions at once and show the result in the message list."""
@@ -204,7 +205,7 @@ class MailSearch(QObject):
             return
         wanted: AdvancedSearch = dialog.search()
         self._messages.change_view(changed(
-            self._state.view, query=wanted.query.strip(), all_folders=wanted.all_folders, advanced=wanted if wanted.extra_filters else None,
+            self._state.view, query=wanted.query.strip(), scope=wanted.scope, advanced=wanted if wanted.extra_filters else None,
             unread=wanted.unread, flagged=wanted.flagged, attachments=wanted.attachments,
         ))
         self.box.setText(wanted.query)  # the words of the search that was run

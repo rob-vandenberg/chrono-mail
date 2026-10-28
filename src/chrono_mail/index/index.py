@@ -33,9 +33,10 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 3.6.350"
+__version__ = "index.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: a search of a folder with filters.subfolders also finds the messages of every folder inside it (This folder + subfolders, D-287)
 # v3.6.350: a rebuilt index put in place counts as written (database.writes)
 # v3.4.344: a stored moment before 1970 is read by adding seconds (Windows refused a negative time, so its folder could not be listed, RV-36);
 #           moments are counted without converting them (RV-34)
@@ -578,7 +579,7 @@ class Index(IndexDatabase):
         if limit is not None:
             parameters.append(max(0, limit))
         try:
-            if folder is not None:  # one folder: its name is not read for every message
+            if folder is not None and not filters.subfolders:  # one folder: its name is not read for every message
                 return [(str(store_id), folder, bool(unread)) for store_id, unread in self._connection.execute(f"SELECT m.store_id, (m.flags & 1) = 0 FROM {source}{where} ORDER BY {order}{tail}", parameters)]
             paths: dict[str, tuple[str, ...]] = {}
             sql = f"SELECT m.store_id, m.folder, (m.flags & 1) = 0 FROM {source}{where} ORDER BY {order}{tail}"
@@ -679,7 +680,11 @@ class Index(IndexDatabase):
         if parsed.negative:
             conditions.append("m.id NOT IN (SELECT rowid FROM text WHERE text MATCH ?)")
             parameters.append(parsed.negative)
-        if folder is not None:
+        if folder is not None and filters.subfolders:  # the folder and those inside it: one range of the folder index ("\x1f" + 1 is "\x20")
+            key = _folder_key(folder)
+            conditions.append(f"({steer}m.folder = ? OR ({steer}m.folder > ? AND {steer}m.folder < ?))")
+            parameters.extend((key, key + FOLDER_SEPARATOR, key + chr(ord(FOLDER_SEPARATOR) + 1)))
+        elif folder is not None:
             conditions.append(f"{steer}m.folder = ?")
             parameters.append(_folder_key(folder))
         marks: list[str] = []  # the conditions on what a person changes while a view shows the message

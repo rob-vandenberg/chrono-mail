@@ -3,13 +3,15 @@ from dataclasses import dataclass
 from typing import Literal, get_args
 
 from chrono_mail.ui.columns import BY_ID, SNOOZED_COLUMN, valid_columns
+from chrono_mail.ui.advancedsearch import SearchScope
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 3.6.354"
+__version__ = "columnsetup.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: a search of a folder and its subfolders has the setup of a search in all folders: it shows several folders (D-287)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.2.314: an Outbox starts with the Send at column (a delayed send shows when it goes, B-21)
@@ -18,7 +20,7 @@ __version__ = "columnsetup.py 3.6.354"
 
 FolderType = Literal["incoming", "sent", "drafts", "outbox", "scheduled", "snoozed"]
 FOLDER_TYPES: tuple[FolderType, ...] = get_args(FolderType)
-SEARCH_KEY: str = "search"  # a search in all folders of an account: one setup of its own
+SEARCH_KEY: str = "search"  # a search in all folders of an account, or of a folder and its subfolders: one setup of its own
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,7 +56,8 @@ FALLBACK_SORTS: tuple[str, ...] = ("date", "sent", "subject", "to", "sender", "s
 
 
 def _searching_everywhere(view: CurrentView) -> bool:
-    return bool(view.query or view.advanced is not None) and view.all_folders and view.combined is None
+    """A search that shows the messages of several folders of one account (all of them, or a folder and its subfolders)."""
+    return view.searching and view.scope is not SearchScope.FOLDER and view.combined is None
 
 
 def folder_type(view: CurrentView) -> FolderType:
@@ -70,7 +73,7 @@ def folder_type(view: CurrentView) -> FolderType:
 
 def setup_key(view: CurrentView) -> str:
     """The name a view's own setup is kept under: a folder (also opened through its pin) by account and path, an account's Unread
-    and Flagged by account, a Favorites, group or Tags entry by its entry, a search in all folders under one name."""
+    and Flagged by account, a Favorites, group or Tags entry by its entry, a search of several folders under one name."""
     if _searching_everywhere(view):
         return SEARCH_KEY
     if view.combined is None and view.kind is EntryKind.FOLDER:

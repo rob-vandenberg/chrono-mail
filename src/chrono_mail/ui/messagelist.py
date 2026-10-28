@@ -25,9 +25,12 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.396"
+__version__ = "messagelist.py 4.2.406"
 
 # --- Version history ----------------------------------------------------
+# v4.2.406: ViewSpec.subfolders: a search of a folder and every folder inside it; a message of such a folder belongs in it and joins it
+#           at once; that view is never taken for one folder (marked read, emptied, dragged); a folder deleted with its mail, or one the
+#           server moved into or out of such a search, fetches the view again (D-287)
 # v4.2.396: leave_when_read: in a list of unread mail, the messages the person marks as read leave it when their read mark comes (or at
 #           the key press, leave_now), and come back at their place when they are unread again or Undo names them (one read already comes
 #           back read and stays, D-149) while the list is shown; Redo takes them out again (undone); one that left is no longer kept (D-282)
@@ -138,6 +141,12 @@ class ViewSpec:
     combined_accounts: tuple[str, ...] = ()  # ... of these accounts only (a group)
     combined_tag: str | None = None  # the tag of the combined view "tagged" (Tags in the folder list)
     tag: str | None = None  # Filter > Tagged with
+    subfolders: bool = False  # with folder: also every folder inside it, at any depth (a search, D-287)
+
+
+def _holds_folder(spec: ViewSpec, folder: str) -> bool:
+    """Whether the messages of this folder are part of a view of one account: its folder, or one inside it in a search with subfolders."""
+    return spec.folder is None or folder == spec.folder or (spec.subfolders and folder.startswith(f"{spec.folder}/"))
 
 
 def _filters_marks(spec: ViewSpec) -> bool:
@@ -165,6 +174,7 @@ class MessageListModel(QAbstractTableModel):
     loaded = Signal()
     rearranged = Signal()  # the same messages were put in another order; Qt's selection moved with them
     placed = Signal()  # the whole order of the view is in: every message has its place (a large view comes start first, W12b)
+    refetch_wanted = Signal()  # a folder fact changed which messages the view holds: the pane fetches it again, once, one at a time (D-287)
     took_in = Signal()  # the messages that came in at one moment are at their places (once for all of them, not once per row)
     places_lost = Signal(str)  # selected places whose messages were not known yet could not be followed (another sort, a change meanwhile)
 
@@ -508,7 +518,7 @@ class MessageListModel(QAbstractTableModel):
         if spec.sort not in typing.get_args(ListSort):
             raise ChronoMailError(f"A list sorted by {spec.sort} does not exist")
         return OrderParameters(
-            account=spec.account, query=spec.query, folder=spec.folder, unread=spec.unread, flagged=spec.flagged, has_attachments=spec.has_attachments,
+            account=spec.account, query=spec.query, folder=spec.folder, subfolders=spec.subfolders, unread=spec.unread, flagged=spec.flagged, has_attachments=spec.has_attachments,
             date_from=spec.date_from, date_to=spec.date_to, minimum_size=spec.minimum_size, maximum_size=spec.maximum_size, tag=spec.tag,
             conversations=spec.conversations, sort=typing.cast(ListSort, spec.sort), oldest_first=spec.oldest_first, stay=tuple(stay),
             whole=whole, first=PAGE_SIZE, rows_of=tuple(rows_of), headings=headings,
@@ -655,7 +665,7 @@ class MessageListModel(QAbstractTableModel):
             _filters_marks(spec) or spec.tag or spec.query or spec.sort in YES_NO_SORTS or spec.sort == "tags"  # in _filters_marks; a search
         ):  # may name tags (tag:) or words a change of the message touches; may have another subject, date or size: always counts)
             return False
-        return spec.combined is not None or spec.folder is None or change.folder == spec.folder or change.to_folder == spec.folder
+        return spec.combined is not None or _holds_folder(spec, change.folder) or (bool(change.to_folder) and _holds_folder(spec, change.to_folder))
 
     @property
     def loading(self) -> bool:
@@ -895,7 +905,7 @@ class MessageListModel(QAbstractTableModel):
             accounts.add(default)  # a view of one account: the messages not known yet are of that account too
         several = len(accounts) > 1
         account = "" if several else next(iter(accounts), "")  # several accounts: each message says its own (sources, D-272)
-        one_folder = self._spec.folder if self._spec is not None and self._spec.combined is None else None
+        one_folder = self._spec.folder if self._spec is not None and self._spec.combined is None and not self._spec.subfolders else None
         return messages_mime_data(
             account, messages, rest=self.places_epoch if unknown else None, rest_folder=one_folder, sources=sources if several else None,
         ), len(messages) + unknown
@@ -1080,7 +1090,25 @@ class MessageListModel(QAbstractTableModel):
                 return
             self._leave_soon.ask()  # nothing gathered: the first of a quiet moment goes at once, below
         self._flush_leaving()  # every fact in the order it came
+        fetch = self._folder_changes_view(change)
         self._follow(change)
+        if fetch:
+            self.refetch_wanted.emit()  # many folders deleted at once give one fetch, not one each
+
+    def _folder_changes_view(self, change: Change) -> bool:
+        """Whether a folder fact changes which messages the view holds, so that it is fetched again: a folder deleted with its mail
+        (no fact per message comes), or a folder the server moved into or out of the folder a search with subfolders looks in. Never
+        for the folder shown itself or one above it: the window then opens another view, or the view follows the new name (D-287)."""
+        spec, kind, folder = self._spec, str(change.kind), change.folder
+        if spec is None or kind not in ("folder_deleted", "folder_renamed"):
+            return False
+        if spec.combined is None and spec.folder is not None and (spec.folder == folder or spec.folder.startswith(f"{folder}/")):
+            return False
+        if kind == "folder_deleted":
+            if spec.combined is not None:
+                return not spec.combined_accounts or change.mailbox in spec.combined_accounts
+            return _holds_folder(spec, folder)
+        return spec.combined is None and spec.subfolders and _holds_folder(spec, folder) != _holds_folder(spec, change.to_folder)
 
     def _flush_leaving(self) -> None:
         """The messages that left the view in this moment go together: one change of the list's layout instead of one removal each, so a
@@ -1413,7 +1441,7 @@ class MessageListModel(QAbstractTableModel):
             }
             if not wanted.get(spec.combined, False):
                 return False
-        elif spec.folder is not None and spec.folder != folder:
+        elif not _holds_folder(spec, folder):
             return False
         if spec.unread is not None and spec.unread == ("seen" in flags):
             return False
@@ -1612,7 +1640,7 @@ class MessageListModel(QAbstractTableModel):
 
     def _shows_folder(self, folder: str) -> bool:
         spec = self._spec
-        return spec is not None and spec.combined is None and spec.folder == folder
+        return spec is not None and spec.combined is None and not spec.subfolders and spec.folder == folder
 
     def _folder_read(self, mailbox: str, folder: str) -> None:
         """Every message of a folder was marked read: they are read in the order, and their rows say so."""
