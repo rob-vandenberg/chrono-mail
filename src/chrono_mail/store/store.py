@@ -15,13 +15,15 @@ from chrono_mail.crypto.cipher import OVERHEAD
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
 from chrono_mail.store.layout import build_name, join_info, new_store_id, parse_name, split_info
 from chrono_mail.store.properties import MessageProperties
+from chrono_mail.store.receivedby import ReceivedBy
 from chrono_mail.core.folder import OWN_FOLDERS, own_role
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 4.2.403"
+__version__ = "store.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: received_by: which account received each message, written once (store/receivedby.py); a copy keeps it (D-292)
 # v4.2.403: make_parents_real: a folder that is only the parent of others becomes a folder of its own (D-285); a rename takes the
 #           folder lock, refuses a move into itself, and (noted: mail kept here) keeps RENAME_NOTE while its folders move:
 #           finish_rename_under_way finishes an interrupted one at the next opening; RenameRefused: refused before anything was written
@@ -162,6 +164,7 @@ class Store:
         self._unsynced: list[Path] | None = None  # inside written_together: the files still to be made safe
         self.properties: MessageProperties = MessageProperties(root, durable)  # what cannot be kept in a message: its tags, snooze, archive origin
         self.properties.take_over_tags_file(root)  # before 1.1.206: one tags file for the whole mailbox
+        self.received_by: ReceivedBy = ReceivedBy(root, durable)  # which account received each message, written once (D-292)
         self._checkpoint: Checkpoint = checkpoint
         self._folders: dict[tuple[str, ...], _FolderEntry] = {}
         self.damaged_folders: list[str] = []
@@ -770,6 +773,10 @@ class Store:
             self.properties.copy(ref.store_id, store_id)
         except StorageError:
             pass  # damaged properties never stop a copy; the file keeps its .bad copy for repair
+        try:
+            self.received_by.copy(ref.store_id, store_id)  # the same account received the copy (D-292)
+        except StorageError:
+            pass  # recorded by the next filling in or rebuild
         return Placed(MessageRef(self.account_id, target_folder, store_id), _place(destination))
 
     def replace(self, ref: MessageRef, raw: bytes, hint: str | None = None) -> None:

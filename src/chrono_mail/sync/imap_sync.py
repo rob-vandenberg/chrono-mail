@@ -15,9 +15,10 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 4.2.387"
+__version__ = "imap_sync.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: a message downloaded is recorded as received by the IMAP account (D-292)
 # v4.2.387: a folder the server does not mark is known by its name in the language of the server's folders (core roles_by_name, ten
 #           languages), no longer by English names only
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
@@ -918,6 +919,11 @@ def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folde
     counts.new.append(reference)
     view.locations[reference.store_id] = (local, place)
     with counts.announcer.changing():
+        if not any(folder.path == local and folder.role is FolderRole.DRAFTS for folder in store.list_folders()):  # a draft: its From decides
+            try:
+                store.received_by.record(reference.store_id, store.account_id)  # who received it, before anything else names it (D-292)
+            except ChronoMailError:
+                pass  # the index's receiver records it
         if index is not None:
             try:
                 index.add(replace_entry(entry_from_raw(reference, place, message_flags(server_now), len(raw), raw), tags=tags))

@@ -6,7 +6,9 @@ from PySide6.QtWidgets import QApplication, QHeaderView, QMenu, QWidget
 
 from chrono_mail.ui import appearance, prefs, scale
 from chrono_mail.ui.columnfit import MINIMUM_ICON, ColumnLayout, drag, fit, layout_from_pixels, read_layout
-from chrono_mail.ui.columns import BY_ID, CARD, DEFAULT_COLUMNS, SAVED_LABEL, SNOOZED_COLUMN, keep_snoozed_column, with_new_columns, without_snoozed_column
+from chrono_mail.ui.columns import (
+    BY_ID, CARD, DEFAULT_COLUMNS, PEOPLE_COLUMNS, SAVED_LABEL, SNOOZED_COLUMN, keep_snoozed_column, with_new_columns, without_snoozed_column,
+)
 from chrono_mail.ui.columnsetup import (
     FOLDER_TYPES, SORT_COLUMNS, STARTING, ColumnSetup, FolderType, fallback_sort, folder_type, read_setups, renamed_key, setup_key, setups_text,
 )
@@ -17,9 +19,12 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.prefs import InUse, Remembered
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagecolumns.py 2.4.325"
+__version__ = "messagecolumns.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: the header menu's From and To open a submenu with a tick per way of showing people (Name and email, Name only, Email only),
+#           each tick a column of its own; From or To is ticked while any of its columns shows; a column ticked there comes right after
+#           the one of its kind already shown (D-291); Account is a plain tick (D-292)
 # v2.4.325: take_in_setups: every folder's setup read again from the settings, the open folder's in use at once (after a restore, D-244)
 # v2.2.314: Send at in the Outbox too (B-21)
 # v2.0.280: Columns per folder (B-16): every folder and view keeps its own columns, order, widths and sort, starting from the setup of its
@@ -357,9 +362,23 @@ class MessageColumns(QObject):
     def header_menu(self, position: QPoint) -> None:
         menu = QMenu(self._parent)
         chosen = set(self.columns)
+        in_submenus = {column_id for ways in PEOPLE_COLUMNS.values() for column_id, _ in ways}
         for column_id, column in BY_ID.items():
             if column_id == SNOOZED_COLUMN and not self._state.in_timed():
                 continue
+            if column_id in PEOPLE_COLUMNS:  # From and To: one entry with an arrow, a tick per way of showing people inside (D-291)
+                ways = PEOPLE_COLUMNS[column_id]
+                submenu = menu.addMenu(column.label)
+                submenu.menuAction().setCheckable(True)
+                submenu.menuAction().setChecked(any(way in chosen for way, _ in ways))
+                for way, label in ways:
+                    action = submenu.addAction(label)
+                    action.setCheckable(True)
+                    action.setChecked(way in chosen)
+                    action.triggered.connect(lambda checked=False, wanted=way: self.toggle_column(wanted))
+                continue
+            if column_id in in_submenus:
+                continue  # in the From or To submenu
             action = menu.addAction(column.label)
             action.setCheckable(True)
             action.setChecked(column_id in chosen)
@@ -376,7 +395,9 @@ class MessageColumns(QObject):
             if len(columns) > 1:
                 columns.remove(column_id)
         else:
-            columns.append(column_id)
+            kind = next((ways for ways in PEOPLE_COLUMNS.values() if any(way == column_id for way, _ in ways)), ())
+            shown = [place for place, shown_id in enumerate(columns) if any(way == shown_id for way, _ in kind)]
+            columns.insert(shown[-1] + 1 if shown else len(columns), column_id)  # next to To when To (name) comes, else at the end (D-291)
         self.set_columns(tuple(columns))
 
     def set_columns(self, columns: tuple[str, ...]) -> None:

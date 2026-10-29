@@ -13,17 +13,18 @@ from chrono_mail.engine.commands_addressbook import AddressesParameters, contact
 from chrono_mail.engine.junkwords import GOOD, JUNK, JUNK_SCORE, JunkWords, fingerprint, load_words, save_words, tokens
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand
-from chrono_mail.engine.rule_engine import Subject, applies_to, condition_holds, header_values, rule_matches
+from chrono_mail.engine.rule_engine import Subject, applies_to, condition_holds, rule_matches
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER
 from chrono_mail.engine.newkey import kept_local_key
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.engine.undorecord import Verdicts
-from chrono_mail.mime import ParsedMessage, parse_message
+from chrono_mail.mime import ParsedMessage, header_values, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "junkfilter.py 3.6.350"
+__version__ = "junkfilter.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: header_values from mime
 # v3.6.350: with the settings lost, the words are read with the key of the mail kept here (they were set aside as damaged)
 # v2.2.313: learn and learn_from_move say what each message was learned as before (Verdicts); set_verdicts puts that back (Undo, B-18)
 # v2.1.312: the busy bar names junk.learn-existing "Junk filter: checking mail for spam" (the owner: calm, not alarming)

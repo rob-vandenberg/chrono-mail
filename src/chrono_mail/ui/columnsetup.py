@@ -7,9 +7,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 4.2.414"
+__version__ = "columnsetup.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: the sort orders of the people columns and of Account (D-291, D-292)
 # v4.2.414: a search of several folders is known by the view itself (CurrentView.several_folders)
 # v4.2.413: a search of All folders from a Favorites or Tags view is a search of several folders too (D-287)
 # v4.2.408: a search of several folders is a kind of its own: it starts with From, To and Folder beside the incoming columns (D-288)
@@ -55,6 +56,7 @@ SORT_COLUMNS: dict[str, tuple[str, ...]] = {
     "sender": ("from_to", "from"), "subject": ("subject",), "date": ("date",), "sent": ("sent",), "size": ("size",), "to": ("to",),
     "snoozed": (SNOOZED_COLUMN,), "unread": ("status",), "flagged": ("flag",), "attachment": ("attachment",), "replied": ("replied",),
     "contact": ("contact",), "folder": ("folder",), "conversation": ("conversation",), "preview": ("preview",),
+    "sender_full": ("from_full",), "sender_address": ("from_address",), "to_names": ("to_names",), "to_addresses": ("to_addresses",), "account": ("account",),
 }
 FALLBACK_SORTS: tuple[str, ...] = ("date", "sent", "subject", "to", "sender", "size")  # Received, Sent, Subject, To, From, Size
 

@@ -29,9 +29,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.414"
+__version__ = "messagelistpane.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: Sorted by offers the people columns and Account (D-291, D-292)
 # v4.2.414: a search of several folders shows the sender in From, also when it starts from Sent, Drafts, the Outbox or Scheduled (D-287)
 # v4.2.413: a search of All folders from a Favorites or Tags view looks in every folder of every account (the view everywhere), not in the
 #           view's own folders (D-287)
@@ -72,6 +73,8 @@ SORT_CHOICES: tuple[tuple[str, str], ...] = (
     ("date", "Received"), ("sent", "Sent"), ("subject", "Subject"), ("sender", "Sender"), ("to", "To"), ("size", "Size"),
     ("unread", "Unread"), ("flagged", "Flagged"), ("attachment", "Attachment"), ("replied", "Replied"), ("contact", "Contact"),
     ("folder", "Folder"), ("conversation", "Messages in conversation"), ("preview", "Preview"), ("snoozed", "Snoozed until"),
+    ("sender_full", "From (name and email)"), ("sender_address", "From (email)"), ("to_names", "To (name)"), ("to_addresses", "To (email)"),
+    ("account", "Account"),  # the people columns (D-291) and Account (D-292)
 )
 
 

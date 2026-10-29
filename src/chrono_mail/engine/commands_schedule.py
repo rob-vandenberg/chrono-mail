@@ -17,9 +17,10 @@ from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 3.6.351"
+__version__ = "commands_schedule.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: the account a message is sent from is recorded with it in Sent (D-292)
 # v3.6.351: what follows a scheduled or repeating send the server took never makes it fail or be sent again (told_after_send); a
 #           scheduled reply that waits in the Outbox after a failed send keeps the message it answers (replies_to)
 # v3.6.350: a message sent whose move to Sent failed is remembered for the run (never sent again, also on a full disk); the repeat lock is
@@ -391,6 +392,7 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                         outcome = send_and_file(
                             mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX,
                             mailbox.role_folder(FolderRole.SENT), before_send=_remover(mailbox, reference), ssl_context=engine.tls_context(sender, outgoing=True),
+                            account=sender.account.account_id,  # recorded with it in Sent (D-292)
                         )
                         if outcome.sent and outcome.reference.folder_path == OUTBOX:
                             engine.sent_unfiled.add(outcome.reference.store_id)  # a failed move to Sent: never sent again in this run, also without a mark on the disk
@@ -460,7 +462,7 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
             with engine.outbox_lock:  # its copy in the Outbox is sent by this send only (RV-109)
                 outcome = send_and_file(
                     mailbox.store, mailbox.index, sender.account.outgoing, password, _outgoing(sender, parsed), OUTBOX, mailbox.role_folder(FolderRole.SENT),
-                    ssl_context=engine.tls_context(sender, outgoing=True),
+                    ssl_context=engine.tls_context(sender, outgoing=True), account=sender.account.account_id,  # recorded with it in Sent (D-292)
                 )
                 if outcome.sent and outcome.reference.folder_path == OUTBOX:
                     engine.sent_unfiled.add(outcome.reference.store_id)  # a failed move to Sent: never sent again in this run, also without a mark on the disk

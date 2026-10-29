@@ -14,9 +14,10 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 4.2.413"
+__version__ = "commands_combined.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: the sort orders of the people columns (From (name and email), From (email), To (name), To (email), D-291) and of Account (D-292)
 # v4.2.413: the view everywhere: every folder of every account, for a search of All folders shown from a Favorites or Tags view (D-287)
 # v4.2.408: the Favorites and Tags views take sent_from and sent_to, snoozed_from and snoozed_to, send_at_from and send_at_to (days,
 #           D-288); the filters are made once per mailbox
@@ -47,7 +48,10 @@ __version__ = "commands_combined.py 4.2.413"
 # v0.0.46: Initial combined views over the mailboxes of all accounts (Favorites)
 
 ViewName = Literal["inboxes", "unread", "flagged", "outbox", "scheduled", "sent", "drafts", "snoozed", "unreplied", "archive", "junk", "trash", "tagged", "everywhere"]  # the Favorites and Tags views, and every folder
-CombinedSort = Literal["date", "sent", "subject", "sender", "to", "size", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview"]  # their sort orders
+CombinedSort = Literal[
+    "date", "sent", "subject", "sender", "to", "size", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview",
+    "sender_full", "sender_address", "to_names", "to_addresses", "account",
+]  # their sort orders
 EVERYWHERE: str = "everywhere"  # every folder of every account, Junk and Trash too: a search of All folders from a Favorites view (D-287)
 VIEWS: tuple[str, ...] = tuple(view for view in typing.get_args(ViewName) if view != EVERYWHERE)  # the standard favorites
 _ROLE_OF_VIEW: dict[str, FolderRole] = {
@@ -89,7 +93,10 @@ class CombinedParameters:
 
 
 _NO_CASE = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)  # as SQLite's NOCASE: only A to Z
-_TEXT_OF_SORT: dict[str, str] = {"subject": "subject", "sender": "sender", "to": "recipients", "folder": "folder", "preview": "preview"}
+_TEXT_OF_SORT: dict[str, str] = {
+    "subject": "subject", "sender": "sender", "to": "recipients", "folder": "folder", "preview": "preview",
+    "sender_full": "sender", "sender_address": "sender_address", "to_names": "recipient_names", "to_addresses": "recipient_addresses", "account": "received_by",  # D-291, D-292
+}
 _NEWEST_WITHIN: frozenset[str] = frozenset({"unread", "flagged", "attachment", "replied", CONTACT_SORT, "folder", "conversation", "preview"})  # same value: newest first, either way
 
 

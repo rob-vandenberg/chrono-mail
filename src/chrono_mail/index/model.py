@@ -1,13 +1,16 @@
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from typing import Protocol
 
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.2.408"
+__version__ = "model.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: Receiving.flush: the receiver writes what it decided after the index let go of its write lock (D-292)
+# v4.2.417: the people columns (the sender's address, the recipients' names and addresses, D-291) and the account that received each message (D-292): kept, read, sorted by
 # v4.2.408: SearchFilter.sent_from and sent_to (the message's own Date) and only (these messages only: snoozed or sent within days, D-288)
 # v4.2.406: SearchFilter.subfolders: a folder's search also looks in every folder inside it (This folder + subfolders, D-287)
 # v2.0.280: SortField.SENT and the sent moment of IndexEntry and IndexedMessage: the message's own Date (the Sent column, B-16)
@@ -57,6 +60,11 @@ class SortField(Enum):
     FOLDER = "folder"
     CONVERSATION = "conversation"
     PREVIEW = "preview"
+    SENDER_FULL = "sender_full"  # the From line as written: name and address (From (name and email))
+    SENDER_ADDRESS = "sender_address"  # From (email)
+    RECIPIENT_NAMES = "to_names"  # To (name)
+    RECIPIENT_ADDRESSES = "to_addresses"  # To (email)
+    ACCOUNT = "account"  # the account that received the message, by the name it is shown with (D-292)
 
 
 YES_NO_SORTS: frozenset[SortField] = frozenset({SortField.UNREAD, SortField.FLAGGED, SortField.ATTACHMENT, SortField.REPLIED})  # no group headers
@@ -129,6 +137,27 @@ class IndexEntry:
     tags: tuple[str, ...] = ()  # as written; the store's tags file is the truth
     send_at: int | None = None  # a scheduled message: when it is to be sent (its own header is the truth); 0: not readable, so not known
     sent: datetime | None = None  # the moment the message carries itself (its Date line): the Sent column
+    sender_address: str = ""  # the sender's address, else the name (From (email), D-291)
+    recipient_names: str = ""  # each recipient's name, else the address, joined by ", " (To (name))
+    recipient_addresses: str = ""  # each recipient's address, else the name (To (email))
+    delivered_to: tuple[str, ...] = ()  # the addresses the receiving server wrote it delivered to (not kept: they decide received_by)
+    received_by: str = ""  # the id of the account that received the message ("": the index's receiver decides, D-292)
+
+
+class Receiving(Protocol):
+    """Which account received a message added without one (the engine's rule, D-292)."""
+
+    def prepare(self) -> None:
+        """Read what it needs now, before the index takes its write lock."""
+        ...
+
+    def flush(self) -> None:
+        """Write what it decided, after the index let go of its write lock."""
+        ...
+
+    def __call__(self, entry: IndexEntry) -> str:
+        """The id of that account; "" when nothing decides."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +187,10 @@ class IndexedMessage:
     preview: str = ""
     tags: tuple[str, ...] = ()
     sent: datetime | None = None  # the message's own Date line
+    sender_address: str = ""  # From (email) (D-291)
+    recipient_names: str = ""  # To (name)
+    recipient_addresses: str = ""  # To (email)
+    received_by: str = ""  # the name of the account that received it, as it is shown ("" when not known, D-292)
 
 
 @dataclass(frozen=True, slots=True)

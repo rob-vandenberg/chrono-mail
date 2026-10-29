@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag, PaletteColour
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 2.2.314"
+__version__ = "changes.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: MessageRow: the people columns (From (email), To (name), To (email), D-291) and the account that received the message (D-292)
 # v2.2.314: "changed" also for a message in the Outbox whose waiting time changed (B-21)
 # v2.0.281: RebuildStep: how far the index of one place where mail is kept is rebuilt or filled in (D-229)
 # v2.0.280: MessageRow.sent: the message's own Date, for the Sent column (B-16)
@@ -53,6 +54,10 @@ class MessageRow:
     snoozed_until: datetime | None = None  # in the Snoozed folder: when the message comes back
     tags: tuple[str, ...] = ()
     sent: datetime | None = None  # the moment the message carries itself (its Date line): the Sent column
+    sender_address: str = ""  # From (email): the sender's address, else the name (D-291)
+    recipient_names: str = ""  # To (name): each recipient's name, else the address
+    recipient_addresses: str = ""  # To (email): each recipient's address, else the name
+    received_by: str = ""  # Account: the name of the account that received the message, as it is shown ("" when not known, D-292)
 
 
 @dataclass(frozen=True, slots=True)

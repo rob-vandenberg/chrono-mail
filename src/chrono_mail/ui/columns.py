@@ -9,9 +9,11 @@ from chrono_mail.engine.changes import MessageRow
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 3.6.354"
+__version__ = "columns.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: the people columns From (name and email), From (email), To (name), To (email), each sorting by what it shows (D-291), and
+#           Account, the account that received the message (D-292); PEOPLE_COLUMNS: the columns the header's From and To submenus hold
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v3.6.349: the dates of the list on this computer's clock through the named zone (Windows, RV-201)
 # v2.2.314: SEND_AT_FOLDERS: the Scheduled folder and the Outbox (a delayed send, B-21)
@@ -48,8 +50,13 @@ COLUMNS: tuple[Column, ...] = (
     Column("contact", "Contact", 24, "contact", symbol=True),
     Column("trash", "Delete", 24, symbol=True),
     Column("from_to", "From / To", 170, "sender"),
-    Column("from", "From", 200, "sender"),
-    Column("to", "To", 200, "to"),
+    Column("from", "From", 200, "sender"),  # the name, else the address
+    Column("from_full", "From (name and email)", 260, "sender_full"),
+    Column("from_address", "From (email)", 200, "sender_address"),
+    Column("to", "To", 200, "to"),  # names and addresses, as written
+    Column("to_names", "To (name)", 200, "to_names"),
+    Column("to_addresses", "To (email)", 200, "to_addresses"),
+    Column("account", "Account", 140, "account"),
     Column("subject", "Subject", 300, "subject"),
     Column("tag", "Tag", 60, symbol=True),  # a narrow column of its own width, as the icon columns: Subject keeps its room
     Column("date", "Received", 110, "date"),
@@ -70,6 +77,10 @@ OUTBOX_FOLDER_PATH: str = OWN_FOLDERS[FolderRole.OUTBOX][0]
 SEND_AT_FOLDERS: tuple[str, ...] = (SCHEDULED_FOLDER_PATH, OUTBOX_FOLDER_PATH)  # the column says when each message is sent (the Outbox: a delayed send, B-21)
 SAVED_LABEL: str = "Saved"  # the Sent column in Drafts: a draft carries when it was last saved
 BY_ID: dict[str, Column] = {column.column_id: column for column in COLUMNS}
+PEOPLE_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {  # the header menu's From and To: a submenu of the ways each shows people (column, its tick), D-291
+    "from": (("from_full", "Name and email"), ("from", "Name only"), ("from_address", "Email only")),
+    "to": (("to", "Name and email"), ("to_names", "Name only"), ("to_addresses", "Email only")),
+}
 SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎", "replied": "↩", "contact": "", "trash": "", "tag": ""}  # Contact and Delete draw icons, their headers stay empty
 READ_MARK: str = "○"  # the dot of an unread message turns into an empty circle when it is read
 
@@ -157,8 +168,18 @@ def cell_text(column_id: str, row: MessageRow, recipients_first: bool, date_styl
         return display_name(_first_address(recipients) if recipients_first and recipients else sender) or "(unknown)"
     if column_id == "from":
         return display_name(sender) or "(unknown)"
+    if column_id == "from_full":
+        return sender or "(unknown)"
+    if column_id == "from_address":
+        return row.sender_address or "(unknown)"
     if column_id == "to":
         return recipients
+    if column_id == "to_names":
+        return row.recipient_names
+    if column_id == "to_addresses":
+        return row.recipient_addresses
+    if column_id == "account":
+        return row.received_by
     if column_id == "subject":
         return row.subject or "(no subject)"
     if column_id == "date":

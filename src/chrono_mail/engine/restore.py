@@ -33,6 +33,7 @@ from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import OUTBOX, STANDARD_FOLDERS, Engine, WaitStopped, let_go_kept_indexes
 from chrono_mail.engine.walletlabels import label_account
 from chrono_mail.pimstore.extract import extract
+from chrono_mail.store.receivedby import FILE_NAME as RECEIVED_FILE, mapped_records, read_records, records_text
 from chrono_mail.store import SENT_LETTER, Store
 from chrono_mail.store.store import folder_description
 from chrono_mail.store.atomic import fsync_directory, replace_file_atomically, write_new_file
@@ -44,9 +45,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 3.6.371"
+__version__ = "restore.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: a message that comes back into an account that is here keeps the account that received it, as the backup recorded it (D-292)
 # v3.6.371: the restored passwords get readable labels in the wallet (B-23, D-275)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.353: the kept index connections are let go before account files are moved aside or into place (D-266)
@@ -452,6 +454,7 @@ def _restore(engine: Engine, archive: _Reading, manifest: dict[str, object], key
             passwords = _passwords(archive, names)
     progress = _Progress(engine, _totals(archive, names, [(settings.account.account_id, mail, items) for settings, mail, items in chosen], kinds))
     local_mail = any(mail and settings.account.kind is AccountKind.LOCAL for settings, mail, _ in chosen)  # Local Folders' mail comes back too
+    receivers = _receiver_ids(engine.config(), backup_config.accounts, {settings.account.account_id for settings, _, _ in chosen})
     for settings, mail, items in chosen:
         if items:
             left_out = _damaged_collections(archive, names, f"data/accounts/{settings.account.account_id}/")
@@ -463,8 +466,9 @@ def _restore(engine: Engine, archive: _Reading, manifest: dict[str, object], key
     for settings, mail, items in sorted(chosen, key=lambda row: row[0].account.kind is not AccountKind.LOCAL):  # Local Folders first: accounts may keep their mail in it
         _one_account(
             engine, archive, names, sealed, kinds if items else set[CollectionKind](), mail, local_mail, key, settings, choice, report, progress,
-            _lists_state_first(manifest),
+            _lists_state_first(manifest), receivers,
         )
+    _without_failed_receivers(engine, receivers)
     if "rules" in parts:
         with _left_out_when_damaged("config/rules.json", report):
             _restore_rules(engine, archive, names, choice.replace_existing, _ids_here(engine.config(), [settings for settings, _, _ in chosen]), report)
@@ -585,15 +589,18 @@ def _passwords(archive: _Reading, names: list[str]) -> dict[str, dict[str, str]]
 def _one_account(
     engine: Engine, archive: _Reading, names: list[str], sealed: set[str], kinds: set[CollectionKind], mail: bool, local_mail: bool, key: DataKey,
     settings: AccountSettings, choice: RestoreChoice, report: RestoreReport, progress: _Progress, state_first: bool = True,
+    receivers: dict[str, str] | None = None,
 ) -> None:
-    """One account of the backup: its mail when mail, its calendars, contacts and tasks of these kinds; its definition always."""
+    """One account of the backup: its mail when mail, its calendars, contacts and tasks of these kinds; its definition always. receivers:
+    the id each account of the backup has here (who received each message is recorded by it, D-292)."""
+    receivers = receivers if receivers is not None else {}
     here = _same_here(engine.config(), settings)
     prefix = f"data/accounts/{settings.account.account_id}/"
     if here is None:
         try:
             _restore_whole(
                 engine, archive, [name for name in names if name.startswith(prefix)], prefix, sealed, kinds, mail, local_mail, key, settings, report,
-                progress, state_first,
+                progress, state_first, receivers,
             )
         except DamagedEntry as error:  # a file the account cannot come back without: only this account is left out, the rest goes on (RV-65)
             if settings.account.kind is AccountKind.LOCAL:
@@ -609,7 +616,7 @@ def _one_account(
         kept = dataclasses.replace(settings, storage=here.storage, encrypted=here.encrypted)
         engine.change_config(lambda fresh: fresh.with_account(kept))
     if mail:
-        _fill_mail(engine, archive, names, prefix, here, choice.replace_existing, report, progress)
+        _fill_mail(engine, archive, names, prefix, here, choice.replace_existing, report, progress, receivers)
     if kinds:
         _fill_items(engine, archive, names, prefix, here, kinds, choice.replace_existing, report, progress)
     report.filled.append(account_id)
@@ -621,6 +628,7 @@ def _one_account(
 def _restore_whole(
     engine: Engine, archive: _Reading, names: list[str], prefix: str, sealed: set[str], kinds: set[CollectionKind], mail: bool, local_mail: bool,
     key: DataKey, settings: AccountSettings, report: RestoreReport, progress: _Progress, state_first: bool = True,
+    receivers: dict[str, str] | None = None,
 ) -> None:
     """The account's files are written in a folder of their own and that folder is renamed into place in one step, so the account comes
     back whole or not at all; only then is it added to the accounts."""
@@ -654,6 +662,9 @@ def _restore_whole(
                     report.damaged.append(name)
                     _note_without_details(report)
                     continue
+                if relative == ["store", RECEIVED_FILE]:  # who received each message: the rule decides them again (D-292)
+                    report.damaged.append(name)
+                    continue
                 if relative == ["pop3-state.log"]:  # what was downloaded: left out, so nothing is named to delete on the server (D-258);
                     report.damaged.append(name)  # the server's messages are downloaded again (twice at worst, never lost)
                     report.notes.append(f"{_shown(settings)}: the list of what was downloaded could not be read from the backup; the server's messages are downloaded again")
@@ -662,6 +673,8 @@ def _restore_whole(
                     raise  # the account's own files (its store, its state): without them it cannot come back whole
                 report.damaged.append(name)
                 continue
+            if relative == ["store", RECEIVED_FILE]:  # each account named by its id here; one that is not here is left out (D-292)
+                data = records_text(mapped_records(read_records(data), receivers if receivers is not None else {}))
             if name in sealed:
                 data = encrypt_message(data, key)
             elif relative in (["store", "store.json"], ["pim", "pim.json"]):
@@ -911,7 +924,7 @@ def _bare(message_id: str) -> str:
 
 def _fill_mail(
     engine: Engine, archive: _Reading, names: list[str], prefix: str, here: AccountSettings, replace_existing: bool, report: RestoreReport,
-    progress: _Progress,
+    progress: _Progress, receivers: dict[str, str] | None = None,
 ) -> None:
     """The messages of the backup that are not here. In an account on an IMAP server only the ones that were never on the server (made or
     moved offline): the rest is the server's to bring, or to have deleted since (D-193)."""
@@ -932,7 +945,13 @@ def _fill_mail(
         report.damaged.append(f"{prefix}imap-state.log")
         report.notes.append(f"{_shown(here)}: the record of the server's messages could not be read from the backup; its messages of the server's folders were put in Recovered, on this computer only (the server keeps its own copies)")
         on_server, server_unknown = set[str](), True
+    received = mapped_records(_received_in_backup(archive, names, prefix, report), receivers if receivers is not None else {})  # who received each
+    # message comes back with it, each account by its id here (D-292)
     with open_mailbox(engine, here.account.account_id) as mailbox:
+        try:  # in one write, before the messages are indexed, so their rows show it at once; one recorded here already keeps its own
+            mailbox.store.received_by.record_many(received.items())
+        except ChronoMailError:
+            pass  # recorded by the next filling in or rebuild
         local_ids = mailbox.store.all_store_ids()
         known: dict[tuple[tuple[str, ...], str], str] = {}
         for store_id, indexed in mailbox.index.messages(local_ids).items():
@@ -1014,6 +1033,53 @@ def _sent_in_backup(archive: _Reading, names: list[str], properties_name: str, i
         return False
     sent_at = details.get("sent_at") if isinstance(details, dict) else None
     return isinstance(sent_at, int) and not isinstance(sent_at, bool)
+
+
+def _receiver_ids(config: AppConfig, accounts: tuple[AccountSettings, ...], coming: set[str]) -> dict[str, str]:
+    """The id each account of the backup has here after the restore: that of the same account here, or its own when it comes back."""
+    found: dict[str, str] = {}
+    for settings in accounts:
+        here = _same_here(config, settings)
+        if here is not None:
+            found[settings.account.account_id] = here.account.account_id
+        elif settings.account.account_id in coming:
+            found[settings.account.account_id] = settings.account.account_id
+    return found
+
+
+def _without_failed_receivers(engine: Engine, receivers: dict[str, str]) -> None:
+    """An account that was to come back and did not: no record of who received a message may name it (D-292)."""
+    config = engine.config()
+    here = {item.account.account_id for item in config.accounts}
+    failed = {account_id for account_id in receivers.values() if account_id not in here}
+    if not failed:
+        return
+    places: dict[str, AccountSettings] = {}
+    for item in config.accounts:
+        if item.account.kind is AccountKind.DAV:
+            continue
+        try:
+            place = engine.storage_settings(item, config)
+        except ChronoMailError:
+            continue  # its Local Folders is missing: no mail of it to look at (as storage_groups)
+        places[place.account.account_id] = place
+    for place in places.values():
+        try:
+            engine.open_store(place, config).received_by.leave_out(failed)
+        except ChronoMailError:
+            continue  # the account rule never shows a record naming an account that is not here (Receiver)
+
+
+def _received_in_backup(archive: _Reading, names: list[str], prefix: str, report: RestoreReport) -> dict[str, str]:
+    """Which account received each message of the backup (message id -> account id); a damaged record is left out and told."""
+    name = f"{prefix}store/{RECEIVED_FILE}"
+    if name not in names:
+        return {}
+    try:
+        return read_records(_read(archive, name))
+    except DamagedEntry:
+        report.damaged.append(name)
+        return {}
 
 
 def _put_properties(store: Store, store_id: str, archive: _Reading, name: str, report: RestoreReport) -> None:

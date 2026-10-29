@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Literal
 
 from chrono_mail.core import AccountKind, ChronoMailError, FolderRole, MessageRef, RebuildAborted, StorageError
@@ -8,14 +7,16 @@ from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
 from chrono_mail.engine.mailbox import open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, index_lock, rebuild_abort
-from chrono_mail.index import Index
-from chrono_mail.mime import parse_message
+from chrono_mail.engine.receiving import Receiver
+from chrono_mail.index import Index, IndexEntry, entry_from_raw
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.2.403"
+__version__ = "commands_folders.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: index.fill-sent records every message's receiving account in its properties (format 15, D-292)
+# v4.2.417: index.fill-sent also reads each message's people columns and the account that received it (format 14, D-291, D-292)
 # v4.2.403: folder.delete refuses a folder with subfolders unless they go too (they would be left inside a folder that is gone, D-285)
 # v3.6.354: A standard folder (any folder with a role) is never deleted, also not inside a folder that is; no longer six English names (CR-36)
 # v3.6.349: a folder with its subfolders is deleted only when none of them holds mail on the server this computer never had: never half-way (RV-176)
@@ -224,31 +225,36 @@ class FillResult:
 
 
 def index_fill_sent(engine: Engine, parameters: AccountParameters) -> FillResult:
-    """After an upgrade in place: read the moment each message carries (its Date line) and its attachments (D-235) into the index, a batch at a time,
-    from where it stopped; the index stays in use meanwhile. Aborted: what is filled stays, the rest follows next time (D-229)."""
+    """After an upgrade in place: read the moment each message carries (its Date line), its attachments (D-235), its people columns (D-291) and
+    the account that received it (D-292) into the index, a batch at a time, from where it stopped; the index stays in use meanwhile.
+    Aborted: what is filled stays, the rest follows next time (D-229)."""
     settings = engine.storage_settings(engine.resolve_account(parameters.account))
     account_id = settings.account.account_id
     aborted = rebuild_abort(engine.directories.index_file(account_id))
     aborted.clear()
     store = engine.open_store(settings)
+    receiver = Receiver(settings, engine.config().accounts, engine.directories.pop3_state_file, store)  # one for the whole filling; it records each message's account once (D-292)
     filled = 0
     try:
         while True:
             if aborted.is_set():
                 raise RebuildAborted("Filling in the index was aborted")
             index = engine.open_index(settings, store)  # opened per batch: a rebuild never waits long for it
+            index.receiver = receiver
             try:
                 state = index.sent_filling()
                 if state is None:
                     break
                 rows = index.sent_to_fill(FILL_BATCH)
-                moments: list[tuple[int, datetime | None, bool | None]] = []
+                moments: list[tuple[int, IndexEntry | None]] = []
                 for row_id, store_id, folder, relative in rows:
+                    reference = MessageRef(account_id, folder, store_id)
                     try:
-                        parsed = parse_message(store.read(MessageRef(account_id, folder, store_id), hint=relative))
-                        moments.append((row_id, parsed.date, any(not attachment.inline for attachment in parsed.attachments)))
+                        raw = store.read(reference, hint=relative)
                     except ChronoMailError:
-                        moments.append((row_id, None, None))  # cannot be read: no Sent date, as in a rebuild; its paperclip stays
+                        moments.append((row_id, None))  # cannot be read: no Sent date, as in a rebuild; its paperclip and people stay
+                        continue
+                    moments.append((row_id, entry_from_raw(reference, relative, frozenset(), len(raw), raw)))
                 finished = len(rows) < FILL_BATCH
                 index.fill_sent(moments, rows[-1][0] if rows else 0, finished)
             finally:
@@ -349,7 +355,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(INDEX_REBUILD.id, "Rebuild the search index from the message store", AccountParameters, index_rebuild, doing="Rebuilding the search index")
     registry.register(INDEX_CHECK.id, "Tell which indexes must be rebuilt or filled in", NoParameters, index_check, doing="Checking the search indexes")
     registry.register(INDEX_PREPARE.id, "Make an index usable, rebuilding it when it cannot be used", AccountParameters, index_prepare, doing="Rebuilding the search index")
-    registry.register(INDEX_FILL_SENT.id, "Fill in the Sent dates of an index upgraded from format 11", AccountParameters, index_fill_sent, doing="Filling in the search index")
+    registry.register(INDEX_FILL_SENT.id, "Fill in what an index upgraded in place does not have yet (Sent dates, attachments, people, the receiving account)", AccountParameters, index_fill_sent, doing="Filling in the search index")
     registry.register(INDEX_ABORT.id, "Abort rebuilding or filling in an index", AccountParameters, index_abort, doing="Stopping the index rebuild")
     registry.register(INDEX_RECONCILE.id, "Repair the index after an interruption", AccountParameters, index_reconcile, doing="Repairing the search index")
     registry.register(STORE_VERIFY.id, "Check that every stored message is intact", AccountParameters, store_verify, doing="Checking the stored messages")

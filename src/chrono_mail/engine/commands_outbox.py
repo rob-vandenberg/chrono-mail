@@ -14,9 +14,10 @@ from chrono_mail.store import MessageNotFoundError, Properties, StoredMessage
 from chrono_mail.sync import file_sent_again, send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 3.6.354"
+__version__ = "commands_outbox.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: the account a message is sent from is recorded with it in Sent (D-292)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.351: what follows a send the server took never makes it fail or stops the rest of the Outbox (a warning)
 # v3.6.350: a message the server took is known by any of its marks (the letter written even on a full disk, sent_at, this run's memory): never sent again
@@ -126,11 +127,12 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                         replies_to = _properties(mailbox, message.ref).replies_to
                         try:
                             if sent_before:  # the server accepted it before and only its move to Sent failed: never sent again (RV-50)
-                                outcome = file_sent_again(mailbox.store, mailbox.index, message.ref, hint, mailbox.role_folder(FolderRole.SENT))
+                                outcome = file_sent_again(mailbox.store, mailbox.index, message.ref, hint, mailbox.role_folder(FolderRole.SENT), account_id)
                             else:
                                 outcome = send_stored(
                                     mailbox.store, mailbox.index, sender.account.outgoing, password, message.ref, hint, raw, sender.account.email_address,
                                     recipients, mailbox.role_folder(FolderRole.SENT), ssl_context=engine.tls_context(sender, outgoing=True),
+                                    account=account_id,  # recorded with it in Sent (D-292)
                                 )
                         except ChronoMailError as error:
                             fail(account_id, f"{parsed.subject}: {error}")

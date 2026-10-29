@@ -18,6 +18,7 @@ from chrono_mail.index.model import (
     IndexedMessage,
     IndexEntry,
     KnownAddress,
+    Receiving,
     SearchFilter,
     YES_NO_SORTS,
     SortField,
@@ -30,12 +31,19 @@ from chrono_mail.index.schema import (
     SENT_FILL_KEY,
     STATEMENTS,
     UPGRADE_FROM_11,
+    UPGRADE_FROM_13,
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.2.408"
+__version__ = "index.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: format 15 (14 is filled in once more); the receiver's record comes first, the row's earlier value only when none can be read;
+#           set_receiver: the account recorded for a message once it is sent (D-292)
+# v4.2.417: format 14: the people columns (the sender's address, the recipients' names and addresses) are kept, read with every row and
+#           sorted and grouped by (D-291); received_by, the account that received each message: given with the entry, else kept from
+#           before, else decided by the receiver the engine gives; read, sorted and grouped by the name the engine gives each account
+#           (account_names, D-292); 13, 12 and 11 are upgraded in place and the filling in reads the new columns too (fill_sent)
 # v4.2.408: a search narrowed by the message's own Date (sent_from, sent_to) and to named messages (only, D-288)
 # v4.2.406: a search of a folder with filters.subfolders also finds the messages of every folder inside it (This folder + subfolders, D-287)
 # v3.6.350: a rebuilt index put in place counts as written (database.writes)
@@ -71,7 +79,11 @@ __version__ = "index.py 4.2.408"
 # v0.0.13: preview, unread index, busy timeout
 # v0.0.8: Initial message index
 
-_COLUMNS: str = "m.store_id, m.folder, m.path, m.flags, m.date, m.size, m.subject, m.sender, m.recipients, m.message_id, m.thread_key, m.has_attachments, m.preview, m.tags, m.sent"
+ACCOUNT_NAME_FUNCTION: str = "account_name"  # the name an account is shown with, by its id (Index.account_names; "" when not known)
+_COLUMNS: str = (
+    "m.store_id, m.folder, m.path, m.flags, m.date, m.size, m.subject, m.sender, m.recipients, m.message_id, m.thread_key, m.has_attachments, m.preview, m.tags, m.sent,"
+    f" m.sender_address, m.recipient_names, m.recipient_addresses, {ACCOUNT_NAME_FUNCTION}(m.received_by)"
+)
 _SORT_COLUMN: dict[SortField, str] = {
     SortField.DATE: "m.date",
     SortField.SENT: "m.sent",
@@ -86,10 +98,17 @@ _SORT_COLUMN: dict[SortField, str] = {
     SortField.FOLDER: "m.folder COLLATE NOCASE",
     SortField.CONVERSATION: "(SELECT count(*) FROM messages c WHERE c.thread_key = m.thread_key)",
     SortField.PREVIEW: "m.preview COLLATE NOCASE",
+    SortField.SENDER_FULL: "m.sender COLLATE NOCASE",  # the columns that show people sort by what they show (D-291)
+    SortField.SENDER_ADDRESS: "m.sender_address COLLATE NOCASE",
+    SortField.RECIPIENT_NAMES: "m.recipient_names COLLATE NOCASE",
+    SortField.RECIPIENT_ADDRESSES: "m.recipient_addresses COLLATE NOCASE",
+    SortField.ACCOUNT: f"{ACCOUNT_NAME_FUNCTION}(m.received_by) COLLATE NOCASE",  # by the name the Account column shows (D-292)
 }
 _NEWEST_WITHIN: frozenset[SortField] = YES_NO_SORTS | {SortField.FOLDER, SortField.CONVERSATION, SortField.PREVIEW}  # messages with the same value: newest first, either way
 _TEXT_GROUP_COLUMN: dict[SortField, str] = {
     SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender_name", SortField.RECIPIENTS: "m.recipients", SortField.FOLDER: "m.folder", SortField.PREVIEW: "m.preview",
+    SortField.SENDER_FULL: "m.sender", SortField.SENDER_ADDRESS: "m.sender_address", SortField.RECIPIENT_NAMES: "m.recipient_names",
+    SortField.RECIPIENT_ADDRESSES: "m.recipient_addresses", SortField.ACCOUNT: f"{ACCOUNT_NAME_FUNCTION}(m.received_by)",
 }
 _FIELD_COLUMN: dict[str, str] = {"from": "sender", "to": "recipients", "subject": "subject", "body": "body"}
 _TERM: re.Pattern[str] = re.compile(r'(-?)(?:(\w+):)?("[^"]*"?|\S+)')
@@ -146,7 +165,8 @@ def _moment(epoch: int | None) -> datetime | None:
 
 
 def _row(values: tuple[object, ...]) -> IndexedMessage:
-    store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, attachments, preview, tags, sent = values
+    store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, attachments, preview, tags, sent, *people = values
+    sender_address, recipient_names, recipient_addresses, received_by = people
     return IndexedMessage(
         str(store_id),
         _folder_path(str(folder)),
@@ -163,6 +183,10 @@ def _row(values: tuple[object, ...]) -> IndexedMessage:
         str(preview),
         tuple(tag for tag in str(tags).split(TAG_SEPARATOR) if tag),
         _moment(None if sent is None else int(str(sent))),
+        str(sender_address),
+        str(recipient_names),
+        str(recipient_addresses),
+        str(received_by or ""),
     )
 
 
@@ -222,29 +246,46 @@ class Index(IndexDatabase):
     """The rebuildable list and search index of one account (SQLite). Never the source of truth."""
 
     _released: Callable[[], None] | None = None  # let go of when closed (when_closed)
+    receiver: Receiving | None = None  # the account that received a message added without one (the engine's rule, D-292)
+    account_names: Mapping[str, str] = {}  # the name each account is shown with, by its id (the engine's, D-292)
 
     @override
     def _prepare(self) -> None:
         self._connection.execute("PRAGMA temp_store = MEMORY")
+        self._connection.create_function(ACCOUNT_NAME_FUNCTION, 1, self._account_name)
         if self._format() == str(SCHEMA_VERSION):
             return  # the usual case: nothing to make, no lock taken
         with self._transaction():  # looked at again under the write lock: another connection may have made or upgraded it meanwhile (D-247)
             found = self._format()
             if found is None:
                 self._create_schema()
-            elif found in ("11", "12"):
+            elif found in ("11", "12", "13", "14"):
                 self._upgrade_in_place(found)
             elif found != str(SCHEMA_VERSION):
                 # An older format is rebuilt from the messages (format 11 changed what date holds for every message, D-226), a newer one too
                 raise StorageError("The index has an unknown format; rebuild it")
 
     def _upgrade_in_place(self, version: str) -> None:
-        """Format 12 added the moment each message carries (sent), format 13 the attachments by what the text shows (D-235): the index
-        stays usable at once, both are filled in afterwards (sent_to_fill, fill_sent), from where it stopped (D-229). Inside _prepare's transaction."""
-        for statement in UPGRADE_FROM_11 if version == "11" else ():
+        """Format 12 added the moment each message carries (sent), format 13 the attachments by what the text shows (D-235), format 14 the
+        people columns and the receiving account (D-291, D-292): the index stays usable at once, all are filled in afterwards (sent_to_fill,
+        fill_sent), from the first message again (a filling an older upgrade left unfinished included). Inside _prepare's transaction."""
+        for statement in (*(UPGRADE_FROM_11 if version == "11" else ()), *(UPGRADE_FROM_13 if version != "14" else ())):
             self._connection.execute(statement)
         self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
-        self._connection.execute("INSERT INTO meta VALUES (?, '0')", (SENT_FILL_KEY,))
+        self._connection.execute("INSERT OR REPLACE INTO meta VALUES (?, '0')", (SENT_FILL_KEY,))
+
+    def receiver_of(self, store_id: str) -> str:
+        """The id of the account that received this message ("" when not known, D-292)."""
+        row = self._connection.execute("SELECT received_by FROM messages WHERE store_id = ?", (store_id,)).fetchone()
+        return str(row[0]) if row is not None and row[0] else ""
+
+    def set_receiver(self, store_id: str, account_id: str) -> None:
+        """The account recorded for this message once it is sent (its row was made while it waited in the Outbox)."""
+        self._update("UPDATE messages SET received_by = ? WHERE store_id = ?", (account_id, store_id))
+
+    def _account_name(self, account_id: object) -> str:
+        """The name the account of this id is shown with ("" when not known): what the Account column shows and sorts by (D-292)."""
+        return self.account_names.get(str(account_id or ""), "")
 
     def when_closed(self, released: Callable[[], None]) -> None:
         """Something to let go of when this index is closed (the engine's hold on the file, so it is never replaced while open)."""
@@ -275,13 +316,31 @@ class Index(IndexDatabase):
         ).fetchall()
         return [(int(row_id), str(store_id), _folder_path(str(folder)), str(path)) for row_id, store_id, folder, path in rows]
 
-    def fill_sent(self, moments: Sequence[tuple[int, datetime | None, bool | None]], filled_to: int, finished: bool) -> None:
-        """The sent moments and attachments of these rows (None: the message could not be read, its attachments stay as they were), and how
-        far the filling has come (finished: every message has them now), in one step."""
+    def fill_sent(self, moments: Sequence[tuple[int, IndexEntry | None]], filled_to: int, finished: bool) -> None:
+        """The sent moments, attachments, people columns and receiving account of these rows, as read from their messages again (None: the
+        message could not be read: no sent moment, the rest stays as it was; a receiving account already given stays), and how far the
+        filling has come (finished: every message has them now), in one step."""
+        if self.receiver is not None:
+            self.receiver.prepare()  # its reading done before the write lock is taken
+        try:
+            self._fill(moments, filled_to, finished)
+        finally:
+            if self.receiver is not None:
+                self.receiver.flush()  # its records written in one step, the write lock let go
+
+    def _fill(self, moments: Sequence[tuple[int, IndexEntry | None]], filled_to: int, finished: bool) -> None:
         with self._transaction():
             self._connection.executemany(
-                "UPDATE messages SET sent = ?, has_attachments = COALESCE(?, has_attachments) WHERE id = ?",
-                [(_epoch(moment), None if attachments is None else int(attachments), row_id) for row_id, moment, attachments in moments],
+                "UPDATE messages SET sent = ?, has_attachments = COALESCE(?, has_attachments), sender_address = COALESCE(?, sender_address),"
+                " recipient_names = COALESCE(?, recipient_names), recipient_addresses = COALESCE(?, recipient_addresses),"
+                " received_by = COALESCE(NULLIF(?, ''), received_by) WHERE id = ?",
+                [
+                    (None, None, None, None, None, None, row_id) if entry is None else (
+                        _epoch(entry.sent), int(entry.has_attachments), entry.sender_address, entry.recipient_names, entry.recipient_addresses,
+                        self._received_by(entry), row_id,
+                    )
+                    for row_id, entry in moments
+                ],
             )
             if finished:
                 self._connection.execute("DELETE FROM meta WHERE key = ?", (SENT_FILL_KEY,))
@@ -296,12 +355,19 @@ class Index(IndexDatabase):
 
     # --- changing the index ----------------------------------------------------------------
 
+    def _received_by(self, entry: IndexEntry) -> str:
+        """The account that received the message: the engine's receiver (its record first, D-292), else as given with it."""
+        return self.receiver(entry) if self.receiver is not None else entry.received_by
+
     def _insert(self, entry: IndexEntry) -> None:
         self._connection.execute("DELETE FROM text WHERE rowid IN (SELECT id FROM messages WHERE store_id = ?)", (entry.store_id,))
+        before = self._connection.execute("SELECT received_by FROM messages WHERE store_id = ?", (entry.store_id,)).fetchone()
         replaced = self._connection.execute("DELETE FROM messages WHERE store_id = ?", (entry.store_id,)).rowcount
+        kept = str(before[0]) if before is not None and before[0] else ""  # a message written again (a draft saved, its tags) keeps who received it
         cursor = self._connection.execute(
-            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview, tags, sender_name, send_at, sent)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview, tags, sender_name, send_at, sent,"
+            " sender_address, recipient_names, recipient_addresses, received_by)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 entry.store_id,
                 _folder_key(entry.folder),
@@ -320,6 +386,10 @@ class Index(IndexDatabase):
                 shown_name(entry.sender),
                 entry.send_at,
                 _epoch(entry.sent),
+                entry.sender_address,
+                entry.recipient_names,
+                entry.recipient_addresses,
+                self._received_by(entry) or kept,  # the record (D-292); the row's earlier value only when none can be read
             ),
         )
         self._write_tags(entry.store_id, entry.tags)
@@ -345,6 +415,8 @@ class Index(IndexDatabase):
     def add_many(self, entries: Iterable[IndexEntry]) -> int:
         """Add (or replace) messages in one transaction. Returns how many."""
         count = 0
+        if self.receiver is not None:
+            self.receiver.prepare()  # its reading done before the write lock is taken
         try:
             with self._transaction():
                 for entry in entries:
@@ -352,6 +424,9 @@ class Index(IndexDatabase):
                     count += 1
         except sqlite3.Error as error:
             raise StorageError(f"The index could not be updated: {type(error).__name__}") from None
+        finally:
+            if self.receiver is not None:
+                self.receiver.flush()  # its records written in one step, the write lock let go
         return count
 
     def add(self, entry: IndexEntry) -> None:
@@ -750,12 +825,13 @@ class Index(IndexDatabase):
 class IndexBuilder:
     """Builds a complete new index next to the old one and swaps it in with one rename."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, receiver: Receiving | None = None) -> None:
         self.path: Path = path
         self._building: Path = path.with_name(path.name + ".new")
         for leftover in (self._building, Path(f"{self._building}-wal"), Path(f"{self._building}-shm")):
             leftover.unlink(missing_ok=True)
         self.index: Index = Index(self._building)
+        self.index.receiver = receiver  # the account that received each message (D-292)
 
     def add_many(self, entries: Iterable[IndexEntry]) -> int:
         return self.index.add_many(entries)

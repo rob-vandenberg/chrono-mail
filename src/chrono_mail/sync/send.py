@@ -10,9 +10,10 @@ from chrono_mail.protocols.smtp import Refusal, SmtpLimits, send_message
 from chrono_mail.store import SENT_LETTER, Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "send.py 3.6.350"
+__version__ = "send.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: account: the account a message is sent from is recorded with it once it is in Sent, never changed after (D-292)
 # v3.6.350: sent but not moved to Sent: marked first by a letter in its file name (a rename needs no free space, so a full disk cannot
 #           stop it), then in its properties; moved to Sent but the index could not follow: it is in Sent, told as such (with a warning)
 # v3.1.341: sent but not moved to Sent: marked as sent, never sent again (file_sent_again, RV-50); when the message it replaces cannot be
@@ -52,6 +53,7 @@ def send_and_file(
     ssl_context: ssl.SSLContext | None = None,
     checkpoint: Checkpoint = _no_checkpoint,
     before_send: Callable[[], None] = lambda: None,
+    account: str = "",
 ) -> SendOutcome:
     """Build the message, keep a verified copy in the Outbox, send it, then move it to Sent. The stored copy keeps
     the Bcc recipients; what goes to the server is the same message without them.
@@ -81,7 +83,7 @@ def send_and_file(
     except ProtocolError as error:
         return SendOutcome(False, reference, error=str(error))
     checkpoint("send:after-smtp")
-    return _file_as_sent(store, index, reference, path, sent, result.refused, checkpoint)
+    return _file_as_sent(store, index, reference, path, sent, result.refused, checkpoint, account)
 
 
 def send_stored(
@@ -98,6 +100,7 @@ def send_stored(
     limits: SmtpLimits = SmtpLimits(),
     ssl_context: ssl.SSLContext | None = None,
     checkpoint: Checkpoint = _no_checkpoint,
+    account: str = "",
 ) -> SendOutcome:
     """Send a message that waits in the Outbox, exactly as it is stored but without its Bcc header, then move it to Sent.
     It is not stored again: until the server has accepted it, the copy in the Outbox is the only one and it stays there."""
@@ -106,10 +109,25 @@ def send_stored(
     except ProtocolError as error:
         return SendOutcome(False, reference, error=str(error))
     checkpoint("send:after-smtp")
-    return _file_as_sent(store, index, reference, path, sent, result.refused, checkpoint)
+    return _file_as_sent(store, index, reference, path, sent, result.refused, checkpoint, account)
 
 
-def _file_as_sent(store: Store, index: Index | None, reference: MessageRef, path: str | None, sent: tuple[str, ...], refused: tuple[Refusal, ...], checkpoint: Checkpoint) -> SendOutcome:
+def _record_sender(store: Store, index: Index | None, reference: MessageRef, account: str) -> None:
+    """The account a message was sent from is recorded with it once it is in Sent, never changed after (D-292)."""
+    if not account:
+        return
+    try:
+        recorded = store.received_by.record(reference.store_id, account)
+        if index is not None and recorded:
+            index.set_receiver(reference.store_id, recorded)
+    except ChronoMailError:
+        pass  # it was sent and is in Sent; the next filling in or rebuild records it
+
+
+def _file_as_sent(
+    store: Store, index: Index | None, reference: MessageRef, path: str | None, sent: tuple[str, ...], refused: tuple[Refusal, ...], checkpoint: Checkpoint,
+    account: str = "",
+) -> SendOutcome:
     """Move a message the server accepted from the Outbox to Sent; if that fails it was still sent, and stays in the Outbox marked as sent,
     so no later send of the Outbox sends it again: they only try the move again (RV-50). The mark is a letter in its file name first (a
     rename: it needs no free space, so a full disk does not stop it), then sent_at in its properties; the caller also remembers it for the
@@ -135,6 +153,7 @@ def _file_as_sent(store: Store, index: Index | None, reference: MessageRef, path
         if len(marks) == 2:
             return SendOutcome(True, reference, refused, warning=f"it was sent but could not be moved to Sent ({error}) or marked as sent ({marks[1]})")
         return SendOutcome(True, reference, refused, warning=f"it was sent but could not be moved to Sent: {error}; it waits in the Outbox as sent")
+    _record_sender(store, index, placed.ref, account)
     try:
         if index is not None:
             index.move(placed.ref.store_id, sent, placed.place)
@@ -144,9 +163,9 @@ def _file_as_sent(store: Store, index: Index | None, reference: MessageRef, path
     return SendOutcome(True, placed.ref, refused)
 
 
-def file_sent_again(store: Store, index: Index | None, reference: MessageRef, path: str | None, sent: tuple[str, ...]) -> SendOutcome:
+def file_sent_again(store: Store, index: Index | None, reference: MessageRef, path: str | None, sent: tuple[str, ...], account: str = "") -> SendOutcome:
     """A message of the Outbox the server accepted before, whose move to Sent failed then (sent_at): only the move is tried again."""
-    return _file_as_sent(store, index, reference, path, sent, (), _no_checkpoint)
+    return _file_as_sent(store, index, reference, path, sent, (), _no_checkpoint, account)
 
 
 def _index(index: Index | None, reference: MessageRef, path: str, raw: bytes) -> None:

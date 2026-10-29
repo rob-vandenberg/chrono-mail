@@ -18,6 +18,7 @@ from chrono_mail.core import (
 from chrono_mail.engine.changes import NUMBERED_KINDS, Change, FolderNumbers, MessageRow, flag_names
 from chrono_mail.engine.imap_online import LOCAL_ONLY, GoneFromServer, ServerSession, is_imap, server_session
 from chrono_mail.engine.old_files import settle_old_files
+from chrono_mail.engine.receiving import WAITING_ROLES
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER
 from chrono_mail.engine.session import OUTBOX, Engine
@@ -32,9 +33,11 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 4.2.403"
+__version__ = "mailbox.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: a copy keeps the account that received the original through its properties (D-292)
+# v4.2.417: a row carries the people columns and the receiving account (D-291, D-292)
 # v4.2.403: a folder made here inside folders that are not there yet makes them first, each a folder of its own, told (D-285);
 #           an interrupted folder rename is finished at the next opening, the index following
 # v3.6.366: deliver keeps a given id; deliver_moved: a message moved here from another account, under its own id, never stored twice (D-272)
@@ -337,7 +340,8 @@ class Mailbox:
         return MessageRow(
             message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, flag_names(message.flags),
             message.has_attachments, message.preview, message.recipients, size, account=self.store.account_id, snoozed_until=snoozed_until, tags=message.tags,
-            sent=message.sent,
+            sent=message.sent, sender_address=message.sender_address, recipient_names=message.recipient_names,
+            recipient_addresses=message.recipient_addresses, received_by=message.received_by,
         )
 
     def timed(self, folder: tuple[str, ...] | None) -> dict[str, int] | None:
@@ -606,9 +610,23 @@ class Mailbox:
         self._moved_here(ref, placed.ref, placed.place, was_unread)
         return placed.ref
 
+    def _record_leaving(self, source: tuple[str, ...], target: tuple[str, ...], store_id: str) -> None:
+        """A message that leaves Drafts, the Outbox or Scheduled without being sent (a drag to the Inbox): the account its list showed
+        (the one in its From) is recorded with it now, for good (D-292)."""
+        waiting = {role.value for role in WAITING_ROLES}
+        if self._role_of(source) not in waiting or self._role_of(target) in waiting:
+            return
+        try:
+            account = self.index.receiver_of(store_id)
+            if account:
+                self.index.set_receiver(store_id, self.store.received_by.record(store_id, account))
+        except ChronoMailError:
+            pass  # recorded by the next filling in or rebuild
+
     def _moved_here(self, ref: MessageRef, moved: MessageRef, path: str, was_unread: bool) -> None:
         """The file of a message moved here went from ref to moved (at path): the index follows, and that is told."""
         target = moved.folder_path
+        self._record_leaving(ref.folder_path, target, moved.store_id)
         self._index(lambda: self.index.move(moved.store_id, target, path))
         row = self.row_of(moved.store_id)
         role = self._role_of(target)
@@ -740,7 +758,7 @@ class Mailbox:
         raw = self.store.read(copied, hint=path)
         flags = self.store.flags(copied, path)  # the copy is not in the index yet: its place comes from the store
         tags = self.tags_of(copied.store_id)
-        self._index(lambda: self.index.add(replace(entry_from_raw(copied, path, flags, len(raw), raw), tags=tags)))
+        self._index(lambda: self.index.add(replace(entry_from_raw(copied, path, flags, len(raw), raw), tags=tags)))  # the store gave the copy the original's record (D-292)
         self._tell_added(copied)
         if self._role_of(target) == FolderRole.SENT.value:
             self.forget_sent_marks(copied)  # a copy of a message sent already, in Sent: an ordinary sent message (the letter came along)

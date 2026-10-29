@@ -6,12 +6,14 @@ from pathlib import Path
 
 from chrono_mail.core import ChronoMailError, RebuildAborted, StorageError
 from chrono_mail.index import Index, IndexBuilder, IndexEntry, entry_from_raw, unreadable_entry
+from chrono_mail.index.model import Receiving
 from chrono_mail.store import Store, StoredMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "rebuild.py 2.0.281"
+__version__ = "rebuild.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: rebuild_index takes the receiver that decides the account that received each message (D-292)
 # v2.0.281: the messages are counted first, so progress says how many of how many; a rebuild can be aborted (RebuildAborted: the new
 #           index is put away, the old one stays); the new index replaces the old one only when the engine allows it (D-229)
 # v1.9.276: a rebuilt entry's last-resort Received time is when its file was written here (D-226)
@@ -60,7 +62,7 @@ def _entry(store: Store, message: StoredMessage, tags: dict[str, tuple[str, ...]
 
 def rebuild_index(
     store: Store, index_path: Path, progress: Progress | None = None, stop: Callable[[], bool] | None = None,
-    replacing: Callable[[], AbstractContextManager[object]] | None = None,
+    replacing: Callable[[], AbstractContextManager[object]] | None = None, receiver: Receiving | None = None,
 ) -> tuple[Index, RebuildReport]:
     """Read every message in the store and build a new index. The messages are counted first, so progress tells how many of how many.
     The old index stays in place until the new one is complete; if anything fails, or stop says the person aborted it
@@ -69,7 +71,7 @@ def rebuild_index(
     started = time.monotonic()
     messages = [message for folder in store.list_folders() for message in store.list_messages(folder.path)]  # only lists the files: quick
     total = len(messages)
-    builder = IndexBuilder(index_path)
+    builder = IndexBuilder(index_path, receiver)  # receiver: the account that received each message (D-292)
     tags = _stored_tags(store)
     indexed = unreadable = 0
     try:

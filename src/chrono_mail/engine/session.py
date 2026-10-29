@@ -24,6 +24,7 @@ from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.crypto import DataKey, KeyStore
 from chrono_mail.engine.changes import Change, RebuildStep
 from chrono_mail.engine.junkwords import JunkHolder
+from chrono_mail.engine.receiving import Receiver
 from chrono_mail.engine.undohistory import UndoHistory
 from chrono_mail.index import Index
 from chrono_mail.protocols.imap import ImapClient
@@ -32,9 +33,11 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.2.403"
+__version__ = "session.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: the receiver of every index records each message's account in its properties, once (D-292)
+# v4.2.417: every index opened or rebuilt is told which account received each message it is given and how each account is named (name_receivers, D-292)
 # v4.2.403: mail kept on this computer: a folder that is only the parent of others becomes a folder of its own when the store opens (D-285)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.353: IndexGate keeps one connection to the index open between commands, let go before a replace or removal: closing the last one wrote the whole change log back, 18 ms of every 23 ms Delete (D-266)
@@ -570,6 +573,7 @@ class Engine:
                 except StorageError:
                     pass
                 else:
+                    self.name_receivers(index, settings, store)
                     index.when_closed(lambda: gate.leave(reader))
                     gate.keep(path)
                     return index
@@ -590,6 +594,21 @@ class Engine:
             return False
         return True
 
+    def name_receivers(self, index: Index, place: AccountSettings, store: Store) -> None:
+        """Tell an index of this place which account received each message it is given (D-292) and the name each account is shown with."""
+        from chrono_mail.engine.commands_accounts import shown_name  # it builds on this module
+
+        accounts = self.config().accounts
+        index.receiver = Receiver(place, accounts, self.directories.pop3_state_file, store)  # records each message's account once (D-292)
+        index.account_names = {item.account.account_id: shown_name(item, accounts) for item in accounts if item.account.kind not in (AccountKind.LOCAL, AccountKind.DAV)}
+
+    def _receiver(self, account_id: str, store: Store) -> Receiver | None:
+        try:
+            place = self.config().find(account_id)
+        except ConfigurationError:
+            return None  # a place no longer in the settings: its messages get their account from the next filling in
+        return Receiver(place, self.config().accounts, self.directories.pop3_state_file, store)
+
     def rebuild(self, account_id: str, store: Store, path: Path, usable: bool) -> tuple[Index, RebuildReport]:
         """Build a new index from every message of the store and put it in place of the old one once no command has that open; the
         caller holds index_lock. It reports how far it is (rebuilding, the status line) and stops when the person aborts it
@@ -601,7 +620,12 @@ class Engine:
             self.rebuilding(RebuildStep(account_id, done, total, usable))
 
         try:
-            return rebuild_index(store, path, progress, aborted.is_set, index_gate(path).replacing)
+            index, report = rebuild_index(store, path, progress, aborted.is_set, index_gate(path).replacing, self._receiver(account_id, store))
+            try:
+                self.name_receivers(index, self.config().find(account_id), store)
+            except ConfigurationError:
+                pass
+            return index, report
         finally:
             self.rebuilding(RebuildStep(account_id, 0, 0, usable, ended=True))
 

@@ -9,7 +9,7 @@ from chrono_mail.engine import commands_folders
 from chrono_mail.engine.changes import RebuildStep
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.index import Index
-from chrono_mail.index.schema import SENT_FILL_KEY
+from chrono_mail.index.schema import SENT_FILL_KEY, UPGRADE_FROM_13
 from chrono_mail.sync import rebuild_index
 from tests.mailfactory import raw_message
 from tests.test_mime_parse import PICTURE_IN_A_PLAIN_TEXT_MESSAGE
@@ -17,9 +17,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_index_rebuild import make_store
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_rebuilds.py 2.5.335"
+__version__ = "test_engine_rebuilds.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: the helpers that make an index of format 11 or 12 take away what format 14 added first (D-291, D-292)
 # v2.5.335: index.prepare tells how many messages it indexed (it said 0), also when no rebuild was needed
 # v2.0.301: a picture labelled inline in a plain-text message: listed, shown below the text, its paperclip filled in by the upgrade from format 12 (D-235)
 # v2.0.281: Initial version: a rebuild counts first, can be aborted, keeps the old index usable meanwhile; format 11 is upgraded in place
@@ -38,9 +39,20 @@ def fetched(setup: Setup) -> list[RebuildStep]:
     return steps
 
 
+def without_format_14(connection: sqlite3.Connection) -> None:
+    """Take away what format 14 added (the people columns, the receiving account and their indexes, D-291, D-292)."""
+    for statement in UPGRADE_FROM_13:
+        if statement.startswith("CREATE INDEX"):
+            connection.execute(f"DROP INDEX {statement.split()[2]}")
+    for statement in UPGRADE_FROM_13:
+        if statement.startswith("ALTER TABLE"):
+            connection.execute(f"ALTER TABLE messages DROP COLUMN {statement.split()[5]}")
+
+
 def as_format_11(path: Path) -> None:
-    """Turn a format 12 index back into format 11, as 1.9.276 to 1.10.279 left it."""
+    """Turn a current index back into format 11, as 1.9.276 to 1.10.279 left it."""
     connection = sqlite3.connect(path)
+    without_format_14(connection)
     connection.execute("DROP INDEX messages_by_sent")
     connection.execute("ALTER TABLE messages DROP COLUMN sent")
     connection.execute("UPDATE meta SET value = '11' WHERE key = 'schema'")
@@ -157,6 +169,7 @@ def test_a_picture_labelled_inline_is_listed_shown_below_the_text_and_its_paperc
     assert [(a.suggested_name, a.inline) for a in message.attachments][0] == ("photo.png", False) and len(message.attachments) == 2
     assert [(picture.content_type, picture.data_base64) for picture in message.pictures] == [("image/png", "iVBORw==")]
     connection = sqlite3.connect(index_path(setup))  # as 2.0.300 left it: format 12, no paperclip for this message
+    without_format_14(connection)
     connection.execute("UPDATE messages SET has_attachments = 0")
     connection.execute("UPDATE meta SET value = '12' WHERE key = 'schema'")
     connection.commit()

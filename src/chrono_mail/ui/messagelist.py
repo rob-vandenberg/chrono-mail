@@ -26,9 +26,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.413"
+__version__ = "messagelist.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: the group headings of the people columns and of Account (D-291, D-292)
 # v4.2.413: the view everywhere (a search of All folders from a Favorites view) is asked like a Favorites view and holds a message in any
 #           folder: a moved message stays, Undo and new mail bring it in (D-287)
 # v4.2.408: ViewSpec carries Advanced search's Sent, Snoozed until and Send at days (with_days); a view narrowed by those days is fetched
@@ -114,8 +115,12 @@ def group_name(sort: str, value: str) -> str:
     """The text of a group header: the date or size group's name, or the sender, recipients or subject as the columns show them."""
     if sort == "sender":
         return display_name(value) or "(unknown)"
-    if sort == "to":
+    if sort in ("to", "to_names", "to_addresses"):
         return value or "(no recipients)"
+    if sort in ("sender_full", "sender_address"):
+        return value or "(unknown)"
+    if sort == "account":
+        return value or "(no account)"
     if sort == "subject":
         return value or "(no subject)"
     if sort == "conversation":

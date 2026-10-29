@@ -11,15 +11,17 @@ from chrono_mail.core import ChronoMailError, FolderRole, MessageFlag, MessageRe
 from chrono_mail.engine.commands_mail import _check_id
 from chrono_mail.engine.commands_many import MAXIMUM_MESSAGES, ManyResult, NotDone, _not_done
 from chrono_mail.engine.junkfilter import learn
+from chrono_mail.engine.receiving import WAITING_ROLES
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.engine.undohistory import UndoStep
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_across.py 3.6.366"
+__version__ = "commands_across.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: a message moved to another account keeps the account that received it (D-292)
 # v3.6.366: Initial: many messages of a folder moved to a folder of another account, message by message, never lost when stopped (D-272)
 
 GROUP: int = 50  # messages per opening of each account
@@ -42,10 +44,23 @@ class _Taken:
     raw: bytes
     flags: frozenset[MessageFlag]
     tags: tuple[str, ...]
+    received_by: str  # the account that received it: it goes along, never changed (D-292); "" when not known
 
 
 def _roles(mailbox: Mailbox) -> dict[tuple[str, ...], FolderRole]:
     return {folder.path: folder.role for folder in mailbox.store.list_folders()}
+
+
+def _receiver_of(mailbox: Mailbox, store_id: str, waiting: bool) -> str:
+    """The account recorded as having received the message, else the one its list shows; "" for a message not sent yet (its From
+    decides, D-292)."""
+    if waiting:
+        return ""
+    try:
+        recorded = mailbox.store.received_by.of(store_id)
+    except ChronoMailError:
+        recorded = None
+    return recorded if recorded is not None else mailbox.index.receiver_of(store_id)
 
 
 def _take(engine: Engine, account: str, folder: str, messages: list[str], failed: list[NotDone]) -> tuple[tuple[str, ...], bool, list[_Taken]]:
@@ -60,7 +75,7 @@ def _take(engine: Engine, account: str, folder: str, messages: list[str], failed
             try:
                 ref = source.reference(path, _check_id(message))
                 raw = source.store.read(ref, hint=source.hint(ref.store_id))
-                taken.append(_Taken(ref, raw, source.current_flags(ref), source.tags_of(ref.store_id)))
+                taken.append(_Taken(ref, raw, source.current_flags(ref), source.tags_of(ref.store_id), _receiver_of(source, ref.store_id, role in WAITING_ROLES)))
             except ChronoMailError as error:
                 failed.append(_not_done(message, error))
     return path, role is FolderRole.JUNK, taken
@@ -77,6 +92,11 @@ def _store(engine: Engine, account: str, target: str, taken: list[_Taken], from_
             raise UsageError("The Outbox and Scheduled take only their own account's messages")
         for item in taken:
             try:
+                if item.received_by:  # written before the message arrives, so its row shows it at once
+                    try:
+                        destination.store.received_by.record(item.ref.store_id, item.received_by)
+                    except ChronoMailError:
+                        pass  # the index's receiver records it; the move goes on
                 arrived = destination.deliver_moved(path, item.raw, item.flags, item.ref.store_id)
             except ChronoMailError as error:
                 failed.append(_not_done(item.ref.store_id, error))

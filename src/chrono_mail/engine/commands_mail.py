@@ -24,20 +24,23 @@ from chrono_mail.engine.compose import ComposeKind, build_draft, message_filenam
 from chrono_mail.engine.imap_online import waiting_marker
 from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
 from chrono_mail.engine.mailbox import Mailbox, SentAlready, open_mailbox
+from chrono_mail.engine.receiving import own_place, receiving_account
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.index.model import DateBounds, GroupCount
-from chrono_mail.mime import REPEAT_HEADER, Address, Attachment, OutgoingMessage, ParsedMessage, build_message, parse_message
+from chrono_mail.mime import REPEAT_HEADER, Address, Attachment, OutgoingMessage, ParsedMessage, build_message, delivery_addresses, parse_message
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
 from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, send_and_file, sync_imap
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.2.408"
+__version__ = "commands_mail.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: the account a message is sent from, and the account that downloads a message, are recorded with it (D-292)
+# v4.2.417: Reply's account by the one rule of engine/receiving.py; a POP3 check tells the index which account downloaded each message (D-292)
 # v4.2.408: the searches take sent_from and sent_to (the message's own Date), snoozed_from and snoozed_to, send_at_from and
 #           send_at_to (days, D-288)
 # v4.2.406: message.search, message.groups and message.order take subfolders: a folder's search also looks in the folders inside it (D-287)
@@ -109,7 +112,10 @@ __version__ = "commands_mail.py 4.2.408"
 # v0.0.13: previews, inline images, attachment save, compose, reply marks
 # v0.0.12: Initial message commands
 
-ListSort = Literal["date", "sent", "subject", "sender", "to", "size", "snoozed", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview"]  # the sort orders of a folder or a search
+ListSort = Literal[  # the sort orders of a folder or a search
+    "date", "sent", "subject", "sender", "to", "size", "snoozed", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview",
+    "sender_full", "sender_address", "to_names", "to_addresses", "account",  # the people columns (D-291) and Account (D-292)
+]
 MAXIMUM_ATTACHMENT_BYTES: int = 100 * 1024 * 1024
 MAXIMUM_MESSAGE_BYTES: int = 256 * 1024 * 1024
 MAXIMUM_INLINE_IMAGE_BYTES: int = 5 * 1024 * 1024
@@ -125,7 +131,8 @@ def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage], snoozed: dict[st
             message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, flag_names(message.flags),
             message.has_attachments, message.preview, message.recipients, sizes.get(message.thread_key, 1),
             snoozed_until=moment_at(times[message.store_id]) if message.folder in TIMED and message.store_id in times else None,
-            tags=message.tags, sent=message.sent,
+            tags=message.tags, sent=message.sent, sender_address=message.sender_address, recipient_names=message.recipient_names,
+            recipient_addresses=message.recipient_addresses, received_by=message.received_by,
         )
         for message in found
     )
@@ -232,6 +239,7 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
                 client, mailbox.store, mailbox.index, state, inbox, settings.pop3, MAXIMUM_MESSAGE_BYTES, engine.clock,
                 progress=downloading, already_here=already_here if known is not None else None,
                 step=lambda text: engine.activity(account_id, "receive", text, None, None), announcer=MailboxAnnouncer(mailbox),
+                receiving=account_id,  # the account that received each new message, recorded with it (D-292)
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
         if report.new_references:
@@ -642,6 +650,7 @@ def _send(engine: Engine, mailbox: Mailbox, parameters: SendParameters, replaced
         outcome = send_and_file(mailbox.store, mailbox.index, settings.account.outgoing, password, outgoing, OUTBOX, mailbox.role_folder(FolderRole.SENT),
             ssl_context=engine.tls_context(settings, outgoing=True),
             before_send=lambda: _settle(mailbox, replaced),  # after the new copy
+            account=settings.account.account_id,  # recorded with it in Sent (D-292)
         )  # is stored, before the server is asked, all under the lock: the old one never goes before the new one is safe (as RV-127)
         if outcome.sent and outcome.reference.folder_path == OUTBOX:
             engine.sent_unfiled.add(outcome.reference.store_id)  # a failed move to Sent: never sent again in this run, also without a mark on the disk
@@ -1282,18 +1291,9 @@ def reply_account(engine: Engine, opened: AccountSettings, parsed: ParsedMessage
     """The account a reply or a forward is sent from. The same rule wherever the mail is kept (its own folders or Local Folders):
     the account whose address the message was sent to (To, Cc, Delivered-To and the like); the account whose folders it is in
     wins when it is one of them or when none matches. None when nothing decides (the person's default account then)."""
-    from chrono_mail.engine.rule_engine import header_values
-
-    addressed = {address.address.lower() for address in (*parsed.to_addresses, *parsed.cc_addresses)}
-    for name in ("Delivered-To", "X-Original-To", "Envelope-To", "X-Envelope-To"):
-        for value in header_values(raw, name):
-            addressed.add(parseaddr(value)[1].lower())
-    senders = [item for item in engine.config().accounts if item.account.kind not in (AccountKind.LOCAL, AccountKind.DAV)]
-    matches = [item for item in senders if item.account.email_address.lower() in addressed]
-    here = opened if opened.account.kind is not AccountKind.LOCAL and opened.storage == "own" else None
-    if here is not None and (not matches or any(item.account.account_id == here.account.account_id for item in matches)):
-        return here.account.account_id
-    return matches[0].account.account_id if matches else None
+    addressed = {address.address.lower() for address in (*parsed.to_addresses, *parsed.cc_addresses)} | set(delivery_addresses(raw))
+    found = receiving_account(engine.config().accounts, own_place(opened), addressed)
+    return found.account.account_id if found is not None else None
 
 
 def message_compose(engine: Engine, parameters: ComposeParameters) -> ComposeResult:

@@ -1,14 +1,16 @@
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from chrono_mail.core import MessageFlag, MessageRef
 from chrono_mail.index.model import PREVIEW_CHARACTERS, UNKNOWN_SEND_TIME, UNREADABLE_SUBJECT, IndexEntry
 from chrono_mail.index.text import clean_preview, searchable_body
-from chrono_mail.mime import Address, ParsedMessage, parse_message, send_time
+from chrono_mail.mime import Address, ParsedMessage, delivery_addresses, parse_message, send_time
 
 # --- Version ------------------------------------------------------------
-__version__ = "entry.py 4.1.384"
+__version__ = "entry.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: the sender's address, the recipients' names and addresses (each with the other as its fallback, D-291) and the delivery addresses (D-292)
 # v4.1.384: no other mail program named in a docstring (OR-10)
 # v2.0.280: sent: the moment the message carries itself (its Date line), for the Sent column (B-16)
 # v1.9.276: date is when the mail server received the message (D-226): the topmost Received line, else Delivery-date, else Date, else when it was stored here
@@ -28,6 +30,18 @@ def _clean(text: str) -> str:
 
 def _display(address: Address) -> str:
     return f"{address.name} <{address.address}>" if address.name else address.address
+
+
+def _name_or_address(address: Address) -> str:
+    return _clean(address.name).strip() or _clean(address.address).strip()
+
+
+def _address_or_name(address: Address) -> str:
+    return _clean(address.address).strip() or _clean(address.name).strip()
+
+
+def _joined(addresses: tuple[Address, ...], shown: Callable[[Address], str]) -> str:
+    return ", ".join(text for text in (shown(address) for address in addresses) if text)
 
 
 MAXIMUM_PEOPLE: int = 60
@@ -91,6 +105,10 @@ def entry_from_raw(
         people=_people(message),
         send_at=send_time(message),
         sent=message.date,
+        sender_address=_address_or_name(message.from_addresses[0]) if message.from_addresses else "",
+        recipient_names=_joined((*message.to_addresses, *message.cc_addresses), _name_or_address),
+        recipient_addresses=_joined((*message.to_addresses, *message.cc_addresses), _address_or_name),
+        delivered_to=delivery_addresses(raw),
     )
 
 

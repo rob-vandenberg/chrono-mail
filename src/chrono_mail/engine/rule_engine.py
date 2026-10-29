@@ -1,17 +1,17 @@
 from dataclasses import dataclass, field
-from email.parser import BytesHeaderParser
 
 from chrono_mail.config import Action, Condition, Rule
 from chrono_mail.core import ChronoMailError, FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.engine.commands_tags import give_colours
 from chrono_mail.engine.mailbox import Mailbox, parse_folder
 from chrono_mail.index import html_to_text
-from chrono_mail.mime import Address, ParsedMessage, parse_message
+from chrono_mail.mime import Address, ParsedMessage, header_values, parse_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "rule_engine.py 2.1.308"
+__version__ = "rule_engine.py 4.2.417"
 
 # --- Version history ----------------------------------------------------
+# v4.2.417: header_values is the one of mime (the index reads the delivery headers too, D-220)
 # v2.1.308: RuleReport.placed: where each message is after the rules (Not junk tells where it went, D-238)
 # v0.5.136: Tags: the condition tag is / is not, the actions add_tag and remove_tag; a later rule sees the tags an earlier one gave
 # v0.5.123: The folder of a rule is made on the server first in an IMAP account (D-118)
@@ -20,7 +20,6 @@ __version__ = "rule_engine.py 2.1.308"
 # v0.0.33: Initial rule matching and actions
 
 MAXIMUM_BODY_CHARACTERS: int = 200_000
-MAXIMUM_HEADER_BYTES: int = 256 * 1024
 
 
 def _address_texts(address: Address) -> tuple[str, ...]:
@@ -45,18 +44,6 @@ def _any_holds(operator: str, candidates: tuple[str, ...], wanted: str) -> bool:
     positive = {"not_contains": "contains", "not_equals": "equals"}.get(operator, operator)
     found = any(_holds(positive, candidate, wanted) for candidate in candidates)
     return not found if operator.startswith("not_") else found
-
-
-def header_values(raw: bytes, name: str) -> tuple[str, ...]:
-    """Every value of a header of the message (a header may occur several times). Never raises."""
-    end = raw.find(b"\r\n\r\n")
-    end = raw.find(b"\n\n") if end == -1 else end
-    head = raw[: end if end != -1 else MAXIMUM_HEADER_BYTES][:MAXIMUM_HEADER_BYTES]
-    try:
-        message = BytesHeaderParser().parsebytes(head)
-        return tuple(str(value).encode("utf-8", "surrogateescape").decode("utf-8", "replace") for value in message.get_all(name, []))
-    except Exception:  # a hostile header must never stop the mail from arriving
-        return ()
 
 
 @dataclass(frozen=True, slots=True)

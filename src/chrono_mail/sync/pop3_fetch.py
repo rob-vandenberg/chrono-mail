@@ -1,6 +1,6 @@
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from chrono_mail.config import Pop3DeletePolicy, Pop3Options
 from chrono_mail.core import ChronoMailError, MessageRef, ProtocolError
@@ -11,9 +11,11 @@ from chrono_mail.sync.announce import SILENT, Announcer
 from chrono_mail.sync.pop3_state import DownloadRecord, Pop3State
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3_fetch.py 0.5.164"
+__version__ = "pop3_fetch.py 4.2.418"
 
 # --- Version history ----------------------------------------------------
+# v4.2.418: the downloading account is recorded with the message before it is indexed (D-292)
+# v4.2.417: receiving: the account that downloads, kept with each message's index entry (the Account column, D-292)
 # v0.5.164: each message is told the moment it is stored, in one step with its index entry (announcer, D-151)
 # v0.5.145: step: the steps of a check (listing the messages, deleting on the server), for the Operations window
 # v0.5.133: already_here first looks at the header alone (TOP n 0); only a message that is not here is downloaded whole
@@ -81,6 +83,7 @@ def fetch_pop3(
     already_here: AlreadyHere | None = None,
     step: Step | None = None,
     announcer: Announcer = SILENT,
+    receiving: str = "",
 ) -> FetchReport:
     """Download new messages through a connected client.
 
@@ -107,7 +110,7 @@ def fetch_pop3(
             seen.add(unique_id)
             if progress is not None:
                 progress(position, len(new))
-            _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number), already_here, announcer)
+            _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number), already_here, announcer, receiving)
         _apply_policy(store, state, options, now, run, on_server)
         if run.to_delete:
             if step is not None:
@@ -136,6 +139,7 @@ def _download_one(
     size: int | None,
     already_here: AlreadyHere | None = None,
     announcer: Announcer = SILENT,
+    receiving: str = "",
 ) -> None:
     header: bytes | None = None
     if already_here is not None:
@@ -168,6 +172,11 @@ def _download_one(
         run.failed.append(FailedMessage(unique_id, f"it could not be stored safely: {error}"))
         return
     checkpoint("fetch:after-deliver")
+    if receiving:
+        try:
+            store.received_by.record(reference.store_id, receiving)  # who received it, before anything else names it (D-292)
+        except ChronoMailError:
+            pass  # the index's receiver records it by the download record
     state.record_download(unique_id, reference.store_id, int(now()))
     checkpoint("fetch:after-state")
     run.downloaded += 1
@@ -175,7 +184,7 @@ def _download_one(
     with announcer.changing():  # its index entry and its fact in one step (D-151)
         if index is not None:
             try:
-                index.add(entry_from_raw(reference, f"new/{reference.store_id}", frozenset(), len(raw), raw))
+                index.add(replace(entry_from_raw(reference, f"new/{reference.store_id}", frozenset(), len(raw), raw), received_by=receiving))  # the account that downloaded it (D-292)
             except ChronoMailError:
                 run.index_problems += 1  # the message is safe in the store; reconcile_index() will add it
         announcer.added(reference)
