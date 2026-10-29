@@ -17,9 +17,10 @@ from tests.fakegithub import FakeGitHub
 from tests.ui.world import Dialogs, World, build_world, record_opened_urls, reject_dialog, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_updates.py 4.2.427"
+__version__ = "test_ui_updates.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: Restart Chrono Mail or Close Chrono Mail; after an update Chrono Mail closes without a question, unsaved messages go to Drafts
 # v4.2.427: Linux after an install: Restart Chrono Mail or Close, both close; Cancel closes at once; an update waits while the window is
 #           minimized or a question is open; About says what went wrong; the release link only to github.com
 # v4.2.423: About shows Check for updates only in a copy updated through an installer (the owner)
@@ -129,7 +130,7 @@ def test_download_then_install_on_linux_closes_and_only_restart_starts_it_again(
 
     def answer(parent: object, title: str, text: str, buttons: list[str]) -> int | None:
         asked_restart.append(text)
-        assert buttons == ["Restart Chrono Mail", "Close"]  # never Later: its files are the new version's now
+        assert buttons == ["Restart Chrono Mail", "Close Chrono Mail"]  # never Later: its files are the new version's now
         return choice  # None: the box was closed
 
     monkeypatch.setattr(updates, "ask_choice", answer)
@@ -278,3 +279,45 @@ def test_a_failed_download_says_what_went_wrong_in_calm_words(world: World, qtbo
     window._failed(error)  # noqa: SLF001 - the engine's answer, as it arrives
     assert window.note.text() == text and window.download_button.isEnabled()
     window.reject()
+
+
+def test_after_an_update_chrono_mail_closes_without_a_question_and_an_unsaved_message_goes_to_drafts(world: World, qtbot: QtBot) -> None:
+    from tests.ui.test_ui_composer import fill, new_composer
+
+    world.window.start()
+    settle(qtbot, world)
+    composer = new_composer(world, qtbot)
+    fill(composer, subject="Not saved yet", body="typed before the update")
+    world.window.composing.composers.append(composer)
+    world.window.quit_for_update()
+    wait(qtbot, lambda: not world.window.isVisible())
+    assert world.dialogs.shown == []  # no question, no Cancel (the owner)
+    drafts = world.call("message.list", account=world.account_id, folder="Drafts")
+    assert [row.subject for row in drafts.messages] == ["Not saved yet"]
+
+
+def test_after_an_update_a_message_that_cannot_be_saved_is_thrown_away_without_a_question(world: World, qtbot: QtBot) -> None:
+    from tests.ui.test_ui_composer import fill, new_composer
+
+    world.window.start()
+    settle(qtbot, world)
+    composer = new_composer(world, qtbot)
+    fill(composer, to="bob@", subject="Address typed wrong")  # cannot be saved
+    world.window.composing.composers.append(composer)
+    world.window.quit_for_update()
+    wait(qtbot, lambda: not world.window.isVisible())
+    assert world.dialogs.shown == []  # no question, no box (the owner: it is thrown away)
+    assert world.call("message.list", account=world.account_id, folder="Drafts").total == 0
+
+
+def test_a_send_given_while_closing_after_an_update_asks_nothing(world: World, qtbot: QtBot) -> None:
+    from tests.ui.test_ui_composer import fill, new_composer
+
+    world.window.start()
+    settle(qtbot, world)
+    composer = new_composer(world, qtbot)
+    fill(composer, subject="")  # no subject: normally a question
+    composer.save_and_close_quietly()  # what the closing after an update does first
+    composer.send()
+    wait(qtbot, lambda: world.call("message.list", account=world.account_id, folder="Sent").total == 1)
+    assert world.dialogs.shown == []

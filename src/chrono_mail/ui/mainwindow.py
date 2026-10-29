@@ -66,9 +66,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.427"
+__version__ = "mainwindow.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: quit_for_update: after an update Chrono Mail closes without questions (unsaved messages go to Drafts)
 # v4.2.427: quitting stops a download of an update at once; an update is offered only while the window is on screen
 # v4.2.419: About is a window of its own with Check for updates; a Refresh that goes online also looks for updates (Updates, D-293)
 # v4.2.416: Mail's toolbar folds Delete to Mark first, then the search field's folder choice, then Forward to Reply (D-290)
@@ -336,6 +337,7 @@ class MainWindow(QMainWindow):
         self._tried_interface: float | None = None  # sizes being tried out in Settings (not saved yet)
         self._tried_windows: float | None = None
         self._quitting: bool = False
+        self._for_update: bool = False  # closing after an update: no questions (quit_for_update)
         self.out_of_sight: bool = False  # started minimized at login and not opened since (D-284): Wayland never says a window is minimized
         self.setProperty(scale.MAIN_WINDOW_PROPERTY, True)  # this window and its menus follow the Main window slider
         self._apply_main_font()
@@ -357,7 +359,7 @@ class MainWindow(QMainWindow):
         self.rebuilds.running_changed.connect(self.checking.rebuild_running)
         self.rebuilds.quit_requested.connect(self.quit_program)
         self.updates: Updates = Updates(  # D-293
-            backend, self.prefs, self, self.quit_program, self.closed_for_good, self._on_screen,
+            backend, self.prefs, self, self.quit_program, self.closed_for_good, self._on_screen, self.quit_for_update,
         )
         self.checking.went_online.connect(self.updates.went_online)
         self._build_toolbar()
@@ -851,7 +853,10 @@ class MainWindow(QMainWindow):
             self.hide()  # the program keeps running in the notification area
             event.ignore()
             return
-        if not self.composing.close_all() or not self.notices.before_quit(self.quit_program) or not may_quit(self, self.backups.running, self.restores.running):  # the backup question last: what it promises then happens (W3)
+        if self._for_update:  # no question, no Cancel: what is not saved is saved, what waits stays waiting
+            self.composing.save_all_and_close()
+            self.notices.drop_all()
+        elif not self.composing.close_all() or not self.notices.before_quit(self.quit_program) or not may_quit(self, self.backups.running, self.restores.running):  # the backup question last: what it promises then happens (W3)
             event.ignore()
             return
         save_geometry(self, self.settings, "geometry")
@@ -871,6 +876,13 @@ class MainWindow(QMainWindow):
         self.closed_for_good.emit()
 
     # --- tray, notifications, closing ---------------------------------------------------------------------
+
+    def quit_for_update(self) -> None:
+        """After an update: Chrono Mail closes without a Cancel (the owner); unsaved messages go to Drafts, the Outbox keeps its mail for the
+        next start, a backup or restore that runs stops as at Quit."""
+        self._for_update = True
+        self.quit_program()
+        self._for_update = False
 
     def quit_program(self) -> None:
         """Really quit (closing the window may only hide it, when the tray is used)."""

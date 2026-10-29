@@ -39,9 +39,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.prefs import InUse
 
 # --- Version ------------------------------------------------------------
-__version__ = "updates.py 4.2.427"
+__version__ = "updates.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: after a Linux install: Restart Chrono Mail or Close Chrono Mail, both close without questions (unsaved messages go to Drafts)
 # v4.2.427: Cancel closes the download's window at once (the download stops behind it); Update available waits until the main window is
 #           on screen (not minimized, not only in the tray, no question or Settings open); About says what went wrong ("could not reach
 #           GitHub" only when it was not reached); the release link only to https on github.com; Linux after an install: Restart Chrono
@@ -56,7 +57,7 @@ GITHUB_BUSY: str = "GitHub could not answer just now. Try again later."
 INTERRUPTED: str = "The download was interrupted. Try again later."
 RELEASE_PAGES: str = "https://github.com/"  # the page of a release is opened only there, encrypted
 RESTART_BUTTON: str = "Restart Chrono Mail"
-CLOSE_BUTTON: str = "Close"
+CLOSE_BUTTON: str = "Close Chrono Mail"  # never just Close: the window before it has a Close that closes only itself (the owner)
 
 
 def downloads_folder() -> str:
@@ -330,9 +331,11 @@ class Updates(QObject):
 
     def __init__(
         self, backend: Backend, prefs: InUse, window: QWidget, quit_program: Callable[[], None], closed_for_good: SignalInstance, in_sight: Callable[[], bool],
+        quit_for_update: Callable[[], None],
     ) -> None:
         super().__init__(window)
         self._in_sight: Callable[[], bool] = in_sight  # the main window is on screen: shown, not minimized, not only in the notification area
+        self._quit_for_update: Callable[[], None] = quit_for_update  # after a Linux install: closes without questions (the owner)
         self._backend: Backend = backend
         self._prefs: InUse = prefs
         self._window: QWidget = window
@@ -412,9 +415,9 @@ class Updates(QObject):
 
     def _installed(self, version: str) -> None:
         choice = ask_choice(self._window, "Chrono Mail was updated", f"Chrono Mail was updated to {version}. Restart it to use the new version.", [RESTART_BUTTON, CLOSE_BUTTON])
-        # Its files are the new version's now: it closes either way (with its usual questions), also when the box was closed; only Restart starts it again
+        # Its files are the new version's now: it closes either way, without a Cancel (the owner), also when the box was closed; only Restart starts it again
         self._after_quit = self._restart if choice == 0 else None
-        self._quit_program()
+        self._quit_for_update()
         self._after_quit = None
 
     def _restart(self) -> None:

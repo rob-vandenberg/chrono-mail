@@ -26,9 +26,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.426"
+__version__ = "messagelist.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: the group headings of to_shown (From / To for mail one sent, D-295)
 # v4.2.426: the time column is Send at in Favorites > Scheduled and Outbox too
 # v4.2.417: the group headings of the people columns and of Account (D-291, D-292)
 # v4.2.413: the view everywhere (a search of All folders from a Favorites view) is asked like a Favorites view and holds a message in any
@@ -118,6 +119,8 @@ def group_name(sort: str, value: str) -> str:
         return display_name(value) or "(unknown)"
     if sort in ("to", "to_names", "to_addresses"):
         return value or "(no recipients)"
+    if sort == "to_shown":
+        return value or "(unknown)"
     if sort in ("sender_full", "sender_address"):
         return value or "(unknown)"
     if sort == "account":

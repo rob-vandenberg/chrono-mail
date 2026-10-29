@@ -1,7 +1,9 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 4.2.418"
+__version__ = "schema.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: format 16: to_shown, the person the From / To column shows for mail one sent, with its sort index; 15 and 14 are filled in from
+#           the headers only (FILL_HEADERS_KEY)
 # v4.2.418: format 15: an index of format 14 is filled in once more (every message's receiving account recorded in its properties, D-292)
 # v4.2.417: format 14: the people columns (sender_address, recipient_names, recipient_addresses, D-291) and received_by, the account that
 #           received each message (D-292), with sort indexes; 13, 12 and 11 are upgraded in place and filled in afterwards
@@ -22,7 +24,7 @@ __version__ = "schema.py 4.2.418"
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 15  # 15: nothing new, but every message is filled in once more, so its receiving account is recorded with it (D-292); 14: the people columns and the receiving account (D-291, D-292; 13, 12 and 11 upgraded in place, filled in afterwards); 13: has_attachments by what the text shows (D-235; 12 and 11 upgraded in place, filled in afterwards); 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
+SCHEMA_VERSION: int = 16  # 16: to_shown, the person the From / To column shows for mail one sent (its first recipient, else the sender), sorted by (D-295; 15 to 11 upgraded in place, filled in afterwards); 15: nothing new, but every message is filled in once more, so its receiving account is recorded with it (D-292); 14: the people columns and the receiving account (D-291, D-292; 13, 12 and 11 upgraded in place, filled in afterwards); 13: has_attachments by what the text shows (D-235; 12 and 11 upgraded in place, filled in afterwards); 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
 FOLDER_SEPARATOR: str = "\x1f"
 SENT_FILL_KEY: str = "sent_filled_to"  # meta, after an upgrade in place: the row id up to which sent, has_attachments, the people columns and received_by were read from the messages; gone when all are done
 UPGRADE_FROM_11: tuple[str, ...] = (  # format 12 only adds the sent moment: the old index stays usable, sent is filled in afterwards (index.fill-sent)
@@ -36,6 +38,13 @@ PEOPLE_INDEXES: tuple[str, ...] = (  # the people columns sort like From (D-291)
     "CREATE INDEX messages_by_recipient_names ON messages (folder, recipient_names COLLATE NOCASE, id)",
     "CREATE INDEX messages_by_recipient_addresses ON messages (folder, recipient_addresses COLLATE NOCASE, id)",
 )
+UPGRADE_FROM_15: tuple[str, ...] = (  # format 16 only adds the person From / To shows for sent mail: filled in afterwards, from the headers only
+    "ALTER TABLE messages ADD COLUMN to_shown TEXT NOT NULL DEFAULT ''",
+    "CREATE INDEX messages_by_to_shown ON messages (folder, to_shown COLLATE NOCASE, id)",
+)
+FILL_HEADERS_KEY: str = "fill_from_headers"  # meta, while a filling in runs that needs less than the whole message: "1" its headers (from 14), "2" only what the index holds (from 15)
+FILL_FROM_HEADERS: str = "1"
+FILL_FROM_INDEX: str = "2"
 UPGRADE_FROM_13: tuple[str, ...] = (  # format 14 only adds columns: the old index stays usable, they are filled in afterwards (index.fill-sent)
     "ALTER TABLE messages ADD COLUMN sender_address TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE messages ADD COLUMN recipient_names TEXT NOT NULL DEFAULT ''",
@@ -96,7 +105,8 @@ STATEMENTS: tuple[str, ...] = (
         sender_address TEXT NOT NULL DEFAULT '',
         recipient_names TEXT NOT NULL DEFAULT '',
         recipient_addresses TEXT NOT NULL DEFAULT '',
-        received_by TEXT NOT NULL DEFAULT ''
+        received_by TEXT NOT NULL DEFAULT '',
+        to_shown TEXT NOT NULL DEFAULT ''
     )""",
     SEND_AT_INDEX,
     "CREATE INDEX messages_by_date ON messages (folder, date DESC, id DESC)",
@@ -104,6 +114,7 @@ STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX messages_by_subject ON messages (folder, subject COLLATE NOCASE, id)",
     "CREATE INDEX messages_by_sender_name ON messages (folder, sender_name COLLATE NOCASE, id)",  # the sender as the From column shows it
     "CREATE INDEX messages_by_size ON messages (folder, size, id)",
+    "CREATE INDEX messages_by_to_shown ON messages (folder, to_shown COLLATE NOCASE, id)",  # From / To where it shows the recipients (D-295)
     # The sort keys of the yes/no sorts are written exactly like _SORT_COLUMN in index.py, or SQLite does not use these indexes.
     "CREATE INDEX messages_by_unread ON messages (folder, (flags & 1), date DESC, id DESC)",  # also serves unread counts: (flags & 1) = 0 is a seek
     "CREATE INDEX messages_by_flagged ON messages (folder, ((flags & 4) <> 0), date, id)",

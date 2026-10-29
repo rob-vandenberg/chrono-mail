@@ -15,9 +15,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from tests.ui.world import World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_column_sorts.py 4.2.426"
+__version__ = "test_ui_column_sorts.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: From / To in Sent sorts by its first recipient as shown (to_shown)
 # v4.2.426: Initial: a column sorts by itself (From / To never shares a sort with From, the owner); Favorites > Scheduled, Snoozed and
 #           Outbox show their time column; the last column's tick is greyed in the header menu (OR-15); Sorted by's ticked entry changes
 #           nothing and Sender sorts by the From / To column where only it shows the sender; a sort saved since is never converted
@@ -78,7 +79,7 @@ def test_the_from_to_column_sorts_by_what_it_shows(world: World, qtbot: QtBot) -
     assert messages.engine_sort() == "sender" and messages.sort_button.text() == "Sorted by Sender ▾"  # the Inbox shows who sent it
     view = world.window.mail_state.view
     world.window.mail_state.view = replace(view, path="Sent", folder="Sent", folder_role="sent")
-    assert messages.engine_sort() == "to_names"  # Sent shows who it went to
+    assert messages.engine_sort() == "to_shown"  # Sent shows who it went to: its first recipient (D-295)
     world.window.mail_state.view = view
 
 

@@ -15,10 +15,12 @@ if TYPE_CHECKING:
     from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "registry.py 3.6.351"
+__version__ = "registry.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
+# v4.2.429: behind: a command that runs behind the person's work (filling in an index, waiting for new mail) never counts as it; every
+#           other command does while it runs (Engine.person_work), so work behind can step aside
 # v2.1.311: every command says what it is doing (doing), in plain words: the busy bar names what runs
 # v1.1.205: TypedCommand: a command with the types of its parameters and its answer, so every caller is checked by the type checker (R-02, R-19)
 # v0.0.12: Initial command registry
@@ -54,9 +56,14 @@ class Command:
     doing: str  # what the program is doing while the command runs, in plain words (the busy bar's hover text)
     _parameter_type: type
     _handler: Callable[["Engine", object], object]
+    behind: bool = False  # runs behind the person's work: never counted as it (the filling in of an index, the wait for new mail)
 
     def run(self, engine: "Engine", values: Mapping[str, object]) -> object:
-        return self._handler(engine, build_parameters(self._parameter_type, self.parameters, values))
+        parameters = build_parameters(self._parameter_type, self.parameters, values)
+        if self.behind:
+            return self._handler(engine, parameters)
+        with engine.person_work():  # the work behind steps aside meanwhile (D-229)
+            return self._handler(engine, parameters)
 
 
 class UsageError(ChronoMailError):
@@ -190,6 +197,7 @@ class CommandRegistry:
         destructive: bool = False,
         *,
         doing: str,
+        behind: bool = False,
     ) -> None:
         if command_id in self._commands:
             raise ValueError(f"Command {command_id} is registered twice")
@@ -205,6 +213,7 @@ class CommandRegistry:
             doing,
             parameter_type,
             lambda engine, parameters: handler(engine, cast(P, parameters)),
+            behind,
         )
 
     def get(self, command_id: str) -> Command:

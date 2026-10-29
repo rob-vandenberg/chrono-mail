@@ -47,9 +47,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 3.6.358"
+__version__ = "composer.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: save_and_close_quietly and close_for_quit: after an update Chrono Mail closes without a Cancel; what is not saved goes to Drafts first
 # v3.6.358: after a save only the attachments it took are marked as stored, at the places the save gives, in place; what was added or removed
 #           during the save stays so and still counts as a change; no reading the draft back; Save, Send and Discard asked while a save
 #           runs follow it, never dropped; the newest decision replaces the one waiting (CR-03, D-271)
@@ -535,7 +536,7 @@ class ComposeWindow(QMainWindow):
             return
         recipients = self._recipients()
         if recipients is None:
-            if not quiet:
+            if not quiet and not self._closing_for_update:
                 QMessageBox.warning(self, "Save draft", f"The {self._bad_field} field contains something that is not an e-mail address.")
             else:
                 self._say("Not saved yet: check the addresses")
@@ -559,7 +560,7 @@ class ComposeWindow(QMainWindow):
             self._saving = False
             self._save_failed = True
             self._say(f"The draft could not be saved: {error}", error=True)
-            if not quiet and not self._discarding:  # Save asked for it; an automatic save never interrupts the writing (it tries again by itself)
+            if not quiet and not self._discarding and not self._closing_for_update:  # Save asked for it; an automatic save never interrupts the writing
                 QMessageBox.warning(self, "Save draft", f"The draft could not be saved: {error}")
             self._decide_waiting()
 
@@ -686,7 +687,7 @@ class ComposeWindow(QMainWindow):
 
     def _edit_failed(self, error: ChronoMailError) -> None:
         self._set_sending(False)
-        QMessageBox.warning(self, "Not saved", f"{error}\n\nThe scheduled message is as it was. You can correct this and try again.")
+        self._tell(QMessageBox.warning, "Not saved", f"{error}\n\nThe scheduled message is as it was. You can correct this and try again.")
 
     def send(self, send_at: str | None = None, repeat: dict[str, object] | None = None) -> None:
         if self._sending:
@@ -696,13 +697,16 @@ class ComposeWindow(QMainWindow):
             return
         recipients = self._recipients()
         if recipients is None:
-            QMessageBox.warning(self, "Send", f"The {self._bad_field} field contains something that is not an e-mail address.")
+            self._tell(QMessageBox.warning, "Send", f"The {self._bad_field} field contains something that is not an e-mail address.")
             return
         to, cc, bcc = recipients
         if not (to or cc or bcc):
-            QMessageBox.warning(self, "Send", "Add at least one recipient.")
+            if self._closing_for_update:
+                self.save_draft(quiet=True)  # closing after an update: not sendable, kept as a draft instead, without a question
+                return
+            self._tell(QMessageBox.warning, "Send", "Add at least one recipient.")
             return
-        if not self.subject.text().strip() and self._options.warn_no_subject:
+        if not self.subject.text().strip() and self._options.warn_no_subject and not self._closing_for_update:  # closing after an update: the Send given goes
             answer = QMessageBox.question(self, "Send", "This message has no subject. Send it anyway?")
             if answer != QMessageBox.StandardButton.Yes:
                 return
@@ -757,7 +761,7 @@ class ComposeWindow(QMainWindow):
             self._handed_over()
             self.sent.emit(str(self.from_box.currentData()))
             self.scheduled.emit(result.message_id)
-            QMessageBox.information(self, "Scheduled", f"The message will be sent at {result.scheduled}. It waits in your Scheduled folder until then; the program has to be running at that time.")
+            self._tell(QMessageBox.information, "Scheduled", f"The message will be sent at {result.scheduled}. It waits in your Scheduled folder until then; the program has to be running at that time.")
             self.close()
             return
         if result.waiting:  # a delayed send: it waits in the Outbox (B-21)
@@ -769,8 +773,8 @@ class ComposeWindow(QMainWindow):
         if not result.sent:  # the message is in the Outbox now, sent from there: this window no longer holds it (a second Send sent it twice, RV-155)
             self._handed_over()
             self.sent.emit(str(self.from_box.currentData()))  # the Outbox changed
-            QMessageBox.warning(
-                self,
+            self._tell(
+                QMessageBox.warning,
                 "The message was not sent",
                 f"{result.error}\n\nIt was kept in your Outbox, so nothing is lost, and is sent again with the next Send and Receive. "
                 "To change it, open it from the Outbox.",
@@ -781,25 +785,68 @@ class ComposeWindow(QMainWindow):
         self.sent.emit(str(self.from_box.currentData()))
         problems = list(result.refused) + ([result.warning] if result.warning else [])
         if problems:
-            QMessageBox.information(self, "Sent", "The message was sent, with remarks:\n\n" + "\n".join(problems))
+            self._tell(QMessageBox.information, "Sent", "The message was sent, with remarks:\n\n" + "\n".join(problems))
         self.close()
 
     def _failed(self, error: ChronoMailError) -> None:
         self._set_sending(False)
         if isinstance(error, SentAlready):  # what it replaces was sent meanwhile: nothing more is sent
-            QMessageBox.warning(self, "The message was not sent again", str(error))
+            self._tell(QMessageBox.warning, "The message was not sent again", str(error))
         elif isinstance(error, GoneMeanwhile):  # what it replaces left the Outbox meanwhile: nothing was done, never "try again"
-            QMessageBox.warning(self, "The message was not sent", str(error))
+            self._tell(QMessageBox.warning, "The message was not sent", str(error))
         elif isinstance(error, (UsageError, ConfigurationError, MessageFormatError)):  # refused before anything was stored (or built)
-            QMessageBox.warning(self, "The message was not sent", f"{error}\n\nNothing was stored or sent. You can correct this and try again.")
+            self._tell(QMessageBox.warning, "The message was not sent", f"{error}\n\nNothing was stored or sent. You can correct this and try again.")
         else:  # it may have got further: never invite a second Send without a look
-            QMessageBox.warning(self, "The message may not have been sent", f"{error}\n\nLook in the Outbox and in Sent before you send it again.")
+            self._tell(QMessageBox.warning, "The message may not have been sent", f"{error}\n\nLook in the Outbox and in Sent before you send it again.")
 
     # --- closing ------------------------------------------------------------------------------------
 
     def _close_for_good(self) -> None:
         self._finished = True
         self.close()
+
+    def save_and_close_quietly(self) -> None:
+        """Chrono Mail closes after an update, without a Cancel and without a question (the owner): what is not saved goes to Drafts (a
+        scheduled message keeps its place), then the window closes; what cannot be saved (an address typed wrong, a full disk) is thrown
+        away (the owner). A Send or a decision already given goes on; no box appears meanwhile."""
+        self._closing_for_update = True
+        if self._discarding or self._sending or (self._saving and self._waiting is not None):
+            return  # under way, or the person's own decision waits for the running save: it goes on, the window closes after it
+        if self._finished or not self.is_modified():
+            self.autosave_timer.stop()
+            self._close_for_good()
+            return
+        if self._editing is not None:
+            recipients = self._recipients()
+            if recipients is not None and any(recipients):
+                self.save_scheduled()  # the window closes once the message is saved
+            return
+
+        def save_then_close() -> None:
+            if self._stored is not None and not self.is_modified():
+                self._close_for_good()
+                return
+            self.save_draft(quiet=True)
+            if self._saving:
+                self._waiting = self._close_when_saved
+            elif not self._save_failed:
+                self._close_for_good()
+
+        self._after_the_save(save_then_close)
+
+    _closing_for_update: bool = False  # closing after an update: nothing asks, what goes wrong is only written on the bottom line
+
+    def _tell(self, box: Callable[[QWidget, str, str], object], title: str, text: str) -> None:
+        """A message in a box, or, while the window closes after an update (no question at all), only on its bottom line."""
+        if self._closing_for_update:
+            self._say(text)
+            return
+        box(self, title, text)
+
+    def close_for_quit(self) -> None:
+        """The program ends now: the window goes without a question (what could be saved was saved)."""
+        self.autosave_timer.stop()
+        self._close_for_good()
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:

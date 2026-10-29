@@ -21,11 +21,13 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import add_account, call
 from tests.test_engine_restore import _backup, _restore
+from tests.test_engine_rebuilds import without_format_16
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_people_columns.py 4.2.428"
+__version__ = "test_engine_people_columns.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: the older formats are made without format 16's column too
 # v4.2.428: a draft dragged out of Drafts has no fixed account until it is sent (the owner)
 # v4.2.418: the account is recorded once and kept through copies, moves, a move to another account and a rebuild; a sent message records its
 #           account, a draft nothing; the upgrade from format 14 records every message
@@ -119,6 +121,7 @@ def test_a_copy_keeps_the_account_that_received_the_original(three: Three) -> No
 def test_an_index_of_format_13_is_filled_in_with_the_people_and_the_accounts(three: Three) -> None:
     path = three.engine.directories.index_file(LOCAL_ACCOUNT_ID)
     connection = sqlite3.connect(path)
+    without_format_16(connection)
     for statement in UPGRADE_FROM_13:
         if statement.startswith("CREATE INDEX"):
             connection.execute(f"DROP INDEX {statement.split()[2]}")
@@ -217,6 +220,7 @@ def test_the_upgrade_from_format_14_records_the_account_of_every_message_once(th
     with open_mailbox(three.engine, LOCAL_ACCOUNT_ID) as mailbox:
         mailbox.store.received_by.path.unlink()  # as 4.2.417 left it: no records
     connection = sqlite3.connect(three.engine.directories.index_file(LOCAL_ACCOUNT_ID))
+    without_format_16(connection)
     connection.execute("UPDATE meta SET value = '14' WHERE key = 'schema'")
     connection.commit()
     connection.close()

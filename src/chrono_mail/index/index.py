@@ -33,12 +33,18 @@ from chrono_mail.index.schema import (
     STATEMENTS,
     UPGRADE_FROM_11,
     UPGRADE_FROM_13,
+    UPGRADE_FROM_15,
+    FILL_HEADERS_KEY,
+    FILL_FROM_HEADERS,
+    FILL_FROM_INDEX,
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.2.428"
+__version__ = "index.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: format 16: to_shown, kept and sorted by (From / To for mail one sent, D-295); 15 and 14 filled in from the headers only;
+#           the Account sort and groups by the names in a table of the connection, never a call to the program per message
 # v4.2.428: holding_records (the receiver writes once for a whole download); store_ids (every message the index holds)
 # v4.2.418: format 15 (14 is filled in once more); the receiver's record comes first, the row's earlier value only when none can be read;
 #           set_receiver: the account recorded for a message once it is sent (D-292)
@@ -81,10 +87,32 @@ __version__ = "index.py 4.2.428"
 # v0.0.13: preview, unread index, busy timeout
 # v0.0.8: Initial message index
 
-ACCOUNT_NAME_FUNCTION: str = "account_name"  # the name an account is shown with, by its id (Index.account_names; "" when not known)
+ACCOUNT_NAME: str = "COALESCE((SELECT name FROM temp.account_names a WHERE a.id = m.received_by), '')"  # the name an account is shown with (Index.account_names)
+
+
+def _first_address(text: str) -> str:
+    """The first of several addresses 'Name <address>, other@example.org', as the list's From / To column takes it."""
+    found = getaddresses([text])
+    if not found:
+        return text
+    name, address = found[0]
+    return f"{name} <{address}>" if name else address
+
+
+def _two(text: str) -> tuple[str, str]:
+    """The recipients and the sender kept together as one text (char 31 between them)."""
+    recipients, _, sender = text.partition("\x1f")
+    return recipients, sender
+
+
+def to_shown(recipients: str, sender: str) -> str:
+    """The person the From / To column shows for mail one sent: its first recipient as the list shows a name, else the sender (D-295)."""
+    return shown_name(_first_address(recipients)) if recipients else shown_name(sender)
+
+
 _COLUMNS: str = (
     "m.store_id, m.folder, m.path, m.flags, m.date, m.size, m.subject, m.sender, m.recipients, m.message_id, m.thread_key, m.has_attachments, m.preview, m.tags, m.sent,"
-    f" m.sender_address, m.recipient_names, m.recipient_addresses, {ACCOUNT_NAME_FUNCTION}(m.received_by)"
+    f" m.sender_address, m.recipient_names, m.recipient_addresses, {ACCOUNT_NAME}"
 )
 _SORT_COLUMN: dict[SortField, str] = {
     SortField.DATE: "m.date",
@@ -104,13 +132,14 @@ _SORT_COLUMN: dict[SortField, str] = {
     SortField.SENDER_ADDRESS: "m.sender_address COLLATE NOCASE",
     SortField.RECIPIENT_NAMES: "m.recipient_names COLLATE NOCASE",
     SortField.RECIPIENT_ADDRESSES: "m.recipient_addresses COLLATE NOCASE",
-    SortField.ACCOUNT: f"{ACCOUNT_NAME_FUNCTION}(m.received_by) COLLATE NOCASE",  # by the name the Account column shows (D-292)
+    SortField.ACCOUNT: f"{ACCOUNT_NAME} COLLATE NOCASE",  # by the name the Account column shows (D-292), from the connection's table of names
+    SortField.TO_SHOWN: "m.to_shown COLLATE NOCASE",  # From / To where it shows the recipients: exactly what it shows (D-295)
 }
 _NEWEST_WITHIN: frozenset[SortField] = YES_NO_SORTS | {SortField.FOLDER, SortField.CONVERSATION, SortField.PREVIEW}  # messages with the same value: newest first, either way
 _TEXT_GROUP_COLUMN: dict[SortField, str] = {
     SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender_name", SortField.RECIPIENTS: "m.recipients", SortField.FOLDER: "m.folder", SortField.PREVIEW: "m.preview",
     SortField.SENDER_FULL: "m.sender", SortField.SENDER_ADDRESS: "m.sender_address", SortField.RECIPIENT_NAMES: "m.recipient_names",
-    SortField.RECIPIENT_ADDRESSES: "m.recipient_addresses", SortField.ACCOUNT: f"{ACCOUNT_NAME_FUNCTION}(m.received_by)",
+    SortField.RECIPIENT_ADDRESSES: "m.recipient_addresses", SortField.ACCOUNT: ACCOUNT_NAME, SortField.TO_SHOWN: "m.to_shown",
 }
 _FIELD_COLUMN: dict[str, str] = {"from": "sender", "to": "recipients", "subject": "subject", "body": "body"}
 _TERM: re.Pattern[str] = re.compile(r'(-?)(?:(\w+):)?("[^"]*"?|\S+)')
@@ -249,19 +278,30 @@ class Index(IndexDatabase):
 
     _released: Callable[[], None] | None = None  # let go of when closed (when_closed)
     receiver: Receiving | None = None  # the account that received a message added without one (the engine's rule, D-292)
-    account_names: Mapping[str, str] = {}  # the name each account is shown with, by its id (the engine's, D-292)
+    _account_names: Mapping[str, str] = {}
+
+    @property
+    def account_names(self) -> Mapping[str, str]:
+        """The name each account is shown with, by its id (the engine's, D-292): what the Account column shows, sorts and groups by."""
+        return self._account_names
+
+    @account_names.setter
+    def account_names(self, names: Mapping[str, str]) -> None:
+        self._account_names = dict(names)
+        self._connection.execute("DELETE FROM temp.account_names")  # this connection's own table: the sort reads it in SQLite, never a call per message
+        self._connection.executemany("INSERT INTO temp.account_names VALUES (?, ?)", list(self._account_names.items()))
 
     @override
     def _prepare(self) -> None:
         self._connection.execute("PRAGMA temp_store = MEMORY")
-        self._connection.create_function(ACCOUNT_NAME_FUNCTION, 1, self._account_name)
+        self._connection.execute("CREATE TEMP TABLE IF NOT EXISTS account_names (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
         if self._format() == str(SCHEMA_VERSION):
             return  # the usual case: nothing to make, no lock taken
         with self._transaction():  # looked at again under the write lock: another connection may have made or upgraded it meanwhile (D-247)
             found = self._format()
             if found is None:
                 self._create_schema()
-            elif found in ("11", "12", "13", "14"):
+            elif found in ("11", "12", "13", "14", "15"):
                 self._upgrade_in_place(found)
             elif found != str(SCHEMA_VERSION):
                 # An older format is rebuilt from the messages (format 11 changed what date holds for every message, D-226), a newer one too
@@ -271,10 +311,44 @@ class Index(IndexDatabase):
         """Format 12 added the moment each message carries (sent), format 13 the attachments by what the text shows (D-235), format 14 the
         people columns and the receiving account (D-291, D-292): the index stays usable at once, all are filled in afterwards (sent_to_fill,
         fill_sent), from the first message again (a filling an older upgrade left unfinished included). Inside _prepare's transaction."""
-        for statement in (*(UPGRADE_FROM_11 if version == "11" else ()), *(UPGRADE_FROM_13 if version != "14" else ())):
+        older = version in ("11", "12", "13")
+        unfinished = self._connection.execute("SELECT value FROM meta WHERE key = ?", (SENT_FILL_KEY,)).fetchone() is not None
+        lighter = self._connection.execute("SELECT value FROM meta WHERE key = ?", (FILL_HEADERS_KEY,)).fetchone()
+        whole = older or (unfinished and lighter is None)  # an older upgrade's filling in that read whole messages still does (the attachments, D-235)
+        for statement in (*(UPGRADE_FROM_11 if version == "11" else ()), *(UPGRADE_FROM_13 if older else ()), *UPGRADE_FROM_15):
             self._connection.execute(statement)
         self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
         self._connection.execute("INSERT OR REPLACE INTO meta VALUES (?, '0')", (SENT_FILL_KEY,))
+        if whole:
+            self._connection.execute("DELETE FROM meta WHERE key = ?", (FILL_HEADERS_KEY,))
+        else:  # 14: what the headers say (the receiving account, D-292); 15: only what the index holds already (no message read at all)
+            way = FILL_FROM_INDEX if version == "15" and not unfinished else FILL_FROM_HEADERS
+            self._connection.execute("INSERT OR REPLACE INTO meta VALUES (?, ?)", (FILL_HEADERS_KEY, way))
+
+    def fill_from_headers(self) -> bool:
+        """The filling in under way needs less than each whole message (an upgrade from format 14 or 15): the attachments stay as they are."""
+        return self._connection.execute("SELECT 1 FROM meta WHERE key = ?", (FILL_HEADERS_KEY,)).fetchone() is not None
+
+    def fill_from_index(self) -> bool:
+        """The filling in under way needs nothing but what the index holds (an upgrade from format 15): no message is read."""
+        found = self._connection.execute("SELECT value FROM meta WHERE key = ?", (FILL_HEADERS_KEY,)).fetchone()
+        return found is not None and str(found[0]) == FILL_FROM_INDEX
+
+    def fill_shown(self, limit: int) -> int:
+        """The next rows' person From / To shows (to_shown), from what the index holds, in one step (an upgrade from format 15); how many."""
+        filled_to = self._connection.execute("SELECT value FROM meta WHERE key = ?", (SENT_FILL_KEY,)).fetchone()
+        if filled_to is None:
+            return 0
+        rows = self._connection.execute(
+            "SELECT id, recipients, sender FROM messages WHERE id > ? ORDER BY id LIMIT ?", (int(str(filled_to[0])), limit)
+        ).fetchall()
+        with self._transaction():
+            self._connection.executemany("UPDATE messages SET to_shown = ? WHERE id = ?", [(to_shown(str(recipients), str(sender)), row_id) for row_id, recipients, sender in rows])
+            if len(rows) < limit:
+                self._connection.execute("DELETE FROM meta WHERE key IN (?, ?)", (SENT_FILL_KEY, FILL_HEADERS_KEY))
+            else:
+                self._connection.execute("UPDATE meta SET value = ? WHERE key = ?", (str(rows[-1][0]), SENT_FILL_KEY))
+        return len(rows)
 
     def receiver_of(self, store_id: str) -> str:
         """The id of the account that received this message ("" when not known, D-292)."""
@@ -292,10 +366,6 @@ class Index(IndexDatabase):
     def set_receiver(self, store_id: str, account_id: str) -> None:
         """The account recorded for this message once it is sent (its row was made while it waited in the Outbox)."""
         self._update("UPDATE messages SET received_by = ? WHERE store_id = ?", (account_id, store_id))
-
-    def _account_name(self, account_id: object) -> str:
-        """The name the account of this id is shown with ("" when not known): what the Account column shows and sorts by (D-292)."""
-        return self.account_names.get(str(account_id or ""), "")
 
     def when_closed(self, released: Callable[[], None]) -> None:
         """Something to let go of when this index is closed (the engine's hold on the file, so it is never replaced while open)."""
@@ -339,21 +409,26 @@ class Index(IndexDatabase):
                 self.receiver.flush()  # its records written in one step, the write lock let go
 
     def _fill(self, moments: Sequence[tuple[int, IndexEntry | None]], filled_to: int, finished: bool) -> None:
+        headers_only = self.fill_from_headers()  # read from the headers only: the attachments stay as they are
+        unread = [row_id for row_id, entry in moments if entry is None]
+        stored: dict[int, str] = dict(self._connection.execute(
+            f"SELECT id, recipients || char(31) || sender FROM messages WHERE id IN ({', '.join('?' * len(unread))})", unread,
+        ).fetchall()) if unread else {}  # a message that cannot be read: From / To still shows its person, from what the index holds
         with self._transaction():
             self._connection.executemany(
                 "UPDATE messages SET sent = ?, has_attachments = COALESCE(?, has_attachments), sender_address = COALESCE(?, sender_address),"
                 " recipient_names = COALESCE(?, recipient_names), recipient_addresses = COALESCE(?, recipient_addresses),"
-                " received_by = COALESCE(NULLIF(?, ''), received_by) WHERE id = ?",
+                " received_by = COALESCE(NULLIF(?, ''), received_by), to_shown = COALESCE(?, to_shown) WHERE id = ?",
                 [
-                    (None, None, None, None, None, None, row_id) if entry is None else (
-                        _epoch(entry.sent), int(entry.has_attachments), entry.sender_address, entry.recipient_names, entry.recipient_addresses,
-                        self._received_by(entry), row_id,
+                    (None, None, None, None, None, None, to_shown(*_two(stored.get(row_id, "") or "")), row_id) if entry is None else (
+                        _epoch(entry.sent), None if headers_only else int(entry.has_attachments), entry.sender_address, entry.recipient_names,
+                        entry.recipient_addresses, self._received_by(entry), to_shown(entry.recipients, entry.sender), row_id,
                     )
                     for row_id, entry in moments
                 ],
             )
             if finished:
-                self._connection.execute("DELETE FROM meta WHERE key = ?", (SENT_FILL_KEY,))
+                self._connection.execute("DELETE FROM meta WHERE key IN (?, ?)", (SENT_FILL_KEY, FILL_HEADERS_KEY))
             else:
                 self._connection.execute("UPDATE meta SET value = ? WHERE key = ?", (str(filled_to), SENT_FILL_KEY))
 
@@ -376,8 +451,8 @@ class Index(IndexDatabase):
         kept = str(before[0]) if before is not None and before[0] else ""  # a message written again (a draft saved, its tags) keeps who received it
         cursor = self._connection.execute(
             "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview, tags, sender_name, send_at, sent,"
-            " sender_address, recipient_names, recipient_addresses, received_by)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " sender_address, recipient_names, recipient_addresses, received_by, to_shown)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 entry.store_id,
                 _folder_key(entry.folder),
@@ -400,6 +475,7 @@ class Index(IndexDatabase):
                 entry.recipient_names,
                 entry.recipient_addresses,
                 self._received_by(entry) or kept,  # the record (D-292); the row's earlier value only when none can be read
+                to_shown(entry.recipients, entry.sender),
             ),
         )
         self._write_tags(entry.store_id, entry.tags)

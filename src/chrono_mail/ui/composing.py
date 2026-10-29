@@ -23,9 +23,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 4.2.414"
+__version__ = "composing.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: save_all_and_close: after an update every message window saves to Drafts without a question and closes
 # v4.2.414: Edit draft goes by the message's own folder in a search of several folders (D-287)
 # v4.0.374: a message window opened from Settings > Scheduled messages tells the page only while Settings is still open
 # v3.6.358: quitting first lets a running draft save and the decision waiting for it end (CR-03)
@@ -253,6 +254,17 @@ class Composing(QObject):
     def restyle(self) -> None:
         for window in self.composers:
             window.setStyleSheet(theme.stylesheet(scale.windows()))
+
+    def save_all_and_close(self) -> None:
+        """Chrono Mail closes after an update (no Cancel, the owner): every window saves what is not saved to Drafts without a question and
+        closes; the saves end first (at most ten seconds), then whatever is still open goes."""
+        for composer in list(self.composers):
+            composer.save_and_close_quietly()
+        deadline = time.monotonic() + 10
+        while any(composer.busy() for composer in self.composers) and time.monotonic() < deadline:
+            self._backend.wait_for_done(max(1, int((deadline - time.monotonic()) * 1000)))
+        for composer in list(self.composers):
+            composer.close_for_quit()
 
     def close_all(self) -> bool:
         """The program ends: every window closes (each asks about what is not saved); False when one of them stays. A save that runs, and what

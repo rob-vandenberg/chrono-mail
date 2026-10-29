@@ -34,9 +34,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.2.427"
+__version__ = "session.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: person_work and step_aside: the filling in of an index waits while a command of the person runs (D-229)
 # v4.2.427: download_interrupts: what stops each update download under way at once
 # v4.2.419: releases_address, stopped_downloads and verified_updates: where the releases are read, the downloads Cancel stopped, the updates checked (D-293)
 # v4.2.418: the receiver of every index records each message's account in its properties, once (D-292)
@@ -332,6 +333,8 @@ class Engine:
     durable: bool = True
     progress: Progress = field(default=_no_progress)
     stop_event: threading.Event = field(default_factory=threading.Event, repr=False)  # set when the program is ending: long waits stop
+    _person_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _person_working: int = field(default=0, init=False, repr=False)  # commands of the person running now (not those behind)
     notice: Callable[[str], None] = field(default=_no_notice)  # tells the person something they should know (an action waits for the server)
     activity: Activity = field(default=_no_activity)  # the steps of a mail check or a send of one account (connecting, listing, downloading …)
     changed: Callable[[Change], None] = field(default=_no_change)  # every fact of a change of mail, as it happens (D-146)
@@ -600,6 +603,23 @@ class Engine:
         except StorageError:
             return False
         return True
+
+    @contextmanager
+    def person_work(self) -> Generator[None]:
+        """A command of the person runs (every command but those behind): work behind steps aside meanwhile (D-229)."""
+        with self._person_lock:
+            self._person_working += 1
+        try:
+            yield
+        finally:
+            with self._person_lock:
+                self._person_working -= 1
+
+    def step_aside(self, stopped: Callable[[], bool]) -> None:
+        """Work behind (the filling in of an index) waits here while a command of the person runs, so sorting, opening and the window stay
+        quick; it goes on as soon as none runs, or at once when it is stopped or the program ends."""
+        while self._person_working > 0 and not stopped() and not self.stop_event.is_set():
+            self.stop_event.wait(0.02)
 
     def name_receivers(self, index: Index, place: AccountSettings, store: Store) -> None:
         """Tell an index of this place which account received each message it is given (D-292) and the name each account is shown with."""

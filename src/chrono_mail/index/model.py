@@ -7,9 +7,10 @@ from typing import Protocol
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.2.428"
+__version__ = "model.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: SortField.TO_SHOWN: From / To where it shows the recipients sorts by exactly what it shows (D-295)
 # v4.2.428: Receiving.holding (one write for a whole download)
 # v4.2.418: Receiving.flush: the receiver writes what it decided after the index let go of its write lock (D-292)
 # v4.2.417: the people columns (the sender's address, the recipients' names and addresses, D-291) and the account that received each message (D-292): kept, read, sorted by
@@ -67,6 +68,7 @@ class SortField(Enum):
     RECIPIENT_NAMES = "to_names"  # To (name)
     RECIPIENT_ADDRESSES = "to_addresses"  # To (email)
     ACCOUNT = "account"  # the account that received the message, by the name it is shown with (D-292)
+    TO_SHOWN = "to_shown"  # the person the From / To column shows for mail one sent: its first recipient, else the sender (D-295)
 
 
 YES_NO_SORTS: frozenset[SortField] = frozenset({SortField.UNREAD, SortField.FLAGGED, SortField.ATTACHMENT, SortField.REPLIED})  # no group headers

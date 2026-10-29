@@ -36,9 +36,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.2.418"
+__version__ = "commands_mail.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: the sort order to_shown: From / To for mail one sent, exactly as it shows (D-295)
 # v4.2.418: the account a message is sent from, and the account that downloads a message, are recorded with it (D-292)
 # v4.2.417: Reply's account by the one rule of engine/receiving.py; a POP3 check tells the index which account downloaded each message (D-292)
 # v4.2.408: the searches take sent_from and sent_to (the message's own Date), snoozed_from and snoozed_to, send_at_from and
@@ -115,6 +116,7 @@ __version__ = "commands_mail.py 4.2.418"
 ListSort = Literal[  # the sort orders of a folder or a search
     "date", "sent", "subject", "sender", "to", "size", "snoozed", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview",
     "sender_full", "sender_address", "to_names", "to_addresses", "account",  # the people columns (D-291) and Account (D-292)
+    "to_shown",  # From / To where it shows the recipients: its first recipient, else the sender (D-295)
 ]
 MAXIMUM_ATTACHMENT_BYTES: int = 100 * 1024 * 1024
 MAXIMUM_MESSAGE_BYTES: int = 256 * 1024 * 1024

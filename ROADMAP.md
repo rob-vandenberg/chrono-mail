@@ -228,6 +228,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.421) From and To are one column each again: the header menu's From and To hold round choices (Don't show, Name and email, Name only, Email only); one From and one To row in the column lists and in Sorted by (D-291).
 - DONE (4.2.426) A column sorts by exactly what it shows and the sort stays with the column clicked (From / To has its own sort); Favorites > Snoozed, Scheduled and Outbox show and sort by their time; the last column's tick is greyed (D-295, D-099).
 - DONE (4.2.428) The Account record (D-292): an account fixed only at retrieval or send; one write per download; read before the index lock; each account kept once in memory; tidied at start; the program's own notes never sent to the server.
+- DONE (4.2.429) Index speed: the filling in after an upgrade reads only what it needs and steps aside while the person works; the Account sort inside the database; From / To for sent mail sorts by exactly what it shows (index format 16); after a Linux update Close Chrono Mail, and no question at all (D-229, D-293, D-295).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

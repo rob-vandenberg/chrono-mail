@@ -7,9 +7,10 @@ from chrono_mail.index.text import clean_preview, searchable_body
 from chrono_mail.mime import Address, ParsedMessage, delivery_addresses, parse_message, send_time
 
 # --- Version ------------------------------------------------------------
-__version__ = "entry.py 4.2.417"
+__version__ = "entry.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: header_block: the headers alone, for a filling in that needs nothing else
 # v4.2.417: the sender's address, the recipients' names and addresses (each with the other as its fallback, D-291) and the delivery addresses (D-292)
 # v4.1.384: no other mail program named in a docstring (OR-10)
 # v2.0.280: sent: the moment the message carries itself (its Date line), for the Sent column (B-16)
@@ -19,6 +20,15 @@ __version__ = "entry.py 4.2.417"
 # v0.0.14: the preview is cleaned of web addresses and decoration
 # v0.0.13: preview
 # v0.0.8: Initial index entries
+
+def header_block(raw: bytes) -> bytes:
+    """The message's header block alone, up to and with its empty line (CRLF or LF, whichever comes first): what is read when only the headers
+    are needed (the filling in of an index after an upgrade that added only header columns)."""
+    crlf, lf = raw.find(b"\r\n\r\n"), raw.find(b"\n\n")
+    if lf >= 0 and (crlf < 0 or lf < crlf):
+        return raw[: lf + 2]
+    return raw[: crlf + 4] if crlf >= 0 else raw
+
 
 _ALLOWED_CONTROL: frozenset[str] = frozenset("\t\n")
 

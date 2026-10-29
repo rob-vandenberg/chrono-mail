@@ -10,12 +10,15 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, index_lock, rebuild_abort, talks_to_servers
 from chrono_mail.engine.receiving import Receiver
 from chrono_mail.index import Index, IndexEntry, entry_from_raw
+from chrono_mail.index.entry import header_block
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.2.428"
+__version__ = "commands_folders.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: index.fill-sent reads only the headers when that is all an upgrade needs, and steps aside while a command of the person runs;
+#           the filling in, a rebuild and the tidying run behind the person's work
 # v4.2.428: index.tidy-records: once at start per place, the record of who received the mail is tidied when more than half is gone (D-292)
 # v4.2.418: index.fill-sent records every message's receiving account in its properties (format 15, D-292)
 # v4.2.417: index.fill-sent also reads each message's people columns and the account that received it (format 14, D-291, D-292)
@@ -219,6 +222,7 @@ def index_prepare(engine: Engine, parameters: AccountParameters) -> IndexResult:
 
 
 FILL_BATCH: int = 100
+FILL_FROM_INDEX_BATCH: int = 5000  # rows filled from what the index holds per step: quick, so larger
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,15 +243,24 @@ def index_fill_sent(engine: Engine, parameters: AccountParameters) -> FillResult
     filled = 0
     try:
         while True:
-            if aborted.is_set():
-                raise RebuildAborted("Filling in the index was aborted")
+            engine.step_aside(aborted.is_set)  # never while the person's command runs: sorting and opening stay quick
+            if aborted.is_set() or engine.stop_event.is_set():
+                raise RebuildAborted("Filling in the index was aborted")  # the program ends: what is filled stays, the rest follows next time
             index = engine.open_index(settings, store)  # opened per batch: a rebuild never waits long for it
             index.receiver = receiver
             try:
                 state = index.sent_filling()
                 if state is None:
                     break
+                if index.fill_from_index():  # an upgrade from format 15: nothing to read from the messages
+                    done = index.fill_shown(FILL_FROM_INDEX_BATCH)
+                    filled += done
+                    engine.rebuilding(RebuildStep(account_id, state[0] + done, state[1], usable=True))
+                    if done < FILL_FROM_INDEX_BATCH:
+                        break
+                    continue
                 rows = index.sent_to_fill(FILL_BATCH)
+                headers_only = index.fill_from_headers()  # only what the headers say is new: never the whole message taken apart
                 moments: list[tuple[int, IndexEntry | None]] = []
                 for row_id, store_id, folder, relative in rows:
                     reference = MessageRef(account_id, folder, store_id)
@@ -256,7 +269,7 @@ def index_fill_sent(engine: Engine, parameters: AccountParameters) -> FillResult
                     except ChronoMailError:
                         moments.append((row_id, None))  # cannot be read: no Sent date, as in a rebuild; its paperclip and people stay
                         continue
-                    moments.append((row_id, entry_from_raw(reference, relative, frozenset(), len(raw), raw)))
+                    moments.append((row_id, entry_from_raw(reference, relative, frozenset(), len(raw), header_block(raw) if headers_only else raw)))
                 finished = len(rows) < FILL_BATCH
                 index.fill_sent(moments, rows[-1][0] if rows else 0, finished)
             finally:
@@ -393,11 +406,11 @@ def register(registry: CommandRegistry) -> None:
     registry.register(FOLDER_CREATE.id, "Create a folder", FolderParameters, folder_create, doing="Creating a folder")
     registry.register(FOLDER_RENAME.id, "Rename a folder with everything below it", FolderRenameParameters, folder_rename, doing="Renaming a folder")
     registry.register(FOLDER_DELETE.id, "Delete a folder (its files are kept in .deleted)", FolderDeleteParameters, folder_delete, destructive=True, doing="Deleting a folder")
-    registry.register(INDEX_REBUILD.id, "Rebuild the search index from the message store", AccountParameters, index_rebuild, doing="Rebuilding the search index")
+    registry.register(INDEX_REBUILD.id, "Rebuild the search index from the message store", AccountParameters, index_rebuild, doing="Rebuilding the search index", behind=True)
     registry.register(INDEX_CHECK.id, "Tell which indexes must be rebuilt or filled in", NoParameters, index_check, doing="Checking the search indexes")
     registry.register(INDEX_PREPARE.id, "Make an index usable, rebuilding it when it cannot be used", AccountParameters, index_prepare, doing="Rebuilding the search index")
-    registry.register(INDEX_FILL_SENT.id, "Fill in what an index upgraded in place does not have yet (Sent dates, attachments, people, the receiving account)", AccountParameters, index_fill_sent, doing="Filling in the search index")
-    registry.register(INDEX_TIDY_RECORDS.id, "Tidy the record of who received the mail (the lines of messages that are gone)", AccountParameters, index_tidy_records, doing="Tidying the record of who received the mail")
+    registry.register(INDEX_FILL_SENT.id, "Fill in what an index upgraded in place does not have yet (Sent dates, attachments, people, the receiving account)", AccountParameters, index_fill_sent, doing="Filling in the search index", behind=True)
+    registry.register(INDEX_TIDY_RECORDS.id, "Tidy the record of who received the mail (the lines of messages that are gone)", AccountParameters, index_tidy_records, doing="Tidying the record of who received the mail", behind=True)
     registry.register(INDEX_ABORT.id, "Abort rebuilding or filling in an index", AccountParameters, index_abort, doing="Stopping the index rebuild")
     registry.register(INDEX_RECONCILE.id, "Repair the index after an interruption", AccountParameters, index_reconcile, doing="Repairing the search index")
     registry.register(STORE_VERIFY.id, "Check that every stored message is intact", AccountParameters, store_verify, doing="Checking the stored messages")

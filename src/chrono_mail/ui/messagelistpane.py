@@ -29,9 +29,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.426"
+__version__ = "messagelistpane.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: From / To where it shows the recipients sorts by exactly what it shows (to_shown, D-295)
 # v4.2.426: the From / To column sorts by what it shows (engine_sort: the recipients where it shows them, else the sender), never
 #           together with From; Send at and Snoozed until in Favorites > Scheduled, Outbox and Snoozed too (timed_kind); the entry of
 #           Sorted by that is ticked changes nothing; From / To shows the recipients in Favorites > Sent and Drafts too, as in their folders
@@ -80,7 +81,7 @@ SORT_CHOICES: tuple[tuple[str, str], ...] = (
     ("account", "Account"),  # the account that received the message (D-292)
 )
 RECIPIENT_ROLES: tuple[str, ...] = ("sent", "drafts", *HERE_ONLY_ROLES)  # the folders (and Favorites) where From / To shows who a message went to
-MENU_SORTS: dict[str, str] = {"sender_full": "sender", "sender_address": "sender", "to_names": "to", "to_addresses": "to"}  # Sender and To, however shown (D-291)
+MENU_SORTS: dict[str, str] = {"sender_full": "sender", "sender_address": "sender", "to_names": "to", "to_addresses": "to", "to_shown": "to"}  # Sender and To, however shown (D-291)
 
 
 
@@ -381,7 +382,7 @@ class MessageListPane(QObject):
         (Sent, Drafts, the Outbox, Scheduled), else the sender; never by a sort another column shows (the owner: a column sorts by itself)."""
         sort = self.effective_sort()
         if sort == FROM_TO_SORT:
-            return "to_names" if self.shows_recipients() else "sender"
+            return "to_shown" if self.shows_recipients() else "sender"  # exactly what it shows: the first recipient, else the sender (D-295)
         return sort
 
     def shows_recipients(self) -> bool:

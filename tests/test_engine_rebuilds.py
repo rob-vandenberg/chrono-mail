@@ -17,9 +17,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_index_rebuild import make_store
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_rebuilds.py 4.2.418"
+__version__ = "test_engine_rebuilds.py 4.2.429"
 
 # --- Version history ----------------------------------------------------
+# v4.2.429: the older formats are made without format 16's column too
 # v4.2.418: the helpers that make an index of format 11 or 12 take away what format 14 added first (D-291, D-292)
 # v2.5.335: index.prepare tells how many messages it indexed (it said 0), also when no rebuild was needed
 # v2.0.301: a picture labelled inline in a plain-text message: listed, shown below the text, its paperclip filled in by the upgrade from format 12 (D-235)
@@ -39,8 +40,15 @@ def fetched(setup: Setup) -> list[RebuildStep]:
     return steps
 
 
+def without_format_16(connection: sqlite3.Connection) -> None:
+    """Take away what format 16 added (the person From / To shows for mail one sent, D-295)."""
+    connection.execute("DROP INDEX messages_by_to_shown")
+    connection.execute("ALTER TABLE messages DROP COLUMN to_shown")
+
+
 def without_format_14(connection: sqlite3.Connection) -> None:
-    """Take away what format 14 added (the people columns, the receiving account and their indexes, D-291, D-292)."""
+    """Take away what format 14 added (the people columns, the receiving account and their indexes, D-291, D-292), and what came after."""
+    without_format_16(connection)
     for statement in UPGRADE_FROM_13:
         if statement.startswith("CREATE INDEX"):
             connection.execute(f"DROP INDEX {statement.split()[2]}")
