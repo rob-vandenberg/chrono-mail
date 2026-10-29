@@ -16,9 +16,10 @@ from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "outlook_settings.py 4.2.386"
+__version__ = "outlook_settings.py 4.2.420"
 
 # --- Version history ----------------------------------------------------
+# v4.2.420: the rules that could not be imported are collected in a list (Pyrefly could not settle the tuple's type in the loop)
 # v4.2.386: Initial version: accounts with their passwords, rules with the junk list's blocked senders, and signatures from Outlook's profile
 
 WINDOWS_ONLY: str = "Only on the Windows computer where Outlook keeps these accounts"
@@ -174,10 +175,10 @@ def import_profile(engine: Engine, accounts: bool, rules: bool, signatures: bool
                 engine.change_config(lambda config, chosen=account_id, text=source.signature: config.with_account(replace(config.find(chosen), signature=text)))
                 given += 1
     rules_added = rules_existing = 0
-    not_imported: tuple[str, ...] = ()
+    not_imported: list[str] = []
     if outlook is not None:
         found = _read_rules(engine, outlook)
-        not_imported = found.not_imported
+        not_imported.extend(found.not_imported)
         rule_set = load_rules(engine.directories.rules_file)
         for rule in found.rules:
             if any((known.name, known.conditions, known.actions, known.match, known.accounts) == (rule.name, rule.conditions, rule.actions, rule.match, rule.accounts) for known in rule_set.rules):
@@ -186,10 +187,10 @@ def import_profile(engine: Engine, accounts: bool, rules: bool, signatures: bool
             try:
                 rule_set = rule_set.with_rule(rule)
             except ChronoMailError as error:
-                not_imported += (f"{rule.name}: {error}",)
+                not_imported.append(f"{rule.name}: {error}")
                 continue
             rules_added += 1
         save_rules(engine.directories.rules_file, rule_set)
         if found.safe:
             notes.append(f"Safe senders: {found.safe:,}; Chrono Mail has no list like it, so they are not imported")
-    return ProfileImport(added, existing, tuple(without_password), rules_added, rules_existing, not_imported, given, tuple(notes))
+    return ProfileImport(added, existing, tuple(without_password), rules_added, rules_existing, tuple(not_imported), given, tuple(notes))

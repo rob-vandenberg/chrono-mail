@@ -15,9 +15,10 @@ from chrono_mail.pst.writer_ltp import Prop, binary, boolean, integer, text, tex
 from chrono_mail.pst.writer_names import NameRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "writer_mail.py 4.2.386"
+__version__ = "writer_mail.py 4.2.420"
 
 # --- Version history ----------------------------------------------------
+# v4.2.420: an attached message's subject is typed object: under some policies a Header, made text by str()
 # v4.2.386: Initial version: a stored message as the properties, recipients and attachments of an item in a data file
 
 MAXIMUM_PARTS: int = 1_000
@@ -112,7 +113,7 @@ class _Parts:
         if media == "message/rfc822":
             inner = part.get_payload()
             raw = inner[0].as_bytes(policy=email.policy.SMTP) if isinstance(inner, list) and inner and isinstance(inner[0], Message) else b""
-            subject = inner[0].get("Subject", "") if isinstance(inner, list) and inner and isinstance(inner[0], Message) else ""
+            subject: object = inner[0].get("Subject", "") if isinstance(inner, list) and inner and isinstance(inner[0], Message) else ""  # a Header, not text, under some policies: str() below
             self.attachments.append(_attachment(raw, name or f"{str(subject).strip()[:60] or 'message'}.eml", "message/rfc822", "", False))
             return
         if disposition != "attachment" and not name:

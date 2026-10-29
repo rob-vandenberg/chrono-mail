@@ -39,9 +39,10 @@ from chrono_mail.pst.model import PstContact, PstError, PstEvent, PstFailure, Ps
 from chrono_mail.store import clean_tags
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outlook.py 4.2.395"
+__version__ = "commands_outlook.py 4.2.420"
 
 # --- Version history ----------------------------------------------------
+# v4.2.420: the item count is typed int (Pyrefly took it for a fixed 0, as only inner functions raise it)
 # v4.2.395: the count goes to the window every 100 items and once at the end of the run (the owner)
 # v4.2.388: the scan says whether an earlier import went through a data file to the end, and which kinds it left out then; again: start
 #           over for the chosen files (their journals are discarded; what is here already is not added twice, what was deleted since comes back)
@@ -809,7 +810,7 @@ def _import_run(engine: Engine, parameters: ImportParameters, run: _Run) -> Impo
     owners = {store_id: file.key for file in run.files for store_id in journals[file.key].imported_ids()}
     owners.update((value, file.key) for file in run.files for key, value in journals[file.key].values.items() if key.startswith(STORED) and value)
     room = parameters.batch if parameters.batch > 0 else None
-    handled = 0
+    handled: int = 0
     left = 0
     for why in run.unreadable.values():
         batch.notes.append(why)

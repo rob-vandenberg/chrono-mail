@@ -29,9 +29,10 @@ from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "exportdialog.py 4.2.391"
+__version__ = "exportdialog.py 4.2.420"
 
 # --- Version history ----------------------------------------------------
+# v4.2.420: a comparison is not wrapped in bool() again
 # v4.2.391: while the accounts are listed and while an export prepares (before its first count): a moving busy bar, an (i) icon and a
 #           text in the accent colour (importdialog.BusyNotice)
 # v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
@@ -203,7 +204,7 @@ class ExportDialog(QDialog):
         for widget in self._inputs():
             widget.setEnabled(True)
         if was_running:
-            self.rules.setEnabled(bool(self.rules.toolTip() == ""))
+            self.rules.setEnabled(self.rules.toolTip() == "")
         self.stop_button.setEnabled(False)
         self.busy.stop(self.progress)
         self._show_state()
