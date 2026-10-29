@@ -15,9 +15,10 @@ from tests.fakegithub import FakeGitHub
 from tests.ui.world import Dialogs, World, build_world, record_opened_urls, reject_dialog, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_updates.py 4.2.419"
+__version__ = "test_ui_updates.py 4.2.423"
 
 # --- Version history ----------------------------------------------------
+# v4.2.423: About shows Check for updates only in a copy updated through an installer (the owner)
 # v4.2.419: Initial: the check goes along with a Refresh that went online, once a day; Download, Skip, Cancel; Install; About (D-293)
 
 DEB = "_amd64.deb"
@@ -143,6 +144,7 @@ def test_about_checks_by_hand_and_offers_a_skipped_version(world: World, qtbot: 
     about = world.window.findChild(AboutWindow)
     assert about is not None
     wait(qtbot, about.check_button.isEnabled)
+    assert not about.check_button.isHidden()  # an installed copy shows it
     about.check_button.click()
     wait(qtbot, lambda: world.window.updates.open_window is not None)
     assert offered(world).check.version == "4.2.419"
@@ -163,12 +165,12 @@ def test_about_says_when_this_is_the_newest_version_and_when_github_is_out_of_re
     about.reject()
 
 
-def test_a_copy_run_from_its_project_folder_greys_the_tick_and_the_button(world: World, qtbot: QtBot) -> None:
+def test_a_copy_run_from_its_project_folder_hides_the_button_and_greys_the_tick(world: World, qtbot: QtBot) -> None:
     world.window.updates.about()
     about = world.window.findChild(AboutWindow)
     assert about is not None
-    wait(qtbot, lambda: about.check_button.toolTip() == commands_updates.NOT_FROM_AN_INSTALLER)
-    assert not about.check_button.isEnabled()
+    wait(qtbot, lambda: about.answered)
+    assert about.check_button.isHidden()  # not there at all in such a copy (the owner)
     about.reject()
     window = world.window
     dialog = SettingsDialog(world.backend, window.settings, SettingsContext(tray_available=False, shortcut_actions=window._shortcut_registry()), window)  # noqa: SLF001

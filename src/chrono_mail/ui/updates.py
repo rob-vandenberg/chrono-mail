@@ -39,9 +39,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.prefs import InUse
 
 # --- Version ------------------------------------------------------------
-__version__ = "updates.py 4.2.419"
+__version__ = "updates.py 4.2.423"
 
 # --- Version history ----------------------------------------------------
+# v4.2.423: About shows Check for updates only in a copy updated through an installer; it keeps its place until the engine said (the owner)
 # v4.2.419: Initial: Update available (Download, Skip, Cancel), Update downloaded (Install, Close), the About window with Check for updates,
 #           and the check that goes along with a Refresh that went online (D-293)
 
@@ -239,7 +240,8 @@ class UpdateDownloadedWindow(QDialog):
 
 
 class AboutWindow(QDialog):
-    """The version and the license, and Check for updates: it may connect by itself and offers a skipped version again (D-293)."""
+    """The version and the license, and Check for updates in a copy updated through an installer: it may connect by itself and offers a
+    skipped version again (D-293)."""
 
     found = Signal(object)  # UpdateCheck: a newer version, offered once this window closed
 
@@ -254,7 +256,12 @@ class AboutWindow(QDialog):
         self.update_note: QLabel = _plain(form, "updateNote")
         _note(self.update_note, "")
         self.check_button: QPushButton = part(form, QPushButton, "checkUpdates")
-        self.check_button.setEnabled(False)  # greyed until the engine said whether this copy is updated through an installer
+        self.check_button.setEnabled(False)
+        self.check_button.hide()  # until the engine said whether this copy is updated through an installer; never shown in one that is not (the owner)
+        keep_place = self.check_button.sizePolicy()
+        keep_place.setRetainSizeWhenHidden(True)  # the window keeps its size when the button comes
+        self.check_button.setSizePolicy(keep_place)
+        self.answered: bool = False  # the engine said whether this copy is updated through an installer
         self.check_button.clicked.connect(self.check_now)
         close = part(form, QPushButton, "close")
         close.setDefault(True)
@@ -264,7 +271,8 @@ class AboutWindow(QDialog):
 
     def _shown(self, setup: UpdateSetup) -> None:
         self.check_button.setEnabled(setup.available)
-        self.check_button.setToolTip(setup.reason)
+        self.check_button.setVisible(setup.available)
+        self.answered = True
 
     def check_now(self) -> None:
         self.check_button.setEnabled(False)
