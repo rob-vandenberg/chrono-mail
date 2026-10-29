@@ -3,10 +3,13 @@ import functools
 import hashlib
 import json
 import os
+import secrets
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from collections.abc import Callable
 from pathlib import Path
 
 from chrono_mail.core import ChronoMailError, ProtocolError
@@ -15,13 +18,15 @@ from chrono_mail.core.jsontext import load_json
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
-from chrono_mail.protocols.releases import Release, ReleaseFile, download, fetch_releases, parse_version, version_text
+from chrono_mail.protocols.releases import Release, ReleaseFile, download, fetch_releases, interrupter, parse_version, version_text
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_updates.py 4.2.424"
+__version__ = "commands_updates.py 4.2.427"
 
 # --- Version history ----------------------------------------------------
+# v4.2.427: Cancel and quitting stop a download at once (its connection is shut, never a wait for a slow server), also while it reads the
+#           list of releases: interrupt_downloads; each download writes its own half file
 # v4.2.424: the texts of why a copy is not updated: the owner's words
 # v4.2.419: Initial: update.show, update.check, update.skip, update.download, update.stop-download, update.install and update.restart (D-293)
 
@@ -203,8 +208,10 @@ class UpdateDownloaded:
     size: int
 
 
-def _release_file(engine: Engine, kind: str, version: tuple[int, ...]) -> ReleaseFile:
-    for release in fetch_releases(engine.releases_address, _user_agent()):
+def _release_file(
+    engine: Engine, kind: str, version: tuple[int, ...], connected: Callable[[socket.socket | None], None] | None = None, stopped: Callable[[], bool] | None = None,
+) -> ReleaseFile:
+    for release in fetch_releases(engine.releases_address, _user_agent(), connected=connected, stopped=stopped):
         installer = _installer(release, kind) if release.version == version else None
         if installer is not None:
             return installer
@@ -218,10 +225,7 @@ def update_download(engine: Engine, parameters: DownloadParameters) -> UpdateDow
     if not kind:
         raise UsageError(_not_installed_reason())
     version = _version(parameters.version)
-    installer = _release_file(engine, kind, version)
-    folder = Path(parameters.folder)
-    target = folder / installer.name
-    partial = folder / f"{installer.name}.part"
+    key = parameters.ticket or secrets.token_hex(8)
     shown = [-1]
 
     def stopped() -> bool:
@@ -234,10 +238,25 @@ def update_download(engine: Engine, parameters: DownloadParameters) -> UpdateDow
             shown[0] = megabytes
             engine.progress(PROGRESS_WHAT, megabytes, max(1, size // (1024 * 1024)))
 
+    def opened(interrupt: Callable[[], None]) -> None:
+        engine.download_interrupts[key] = interrupt
+        if stopped():
+            interrupt()  # Cancel came while it connected
+
+    try:
+        installer = _release_file(engine, kind, version, lambda sock: opened(interrupter(sock)), stopped)  # stoppable while the list is read too
+    finally:
+        engine.download_interrupts.pop(key, None)
+    folder = Path(parameters.folder)
+    target = folder / installer.name
+    partial = folder / f"{installer.name}.{key}.part"  # its own: a download stopped a moment ago never touches the next one's file
     try:
         folder.mkdir(parents=True, exist_ok=True)
         with open(partial, "wb") as sink:
-            fingerprint = download(installer, sink, _user_agent(), progress, stopped)
+            try:
+                fingerprint = download(installer, sink, _user_agent(), progress, stopped, opened=opened)
+            finally:
+                engine.download_interrupts.pop(key, None)
             sink.flush()
             os.fsync(sink.fileno())
         if fingerprint != installer.sha256:
@@ -265,7 +284,16 @@ def update_stop_download(engine: Engine, parameters: StopParameters) -> UpdateSe
     """Stop that download, also when it has not begun yet; what it saved so far is removed."""
     if parameters.ticket:
         engine.stopped_downloads.add(parameters.ticket)
+        interrupt = engine.download_interrupts.get(parameters.ticket)
+        if interrupt is not None:
+            interrupt()  # a read that waits for the server returns now
     return update_show(engine, NoParameters())
+
+
+def interrupt_downloads(engine: Engine) -> None:
+    """The program is ending (its stop event is set): every download under way stops at once, its half file removed."""
+    for interrupt in list(engine.download_interrupts.values()):
+        interrupt()
 
 
 @dataclass(frozen=True, slots=True)

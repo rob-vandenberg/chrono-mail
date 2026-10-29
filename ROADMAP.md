@@ -165,6 +165,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | UP.2 | Update available (Download, Skip, Cancel, the link to the release), the download checked against GitHub's fingerprint, Update downloaded (Install, Close). | done (4.2.419) |
 | UP.3 | Install on Linux through the system's software installer, Restart now. | done (4.2.419); a real install from an installed copy: the owner |
 | UP.4 | Install on Windows: the setup without its questions, Chrono Mail opened again. | built (4.2.419); to try on the Windows computer with the next milestone's setup.exe |
+| UP.5 | Review fixes (4.2.427): Cancel at once, the offer only while the window is on screen, About's calm reasons, the release link only to GitHub, Restart Chrono Mail or Close after a Linux install. | done (4.2.427) |
 
 ## Backup and restore (B-22, from 2.4.322, D-244)
 

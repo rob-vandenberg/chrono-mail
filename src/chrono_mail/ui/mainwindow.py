@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.core.colours import NEW_TAG
+from chrono_mail.engine.commands_updates import interrupt_downloads
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, KEY_STATUS, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, FoundServer, LinkParameters
 from chrono_mail.engine.commands_schedule import ScheduledInfo
@@ -65,9 +66,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.419"
+__version__ = "mainwindow.py 4.2.427"
 
 # --- Version history ----------------------------------------------------
+# v4.2.427: quitting stops a download of an update at once; an update is offered only while the window is on screen
 # v4.2.419: About is a window of its own with Check for updates; a Refresh that goes online also looks for updates (Updates, D-293)
 # v4.2.416: Mail's toolbar folds Delete to Mark first, then the search field's folder choice, then Forward to Reply (D-290)
 # v4.2.414: in a search of several folders a message opens, and its right-click menu and Junk or Not junk follow, as in its own folder (D-287)
@@ -354,7 +356,9 @@ class MainWindow(QMainWindow):
         self.restores.restored.connect(self._after_restore)
         self.rebuilds.running_changed.connect(self.checking.rebuild_running)
         self.rebuilds.quit_requested.connect(self.quit_program)
-        self.updates: Updates = Updates(backend, self.prefs, self, self.quit_program, self.closed_for_good)  # D-293
+        self.updates: Updates = Updates(  # D-293
+            backend, self.prefs, self, self.quit_program, self.closed_for_good, self._on_screen,
+        )
         self.checking.went_online.connect(self.updates.went_online)
         self._build_toolbar()
         self._build_menus()
@@ -859,6 +863,7 @@ class MainWindow(QMainWindow):
         self.memory.remember_view(view.account or "", view.path, view.key_kind)
         self.checking.stop()
         self.backend.engine.stop_event.set()  # waits for new mail end now
+        interrupt_downloads(self.backend.engine)  # a download of an update stops at once, never waited for
         self.backend.wait_for_done(3000)
         self.backend.engine.close_imap_links()  # log out of the connections kept open for the actions on the server
         self.tray.set_visible(False)
@@ -872,6 +877,11 @@ class MainWindow(QMainWindow):
         self._quitting = True
         if not self.close():
             self._quitting = False
+
+    def _on_screen(self) -> bool:
+        """The window is on screen: shown, not minimized, not only in the notification area. Wayland never says a window is minimized: there it
+        counts only while it is the active window (D-286)."""
+        return self.isVisible() and not self.isMinimized() and not self.out_of_sight and (not on_wayland() or self.isActiveWindow())
 
     def toggle_visibility(self) -> None:
         """A click on the tray icon: hide the window that is in sight, else bring it back. Wayland never says a window is minimized

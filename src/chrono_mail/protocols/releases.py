@@ -1,5 +1,6 @@
 import hashlib
 import http.client
+import socket
 import ssl
 import urllib.parse
 from collections.abc import Callable
@@ -11,9 +12,13 @@ from chrono_mail.core.jsontext import load_json
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "releases.py 4.2.419"
+__version__ = "releases.py 4.2.427"
 
 # --- Version history ----------------------------------------------------
+# v4.2.427: a download takes what has arrived each time and can be interrupted at once (opened gives the means: its connection is shut),
+#           so a stop never waits for a slow or stalled server (registered as soon as each hop is connected, before its answer, also
+#           for the list of releases a download reads first); GitHubBusy: GitHub answered with something else than what was asked; DownloadInterrupted: the network broke off a download (a full
+#           disk is told apart); GitHubUnreachable: GitHub was not reached at all
 # v4.2.419: Initial: the releases of Chrono Mail on GitHub and the download of one installer, every answer capped (D-293)
 
 # The list of releases comes from GitHub's own address for them; a download starts at the release's file address and is passed on by
@@ -33,6 +38,26 @@ TIMEOUT_SECONDS: float = 30.0  # a server that sends nothing for this long has s
 
 class DownloadStopped(ChronoMailError):
     """The person stopped the download."""
+
+
+class GitHubUnreachable(ProtocolError):
+    """GitHub could not be reached (no network, no answer, or passed on to somewhere else); any other failure means it was reached."""
+
+
+class DownloadInterrupted(GitHubUnreachable):
+    """The connection to GitHub broke off during the download (the network, never the disk)."""
+
+
+class _WriteFailed(Exception):
+    """Saving a piece of the download failed (the disk): its OSError, kept apart from the network's."""
+
+    def __init__(self, error: OSError) -> None:
+        super().__init__(str(error))
+        self.error: OSError = error
+
+
+class GitHubBusy(ProtocolError):
+    """GitHub answered, but not with what was asked (too many questions from this network, an outage)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,11 +135,16 @@ def _allowed(address: str) -> urllib.parse.SplitResult:
     host = parts.hostname or ""
     if (parts.scheme == "https" and host in GITHUB_HOSTS) or (parts.scheme == "http" and host in LOCAL_HOSTS):
         return parts
-    raise ProtocolError("An update is only taken from GitHub")
+    raise GitHubUnreachable("An update is only taken from GitHub")  # passed on elsewhere (a network's own sign-in page): GitHub was not reached
 
 
-def _response(address: str, accept: str, user_agent: str, timeout: float) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse]:
-    """The answer to a GET of the address, after GitHub's redirects (only to its own addresses). The caller reads it and closes the connection."""
+def _response(
+    address: str, accept: str, user_agent: str, timeout: float, connected: Callable[[socket.socket | None], None] | None = None,
+    stopped: Callable[[], bool] | None = None,
+) -> tuple[http.client.HTTPConnection, http.client.HTTPResponse]:
+    """The answer to a GET of the address, after GitHub's redirects (only to its own addresses). connected gets the socket of every hop as soon
+    as it is connected, before anything is asked (a stop shuts it, also while the server keeps its answer back); stopped is asked before each
+    hop. The caller reads the answer and closes the connection."""
     for _ in range(MAXIMUM_REDIRECTS + 1):
         parts = _allowed(address)
         host = parts.hostname or ""
@@ -126,6 +156,13 @@ def _response(address: str, accept: str, user_agent: str, timeout: float) -> tup
         if parts.query:
             target += "?" + parts.query
         try:
+            if stopped is not None and stopped():
+                raise DownloadStopped("The download was stopped")
+            connection.connect()
+            if connected is not None:
+                connected(connection.sock)
+            if stopped is not None and stopped():
+                raise DownloadStopped("The download was stopped")
             connection.request("GET", target, headers={"Accept": accept, "User-Agent": user_agent})
             response = connection.getresponse()
         except BaseException:
@@ -139,54 +176,103 @@ def _response(address: str, accept: str, user_agent: str, timeout: float) -> tup
             address = urllib.parse.urljoin(address, location)
             continue
         return connection, response
-    raise ProtocolError("GitHub passed the request on too often")
+    raise GitHubUnreachable("GitHub passed the request on too often")
 
 
-def fetch_releases(address: str, user_agent: str, timeout: float = TIMEOUT_SECONDS) -> tuple[Release, ...]:
-    """The published releases of Chrono Mail, newest first as GitHub lists them."""
+def fetch_releases(
+    address: str, user_agent: str, timeout: float = TIMEOUT_SECONDS, connected: Callable[[socket.socket | None], None] | None = None,
+    stopped: Callable[[], bool] | None = None,
+) -> tuple[Release, ...]:
+    """The published releases of Chrono Mail, newest first as GitHub lists them (connected and stopped: as for _response, for a download that
+    can be stopped while its list is read)."""
     try:
-        connection, response = _response(address, "application/vnd.github+json", user_agent, timeout)
+        connection, response = _response(address, "application/vnd.github+json", user_agent, timeout, connected, stopped)
         try:
             if response.status != 200:
-                raise ProtocolError(f"GitHub answered {response.status}")
+                raise GitHubBusy(f"GitHub answered {response.status}")
             body = response.read(MAXIMUM_LIST_BYTES + 1)
         finally:
             connection.close()
+    except DownloadStopped:
+        raise
     except (OSError, http.client.HTTPException) as error:
-        raise ProtocolError(f"GitHub could not be reached: {error}") from None
+        if stopped is not None and stopped():
+            raise DownloadStopped("The download was stopped") from None
+        raise GitHubUnreachable(f"GitHub could not be reached: {error}") from None
+    except Exception:
+        if stopped is not None and stopped():
+            raise DownloadStopped("The download was stopped") from None  # a shut encrypted socket can also fail this way
+        raise
+    if stopped is not None and stopped():
+        raise DownloadStopped("The download was stopped")  # a shut connection reads as a short list
     if len(body) > MAXIMUM_LIST_BYTES:
         raise ProtocolError("GitHub's list of releases is too large")
     return parse_releases(body)
 
 
+def interrupter(sock: socket.socket | None) -> Callable[[], None]:
+    """What stops a download at once from another thread: its socket is shut, so a read that waits for the server returns."""
+    def interrupt() -> None:
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # closed already
+    return interrupt
+
+
 def download(
     file: ReleaseFile, sink: BinaryIO, user_agent: str, progress: Callable[[int, int], None], stopped: Callable[[], bool], timeout: float = TIMEOUT_SECONDS,
+    opened: Callable[[Callable[[], None]], None] | None = None,
 ) -> str:
     """Download the file into sink and give its SHA-256 fingerprint. Never more than the size GitHub gave is taken; progress tells the bytes so
-    far and the size; stopped is asked between the pieces (DownloadStopped when it says so)."""
+    far and the size; stopped is asked after every read, which takes what has arrived (DownloadStopped when it says so); opened gets, once the
+    server answered, what interrupts a read that waits."""
     hasher = hashlib.sha256()
     received = 0
+
+    def connected(sock: socket.socket | None) -> None:
+        if opened is not None:
+            opened(interrupter(sock))
+
     try:
-        connection, response = _response(file.address, "application/octet-stream", user_agent, timeout)
+        connection, response = _response(file.address, "application/octet-stream", user_agent, timeout, connected, stopped)
         try:
             if response.status != 200:
-                raise ProtocolError(f"GitHub answered {response.status}")
+                raise GitHubBusy(f"GitHub answered {response.status}")
             while True:
                 if stopped():
                     raise DownloadStopped("The download was stopped")
-                piece = response.read(CHUNK_BYTES)
+                piece = response.read1(CHUNK_BYTES)  # what has arrived, never waiting for a whole piece
                 if not piece:
                     break
                 received += len(piece)
                 if received > file.size:
                     raise ProtocolError("The download is larger than GitHub said")
                 hasher.update(piece)
-                sink.write(piece)
+                try:
+                    sink.write(piece)
+                except OSError as error:
+                    raise _WriteFailed(error) from None  # the disk, told as such
                 progress(received, file.size)
         finally:
             connection.close()
+    except DownloadStopped:
+        raise
+    except _WriteFailed as failed:
+        if stopped():
+            raise DownloadStopped("The download was stopped") from None
+        raise failed.error from None  # the caller says where it could not be saved
     except (OSError, http.client.HTTPException) as error:
-        raise ProtocolError(f"The download did not complete: {error}") from None  # the network, or a full disk
+        if stopped():
+            raise DownloadStopped("The download was stopped") from None  # interrupted: its connection was shut
+        raise DownloadInterrupted(f"The download was interrupted: {error}") from None  # the network
+    except Exception:
+        if stopped():
+            raise DownloadStopped("The download was stopped") from None  # a shut encrypted socket can also fail this way
+        raise
+    if stopped():
+        raise DownloadStopped("The download was stopped")  # interrupted: the shut connection read as its end
     if received != file.size:
-        raise ProtocolError("The download is not complete")
+        raise DownloadInterrupted("The download was interrupted before it was complete")
     return hasher.hexdigest()

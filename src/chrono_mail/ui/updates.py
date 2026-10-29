@@ -7,7 +7,7 @@ from typing import override
 
 from PySide6.QtCore import QEvent, QObject, QStandardPaths, Qt, QTimer, QUrl, Signal, SignalInstance
 from PySide6.QtGui import QCloseEvent, QDesktopServices
-from PySide6.QtWidgets import QDialog, QLabel, QMessageBox, QProgressBar, QPushButton, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox, QProgressBar, QPushButton, QWidget
 
 from chrono_mail.core import ChronoMailError, program_version
 from chrono_mail.engine.commands_accounts import NoParameters
@@ -30,7 +30,7 @@ from chrono_mail.engine.commands_updates import (
     UpdateSetup,
     VersionParameters,
 )
-from chrono_mail.protocols.releases import DownloadStopped
+from chrono_mail.protocols.releases import DownloadInterrupted, DownloadStopped, GitHubBusy, GitHubUnreachable
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.forms import part
@@ -39,15 +39,24 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.prefs import InUse
 
 # --- Version ------------------------------------------------------------
-__version__ = "updates.py 4.2.423"
+__version__ = "updates.py 4.2.427"
 
 # --- Version history ----------------------------------------------------
+# v4.2.427: Cancel closes the download's window at once (the download stops behind it); Update available waits until the main window is
+#           on screen (not minimized, not only in the tray, no question or Settings open); About says what went wrong ("could not reach
+#           GitHub" only when it was not reached); the release link only to https on github.com; Linux after an install: Restart Chrono
+#           Mail or Close, both close the program
 # v4.2.423: About shows Check for updates only in a copy updated through an installer; it keeps its place until the engine said (the owner)
 # v4.2.419: Initial: Update available (Download, Skip, Cancel), Update downloaded (Install, Close), the About window with Check for updates,
 #           and the check that goes along with a Refresh that went online (D-293)
 
 WINDOW_WIDTH: int = 460  # at the standard size; never narrower than its texts need (forms.smallest)
 COULD_NOT_REACH: str = "Chrono Mail could not reach GitHub. Try again later."
+GITHUB_BUSY: str = "GitHub could not answer just now. Try again later."
+INTERRUPTED: str = "The download was interrupted. Try again later."
+RELEASE_PAGES: str = "https://github.com/"  # the page of a release is opened only there, encrypted
+RESTART_BUTTON: str = "Restart Chrono Mail"
+CLOSE_BUTTON: str = "Close"
 
 
 def downloads_folder() -> str:
@@ -94,7 +103,11 @@ class UpdateAvailableWindow(QDialog):
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)  # never takes the keyboard from someone typing
         form = forms.fill(self, "update_available")  # D-276
         _plain(form, "headline").setText(f"Chrono Mail {check.version} is available. You have {check.running}.")
-        self.page_link: QLabel = _link(form, "pageLink", check.page, f"What is new in Chrono Mail {check.version} (on GitHub)")
+        self.page_link: QLabel = part(form, QLabel, "pageLink")
+        if check.page.startswith(RELEASE_PAGES):
+            self.page_link = _link(form, "pageLink", check.page, f"What is new in Chrono Mail {check.version} (on GitHub)")
+        else:
+            self.page_link.hide()  # never a link to anywhere else, whatever the answer held
         self.progress: QProgressBar = part(form, QProgressBar, "progress")
         self.progress.setVisible(False)
         self.note: QLabel = _plain(form, "note")
@@ -129,7 +142,6 @@ class UpdateAvailableWindow(QDialog):
     def _downloaded(self, result: UpdateDownloaded) -> None:
         self.downloading = False
         if self._closing:  # Cancel came too late to stop it: the file is complete and stays where it is
-            super().reject()
             return
         self.downloaded.emit(result)
         self.accept()
@@ -137,10 +149,9 @@ class UpdateAvailableWindow(QDialog):
     def _failed(self, error: ChronoMailError) -> None:
         self.downloading = False
         if self._closing or isinstance(error, DownloadStopped):
-            super().reject()
             return
         self.progress.setVisible(False)
-        _note(self.note, str(error))
+        _note(self.note, _why_not_downloaded(error))
         self.download_button.setEnabled(True)
         self.skip_button.setEnabled(True)
 
@@ -160,23 +171,17 @@ class UpdateAvailableWindow(QDialog):
 
     @override
     def reject(self) -> None:
-        """Cancel, Escape and the close button: nothing until the next check; a download that runs is stopped first."""
-        if not self.downloading:
-            super().reject()
-            return
-        if not self._closing:
+        """Cancel, Escape and the close button: nothing until the next check; the window closes at once, a download that runs stops behind
+        it and removes what it saved (the engine)."""
+        if self.downloading and not self._closing:
             self._closing = True
-            self.cancel_button.setEnabled(False)
-            _note(self.note, "Stopping the download…")
-            self._backend.ask(UPDATE_STOP_DOWNLOAD, StopParameters(self._ticket), lambda setup: None, owner=self)
+            self._backend.ask(UPDATE_STOP_DOWNLOAD, StopParameters(self._ticket), lambda setup: None)  # no owner: it is sent although the window goes
+        super().reject()
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
-        if self.downloading:
-            event.ignore()
-            self.reject()
-            return
-        super().closeEvent(event)
+        self.reject()
+        event.accept()
 
 
 class UpdateDownloadedWindow(QDialog):
@@ -262,6 +267,7 @@ class AboutWindow(QDialog):
         keep_place.setRetainSizeWhenHidden(True)  # the window keeps its size when the button comes
         self.check_button.setSizePolicy(keep_place)
         self.answered: bool = False  # the engine said whether this copy is updated through an installer
+        self._reason: str = ""  # why this copy is not updated from here, as the engine said
         self.check_button.clicked.connect(self.check_now)
         close = part(form, QPushButton, "close")
         close.setDefault(True)
@@ -270,6 +276,7 @@ class AboutWindow(QDialog):
         forms.smallest(self, WINDOW_WIDTH)
 
     def _shown(self, setup: UpdateSetup) -> None:
+        self._reason = setup.reason
         self.check_button.setEnabled(setup.available)
         self.check_button.setVisible(setup.available)
         self.answered = True
@@ -286,26 +293,53 @@ class AboutWindow(QDialog):
             self.found.emit(result)
             self.accept()
             return
+        if result.outcome == "not_installed":
+            _note(self.update_note, self._reason or "This copy of Chrono Mail is not updated from here.")
+            return
         _note(self.update_note, f"You have the newest version, {result.running}.")
 
     def _failed(self, error: ChronoMailError) -> None:
         self.check_button.setEnabled(True)
-        _note(self.update_note, COULD_NOT_REACH)
+        _note(self.update_note, _why_not_checked(error))
+
+
+def _why_not_checked(error: ChronoMailError) -> str:
+    """What went wrong with a check, in calm words: GitHub not reached, GitHub busy, or what the engine said (its list could not be read)."""
+    if isinstance(error, GitHubUnreachable):
+        return COULD_NOT_REACH
+    if isinstance(error, GitHubBusy):
+        return GITHUB_BUSY
+    return f"Chrono Mail could not check for updates: {error}"
+
+
+def _why_not_downloaded(error: ChronoMailError) -> str:
+    """What went wrong with a download, in calm words: interrupted, GitHub not reached or busy, else what the engine said (where it could not be
+    saved, a file that did not match)."""
+    if isinstance(error, DownloadInterrupted):
+        return INTERRUPTED
+    if isinstance(error, GitHubUnreachable):
+        return COULD_NOT_REACH
+    if isinstance(error, GitHubBusy):
+        return GITHUB_BUSY
+    return str(error)
 
 
 class Updates(QObject):
     """The part of the window that looks for updates: along with a Refresh that went online (at most once a day, when Settings > General says so),
     or from About; the windows that offer, download and install a newer version (D-293)."""
 
-    def __init__(self, backend: Backend, prefs: InUse, window: QWidget, quit_program: Callable[[], None], closed_for_good: SignalInstance) -> None:
+    def __init__(
+        self, backend: Backend, prefs: InUse, window: QWidget, quit_program: Callable[[], None], closed_for_good: SignalInstance, in_sight: Callable[[], bool],
+    ) -> None:
         super().__init__(window)
+        self._in_sight: Callable[[], bool] = in_sight  # the main window is on screen: shown, not minimized, not only in the notification area
         self._backend: Backend = backend
         self._prefs: InUse = prefs
         self._window: QWidget = window
         self._quit_program: Callable[[], None] = quit_program
         self._closed_for_good: SignalInstance = closed_for_good
         self._checking: bool = False
-        self._waiting: UpdateCheck | None = None  # found while the window was hidden in the notification area: offered when it is shown
+        self._waiting: UpdateCheck | None = None  # found while the window was not on screen or a question was open: offered once it is
         self.open_window: QDialog | None = None  # the update window shown now (one at a time)
         self._after_quit: Callable[[], None] | None = None
         window.installEventFilter(self)
@@ -333,7 +367,7 @@ class Updates(QObject):
             if by_hand:
                 self.open_window.activateWindow()
             return
-        if not self._window.isVisible():
+        if not by_hand and not self._may_offer():
             self._waiting = check
             return
         self._waiting = None
@@ -342,6 +376,10 @@ class Updates(QObject):
         self._show(offered)
         if by_hand:
             offered.activateWindow()
+
+    def _may_offer(self) -> bool:
+        """A newer version found by itself is offered only while the main window is on screen and nothing waits for an answer (Settings, a question)."""
+        return self._in_sight() and QApplication.activeModalWidget() is None
 
     def _show(self, dialog: QDialog) -> None:
         self.open_window = dialog
@@ -373,11 +411,11 @@ class Updates(QObject):
         self._after_quit = None  # kept open (the person said no to a question at Exit): nothing is installed
 
     def _installed(self, version: str) -> None:
-        choice = ask_choice(self._window, "Chrono Mail was updated", f"Chrono Mail was updated to {version}. Restart it to use the new version.", ["Restart now", "Later"])
-        if choice == 0:
-            self._after_quit = self._restart
-            self._quit_program()
-            self._after_quit = None
+        choice = ask_choice(self._window, "Chrono Mail was updated", f"Chrono Mail was updated to {version}. Restart it to use the new version.", [RESTART_BUTTON, CLOSE_BUTTON])
+        # Its files are the new version's now: it closes either way (with its usual questions), also when the box was closed; only Restart starts it again
+        self._after_quit = self._restart if choice == 0 else None
+        self._quit_program()
+        self._after_quit = None
 
     def _restart(self) -> None:
         """Linux: the new version starts once this program has ended."""
@@ -391,6 +429,10 @@ class Updates(QObject):
         if work is not None:
             work()
 
+    def _offer_waiting(self, check: UpdateCheck) -> None:
+        if self._waiting is check and self.open_window is None:
+            self.offer(check)
+
     def about(self) -> None:
         about = AboutWindow(self._backend, self._window)
         about.found.connect(self._found_by_hand)
@@ -401,7 +443,8 @@ class Updates(QObject):
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched is self._window and event.type() == QEvent.Type.Show and self._waiting is not None:
+        comes = (QEvent.Type.Show, QEvent.Type.WindowStateChange, QEvent.Type.WindowActivate)  # shown, no longer minimized, back after a question
+        if watched is self._window and event.type() in comes and self._waiting is not None:
             waiting = self._waiting
-            QTimer.singleShot(0, lambda: self.offer(waiting))
+            QTimer.singleShot(0, lambda: self._offer_waiting(waiting))
         return False

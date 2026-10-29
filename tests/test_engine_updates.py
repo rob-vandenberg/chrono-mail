@@ -28,9 +28,10 @@ from tests.enginefactory import make_engine
 from tests.fakegithub import FakeGitHub
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_updates.py 4.2.419"
+__version__ = "test_engine_updates.py 4.2.427"
 
 # --- Version history ----------------------------------------------------
+# v4.2.427: the stand-in's release pages are on github.com; the list reader takes what lets a download stop while it reads
 # v4.2.419: Initial: update.check, update.skip, update.download and update.install against a stand-in for GitHub (D-293)
 
 REGISTRY = build_registry()
@@ -81,7 +82,7 @@ def test_the_newest_release_with_this_computer_s_installer_is_offered(monkeypatc
     github.publish("4.2.422", {f"chrono-mail_4.2.422{DEB}": b"pre"}, prerelease=True)
     found = check(engine)
     assert (found.outcome, found.version, found.running, found.file_name, found.size) == ("available", "4.2.419", "4.2.418", f"chrono-mail_4.2.419{DEB}", 3)
-    assert found.page.endswith("/release/4.2.419")
+    assert found.page == "https://github.com/rob-vandenberg/chrono-mail/releases/tag/4.2.419"
 
 
 def test_nothing_newer_is_current(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, github: FakeGitHub) -> None:
@@ -244,7 +245,7 @@ def test_a_cancel_while_github_s_list_comes_in_stops_the_download(monkeypatch: p
     github.publish("4.2.419", {f"chrono-mail_4.2.419{DEB}": b"deb"})
     reading = commands_updates.fetch_releases
 
-    def cancelled_meanwhile(address: str, user_agent: str) -> tuple[commands_updates.Release, ...]:
+    def cancelled_meanwhile(address: str, user_agent: str, **options: object) -> tuple[commands_updates.Release, ...]:
         found = reading(address, user_agent)
         REGISTRY.ask(engine, UPDATE_STOP_DOWNLOAD, StopParameters("t1"))  # the person pressed Cancel before the first piece came
         return found

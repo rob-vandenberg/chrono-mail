@@ -34,9 +34,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.2.419"
+__version__ = "session.py 4.2.427"
 
 # --- Version history ----------------------------------------------------
+# v4.2.427: download_interrupts: what stops each update download under way at once
 # v4.2.419: releases_address, stopped_downloads and verified_updates: where the releases are read, the downloads Cancel stopped, the updates checked (D-293)
 # v4.2.418: the receiver of every index records each message's account in its properties, once (D-292)
 # v4.2.417: every index opened or rebuilt is told which account received each message it is given and how each account is named (name_receivers, D-292)
@@ -358,6 +359,7 @@ class Engine:
     # left: never sent again, also when no mark could be written on the disk (full)
     releases_address: str = field(default=RELEASES_ADDRESS, repr=False)  # where the releases of Chrono Mail are read (a test's own server)
     stopped_downloads: set[str] = field(default_factory=set, init=False, repr=False)  # the downloads of updates Cancel stopped, by the number the window gave each
+    download_interrupts: dict[str, Callable[[], None]] = field(default_factory=dict, init=False, repr=False)  # the downloads under way: what stops each at once
     verified_updates: dict[str, str] = field(default_factory=dict, init=False, repr=False)  # a downloaded installer -> the fingerprint it was checked against
 
     def first_time(self, problem: str) -> bool:
