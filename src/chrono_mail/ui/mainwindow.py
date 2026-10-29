@@ -64,9 +64,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.414"
+__version__ = "mainwindow.py 4.2.416"
 
 # --- Version history ----------------------------------------------------
+# v4.2.416: Mail's toolbar folds Delete to Mark first, then the search field's folder choice, then Forward to Reply (D-290)
 # v4.2.414: in a search of several folders a message opens, and its right-click menu and Junk or Not junk follow, as in its own folder (D-287)
 # v4.2.410: Advanced search's saved searches are kept beside the window's settings, on this computer only (D-289)
 # v4.2.407: Advanced search… also in the search field's ▾ menu, below its three choices (D-287)
@@ -634,6 +635,7 @@ class MainWindow(QMainWindow):
         self.scope.add_command(self.act_advanced)  # below where the search looks, after a line
         self.search_history, self.search_help = self.search.history, self.search.help
         self.toolbar.set_search(self.search_pill)
+        self.toolbar.set_scope_gives_way_after(self.mark_button)  # Delete to Mark fold first, then where the search looks (D-290)
         for page in self.pages.values():  # the rows of the other sections, in the same toolbar
             self.window_toolbar.add_row(page.toolbar)
 

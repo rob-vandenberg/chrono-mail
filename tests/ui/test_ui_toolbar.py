@@ -12,9 +12,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_toolbar.py 4.2.407"
+__version__ = "test_ui_toolbar.py 4.2.416"
 
 # --- Version history ----------------------------------------------------
+# v4.2.416: Mail folds Delete to Mark first, then All folders shows only its ▾, then Forward to Reply (D-290)
 # v4.2.407: the search field starts on All folders (D-287)
 # v4.2.406: the search field's first choice is called This folder only (D-287)
 # v1.9.265: the minimum right after the start is the minimum after Settings; a long count line is cut with "…" and never holds the window wider (R-44)
@@ -170,6 +171,30 @@ def test_the_mail_toolbar_keeps_menu_and_the_search_field_at_the_narrowest_windo
     assert window.toolbar.button_for(window.act_delete).isHidden() and window.scope.text() == ""
     folded = [action for action in (window.act_reply, window.act_reply_all, window.act_forward, window.act_archive, window.act_snooze, window.act_delete) if window.toolbar.button_for(action).isHidden()]
     assert folded and all(action in window.actions() or action in window.list_view.actions() for action in folded)  # their keys still work: the window holds them, the one-letter keys the message list (D-217)
+
+
+def test_mail_folds_delete_to_mark_first_then_where_the_search_looks_then_forward_to_reply(world: World, qtbot: QtBot) -> None:
+    """D-290: Delete, Move to, Snooze, Archive, Tag and Mark fold first, then "All folders" shows only its ▾, then Forward,
+    Reply all and Reply (then Refresh and New); Menu never goes."""
+    started(qtbot, world)
+    window = world.window
+    window.show()
+    row = window.toolbar
+    order: list[QToolButton] = [row.button_for(window.act_new), row.button_for(window.act_refresh), row.button_for(window.act_reply), row.button_for(window.act_reply_all), row.button_for(window.act_forward), window.mark_button, window.tag_button, row.button_for(window.act_archive), row.button_for(window.act_snooze), window.move_button, row.button_for(window.act_delete)]
+    first = order.index(window.mark_button)  # Delete to Mark: the last six
+    seen: list[tuple[bool, int]] = []
+    for width in range(row.sizeHint().width() + 100, window.minimumSizeHint().width() - 1, -4):
+        window.resize(width, 700)
+        QApplication.processEvents()
+        folded = [unit.buttons[0] for unit in row.folded]
+        assert folded == order[len(order) - len(folded):]  # always the right-most ones, in this order
+        assert not row.compact or len(folded) >= len(order) - first  # only once Mark is in More
+        assert row.compact or len(folded) <= len(order) - first  # and before Forward folds
+        state = (row.compact, len(folded))
+        if not seen or seen[-1] != state:
+            seen.append(state)
+    assert seen[0] == (False, 0) and (False, len(order) - first) in seen and (True, len(order) - first) in seen  # Mark folds, then the search gives way
+    assert seen[-1][1] > len(order) - first and window.menu_buttons[0].isVisible()  # then Forward and on; Menu stays
 
 
 def test_the_calendar_views_merge_into_one_button_that_shows_the_chosen_view(world: World, qtbot: QtBot) -> None:

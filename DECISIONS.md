@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-286 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-290 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-290**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-291**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -286,7 +286,8 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-069** Windows: app id `chrono-mail.ChronoMail` set before the first window.
 - **D-104** Sizes are factors 0.75–2.00 on sliders, shown live; Cancel restores. **Settings > Message list's Layout, Reading pane, Dates, Row height, conversations and the tag's colour show at once too** (the owner): tried without being saved, applied by the same steps as OK (only what differs); Cancel puts them back, OK saves. The reading pane gets back the size it had at a place when it returns there.
 - **D-135** Four sliders: main window, message list, other windows, text of messages; a menu takes the size of its window.
-- **D-154** Each section's toolbar is one folding row; under pressure it folds in fixed steps, computed from widths (no flicker).
+- **D-154** Each section's toolbar is one folding row; under pressure it folds in fixed steps, computed from widths (no flicker). Mail's order: D-290.
+- **D-290** (the owner) **Mail's toolbar gives way in this order**: Delete, Move to, Snooze, Archive, Tag and Mark fold into More (right-most first), then the search field's "All folders" shows only its ▾, then Forward, Reply all and Reply, then Refresh and New; the search field shrinks last; Menu never goes. The other sections have no folder choice and fold from the right as before. Why: the reply buttons and where the search looks are used more than the rest.
 - **D-155** The sections' search field is Mail's minus This folder; the month calendar's minimum is 240 px.
 - **D-156** One toolbar for the window, one row per section.
 - **D-159** The main window is never narrower than 768 px. Rejected: 768 × factor.

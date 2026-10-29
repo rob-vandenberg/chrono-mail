@@ -18,9 +18,10 @@ from chrono_mail.ui.toolbar import ToolbarRow
 from tests.ui.world import World, dialogs, menu_named, settle, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_theme.py 4.2.386"
+__version__ = "test_ui_theme.py 4.2.416"
 
 # --- Version history ----------------------------------------------------
+# v4.2.416: the toolbar order test leaves out More, which may sit after Tag (D-290)
 # v4.2.386: File has Export… below Import…
 # v2.4.323: Backup… is one word (the owner)
 # v2.4.322: the File menu has Back up… and Restore…, and the key items are named after the recovery code (D-244)
@@ -180,7 +181,7 @@ def test_mark_and_move_to_have_icons_and_archive_is_in_the_toolbar(world: World)
 
     for button in (window.mark_button, window.move_button):
         assert not button.icon().isNull() and button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextBesideIcon
-    order = window.toolbar.widgets_in_order()
+    order = [widget for widget in window.toolbar.widgets_in_order() if widget is not window.toolbar.more]  # More sits after the last button shown (D-290)
     mark = order.index(window.mark_button)
     assert order[mark + 1] is window.tag_button  # Tag comes after Mark (0.5.135)
     assert order[mark + 2] is window.toolbar.button_for(window.act_archive)

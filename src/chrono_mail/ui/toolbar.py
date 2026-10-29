@@ -9,9 +9,10 @@ from chrono_mail.ui.scale import px
 from chrono_mail.ui.searchfield import SearchField
 
 # --- Version ------------------------------------------------------------
-__version__ = "toolbar.py 0.5.170"
+__version__ = "toolbar.py 4.2.416"
 
 # --- Version history ----------------------------------------------------
+# v4.2.416: The row can name the button after which the search field's folder choice gives way; Mail names Mark (D-290)
 # v0.5.170: One toolbar for the window (WindowToolbar) that shows the row of the section on screen; a section has a row, not a toolbar of its own (D-156)
 # v0.5.167: Initial folding toolbar of every section: Menu and the search field always shown, the other buttons fold into More from the right (D-154)
 
@@ -80,9 +81,10 @@ def _fill_proxy(proxy: QMenu, menu: QMenu, action: QAction | None) -> None:
 class ToolbarRow(QWidget):
     """What a section's toolbar holds, on one row: the Menu button and the buttons that start the section's work at the
     left (New, Refresh), the other buttons centred, the search field at the right. When the row is too narrow, things give
-    way in this order: the search field's "This folder" shows only its ▾; the view buttons of the calendar merge into one;
-    the buttons fold into More, the right-most first; the search field shrinks to its minimum. Menu and the search field
-    are always shown. Widths are worked out from what each part would need, never by trying, so the row never flickers."""
+    way in this order: the search field's "This folder" shows only its ▾ (or, when the row names a button for it, once
+    that button has folded); the view buttons of the calendar merge into one; the buttons fold into More, the right-most
+    first; the search field shrinks to its minimum. Menu and the search field are always shown. Widths are worked out
+    from what each part would need, never by trying, so the row never flickers (D-154, D-290)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -114,6 +116,7 @@ class ToolbarRow(QWidget):
         self.folded: list[_Unit] = []
         self.compact: bool = False
         self.merged: bool = False
+        self.scope_after: QToolButton | None = None  # "This folder" gives way once this button folded; None: before any button
 
     # --- filling ------------------------------------------------------------------------------------------------
 
@@ -177,6 +180,11 @@ class ToolbarRow(QWidget):
         self.line.addWidget(field)
         self.arrange()
 
+    def set_scope_gives_way_after(self, button: QToolButton) -> None:
+        """The search field's "This folder" shows only its ▾ once this button, and every button right of it, is in More."""
+        self.scope_after = button
+        self.arrange()
+
     def set_more_extras(self, actions: list[QAction]) -> None:
         """Entries that always live in More (below a line, after what is folded): More is then always shown."""
         self.more_extras = actions
@@ -236,15 +244,23 @@ class ToolbarRow(QWidget):
 
     def _states(self, units: list[_Unit]) -> list[tuple[bool, bool, int]]:
         """Every state in the order things give way: (compact search, views merged, number of units shown)."""
+        scope = self.search is not None and self.search.has_scope
+        gives_way = len(units)  # how many units are still shown when "This folder" shows only its ▾
+        if scope and self.scope_after is not None:
+            gives_way = next((number for number, unit in enumerate(units) if self.scope_after in unit.widgets()), len(units))
         compact, merged = False, False
         states = [(compact, merged, len(units))]
-        if self.search is not None and self.search.has_scope:
+        if scope and gives_way == len(units):
             compact = True
             states.append((compact, merged, len(units)))
         if any(unit.merged is not None for unit in units):
             merged = True
             states.append((compact, merged, len(units)))
-        states.extend((compact, merged, shown) for shown in range(len(units) - 1, -1, -1))
+        for shown in range(len(units) - 1, -1, -1):
+            states.append((compact, merged, shown))
+            if scope and not compact and shown == gives_way:
+                compact = True
+                states.append((compact, merged, shown))
         return states
 
     def arrange(self) -> None:
