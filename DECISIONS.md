@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-292 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-293 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-293**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-294**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -344,3 +344,4 @@ The design rules as they stand now, by topic, one short entry each. Every number
 ## 14. Packaging
 
 - **D-123** Nuitka 4.2.2 standalone (4.3 crashes PySide6). Linux .deb and .rpm by nFPM in an Ubuntu 22.04 container; Windows an Inno Setup installer built on the Windows computer. Installers only for milestones, after the owner tested them (`./build-release.sh`). The installers carry their own SQLite, built from the official source (fixed version, checksum checked); the build stops when it is older than the index needs. They carry the AppStream app information, so software centres list Chrono Mail as installed, with Uninstall. Rejected: Flatpak, Snap, PyInstaller, GitHub Actions. See `packaging/PACKAGING.md`.
+- **D-293** (the owner) **Check for updates never connects on its own**: an installed copy (setup.exe, .deb, .rpm) looks on GitHub for the newest release with its own installer only along with a Refresh that tried to reach a server, at most once a day, when Settings > General says so (on by default); About's Check for updates may connect itself and offers a skipped version too. Download, Skip (until a newer one), Cancel; the file is checked against GitHub's fingerprint, then Install or Close. Why: the program must never reach the internet unasked. Rejected: a package source for Discover.

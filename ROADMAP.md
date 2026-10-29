@@ -157,6 +157,15 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | O.5 | Export of accounts (its profile file) and rules. | built (4.2.386); to try on the Windows computer |
 | O.6 | The round trip: exported, opened there, imported back, compared. | the automatic round trip here passes (4.2.386); the Windows half waits |
 
+## Check for updates (from 4.2.419, D-293)
+
+| # | Task | Status |
+|---|---|---|
+| UP.1 | Settings > General "Automatically check for updates" (on by default), along with a Refresh that tried to reach a server, at most once a day; About > Check for updates. | done (4.2.419) |
+| UP.2 | Update available (Download, Skip, Cancel, the link to the release), the download checked against GitHub's fingerprint, Update downloaded (Install, Close). | done (4.2.419) |
+| UP.3 | Install on Linux through the system's software installer, Restart now. | done (4.2.419); a real install from an installed copy: the owner |
+| UP.4 | Install on Windows: the setup without its questions, Chrono Mail opened again. | built (4.2.419); to try on the Windows computer with the next milestone's setup.exe |
+
 ## Backup and restore (B-22, from 2.4.322, D-244)
 
 | # | Task | Status |

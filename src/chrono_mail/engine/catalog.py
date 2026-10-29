@@ -1,10 +1,11 @@
-from chrono_mail.engine import commands_accounts, commands_across, commands_autostart, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_outlook, commands_outlook_export, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_view, commands_watch, junkfilter, undo
+from chrono_mail.engine import commands_accounts, commands_across, commands_autostart, commands_actions, commands_attachments, commands_addressbook, commands_backup, commands_calendar, commands_combined, commands_conflicts, commands_contacts, commands_dav, commands_drafts, commands_emclient, commands_export, commands_folders, commands_groups, commands_imap, commands_local, commands_mail, commands_many, commands_outbox, commands_outlook, commands_outlook_export, commands_pim, commands_rules, commands_schedule, commands_sidebar, commands_tags, commands_tasklist, commands_updates, commands_view, commands_watch, junkfilter, undo
 from chrono_mail.engine.registry import CommandRegistry
 
 # --- Version ------------------------------------------------------------
-__version__ = "catalog.py 4.2.402"
+__version__ = "catalog.py 4.2.419"
 
 # --- Version history ----------------------------------------------------
+# v4.2.419: update.* (D-293)
 # v4.2.402: Start at login (autostart.show, autostart.set, D-284)
 # v4.2.386: export.outlook-choices, export.outlook, export.outlook-stop
 # v4.2.385: the import from a data file (import.outlook-scan, import.outlook)
@@ -73,6 +74,7 @@ def build_registry() -> CommandRegistry:
     commands_emclient.register(registry)
     commands_outlook.register(registry)
     commands_outlook_export.register(registry)
+    commands_updates.register(registry)
     commands_tags.register(registry)
     commands_autostart.register(registry)
     commands_conflicts.register(registry)

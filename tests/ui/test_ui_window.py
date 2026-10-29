@@ -23,9 +23,10 @@ from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 4.2.407"
+__version__ = "test_ui_window.py 4.2.419"
 
 # --- Version history ----------------------------------------------------
+# v4.2.419: About is a window of its own (D-293)
 # v4.2.407: a search starts on All folders; the tests of one folder choose This folder only (D-287)
 # v4.2.406: All folders is the third choice of where the search looks (D-287)
 # v4.2.403: a folder that was only the parent of others is renamed from its right-click menu (D-285)
@@ -1221,18 +1222,16 @@ def test_a_conversation_row_is_painted_with_its_count_at_any_width(world: World,
         assert not narrow.viewport().grab().isNull()
 
 
-def test_the_about_text_names_the_program_and_its_version(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_about_text_names_the_program_and_its_version(world: World, qtbot: QtBot) -> None:
     from chrono_mail.core import program_version
+    from chrono_mail.ui.updates import AboutWindow
 
-    shown: list[str] = []
-
-    def about(parent: object, title: str, text: str) -> None:
-        shown.append(f"{title}|{text}")
-
-    monkeypatch.setattr(QMessageBox, "about", staticmethod(about))
     world.window.act_about.trigger()
-    assert len(shown) == 1 and shown[0].startswith("About Chrono Mail|")
-    assert f"version {program_version()}" in shown[0] and program_version()[0].isdigit() and "AGPL" in shown[0]
+    about = world.window.findChild(AboutWindow)
+    assert about is not None and about.windowTitle() == "About Chrono Mail"  # a window of its own since 4.2.419, with Check for updates (D-293)
+    text = " ".join(label.text() for label in about.findChildren(QLabel))
+    assert f"version {program_version()}" in text and program_version()[0].isdigit() and "AGPL" in text
+    about.reject()
 
 
 # --- junk and unread navigation (0.0.34) -----------------------------------------------------------------------------------------------

@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_autostart import AUTOSTART_SET, AUTOSTART_SHOW, AutostartInfo, AutostartParameters
+from chrono_mail.engine.commands_updates import UPDATE_SHOW, UpdateSetup
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, ACCOUNT_REMOVE, KEY_STATUS, AccountParameters, AccountRemoveResult, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_folders import INDEX_RECONCILE, STORE_VERIFY, ReconcileResult, VerifyResult
 from chrono_mail.ui import appearance, forms, prefs, scale
@@ -57,9 +58,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.402"
+__version__ = "settingsdialog.py 4.2.419"
 
 # --- Version history ----------------------------------------------------
+# v4.2.419: General: Automatically check for updates, greyed with its reason in a copy that is not updated through an installer (D-293)
 # v4.2.402: General: Start Chrono Mail when I log in, with the window open or minimized; set on OK, the window waits for it (D-284)
 # v4.2.401: Message list: Layout, Reading pane, Dates, Row height, conversations and the tag's colour are shown at once (D-104)
 # v4.2.396: Message list: Remove messages from Unread when I mark them as read (D-282)
@@ -413,6 +415,10 @@ class SettingsDialog(QDialog):
         self.start_window.setEnabled(False)
         self.start_at_login.toggled.connect(self.start_window.setEnabled)
         self._backend.ask(AUTOSTART_SHOW, NoParameters(), self._autostart_shown, self._autostart_unknown, owner=self)
+        self.update_check = part(page, QCheckBox, "updateCheck")
+        self.update_check.setChecked(self._chosen.update_check)
+        self.update_check.setEnabled(False)  # greyed until the engine said whether this copy is updated through an installer
+        self._backend.ask(UPDATE_SHOW, NoParameters(), self._update_shown, owner=self)
         self.auto_check.toggled.connect(self.interval.setEnabled)
         self.send_delay.toggled.connect(self.send_delay_seconds.setEnabled)
         return page
@@ -449,6 +455,10 @@ class SettingsDialog(QDialog):
             self.start_window.setCurrentIndex(1 if info.minimized else 0)
         self.start_at_login.setEnabled(True)
         self.start_window.setEnabled(info.on)
+
+    def _update_shown(self, setup: UpdateSetup) -> None:
+        self.update_check.setEnabled(setup.available)
+        self.update_check.setToolTip(setup.reason)
 
     def _autostart_unknown(self, error: ChronoMailError) -> None:
         for widget in (self.start_at_login, self.start_window):
@@ -919,7 +929,7 @@ class SettingsDialog(QDialog):
             start_refresh=str(self.start_refresh.currentData()), scheduled_refresh=str(self.scheduled_refresh.currentData()), send_delay=self.send_delay.isChecked(), send_delay_seconds=self.send_delay_seconds.value(),
             send_on_refresh=self.send_on_refresh.isChecked(), warn_outbox_on_quit=self.warn_outbox_on_quit.isChecked(),
             notifications=self.notifications.isChecked(), tray=self.tray.isChecked(), close_to_tray=self.close_to_tray.isChecked(),
-            start_minimized=bool(self.start_window.currentData()),
+            start_minimized=bool(self.start_window.currentData()), update_check=self.update_check.isChecked(),
             operations_show_on_send_receive=self.operations_show.isChecked(), operations_hide_when_done=self.operations_hide.isChecked(),
             operations_show_on_error=self.operations_error.isChecked(),
             color_scheme=str(self.scheme_box.currentData()), accent_dark=accent_dark, accent_light=accent_light,

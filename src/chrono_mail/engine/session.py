@@ -28,14 +28,16 @@ from chrono_mail.engine.receiving import Receiver
 from chrono_mail.engine.undohistory import UndoHistory
 from chrono_mail.index import Index
 from chrono_mail.protocols.imap import ImapClient
+from chrono_mail.protocols.releases import RELEASES_ADDRESS
 from chrono_mail.protocols.tls import context_for
 from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.2.418"
+__version__ = "session.py 4.2.419"
 
 # --- Version history ----------------------------------------------------
+# v4.2.419: releases_address, stopped_downloads and verified_updates: where the releases are read, the downloads Cancel stopped, the updates checked (D-293)
 # v4.2.418: the receiver of every index records each message's account in its properties, once (D-292)
 # v4.2.417: every index opened or rebuilt is told which account received each message it is given and how each account is named (name_receivers, D-292)
 # v4.2.403: mail kept on this computer: a folder that is only the parent of others becomes a folder of its own when the store opens (D-285)
@@ -354,6 +356,9 @@ class Engine:
     server_work: ServerWork = field(default_factory=ServerWork, init=False, repr=False)  # checks and sends against a restore (RV-60)
     sent_unfiled: set[str] = field(default_factory=set, init=False, repr=False)  # store ids the server took in this run whose move to Sent is
     # left: never sent again, also when no mark could be written on the disk (full)
+    releases_address: str = field(default=RELEASES_ADDRESS, repr=False)  # where the releases of Chrono Mail are read (a test's own server)
+    stopped_downloads: set[str] = field(default_factory=set, init=False, repr=False)  # the downloads of updates Cancel stopped, by the number the window gave each
+    verified_updates: dict[str, str] = field(default_factory=dict, init=False, repr=False)  # a downloaded installer -> the fingerprint it was checked against
 
     def first_time(self, problem: str) -> bool:
         """True the first time this problem is named in this run of the program, False after that: a problem that is met

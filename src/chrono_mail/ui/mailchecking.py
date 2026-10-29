@@ -24,9 +24,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 3.6.371"
+__version__ = "mailchecking.py 4.2.419"
 
 # --- Version history ----------------------------------------------------
+# v4.2.419: went_online: a mail check, a send that reached a server or a calendar sync tried the internet; the check for updates goes along (D-293)
 # v3.6.371: label_wallet at start: readable labels in the wallet (B-23, D-275)
 # v3.5.348: A question with buttons of its own shows plain text (RV-167, without a filter on the whole program)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
@@ -78,6 +79,7 @@ class MailChecking(QObject):
     """Sending and receiving: the owner of the timers, the waits for new mail, the Operations window's rounds and the calendar sync."""
 
     new_mail = Signal(object)  # a check brought new mail: {account id: count}
+    went_online = Signal()  # a Refresh tried to reach a server (a mail check, a send that reached one, a calendar sync): updates may be looked for (D-293)
 
     def __init__(
         self, backend: Backend, state: MailState, status: StatusReport, prefs_in_use: InUse, messages: MessageListPane, refresh: QAction, auto: QAction,
@@ -306,6 +308,8 @@ class MailChecking(QObject):
                 self._status.show("Sending: " + "; ".join(failed), error=True)
             elif sent:
                 self._status.show(f"Sent {counted(sent, 'message')} from the Outbox")
+            if sent:
+                self.went_online.emit()  # only a send that reached a server: an empty Outbox connects nowhere
             if then is not None:
                 then()
             else:
@@ -401,6 +405,7 @@ class MailChecking(QObject):
         self._status.show("Checking for mail…")
         for account_id in list(remaining):
             self._backend.ask(MAIL_FETCH, AccountParameters(account_id), make_done(account_id), make_failed(account_id), owner=self, checking=True)
+        self.went_online.emit()
 
     def learn_existing_junk(self) -> None:
         """At start: the junk filter learns once from the mail already kept in each place (D-238); the status line follows how far it is."""
@@ -565,3 +570,4 @@ class MailChecking(QObject):
             self._status.show(f"{CALENDARS_WORDS}: {error}", error=True)
 
         self._backend.ask(DAV_SYNC, SyncParameters() if only is None else SyncParameters(accounts=tuple(accounts)), done, failed, owner=self)
+        self.went_online.emit()

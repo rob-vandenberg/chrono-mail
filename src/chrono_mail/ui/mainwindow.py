@@ -5,10 +5,10 @@ from typing import override
 from PySide6.QtCore import QEvent, QModelIndex, QPoint, QSettings, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QColor, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QLabel, QLayout, QMainWindow, QMenu, QMessageBox, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QApplication, QLabel, QLayout, QMainWindow, QMenu, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
-from chrono_mail.core import ChronoMailError, program_version
+from chrono_mail.core import ChronoMailError
 from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, KEY_STATUS, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, FoundServer, LinkParameters
@@ -33,6 +33,7 @@ from chrono_mail.ui.exportdialog import ExportDialog
 from chrono_mail.ui.restoredialog import MENU_TEXT as RESTORE_MENU_TEXT, RestoreWindow
 from chrono_mail.ui.indexrebuilds import IndexRebuilds
 from chrono_mail.ui.mailchecking import MailChecking
+from chrono_mail.ui.updates import Updates
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.heldkey import HeldKey
 from chrono_mail.ui.mailtags import MailTags
@@ -64,9 +65,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.416"
+__version__ = "mainwindow.py 4.2.419"
 
 # --- Version history ----------------------------------------------------
+# v4.2.419: About is a window of its own with Check for updates; a Refresh that goes online also looks for updates (Updates, D-293)
 # v4.2.416: Mail's toolbar folds Delete to Mark first, then the search field's folder choice, then Forward to Reply (D-290)
 # v4.2.414: in a search of several folders a message opens, and its right-click menu and Junk or Not junk follow, as in its own folder (D-287)
 # v4.2.410: Advanced search's saved searches are kept beside the window's settings, on this computer only (D-289)
@@ -352,6 +354,8 @@ class MainWindow(QMainWindow):
         self.restores.restored.connect(self._after_restore)
         self.rebuilds.running_changed.connect(self.checking.rebuild_running)
         self.rebuilds.quit_requested.connect(self.quit_program)
+        self.updates: Updates = Updates(backend, self.prefs, self, self.quit_program, self.closed_for_good)  # D-293
+        self.checking.went_online.connect(self.updates.went_online)
         self._build_toolbar()
         self._build_menus()
         self._build_status()
@@ -1563,4 +1567,4 @@ class MainWindow(QMainWindow):
         self.report.show(text, error)
 
     def _about(self) -> None:
-        QMessageBox.about(self, "About Chrono Mail", f"<b>Chrono Mail</b> version {program_version()}<br>An open-source e-mail client for Linux.<br><br>License: AGPL-3.0")
+        self.updates.about()

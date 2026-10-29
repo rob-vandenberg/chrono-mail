@@ -10,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.2.402"
+__version__ = "prefs.py 4.2.419"
 
 # --- Version history ----------------------------------------------------
+# v4.2.419: update_check: look for a newer version with a Refresh that goes online, at most once a day (D-293)
 # v4.2.402: start_minimized: the window choice of the start at login, kept while the start at login is off (D-284)
 # v4.2.401: settings can be tried without being saved: Settings > Message list shows its changes at once (D-104)
 # v4.2.397: automatic refresh every 30 minutes by default (was 5)
@@ -61,6 +62,7 @@ DEFAULTS: dict[str, object] = {
     "tray": True,
     "close_to_tray": False,
     "start_minimized": False,  # a start at login opens the window minimized; the start itself is the system's own entry (D-284)
+    "update_check": True,  # a Refresh that goes online also looks for a newer version, at most once a day; never a connection of its own (D-293)
     "operations_show_on_send_receive": True,  # the Operations window opens when a send and receive starts
     "operations_hide_when_done": True,  # it closes itself when everything is done (not after an error while operations_show_on_error is on)
     "operations_show_on_error": True,  # it opens for an error, and stays open after one
@@ -265,6 +267,7 @@ class Preferences:
     tray: bool = True
     close_to_tray: bool = False
     start_minimized: bool = False
+    update_check: bool = True
     operations_show_on_send_receive: bool = True
     operations_hide_when_done: bool = True
     operations_show_on_error: bool = True
@@ -330,6 +333,7 @@ def read_preferences(settings: QSettings) -> Preferences:
         tray=get_bool(settings, "tray"),
         close_to_tray=get_bool(settings, "close_to_tray"),
         start_minimized=get_bool(settings, "start_minimized"),
+        update_check=get_bool(settings, "update_check"),
         operations_show_on_send_receive=get_bool(settings, "operations_show_on_send_receive"),
         operations_hide_when_done=get_bool(settings, "operations_hide_when_done"),
         operations_show_on_error=get_bool(settings, "operations_show_on_error"),

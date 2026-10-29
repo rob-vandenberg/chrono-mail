@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>UpdateAvailable</class>
+ <widget class="QWidget" name="UpdateAvailable">
+  <property name="windowTitle">
+   <string>Update available</string>
+  </property>
+  <layout class="QVBoxLayout" name="layout">
+   <item>
+    <widget class="QLabel" name="headline" />
+   </item>
+   <item>
+    <widget class="QLabel" name="pageLink" />
+   </item>
+   <item>
+    <widget class="QProgressBar" name="progress" />
+   </item>
+   <item>
+    <widget class="QLabel" name="note" />
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="buttons" stretch="1,0,0,0">
+     <item>
+      <spacer name="buttonsStart">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QPushButton" name="download">
+       <property name="text">
+        <string>Download</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="skip">
+       <property name="text">
+        <string>Skip</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="cancel">
+       <property name="text">
+        <string>Cancel</string>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+  </layout>
+ </widget>
+ <resources />
+ <connections />
+</ui>

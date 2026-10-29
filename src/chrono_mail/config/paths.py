@@ -7,9 +7,10 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import SERVICE_NAME, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 3.6.371"
+__version__ = "paths.py 4.2.419"
 
 # --- Version history ----------------------------------------------------
+# v4.2.419: updates_file: the day of the last check for updates and the version the person skipped (D-293)
 # v3.6.371: profile_name: a profile's folder name, shown in the labels of its wallet entries (B-23, D-275)
 # v3.6.370: credential_service: a profile keeps its passwords and key under a wallet name of its own, never mixed with the person's own
 # v2.3.320: profile_directories: everything of one profile in one folder of its own (the demo for screenshots, D-243)
@@ -71,6 +72,11 @@ class AppDirectories:
     def junk_filter_file(self) -> Path:
         """What the junk filter learned, for every account together (D-238)."""
         return self.data_directory / "junk-filter.bin"
+
+    @property
+    def updates_file(self) -> Path:
+        """The day updates were last looked for and the version the person skipped, on this computer only (D-293)."""
+        return self.data_directory / "updates.json"
 
     @property
     def opened_directory(self) -> Path:

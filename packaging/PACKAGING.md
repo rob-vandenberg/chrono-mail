@@ -159,6 +159,21 @@ a locally built setup.exe). Never automatic.
 
 Check afterwards on https://github.com/rob-vandenberg/chrono-mail/releases that the three files are there.
 
-## 6. Sizes
+## 6. Updates from inside the program (D-293, since 4.2.419)
+
+An installed Chrono Mail looks for the newest release whose installer fits it: the setup.exe on Windows, the `.deb` or the
+`.rpm` on Linux, whichever it was installed from (dpkg's list of `chrono-mail`, else `rpm -q chrono-mail`). So the file names
+of section 1 must never change, and a release counts for a computer only once its installer is attached. GitHub's own
+fingerprint of each file (the `digest` of the release asset) is checked after the download.
+
+1. Linux: the program hands the downloaded package to PackageKit (the system's software installer, the one the software
+   centres use) over D-Bus; the system asks for its password itself. Checked on Kubuntu with a made-up package in PackageKit's
+   simulate mode (nothing installed, 2026-10-29). Not yet tried: a real install, and Fedora and openSUSE.
+2. Windows: the program closes as Exit does and starts the setup with `/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS`;
+   the `[Run]` line with `Check: WizardSilent` in `chrono-mail.iss` opens Chrono Mail again when the setup is done, as the person
+   (`runasoriginaluser`). **To try on the Windows computer**: an install for all users (Windows' own question still comes) and one
+   for the person only; that the program comes back after the update.
+
+## 7. Sizes
 
 The program folder is about 480 MB on disk (the HTML viewer is the largest part); the .deb and .rpm are about 190 MB.

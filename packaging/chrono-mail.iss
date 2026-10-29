@@ -1,6 +1,7 @@
 ; --- Version ------------------------------------------------------------
-; chrono-mail.iss 4.2.402
+; chrono-mail.iss 4.2.419
 ; --- Version history ----------------------------------------------------
+; v4.2.419: an update from Chrono Mail runs this setup silently; it starts Chrono Mail again when done, as the person (D-293)
 ; v4.2.402: the uninstaller removes the start at login of the person who uninstalls (D-284)
 ; v0.5.127: Initial: the Windows installer (Inno Setup 6), made by packaging\build_windows.ps1
 ;
@@ -51,6 +52,8 @@ Name: "{autodesktop}\Chrono Mail"; Filename: "{app}\chrono-mail.exe"; Tasks: des
 
 [Run]
 Filename: "{app}\chrono-mail.exe"; Description: "{cm:LaunchProgram,Chrono Mail}"; Flags: nowait postinstall skipifsilent
+; An update started by Chrono Mail itself (Check for updates, D-293) runs silently and opens the program again; never elevated.
+Filename: "{app}\chrono-mail.exe"; Flags: nowait runasoriginaluser; Check: WizardSilent
 
 [Code]
 { The start at login is the person's own entry in their Run list (Settings > General, D-284); it goes with the program. }
