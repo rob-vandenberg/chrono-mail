@@ -19,6 +19,7 @@ from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.core import OWN_COLOUR_ID, ChronoMailError, PaletteColour
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR
 from chrono_mail.engine.commands_pim import COLLECTION_SET_PALETTE, CollectionSummary, PaletteParameters
+from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
@@ -27,9 +28,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import px_for, wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 4.0.378"
+__version__ = "paletteeditor.py 4.2.424"
 
 # --- Version history ----------------------------------------------------
+# v4.2.424: an (i) after the greyed Delete of the calendar's own colour, and after + of a read-only calendar, saying why; a read-only calendar greys each row's parts, never the (i) (D-294)
 # v4.0.378: the editor and a colour's row are built from their Qt Designer forms (ui/forms/palette_editor.ui, palette_colour.ui, D-276); the
 #           rows are made at their place, and a colour added comes after the others in the Tab order (it came after Save and Cancel)
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
@@ -40,6 +42,8 @@ __version__ = "paletteeditor.py 4.0.378"
 # v1.1.221: The colours of the calendar's account, named in the title (D-191)
 # v1.1.219: Initial: the colours of one calendar (its own first, which cannot be deleted), each with a name; and how an appointment's colour is found (D-191)
 
+OWN_COLOUR_STAYS: str = "The calendar's own colour cannot be deleted"
+READ_ONLY_COLOURS: str = "This calendar is read only: its colours are shown, but cannot be changed."
 LIST_RIGHT_MARGIN: int = 8  # pixels between the delete buttons and the scrollbar, at the windows' size
 
 OTHER_COLOUR_NAME: str = "Other colour"  # an appointment coloured by another program, with no colour of the palette
@@ -82,7 +86,7 @@ class ColourRow(QWidget):
         super().__init__(parent or editor)
         self.colour_id: str = entry.colour_id
         self.colour: str = entry.colour
-        form = forms.fill(self, "palette_colour")  # one colour of the editor (D-276)
+        form = forms.fill(self, "palette_colour", info_marks("deleteInfo", keep_place=True))  # one colour of the editor (D-276); the rows stay lined up
         self.colour_button: QPushButton = part(form, QPushButton, "colour")
         self.name: QLineEdit = part(form, QLineEdit, "name")
         self.name.setText(entry.name)
@@ -92,7 +96,9 @@ class ColourRow(QWidget):
         own = entry.colour_id == OWN_COLOUR_ID
         self.delete_button.setEnabled(not own)  # the calendar's own colour can be changed, never deleted
         if own:
-            self.delete_button.setToolTip("The calendar's own colour cannot be deleted")
+            self.delete_button.setToolTip(OWN_COLOUR_STAYS)
+        self.delete_info: InfoMark = part(form, InfoMark, "deleteInfo")
+        self.delete_info.explain("Delete this colour", OWN_COLOUR_STAYS if own else "")  # D-294
         self._show_colour()
         self.colour_button.clicked.connect(self._pick)
         self.delete_button.clicked.connect(lambda: editor.remove_row(self))
@@ -117,7 +123,7 @@ class PaletteEditor(QDialog):
         self._calendar: CollectionSummary = calendar
         self.result_summary: CollectionSummary | None = None
         self.rows: list[ColourRow] = []
-        form = forms.fill(self, "palette_editor", {"rows": self._holder})  # D-276
+        form = forms.fill(self, "palette_editor", {"rows": self._holder, **info_marks("addInfo")})  # D-276
         self.calendar: QComboBox = part(form, QComboBox, "calendar")  # the event editor's Calendar row: which calendar's own colour comes first, and whose account's colours follow
         self.calendar.addItem(f"{calendar.account_name} — {calendar.name}")
         self.calendar.setEnabled(False)
@@ -133,9 +139,10 @@ class PaletteEditor(QDialog):
         forms.smallest(self, 440)  # its texts are never cut off, also at the largest size
         if self.rows:
             self.rows[0].colour_button.setFocus()  # it opens on the first colour, as before (the list's scroll area comes first in the Tab order)
-        if calendar.read_only:
-            for widget in (self.add_button, self.save_button, self.holder):
-                widget.setEnabled(False)  # a read-only calendar's colours are shown, not changed
+        if calendar.read_only:  # a read-only calendar's colours are shown, not changed; the (i) of a row stays usable (D-294)
+            for widget in (self.add_button, self.save_button, *(control for row in self.rows for control in (row.colour_button, row.name, row.delete_button))):
+                widget.setEnabled(False)
+            part(form, InfoMark, "addInfo").explain("Event colours", READ_ONLY_COLOURS)
 
     def _holder(self, parent: QWidget) -> QWidget:
         """The list of colours with a row each, made at its place in the form (so Tab reaches the rows before the buttons below them)."""

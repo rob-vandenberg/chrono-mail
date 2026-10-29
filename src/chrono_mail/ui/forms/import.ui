@@ -249,25 +249,94 @@
             </widget>
            </item>
            <item>
-            <widget class="QCheckBox" name="dataFileAccounts">
-             <property name="text">
-              <string>Accounts</string>
-             </property>
-            </widget>
+            <layout class="QHBoxLayout" name="dataFileAccountsRow" stretch="0,0,1">
+             <item>
+              <widget class="QCheckBox" name="dataFileAccounts">
+               <property name="text">
+                <string>Accounts</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QWidget" name="dataFileAccountsInfo" />
+             </item>
+             <item>
+              <spacer name="dataFileAccountsRowEnd">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeType">
+                <enum>QSizePolicy::Expanding</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
            </item>
            <item>
-            <widget class="QCheckBox" name="dataFileRules">
-             <property name="text">
-              <string>Rules</string>
-             </property>
-            </widget>
+            <layout class="QHBoxLayout" name="dataFileRulesRow" stretch="0,0,1">
+             <item>
+              <widget class="QCheckBox" name="dataFileRules">
+               <property name="text">
+                <string>Rules</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QWidget" name="dataFileRulesInfo" />
+             </item>
+             <item>
+              <spacer name="dataFileRulesRowEnd">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeType">
+                <enum>QSizePolicy::Expanding</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
            </item>
            <item>
-            <widget class="QCheckBox" name="dataFileSignatures">
-             <property name="text">
-              <string>Signatures</string>
-             </property>
-            </widget>
+            <layout class="QHBoxLayout" name="dataFileSignaturesRow" stretch="0,0,1">
+             <item>
+              <widget class="QCheckBox" name="dataFileSignatures">
+               <property name="text">
+                <string>Signatures</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QWidget" name="dataFileSignaturesInfo" />
+             </item>
+             <item>
+              <spacer name="dataFileSignaturesRowEnd">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeType">
+                <enum>QSizePolicy::Expanding</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>0</width>
+                 <height>0</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
            </item>
            <item>
             <spacer name="blankAboveDataFiles">
@@ -378,6 +447,9 @@
         <string>Import</string>
        </property>
       </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="importInfo" />
      </item>
      <item>
       <widget class="QPushButton" name="stop">

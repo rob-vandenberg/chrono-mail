@@ -2,7 +2,7 @@
 <ui version="4.0">
  <class>ColourRow</class>
  <widget class="QWidget" name="ColourRow">
-  <layout class="QHBoxLayout" name="layout" stretch="0,1,0">
+  <layout class="QHBoxLayout" name="layout" stretch="0,1,0,0">
    <property name="leftMargin">
     <number>0</number>
    </property>
@@ -34,6 +34,9 @@
       <string>Delete this colour</string>
      </property>
     </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="deleteInfo" />
    </item>
   </layout>
  </widget>

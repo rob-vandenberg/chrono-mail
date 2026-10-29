@@ -19,9 +19,10 @@ from chrono_mail.protocols.releases import Release, ReleaseFile, download, fetch
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_updates.py 4.2.419"
+__version__ = "commands_updates.py 4.2.424"
 
 # --- Version history ----------------------------------------------------
+# v4.2.424: the texts of why a copy is not updated: the owner's words
 # v4.2.419: Initial: update.show, update.check, update.skip, update.download, update.stop-download, update.install and update.restart (D-293)
 
 # Each installed copy is updated by the installer it came from: the Windows setup, or the Linux .deb or .rpm. A check reads GitHub's list
@@ -29,8 +30,8 @@ __version__ = "commands_updates.py 4.2.419"
 # with a Refresh that went online, at most once a day, or when the person clicks Check for updates (D-293).
 FILE_ENDINGS: dict[str, str] = {"windows": "_setup.exe", "deb": "_amd64.deb", "rpm": "_x86_64.rpm"}
 PROGRESS_WHAT: str = "Downloading the update"
-NOT_FROM_AN_INSTALLER: str = "This copy runs from its project folder; it is not updated through installers."
-NOT_FROM_A_PACKAGE: str = "This copy was not installed from a .deb, .rpm or setup.exe, so it is not updated through one."
+NOT_FROM_AN_INSTALLER: str = "This copy is running from the project folder. It cannot be updated via the installer."
+NOT_FROM_A_PACKAGE: str = "This copy was not installed with an installer. It cannot be updated via the installer."
 PACKAGEKIT: str = "org.freedesktop.PackageKit"
 PACKAGEKIT_SUCCESS: int = 1  # PackageKit's exit code of a transaction that ended well
 PACKAGEKIT_WAIT_SECONDS: float = 900.0  # no word from the system's installer for this long (its password window included): it has stalled

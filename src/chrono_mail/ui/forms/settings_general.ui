@@ -139,21 +139,67 @@
     </widget>
    </item>
    <item row="6" column="0" colspan="2">
-    <widget class="QCheckBox" name="notifications">
-     <property name="text">
-      <string>Show a notification when new mail arrives (only the number, never the content)</string>
-     </property>
-    </widget>
+    <layout class="QHBoxLayout" name="notificationsRow" stretch="0,0,1">
+     <item>
+      <widget class="QCheckBox" name="notifications">
+       <property name="text">
+        <string>Show a notification when new mail arrives (only the number, never the content)</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="notificationsInfo" />
+     </item>
+     <item>
+      <spacer name="notificationsRowEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
    </item>
    <item row="7" column="0" colspan="2">
-    <widget class="QCheckBox" name="tray">
-     <property name="text">
-      <string>Show an icon in the notification area</string>
-     </property>
-    </widget>
+    <layout class="QHBoxLayout" name="trayRow" stretch="0,0,1">
+     <item>
+      <widget class="QCheckBox" name="tray">
+       <property name="text">
+        <string>Show an icon in the notification area</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="trayInfo" />
+     </item>
+     <item>
+      <spacer name="trayRowEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
    </item>
    <item row="8" column="0" colspan="2">
-    <layout class="QHBoxLayout" name="startAtLoginRow" stretch="0,0,1">
+    <layout class="QHBoxLayout" name="startAtLoginRow" stretch="0,0,0,1">
      <item>
       <widget class="QCheckBox" name="startAtLogin">
        <property name="text">
@@ -163,6 +209,9 @@
      </item>
      <item>
       <widget class="QComboBox" name="startWindow" />
+     </item>
+     <item>
+      <widget class="QWidget" name="startAtLoginInfo" />
      </item>
      <item>
       <spacer name="startAtLoginRowEnd">
@@ -183,27 +232,66 @@
     </layout>
    </item>
    <item row="9" column="0" colspan="2">
-    <widget class="QCheckBox" name="closeToTray">
-     <property name="text">
-      <string>Closing the window keeps Chrono Mail running in the notification area</string>
-     </property>
-    </widget>
+    <layout class="QHBoxLayout" name="closeToTrayRow" stretch="0,0,1">
+     <item>
+      <widget class="QCheckBox" name="closeToTray">
+       <property name="text">
+        <string>Closing the window keeps Chrono Mail running in the notification area</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="closeToTrayInfo" />
+     </item>
+     <item>
+      <spacer name="closeToTrayRowEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
    </item>
    <item row="10" column="0" colspan="2">
-    <widget class="QCheckBox" name="updateCheck">
-     <property name="text">
-      <string>Automatically check for updates</string>
-     </property>
-    </widget>
+    <layout class="QHBoxLayout" name="updateCheckRow" stretch="0,0,1">
+     <item>
+      <widget class="QCheckBox" name="updateCheck">
+       <property name="text">
+        <string>Automatically check for updates</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="updateCheckInfo" />
+     </item>
+     <item>
+      <spacer name="updateCheckRowEnd">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeType">
+        <enum>QSizePolicy::Expanding</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>0</width>
+         <height>0</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
    </item>
    <item row="11" column="0" colspan="2">
-    <widget class="QLabel" name="noTrayNote">
-     <property name="text">
-      <string>This desktop has no notification area, so there are no icon and no notifications.</string>
-     </property>
-    </widget>
-   </item>
-   <item row="12" column="0" colspan="2">
     <widget class="QLabel" name="languageNote">
      <property name="text">
       <string>Language: the program is in English; dates and times follow the language of the system.</string>

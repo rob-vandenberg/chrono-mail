@@ -42,13 +42,16 @@
     </widget>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="bottom" stretch="0,1,0">
+    <layout class="QHBoxLayout" name="bottom" stretch="0,0,1,0">
      <item>
       <widget class="QToolButton" name="add">
        <property name="toolTip">
         <string>Add a colour</string>
        </property>
       </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="addInfo" />
      </item>
      <item>
       <spacer name="bottomMiddle">

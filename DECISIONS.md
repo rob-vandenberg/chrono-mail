@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-293 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-294 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-294**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-295**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -247,6 +247,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-065** Rules and Scheduled messages are Settings pages; no Tools menu.
 - **D-172** Scheduled and repeating messages wait in their own local folder, **Scheduled**, with a Send at column; the Outbox means only "should have gone and did not". Never a move or copy target, never in Unread, Flagged, Unreplied or Tags.
 - **D-171** Buttons say the one action that applies (Send now or Cancel snooze) and are greyed, never hidden. The message window says Schedule…. Settings > Scheduled messages > New opens the message window in a schedule-only mode.
+- **D-294** (the owner) **An option greyed for a reason gets an (i) right after its text**, never greyed itself and shown only while the reason holds: a hover shows the reason at once, a click (or Enter, Space; Tab reaches it) opens it in a small window. The option keeps its own hover text. Why: nobody hovers over something that looks switched off, so a reason only in a hover text is never found. Rejected: a line of text below the option (it takes a whole line).
 - **D-224** (R-21) Settings > Scheduled messages changes only the line an action touched; the selection stays; a failed Send now says why.
 - **D-177** A scheduled message is edited where it waits and stays scheduled, under the same id (Edit on the page, also from the Scheduled folder; no autosave). Never a draft by being edited.
 - **D-178** The Scheduled page has only New, Edit, Send now (or Cancel snooze) and Pause/Resume. A scheduled message goes back to being a draft by a drag or move to Drafts; otherwise only Trash takes it. A closed message window is deleted.

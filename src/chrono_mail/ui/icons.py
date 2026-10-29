@@ -8,9 +8,10 @@ from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPalett
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 1.1.200"
+__version__ = "icons.py 4.2.424"
 
 # --- Version history ----------------------------------------------------
+# v4.2.424: accent_icon: an icon always in the accent colour (the (i) after a greyed option, D-294)
 # v1.1.200: An icon for the Scheduled folder
 # v1.1.191: Icons for the Favorites Snoozed and Unreplied
 # v0.1.89: grey_icon: an icon drawn wholly in grey (the column headers of Contact and Delete)
@@ -54,10 +55,11 @@ _ANY_COLOUR: re.Pattern[str] = re.compile(r"(\.ColorScheme-[A-Za-z]+\s*\{\s*colo
 class TintedSvgEngine(QIconEngine):
     """An icon drawn from a Breeze SVG with its text colour replaced by the colour the palette gives text at that moment, so that it suits the light and the dark scheme; other colours (the red of Delete) stay."""
 
-    def __init__(self, path: Path, accent_when_on: bool = False, grey: bool = False) -> None:
+    def __init__(self, path: Path, accent_when_on: bool = False, grey: bool = False, accent: bool = False) -> None:
         super().__init__()
         self._path: Path = path
         self._accent_when_on: bool = accent_when_on  # in the blue of the highlight while the button is pressed (checked)
+        self._accent: bool = accent  # always in the blue of the highlight
         self._grey: bool = grey  # every colour of the icon (also the red of Delete) in the grey of placeholder text
         self._source: str = path.read_text("utf-8")
 
@@ -77,7 +79,7 @@ class TintedSvgEngine(QIconEngine):
         if self._grey:
             source = _ANY_COLOUR.sub(rf"\g<1>{palette.color(QPalette.ColorRole.PlaceholderText).name()}", self._source)
         else:
-            source = _TEXT_COLOUR.sub(rf"\g<1>{self.colour_for(mode, palette, self._accent_when_on and state == QIcon.State.On)}", self._source)
+            source = _TEXT_COLOUR.sub(rf"\g<1>{self.colour_for(mode, palette, self._accent or (self._accent_when_on and state == QIcon.State.On))}", self._source)
         QSvgRenderer(source.encode("utf-8")).render(painter, QRectF(rect))
 
     @override
@@ -91,7 +93,7 @@ class TintedSvgEngine(QIconEngine):
 
     @override
     def clone(self) -> "TintedSvgEngine":
-        return TintedSvgEngine(self._path, self._accent_when_on, self._grey)
+        return TintedSvgEngine(self._path, self._accent_when_on, self._grey, self._accent)
 
 
 def grey_icon(name: str) -> QIcon:
@@ -104,6 +106,12 @@ def bundled_icon(name: str) -> QIcon:
     """The icon that comes with the program for this icon name, or an empty icon."""
     file = RESOURCES / "icons" / f"{name}.svg"
     return QIcon(TintedSvgEngine(file)) if name and "/" not in name and file.is_file() else QIcon()
+
+
+def accent_icon(name: str) -> QIcon:
+    """The icon that comes with the program for this icon name, in the accent colour (the theme's blue); an empty icon when there is none."""
+    file = RESOURCES / "icons" / f"{name}.svg"
+    return QIcon(TintedSvgEngine(file, accent=True)) if name and "/" not in name and file.is_file() else QIcon()
 
 
 def section_icon(stem: str) -> QIcon:

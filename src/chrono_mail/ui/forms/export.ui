@@ -81,11 +81,34 @@
         </widget>
        </item>
        <item>
-        <widget class="QCheckBox" name="rules">
-         <property name="text">
-          <string>Rules</string>
-         </property>
-        </widget>
+        <layout class="QHBoxLayout" name="rulesRow" stretch="0,0,1">
+         <item>
+          <widget class="QCheckBox" name="rules">
+           <property name="text">
+            <string>Rules</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QWidget" name="rulesInfo" />
+         </item>
+         <item>
+          <spacer name="rulesRowEnd">
+           <property name="orientation">
+            <enum>Qt::Horizontal</enum>
+           </property>
+           <property name="sizeType">
+            <enum>QSizePolicy::Expanding</enum>
+           </property>
+           <property name="sizeHint" stdset="0">
+            <size>
+             <width>0</width>
+             <height>0</height>
+            </size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
        </item>
        <item>
         <widget class="QLabel" name="chooseAccounts">

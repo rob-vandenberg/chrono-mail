@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QKeySequenceEdit,
     QLabel,
     QListWidget,
@@ -36,6 +35,7 @@ from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_autostart import AUTOSTART_SET, AUTOSTART_SHOW, AutostartInfo, AutostartParameters
 from chrono_mail.engine.commands_updates import UPDATE_SHOW, UpdateSetup
+from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, ACCOUNT_REMOVE, KEY_STATUS, AccountParameters, AccountRemoveResult, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_folders import INDEX_RECONCILE, STORE_VERIFY, ReconcileResult, VerifyResult
 from chrono_mail.ui import appearance, forms, prefs, scale
@@ -58,9 +58,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.419"
+__version__ = "settingsdialog.py 4.2.424"
 
 # --- Version history ----------------------------------------------------
+# v4.2.424: General: an (i) after the start at login, the update tick and the three ticks of the notification area while greyed, saying why; the line about a missing notification area is gone (D-294)
 # v4.2.419: General: Automatically check for updates, greyed with its reason in a copy that is not updated through an installer (D-293)
 # v4.2.402: General: Start Chrono Mail when I log in, with the window open or minimized; set on OK, the window waits for it (D-284)
 # v4.2.401: Message list: Layout, Reading pane, Dates, Row height, conversations and the tag's colour are shown at once (D-104)
@@ -133,6 +134,9 @@ __version__ = "settingsdialog.py 4.2.419"
 # v0.0.21: Tray icon, new mail notifications, unread count in the title
 # v0.0.20: Initial settings window
 
+NO_TRAY: str = "This desktop has no notification area, so there are no icon and no notifications."
+AUTOSTART_NOT_HERE: str = "Not available for this copy of Chrono Mail"
+START_AT_LOGIN: str = "Start Chrono Mail when I log in"
 ROLE_ACCOUNT: int = 256
 MARK_READ_LABELS: tuple[tuple[str, str], ...] = (
     ("delay", "A moment after I select it"), ("window", "Only when I open it in a window of its own"), ("never", "Never by itself (I mark messages)"),
@@ -369,7 +373,10 @@ class SettingsDialog(QDialog):
     # --- the pages --------------------------------------------------------------------------------------------------
 
     def _general_page(self, tray_available: bool) -> QWidget:
-        page = forms.load("settings_general", self, {"startupBox": lambda parent: StartupChooser(self._startup_choices, parent)})
+        page = forms.load("settings_general", self, {
+            "startupBox": lambda parent: StartupChooser(self._startup_choices, parent),
+            **info_marks("notificationsInfo", "trayInfo", "closeToTrayInfo", "startAtLoginInfo", "updateCheckInfo"),
+        })
         self.startup_box = part(page, StartupChooser, "startupBox")  # a folded tree: headings unfold, folders and views are chosen
         if not self.startup_box.choose_value(self._chosen.startup.text):
             self.startup_box.choose_value("")  # a folder that is gone: the last selected one
@@ -399,10 +406,12 @@ class SettingsDialog(QDialog):
         self.tray.setChecked(self._chosen.tray and tray_available)
         self.close_to_tray = part(page, QCheckBox, "closeToTray")
         self.close_to_tray.setChecked(self._chosen.close_to_tray and tray_available)
+        self.start_at_login_info: InfoMark = part(page, InfoMark, "startAtLoginInfo")
+        self.update_check_info: InfoMark = part(page, InfoMark, "updateCheckInfo")
         if not tray_available:
-            for widget in (self.tray, self.close_to_tray, self.notifications):
+            for widget, name in ((self.tray, "trayInfo"), (self.close_to_tray, "closeToTrayInfo"), (self.notifications, "notificationsInfo")):
                 widget.setEnabled(False)
-        part(page, QFormLayout, "form").setRowVisible(part(page, QLabel, "noTrayNote"), not tray_available)  # only where it is true
+                part(page, InfoMark, name).explain(widget.text(), NO_TRAY)  # only where it is true (D-294)
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())
         self.start_at_login = part(page, QCheckBox, "startAtLogin")
@@ -418,7 +427,7 @@ class SettingsDialog(QDialog):
         self.update_check = part(page, QCheckBox, "updateCheck")
         self.update_check.setChecked(self._chosen.update_check)
         self.update_check.setEnabled(False)  # greyed until the engine said whether this copy is updated through an installer
-        self._backend.ask(UPDATE_SHOW, NoParameters(), self._update_shown, owner=self)
+        self._backend.ask(UPDATE_SHOW, NoParameters(), self._update_shown, self._update_unknown, owner=self)
         self.auto_check.toggled.connect(self.interval.setEnabled)
         self.send_delay.toggled.connect(self.send_delay_seconds.setEnabled)
         return page
@@ -448,7 +457,8 @@ class SettingsDialog(QDialog):
         self.autostart_now = info
         if not info.available:
             for widget in (self.start_at_login, self.start_window):
-                widget.setToolTip("Not available for this copy of Chrono Mail")
+                widget.setToolTip(AUTOSTART_NOT_HERE)
+            self.start_at_login_info.explain(START_AT_LOGIN, AUTOSTART_NOT_HERE)
             return
         self.start_at_login.setChecked(info.on)
         if info.on:
@@ -456,13 +466,18 @@ class SettingsDialog(QDialog):
         self.start_at_login.setEnabled(True)
         self.start_window.setEnabled(info.on)
 
+    def _update_unknown(self, error: ChronoMailError) -> None:
+        self.update_check_info.explain(self.update_check.text(), f"Whether this copy can be updated could not be read: {error}")
+
     def _update_shown(self, setup: UpdateSetup) -> None:
         self.update_check.setEnabled(setup.available)
         self.update_check.setToolTip(setup.reason)
+        self.update_check_info.explain(self.update_check.text(), "" if setup.available else setup.reason)
 
     def _autostart_unknown(self, error: ChronoMailError) -> None:
         for widget in (self.start_at_login, self.start_window):
             widget.setToolTip(f"The start at login could not be read: {error}")
+        self.start_at_login_info.explain(START_AT_LOGIN, f"The start at login could not be read: {error}")
 
     def autostart_wanted(self) -> AutostartParameters | None:
         """What OK must change in the start at login; None when nothing changes (or it is not known or not available)."""

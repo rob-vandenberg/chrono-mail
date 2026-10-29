@@ -9,6 +9,7 @@ from chrono_mail.core import ChronoMailError, RebuildAborted
 from chrono_mail.engine.changes import RebuildStep
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
 from chrono_mail.engine.commands_folders import INDEX_ABORT, INDEX_CHECK, INDEX_FILL_SENT, INDEX_PREPARE, INDEX_REBUILD, IndexState
+from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.forms import part
@@ -17,9 +18,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "indexrebuilds.py 4.0.375"
+__version__ = "indexrebuilds.py 4.2.424"
 
 # --- Version history ----------------------------------------------------
+# v4.2.424: an (i) after Run in background while it is greyed, saying why (D-294)
 # v4.0.375: the rebuild window is built from its Qt Designer form (ui/forms/rebuild_window.ui, D-276); the account's name is plain text (D-259)
 # v4.0.374: the rebuild window is forgotten when it goes with its parent (Settings is deleted once closed); the next one is made fresh
 # v3.5.348: The question Abort rebuilding shows plain text (RV-167, without a filter on the whole program)
@@ -59,13 +61,14 @@ class RebuildWindow(QDialog):
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
         self.setModal(True)  # above every window, also Settings; Run in background lets go of it
-        form = forms.fill(self, "rebuild_window")  # why, the account, the bar, the count and the two buttons (D-276)
+        form = forms.fill(self, "rebuild_window", info_marks("runInBackgroundInfo"))  # why, the account, the bar, the count and the two buttons (D-276)
         self.account_label: QLabel = part(form, QLabel, "account")
         self.account_label.setTextFormat(Qt.TextFormat.PlainText)  # an account's name: never markup (D-259)
         self.bar: QProgressBar = part(form, QProgressBar, "bar")
         self.bar.setMinimumWidth(wpx(520))
         self.count_label: QLabel = part(form, QLabel, "count")
         self.background_button: QPushButton = part(form, QPushButton, "runInBackground")
+        self.background_info: InfoMark = part(form, InfoMark, "runInBackgroundInfo")
         self.abort_button: QPushButton = part(form, QPushButton, "abort")
         self.background_button.clicked.connect(self.background_chosen)
         self.abort_button.clicked.connect(self.abort_chosen)
@@ -77,6 +80,7 @@ class RebuildWindow(QDialog):
         self.count_label.setText(f"{done:,} of {total:,}")
         self.background_button.setEnabled(usable)  # greyed, never hidden
         self.background_button.setToolTip("" if usable else BACKGROUND_TIP)
+        self.background_info.explain(self.background_button.text(), "" if usable else BACKGROUND_TIP)  # D-294
 
     @override
     def reject(self) -> None:

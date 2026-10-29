@@ -30,7 +30,7 @@
     <widget class="QLabel" name="count" />
    </item>
    <item>
-    <layout class="QHBoxLayout" name="buttons" stretch="1,0,0">
+    <layout class="QHBoxLayout" name="buttons" stretch="1,0,0,0">
      <item>
       <spacer name="buttonsStart">
        <property name="orientation">
@@ -53,6 +53,9 @@
         <string>Run in background</string>
        </property>
       </widget>
+     </item>
+     <item>
+      <widget class="QWidget" name="runInBackgroundInfo" />
      </item>
      <item>
       <widget class="QPushButton" name="abort">

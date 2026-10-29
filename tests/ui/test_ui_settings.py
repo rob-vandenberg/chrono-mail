@@ -1,5 +1,3 @@
-from typing import cast
-
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QCheckBox, QDialog, QFormLayout, QHBoxLayout, QGroupBox, QLabel, QLineEdit, QMessageBox
@@ -16,9 +14,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 4.2.405"
+__version__ = "test_ui_settings.py 4.2.424"
 
 # --- Version history ----------------------------------------------------
+# v4.2.424: the ticks of the notification area sit in rows of their own with their (i) (D-294)
 # v4.2.405: the row test of the start at login is Pyrefly-clean (a position of the form is typed as object)
 # v4.2.402: General: Start Chrono Mail when I log in, with the window open or minimized (D-284)
 # v4.0.374: a closed Settings window is deleted (every opening kept one in memory); it is not closed while it removes an account; a
@@ -397,10 +396,10 @@ def test_the_start_at_login_sits_between_the_icon_and_closing_to_the_icon(world:
     dialog = opened_with_the_start_at_login(world, qtbot)
     page = dialog.tray.parentWidget()
     form = page.layout() if page is not None else None
-    row_layout = page.findChild(QHBoxLayout, "startAtLoginRow") if page is not None else None
-    assert isinstance(form, QFormLayout) and row_layout is not None
-    rows = [cast(tuple[int, QFormLayout.ItemRole], form.getWidgetPosition(part))[0] for part in (dialog.tray, dialog.close_to_tray)]  # PySide6 types it as object
-    row = form.getLayoutPosition(row_layout)[0]
+    row_layouts = [page.findChild(QHBoxLayout, name) if page is not None else None for name in ("trayRow", "startAtLoginRow", "closeToTrayRow")]  # each tick in its row with its (i) (D-294)
+    assert isinstance(form, QFormLayout) and all(found is not None for found in row_layouts)
+    rows = [form.getLayoutPosition(found)[0] for found in (row_layouts[0], row_layouts[2]) if found is not None]
+    row = form.getLayoutPosition(row_layouts[1])[0] if row_layouts[1] is not None else -1
     assert rows[0] < row < rows[1]
     assert dialog.start_at_login.text() == "Start Chrono Mail when I log in:"
     assert [dialog.start_window.itemText(index) for index in range(dialog.start_window.count())] == ["with the window open", "with the window minimized"]

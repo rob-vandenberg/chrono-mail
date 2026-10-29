@@ -23,15 +23,17 @@ from chrono_mail.engine.commands_outlook_export import (
     StopParameters, StopResult,
 )
 from chrono_mail.ui import forms
+from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.importdialog import place_busy_notice, remember_pick, starting_place
 from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "exportdialog.py 4.2.420"
+__version__ = "exportdialog.py 4.2.424"
 
 # --- Version history ----------------------------------------------------
+# v4.2.424: an (i) after Rules while it is greyed, saying why (D-294)
 # v4.2.420: a comparison is not wrapped in bool() again
 # v4.2.391: while the accounts are listed and while an export prepares (before its first count): a moving busy bar, an (i) icon and a
 #           text in the accent colour (importdialog.BusyNotice)
@@ -76,7 +78,8 @@ class ExportDialog(QDialog):
         self._memory = memory  # the folder of the last export, on this computer (None: nothing remembered)
         self._backend = backend
         self._running = False
-        form = forms.fill(self, "export")  # D-276
+        form = forms.fill(self, "export", info_marks("rulesInfo"))  # D-276
+        self.rules_info: InfoMark = forms.part(form, InfoMark, "rulesInfo")
         self.programs: QTreeWidget = forms.part(form, QTreeWidget, "programs")
         self.programs.setHeaderHidden(True)
         self.programs.setRootIsDecorated(False)
@@ -137,6 +140,7 @@ class ExportDialog(QDialog):
         self.rules.setEnabled(choices.rules_available)
         self.rules.setChecked(choices.rules_available)
         self.rules.setToolTip("" if choices.rules_available else choices.rules_reason)
+        self.rules_info.explain(self.rules.text(), "" if choices.rules_available else choices.rules_reason)  # D-294
         self._show_state()
 
     def _browse(self) -> None:

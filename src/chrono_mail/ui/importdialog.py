@@ -31,15 +31,17 @@ from chrono_mail.engine import commands_outlook
 from chrono_mail.engine.commands_outlook import IMPORT_OUTLOOK, IMPORT_OUTLOOK_SCAN, PROGRESS_TEXT
 from chrono_mail.engine.outlook_settings import WINDOWS_ONLY, ProfileImport, ProfileScan
 from chrono_mail.ui import forms
+from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.404"
+__version__ = "importdialog.py 4.2.424"
 
 # --- Version history ----------------------------------------------------
+# v4.2.424: an (i) after Accounts, Rules and Signatures while greyed, and after Import while it waits for the reading, saying why (D-294)
 # v4.2.404: the "Import again" box shows its text as plain text, as every message box (RV-167, D-259)
 # v4.2.391: while the exports or data files are read: a moving busy bar, an (i) icon and "A large mail folder can take a while." in the accent
 #           colour (BusyNotice, also used by the Export window); Import stays grey with a hover text saying when it can be used
@@ -350,7 +352,7 @@ class ImportDialog(QDialog):
         self._finished_parts: tuple[str, ...] = ()  # what an earlier import of the chosen exports went through to the end
         self._scanned_files: tuple[commands_outlook.FileScan, ...] = ()  # the latest reading of the chosen data files
         self._again = False  # this import starts over (sent with its first batch only)
-        form = forms.fill(self, "import")  # D-276
+        form = forms.fill(self, "import", info_marks("dataFileAccountsInfo", "dataFileRulesInfo", "dataFileSignaturesInfo", "importInfo"))  # D-276
         self.sources: QTreeWidget = forms.part(form, QTreeWidget, "sources")
         self.sources.setHeaderHidden(True)
         self.sources.setRootIsDecorated(False)
@@ -397,9 +399,11 @@ class ImportDialog(QDialog):
         for box in self._data_file_types():
             box.setChecked(True)
         self.data_file_later: tuple[QCheckBox, ...] = tuple(forms.part(form, QCheckBox, name) for name in ("dataFileAccounts", "dataFileRules", "dataFileSignatures"))
-        for box in self.data_file_later:
+        self.data_file_later_info: tuple[InfoMark, ...] = tuple(forms.part(form, InfoMark, f"{box.objectName()}Info") for box in self.data_file_later)
+        for box, info in zip(self.data_file_later, self.data_file_later_info, strict=True):
             box.setEnabled(False)  # greyed, never hidden (OR-15): these are read on the Windows computer itself
             box.setToolTip(WINDOWS_ONLY)
+            info.explain(box.text(), WINDOWS_ONLY)  # D-294
         self.data_files: QLineEdit = forms.part(form, QLineEdit, "dataFiles")
         self._picked: tuple[str, ...] = ()  # the files chosen with Browse, as the picker gave them
         forms.part(form, QPushButton, "browseDataFiles").clicked.connect(self._browse_data_files)
@@ -413,6 +417,7 @@ class ImportDialog(QDialog):
         self.progress.setVisible(False)
         self.busy = place_busy_notice(form, "right", self.summary_area)  # while the exports are read
         self.import_button: QPushButton = forms.part(form, QPushButton, "import")
+        self.import_info: InfoMark = forms.part(form, InfoMark, "importInfo")
         self.stop_button: QPushButton = forms.part(form, QPushButton, "stop")
         self.close_button: QPushButton = forms.part(form, QPushButton, "close")
         self.stop_button.setEnabled(False)
@@ -517,11 +522,13 @@ class ImportDialog(QDialog):
         self.summary.setText("")
         self.busy.start(text, self.progress)
         self.import_button.setToolTip(wait)
+        self.import_info.explain(self.import_button.text(), wait)
 
     def _read(self) -> None:
         """The reading answered or failed (or there is nothing to read): back to normal."""
         self.busy.stop(self.progress)
         self.import_button.setToolTip("")
+        self.import_info.explain(self.import_button.text(), "")
 
     def _scanned(self, number: int, result: ScanResult) -> None:
         if self._running or number != self._scan_number:
@@ -561,6 +568,7 @@ class ImportDialog(QDialog):
                 box.setChecked(True)
             box.setEnabled(available and not self._running)
             box.setToolTip("" if available else reason or WINDOWS_ONLY)
+            self.data_file_later_info[self.data_file_later.index(box)].explain(box.text(), "" if available else reason or WINDOWS_ONLY)
 
     def _scan_failed(self, number: int, error: ChronoMailError) -> None:
         if self._running or number != self._scan_number:
