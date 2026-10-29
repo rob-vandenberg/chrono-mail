@@ -9,9 +9,11 @@ from chrono_mail.engine.changes import MessageRow
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 4.2.417"
+__version__ = "columns.py 4.2.421"
 
 # --- Version history ----------------------------------------------------
+# v4.2.421: one From and one To column, shown one way each (D-291): every way is called From or To; a saved list keeps at most one way of
+#           each, the leftmost; people_group and people_shown tell the way of From or To a list shows
 # v4.2.417: the people columns From (name and email), From (email), To (name), To (email), each sorting by what it shows (D-291), and
 #           Account, the account that received the message (D-292); PEOPLE_COLUMNS: the columns the header's From and To submenus hold
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
@@ -51,11 +53,11 @@ COLUMNS: tuple[Column, ...] = (
     Column("trash", "Delete", 24, symbol=True),
     Column("from_to", "From / To", 170, "sender"),
     Column("from", "From", 200, "sender"),  # the name, else the address
-    Column("from_full", "From (name and email)", 260, "sender_full"),
-    Column("from_address", "From (email)", 200, "sender_address"),
+    Column("from_full", "From", 260, "sender_full"),  # the From column shown as name and email (D-291)
+    Column("from_address", "From", 200, "sender_address"),  # the From column shown as the address only
     Column("to", "To", 200, "to"),  # names and addresses, as written
-    Column("to_names", "To (name)", 200, "to_names"),
-    Column("to_addresses", "To (email)", 200, "to_addresses"),
+    Column("to_names", "To", 200, "to_names"),  # the To column shown as the names only
+    Column("to_addresses", "To", 200, "to_addresses"),  # the To column shown as the addresses only
     Column("account", "Account", 140, "account"),
     Column("subject", "Subject", 300, "subject"),
     Column("tag", "Tag", 60, symbol=True),  # a narrow column of its own width, as the icon columns: Subject keeps its room
@@ -77,7 +79,7 @@ OUTBOX_FOLDER_PATH: str = OWN_FOLDERS[FolderRole.OUTBOX][0]
 SEND_AT_FOLDERS: tuple[str, ...] = (SCHEDULED_FOLDER_PATH, OUTBOX_FOLDER_PATH)  # the column says when each message is sent (the Outbox: a delayed send, B-21)
 SAVED_LABEL: str = "Saved"  # the Sent column in Drafts: a draft carries when it was last saved
 BY_ID: dict[str, Column] = {column.column_id: column for column in COLUMNS}
-PEOPLE_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {  # the header menu's From and To: a submenu of the ways each shows people (column, its tick), D-291
+PEOPLE_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {  # From and To: one column each, shown one of these ways (the column of each way, its name), D-291
     "from": (("from_full", "Name and email"), ("from", "Name only"), ("from_address", "Email only")),
     "to": (("to", "Name and email"), ("to_names", "Name only"), ("to_addresses", "Email only")),
 }
@@ -85,11 +87,23 @@ SYMBOLS: dict[str, str] = {"status": "●", "flag": "⚑", "attachment": "📎",
 READ_MARK: str = "○"  # the dot of an unread message turns into an empty circle when it is read
 
 
+def people_group(column_id: str) -> str | None:
+    """The column a way of showing people belongs to: "from" or "to"; None for every other column."""
+    return next((group for group, ways in PEOPLE_COLUMNS.items() if any(way == column_id for way, _ in ways)), None)
+
+
+def people_shown(columns: tuple[str, ...], group: str) -> str | None:
+    """The way the From or To column is shown in these columns (the column of that way); None while it is not shown."""
+    return next((column_id for column_id in columns if people_group(column_id) == group), None)
+
+
 def valid_columns(wanted: list[str]) -> tuple[str, ...]:
-    """The known columns of a saved list, each once; the default when nothing usable is left."""
+    """The known columns of a saved list, each once, and From and To each one way only (the leftmost, D-291); the default when
+    nothing usable is left."""
     seen: list[str] = []
     for column_id in wanted:
-        if column_id in BY_ID and column_id not in seen:
+        group = people_group(column_id)
+        if column_id in BY_ID and column_id not in seen and (group is None or people_shown(tuple(seen), group) is None):
             seen.append(column_id)
     return tuple(seen) or DEFAULT_COLUMNS
 

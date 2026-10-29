@@ -2,14 +2,15 @@ import json
 from dataclasses import dataclass
 from typing import Literal, get_args
 
-from chrono_mail.ui.columns import BY_ID, SNOOZED_COLUMN, valid_columns
+from chrono_mail.ui.columns import BY_ID, PEOPLE_COLUMNS, SNOOZED_COLUMN, people_shown, valid_columns
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 4.2.417"
+__version__ = "columnsetup.py 4.2.421"
 
 # --- Version history ----------------------------------------------------
+# v4.2.421: a sort of From or To follows the way the column shows (sort_of_way_shown), also in a saved setup (D-291)
 # v4.2.417: the sort orders of the people columns and of Account (D-291, D-292)
 # v4.2.414: a search of several folders is known by the view itself (CurrentView.several_folders)
 # v4.2.413: a search of All folders from a Favorites or Tags view is a search of several folders too (D-287)
@@ -106,9 +107,26 @@ def sort_shown(columns: tuple[str, ...], sort: str) -> bool:
     return any(column_id in columns for column_id in SORT_COLUMNS.get(sort, ()))
 
 
+PEOPLE_SORTS: dict[str, str] = {
+    sort: group for group, ways in PEOPLE_COLUMNS.items() for way, _ in ways if (sort := BY_ID[way].sort) is not None
+}  # the sort of each way of showing From or To, and its column
+
+
+def sort_of_way_shown(columns: tuple[str, ...], sort: str) -> str:
+    """A sort of From or To follows the way the column shows (D-291): sorted by a way these columns do not show while they show
+    another way of that column, they sort by the way shown. Every other sort stays."""
+    group = PEOPLE_SORTS.get(sort)
+    if group is None or sort_shown(columns, sort):
+        return sort
+    shown = people_shown(columns, group)
+    found = BY_ID[shown].sort if shown is not None else None
+    return found or sort
+
+
 def fallback_sort(columns: tuple[str, ...], sort: str) -> str:
-    """The sort order of a folder whose columns are these: its own while a column shows it, else the first shown of Received,
+    """The sort order of a folder whose columns are these: its own while a column shows it (of From or To: the way shown), else the first shown of Received,
     Sent, Subject, To, From, Size, else the first text column that sorts (never an icon column)."""
+    sort = sort_of_way_shown(columns, sort)
     if sort_shown(columns, sort):
         return sort
     for candidate in FALLBACK_SORTS:
@@ -129,7 +147,8 @@ def _setup_from(data: object) -> tuple[ColumnSetup, FolderType] | None:
         return None
     if kind not in FOLDER_TYPES:
         return None
-    return ColumnSetup(valid_columns([str(column) for column in columns]), sort, oldest, widths), kind
+    chosen = valid_columns([str(column) for column in columns])
+    return ColumnSetup(chosen, sort_of_way_shown(chosen, sort), oldest, widths), kind
 
 
 def read_setups(text: str) -> dict[str, tuple[ColumnSetup, FolderType]]:

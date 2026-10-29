@@ -224,6 +224,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.415) A selection moves as single messages, each by its own rules; the allowed ones together (D-178, D-287).
 - DONE (4.2.418) The account that received each message is recorded with it once and never changes; a rebuild reads it (D-292).
 - DONE (4.2.417) The header menu's From and To each hold Name and email, Name only and Email only, each a column of its own; a new Account column: which of your accounts received the message (D-291, D-292).
+- DONE (4.2.421) From and To are one column each again: the header menu's From and To hold round choices (Don't show, Name and email, Name only, Email only); one From and one To row in the column lists and in Sorted by (D-291).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)
 

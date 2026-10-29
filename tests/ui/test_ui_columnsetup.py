@@ -2,17 +2,19 @@ from PySide6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui.advancedsearch import AdvancedSearch, SearchScope
+from chrono_mail.ui.columnsdialog import ListChoice
 from chrono_mail.ui.columnsetup import (
-    SEARCH_KEY, STARTING, ColumnSetup, fallback_sort, folder_key, folder_type, read_setups, renamed_key, setup_key, setups_text,
+    SEARCH_KEY, STARTING, ColumnSetup, FolderType, fallback_sort, folder_key, folder_type, read_setups, renamed_key, setup_key, setups_text,
 )
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import World, menu_named, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columnsetup.py 4.2.413"
+__version__ = "test_ui_columnsetup.py 4.2.422"
 
 # --- Version history ----------------------------------------------------
+# v4.2.422: a sort no column shows stays when the columns change or only the layout is switched in the Message list window
 # v4.2.413: a search of All folders from a Favorites view has the setup of a search of several folders (D-287)
 # v4.2.406: where a search looks is a scope; a search of a folder and its subfolders has the search setup (D-287)
 # v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
@@ -66,7 +68,7 @@ def test_the_sort_falls_back_to_the_first_shown_of_received_sent_subject_to_from
 
 
 def test_kept_setups_go_through_text_and_follow_a_renamed_folder() -> None:
-    setups = {folder_key(ACCOUNT, "Inbox"): (ColumnSetup(("subject", "date"), "subject", True, '{"icons": {}, "shares": {}}'), "incoming")}
+    setups: dict[str, tuple[ColumnSetup, FolderType]] = {folder_key(ACCOUNT, "Inbox"): (ColumnSetup(("subject", "date"), "subject", True, '{"icons": {}, "shares": {}}'), "incoming")}
     assert read_setups(setups_text(setups)) == setups
     damaged = '{"x": {"type": "nonsense", "columns": [], "sort": "date", "oldest_first": false}, "y": 3, "z": {"type": "sent", "columns": ["to"], "sort": "nope", "oldest_first": false}}'
     assert read_setups(damaged) == {} and read_setups("not json") == {} and read_setups("") == {}
@@ -109,6 +111,29 @@ def test_removing_the_sorted_column_moves_the_sort_to_the_next_shown(world: Worl
     window.columns.toggle_column("date")  # noqa: SLF001 - Received went: no Sent either, so Subject
     assert window.messages.sort == "subject" and not window.messages.oldest_first and window.sort_button.text() == "Sorted by Subject ▾"
     wait(qtbot, lambda: window.list_model.spec is not None and window.list_model.spec.sort == "subject")
+
+
+def test_a_layout_switch_in_the_message_list_window_keeps_a_sort_no_column_shows(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.columns.set_list_layout("cards")
+    window.columns.toggle_column("size")  # noqa: SLF001 - no Size column
+    window.messages.set_sort("size", False)
+    columns, reading = window.columns.columns, window.reading.place
+    window.apply_list_choice(ListChoice("columns", columns, reading, window.columns.date_style, "normal"))
+    assert window.columns.layout == "columns" and window.messages.sort == "size" and window.sort_button.text() == "Sorted by Size ▾"
+
+
+def test_a_column_change_keeps_a_sort_no_column_showed_and_moves_one_whose_column_went(world: World, qtbot: QtBot) -> None:
+    started(qtbot, world)
+    window = world.window
+    window.columns.toggle_column("size")  # noqa: SLF001
+    window.messages.set_sort("size", False)
+    window.columns.toggle_column("preview")  # noqa: SLF001 - another column: Size was not shown, so it stays
+    assert window.messages.sort == "size"
+    window.messages.set_sort("subject", True)
+    window.columns.toggle_column("subject")  # noqa: SLF001 - the sorted column went: the next shown
+    assert window.messages.sort == "date"
 
 
 def test_apply_to_all_folders_gives_the_setup_to_every_folder_of_its_kind_and_those_made_later(world: World, qtbot: QtBot) -> None:

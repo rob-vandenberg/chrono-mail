@@ -1,16 +1,18 @@
 from dataclasses import replace as changed
 
 from PySide6.QtCore import QObject, QPoint, Qt
-from PySide6.QtGui import QAction, QFont
+from PySide6.QtGui import QAction, QActionGroup, QFont
 from PySide6.QtWidgets import QApplication, QHeaderView, QMenu, QWidget
 
 from chrono_mail.ui import appearance, prefs, scale
 from chrono_mail.ui.columnfit import MINIMUM_ICON, ColumnLayout, drag, fit, layout_from_pixels, read_layout
 from chrono_mail.ui.columns import (
-    BY_ID, CARD, DEFAULT_COLUMNS, PEOPLE_COLUMNS, SAVED_LABEL, SNOOZED_COLUMN, keep_snoozed_column, with_new_columns, without_snoozed_column,
+    BY_ID, CARD, DEFAULT_COLUMNS, PEOPLE_COLUMNS, SAVED_LABEL, SNOOZED_COLUMN, keep_snoozed_column, people_group, people_shown, with_new_columns,
+    without_snoozed_column,
 )
 from chrono_mail.ui.columnsetup import (
     FOLDER_TYPES, SORT_COLUMNS, STARTING, ColumnSetup, FolderType, fallback_sort, folder_type, read_setups, renamed_key, setup_key, setups_text,
+    sort_of_way_shown, sort_shown,
 )
 from chrono_mail.ui.delegate import COLUMN_ROW_HEIGHTS
 from chrono_mail.ui.mailstate import MailState
@@ -19,9 +21,14 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.prefs import InUse, Remembered
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagecolumns.py 4.2.417"
+__version__ = "messagecolumns.py 4.2.422"
 
 # --- Version history ----------------------------------------------------
+# v4.2.422: the sort falls back only when a change of columns took away the column it was shown by; a sort no column showed
+#           stays (Message list window > OK after only a layout switch changed it)
+# v4.2.421: one From and one To column (D-291): the header menu's From and To open a submenu of round choices, Don't show, Name and
+#           email, Name only, Email only, exactly one chosen; From or To is ticked while shown; another way takes the column's place
+#           and width; a sort of From or To follows the way shown (Sorted by Sender and To too); Don't show is greyed for the last column
 # v4.2.417: the header menu's From and To open a submenu with a tick per way of showing people (Name and email, Name only, Email only),
 #           each tick a column of its own; From or To is ticked while any of its columns shows; a column ticked there comes right after
 #           the one of its kind already shown (D-291); Account is a plain tick (D-292)
@@ -75,6 +82,7 @@ class MessageColumns(QObject):
         view.list_header.column_dragged.connect(self._column_line_dragged)
         view.header().customContextMenuRequested.connect(self.header_menu)
         messages.sort_changed.connect(self._sort_changed)
+        messages.people_sort = self.people_sort
         messages.view_changed.connect(self.follow_view)  # a search in all folders has a setup of its own
 
     def _read_setups(self) -> None:
@@ -194,10 +202,15 @@ class MessageColumns(QObject):
             self._folder_setups = kept
             self._memory.folder_columns = setups_text(self._folder_setups)
 
-    def _follow_sort(self) -> None:
-        """The column the folder is sorted by went: the sort moves to the first column it still shows (columnsetup.fallback_sort)."""
-        sort = fallback_sort(self.columns, self._messages.sort)
-        if sort != self._messages.sort:
+    def _follow_sort(self, before: tuple[str, ...]) -> None:
+        """The columns changed from these: sorted by From or To, the sort follows the way the column shows (D-291); when the change
+        took away the column the folder is sorted by, the sort moves to the first column it still shows (columnsetup.fallback_sort).
+        A sort no column showed before (Sorted by can choose one) stays: a change of columns is not a change of the sort."""
+        current = self._messages.sort
+        sort = sort_of_way_shown(self.columns, current)
+        if sort == current and sort_shown(before, current) and not sort_shown(self.columns, current):
+            sort = fallback_sort(self.columns, current)
+        if sort != current:
             self._messages.set_sort(sort, self._messages.oldest_first)
 
     def apply_list_layout(self) -> None:
@@ -366,19 +379,11 @@ class MessageColumns(QObject):
         for column_id, column in BY_ID.items():
             if column_id == SNOOZED_COLUMN and not self._state.in_timed():
                 continue
-            if column_id in PEOPLE_COLUMNS:  # From and To: one entry with an arrow, a tick per way of showing people inside (D-291)
-                ways = PEOPLE_COLUMNS[column_id]
-                submenu = menu.addMenu(column.label)
-                submenu.menuAction().setCheckable(True)
-                submenu.menuAction().setChecked(any(way in chosen for way, _ in ways))
-                for way, label in ways:
-                    action = submenu.addAction(label)
-                    action.setCheckable(True)
-                    action.setChecked(way in chosen)
-                    action.triggered.connect(lambda checked=False, wanted=way: self.toggle_column(wanted))
+            if column_id in PEOPLE_COLUMNS:  # From and To: one entry with an arrow, the round choices of how it shows inside (D-291)
+                self._add_people_menu(menu, column_id, column.label)
                 continue
             if column_id in in_submenus:
-                continue  # in the From or To submenu
+                continue  # a way of showing From or To: in its submenu
             action = menu.addAction(column.label)
             action.setCheckable(True)
             action.setChecked(column_id in chosen)
@@ -389,23 +394,69 @@ class MessageColumns(QObject):
             menu.addAction(self.columns_action)
         menu.exec(self._messages.view.header().mapToGlobal(position))
 
+    def _add_people_menu(self, menu: QMenu, group: str, label: str) -> None:
+        """From or To: ticked while shown; inside, Don't show and the ways it can show, exactly one chosen (D-291)."""
+        shown = people_shown(self.columns, group)
+        submenu = menu.addMenu(label)
+        submenu.menuAction().setCheckable(True)
+        submenu.menuAction().setChecked(shown is not None)
+        choices = QActionGroup(submenu)
+        choices.setExclusive(True)
+        for way, way_label in ((None, "Don't show"), *PEOPLE_COLUMNS[group]):
+            action = submenu.addAction(way_label)
+            action.setCheckable(True)
+            action.setChecked(way == shown)
+            choices.addAction(action)
+            if way is None:
+                action.setEnabled(shown is None or len(self.columns) > 1)  # the last column cannot go
+            action.triggered.connect(lambda checked=False, wanted=way: self.show_people(group, wanted))
+
+    def show_people(self, group: str, way: str | None) -> None:
+        """From or To shown this way, or not at all (None). Another way takes the place and the width of the one shown, and the sort
+        goes along when the list was sorted by it; a column that was not shown comes at the end (D-291)."""
+        columns = list(self.columns)
+        shown = people_shown(self.columns, group)
+        if way == shown:
+            return
+        if way is None:
+            if shown is not None and len(columns) > 1:
+                columns.remove(shown)
+            self.set_columns(tuple(columns))
+            return
+        if shown is None:
+            self.set_columns((*columns, way))
+            return
+        columns[columns.index(shown)] = way
+        layout = self._column_layout
+        if layout is not None and shown in layout.shares:
+            layout.shares[way] = layout.shares.pop(shown)
+        self.set_columns(tuple(columns))  # the sort goes along (_follow_sort)
+
+    def people_sort(self, sort: str) -> str:
+        """Sorted by Sender or To: by what the folder's From or To column shows (its way's sort), in the cards too; the name, the
+        recipients as written, while it is not shown."""
+        return sort_of_way_shown(self.columns, sort)
+
     def toggle_column(self, column_id: str) -> None:
+        group = people_group(column_id)
+        if group is not None:  # a way of From or To: shown that way, or no longer shown when it is the way shown
+            self.show_people(group, None if column_id in self.columns else column_id)
+            return
         columns = list(self.columns)
         if column_id in columns:
             if len(columns) > 1:
                 columns.remove(column_id)
         else:
-            kind = next((ways for ways in PEOPLE_COLUMNS.values() if any(way == column_id for way, _ in ways)), ())
-            shown = [place for place, shown_id in enumerate(columns) if any(way == shown_id for way, _ in kind)]
-            columns.insert(shown[-1] + 1 if shown else len(columns), column_id)  # next to To when To (name) comes, else at the end (D-291)
+            columns.append(column_id)
         self.set_columns(tuple(columns))
 
     def set_columns(self, columns: tuple[str, ...]) -> None:
         """The open folder's columns (the header's menu, Settings > Message list): that folder only."""
+        before = self.columns
         self.columns = columns or DEFAULT_COLUMNS
         self._keep()
         self.apply_list_layout()
-        self._follow_sort()
+        self._follow_sort(before)
 
     def choose(self, layout: str, columns: tuple[str, ...], date_style: str, density: str) -> None:
         """Message list… was confirmed: the layout, the date style and the row height for every folder, the columns for the open

@@ -29,9 +29,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.417"
+__version__ = "messagelistpane.py 4.2.421"
 
 # --- Version history ----------------------------------------------------
+# v4.2.421: Sorted by has one Sender and one To, sorting by what the From and To column shows (people_sort, D-291)
 # v4.2.417: Sorted by offers the people columns and Account (D-291, D-292)
 # v4.2.414: a search of several folders shows the sender in From, also when it starts from Sent, Drafts, the Outbox or Scheduled (D-287)
 # v4.2.413: a search of All folders from a Favorites or Tags view looks in every folder of every account (the view everywhere), not in the
@@ -73,9 +74,9 @@ SORT_CHOICES: tuple[tuple[str, str], ...] = (
     ("date", "Received"), ("sent", "Sent"), ("subject", "Subject"), ("sender", "Sender"), ("to", "To"), ("size", "Size"),
     ("unread", "Unread"), ("flagged", "Flagged"), ("attachment", "Attachment"), ("replied", "Replied"), ("contact", "Contact"),
     ("folder", "Folder"), ("conversation", "Messages in conversation"), ("preview", "Preview"), ("snoozed", "Snoozed until"),
-    ("sender_full", "From (name and email)"), ("sender_address", "From (email)"), ("to_names", "To (name)"), ("to_addresses", "To (email)"),
-    ("account", "Account"),  # the people columns (D-291) and Account (D-292)
+    ("account", "Account"),  # the account that received the message (D-292)
 )
+MENU_SORTS: dict[str, str] = {"sender_full": "sender", "sender_address": "sender", "to_names": "to", "to_addresses": "to"}  # Sender and To, however shown (D-291)
 
 
 
@@ -150,6 +151,7 @@ class MessageListPane(QObject):
         self._memory: Remembered = memory
         self._conversations_on: Callable[[], bool] = conversations_on
         self.sort: str = STARTING["incoming"].sort  # the open folder's sort, given by its setup (MessageColumns.follow_view, B-16)
+        self.people_sort: Callable[[str], str] = lambda sort: sort  # Sender or To as the From or To column shows it (MessageColumns, D-291)
         self.oldest_first: bool = STARTING["incoming"].oldest_first
         self._refetching: bool = False  # the list is being fetched again after a change from outside (one at a time)
         self._refetch_again: bool = False  # another change from outside came meanwhile: once more afterwards
@@ -336,13 +338,14 @@ class MessageListPane(QObject):
     def update_sort_menu(self) -> None:
         self.sort_menu.clear()
         sort = self.effective_sort()
+        sort = MENU_SORTS.get(sort, sort)  # sorted by what From or To shows: its one entry
         for value, label in SORT_CHOICES:
             if value == "snoozed" and not self._state.in_timed():
                 continue  # only the Snoozed and the Scheduled folder know when their messages leave
             action = self.sort_menu.addAction(self._sort_label(value, label))
             action.setCheckable(True)
             action.setChecked(value == sort)
-            action.triggered.connect(lambda checked=False, chosen=value: self.set_sort(chosen, self.oldest_first))
+            action.triggered.connect(lambda checked=False, chosen=value: self.set_sort(self.people_sort(chosen), self.oldest_first))
         self.sort_menu.addSeparator()
         for flag, label in ((False, "Newest / Z–A / largest first"), (True, "Oldest / A–Z / smallest first")):
             action = self.sort_menu.addAction(label)

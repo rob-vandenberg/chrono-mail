@@ -4,14 +4,16 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem, QPushButton, QWidget
 
 from chrono_mail.ui import forms
-from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS, SNOOZED_COLUMN
+from chrono_mail.ui.columns import BY_ID, COLUMNS, DEFAULT_COLUMNS, SNOOZED_COLUMN, people_group, people_shown
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsdialog.py 4.0.377"
+__version__ = "columnsdialog.py 4.2.421"
 
 # --- Version history ----------------------------------------------------
+# v4.2.421: one From row and one To row (D-291): each stands for the way the folder shows it, the header menu's choice; while not shown
+#           its standard way (From: Name only, To: Name and email)
 # v4.0.377: the column picker (also on Settings > Message list) and the Message list window are built from their Qt Designer forms
 #           (ui/forms/column_picker.ui, message_list.ui, D-276); the window's sizes follow the size factor
 # v2.0.280: Standard columns are those of the kind of folder that is open (B-16)
@@ -57,6 +59,7 @@ class ColumnPicker(QWidget):
         self.list.clear()
         ordered = [BY_ID[column_id] for column_id in shown if column_id in BY_ID] + [column for column in COLUMNS if column.column_id not in shown]
         ordered = [column for column in ordered if column.column_id != SNOOZED_COLUMN]  # chosen in the Snoozed folder itself
+        ordered = [column for column in ordered if _one_row(column.column_id, shown)]  # From and To once each, the way they show (D-291)
         for column in ordered:
             item = QListWidgetItem(column.label)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -92,6 +95,15 @@ class ColumnPicker(QWidget):
         item = self.list.takeItem(row)
         self.list.insertItem(row + step, item)
         self.list.setCurrentRow(row + step)
+
+
+def _one_row(column_id: str, shown: tuple[str, ...]) -> bool:
+    """Whether a column has a row of its own: every column but the ways of From and To other than the one shown (its standard way,
+    the group's own column, while it is not shown)."""
+    group = people_group(column_id)
+    if group is None:
+        return True
+    return column_id == (people_shown(shown, group) or group)
 
 
 class ColumnsDialog(QDialog):
