@@ -11,9 +11,10 @@ from chrono_mail.ui.models import FolderTreeModel
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_icons.py 2.0.287"
+__version__ = "test_ui_icons.py 4.2.425"
 
 # --- Version history ----------------------------------------------------
+# v4.2.425: the Outbox of the icon test has its role: a standard folder is known by its role, never by its name (OR-26)
 # v2.0.287: the engine's own AccountSummary and FolderInfo instead of stand-ins that fell behind (kind, storage, messages) (the Windows computer's report)
 # v0.0.85: All icons are the program's own Breeze files, drawn in the text colour with other colours kept
 # v0.0.70: The Inboxes section is removed from the folder tree
@@ -64,7 +65,7 @@ def test_the_tree_asks_for_the_icon_of_each_kind(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(models, "folder_icon", record)
     model = FolderTreeModel()
     model.show_favorites = False
-    model.populate([Account()], {"a" * 32: [Info("Inbox", "inbox"), Info("Sent", "sent"), Info("Outbox", "other"), Info("Trash", "trash"), Info("Mine/Sub", "other")]})
+    model.populate([Account()], {"a" * 32: [Info("Inbox", "inbox"), Info("Sent", "sent"), Info("Outbox", "outbox"), Info("Trash", "trash"), Info("Mine/Sub", "other")]})
     assert asked[:3] == ["account", "unread", "flagged"]
     assert {"inbox", "sent", "outbox", "trash", "other"} <= set(asked)
     assert model.rowCount(QModelIndex()) == 1
