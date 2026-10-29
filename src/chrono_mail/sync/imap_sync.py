@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from collections.abc import Callable, Sequence
 from dataclasses import replace as replace_entry
 from dataclasses import dataclass, field
@@ -15,9 +16,10 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 4.2.418"
+__version__ = "imap_sync.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: the accounts of a folder's downloaded messages are recorded in one write (the index's receiver, held), never one per message
 # v4.2.418: a message downloaded is recorded as received by the IMAP account (D-292)
 # v4.2.387: a folder the server does not mark is known by its name in the language of the server's folders (core roles_by_name, ten
 #           languages), no longer by English names only
@@ -832,6 +834,14 @@ def _download(
             counts.retried.add(uid)
         else:
             eligible.append(uid)
+    with index.holding_records() if index is not None else nullcontext():  # every message's account in one write at the end (D-292)
+        _download_batches(client, store, index, state, options, view, eligible, local, pool, counts, progress)
+
+
+def _download_batches(
+    client: ImapClient, store: Store, index: Index | None, state: ImapState, options: ImapSyncOptions, view: _Folder, eligible: list[int],
+    local: tuple[str, ...], pool: dict[str, str | None], counts: _Counts, progress: Progress | None,
+) -> None:
     done = 0
     for batch in _batches(eligible, view.on_server, options):
         fetched, refused = _fetch_bodies(client, batch)
@@ -919,14 +929,10 @@ def _store_one(store: Store, index: Index | None, state: ImapState, view: _Folde
     counts.new.append(reference)
     view.locations[reference.store_id] = (local, place)
     with counts.announcer.changing():
-        if not any(folder.path == local and folder.role is FolderRole.DRAFTS for folder in store.list_folders()):  # a draft: its From decides
+        if index is not None:  # its receiver records the account, with the folder's others (D-292): this one, never in Drafts (its From decides)
+            received = "" if any(folder.path == local and folder.role is FolderRole.DRAFTS for folder in store.list_folders()) else store.account_id
             try:
-                store.received_by.record(reference.store_id, store.account_id)  # who received it, before anything else names it (D-292)
-            except ChronoMailError:
-                pass  # the index's receiver records it
-        if index is not None:
-            try:
-                index.add(replace_entry(entry_from_raw(reference, place, message_flags(server_now), len(raw), raw), tags=tags))
+                index.add(replace_entry(entry_from_raw(reference, place, message_flags(server_now), len(raw), raw), tags=tags, received_by=received))
             except ChronoMailError:
                 counts.failed.append(f"UID {uid}: it is stored but not yet in the index (the next repair of the index adds it)")
         counts.announcer.added(reference)

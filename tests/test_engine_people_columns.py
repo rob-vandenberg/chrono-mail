@@ -23,9 +23,10 @@ from tests.test_engine_commands import add_account, call
 from tests.test_engine_restore import _backup, _restore
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_people_columns.py 4.2.418"
+__version__ = "test_engine_people_columns.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: a draft dragged out of Drafts has no fixed account until it is sent (the owner)
 # v4.2.418: the account is recorded once and kept through copies, moves, a move to another account and a rebuild; a sent message records its
 #           account, a draft nothing; the upgrade from format 14 records every message
 # v4.2.417: Initial: the people columns (D-291) and the account that received each message (D-292)
@@ -238,14 +239,16 @@ def test_a_message_restored_into_an_account_here_keeps_who_received_it(three: Th
     assert [_receiver_recorded(three.engine, row.message_id) for row in rows] == [three.a, three.b, three.c]  # as the backup recorded them
 
 
-def test_a_draft_dragged_out_of_drafts_keeps_the_account_it_showed(three: Three) -> None:
+def test_a_draft_dragged_out_of_drafts_has_no_fixed_account_until_it_is_sent(three: Three) -> None:
+    """The owner: a draft has no account wherever it is moved; it gets the sender's when it is sent."""
     call(three.engine, "draft.save", account=three.c, to="a@example.com", subject="Never sent", body="later")  # from C, to A
     (draft,) = call(three.engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Drafts").messages
-    assert draft.received_by == "Club"
+    assert draft.received_by == "Club"  # in Drafts its From shows the account
     call(three.engine, "message.move", account=LOCAL_ACCOUNT_ID, folder="Drafts", message=draft.message_id, target="Junk")
-    assert _receiver_recorded(three.engine, draft.message_id) == three.c
+    assert _receiver_recorded(three.engine, draft.message_id) is None  # moved: still nothing fixed
     three.engine.directories.index_file(LOCAL_ACCOUNT_ID).unlink()
-    assert _accounts(three.engine, "Junk") == ["Club"]  # rebuilt: still C, not A whom it was written to
+    call(three.engine, "message.list", account=LOCAL_ACCOUNT_ID, folder="Junk")  # rebuilt
+    assert _receiver_recorded(three.engine, draft.message_id) is None
 
 
 def test_a_restore_on_a_new_computer_names_the_account_by_its_id_there(tmp_path: Path) -> None:

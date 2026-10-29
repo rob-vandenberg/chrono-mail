@@ -1,3 +1,4 @@
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -6,9 +7,10 @@ from typing import Protocol
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.2.418"
+__version__ = "model.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: Receiving.holding (one write for a whole download)
 # v4.2.418: Receiving.flush: the receiver writes what it decided after the index let go of its write lock (D-292)
 # v4.2.417: the people columns (the sender's address, the recipients' names and addresses, D-291) and the account that received each message (D-292): kept, read, sorted by
 # v4.2.408: SearchFilter.sent_from and sent_to (the message's own Date) and only (these messages only: snoozed or sent within days, D-288)
@@ -153,6 +155,10 @@ class Receiving(Protocol):
 
     def flush(self) -> None:
         """Write what it decided, after the index let go of its write lock."""
+        ...
+
+    def holding(self) -> AbstractContextManager[None]:
+        """While held, what it decides waits: written in one step when the hold ends (a whole download, not one message at a time)."""
         ...
 
     def __call__(self, entry: IndexEntry) -> str:

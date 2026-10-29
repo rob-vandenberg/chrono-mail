@@ -3,15 +3,18 @@ from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.changes import RebuildStep
+from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.store.receivedby import records_text
 from chrono_mail.ui import indexrebuilds
 from chrono_mail.ui.indexrebuilds import ABORT_CLOSES, ABORT_KEEPS, ABORT_TITLE, ask_abort
 from tests.test_engine_rebuilds import as_format_11
 from tests.ui.world import World, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_indexrebuilds.py 4.0.374"
+__version__ = "test_ui_indexrebuilds.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: at start, once the index round ended, every place's record of who received the mail is tidied in the background (D-292)
 # v4.0.374: the rebuild window made above Settings is forgotten when Settings is deleted, and the next one belongs to the main window
 # v2.1.311: the hover text's last line says what a click does (the lines above name what runs)
 # v2.1.310: "The index is ready." is read when the rebuild ends: the junk filter's first learning may say more after it (D-238)
@@ -154,3 +157,19 @@ def test_the_rebuild_window_made_above_settings_is_forgotten_with_it(world: Worl
     assert again.parent() is world.window
     again.objectName()
 
+
+
+def test_the_start_tidies_the_record_of_who_received_the_mail_in_the_background(world: World, qtbot: QtBot) -> None:
+    with open_mailbox(world.engine, world.account_id) as mailbox:
+        record = mailbox.store.received_by
+        kept = dict(record.all())
+        gone = {f"{number:032x}": world.account_id for number in range(1, 2 * len(kept) + 2)}  # more lines of messages that are gone than of those here
+        record.path.write_bytes(records_text({**kept, **gone}))
+    world.window.start()
+
+    def tidied() -> bool:
+        with open_mailbox(world.engine, world.account_id) as mailbox:
+            return mailbox.store.received_by.all() == kept
+
+    wait(qtbot, tidied)
+    assert not world.window.rebuilds.running  # never a rebuild's busy state, no window

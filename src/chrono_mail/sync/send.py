@@ -5,14 +5,15 @@ from dataclasses import dataclass, replace
 
 from chrono_mail.core import ChronoMailError, MessageFlag, MessageRef, ProtocolError, ServerSettings, StorageError
 from chrono_mail.index import Index, entry_from_raw
-from chrono_mail.mime import OutgoingMessage, build_message, envelope_recipients, without_bcc
+from chrono_mail.mime import OutgoingMessage, as_it_goes_out, build_message, envelope_recipients
 from chrono_mail.protocols.smtp import Refusal, SmtpLimits, send_message
 from chrono_mail.store import SENT_LETTER, Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "send.py 4.2.418"
+__version__ = "send.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: what goes to the server never carries the program's own X-Chrono-Mail notes (a draft moved into the Outbox)
 # v4.2.418: account: the account a message is sent from is recorded with it once it is in Sent, never changed after (D-292)
 # v3.6.350: sent but not moved to Sent: marked first by a letter in its file name (a rename needs no free space, so a full disk cannot
 #           stop it), then in its properties; moved to Sent but the index could not follow: it is in Sent, told as such (with a warning)
@@ -79,7 +80,7 @@ def send_and_file(
             index.remove(reference.store_id)
         raise
     try:
-        result = send_message(settings, password, outgoing.from_address.address, recipients, without_bcc(raw), limits, ssl_context)
+        result = send_message(settings, password, outgoing.from_address.address, recipients, as_it_goes_out(raw), limits, ssl_context)
     except ProtocolError as error:
         return SendOutcome(False, reference, error=str(error))
     checkpoint("send:after-smtp")
@@ -105,7 +106,7 @@ def send_stored(
     """Send a message that waits in the Outbox, exactly as it is stored but without its Bcc header, then move it to Sent.
     It is not stored again: until the server has accepted it, the copy in the Outbox is the only one and it stays there."""
     try:
-        result = send_message(settings, password, sender, recipients, without_bcc(raw), limits, ssl_context)
+        result = send_message(settings, password, sender, recipients, as_it_goes_out(raw), limits, ssl_context)
     except ProtocolError as error:
         return SendOutcome(False, reference, error=str(error))
     checkpoint("send:after-smtp")

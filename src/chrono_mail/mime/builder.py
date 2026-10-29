@@ -9,9 +9,11 @@ from chrono_mail.core import MessageFormatError
 from chrono_mail.mime.model import Address, Attachment, OutgoingMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "builder.py 1.1.206"
+__version__ = "builder.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: as_it_goes_out: the stored message as it goes to the server, without its Bcc and without the program's own X-Chrono-Mail notes; also
+#           for a message with plain LF line ends
 # v1.1.206: with_extra_headers: set or remove X-Chrono-Mail headers of a stored message, every other byte kept (a repeating message records its progress in itself, D-176)
 # v0.0.86: Bcc can be taken out of a stored message just before it is sent; an attached e-mail (message/rfc822) is added as it is, not in base64
 # v0.0.16: drafts keep Bcc and the program's own X-Chrono-Mail headers
@@ -68,24 +70,37 @@ def _add_attachment(message: EmailMessage, attachment: Attachment) -> None:
         )
 
 
+def as_it_goes_out(raw: bytes) -> bytes:
+    """The stored message as it goes to the server: without its Bcc header and without the program's own X-Chrono-Mail notes (a draft moved
+    into the Outbox still carries them; they are this computer's only). Every other byte stays as it is."""
+    return _without_headers(raw, (b"bcc:", b"x-chrono-mail-"))
+
+
 def without_bcc(raw: bytes) -> bytes:
-    """The stored message as it goes to the server: the same bytes without its Bcc header (and the lines that continue it).
+    """The stored message without its Bcc header (and the lines that continue it).
     Only the header block is looked at; the body and everything else stay exactly as they are."""
-    end = raw.find(b"\r\n\r\n")
-    if end < 0:
-        return raw
-    lines = raw[: end + 2].split(b"\r\n")[:-1]
+    return _without_headers(raw, (b"bcc:",))
+
+
+def _without_headers(raw: bytes, names: tuple[bytes, ...]) -> bytes:
+    """The message without these headers (and the lines that continue them). The header block ends at the first empty line, whatever the
+    line ends (CRLF, or LF as some imported messages have); a message of headers only is all header. Every other byte stays as it is."""
     kept: list[bytes] = []
+    position = 0
     skipping = False
-    for line in lines:
+    for line in raw.split(b"\n"):
+        line += b"\n" if position + len(line) < len(raw) else b""  # its own line end back (only the last line may have none)
+        if line in (b"\n", b"\r\n"):
+            return b"".join(kept) + raw[position:]  # the body, from its empty line on, exactly as it was
+        position += len(line)
         if line[:1] in (b" ", b"\t"):
             if not skipping:
                 kept.append(line)
             continue
-        skipping = line[:4].lower() == b"bcc:"
+        skipping = line.lower().startswith(names)
         if not skipping:
             kept.append(line)
-    return b"\r\n".join(kept) + raw[end:]
+    return b"".join(kept)
 
 
 def with_extra_headers(raw: bytes, changes: Mapping[str, str | None]) -> bytes:

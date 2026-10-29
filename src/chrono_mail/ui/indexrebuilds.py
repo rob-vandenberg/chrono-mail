@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QLabel, QMessageBox, QProgr
 from chrono_mail.core import ChronoMailError, RebuildAborted
 from chrono_mail.engine.changes import RebuildStep
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
-from chrono_mail.engine.commands_folders import INDEX_ABORT, INDEX_CHECK, INDEX_FILL_SENT, INDEX_PREPARE, INDEX_REBUILD, IndexState
+from chrono_mail.engine.commands_folders import INDEX_ABORT, INDEX_CHECK, INDEX_FILL_SENT, INDEX_PREPARE, INDEX_REBUILD, INDEX_TIDY_RECORDS, IndexState
 from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
@@ -18,9 +18,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "indexrebuilds.py 4.2.424"
+__version__ = "indexrebuilds.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: at start, after the rebuilds and fillings, every place's record of who received the mail is tidied (index.tidy-records, D-292)
 # v4.2.424: an (i) after Run in background while it is greyed, saying why (D-294)
 # v4.0.375: the rebuild window is built from its Qt Designer form (ui/forms/rebuild_window.ui, D-276); the account's name is plain text (D-259)
 # v4.0.374: the rebuild window is forgotten when it goes with its parent (Settings is deleted once closed); the next one is made fresh
@@ -114,6 +115,7 @@ class IndexRebuilds(QObject):
         self.window: RebuildWindow | None = None
         self._names: dict[str, str] = {}
         self._plan: list[str] = []  # the places of this round, in order (Account 2 of 3)
+        self._tidy_after: list[str] = []  # at start: the places whose record of who received the mail is tidied once the round ended
         self._jobs: list[Job] = []
         self._later: list[Job] = []  # what may run while the person works (the Sent dates filled in)
         self._then: list[Callable[[], None]] = []  # what waits for the rebuilds that come first (the mail shown at start)
@@ -135,6 +137,7 @@ class IndexRebuilds(QObject):
         def checked(states: tuple[IndexState, ...]) -> None:
             rebuild = [state.account for state in states if state.need == "rebuild"]
             fill = [state.account for state in states if state.need == "fill"]
+            self._tidy_after = [state.account for state in states]  # each place's record of who received the mail, once the round ended (D-292)
             self._begin(states, [("prepare", account) for account in rebuild], then, [("fill", account) for account in fill])
 
         def failed(error: ChronoMailError) -> None:
@@ -204,6 +207,22 @@ class IndexRebuilds(QObject):
         self._set_running(False)
         if report is not None:
             report(self._lines)
+        tidy = self._tidy_after
+        self._tidy_after = []
+        self._tidy(tidy)
+
+    def _tidy(self, accounts: list[str]) -> None:
+        """Each place's record of who received the mail, one after the other in the background (D-292): no window, no busy state of the
+        index; a failure is told and tried again at the next start."""
+        if not accounts:
+            return
+        first, rest = accounts[0], accounts[1:]
+
+        def failed(error: ChronoMailError) -> None:
+            self._status.report(f"Tidying the record of who received the mail of {self._name(first)}", error)
+            self._tidy(rest)
+
+        self._backend.ask(INDEX_TIDY_RECORDS, AccountParameters(first), lambda result: self._tidy(rest), failed, owner=self)
 
     def _set_running(self, running: bool) -> None:
         if running != self.running:

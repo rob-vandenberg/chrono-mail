@@ -2,7 +2,6 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from chrono_mail.config import AccountSettings
-from chrono_mail.engine.receiving import WAITING_ROLES
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, FolderRole, MessageRef, StorageError
 from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.engine.commands_accounts import AccountSummary, NoParameters, _summary
@@ -14,9 +13,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import Pop3State, reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_local.py 4.2.418"
+__version__ = "commands_local.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: only a fixed account goes along (retrieved or sent); a message without one stays without (the owner)
 # v4.2.418: moving an account into or out of Local Folders keeps the account that received each message (D-292)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -76,39 +76,36 @@ def _same(a: Store, b: Store, store_id: str, a_where: tuple[tuple[str, ...], str
         return False
 
 
-def _keep_receiver(source: Store, target: Store, store_id: str, account_id: str, waiting: bool) -> None:
-    """The account that received the message goes along; one that has none yet was received by the account whose mail this is, unless it
-    waits to be sent (Drafts, Outbox, Scheduled: its From decides, D-292)."""
+def _keep_receiver(source: Store, target: Store, store_id: str) -> None:
+    """The account fixed for the message (retrieved or sent, D-292) goes along; one that has none stays without (shown by the rule)."""
     try:
         recorded = source.received_by.of(store_id)
-        if recorded is None and waiting:
-            return
-        target.received_by.record(store_id, recorded or account_id)
-    except StorageError:
-        pass  # recorded by the next filling in or rebuild
+        if recorded is not None:
+            target.received_by.record(store_id, recorded)
+    except ChronoMailError:
+        pass  # shown by the rule
 
 
-def _copy(engine: Engine, source: Store, target: Store, wanted: set[str] | None, account_id: str) -> tuple[int, int]:
+def _copy(engine: Engine, source: Store, target: Store, wanted: set[str] | None) -> tuple[int, int]:
     """Copy messages (all, or those with these ids) of this account to the other store, keeping their ids and the account that received
     each. Returns (copied, already there)."""
     present = target.locate_all()
     copied = already = 0
     for folder in source.list_folders():
         destination, role = _target_path(source, folder.path)
-        waiting = folder.role in WAITING_ROLES  # not sent yet: nothing recorded (D-292)
         for message in source.list_messages(folder.path):
             store_id = message.ref.store_id
             if wanted is not None and store_id not in wanted:
                 continue
             if store_id in present:
                 target.properties.take_from(source.properties, store_id)  # an interrupted earlier run may have stopped before it
-                _keep_receiver(source, target, store_id, account_id, waiting)
+                _keep_receiver(source, target, store_id)
                 already += 1
                 continue
             _ensure_folder(target, destination, role)
             raw = source.read(message.ref, hint=message.relative_path)
             target.properties.take_from(source.properties, store_id)  # tags, snooze, archive origin: before the copy counts
-            _keep_receiver(source, target, store_id, account_id, waiting)
+            _keep_receiver(source, target, store_id)
             target.deliver(destination, raw, flags=message.flags, verify=True, store_id=store_id)  # read back and compared before it counts
             copied += 1
             engine.progress("Moving the mail", copied + already, None)
@@ -158,7 +155,7 @@ def _to_local(engine: Engine, settings: AccountSettings) -> StorageResult:
     own_settings = replace(settings, storage="own")
     if own_directory.exists():
         own_store = engine.open_store(own_settings, config)
-        copied, already = _copy(engine, own_store, local_store, None, account_id)
+        copied, already = _copy(engine, own_store, local_store, None)
         local_index = engine.open_index(local, local_store)
         try:
             reconcile_index(local_store, local_index)  # the copies are found by the index
@@ -188,7 +185,7 @@ def _to_own(engine: Engine, settings: AccountSettings) -> StorageResult:
         for path, role in STANDARD_FOLDERS:
             created.create_folder(path, role)
     own_store = engine.open_store(own_settings, config)
-    copied, already = _copy(engine, local_store, own_store, wanted, account_id)
+    copied, already = _copy(engine, local_store, own_store, wanted)
     own_index = engine.open_index(own_settings, own_store)
     try:
         reconcile_index(own_store, own_index)

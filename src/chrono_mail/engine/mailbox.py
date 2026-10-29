@@ -18,7 +18,6 @@ from chrono_mail.core import (
 from chrono_mail.engine.changes import NUMBERED_KINDS, Change, FolderNumbers, MessageRow, flag_names
 from chrono_mail.engine.imap_online import LOCAL_ONLY, GoneFromServer, ServerSession, is_imap, server_session
 from chrono_mail.engine.old_files import settle_old_files
-from chrono_mail.engine.receiving import WAITING_ROLES
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER
 from chrono_mail.engine.session import OUTBOX, Engine
@@ -33,9 +32,10 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 4.2.418"
+__version__ = "mailbox.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: a message that leaves Drafts, the Outbox or Scheduled unsent is no longer recorded: only a retrieval or a send fixes an account (the owner)
 # v4.2.418: a copy keeps the account that received the original through its properties (D-292)
 # v4.2.417: a row carries the people columns and the receiving account (D-291, D-292)
 # v4.2.403: a folder made here inside folders that are not there yet makes them first, each a folder of its own, told (D-285);
@@ -610,23 +610,9 @@ class Mailbox:
         self._moved_here(ref, placed.ref, placed.place, was_unread)
         return placed.ref
 
-    def _record_leaving(self, source: tuple[str, ...], target: tuple[str, ...], store_id: str) -> None:
-        """A message that leaves Drafts, the Outbox or Scheduled without being sent (a drag to the Inbox): the account its list showed
-        (the one in its From) is recorded with it now, for good (D-292)."""
-        waiting = {role.value for role in WAITING_ROLES}
-        if self._role_of(source) not in waiting or self._role_of(target) in waiting:
-            return
-        try:
-            account = self.index.receiver_of(store_id)
-            if account:
-                self.index.set_receiver(store_id, self.store.received_by.record(store_id, account))
-        except ChronoMailError:
-            pass  # recorded by the next filling in or rebuild
-
     def _moved_here(self, ref: MessageRef, moved: MessageRef, path: str, was_unread: bool) -> None:
         """The file of a message moved here went from ref to moved (at path): the index follows, and that is told."""
         target = moved.folder_path
-        self._record_leaving(ref.folder_path, target, moved.store_id)
         self._index(lambda: self.index.move(moved.store_id, target, path))
         row = self.row_of(moved.store_id)
         role = self._role_of(target)

@@ -1,16 +1,19 @@
 import os
 import re
+import sys
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from chrono_mail.core import StorageError
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "receivedby.py 4.2.418"
+__version__ = "receivedby.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: every account id kept once in memory (one text for all its messages); tidy: the lines of messages that are gone taken out
+#           when they are more than half, never the line of a message named by a record call meanwhile (moved back)
 # v4.2.418: Initial: which account received each message of a mailbox, written once and never changed (D-292)
 
 FILE_NAME: str = "received-by.log"  # in the store, beside "folders" and "properties": a backup takes it with the mailbox
@@ -19,6 +22,8 @@ _ID: re.Pattern[str] = re.compile(r"[0-9a-f]{32}")  # a message id and an accoun
 _WRITING: threading.Lock = threading.Lock()  # every write of every mailbox, so a message never gets two lines
 _LOCK: threading.Lock = threading.Lock()  # the files read so far
 _READ: dict[Path, tuple[tuple[int, int, int], dict[str, str]]] = {}  # a file -> (its identity, time and size when read, message id -> account id)
+_TIDYING: dict[Path, set[str]] = {}  # a file being tidied -> the messages named by a record call meanwhile (one that came back: its line stays)
+_HELD: dict[Path, dict[str, str]] = {}  # a file -> accounts fixed by a download that holds its write back: already true, written soon
 
 
 def read_records(data: bytes) -> dict[str, str]:
@@ -27,7 +32,7 @@ def read_records(data: bytes) -> dict[str, str]:
     for line in data.decode("utf-8", "replace").split("\n"):
         parts = line.split("\t")
         if len(parts) == 3 and parts[0] == "R" and _ID.fullmatch(parts[1]) and _ID.fullmatch(parts[2]):
-            found.setdefault(parts[1], parts[2])  # the first line of a message is its account for good
+            found.setdefault(parts[1], sys.intern(parts[2]))  # the first line of a message is its account for good; each account's text kept once
     return found
 
 
@@ -80,7 +85,15 @@ class ReceivedBy:
         return found
 
     def of(self, store_id: str) -> str | None:
-        return self.all().get(store_id)
+        """The message's account: its line, else one a download fixed and holds back for a moment (a move or a copy meanwhile takes it along)."""
+        with _LOCK:
+            held = _HELD.get(self.path, {}).get(store_id)  # first: a held account leaves only once its line can be read
+        return held if held is not None else self.all().get(store_id)
+
+    def hold(self, store_id: str, account_id: str) -> None:
+        """A download fixed this account now; its line is written with the others (record_many), and of() knows it meanwhile."""
+        with _LOCK:
+            _HELD.setdefault(self.path, {}).setdefault(store_id, sys.intern(account_id))
 
     def record(self, store_id: str, account_id: str) -> str:
         """The account that received the message, written once: one that has an account keeps it. Returns the one kept."""
@@ -93,11 +106,14 @@ class ReceivedBy:
             if _ID.fullmatch(store_id) is None or _ID.fullmatch(account_id) is None:
                 raise StorageError("A message id and an account id are 32 lower-case hexadecimal characters")
         with _WRITING:
+            named = _TIDYING.get(self.path)
+            if named is not None:
+                named.update(store_id for store_id, _ in wanted)  # here again (a move back): a tidy under way keeps its line
             known = self.all()
             new: dict[str, str] = {}
             for store_id, account_id in wanted:
                 if store_id not in known and store_id not in new:
-                    new[store_id] = account_id
+                    new[store_id] = sys.intern(account_id)
             if new:
                 self._append(records_text(new).decode("utf-8"))
                 stamp = self._stamp()
@@ -107,11 +123,23 @@ class ReceivedBy:
                         _READ[self.path] = (stamp, known)
                     else:
                         _READ.pop(self.path, None)
+            with _LOCK:
+                held = _HELD.get(self.path)
+                if held is not None:
+                    for store_id, _ in wanted:
+                        held.pop(store_id, None)  # written now (or had a line already)
+                    if not held:
+                        _HELD.pop(self.path, None)
         return {store_id: known.get(store_id) or new[store_id] for store_id, _ in wanted}
 
     def leave_out(self, account_ids: set[str]) -> None:
         """Take out the records that name these accounts (a restore that could not bring them back): never a record of an account that
         is not here. Written as a new file in one step."""
+        with _LOCK:
+            held = _HELD.get(self.path)
+            if held is not None:
+                for store_id in [store_id for store_id, account_id in held.items() if account_id in account_ids]:
+                    del held[store_id]
         with _WRITING:
             kept = {store_id: account_id for store_id, account_id in self.all().items() if account_id not in account_ids}
             if len(kept) == len(self.all()):
@@ -122,6 +150,36 @@ class ReceivedBy:
                 raise StorageError(f"Who received the mail could not be recorded: {error.strerror}") from None
             with _LOCK:
                 _READ.pop(self.path, None)
+
+    def tidy(self, present: Callable[[], set[str]]) -> int:
+        """Take out the lines of messages that are gone (present: every message of the mailbox now), only when they are more than half
+        of the lines: the file is written again, the new one first, then put in place in one step. A message is gone only when two
+        looks at the mailbox both miss it (one that moved between folders while the first looked is seen by the second). How many went."""
+        before = set(self.all())
+        with _WRITING:
+            if self.path in _TIDYING:
+                return 0  # tidied already: one tidy of a file at a time
+            _TIDYING[self.path] = set()
+        try:
+            gone = before - present()
+            if len(gone) * 2 <= len(before):
+                return 0
+            gone -= present()
+            if not gone:
+                return 0
+            with _WRITING:  # a line added meanwhile names a new message, and one named again came back: never among those gone
+                gone -= _TIDYING[self.path]
+                kept = {store_id: account_id for store_id, account_id in self.all().items() if store_id not in gone}
+                try:
+                    replace_file_atomically(self.path, records_text(kept), self._durable)
+                except OSError as error:
+                    raise StorageError(f"The record of who received the mail could not be tidied: {error.strerror}") from None
+                with _LOCK:
+                    _READ.pop(self.path, None)
+            return len(gone)
+        finally:
+            with _WRITING:
+                _TIDYING.pop(self.path, None)
 
     def copy(self, source: str, target: str) -> None:
         """The copy of a message was received by the same account."""

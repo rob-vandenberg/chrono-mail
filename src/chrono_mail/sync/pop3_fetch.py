@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -11,9 +12,10 @@ from chrono_mail.sync.announce import SILENT, Announcer
 from chrono_mail.sync.pop3_state import DownloadRecord, Pop3State
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3_fetch.py 4.2.418"
+__version__ = "pop3_fetch.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: the downloading account goes with each index entry; the accounts of a whole check are recorded in one write (the receiver, held)
 # v4.2.418: the downloading account is recorded with the message before it is indexed (D-292)
 # v4.2.417: receiving: the account that downloads, kept with each message's index entry (the Account column, D-292)
 # v0.5.164: each message is told the moment it is stored, in one step with its index entry (announcer, D-151)
@@ -104,13 +106,14 @@ def fetch_pop3(
         new = [(number, unique_id) for number, unique_id in numbers if unique_id not in state.records]
         run.already_known = len(on_server) - len({unique_id for _, unique_id in new})
         seen: set[str] = set()
-        for position, (number, unique_id) in enumerate(new, 1):
-            if unique_id in seen:
-                continue  # a server that lists the same unique id twice
-            seen.add(unique_id)
-            if progress is not None:
-                progress(position, len(new))
-            _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number), already_here, announcer, receiving)
+        with index.holding_records() if index is not None else nullcontext():  # every message's account in one write at the end (D-292)
+            for position, (number, unique_id) in enumerate(new, 1):
+                if unique_id in seen:
+                    continue  # a server that lists the same unique id twice
+                seen.add(unique_id)
+                if progress is not None:
+                    progress(position, len(new))
+                _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number), already_here, announcer, receiving)
         _apply_policy(store, state, options, now, run, on_server)
         if run.to_delete:
             if step is not None:
@@ -172,11 +175,6 @@ def _download_one(
         run.failed.append(FailedMessage(unique_id, f"it could not be stored safely: {error}"))
         return
     checkpoint("fetch:after-deliver")
-    if receiving:
-        try:
-            store.received_by.record(reference.store_id, receiving)  # who received it, before anything else names it (D-292)
-        except ChronoMailError:
-            pass  # the index's receiver records it by the download record
     state.record_download(unique_id, reference.store_id, int(now()))
     checkpoint("fetch:after-state")
     run.downloaded += 1

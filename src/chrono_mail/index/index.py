@@ -1,3 +1,4 @@
+from contextlib import AbstractContextManager, nullcontext
 import os
 import re
 import sqlite3
@@ -35,9 +36,10 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.2.418"
+__version__ = "index.py 4.2.428"
 
 # --- Version history ----------------------------------------------------
+# v4.2.428: holding_records (the receiver writes once for a whole download); store_ids (every message the index holds)
 # v4.2.418: format 15 (14 is filled in once more); the receiver's record comes first, the row's earlier value only when none can be read;
 #           set_receiver: the account recorded for a message once it is sent (D-292)
 # v4.2.417: format 14: the people columns (the sender's address, the recipients' names and addresses) are kept, read with every row and
@@ -278,6 +280,14 @@ class Index(IndexDatabase):
         """The id of the account that received this message ("" when not known, D-292)."""
         row = self._connection.execute("SELECT received_by FROM messages WHERE store_id = ?", (store_id,)).fetchone()
         return str(row[0]) if row is not None and row[0] else ""
+
+    def holding_records(self) -> AbstractContextManager[None]:
+        """While held, the receiver writes nothing: what it decided is written in one step at the end (a whole download, D-292)."""
+        return self.receiver.holding() if self.receiver is not None else nullcontext()
+
+    def store_ids(self) -> set[str]:
+        """The id of every message the index holds."""
+        return {str(row[0]) for row in self._connection.execute("SELECT store_id FROM messages")}
 
     def set_receiver(self, store_id: str, account_id: str) -> None:
         """The account recorded for this message once it is sent (its row was made while it waited in the Outbox)."""
