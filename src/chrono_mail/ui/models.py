@@ -12,9 +12,10 @@ from chrono_mail.ui.icons import folder_icon
 from chrono_mail.ui.tagging import tag_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "models.py 3.6.354"
+__version__ = "models.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: TIMED_ROLES: Snoozed, Scheduled and the Outbox, whose messages leave at a time
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
 # v2.0.298: the owner's order: Inbox, Unread, Outbox, Sent, Drafts, Flagged, then the other standard folders (D-232); Favorites the same with
 #           All Inboxes first and Unreplied after Flagged (D-061)
@@ -610,6 +611,7 @@ def favorite_number(view: str, mailbox_ids: list[str], folders: Mapping[str, Seq
 
 SCHEDULED_TARGET_ROLES: tuple[str, ...] = ("drafts", "trash")  # where a scheduled message may be moved: back to drafts, or away (D-178)
 HERE_ONLY_ROLES: tuple[str, ...] = ("outbox", "scheduled")  # the roles of the folders whose messages are never moved there by the person
+TIMED_ROLES: tuple[str, ...] = ("snoozed", "scheduled", "outbox")  # the folders (and their Favorites) whose messages leave at a time: comes back, is sent
 
 
 def standard_kind(path: str, role: str) -> str:

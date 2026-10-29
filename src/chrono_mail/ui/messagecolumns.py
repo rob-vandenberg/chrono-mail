@@ -11,8 +11,8 @@ from chrono_mail.ui.columns import (
     without_snoozed_column,
 )
 from chrono_mail.ui.columnsetup import (
-    FOLDER_TYPES, SORT_COLUMNS, STARTING, ColumnSetup, FolderType, fallback_sort, folder_type, read_setups, renamed_key, setup_key, setups_text,
-    sort_of_way_shown, sort_shown,
+    FOLDER_TYPES, FROM_TO_SORT, SORT_COLUMNS, STARTING, ColumnSetup, FolderType, fallback_sort, folder_type, read_setups, renamed_key, setup_key, setups_text,
+    saved_sort, sort_of_way_shown, sort_shown,
 )
 from chrono_mail.ui.delegate import COLUMN_ROW_HEIGHTS
 from chrono_mail.ui.mailstate import MailState
@@ -21,9 +21,11 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.prefs import InUse, Remembered
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagecolumns.py 4.2.422"
+__version__ = "messagecolumns.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: the tick of the last column shown is greyed in the header menu (OR-15), as its Don't show; a setup taken over from before
+#           2.0.280 keeps a sort of From / To (saved_sort); Sorted by Sender or To sorts by the From / To column where only it shows them
 # v4.2.422: the sort falls back only when a change of columns took away the column it was shown by; a sort no column showed
 #           stays (Message list window > OK after only a layout switch changed it)
 # v4.2.421: one From and one To column (D-291): the header menu's From and To open a submenu of round choices, Don't show, Name and
@@ -132,7 +134,7 @@ class MessageColumns(QObject):
             columns = with_new_columns(columns)
         chosen = without_snoozed_column(columns) if columns else start.columns
         wanted, oldest = sort if sort is not None else (start.sort, start.oldest_first)
-        self._type_setups["incoming"] = ColumnSetup(chosen, fallback_sort(chosen, "date" if wanted == "snoozed" else wanted), oldest, widths)
+        self._type_setups["incoming"] = ColumnSetup(chosen, fallback_sort(chosen, "date" if wanted == "snoozed" else saved_sort(chosen, wanted)), oldest, widths)
         self._save_type_setups()
 
     def standard_setup(self, kind: FolderType | None = None) -> ColumnSetup:
@@ -387,6 +389,7 @@ class MessageColumns(QObject):
             action = menu.addAction(column.label)
             action.setCheckable(True)
             action.setChecked(column_id in chosen)
+            action.setEnabled(column_id not in chosen or len(self.columns) > 1)  # the last column cannot go: greyed, never a click that does nothing
             action.triggered.connect(lambda checked=False, wanted=column_id: self.toggle_column(wanted))
         menu.addSeparator()
         menu.addAction(self.apply_action)
@@ -433,9 +436,13 @@ class MessageColumns(QObject):
         self.set_columns(tuple(columns))  # the sort goes along (_follow_sort)
 
     def people_sort(self, sort: str) -> str:
-        """Sorted by Sender or To: by what the folder's From or To column shows (its way's sort), in the cards too; the name, the
-        recipients as written, while it is not shown."""
-        return sort_of_way_shown(self.columns, sort)
+        """Sorted by Sender or To: by the column that shows it, in the cards too: the folder's From or To column (its way's sort), else
+        the From / To column where it shows senders or recipients; the name, the recipients as written, while none shows it."""
+        found = sort_of_way_shown(self.columns, sort)
+        if found in ("sender", "to") and not sort_shown(self.columns, found) and FROM_TO_SORT in self.columns:
+            if (found == "to") == self._messages.shows_recipients():
+                return FROM_TO_SORT
+        return found
 
     def toggle_column(self, column_id: str) -> None:
         group = people_group(column_id)

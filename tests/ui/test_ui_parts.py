@@ -16,9 +16,10 @@ from chrono_mail.ui.statusreport import MISSING_WARNING
 from tests.ui.world import Dialogs, World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_parts.py 3.6.355"
+__version__ = "test_ui_parts.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: Favorites > Scheduled is a timed view (it shows Send at)
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42); the size guards are gone (the window under 1,100 code lines, a part under 650): limits the owner never set, against his rule
 #           that a code file may have up to 2,000 lines
 # v3.6.354: Chrono Mail's own folders carry their role in the made-up folder data, as the engine now gives it (CR-36)
@@ -85,7 +86,7 @@ def test_the_shared_record_knows_the_kind_of_view() -> None:
     state.view = CurrentView(account="a", kind=EntryKind.FOLDER, folder="Snoozed", folder_role="snoozed")
     assert state.in_snoozed() and state.in_timed() and not state.in_scheduled_view()
     state.view = CurrentView(account="", kind=EntryKind.FAVORITE, combined="scheduled")
-    assert state.in_scheduled_view() and state.in_drafts() and not state.in_timed()
+    assert state.in_scheduled_view() and state.in_drafts() and state.in_timed()  # Favorites > Scheduled shows Send at too (4.2.426)
     state.view = CurrentView(account="a", kind=EntryKind.FOLDER, folder="Archive", folder_role="archive")
     assert state.can_make_folder()
     state.view = CurrentView(account="", kind=EntryKind.FAVORITE, combined="inboxes")

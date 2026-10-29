@@ -7,12 +7,13 @@ from chrono_mail.engine.commands_folders import FolderInfo
 from chrono_mail.engine.commands_pim import TagInfo
 from chrono_mail.engine.commands_sidebar import EMPTY_SIDEBAR, SidebarInfo
 from chrono_mail.ui.currentview import CurrentView, EntryKind
-from chrono_mail.ui.models import FAVORITES, HERE_ONLY_ROLES, USED_ONLY, favorite_in_use, local_folder_kind
+from chrono_mail.ui.models import FAVORITES, HERE_ONLY_ROLES, TIMED_ROLES, USED_ONLY, favorite_in_use, local_folder_kind
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailstate.py 4.2.414"
+__version__ = "mailstate.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: timed_kind: Favorites > Snoozed, Scheduled and Outbox are timed too (they show and sort by when a message leaves, as the folders)
 # v4.2.414: in a search of several folders a message acts as in its own folder: in_drafts, in_scheduled_view, in_snoozed and the new
 #           in_junk take the message (role_of_message, the owner, D-287)
 # v3.6.354: Chrono Mail's own folders (Outbox, Scheduled, Snoozed, Recovered) known by their role, no longer by their name (CR-36)
@@ -162,9 +163,17 @@ class MailState:
         return view.combined is None and view.kind == EntryKind.FOLDER and view.folder_role == "snoozed"
 
     def in_timed(self) -> bool:
-        """The Snoozed or the Scheduled folder or the Outbox of an account is shown: its messages leave at a time (it comes back, it is sent)."""
+        """The Snoozed or the Scheduled folder or the Outbox is shown, of an account or in Favorites: its messages leave at a time (it comes back, it is sent)."""
+        return self.timed_kind() is not None
+
+    def timed_kind(self) -> str | None:
+        """Which of Snoozed, Scheduled and the Outbox is shown (a folder, its pin, or its Favorites entry); None for any other view."""
         view = self.view
-        return view.combined is None and view.kind == EntryKind.FOLDER and view.folder_role in ("snoozed", "scheduled", "outbox")
+        if view.several_folders:
+            return None
+        if view.combined is not None:
+            return view.combined if view.combined in TIMED_ROLES else None
+        return view.folder_role if view.kind == EntryKind.FOLDER and view.folder_role in TIMED_ROLES else None
 
     def in_drafts(self, row: Placed | None = None) -> bool:
         """A message here opens in the editor: Drafts, the Outbox, Scheduled; in a search of several folders: the message is in one."""

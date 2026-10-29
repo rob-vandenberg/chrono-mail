@@ -6,17 +6,20 @@ from datetime import datetime
 import string
 
 from chrono_mail.core import Folder, FolderRole, shown_name
-from chrono_mail.engine.commands_mail import CONTACT_SORT, timed_only, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, neighbours, not_heard, with_headings, _day, _rows, contact_address_set, date_bounds, from_contacts, group_of
+from chrono_mail.engine.commands_mail import CONTACT_SORT, LATER, timed_only, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, neighbours, not_heard, with_headings, _day, _rows, contact_address_set, date_bounds, from_contacts, group_of
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
+from chrono_mail.engine.schedule import SNOOZE_GROUPS, snooze_group
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 4.2.417"
+__version__ = "commands_combined.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: Favorites > Snoozed, Scheduled and Outbox carry when each message leaves (comes back, is sent) in their first rows too, and sort
+#           and group by it (sort order snoozed), as their folders do
 # v4.2.417: the sort orders of the people columns (From (name and email), From (email), To (name), To (email), D-291) and of Account (D-292)
 # v4.2.413: the view everywhere: every folder of every account, for a search of All folders shown from a Favorites or Tags view (D-287)
 # v4.2.408: the Favorites and Tags views take sent_from and sent_to, snoozed_from and snoozed_to, send_at_from and send_at_to (days,
@@ -49,9 +52,10 @@ __version__ = "commands_combined.py 4.2.417"
 
 ViewName = Literal["inboxes", "unread", "flagged", "outbox", "scheduled", "sent", "drafts", "snoozed", "unreplied", "archive", "junk", "trash", "tagged", "everywhere"]  # the Favorites and Tags views, and every folder
 CombinedSort = Literal[
-    "date", "sent", "subject", "sender", "to", "size", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview",
+    "date", "sent", "subject", "sender", "to", "size", "snoozed", "unread", "flagged", "attachment", "replied", "contact", "folder", "conversation", "preview",
     "sender_full", "sender_address", "to_names", "to_addresses", "account",
-]  # their sort orders
+]  # their sort orders (snoozed: when a message leaves Snoozed, Scheduled or the Outbox; any other message after those)
+TIMED_SORT: str = "snoozed"
 EVERYWHERE: str = "everywhere"  # every folder of every account, Junk and Trash too: a search of All folders from a Favorites view (D-287)
 VIEWS: tuple[str, ...] = tuple(view for view in typing.get_args(ViewName) if view != EVERYWHERE)  # the standard favorites
 _ROLE_OF_VIEW: dict[str, FolderRole] = {
@@ -97,7 +101,7 @@ _TEXT_OF_SORT: dict[str, str] = {
     "subject": "subject", "sender": "sender", "to": "recipients", "folder": "folder", "preview": "preview",
     "sender_full": "sender", "sender_address": "sender_address", "to_names": "recipient_names", "to_addresses": "recipient_addresses", "account": "received_by",  # D-291, D-292
 }
-_NEWEST_WITHIN: frozenset[str] = frozenset({"unread", "flagged", "attachment", "replied", CONTACT_SORT, "folder", "conversation", "preview"})  # same value: newest first, either way
+_NEWEST_WITHIN: frozenset[str] = frozenset({"unread", "flagged", "attachment", "replied", CONTACT_SORT, "folder", "conversation", "preview", TIMED_SORT})  # same value: newest first, either way
 
 
 def _newest_key(row: MessageRow) -> tuple[bool, float]:
@@ -114,6 +118,8 @@ def _value_key(row: MessageRow, sort: str) -> int | str:
         return int(row.attachments)
     if sort == "conversation":
         return row.thread_size
+    if sort == TIMED_SORT:  # as its folder orders it: by the moment, a message without one after all others
+        return int(row.snoozed_until.timestamp()) if row.snoozed_until is not None else LATER
     return str(getattr(row, _TEXT_OF_SORT[sort])).translate(_NO_CASE)
 
 
@@ -195,10 +201,12 @@ def gather(engine: Engine, parameters: CombinedParameters, want: int | None, gro
     view = parameters.view
     if view == "tagged" and not parameters.tag.strip():
         raise UsageError("The view tagged needs a tag")
-    contact = parameters.sort == CONTACT_SORT
-    sort, descending = SortField.DATE if contact else SortField(parameters.sort), not parameters.oldest_first
-    grouped = groups and not contact and sort not in YES_NO_SORTS  # the yes/no sorts have no group headers
+    contact, timed = parameters.sort == CONTACT_SORT, parameters.sort == TIMED_SORT
+    sort, descending = SortField.DATE if contact or timed else SortField(parameters.sort), not parameters.oldest_first
+    grouped = groups and not contact and not timed and sort not in YES_NO_SORTS  # the yes/no sorts have no group headers
     bounds = date_bounds(datetime.now())
+    now = datetime.fromtimestamp(engine.clock()).astimezone()
+    names = dict(SNOOZE_GROUPS)
     known = contact_address_set(engine) if contact and want is not None else frozenset[str]()
     found = Gathered()
     for account in _places(engine, parameters.accounts):
@@ -207,11 +215,19 @@ def gather(engine: Engine, parameters: CombinedParameters, want: int | None, gro
             for folder in mailbox.folders():
                 if not _chosen(view, folder):
                     continue
+                times = mailbox.timed(folder.path)  # Snoozed, Scheduled, the Outbox: when each message leaves it; None for any other folder
+                rows = None
                 if want is not None:
-                    rows = mailbox.index.search(parameters.query, folder.path, filters, 0, EVERYTHING if contact else want, sort, descending)
+                    rows = mailbox.index.search(parameters.query, folder.path, filters, 0, EVERYTHING if contact or timed else want, sort, descending)
                     if contact:  # the index does not know the contacts: every message is looked at
                         found.from_contact.update(((account, store_id), yes) for store_id, yes in from_contacts(mailbox, rows, known).items())
-                    found.rows.extend(replace(row, account=account) for row in _rows(mailbox, rows))
+                    found.rows.extend(replace(row, account=account) for row in _rows(mailbox, rows, times))
+                if groups and timed:  # the groups of its folder: when each message leaves, never in the index
+                    everything = rows if rows is not None else mailbox.index.search(parameters.query, folder.path, filters, 0, EVERYTHING, SortField.DATE, True)
+                    for message in everything:
+                        key = snooze_group((times or {}).get(message.store_id), now)
+                        before = found.groups.get(key)
+                        found.groups[key] = GroupCount(key, names[key], 1 if before is None else before.count + 1)
                 if grouped:
                     for group in mailbox.index.groups(bounds, parameters.query, folder.path, filters, sort, descending):
                         before = found.groups.get(group.key)
@@ -242,6 +258,9 @@ def groups_in_order(found: Gathered, parameters: CombinedParameters) -> tuple[Gr
     """The groups of all mailboxes together, in the order of the merged rows."""
     if not found.groups:
         return ()
+    if parameters.sort == TIMED_SORT:  # soonest first, as its folder
+        order = SNOOZE_GROUPS if parameters.oldest_first else tuple(reversed(SNOOZE_GROUPS))
+        return tuple(found.groups[key] for key, _ in order if key in found.groups)
     sort, descending = SortField(parameters.sort), not parameters.oldest_first
     if sort in (SortField.DATE, SortField.SENT):
         position = {key: number for number, (key, _) in enumerate(DATE_GROUPS)}

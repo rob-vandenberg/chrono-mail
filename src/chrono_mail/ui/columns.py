@@ -9,9 +9,10 @@ from chrono_mail.engine.changes import MessageRow
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 4.2.421"
+__version__ = "columns.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: the From / To column sorts by its own sort (from_to), what it shows, never together with From
 # v4.2.421: one From and one To column, shown one way each (D-291): every way is called From or To; a saved list keeps at most one way of
 #           each, the leftmost; people_group and people_shown tell the way of From or To a list shows
 # v4.2.417: the people columns From (name and email), From (email), To (name), To (email), each sorting by what it shows (D-291), and
@@ -51,7 +52,7 @@ COLUMNS: tuple[Column, ...] = (
     Column("replied", "Replied", 24, "replied", symbol=True),
     Column("contact", "Contact", 24, "contact", symbol=True),
     Column("trash", "Delete", 24, symbol=True),
-    Column("from_to", "From / To", 170, "sender"),
+    Column("from_to", "From / To", 170, "from_to"),  # sorts by what it shows: the recipients in Sent, Drafts, the Outbox and Scheduled, else the sender
     Column("from", "From", 200, "sender"),  # the name, else the address
     Column("from_full", "From", 260, "sender_full"),  # the From column shown as name and email (D-291)
     Column("from_address", "From", 200, "sender_address"),  # the From column shown as the address only
@@ -77,6 +78,7 @@ SCHEDULED_FOLDER_PATH: str = OWN_FOLDERS[FolderRole.SCHEDULED][0]  # its message
 SEND_AT_LABEL: str = "Send at"
 OUTBOX_FOLDER_PATH: str = OWN_FOLDERS[FolderRole.OUTBOX][0]
 SEND_AT_FOLDERS: tuple[str, ...] = (SCHEDULED_FOLDER_PATH, OUTBOX_FOLDER_PATH)  # the column says when each message is sent (the Outbox: a delayed send, B-21)
+SEND_AT_VIEWS: tuple[str, ...] = ("scheduled", "outbox")  # the same in Favorites
 SAVED_LABEL: str = "Saved"  # the Sent column in Drafts: a draft carries when it was last saved
 BY_ID: dict[str, Column] = {column.column_id: column for column in COLUMNS}
 PEOPLE_COLUMNS: dict[str, tuple[tuple[str, str], ...]] = {  # From and To: one column each, shown one of these ways (the column of each way, its name), D-291

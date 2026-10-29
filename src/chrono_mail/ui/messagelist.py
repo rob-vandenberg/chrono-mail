@@ -17,7 +17,7 @@ from chrono_mail.index.model import GroupCount
 from chrono_mail.ui.advancedsearch import AdvancedSearch
 from chrono_mail.ui.backend import Backend, carried
 from chrono_mail.ui.burst import Burst
-from chrono_mail.ui.columns import BY_ID, CARD, SEND_AT_FOLDERS, SEND_AT_LABEL, SNOOZED_COLUMN, SYMBOLS, cell_text, display_name, person_address
+from chrono_mail.ui.columns import BY_ID, CARD, SEND_AT_FOLDERS, SEND_AT_LABEL, SEND_AT_VIEWS, SNOOZED_COLUMN, SYMBOLS, cell_text, display_name, person_address
 from chrono_mail.ui.dragdata import MESSAGES_MIME_TYPE, messages_mime_data
 from chrono_mail.ui.icons import grey_icon
 from chrono_mail.ui.messageorder import MessageOrder, message_key, split_key
@@ -26,9 +26,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.417"
+__version__ = "messagelist.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: the time column is Send at in Favorites > Scheduled and Outbox too
 # v4.2.417: the group headings of the people columns and of Account (D-291, D-292)
 # v4.2.413: the view everywhere (a search of All folders from a Favorites view) is asked like a Favorites view and holds a message in any
 #           folder: a moved message stays, Undo and new mail bring it in (D-287)
@@ -833,12 +834,17 @@ class MessageListModel(QAbstractTableModel):
     def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:
         return 0 if parent.isValid() else len(self._columns)
 
+    def _send_at(self) -> bool:
+        """The time column says when each message is sent: the Scheduled folder and the Outbox, also in Favorites."""
+        spec = self._spec
+        return spec is not None and (spec.folder in SEND_AT_FOLDERS if spec.combined is None else spec.combined in SEND_AT_VIEWS)
+
     @override
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole) -> object:
         if orientation != Qt.Orientation.Horizontal or not 0 <= section < len(self._columns) or self._columns[section] not in BY_ID:
             return None
         column = BY_ID[self._columns[section]]
-        label = SEND_AT_LABEL if column.column_id == SNOOZED_COLUMN and self._spec is not None and self._spec.folder in SEND_AT_FOLDERS else self._column_labels.get(column.column_id, column.label)
+        label = SEND_AT_LABEL if column.column_id == SNOOZED_COLUMN and self._send_at() else self._column_labels.get(column.column_id, column.label)
         if role == Qt.ItemDataRole.DisplayRole:
             return SYMBOLS.get(column.column_id, label)
         if role == Qt.ItemDataRole.ToolTipRole:

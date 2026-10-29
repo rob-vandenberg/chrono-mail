@@ -7,9 +7,11 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 4.2.421"
+__version__ = "columnsetup.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: the From / To column has a sort of its own (from_to), never shared with From (the owner: a column sorts by itself); a saved
+#           setup saved before (no format 2) sorted by sender that shows From / To and no From is sorted by From / To (saved_sort)
 # v4.2.421: a sort of From or To follows the way the column shows (sort_of_way_shown), also in a saved setup (D-291)
 # v4.2.417: the sort orders of the people columns and of Account (D-291, D-292)
 # v4.2.414: a search of several folders is known by the view itself (CurrentView.several_folders)
@@ -52,14 +54,17 @@ STARTING: dict[FolderType, ColumnSetup] = {
 _OUTGOING_FAVORITES: dict[str, FolderType] = {"sent": "sent", "drafts": "drafts", "outbox": "outbox", "scheduled": "scheduled", "snoozed": "snoozed"}
 _LOCAL_FOLDERS: dict[str, FolderType] = {"outbox": "outbox", "scheduled": "scheduled", "snoozed": "snoozed"}  # by the folder's role (CR-36)
 
-# The columns that show each sort order (the From / To column sorts by sender)
+SETUP_FORMAT: int = 2  # a setup saved since every column has a sort of its own (4.2.426); without it, saved_sort reads the sort of before
+FROM_TO_SORT: str = "from_to"  # the From / To column's own sort: by what it shows (the engine is asked for the sender or the recipients)
+
+# The column that shows each sort order: one each, so a sort belongs to the column it was chosen by
 SORT_COLUMNS: dict[str, tuple[str, ...]] = {
-    "sender": ("from_to", "from"), "subject": ("subject",), "date": ("date",), "sent": ("sent",), "size": ("size",), "to": ("to",),
+    "sender": ("from",), FROM_TO_SORT: ("from_to",), "subject": ("subject",), "date": ("date",), "sent": ("sent",), "size": ("size",), "to": ("to",),
     "snoozed": (SNOOZED_COLUMN,), "unread": ("status",), "flagged": ("flag",), "attachment": ("attachment",), "replied": ("replied",),
     "contact": ("contact",), "folder": ("folder",), "conversation": ("conversation",), "preview": ("preview",),
     "sender_full": ("from_full",), "sender_address": ("from_address",), "to_names": ("to_names",), "to_addresses": ("to_addresses",), "account": ("account",),
 }
-FALLBACK_SORTS: tuple[str, ...] = ("date", "sent", "subject", "to", "sender", "size")  # Received, Sent, Subject, To, From, Size
+FALLBACK_SORTS: tuple[str, ...] = ("date", "sent", "subject", "to", "sender", FROM_TO_SORT, "size")  # Received, Sent, Subject, To, From, From / To, Size
 
 
 def folder_type(view: CurrentView) -> FolderType:
@@ -123,6 +128,16 @@ def sort_of_way_shown(columns: tuple[str, ...], sort: str) -> str:
     return found or sort
 
 
+def saved_sort(columns: tuple[str, ...], sort: str, before_own_sorts: bool = True) -> str:
+    """The sort of a saved setup: of From or To, the way shown (D-291). One saved before every column had a sort of its own (4.2.426) by
+    sender belonged to the first column that showed it, From / To or From (Name only): it stays with that column. A sort chosen since is
+    never changed."""
+    if before_own_sorts and sort == "sender" and FROM_TO_SORT in columns:
+        if "from" not in columns or columns.index(FROM_TO_SORT) < columns.index("from"):
+            return FROM_TO_SORT  # where the arrow was
+    return sort_of_way_shown(columns, sort)
+
+
 def fallback_sort(columns: tuple[str, ...], sort: str) -> str:
     """The sort order of a folder whose columns are these: its own while a column shows it (of From or To: the way shown), else the first shown of Received,
     Sent, Subject, To, From, Size, else the first text column that sorts (never an icon column)."""
@@ -139,6 +154,11 @@ def fallback_sort(columns: tuple[str, ...], sort: str) -> str:
     return sort
 
 
+def _before_own_sorts(found: object) -> bool:
+    """A setup saved before every column had a sort of its own: no format, or one older than SETUP_FORMAT (a newer one is never converted)."""
+    return not isinstance(found, int) or isinstance(found, bool) or found < SETUP_FORMAT
+
+
 def _setup_from(data: object) -> tuple[ColumnSetup, FolderType] | None:
     if not isinstance(data, dict):
         return None
@@ -148,7 +168,7 @@ def _setup_from(data: object) -> tuple[ColumnSetup, FolderType] | None:
     if kind not in FOLDER_TYPES:
         return None
     chosen = valid_columns([str(column) for column in columns])
-    return ColumnSetup(chosen, sort_of_way_shown(chosen, sort), oldest, widths), kind
+    return ColumnSetup(chosen, saved_sort(chosen, sort, _before_own_sorts(data.get("format"))), oldest, widths), kind
 
 
 def read_setups(text: str) -> dict[str, tuple[ColumnSetup, FolderType]]:
@@ -169,6 +189,6 @@ def read_setups(text: str) -> dict[str, tuple[ColumnSetup, FolderType]]:
 
 def setups_text(setups: dict[str, tuple[ColumnSetup, FolderType]]) -> str:
     return json.dumps({
-        key: {"type": kind, "columns": list(setup.columns), "sort": setup.sort, "oldest_first": setup.oldest_first, "widths": setup.widths}
+        key: {"type": kind, "columns": list(setup.columns), "sort": setup.sort, "oldest_first": setup.oldest_first, "widths": setup.widths, "format": SETUP_FORMAT}
         for key, (setup, kind) in setups.items()
     })

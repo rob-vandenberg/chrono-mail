@@ -11,9 +11,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import World, menu_named, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columnsetup.py 4.2.422"
+__version__ = "test_ui_columnsetup.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: the From / To column falls back to its own sort, no longer to From's
 # v4.2.422: a sort no column shows stays when the columns change or only the layout is switched in the Message list window
 # v4.2.413: a search of All folders from a Favorites view has the setup of a search of several folders (D-287)
 # v4.2.406: where a search looks is a scope; a search of a folder and its subfolders has the search setup (D-287)
@@ -62,7 +63,7 @@ def test_the_sort_falls_back_to_the_first_shown_of_received_sent_subject_to_from
     assert fallback_sort(("subject", "sent", "date"), "size") == "date"
     assert fallback_sort(("to", "subject", "sent"), "date") == "sent"
     assert fallback_sort(("from", "to", "subject"), "size") == "subject"
-    assert fallback_sort(("from_to", "to"), "date") == "to" and fallback_sort(("from_to", "size"), "date") == "sender"  # From / To counts as From
+    assert fallback_sort(("from_to", "to"), "date") == "to" and fallback_sort(("from_to", "size"), "date") == "from_to"  # the From / To column's own sort (4.2.426)
     assert fallback_sort(("flag", "folder", "preview"), "date") == "folder"  # else the first text column, never an icon column
     assert fallback_sort(("flag", "status"), "subject") == "subject"  # no text column at all: as it was
 

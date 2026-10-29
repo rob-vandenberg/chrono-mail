@@ -16,9 +16,10 @@ from chrono_mail.ui.columnsetup import read_setups
 from tests.ui.world import World, settle
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_people_columns.py 4.2.421"
+__version__ = "test_ui_people_columns.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: a sort by sender belongs to From only: From / To has its own sort
 # v4.2.421: one From and one To column, a round choice of how each shows (Don't show, Name and email, Name only, Email only, D-291)
 # v4.2.417: Initial: the people columns and the header menu's From and To submenus (D-291), the Account column (D-292)
 
@@ -152,7 +153,7 @@ def test_a_saved_sort_of_from_or_to_follows_the_way_shown() -> None:
         return found["f"][0].sort
     assert sort_of(["from_full", "subject"], "sender") == "sender_full" and sort_of(["from", "subject"], "sender_address") == "sender"
     assert sort_of(["to_addresses", "subject"], "to") == "to_addresses" and sort_of(["subject"], "to_names") == "to_names"
-    assert sort_of(["from_to", "from_address", "from", "subject"], "sender") == "sender"  # From / To shows it
+    assert sort_of(["from_to", "from_address", "from", "subject"], "sender") == "from_to"  # it was From / To's, the first column showing it (4.2.426)
     assert sort_of(["to_names", "to", "subject"], "to") == "to_names" and sort_of(["from", "from_full"], "date") == "date"
 
 

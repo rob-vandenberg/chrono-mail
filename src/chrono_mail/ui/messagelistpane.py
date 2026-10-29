@@ -14,7 +14,7 @@ from chrono_mail.engine.commands_combined import EVERYWHERE
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columnfit import MINIMUM_ICON
 from chrono_mail.ui.columns import SAVED_LABEL
-from chrono_mail.ui.columnsetup import STARTING, folder_type
+from chrono_mail.ui.columnsetup import FROM_TO_SORT, STARTING, folder_type
 from chrono_mail.ui.advancedsearch import SearchScope
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.ui.delegate import ColumnDelegate, MessageDelegate
@@ -29,9 +29,12 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.421"
+__version__ = "messagelistpane.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: the From / To column sorts by what it shows (engine_sort: the recipients where it shows them, else the sender), never
+#           together with From; Send at and Snoozed until in Favorites > Scheduled, Outbox and Snoozed too (timed_kind); the entry of
+#           Sorted by that is ticked changes nothing; From / To shows the recipients in Favorites > Sent and Drafts too, as in their folders
 # v4.2.421: Sorted by has one Sender and one To, sorting by what the From and To column shows (people_sort, D-291)
 # v4.2.417: Sorted by offers the people columns and Account (D-291, D-292)
 # v4.2.414: a search of several folders shows the sender in From, also when it starts from Sent, Drafts, the Outbox or Scheduled (D-287)
@@ -76,6 +79,7 @@ SORT_CHOICES: tuple[tuple[str, str], ...] = (
     ("folder", "Folder"), ("conversation", "Messages in conversation"), ("preview", "Preview"), ("snoozed", "Snoozed until"),
     ("account", "Account"),  # the account that received the message (D-292)
 )
+RECIPIENT_ROLES: tuple[str, ...] = ("sent", "drafts", *HERE_ONLY_ROLES)  # the folders (and Favorites) where From / To shows who a message went to
 MENU_SORTS: dict[str, str] = {"sender_full": "sender", "sender_address": "sender", "to_names": "to", "to_addresses": "to"}  # Sender and To, however shown (D-291)
 
 
@@ -290,11 +294,11 @@ class MessageListPane(QObject):
         advanced = view.advanced
         if view.combined is not None and view.searching and view.scope is SearchScope.ALL:  # All folders is every folder of every account (D-287)
             return with_days(ViewSpec(
-                "", None, query, self.effective_sort(), self.oldest_first, unread, flagged, attachments, combined=EVERYWHERE, tag=view.tag,
+                "", None, query, self.engine_sort(), self.oldest_first, unread, flagged, attachments, combined=EVERYWHERE, tag=view.tag,
             ), advanced)
         if view.combined is not None:  # the filters narrow a Favorites or Tags view as they narrow a folder (R-03)
             return with_days(ViewSpec(
-                "", None, query, self.effective_sort(), self.oldest_first, unread, flagged, attachments,
+                "", None, query, self.engine_sort(), self.oldest_first, unread, flagged, attachments,
                 combined=view.combined, combined_accounts=view.combined_accounts, combined_tag=view.combined_tag or None, tag=view.tag,
             ), advanced)
         folder = view.folder
@@ -305,13 +309,13 @@ class MessageListPane(QObject):
         subfolders = folder is not None and view.searching and view.scope is SearchScope.SUBFOLDERS
         grouped = self._conversations_on() and view.kind == EntryKind.FOLDER and not (query or unread or flagged or attachments or view.advanced is not None)
         return with_days(ViewSpec(
-            view.account, folder, query, self.effective_sort(), self.oldest_first, unread, flagged, attachments,
+            view.account, folder, query, self.engine_sort(), self.oldest_first, unread, flagged, attachments,
             conversations=grouped and view.tag is None, tag=view.tag, subfolders=subfolders,
         ), advanced)
 
     def apply_view(self) -> None:
         view = self._state.view
-        self.delegate.show_recipients = not view.several_folders and (view.folder_role in ("sent", "drafts", *HERE_ONLY_ROLES) or view.combined in HERE_ONLY_ROLES)
+        self.delegate.show_recipients = self.shows_recipients()
         self.model.recipients_first = self.delegate.show_recipients
         self.model.show(self.view_spec())
 
@@ -337,7 +341,7 @@ class MessageListPane(QObject):
 
     def update_sort_menu(self) -> None:
         self.sort_menu.clear()
-        sort = self.effective_sort()
+        sort = self.engine_sort()
         sort = MENU_SORTS.get(sort, sort)  # sorted by what From or To shows: its one entry
         for value, label in SORT_CHOICES:
             if value == "snoozed" and not self._state.in_timed():
@@ -345,7 +349,7 @@ class MessageListPane(QObject):
             action = self.sort_menu.addAction(self._sort_label(value, label))
             action.setCheckable(True)
             action.setChecked(value == sort)
-            action.triggered.connect(lambda checked=False, chosen=value: self.set_sort(self.people_sort(chosen), self.oldest_first))
+            action.triggered.connect(lambda checked=False, chosen=value: self._choose_sort(chosen))
         self.sort_menu.addSeparator()
         for flag, label in ((False, "Newest / Z–A / largest first"), (True, "Oldest / A–Z / smallest first")):
             action = self.sort_menu.addAction(label)
@@ -355,14 +359,35 @@ class MessageListPane(QObject):
         label = self._sort_label(sort, dict(SORT_CHOICES).get(sort, "Received"))
         self.sort_button.setText(f"Sorted by {label} ▾")
 
+    def _choose_sort(self, value: str) -> None:
+        """An entry of Sorted by: the one ticked changes nothing; Sender and To sort by the column that shows them (people_sort)."""
+        sort = self.engine_sort()
+        if value == MENU_SORTS.get(sort, sort):
+            self.update_sort_menu()  # Qt took the tick away from the entry clicked: it comes back
+            return
+        self.set_sort(self.people_sort(value), self.oldest_first)
+
     def _sort_label(self, value: str, label: str) -> str:
         if value == "sent" and folder_type(self._state.view) == "drafts":
             return SAVED_LABEL
-        return "Send at" if value == "snoozed" and self._state.view.folder_role in ("scheduled", "outbox") and self._state.in_timed() else label
+        return "Send at" if value == "snoozed" and self._state.timed_kind() in ("scheduled", "outbox") else label
 
     def effective_sort(self) -> str:
-        """The chosen sort order; sorting by Snoozed until (Send at) is sorting by Received outside Snoozed and Scheduled."""
+        """The chosen sort order, as the columns name it; sorting by Snoozed until (Send at) is sorting by Received outside Snoozed and Scheduled."""
         return "date" if self.sort == "snoozed" and not self._state.in_timed() else self.sort
+
+    def engine_sort(self) -> str:
+        """The sort order the engine is asked for: the From / To column sorts by what it shows, the recipients where it shows them
+        (Sent, Drafts, the Outbox, Scheduled), else the sender; never by a sort another column shows (the owner: a column sorts by itself)."""
+        sort = self.effective_sort()
+        if sort == FROM_TO_SORT:
+            return "to_names" if self.shows_recipients() else "sender"
+        return sort
+
+    def shows_recipients(self) -> bool:
+        """The From / To column shows the recipients: in Sent, Drafts, the Outbox and Scheduled, as a folder and in Favorites."""
+        view = self._state.view
+        return not view.several_folders and (view.folder_role in RECIPIENT_ROLES if view.combined is None else view.combined in RECIPIENT_ROLES)
 
     def use_sort(self, sort: str, oldest_first: bool) -> None:
         """The sort of the folder about to be shown (its setup): taken into use without asking the list, which is asked next."""

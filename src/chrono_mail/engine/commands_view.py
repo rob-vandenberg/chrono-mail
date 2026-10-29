@@ -4,7 +4,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from chrono_mail.engine.changes import MessageRow
-from chrono_mail.engine.commands_combined import CombinedParameters, gather, groups_in_order, in_order
+from chrono_mail.engine.commands_combined import TIMED_SORT, CombinedParameters, gather, groups_in_order, in_order
 from chrono_mail.engine.commands_mail import CONTACT_SORT, EVERYTHING, TIMED, SearchParameters, _rows, _search_filter, _snooze_sort, _sort_field, message_groups, message_search
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -14,9 +14,10 @@ from chrono_mail.index.database import writes
 from chrono_mail.index.model import GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_view.py 4.2.408"
+__version__ = "commands_view.py 4.2.426"
 
 # --- Version history ----------------------------------------------------
+# v4.2.426: a Favorites view sorted by when its messages leave (Snoozed, Scheduled, the Outbox) is always read whole, as its folder
 # v4.2.408: the filters are read with the mailbox (the days of snoozed and waiting messages, D-288)
 # v3.6.350: every order answer carries a write stamp of its index files (how many changes were written), read before the order (RV-206)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
@@ -120,7 +121,7 @@ def message_combined_order(engine: Engine, parameters: CombinedOrderParameters) 
     if len(parameters.rows_of_mailboxes) != len(parameters.rows_of):
         raise UsageError("Give the mailbox of each message of rows_of")
     first = max(0, parameters.first)
-    whole = parameters.whole or parameters.sort == CONTACT_SORT  # the Contact sort looks at every message anyway
+    whole = parameters.whole or parameters.sort in (CONTACT_SORT, TIMED_SORT)  # these sorts look at every message anyway
     indexes = sorted(engine.directories.index_file(settings.account.account_id) for settings in engine.config().accounts)
     before = write_stamp(indexes)  # before reading
     found = gather(engine, parameters, EVERYTHING if whole else first, groups=parameters.headings, tally=not whole)
