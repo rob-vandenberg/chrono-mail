@@ -36,9 +36,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.2.430"
+__version__ = "commands_mail.py 4.2.432"
 
 # --- Version history ----------------------------------------------------
+# v4.2.432: the Contact sort judges every row by the person the list shows (shows_recipients), one rule for the whole list (D-295)
 # v4.2.430: addresses shown to the window written so they can be read back (written_address); a row carries to_shown; the Contact sort takes the first address from the address columns, never the names read back
 # v4.2.429: the sort order to_shown: From / To for mail one sent, exactly as it shows (D-295)
 # v4.2.418: the account a message is sent from, and the account that downloads a message, are recorded with it (D-292)
@@ -153,7 +154,8 @@ def _by_snooze(messages: list[IndexedMessage], times: dict[str, int], soonest_fi
 
 
 CONTACT_SORT: str = "contact"
-_RECIPIENT_ROLES: frozenset[FolderRole] = frozenset({FolderRole.SENT, FolderRole.DRAFTS})  # with Outbox: the folders where a row shows its recipients
+_RECIPIENT_ROLES: frozenset[FolderRole] = frozenset({FolderRole.SENT, FolderRole.DRAFTS, FolderRole.OUTBOX, FolderRole.SCHEDULED})  # the folders where a row shows its recipients
+RECIPIENT_VIEWS: tuple[str, ...] = ("sent", "drafts", "outbox", "scheduled")  # ... and the Favorites entries of those folders
 
 
 def contact_address_set(engine: Engine) -> frozenset[str]:
@@ -181,20 +183,26 @@ def first_address(addresses: str) -> str:
     return addresses.split(", ", 1)[0].strip().lower()
 
 
-def from_contacts(mailbox: Mailbox, messages: list[IndexedMessage], known: frozenset[str]) -> dict[str, bool]:
-    """store id -> whether the message is from a contact (in Sent, Drafts and Outbox: to a contact, the first recipient),
-    as the Contact column shows it."""
-    to_folders = {folder.path for folder in mailbox.folders() if folder.role in _RECIPIENT_ROLES or folder.role in (FolderRole.OUTBOX, FolderRole.SCHEDULED)}
+def shows_recipients(mailbox: Mailbox, folder: tuple[str, ...] | None) -> bool:
+    """Whether a list of this one folder shows who its messages went to: Sent, Drafts, the Outbox and Scheduled; a list of several
+    folders (a search of a folder and its subfolders, of every folder) shows the senders. The window's From / To column and Contact
+    mark follow the same rule, so the Contact sort judges every row by the person the row shows."""
+    return folder is not None and any(found.path == folder and found.role in _RECIPIENT_ROLES for found in mailbox.folders())
+
+
+def from_contacts(messages: list[IndexedMessage], known: frozenset[str], recipients_first: bool) -> dict[str, bool]:
+    """store id -> whether the person the row shows is a contact, as the Contact column shows it: the first recipient in a list that
+    shows the recipients (shows_recipients), else the sender; one rule for the whole list, never by each message's own folder."""
     result: dict[str, bool] = {}
     for message in messages:
-        address = contact_address(message.folder in to_folders, message.recipient_addresses, message.recipients, message.sender_address, message.sender)
+        address = contact_address(recipients_first, message.recipient_addresses, message.recipients, message.sender_address, message.sender)
         result[message.store_id] = bool(address) and address in known
     return result
 
 
-def _by_contact(engine: Engine, mailbox: Mailbox, newest_first: list[IndexedMessage], contacts_first: bool) -> list[IndexedMessage]:
+def _by_contact(engine: Engine, newest_first: list[IndexedMessage], contacts_first: bool, recipients_first: bool) -> list[IndexedMessage]:
     """The messages from a contact first or last, newest first within each part. The index does not know the contacts, so all messages are sorted here."""
-    contact = from_contacts(mailbox, newest_first, contact_address_set(engine))
+    contact = from_contacts(newest_first, contact_address_set(engine), recipients_first)
     return sorted(newest_first, key=lambda message: contact[message.store_id], reverse=contacts_first)  # a stable sort: newest first stays within each part
 
 
@@ -738,7 +746,7 @@ def message_list(engine: Engine, parameters: ListParameters) -> ListResult:
             rows = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         elif parameters.sort == CONTACT_SORT:
             everything = mailbox.index.page(folder, SortField.DATE, True, 0, total, parameters.unread_only)
-            rows = _by_contact(engine, mailbox, everything, not parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
+            rows = _by_contact(engine, everything, not parameters.oldest_first, shows_recipients(mailbox, folder))[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         elif parameters.tag:
             only = SearchFilter(unread=True if parameters.unread_only else None, tag=parameters.tag)
             rows = mailbox.index.search("", folder, only, parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first)
@@ -784,7 +792,7 @@ def _ordered_ids(engine: Engine, mailbox: Mailbox, folder: tuple[str, ...], sort
         return [store_id for store_id, _, _ in mailbox.index.ordered(folder=folder, sort=_sort_field(sort), descending=not oldest_first)]
     times = mailbox.timed(folder)
     everything = mailbox.index.page(folder, SortField.DATE, True, 0, mailbox.index.count(folder))
-    ordered = _by_snooze(everything, times, oldest_first) if times is not None and sort != CONTACT_SORT else _by_contact(engine, mailbox, everything, not oldest_first)
+    ordered = _by_snooze(everything, times, oldest_first) if times is not None and sort != CONTACT_SORT else _by_contact(engine, everything, not oldest_first, shows_recipients(mailbox, folder))
     return [message.store_id for message in ordered]
 
 
@@ -991,7 +999,7 @@ def message_search(engine: Engine, parameters: SearchParameters) -> tuple[Messag
             found = _by_snooze(everything, times, parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         elif parameters.sort == CONTACT_SORT:
             everything = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), 0, EVERYTHING, SortField.DATE, True)
-            found = _by_contact(engine, mailbox, everything, not parameters.oldest_first)[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
+            found = _by_contact(engine, everything, not parameters.oldest_first, shows_recipients(mailbox, None if parameters.subfolders else folder))[max(0, parameters.offset):max(0, parameters.offset) + max(0, parameters.limit)]
         else:
             found = mailbox.index.search(parameters.query, folder, _search_filter(parameters, mailbox), parameters.offset, parameters.limit, _sort_field(parameters.sort), not parameters.oldest_first)
         return _rows(mailbox, found, times)

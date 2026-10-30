@@ -6,7 +6,7 @@ from datetime import datetime
 import string
 
 from chrono_mail.core import Folder, FolderRole, shown_name
-from chrono_mail.engine.commands_mail import CONTACT_SORT, LATER, timed_only, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, neighbours, not_heard, with_headings, _day, _rows, contact_address_set, date_bounds, from_contacts, group_of
+from chrono_mail.engine.commands_mail import CONTACT_SORT, LATER, timed_only, EVERYTHING, LocateResult, MessageRow, PlacesResult, leave_out, neighbours, not_heard, with_headings, _day, _rows, contact_address_set, date_bounds, from_contacts, group_of, RECIPIENT_VIEWS
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.schedule import SNOOZE_GROUPS, snooze_group
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -15,9 +15,10 @@ from chrono_mail.index import SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 4.2.430"
+__version__ = "commands_combined.py 4.2.432"
 
 # --- Version history ----------------------------------------------------
+# v4.2.432: the Contact sort of a Favorites view judges every row by the person it shows (RECIPIENT_VIEWS)
 # v4.2.430: to_shown merged by the row's own value
 # v4.2.429: the sort order to_shown (From / To for mail one sent, D-295)
 # v4.2.426: Favorites > Snoozed, Scheduled and Outbox carry when each message leaves (comes back, is sent) in their first rows too, and sort
@@ -224,7 +225,7 @@ def gather(engine: Engine, parameters: CombinedParameters, want: int | None, gro
                 if want is not None:
                     rows = mailbox.index.search(parameters.query, folder.path, filters, 0, EVERYTHING if contact or timed else want, sort, descending)
                     if contact:  # the index does not know the contacts: every message is looked at
-                        found.from_contact.update(((account, store_id), yes) for store_id, yes in from_contacts(mailbox, rows, known).items())
+                        found.from_contact.update(((account, store_id), yes) for store_id, yes in from_contacts(rows, known, view in RECIPIENT_VIEWS).items())
                     found.rows.extend(replace(row, account=account) for row in _rows(mailbox, rows, times))
                 if groups and timed:  # the groups of its folder: when each message leaves, never in the index
                     everything = rows if rows is not None else mailbox.index.search(parameters.query, folder.path, filters, 0, EVERYTHING, SortField.DATE, True)

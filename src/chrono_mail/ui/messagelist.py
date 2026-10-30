@@ -26,9 +26,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.429"
+__version__ = "messagelist.py 4.2.432"
 
 # --- Version history ----------------------------------------------------
+# v4.2.432: a message that changed where it is moves to its new place in the sort, under its heading, keeping the selection (D-146)
 # v4.2.429: the group headings of to_shown (From / To for mail one sent, D-295)
 # v4.2.426: the time column is Send at in Favorites > Scheduled and Outbox too
 # v4.2.417: the group headings of the people columns and of Account (D-291, D-292)
@@ -262,6 +263,13 @@ class MessageListModel(QAbstractTableModel):
         self._arrivals_held: int = 0  # while above 0 (an Undo runs) messages that come in are gathered, not placed: placed in one step after
         self._after_arrivals: list[Callable[[], None]] = []  # what waits until every message that came in has its place (after_arrivals)
         self._placing: dict[str, MessageRow] | None = None  # the messages whose places are being asked (one question at a time)
+        self._resorting: dict[str, None] = {}  # keys of messages of the view that changed where they are, in the order heard: their places are asked together
+        self._parked: set[str] = set()  # those of them whose place waits for a message the list does not hold yet: asked at the next change
+        self._order_changes: int = 0  # counts the times messages left the order or a new order came: a place given by one that left is asked again
+        self._facts_heard: int = 0  # counts the facts this view heard: one heard while a places question was out may have made its answer old
+        self._resort_when_placed: set[str] = set()  # keys that changed while their arrival's place was being asked: asked again once placed
+        self._resort_planned: bool = False
+        self._resort_asked: set[str] | None = None  # the keys whose new places are being asked (one question at a time)
         self._seen: dict[str, int] = {}  # per mailbox: the number of the last fact heard (the engine counts only what came before it, D-152)
         self.selected_rows: Callable[[], list[int]] = lambda: []  # the rows selected in the window and its current row (a new order keeps them)
         self.shown_rows: Callable[[], list[int]] = lambda: []  # the rows on screen (a view fetched again brings their rows with it)
@@ -387,6 +395,10 @@ class MessageListModel(QAbstractTableModel):
         self._was_kept.clear()
         self._arriving.clear()
         self._placing = None
+        self._resorting.clear()
+        self._parked.clear()
+        self._resort_when_placed.clear()
+        self._resort_asked = None
         self.settled = spec is None or (self.settled and spec == self._spec and self._display_rows == 0)  # an empty view reloaded stays settled; one with messages waits for them
         self._changed_while_loading = False
         self.beginResetModel()
@@ -632,11 +644,14 @@ class MessageListModel(QAbstractTableModel):
             self._fetch(page * PAGE_SIZE)
         if self._arriving:
             self._take_in()  # what came in while the order was on its way
+        self._unpark()
+        self._plan_resort()  # what changed while the order was on its way: placed again in the order that came
 
     def _set_order(self, spec: ViewSpec, order: ViewOrder, keys: list[str], keep_rows: bool) -> None:
         """The state of an order answer (call between the begin and end of a model change)."""
         self._spec = spec
         self._order = MessageOrder(keys, order.folders)
+        self._order_changes += 1
         self._complete = order.complete
         self._total, self._unread_total = order.total, order.unread_total
         self._unread = {key for key, unread in zip(keys, order.unread, strict=True) if unread}
@@ -1119,6 +1134,7 @@ class MessageListModel(QAbstractTableModel):
         spec = self._spec
         if spec is None or not self._concerns(spec, mailbox):
             return
+        self._facts_heard += 1
         if self._open:
             self._log.append(change)  # applied again to the answers on their way
         if not self._complete and self._touches_view(change):
@@ -1132,6 +1148,7 @@ class MessageListModel(QAbstractTableModel):
         self._flush_leaving()  # every fact in the order it came
         fetch = self._folder_changes_view(change)
         self._follow(change)
+        self._unpark()  # the list changed: a place that waited for a message may be known now
         if fetch:
             self.refetch_wanted.emit()  # many folders deleted at once give one fetch, not one each
 
@@ -1205,6 +1222,7 @@ class MessageListModel(QAbstractTableModel):
             row = change.row
             if row is not None and self._row_of(key) is not None:
                 self._replace(key, self._held(row, mailbox))
+            self._resort(key)  # what it is sorted by may have changed (an edited send time, subject or size)
         elif kind == "removed":
             self._take_out(key, change.was_unread)
         elif kind == "moved":
@@ -1392,6 +1410,7 @@ class MessageListModel(QAbstractTableModel):
             self._stay.discard(key)  # back in the folder it was kept in (a failed action, Undo), it is kept again
             self._was_kept[key] = self._order.folder_of(key) or ""
         self._order.remove(key)
+        self._order_changes += 1
         self._forget(key)
         self._unread.discard(key)
         self._asked.discard(key)
@@ -1526,6 +1545,7 @@ class MessageListModel(QAbstractTableModel):
                 return
             released.append(True)
             self._arrivals_held -= 1
+            self._plan_resort()  # what changed while an Undo held what came in
             if not self._arrivals_held and self._arriving and not self._arrival_planned:
                 self._arrival_planned = True
                 QTimer.singleShot(0, self, self._take_in)
@@ -1605,8 +1625,16 @@ class MessageListModel(QAbstractTableModel):
                         continue
                 else:
                     place = len(self._order)
-                self._insert(place, key, row, group_keys[number] if group_keys else "", group_names[number] if group_names else "")
+                group_key, group_name = group_keys[number] if group_keys else "", group_names[number] if group_names else ""
+                provisional = bool(before) and self._still_moving(self._key(before_mailboxes[number] if number < len(before_mailboxes) else "", before))
+                if provisional:
+                    group_key, group_name = self._group_here(place, group_key, group_name)  # counted where it sits for now
+                self._insert(place, key, row, group_key, group_name)
+                if provisional or key in self._resort_when_placed:
+                    self._resort_when_placed.discard(key)
+                    self._resort(key)  # placed by a message whose own move is not done, or changed while its place was asked: asked again
             self.took_in.emit()
+            self._unpark()  # placed: a place that waited for one of them is known now
             if self._arriving:
                 self._take_in()  # what came in meanwhile, with one question
             self._arrivals_done()
@@ -1674,6 +1702,186 @@ class MessageListModel(QAbstractTableModel):
         spec = self._spec
         counts.insert(place, (key, group_name(spec.sort, name) if spec is not None else name, 1))
         return True
+
+    def _resort(self, key: str) -> None:
+        """A message of the view changed where it is: its place may be another now (the time it is sent, its subject, its size). The
+        engine is asked where it stands, together with the others that changed in the same moment, and the row moves there (D-146)."""
+        if key not in self._order:
+            if self._placing is not None and key in self._placing:
+                self._resort_when_placed.add(key)  # its place is being asked from what it was: asked again once it is in the list
+            return
+        self._resorting[key] = None
+        self._parked.discard(key)
+        self._plan_resort()
+
+    def _plan_resort(self) -> None:
+        """Ask the places of what changed at the next pass of the event loop (once however often this is called)."""
+        if self._resorting and not self._resort_planned:
+            self._resort_planned = True
+            QTimer.singleShot(0, self, self._ask_resort)
+
+    def _unpark(self) -> None:
+        """Something changed in the list (a fact, messages placed): the messages whose place waited for a message the list did not hold
+        are asked again, once."""
+        if self._parked:
+            self._parked.clear()
+            self._plan_resort()
+
+    def _ask_resort(self) -> None:
+        """Ask the new places of the messages that changed, in one question. They wait while an order is on its way (asked when it came),
+        while the order is not complete, while an Undo holds what comes in, and while all of them wait for a message the list does not hold
+        yet (asked again at the next change of the list: never asked over and over for the same answer). One question at a time."""
+        self._resort_planned = False
+        spec = self._spec
+        if spec is None or self._resort_asked is not None or self._ordering is not None or not self._complete or self._arrivals_held:
+            return
+        for key in [key for key in self._resorting if key not in self._order]:
+            del self._resorting[key]
+        if not self._resorting or self._parked >= self._resorting.keys():
+            return
+        keys = list(self._resorting)
+        self._resorting.clear()
+        self._parked.clear()
+        asked = self._resort_asked = set(keys)
+        asked_stay = frozenset(self._stay)
+        asked_changes = (self._order_changes, self._facts_heard)
+        view = self._view
+
+        def again() -> None:
+            for key in keys:
+                self._resorting.setdefault(key, None)
+            self._plan_resort()
+
+        def located(result: PlacesResult) -> None:
+            if view != self._view or self._resort_asked is not asked:
+                return
+            self._resort_asked = None
+            if self._ordering is not None or self._spec != spec or not self._stay <= asked_stay:  # another order or sort came meanwhile, or a
+                again()  # message the list holds was kept meanwhile (read while shown, D-149) and the answer left it out: asked again
+                return
+            if not result.known:
+                self.rearrange(self._spec)  # what changed is no longer known one by one: the order is asked once
+                return
+            moves: list[tuple[str, int, str, str, str]] = []
+            for number, key in enumerate(keys):
+                position = result.positions[number] if number < len(result.positions) else None
+                if not isinstance(position, int):
+                    continue  # no longer in the view: its own fact takes it out
+                before = result.before[number] if number < len(result.before) else ""
+                mailbox = result.before_mailboxes[number] if number < len(result.before_mailboxes) else ""
+                group_key = result.group_keys[number] if result.group_keys else ""
+                group_name = result.group_names[number] if result.group_names else ""
+                moves.append((key, position, self._key(mailbox, before) if before else "", group_key, group_name))
+            self._move_to_places(moves, left_meanwhile=(self._order_changes, self._facts_heard) != asked_changes)
+            self._plan_resort()
+
+        def failed(error: ChronoMailError) -> None:
+            if view != self._view or self._resort_asked is not asked:
+                return  # another view is shown: its own questions are its own
+            self._resort_asked = None
+            for key in keys:
+                self._resorting.setdefault(key, None)
+                self._parked.add(key)  # kept, asked again at the next change of the list (never over and over for the same failure)
+            self._failed(error)
+
+        messages = tuple(split_key(key)[1] for key in keys)
+        heard = tuple(f"{mailbox}={number}" for mailbox, number in self._seen.items())  # only what came before these facts is counted (D-152)
+        order = self._order_parameters(spec, True, [])
+        if isinstance(order, CombinedOrderParameters):
+            mailboxes = tuple(split_key(key)[0] for key in keys)
+            combined = carried(order, CombinedPlacesParameters, messages=messages, mailboxes=mailboxes, headings=True, heard=heard)
+            self._backend.ask(MESSAGE_COMBINED_PLACES, combined, located, failed, owner=self)
+        else:
+            self._backend.ask(MESSAGE_PLACES, carried(order, PlacesParameters, messages=messages, headings=True, heard=heard), located, failed, owner=self)
+
+    def _group_here(self, place: int, group_key: str, name: str) -> tuple[str, str]:
+        """The heading of the message at this place of the list as it stands now (the given one when there is none): a message put before
+        it for now is counted where it sits, so the headings' counts keep matching the list until its true place comes."""
+        if not self._group_counts or place >= len(self._order):
+            return group_key, name
+        found_key, found_name, _ = self._group_counts[self._group_index(place)]
+        return found_key, found_name
+
+    def _still_moving(self, key: str) -> bool:
+        """Whether a message of the list waits for its own move (or its question is out): the engine names it at its new place, the list
+        still holds it at its old one, so a place given by it is not sure yet."""
+        return key in self._resorting or (self._resort_asked is not None and key in self._resort_asked)
+
+    def _move_to_places(self, moves: list[tuple[str, int, str, str, str]], left_meanwhile: bool = False) -> None:
+        """Messages of the view go to their new places (key, its place in the engine's order, the key of the message it now comes before
+        or "" for the end, the key and name of its heading), in one layout change: every index Qt holds moves with its message, so the
+        selection and the current message stay with their messages; a heading that empties goes, a new one comes. All of them are taken
+        out first and put back in the engine's order, so two that now come before the same message stand in the right order. Nothing
+        changes when every one is at its place already. left_meanwhile: a fact came, messages left the order or a new order came while the
+        question was out, so a message named that is not held may have left meanwhile: asked again at once (each such ask needs a new fact, so
+        it never repeats by itself); otherwise the change that brings or takes it is still to come: asked again when the list changes.
+        One placed before a message whose own move is not done is counted into the heading that message is under now, as it stands now;
+        its place and heading are asked again together with it."""
+        wanted: list[tuple[str, int, str, str, str]] = []
+        for move in moves:
+            key, _, before, _, _ = move
+            if key not in self._order or before == key:
+                continue
+            if before and before not in self._order:
+                self._resorting[key] = None  # the message it comes before is not held: it left meanwhile (asked again at once), or it has not
+                if not left_meanwhile:  # come yet (asked again when the list changes)
+                    self._parked.add(key)
+                continue
+            wanted.append(move)
+            if before and self._still_moving(before):
+                self._resorting[key] = None  # placed by a message whose own move is not done: asked again together with it
+        wanted.sort(key=lambda move: move[1])
+        moving = {move[0] for move in wanted}
+
+        def next_kept(key: str) -> str:
+            """The message after this one that is not moving ("" at the end)."""
+            return next((each for _, each in self._order.walk(self._order.position(key) + 1, 1) if each not in moving), "")
+
+        def in_place(key: str, before: str, group_key: str) -> bool:
+            same_group = not self._group_counts or self._group_counts[self._group_index(self._order.position(key))][0] == group_key
+            return next_kept(key) == before and same_group
+
+        now = sorted(moving, key=self._order.position)
+        if all(in_place(key, before, group_key) for key, _, before, group_key, _ in wanted) and now == [move[0] for move in wanted]:
+            return
+        self.layoutAboutToBeChanged.emit()
+        held = self.persistentIndexList()
+        held_places: list[tuple[str | None, int | None]] = []
+        for index in held:
+            position = self.message_position(index.row()) if index.isValid() else None
+            held_places.append((None if position is None else self._order.key_at(position), position))
+        folders: dict[str, str] = {}
+        for key in now[::-1]:  # the last first: the group of each is found by its place before anything moved
+            position = self._order.position(key)
+            folders[key] = self._order.folder_of(key)
+            if self._group_counts:
+                number = self._group_index(position)
+                old_key, old_name, count = self._group_counts[number]
+                if count <= 1:
+                    del self._group_counts[number]
+                else:
+                    self._group_counts[number] = (old_key, old_name, count - 1)
+            self._order.remove(key)
+        for key, _, before, group_key, name in wanted:
+            place = self._order.position(before) if before else len(self._order)
+            if before and self._still_moving(before):
+                group_key, name = self._group_here(place, group_key, name)
+            if self._group_counts is not None:
+                self._count_into_group(place, group_key, name)
+            self._order.insert(place, key, folders[key])
+        self._layout_groups()
+        moved: list[QModelIndex] = []
+        for index, (key, position) in zip(held, held_places, strict=True):
+            if key is not None:
+                shown = self.display_row(self._order.position(key))
+            elif position is not None:  # a place whose message is not known yet: the known ones moved among themselves only
+                shown = self.display_row(position)
+            else:
+                shown = -1
+            moved.append(self.index(shown, index.column()) if 0 <= shown < self._display_rows else QModelIndex())
+        self.changePersistentIndexList(held, moved)
+        self.layoutChanged.emit()
+        self.groups_changed.emit()
 
     def _in_folder(self, mailbox: str, folder: str) -> list[str]:
         """The keys of the messages of the view that are in this folder of this mailbox."""
@@ -1801,6 +2009,7 @@ class MessageListModel(QAbstractTableModel):
             self._total = max(0, self._total - len(gone))
             self._unread_total = max(0, self._unread_total - sum(1 for key in gone if key in self._unread))
         self._order = self._order.without(gone)
+        self._order_changes += 1
         for key in gone:
             row = self._rows.get(key)
             if row is not None:

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QAbstractItemView, QHBoxLayout, QMenu, QToolButton
 from chrono_mail.engine.changes import Change, MessageRow
 from chrono_mail.engine.commands_addressbook import CONTACT_ADDRESSES, AddressesParameters, ContactAddress
 from chrono_mail.engine.commands_combined import EVERYWHERE
+from chrono_mail.engine.commands_mail import RECIPIENT_VIEWS
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.columnfit import MINIMUM_ICON
 from chrono_mail.ui.columns import SAVED_LABEL
@@ -23,15 +24,15 @@ from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelist import LOST_PLACES, PAGE_SIZE, MessageListModel, ViewSpec, with_days
 from chrono_mail.ui.messageorder import split_key
 from chrono_mail.ui.messagelistview import MessageListView
-from chrono_mail.ui.models import HERE_ONLY_ROLES
 from chrono_mail.ui.prefs import InUse, Remembered
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.429"
+__version__ = "messagelistpane.py 4.2.432"
 
 # --- Version history ----------------------------------------------------
+# v4.2.432: the folders that show their recipients are the engine's list (RECIPIENT_VIEWS), one rule with the Contact sort (D-295)
 # v4.2.429: From / To where it shows the recipients sorts by exactly what it shows (to_shown, D-295)
 # v4.2.426: the From / To column sorts by what it shows (engine_sort: the recipients where it shows them, else the sender), never
 #           together with From; Send at and Snoozed until in Favorites > Scheduled, Outbox and Snoozed too (timed_kind); the entry of
@@ -80,7 +81,7 @@ SORT_CHOICES: tuple[tuple[str, str], ...] = (
     ("folder", "Folder"), ("conversation", "Messages in conversation"), ("preview", "Preview"), ("snoozed", "Snoozed until"),
     ("account", "Account"),  # the account that received the message (D-292)
 )
-RECIPIENT_ROLES: tuple[str, ...] = ("sent", "drafts", *HERE_ONLY_ROLES)  # the folders (and Favorites) where From / To shows who a message went to
+RECIPIENT_ROLES: tuple[str, ...] = RECIPIENT_VIEWS  # the folders (and Favorites) where From / To shows who a message went to: the engine's, so the Contact sort judges the same
 MENU_SORTS: dict[str, str] = {"sender_full": "sender", "sender_address": "sender", "to_names": "to", "to_addresses": "to", "to_shown": "to"}  # Sender and To, however shown (D-291)
 
 
