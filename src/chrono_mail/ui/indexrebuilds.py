@@ -18,9 +18,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "indexrebuilds.py 4.2.428"
+__version__ = "indexrebuilds.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: Run in background has no hover text while its (i) shows (D-294)
 # v4.2.428: at start, after the rebuilds and fillings, every place's record of who received the mail is tidied (index.tidy-records, D-292)
 # v4.2.424: an (i) after Run in background while it is greyed, saying why (D-294)
 # v4.0.375: the rebuild window is built from its Qt Designer form (ui/forms/rebuild_window.ui, D-276); the account's name is plain text (D-259)
@@ -80,8 +81,7 @@ class RebuildWindow(QDialog):
         self.bar.setValue(min(done, total))
         self.count_label.setText(f"{done:,} of {total:,}")
         self.background_button.setEnabled(usable)  # greyed, never hidden
-        self.background_button.setToolTip("" if usable else BACKGROUND_TIP)
-        self.background_info.explain(self.background_button.text(), "" if usable else BACKGROUND_TIP)  # D-294
+        self.background_info.explain(self.background_button.text(), "" if usable else BACKGROUND_TIP, self.background_button)  # D-294: one or the other
 
     @override
     def reject(self) -> None:

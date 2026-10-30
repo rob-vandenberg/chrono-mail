@@ -20,9 +20,10 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 4.2.391"
+__version__ = "test_ui_import.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: Import's reason is in its (i), not in a hover text
 # v4.2.391: while the exports are read the bar moves as a busy bar and the (i) notice shows, Import grey with its hover text; both stop at the answer
 # v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
 # v4.2.389: the paths of the last import come back in a new window and Browse opens there; a path that is gone is left out;
@@ -218,10 +219,10 @@ def test_import_waits_until_the_exports_are_read(qtbot: QtBot, setup: Setup, mon
     dialog.scan()
     assert not dialog.import_button.isEnabled() and dialog.busy.text.text() == importdialog.READING_EXPORTS
     assert dialog.progress.maximum() == 0 and not dialog.progress.isHidden() and not dialog.busy.isHidden()
-    assert dialog.import_button.toolTip() == importdialog.WAIT_FOR_EXPORTS
+    assert dialog.import_info.reason == importdialog.WAIT_FOR_EXPORTS and dialog.import_button.toolTip() == ""  # the (i) says why (D-294)
     held[0](scanned(setup, dialog))
     assert dialog.import_button.isEnabled() and dialog.progress.maximum() == 7
-    assert dialog.progress.isHidden() and dialog.busy.isHidden() and dialog.import_button.toolTip() == ""
+    assert dialog.progress.isHidden() and dialog.busy.isHidden() and dialog.import_info.reason == ""
 
 
 def test_a_reading_answer_during_the_import_changes_nothing(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:

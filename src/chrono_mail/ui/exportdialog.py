@@ -30,9 +30,10 @@ from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "exportdialog.py 4.2.424"
+__version__ = "exportdialog.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: Rules has no hover text while its (i) shows, and after an export it is usable again only where its (i) holds no reason (D-294)
 # v4.2.424: an (i) after Rules while it is greyed, saying why (D-294)
 # v4.2.420: a comparison is not wrapped in bool() again
 # v4.2.391: while the accounts are listed and while an export prepares (before its first count): a moving busy bar, an (i) icon and a
@@ -139,8 +140,7 @@ class ExportDialog(QDialog):
             item.setCheckState(Qt.CheckState.Checked)
         self.rules.setEnabled(choices.rules_available)
         self.rules.setChecked(choices.rules_available)
-        self.rules.setToolTip("" if choices.rules_available else choices.rules_reason)
-        self.rules_info.explain(self.rules.text(), "" if choices.rules_available else choices.rules_reason)  # D-294
+        self.rules_info.explain(self.rules.text(), "" if choices.rules_available else choices.rules_reason, self.rules)  # D-294: one or the other
         self._show_state()
 
     def _browse(self) -> None:
@@ -208,7 +208,7 @@ class ExportDialog(QDialog):
         for widget in self._inputs():
             widget.setEnabled(True)
         if was_running:
-            self.rules.setEnabled(self.rules.toolTip() == "")
+            self.rules.setEnabled(self.rules_info.reason == "")  # usable only where nothing keeps it greyed (its (i) holds the reason, D-294)
         self.stop_button.setEnabled(False)
         self.busy.stop(self.progress)
         self._show_state()

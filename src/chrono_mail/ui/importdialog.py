@@ -38,9 +38,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.424"
+__version__ = "importdialog.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: Accounts, Rules, Signatures and Import have no hover text while their (i) shows (D-294)
 # v4.2.424: an (i) after Accounts, Rules and Signatures while greyed, and after Import while it waits for the reading, saying why (D-294)
 # v4.2.404: the "Import again" box shows its text as plain text, as every message box (RV-167, D-259)
 # v4.2.391: while the exports or data files are read: a moving busy bar, an (i) icon and "A large mail folder can take a while." in the accent
@@ -402,8 +403,7 @@ class ImportDialog(QDialog):
         self.data_file_later_info: tuple[InfoMark, ...] = tuple(forms.part(form, InfoMark, f"{box.objectName()}Info") for box in self.data_file_later)
         for box, info in zip(self.data_file_later, self.data_file_later_info, strict=True):
             box.setEnabled(False)  # greyed, never hidden (OR-15): these are read on the Windows computer itself
-            box.setToolTip(WINDOWS_ONLY)
-            info.explain(box.text(), WINDOWS_ONLY)  # D-294
+            info.explain(box.text(), WINDOWS_ONLY, box)  # D-294: the (i) says why, no hover text beside it
         self.data_files: QLineEdit = forms.part(form, QLineEdit, "dataFiles")
         self._picked: tuple[str, ...] = ()  # the files chosen with Browse, as the picker gave them
         forms.part(form, QPushButton, "browseDataFiles").clicked.connect(self._browse_data_files)
@@ -521,14 +521,12 @@ class ImportDialog(QDialog):
         """A reading runs: a busy bar, the (i) notice in the accent colour, Import grey with when it can be used."""
         self.summary.setText("")
         self.busy.start(text, self.progress)
-        self.import_button.setToolTip(wait)
-        self.import_info.explain(self.import_button.text(), wait)
+        self.import_info.explain(self.import_button.text(), wait, self.import_button)
 
     def _read(self) -> None:
         """The reading answered or failed (or there is nothing to read): back to normal."""
         self.busy.stop(self.progress)
-        self.import_button.setToolTip("")
-        self.import_info.explain(self.import_button.text(), "")
+        self.import_info.explain(self.import_button.text(), "", self.import_button)
 
     def _scanned(self, number: int, result: ScanResult) -> None:
         if self._running or number != self._scan_number:
@@ -567,8 +565,7 @@ class ImportDialog(QDialog):
             if available and not box.isEnabled():
                 box.setChecked(True)
             box.setEnabled(available and not self._running)
-            box.setToolTip("" if available else reason or WINDOWS_ONLY)
-            self.data_file_later_info[self.data_file_later.index(box)].explain(box.text(), "" if available else reason or WINDOWS_ONLY)
+            self.data_file_later_info[self.data_file_later.index(box)].explain(box.text(), "" if available else reason or WINDOWS_ONLY, box)
 
     def _scan_failed(self, number: int, error: ChronoMailError) -> None:
         if self._running or number != self._scan_number:

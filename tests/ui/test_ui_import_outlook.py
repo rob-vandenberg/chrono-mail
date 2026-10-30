@@ -17,9 +17,10 @@ from tests.test_import_outlook_profile import machine  # noqa: F401 - the fixtur
 from tests.ui.world import wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import_outlook.py 4.2.388"
+__version__ = "test_ui_import_outlook.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: the data file's later choices: the reason in their (i), no hover text
 # v4.2.388: a data file imported before: Import asks first; Import again says nothing new came in
 # v4.2.386: on the Windows computer with a readable profile: Accounts, Rules and Signatures offered, its data files listed without asking
 # v4.2.385: the items that got their tags later in the end summary
@@ -67,7 +68,8 @@ def test_the_data_file_program_has_its_own_page_with_greyed_choices(qtbot: QtBot
     assert [box.text() for box in dialog._data_file_types()] == ["Mail", "Calendar", "Contacts", "Tasks", "Tags (categories)"]
     assert all(box.isChecked() and box.isEnabled() for box in dialog._data_file_types())
     assert [box.text() for box in dialog.data_file_later] == ["Accounts", "Rules", "Signatures"]
-    assert all(not box.isEnabled() and box.toolTip() == WINDOWS_ONLY and box.isVisibleTo(dialog) for box in dialog.data_file_later)  # greyed, never hidden
+    assert all(not box.isEnabled() and box.toolTip() == "" and box.isVisibleTo(dialog) for box in dialog.data_file_later)  # greyed, never hidden
+    assert all(info.reason == WINDOWS_ONLY for info in dialog.data_file_later_info)  # the (i) says why, no hover text (D-294)
     assert not dialog.import_button.isEnabled() and dialog.summary.text() == importdialog.DATA_FILE_HINT
     dialog.sources.setCurrentItem(dialog.source_item)
     assert dialog.pages.currentWidget() is dialog.exports_page and dialog.summary.text().startswith("Choose the exports")

@@ -11,15 +11,17 @@ from chrono_mail.engine import commands_updates
 from chrono_mail.protocols.releases import DownloadInterrupted, GitHubBusy, GitHubUnreachable
 from chrono_mail.ui import updates
 from chrono_mail.ui.accountdialog import AccountDialog
+from chrono_mail.ui.infomark import InfoMark
 from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from chrono_mail.ui.updates import AboutWindow, UpdateAvailableWindow, UpdateDownloadedWindow
 from tests.fakegithub import FakeGitHub
 from tests.ui.world import Dialogs, World, build_world, record_opened_urls, reject_dialog, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_updates.py 4.2.429"
+__version__ = "test_ui_updates.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: the update tick's reason is in its (i), not in a hover text
 # v4.2.429: Restart Chrono Mail or Close Chrono Mail; after an update Chrono Mail closes without a question, unsaved messages go to Drafts
 # v4.2.427: Linux after an install: Restart Chrono Mail or Close, both close; Cancel closes at once; an update waits while the window is
 #           minimized or a question is open; About says what went wrong; the release link only to github.com
@@ -189,8 +191,10 @@ def test_a_copy_run_from_its_project_folder_hides_the_button_and_greys_the_tick(
     qtbot.addWidget(dialog)
     tick = dialog.findChild(QCheckBox, "updateCheck")
     assert tick is not None and tick.isChecked()  # on by default
-    wait(qtbot, lambda: tick.toolTip() == commands_updates.NOT_FROM_AN_INSTALLER)
-    assert not tick.isEnabled()
+    mark = dialog.findChild(InfoMark, "updateCheckInfo")
+    assert mark is not None
+    wait(qtbot, lambda: mark.reason == commands_updates.NOT_FROM_AN_INSTALLER)
+    assert not tick.isEnabled() and tick.toolTip() == ""  # the (i) says why, the tick has no hover text (D-294)
 
 
 def test_an_update_found_while_the_window_is_hidden_waits_for_it(world: World, qtbot: QtBot, github: FakeGitHub, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

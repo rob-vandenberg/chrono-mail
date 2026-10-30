@@ -58,9 +58,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.424"
+__version__ = "settingsdialog.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: the options of Settings > General that show an (i) have no hover text while it shows (D-294)
 # v4.2.424: General: an (i) after the start at login, the update tick and the three ticks of the notification area while greyed, saying why; the line about a missing notification area is gone (D-294)
 # v4.2.419: General: Automatically check for updates, greyed with its reason in a copy that is not updated through an installer (D-293)
 # v4.2.402: General: Start Chrono Mail when I log in, with the window open or minimized; set on OK, the window waits for it (D-284)
@@ -411,7 +412,7 @@ class SettingsDialog(QDialog):
         if not tray_available:
             for widget, name in ((self.tray, "trayInfo"), (self.close_to_tray, "closeToTrayInfo"), (self.notifications, "notificationsInfo")):
                 widget.setEnabled(False)
-                part(page, InfoMark, name).explain(widget.text(), NO_TRAY)  # only where it is true (D-294)
+                part(page, InfoMark, name).explain(widget.text(), NO_TRAY, widget)  # only where it is true; no hover text beside it (D-294)
         self.tray.toggled.connect(self._tray_toggled)
         self._tray_toggled(self.tray.isChecked())
         self.start_at_login = part(page, QCheckBox, "startAtLogin")
@@ -456,9 +457,7 @@ class SettingsDialog(QDialog):
         """The start at login as the system has it: the tick, and the window choice while it is on."""
         self.autostart_now = info
         if not info.available:
-            for widget in (self.start_at_login, self.start_window):
-                widget.setToolTip(AUTOSTART_NOT_HERE)
-            self.start_at_login_info.explain(START_AT_LOGIN, AUTOSTART_NOT_HERE)
+            self.start_at_login_info.explain(START_AT_LOGIN, AUTOSTART_NOT_HERE, self.start_at_login, self.start_window)  # the (i) says why, no hover text (D-294)
             return
         self.start_at_login.setChecked(info.on)
         if info.on:
@@ -467,17 +466,14 @@ class SettingsDialog(QDialog):
         self.start_window.setEnabled(info.on)
 
     def _update_unknown(self, error: ChronoMailError) -> None:
-        self.update_check_info.explain(self.update_check.text(), f"Whether this copy can be updated could not be read: {error}")
+        self.update_check_info.explain(self.update_check.text(), f"Whether this copy can be updated could not be read: {error}", self.update_check)
 
     def _update_shown(self, setup: UpdateSetup) -> None:
         self.update_check.setEnabled(setup.available)
-        self.update_check.setToolTip(setup.reason)
-        self.update_check_info.explain(self.update_check.text(), "" if setup.available else setup.reason)
+        self.update_check_info.explain(self.update_check.text(), "" if setup.available else setup.reason, self.update_check)  # the (i) says why (D-294)
 
     def _autostart_unknown(self, error: ChronoMailError) -> None:
-        for widget in (self.start_at_login, self.start_window):
-            widget.setToolTip(f"The start at login could not be read: {error}")
-        self.start_at_login_info.explain(START_AT_LOGIN, f"The start at login could not be read: {error}")
+        self.start_at_login_info.explain(START_AT_LOGIN, f"The start at login could not be read: {error}", self.start_at_login, self.start_window)
 
     def autostart_wanted(self) -> AutostartParameters | None:
         """What OK must change in the start at login; None when nothing changes (or it is not known or not available)."""

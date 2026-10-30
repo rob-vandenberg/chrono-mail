@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QPointF, QSettings, Qt
 from PySide6.QtGui import QEnterEvent
-from PySide6.QtWidgets import QApplication, QLabel, QWidget
+from PySide6.QtWidgets import QApplication, QCheckBox, QLabel, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine import commands_updates
@@ -21,9 +21,10 @@ from tests.enginefactory import make_engine
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_infomark.py 4.2.424"
+__version__ = "test_ui_infomark.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: an option has no hover text while its (i) shows, its own back afterwards (D-294)
 # v4.2.424: Initial: the (i) after a greyed option says why, at a hover and in a small window; the eight places that have one (D-294)
 
 
@@ -104,10 +105,22 @@ def backend(tmp_path: Path) -> Generator[Backend]:
 def test_export_s_rules_say_why_they_are_greyed(qtbot: QtBot, backend: Backend, tmp_path: Path) -> None:
     dialog = ExportDialog(backend, memory=Remembered(QSettings(str(tmp_path / "window.ini"), QSettings.Format.IniFormat)))
     qtbot.addWidget(dialog)
-    wait(qtbot, lambda: dialog.account_list.count() > 0 or dialog.rules.toolTip() != "")
     rules = info(dialog, "rulesInfo")
-    assert rules.reason == ("" if dialog.rules.isEnabled() else dialog.rules.toolTip())
-    assert rules.isHidden() is dialog.rules.isEnabled()
+    wait(qtbot, lambda: dialog.account_list.count() > 0 or rules.reason != "")
+    assert (rules.reason == "") is dialog.rules.isEnabled() and rules.isHidden() is dialog.rules.isEnabled()
+    assert dialog.rules.isEnabled() or dialog.rules.toolTip() == ""  # one or the other, never both (D-294)
+
+
+def test_an_option_has_no_hover_text_while_its_info_mark_shows_and_gets_its_own_back(qtbot: QtBot) -> None:
+    option = QCheckBox("Option")
+    option.setToolTip("What it does")
+    mark = InfoMark()
+    qtbot.addWidget(option)
+    qtbot.addWidget(mark)
+    mark.explain("Option", "Why it is greyed", option)
+    assert option.toolTip() == "" and mark.reason == "Why it is greyed"
+    mark.explain("Option", "", option)
+    assert option.toolTip() == "What it does"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="these are read on Windows itself")

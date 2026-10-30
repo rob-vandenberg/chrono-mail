@@ -9,15 +9,17 @@ from chrono_mail.ui.icons import accent_icon
 from chrono_mail.ui.plainboxes import plain_tip
 
 # --- Version ------------------------------------------------------------
-__version__ = "infomark.py 4.2.424"
+__version__ = "infomark.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: the options an (i) explains have no hover text while it shows, their own back when it goes (the owner, D-294)
 # v4.2.424: Initial: the (i) after a greyed option, which says why: at once at a hover, in a small window at a click or Enter (D-294)
 
 
 class InfoMark(QToolButton):
     """The (i) right after an option that is greyed for a reason. It is shown only while there is a reason and is never greyed itself: a hover
-    shows the reason at once, a click (or Enter or Space, Tab reaches it) opens it in a small window (D-294). The option keeps its own hover text."""
+    shows the reason at once, a click (or Enter or Space, Tab reaches it) opens it in a small window (D-294). While it is shown the options it
+    explains have no hover text: one or the other, never both (the owner); when it goes, their own hover text comes back."""
 
     def __init__(self, parent: QWidget | None = None, keep_place: bool = False) -> None:
         super().__init__(parent)
@@ -36,13 +38,20 @@ class InfoMark(QToolButton):
             self.setSizePolicy(policy)
         self.clicked.connect(self.open)
         self.setVisible(False)
+        self._own: list[tuple[QWidget, str]] = []  # the options it explains, each with its own hover text (kept while the (i) shows)
 
-    def explain(self, title: str, reason: str) -> None:
-        """The option this (i) belongs to and why it is greyed; no reason: the (i) is not shown."""
+    def explain(self, title: str, reason: str, *options: QWidget) -> None:
+        """The option this (i) belongs to and why it is greyed; no reason: the (i) is not shown. The options it explains lose their hover text
+        while it shows and get their own back when it goes (D-294)."""
         self.title = title
         self.reason = reason
         self.setToolTip(plain_tip(reason))
         self.setVisible(bool(reason))
+        for option in options:
+            if all(known is not option for known, _ in self._own):
+                self._own.append((option, option.toolTip()))
+        for option, own in self._own:
+            option.setToolTip("" if reason else own)
 
     def open(self) -> None:
         """The reason in a small window with OK (plain text: a reason may hold a server's or a file's words)."""

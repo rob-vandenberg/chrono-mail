@@ -14,9 +14,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import Dialogs, World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_settings.py 4.2.424"
+__version__ = "test_ui_settings.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: the start at login's reason is in its (i), not in a hover text
 # v4.2.424: the ticks of the notification area sit in rows of their own with their (i) (D-294)
 # v4.2.405: the row test of the start at login is Pyrefly-clean (a position of the form is typed as object)
 # v4.2.402: General: Start Chrono Mail when I log in, with the window open or minimized (D-284)
@@ -441,4 +442,4 @@ def test_a_profile_greys_the_start_at_login(world: World, qtbot: QtBot) -> None:
     world.engine.directories = dataclasses.replace(world.engine.directories, profile_name="demo")
     dialog = opened_with_the_start_at_login(world, qtbot)
     assert not dialog.start_at_login.isEnabled() and not dialog.start_window.isEnabled()
-    assert dialog.start_at_login.toolTip() == "Not available for this copy of Chrono Mail"
+    assert dialog.start_at_login_info.reason == "Not available for this copy of Chrono Mail" and dialog.start_at_login.toolTip() == ""  # D-294

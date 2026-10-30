@@ -28,9 +28,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import px_for, wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 4.2.424"
+__version__ = "paletteeditor.py 4.2.431"
 
 # --- Version history ----------------------------------------------------
+# v4.2.431: the + of a read-only calendar and the Delete of its own colour have no hover text while their (i) shows
 # v4.2.424: an (i) after the greyed Delete of the calendar's own colour, and after + of a read-only calendar, saying why; a read-only calendar greys each row's parts, never the (i) (D-294)
 # v4.0.378: the editor and a colour's row are built from their Qt Designer forms (ui/forms/palette_editor.ui, palette_colour.ui, D-276); the
 #           rows are made at their place, and a colour added comes after the others in the Tab order (it came after Save and Cancel)
@@ -95,10 +96,8 @@ class ColourRow(QWidget):
         self.delete_button.setIcon(theme_icon("edit-delete", "user-trash"))
         own = entry.colour_id == OWN_COLOUR_ID
         self.delete_button.setEnabled(not own)  # the calendar's own colour can be changed, never deleted
-        if own:
-            self.delete_button.setToolTip(OWN_COLOUR_STAYS)
         self.delete_info: InfoMark = part(form, InfoMark, "deleteInfo")
-        self.delete_info.explain("Delete this colour", OWN_COLOUR_STAYS if own else "")  # D-294
+        self.delete_info.explain("Delete this colour", OWN_COLOUR_STAYS if own else "", self.delete_button)  # D-294: no hover text beside the (i)
         self._show_colour()
         self.colour_button.clicked.connect(self._pick)
         self.delete_button.clicked.connect(lambda: editor.remove_row(self))
@@ -142,7 +141,7 @@ class PaletteEditor(QDialog):
         if calendar.read_only:  # a read-only calendar's colours are shown, not changed; the (i) of a row stays usable (D-294)
             for widget in (self.add_button, self.save_button, *(control for row in self.rows for control in (row.colour_button, row.name, row.delete_button))):
                 widget.setEnabled(False)
-            part(form, InfoMark, "addInfo").explain("Event colours", READ_ONLY_COLOURS)
+            part(form, InfoMark, "addInfo").explain("Event colours", READ_ONLY_COLOURS, self.add_button)  # D-294: no hover text beside the (i)
 
     def _holder(self, parent: QWidget) -> QWidget:
         """The list of colours with a row each, made at its place in the form (so Tab reaches the rows before the buttons below them)."""
