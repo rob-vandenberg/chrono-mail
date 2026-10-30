@@ -28,9 +28,10 @@ from tests.enginefactory import make_engine
 from tests.fakegithub import FakeGitHub
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_updates.py 4.2.427"
+__version__ = "test_engine_updates.py 4.2.435"
 
 # --- Version history ----------------------------------------------------
+# v4.2.435: the Windows setup is named chrono-mail_<version>_x64_setup.exe; the old name is neither offered nor installed
 # v4.2.427: the stand-in's release pages are on github.com; the list reader takes what lets a download stop while it reads
 # v4.2.419: Initial: update.check, update.skip, update.download and update.install against a stand-in for GitHub (D-293)
 
@@ -77,7 +78,7 @@ def test_the_newest_release_with_this_computer_s_installer_is_offered(monkeypatc
     engine = installed(monkeypatch, tmp_path, github)
     github.publish("4.2.417", {f"chrono-mail_4.2.417{DEB}": b"old"})
     github.publish("4.2.419", {f"chrono-mail_4.2.419{DEB}": b"deb", "chrono-mail_4.2.419_x86_64.rpm": b"rpm"})
-    github.publish("4.2.420", {"chrono-mail_4.2.420_x86_64.rpm": b"rpm", "chrono-mail_4.2.420_setup.exe": b"exe"})  # no .deb yet
+    github.publish("4.2.420", {"chrono-mail_4.2.420_x86_64.rpm": b"rpm", "chrono-mail_4.2.420_x64_setup.exe": b"exe"})  # no .deb yet
     github.publish("4.2.421", {f"chrono-mail_4.2.421{DEB}": b"draft"}, draft=True)
     github.publish("4.2.422", {f"chrono-mail_4.2.422{DEB}": b"pre"}, prerelease=True)
     found = check(engine)
@@ -232,7 +233,7 @@ def test_only_an_installer_of_chrono_mail_for_this_computer_is_installed(monkeyp
 
 def test_windows_starts_the_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, github: FakeGitHub) -> None:
     engine = installed(monkeypatch, tmp_path, github, kind="windows")
-    github.publish("4.2.419", {"chrono-mail_4.2.419_setup.exe": b"setup"})
+    github.publish("4.2.419", {"chrono-mail_4.2.419_x64_setup.exe": b"setup"})
     started: list[Path] = []
     monkeypatch.setattr(commands_updates, "_start_setup", started.append)
     path = REGISTRY.ask(engine, UPDATE_DOWNLOAD, DownloadParameters("4.2.419", str(tmp_path))).path
@@ -275,3 +276,15 @@ def test_a_cancel_that_comes_before_its_download_began_still_stops_it(monkeypatc
         REGISTRY.ask(engine, UPDATE_DOWNLOAD, DownloadParameters("4.2.419", str(tmp_path / "Downloads"), "t2"))
     another = REGISTRY.ask(engine, UPDATE_DOWNLOAD, DownloadParameters("4.2.419", str(tmp_path / "Downloads"), "t3"))  # a new download is not stopped
     assert Path(another.path).read_bytes() == b"deb"
+
+
+def test_windows_looks_for_the_x64_setup_only(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, github: FakeGitHub) -> None:
+    """The owner (4.2.435): the setup is chrono-mail_<version>_x64_setup.exe; a release with only the old name has no installer for it."""
+    engine = installed(monkeypatch, tmp_path, github, kind="windows")
+    github.publish("4.2.419", {"chrono-mail_4.2.419_setup.exe": b"old name"})
+    github.publish("4.2.420", {"chrono-mail_4.2.420_x64_setup.exe": b"setup"})
+    found = check(engine)
+    assert (found.outcome, found.version, found.file_name) == ("available", "4.2.420", "chrono-mail_4.2.420_x64_setup.exe")
+    (tmp_path / "chrono-mail_4.2.419_setup.exe").write_bytes(b"x")
+    with pytest.raises(UsageError):
+        REGISTRY.ask(engine, UPDATE_INSTALL, InstallParameters(str(tmp_path / "chrono-mail_4.2.419_setup.exe")))

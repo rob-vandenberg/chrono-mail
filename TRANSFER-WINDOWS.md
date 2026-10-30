@@ -11,7 +11,7 @@ Vandenberg. The repository is `https://github.com/rob-vandenberg/chrono-mail` (b
 
 - **Development happens on the Kubuntu machine.** A Claude Code session there writes the code, runs the tests and pushes.
 - **You, on the Windows computer, do the Windows part:** you pull the pushed code from GitHub, run and test Chrono Mail on
-  Windows, build the Windows installer `chrono-mail_<version>_setup.exe`, test it, and (only when the owner says so)
+  Windows, build the Windows installer `chrono-mail_<version>_x64_setup.exe`, test it, and (only when the owner says so)
   attach it to the GitHub release of that version.
 - **You may have to write code** (for example a fix that only shows up on Windows, or the Windows build recipe). The
   same rules apply to you as to the Kubuntu session: see section 2. Coordinate with the owner, so that the two machines
@@ -181,7 +181,7 @@ powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 - `packaging\build_windows.ps1` makes a virtual environment in `build\windows`, installs Chrono Mail and **Nuitka 4.2.2**
   (pinned: 4.3 crashes PySide6 programs at startup, Nuitka issue 4081), compiles the program into
   `build\windows\chrono-mail.dist`, and runs Inno Setup with `packaging\chrono-mail.iss` to make
-  `dist\chrono-mail_<version>_setup.exe`. `build\` and `dist\` are git-ignored.
+  `dist\chrono-mail_<version>_x64_setup.exe`. `build\` and `dist\` are git-ignored.
 - `packaging\chrono_mail_main.py` is the start of the packaged program: it points Qt to the HTML viewer's helper
   `QtWebEngineProcess.exe` next to the program. Keep it; without it the viewer cannot start, or borrows a helper of a
   Qt installed elsewhere.
@@ -190,7 +190,7 @@ powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 - **Test** as PACKAGING.md section 4.4 says (Start menu entry, start, the HTML viewer uses its own helper, an HTML
   message, uninstall), ideally also on a clean Windows without Python (for example Windows Sandbox).
 - **Attach** to the release page only when the owner says so (milestone versions, after testing):
-  `gh release upload <version> dist\chrono-mail_<version>_setup.exe --repo rob-vandenberg/chrono-mail --clobber`.
+  `gh release upload <version> dist\chrono-mail_<version>_x64_setup.exe --repo rob-vandenberg/chrono-mail --clobber`.
   The release page of 0.5.127 already exists with the .deb and the .rpm:
   `https://github.com/rob-vandenberg/chrono-mail/releases/tag/0.5.127`.
 

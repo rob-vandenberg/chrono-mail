@@ -1,13 +1,14 @@
 # --- Version ------------------------------------------------------------
-# build_windows.ps1 2.4.322
+# build_windows.ps1 4.2.435
 # --- Version history ----------------------------------------------------
+# v4.2.435: the setup is named chrono-mail_<version>_x64_setup.exe
 # v2.4.322: The AES code of pycryptodomex (Cryptodome), which pyzipper uses for a protected backup (D-244)
 # v1.5.257: The Public Suffix List file of publicsuffixlist (the main domain of a link, D-215)
 # v0.5.131: The program's own package information, so that it knows its version (About said "version unknown")
 # v0.5.129: First run on Windows: Inno Setup in Program Files (x86) is found; time-zone files once; only the parts of win32ctypes the password store uses
 # v0.5.127: Initial: the Windows program folder and setup.exe (written on Linux; first run on the Windows machine)
 #
-# Builds dist\chrono-mail_<version>_setup.exe: Nuitka makes the program folder (Python, Qt and the program; nothing needs
+# Builds dist\chrono-mail_<version>_x64_setup.exe: Nuitka makes the program folder (Python, Qt and the program; nothing needs
 # to be installed by the user), Inno Setup makes the installer with a Start menu entry and an uninstaller. Run from any
 # folder in PowerShell: powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 # Needs Python 3.14 (the py launcher) and Inno Setup 6. See packaging\PACKAGING.md.
@@ -64,4 +65,4 @@ $Iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\I
 if (-not $Iscc) { throw "Inno Setup 6 (ISCC.exe) was not found" }
 & $Iscc "/DVersion=$Version" "/DSource=$Build\chrono-mail.dist" "/O$Root\dist" "$Root\packaging\chrono-mail.iss"
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
-Write-Host "Built: $Root\dist\chrono-mail_${Version}_setup.exe"
+Write-Host "Built: $Root\dist\chrono-mail_${Version}_x64_setup.exe"

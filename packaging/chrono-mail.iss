@@ -1,6 +1,7 @@
 ; --- Version ------------------------------------------------------------
-; chrono-mail.iss 4.2.419
+; chrono-mail.iss 4.2.435
 ; --- Version history ----------------------------------------------------
+; v4.2.435: the setup is named chrono-mail_<version>_x64_setup.exe
 ; v4.2.419: an update from Chrono Mail runs this setup silently; it starts Chrono Mail again when done, as the person (D-293)
 ; v4.2.402: the uninstaller removes the start at login of the person who uninstalls (D-284)
 ; v0.5.127: Initial: the Windows installer (Inno Setup 6), made by packaging\build_windows.ps1
@@ -27,7 +28,7 @@ DefaultDirName={autopf}\Chrono Mail
 DefaultGroupName=Chrono Mail
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
-OutputBaseFilename=chrono-mail_{#Version}_setup
+OutputBaseFilename=chrono-mail_{#Version}_x64_setup
 SetupIconFile=..\src\chrono_mail\ui\resources\chrono-mail.ico
 UninstallDisplayIcon={app}\chrono-mail.exe
 UninstallDisplayName=Chrono Mail

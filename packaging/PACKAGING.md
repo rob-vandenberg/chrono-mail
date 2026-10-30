@@ -10,7 +10,7 @@ release nothing without the owner's "Proceed"; report every problem instead of w
 |---|---|---|
 | `dist/chrono-mail_<version>_amd64.deb` | the Linux machine (Kubuntu) | `packaging/package_linux.sh` |
 | `dist/chrono-mail_<version>_x86_64.rpm` | the Linux machine (Kubuntu) | `packaging/package_linux.sh` |
-| `dist\chrono-mail_<version>_setup.exe` | the Windows machine (the Windows computer) | `packaging\build_windows.ps1` |
+| `dist\chrono-mail_<version>_x64_setup.exe` | the Windows machine (the Windows computer) | `packaging\build_windows.ps1` |
 
 `<version>` is the version in `pyproject.toml`. All three are built from the **same pushed version** (the same git tag),
 then attached to the GitHub release of that version (section 5).
@@ -107,7 +107,7 @@ git checkout <version>                                          # the same tag t
 powershell -ExecutionPolicy Bypass -File packaging\build_windows.ps1
 ```
 
-The result is `dist\chrono-mail_<version>_setup.exe`. The setup installs in `C:\Program Files\Chrono Mail` (or, if the
+The result is `dist\chrono-mail_<version>_x64_setup.exe` (named `_setup.exe` before 4.2.435). The setup installs in `C:\Program Files\Chrono Mail` (or, if the
 person chooses, for themselves only), makes a Start menu entry (and a desktop icon if ticked) and registers an
 uninstaller under Settings > Apps. Its `AppId` in `packaging/chrono-mail.iss` must never change: Windows recognises
 updates by it.
@@ -153,7 +153,7 @@ a locally built setup.exe). Never automatic.
 
 - Linux: `packaging/upload_release.sh` attaches `dist/chrono-mail_<version>_*` to the release of that version (it makes
   the release page from the tag when it does not exist yet). Files with the same name are replaced.
-- Windows: `gh release upload <version> dist\chrono-mail_<version>_setup.exe --repo rob-vandenberg/chrono-mail --clobber`
+- Windows: `gh release upload <version> dist\chrono-mail_<version>_x64_setup.exe --repo rob-vandenberg/chrono-mail --clobber`
   (the Linux machine usually makes the release page first; if it does not exist yet, `gh release create <version>
   --verify-tag --repo rob-vandenberg/chrono-mail` makes it).
 

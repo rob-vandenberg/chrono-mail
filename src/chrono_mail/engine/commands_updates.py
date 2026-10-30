@@ -22,9 +22,10 @@ from chrono_mail.protocols.releases import Release, ReleaseFile, download, fetch
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_updates.py 4.2.427"
+__version__ = "commands_updates.py 4.2.435"
 
 # --- Version history ----------------------------------------------------
+# v4.2.435: the Windows setup is named chrono-mail_<version>_x64_setup.exe
 # v4.2.427: Cancel and quitting stop a download at once (its connection is shut, never a wait for a slow server), also while it reads the
 #           list of releases: interrupt_downloads; each download writes its own half file
 # v4.2.424: the texts of why a copy is not updated: the owner's words
@@ -33,7 +34,7 @@ __version__ = "commands_updates.py 4.2.427"
 # Each installed copy is updated by the installer it came from: the Windows setup, or the Linux .deb or .rpm. A check reads GitHub's list
 # of releases and offers the newest version above this one that carries that installer. It never connects by itself: the window asks for it
 # with a Refresh that went online, at most once a day, or when the person clicks Check for updates (D-293).
-FILE_ENDINGS: dict[str, str] = {"windows": "_setup.exe", "deb": "_amd64.deb", "rpm": "_x86_64.rpm"}
+FILE_ENDINGS: dict[str, str] = {"windows": "_x64_setup.exe", "deb": "_amd64.deb", "rpm": "_x86_64.rpm"}
 PROGRESS_WHAT: str = "Downloading the update"
 NOT_FROM_AN_INSTALLER: str = "This copy is running from the project folder. It cannot be updated via the installer."
 NOT_FROM_A_PACKAGE: str = "This copy was not installed with an installer. It cannot be updated via the installer."
