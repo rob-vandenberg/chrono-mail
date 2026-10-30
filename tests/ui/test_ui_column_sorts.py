@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from dataclasses import replace
 from typing import override
 
@@ -8,16 +9,19 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.changes import MessageRow
 from chrono_mail.ui import messagecolumns
+from chrono_mail.ui.columns import cell_text, person_address
 from chrono_mail.ui.columns import SNOOZED_COLUMN
 from chrono_mail.ui.columnsetup import SORT_COLUMNS, ColumnSetup, read_setups, setups_text
 from chrono_mail.ui.currentview import CurrentView, EntryKind
 from tests.ui.world import World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_column_sorts.py 4.2.429"
+__version__ = "test_ui_column_sorts.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: From / To shows the person the index keeps; the Contact column takes the first address
 # v4.2.429: From / To in Sent sorts by its first recipient as shown (to_shown)
 # v4.2.426: Initial: a column sorts by itself (From / To never shares a sort with From, the owner); Favorites > Scheduled, Snoozed and
 #           Outbox show their time column; the last column's tick is greyed in the header menu (OR-15); Sorted by's ticked entry changes
@@ -149,3 +153,23 @@ def test_from_to_shows_the_recipients_in_favorites_sent_and_drafts_as_in_their_f
 def test_a_sort_saved_since_every_column_has_its_own_is_never_converted() -> None:
     text = setups_text({"f": (ColumnSetup(("from_to", "subject"), "sender"), "sent")})
     assert json.loads(text)["f"]["format"] == 2 and read_setups(text)["f"][0].sort == "sender"
+
+
+def test_from_to_shows_the_person_the_index_keeps_and_contact_takes_the_first_address() -> None:
+    row = MessageRow(
+        "1" * 32, "Sent", "Odd name", "Me <me@example.com>", datetime(2026, 3, 4, tzinfo=UTC), 10, (), False, "",
+        "zed@example.org <zed@example.org>, Doe, John <john@example.org>", recipient_addresses="zed@example.org, john@example.org", to_shown="zed@example.org",
+    )
+    assert cell_text("from_to", row, True) == "zed@example.org"  # never (unknown) for a name that looks like an address (D-295)
+    assert person_address(row, True) == "zed@example.org" and person_address(row, False) == "me@example.com"  # its sender, read as before while not filled in
+
+
+def test_an_escaped_quote_inside_a_quoted_name_never_splits_it() -> None:
+    from chrono_mail.core import displayed_address, written_address
+    from chrono_mail.ui.addresscompleter import split_last_address
+    from chrono_mail.ui.composer import parse_recipients
+
+    written = written_address('Bob "x, y', "p@q.org")
+    assert parse_recipients(f"{written}, ann@example.org") is not None and len(parse_recipients(f"{written}, ann@example.org") or []) == 2
+    assert split_last_address(f"{written}, an") == (f"{written},", "an")
+    assert displayed_address(written_address("Doe, John", "john@example.org")) == "Doe, John <john@example.org>"  # shown without the quotes

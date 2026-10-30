@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag, PaletteColour
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 4.2.417"
+__version__ = "changes.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: MessageRow.to_shown: the person From / To shows for mail one sent, as the index keeps it (D-295)
 # v4.2.417: MessageRow: the people columns (From (email), To (name), To (email), D-291) and the account that received the message (D-292)
 # v2.2.314: "changed" also for a message in the Outbox whose waiting time changed (B-21)
 # v2.0.281: RebuildStep: how far the index of one place where mail is kept is rebuilt or filled in (D-229)
@@ -58,6 +59,7 @@ class MessageRow:
     recipient_names: str = ""  # To (name): each recipient's name, else the address
     recipient_addresses: str = ""  # To (email): each recipient's address, else the name
     received_by: str = ""  # Account: the name of the account that received the message, as it is shown ("" when not known, D-292)
+    to_shown: str = ""  # From / To for mail one sent: the person it shows, as the index keeps it (D-295); "" while not filled in yet
 
 
 @dataclass(frozen=True, slots=True)

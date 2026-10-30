@@ -14,9 +14,10 @@ from chrono_mail.index.entry import header_block
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.2.429"
+__version__ = "commands_folders.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: the filling in from what the index held is gone: the person From / To shows is read from each message's headers
 # v4.2.429: index.fill-sent reads only the headers when that is all an upgrade needs, and steps aside while a command of the person runs;
 #           the filling in, a rebuild and the tidying run behind the person's work
 # v4.2.428: index.tidy-records: once at start per place, the record of who received the mail is tidied when more than half is gone (D-292)
@@ -222,7 +223,6 @@ def index_prepare(engine: Engine, parameters: AccountParameters) -> IndexResult:
 
 
 FILL_BATCH: int = 100
-FILL_FROM_INDEX_BATCH: int = 5000  # rows filled from what the index holds per step: quick, so larger
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,13 +252,6 @@ def index_fill_sent(engine: Engine, parameters: AccountParameters) -> FillResult
                 state = index.sent_filling()
                 if state is None:
                     break
-                if index.fill_from_index():  # an upgrade from format 15: nothing to read from the messages
-                    done = index.fill_shown(FILL_FROM_INDEX_BATCH)
-                    filled += done
-                    engine.rebuilding(RebuildStep(account_id, state[0] + done, state[1], usable=True))
-                    if done < FILL_FROM_INDEX_BATCH:
-                        break
-                    continue
                 rows = index.sent_to_fill(FILL_BATCH)
                 headers_only = index.fill_from_headers()  # only what the headers say is new: never the whole message taken apart
                 moments: list[tuple[int, IndexEntry | None]] = []

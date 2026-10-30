@@ -12,7 +12,7 @@ from typing import Literal
 
 from chrono_mail.pim.times import local_zone, moment_at
 from chrono_mail.config import AccountSettings, ServerRole
-from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag, MessageRef
+from chrono_mail.core import AccountKind, written_address, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_addressbook import AddressesParameters, contact_addresses
 from chrono_mail.engine.import_common import fingerprint_of_raw, known_messages
@@ -36,9 +36,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.2.429"
+__version__ = "commands_mail.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: addresses shown to the window written so they can be read back (written_address); a row carries to_shown; the Contact sort takes the first address from the address columns, never the names read back
 # v4.2.429: the sort order to_shown: From / To for mail one sent, exactly as it shows (D-295)
 # v4.2.418: the account a message is sent from, and the account that downloads a message, are recorded with it (D-292)
 # v4.2.417: Reply's account by the one rule of engine/receiving.py; a POP3 check tells the index which account downloaded each message (D-292)
@@ -134,7 +135,7 @@ def _rows(mailbox: Mailbox, messages: Iterable[IndexedMessage], snoozed: dict[st
             message.has_attachments, message.preview, message.recipients, sizes.get(message.thread_key, 1),
             snoozed_until=moment_at(times[message.store_id]) if message.folder in TIMED and message.store_id in times else None,
             tags=message.tags, sent=message.sent, sender_address=message.sender_address, recipient_names=message.recipient_names,
-            recipient_addresses=message.recipient_addresses, received_by=message.received_by,
+            recipient_addresses=message.recipient_addresses, received_by=message.received_by, to_shown=message.to_shown,
         )
         for message in found
     )
@@ -160,14 +161,34 @@ def contact_address_set(engine: Engine) -> frozenset[str]:
     return frozenset(entry.address for entry in contact_addresses(engine, AddressesParameters()))
 
 
+def contact_address(recipients_first: bool, recipient_addresses: str, recipients: str, sender_address: str, sender: str) -> str:
+    """The address (lower case) of the person a row shows, as the Contact column and the Contact sort take it: in Sent, Drafts, the Outbox and
+    Scheduled the first recipient, else (or without a recipient) the sender; from the address columns, and only while a row of an upgraded
+    index is not filled in yet from its text, as before."""
+    if recipients_first and (recipient_addresses or recipients):
+        return first_address(recipient_addresses) if recipient_addresses else _first_parsed(recipients)
+    return first_address(sender_address) if sender_address else _first_parsed(sender)
+
+
+def _first_parsed(text: str) -> str:
+    found = getaddresses([text])
+    return found[0][1].strip().lower() if found else ""
+
+
+def first_address(addresses: str) -> str:
+    """The first of the addresses an index row keeps joined by ", " (an address never holds one), in lower case; never read back as one
+    text of names and addresses (a name that looks like an address made that unreadable)."""
+    return addresses.split(", ", 1)[0].strip().lower()
+
+
 def from_contacts(mailbox: Mailbox, messages: list[IndexedMessage], known: frozenset[str]) -> dict[str, bool]:
     """store id -> whether the message is from a contact (in Sent, Drafts and Outbox: to a contact, the first recipient),
     as the Contact column shows it."""
     to_folders = {folder.path for folder in mailbox.folders() if folder.role in _RECIPIENT_ROLES or folder.role in (FolderRole.OUTBOX, FolderRole.SCHEDULED)}
     result: dict[str, bool] = {}
     for message in messages:
-        found = getaddresses([message.recipients if message.folder in to_folders and message.recipients else message.sender])
-        result[message.store_id] = bool(found) and found[0][1].strip().lower() in known
+        address = contact_address(message.folder in to_folders, message.recipient_addresses, message.recipients, message.sender_address, message.sender)
+        result[message.store_id] = bool(address) and address in known
     return result
 
 
@@ -822,7 +843,7 @@ def _check_id(message_id: str) -> str:
 
 
 def _shown(addresses: tuple[Address, ...]) -> tuple[str, ...]:
-    return tuple(f"{a.name} <{a.address}>" if a.name else a.address for a in addresses)
+    return tuple(written_address(a.name, a.address) for a in addresses)  # read back by the window: a name with a comma or an @ in quotes
 
 
 def _inline_images(parsed: ParsedMessage) -> tuple[tuple[InlineImage, ...], tuple[InlineImage, ...]]:

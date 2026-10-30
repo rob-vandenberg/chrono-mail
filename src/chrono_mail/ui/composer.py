@@ -47,9 +47,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.2.429"
+__version__ = "composer.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: an escaped quote inside a quoted name never ends it when the addresses are split
 # v4.2.429: save_and_close_quietly and close_for_quit: after an update Chrono Mail closes without a Cancel; what is not saved goes to Drafts first
 # v3.6.358: after a save only the attachments it took are marked as stored, at the places the save gives, in place; what was added or removed
 #           during the save stays so and still counts as a change; no reading the draft back; Save, Send and Discard asked while a save
@@ -92,9 +93,13 @@ def _split_addresses(text: str) -> list[str]:
     """Split on commas, semicolons and line breaks that are not inside quotes or angle brackets."""
     parts: list[str] = []
     current: list[str] = []
-    quoted = angle = False
+    quoted = angle = escaped = False
     for character in text:
-        if character == '"':
+        if escaped:
+            escaped = False  # the character after a backslash inside quotes is part of the name (written_address)
+        elif character == "\\" and quoted:
+            escaped = True
+        elif character == '"':
             quoted = not quoted
         elif character == "<" and not quoted:
             angle = True

@@ -15,9 +15,10 @@ from chrono_mail.ui.sections import CONTACTS
 from tests.ui.world import account_node, World, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_columns.py 3.6.360"
+__version__ = "test_ui_columns.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: the stand-in row has to_shown (the person From / To shows for mail one sent, D-295)
 # v3.6.360: the Delete icon test waits for the engine's delete, not only for the row (it leaves at the click since 3.6.353, D-266)
 # v2.0.280: Columns per folder (B-16): the standard columns of incoming mail have From; Sent starts with To and Sent; the widths are kept per folder; the one setup of earlier versions is handed over to incoming mail
 # v1.9.265: the header icons are checked in the program's own grey, with a tolerance for the soft edges (Qt's own grey is black: it passed without testing grey)
@@ -53,6 +54,7 @@ class Row:
     folder = "Inbox"
     thread_size = 3
     preview = "first words"
+    to_shown = ""  # not filled in yet: From / To reads the recipients as before
 
 
 def test_every_column_shows_something_sensible() -> None:

@@ -15,11 +15,13 @@ from chrono_mail.engine.undorecord import UndoRecorder
 from chrono_mail.mime import REPEAT_HEADER, SEND_AT_HEADER, Address, OutgoingMessage, ParsedMessage, build_message, parse_message, send_time, with_extra_headers
 from chrono_mail.store import MessageNotFoundError
 from chrono_mail.sync import send_and_file
+from chrono_mail.core import written_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 4.2.418"
+__version__ = "commands_schedule.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: a scheduled message's addresses written so the window can read them back
 # v4.2.418: the account a message is sent from is recorded with it in Sent (D-292)
 # v3.6.351: what follows a scheduled or repeating send the server took never makes it fail or be sent again (told_after_send); a
 #           scheduled reply that waits in the Outbox after a failed send keeps the message it answers (replies_to)
@@ -624,7 +626,7 @@ def mail_unschedule(engine: Engine, parameters: MessageParameters) -> DraftSaveR
 
 
 def _shown(addresses: tuple[Address, ...]) -> list[str]:
-    return [f"{a.name} <{a.address}>" if a.name else a.address for a in addresses]
+    return [written_address(a.name, a.address) for a in addresses]  # read back by the window: a name with a comma or an @ in quotes
 
 
 # --- snooze ------------------------------------------------------------------------------------------------------------------------------------

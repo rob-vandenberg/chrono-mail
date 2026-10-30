@@ -36,11 +36,13 @@ from chrono_mail.core.colours import MAIL_PAGE
 from chrono_mail.mime.linkdomain import leads_elsewhere
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
 from chrono_mail.ui.scale import px_for
+from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.2.396"
+__version__ = "reader.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: the From, To and Cc lines show the addresses as a person reads them (no quotes added for Reply)
 # v4.2.396: a right-click on a link of the message (HTML or plain text) offers Copy link address (the link fully encoded; not for a link within
 #           the message itself); on a picture that is a link too, after Open attachment and Save as…; in plain text Copy and Select All follow (D-281)
 # v3.6.357: linkify finds the addresses in the text as written, so a link in <...> or quotes stops at its closing character; an apostrophe belongs to the address unless it opened with one; punctuation that ends the sentence after an address is not part of it; a scheme in any case (CR-19)
@@ -529,9 +531,9 @@ class ReaderWidget(QWidget):
         self._hover("")  # the link under the pointer went with the message before
         self._header.show()
         self._subject.setText(shown.subject or "(no subject)")
-        senders: tuple[str, ...] = shown.sender
-        recipients: tuple[str, ...] = shown.to
-        copies: tuple[str, ...] = shown.cc
+        senders: tuple[str, ...] = tuple(displayed_address(text) for text in shown.sender)  # the quotes Reply needs are left out on screen
+        recipients: tuple[str, ...] = tuple(displayed_address(text) for text in shown.to)
+        copies: tuple[str, ...] = tuple(displayed_address(text) for text in shown.cc)
         who = senders[0] if senders else "(unknown sender)"
         lines = [f"<b>{html.escape(who)}</b>"]
         muted = self.palette().color(QPalette.ColorRole.PlaceholderText).name()

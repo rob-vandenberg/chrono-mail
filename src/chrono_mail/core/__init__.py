@@ -16,7 +16,7 @@ from chrono_mail.core.errors import (
 from chrono_mail.core.flags import MessageFlag, flags_from_maildir_suffix, flags_to_maildir_suffix
 from chrono_mail.core.folder import Folder, FolderRole
 from chrono_mail.core.message import MessageRef
-from chrono_mail.core.names import shown_name
+from chrono_mail.core.names import displayed_address, shown_name, written_address
 from chrono_mail.core.pim import (
     LOOK_FOLLOWS,
     LOOK_KEPT,
@@ -32,9 +32,10 @@ from chrono_mail.core.pim import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 2.0.281"
+__version__ = "__init__.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: Export written_address
 # v2.0.281: Export RebuildAborted
 # v1.8.263: Export CredentialEntries, CredentialFailure and SERVICE_NAME (R-16)
 # v1.1.221: Export CollectionLook and its states, is_colour, palette_problem
@@ -79,6 +80,8 @@ __all__ = [
     "MessageFormatError",
     "MessageRef",
     "shown_name",
+    "written_address",
+    "displayed_address",
     "ProtocolError",
     "ServerSettings",
     "RebuildAborted",

@@ -7,9 +7,10 @@ from typing import Protocol
 from chrono_mail.core import MessageFlag
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.2.429"
+__version__ = "model.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: IndexEntry.to_shown and IndexedMessage.to_shown: the person From / To shows, from the message's own addresses
 # v4.2.429: SortField.TO_SHOWN: From / To where it shows the recipients sorts by exactly what it shows (D-295)
 # v4.2.428: Receiving.holding (one write for a whole download)
 # v4.2.418: Receiving.flush: the receiver writes what it decided after the index let go of its write lock (D-292)
@@ -146,6 +147,7 @@ class IndexEntry:
     recipient_addresses: str = ""  # each recipient's address, else the name (To (email))
     delivered_to: tuple[str, ...] = ()  # the addresses the receiving server wrote it delivered to (not kept: they decide received_by)
     received_by: str = ""  # the id of the account that received the message ("": the index's receiver decides, D-292)
+    to_shown: str = ""  # the person From / To shows for mail one sent: the first recipient's name, else its address; no recipient: the sender's (D-295)
 
 
 class Receiving(Protocol):
@@ -199,6 +201,7 @@ class IndexedMessage:
     recipient_names: str = ""  # To (name)
     recipient_addresses: str = ""  # To (email)
     received_by: str = ""  # the name of the account that received it, as it is shown ("" when not known, D-292)
+    to_shown: str = ""  # the person From / To shows for mail one sent (D-295); "" while an upgrade has not filled it in yet
 
 
 @dataclass(frozen=True, slots=True)

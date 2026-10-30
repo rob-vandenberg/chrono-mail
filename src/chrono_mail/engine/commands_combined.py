@@ -12,13 +12,13 @@ from chrono_mail.engine.schedule import SNOOZE_GROUPS, snooze_group
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.index import SearchFilter, SortField
-from chrono_mail.index.index import to_shown
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 4.2.429"
+__version__ = "commands_combined.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: to_shown merged by the row's own value
 # v4.2.429: the sort order to_shown (From / To for mail one sent, D-295)
 # v4.2.426: Favorites > Snoozed, Scheduled and Outbox carry when each message leaves (comes back, is sent) in their first rows too, and sort
 #           and group by it (sort order snoozed), as their folders do
@@ -135,7 +135,7 @@ def _row_key(row: MessageRow, sort: str) -> tuple[bool, float] | int | str:
     if sort == "sender":
         return shown_name(row.sender).translate(_NO_CASE)  # as the index sorts it: the name the From column shows
     if sort == "to_shown":
-        return to_shown(row.recipients, row.sender).translate(_NO_CASE)  # as the index sorts it: the person From / To shows (D-295)
+        return row.to_shown.translate(_NO_CASE)  # as the index sorts it: the person From / To shows (D-295)
     return str(getattr(row, _TEXT_OF_SORT[sort])).translate(_NO_CASE)
 
 

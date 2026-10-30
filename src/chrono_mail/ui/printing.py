@@ -5,11 +5,13 @@ from PySide6.QtPrintSupport import QPrintDialog, QPrinter
 from PySide6.QtWidgets import QWidget
 
 from chrono_mail.engine.commands_export import TextResult
+from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "printing.py 1.9.275"
+__version__ = "printing.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: the From, To and Cc lines as a person reads them
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v0.0.22: Initial printing of a message
 
@@ -21,8 +23,8 @@ def print_document(text: TextResult) -> QTextDocument:
     so nothing is fetched from the internet and no script can run."""
     lines = [f"<h2 style='margin:0'>{html.escape(text.subject or '(no subject)')}</h2>", "<table style='margin-top:6px'>"]
     for label, value in (
-        ("From", ", ".join(text.sender)), ("To", ", ".join(text.to)),
-        ("Cc", ", ".join(text.cc)), ("Date", text.date),
+        ("From", ", ".join(map(displayed_address, text.sender))), ("To", ", ".join(map(displayed_address, text.to))),
+        ("Cc", ", ".join(map(displayed_address, text.cc))), ("Date", text.date),
         ("Attachments", ", ".join(text.attachments)),
     ):
         if value:

@@ -6,11 +6,13 @@ from typing import Literal
 
 from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, ParsedMessage
+from chrono_mail.core import written_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "compose.py 3.4.344"
+__version__ = "compose.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: a reply's and a forward's addresses written so they can be read back (a name with a comma or an @ in quotes)
 # v3.4.344: a long name is cut before its extension and never ends in a space or a dot after the cut ("x.exe " opened x.exe on Windows
 #           without the question for programs, RV-110)
 # v2.4.334: CONIN$, CONOUT$ and COM or LPT with ¹ ² ³ are Windows devices too (W11c)
@@ -67,7 +69,7 @@ class Draft:
 
 
 def _format(address: Address) -> str:
-    return f"{address.name} <{address.address}>" if address.name else address.address
+    return written_address(address.name, address.address)  # a name with a comma or an @ in quotes: Reply can read it back
 
 
 def _unique(addresses: list[Address], exclude: set[str]) -> tuple[str, ...]:

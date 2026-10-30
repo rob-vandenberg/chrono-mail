@@ -32,9 +32,10 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 4.2.428"
+__version__ = "mailbox.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: a row carries the person From / To shows (to_shown, D-295)
 # v4.2.428: a message that leaves Drafts, the Outbox or Scheduled unsent is no longer recorded: only a retrieval or a send fixes an account (the owner)
 # v4.2.418: a copy keeps the account that received the original through its properties (D-292)
 # v4.2.417: a row carries the people columns and the receiving account (D-291, D-292)
@@ -341,7 +342,7 @@ class Mailbox:
             message.store_id, "/".join(message.folder), message.subject, message.sender, message.date, message.size, flag_names(message.flags),
             message.has_attachments, message.preview, message.recipients, size, account=self.store.account_id, snoozed_until=snoozed_until, tags=message.tags,
             sent=message.sent, sender_address=message.sender_address, recipient_names=message.recipient_names,
-            recipient_addresses=message.recipient_addresses, received_by=message.received_by,
+            recipient_addresses=message.recipient_addresses, received_by=message.received_by, to_shown=message.to_shown,
         )
 
     def timed(self, folder: tuple[str, ...] | None) -> dict[str, int] | None:

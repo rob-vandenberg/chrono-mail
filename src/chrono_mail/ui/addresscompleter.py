@@ -8,9 +8,10 @@ from chrono_mail.engine.commands_contacts import CONTACT_SUGGEST, SuggestParamet
 from chrono_mail.ui.backend import Backend
 
 # --- Version ------------------------------------------------------------
-__version__ = "addresscompleter.py 1.10.277"
+__version__ = "addresscompleter.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: an escaped quote inside a quoted name never ends it
 # v1.10.277: A contact group is suggested by its name; choosing it puts every member's address in the field (R-39)
 # v1.9.273: R-19: the suggestions are a typed call
 # v0.0.68: Address suggestion chosen with the arrow keys was entered twice
@@ -27,8 +28,13 @@ def split_last_address(text: str) -> tuple[str, str]:
     cut = 0
     quoted = False
     angled = False
+    escaped = False
     for position, character in enumerate(text):
-        if character == '"':
+        if escaped:
+            escaped = False  # the character after a backslash inside quotes is part of the name
+        elif character == "\\" and quoted:
+            escaped = True
+        elif character == '"':
             quoted = not quoted
         elif character == "<" and not quoted:
             angled = True

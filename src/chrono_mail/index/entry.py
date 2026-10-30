@@ -7,9 +7,10 @@ from chrono_mail.index.text import clean_preview, searchable_body
 from chrono_mail.mime import Address, ParsedMessage, delivery_addresses, parse_message, send_time
 
 # --- Version ------------------------------------------------------------
-__version__ = "entry.py 4.2.429"
+__version__ = "entry.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: to_shown: the person From / To shows, from the message's own addresses
 # v4.2.429: header_block: the headers alone, for a filling in that needs nothing else
 # v4.2.417: the sender's address, the recipients' names and addresses (each with the other as its fallback, D-291) and the delivery addresses (D-292)
 # v4.1.384: no other mail program named in a docstring (OR-10)
@@ -20,6 +21,13 @@ __version__ = "entry.py 4.2.429"
 # v0.0.14: the preview is cleaned of web addresses and decoration
 # v0.0.13: preview
 # v0.0.8: Initial index entries
+
+def _person_shown(message: ParsedMessage) -> str:
+    """The person From / To shows for mail one sent: the first recipient's name, else its address; without a recipient the sender's. From
+    the message's own addresses, never from a text read back (a name that looks like an address would make that unreadable, D-295)."""
+    people = (*message.to_addresses, *message.cc_addresses) or message.from_addresses[:1]
+    return _name_or_address(people[0]) if people else ""
+
 
 def header_block(raw: bytes) -> bytes:
     """The message's header block alone, up to and with its empty line (CRLF or LF, whichever comes first): what is read when only the headers
@@ -119,6 +127,7 @@ def entry_from_raw(
         recipient_names=_joined((*message.to_addresses, *message.cc_addresses), _name_or_address),
         recipient_addresses=_joined((*message.to_addresses, *message.cc_addresses), _address_or_name),
         delivered_to=delivery_addresses(raw),
+        to_shown=_person_shown(message),
     )
 
 

@@ -1,7 +1,8 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 4.2.429"
+__version__ = "schema.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: format 17: to_shown filled in again from the headers (16, 15 and 14), from each message's own addresses
 # v4.2.429: format 16: to_shown, the person the From / To column shows for mail one sent, with its sort index; 15 and 14 are filled in from
 #           the headers only (FILL_HEADERS_KEY)
 # v4.2.418: format 15: an index of format 14 is filled in once more (every message's receiving account recorded in its properties, D-292)
@@ -24,7 +25,7 @@ __version__ = "schema.py 4.2.429"
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 16  # 16: to_shown, the person the From / To column shows for mail one sent (its first recipient, else the sender), sorted by (D-295; 15 to 11 upgraded in place, filled in afterwards); 15: nothing new, but every message is filled in once more, so its receiving account is recorded with it (D-292); 14: the people columns and the receiving account (D-291, D-292; 13, 12 and 11 upgraded in place, filled in afterwards); 13: has_attachments by what the text shows (D-235; 12 and 11 upgraded in place, filled in afterwards); 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
+SCHEMA_VERSION: int = 17  # 17: to_shown filled in again from each message's own addresses (16 read them back from the joined recipients, which a name that looks like an address breaks); 16: to_shown, the person the From / To column shows for mail one sent (its first recipient, else the sender), sorted by (D-295; 15 to 11 upgraded in place, filled in afterwards); 15: nothing new, but every message is filled in once more, so its receiving account is recorded with it (D-292); 14: the people columns and the receiving account (D-291, D-292; 13, 12 and 11 upgraded in place, filled in afterwards); 13: has_attachments by what the text shows (D-235; 12 and 11 upgraded in place, filled in afterwards); 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
 FOLDER_SEPARATOR: str = "\x1f"
 SENT_FILL_KEY: str = "sent_filled_to"  # meta, after an upgrade in place: the row id up to which sent, has_attachments, the people columns and received_by were read from the messages; gone when all are done
 UPGRADE_FROM_11: tuple[str, ...] = (  # format 12 only adds the sent moment: the old index stays usable, sent is filled in afterwards (index.fill-sent)
@@ -42,9 +43,7 @@ UPGRADE_FROM_15: tuple[str, ...] = (  # format 16 only adds the person From / To
     "ALTER TABLE messages ADD COLUMN to_shown TEXT NOT NULL DEFAULT ''",
     "CREATE INDEX messages_by_to_shown ON messages (folder, to_shown COLLATE NOCASE, id)",
 )
-FILL_HEADERS_KEY: str = "fill_from_headers"  # meta, while a filling in runs that needs less than the whole message: "1" its headers (from 14), "2" only what the index holds (from 15)
-FILL_FROM_HEADERS: str = "1"
-FILL_FROM_INDEX: str = "2"
+FILL_HEADERS_KEY: str = "fill_from_headers"  # meta, while a filling in runs that needs only the headers of each message (an upgrade from 14, 15 or 16)
 UPGRADE_FROM_13: tuple[str, ...] = (  # format 14 only adds columns: the old index stays usable, they are filled in afterwards (index.fill-sent)
     "ALTER TABLE messages ADD COLUMN sender_address TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE messages ADD COLUMN recipient_names TEXT NOT NULL DEFAULT ''",

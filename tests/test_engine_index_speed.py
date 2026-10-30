@@ -19,9 +19,10 @@ from tests.test_engine_rebuilds import without_format_16
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_index_speed.py 4.2.429"
+__version__ = "test_engine_index_speed.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: names written readably (written_address); the junk filter's trust reads the addresses column; format 17: the person From / To shows comes from each message's own addresses; 15 and 16 refilled from the headers
 # v4.2.429: Initial: format 16 (From / To for mail one sent sorts by exactly what it shows), the filling in after an upgrade from format 15
 #           reads nothing (from 15) or only the headers (from 14) and steps aside while the person's command runs, the Account sort by the names in SQLite (D-295, D-229)
 
@@ -53,7 +54,10 @@ def _upgraded_from(setup: Setup, version: str, monkeypatch: pytest.MonkeyPatch) 
     """A sent message, its index made of this older format again (attachments marked wrongly on purpose), filled in: what was read."""
     assert call(setup.engine, "mail.send", account=setup.account_id, to="bea@example.org", subject="Sent", body="hi").sent
     connection = sqlite3.connect(setup.engine.directories.index_file(setup.account_id))
-    without_format_16(connection)
+    if version == "16":
+        connection.execute("UPDATE messages SET to_shown = ''")  # as 4.2.429 left it for a name that looks like an address
+    else:
+        without_format_16(connection)
     if version == "14":
         connection.execute("UPDATE messages SET received_by = ''")
     connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (version,))
@@ -81,8 +85,10 @@ def _shown_and_left(setup: Setup) -> tuple[tuple[str, int], tuple[int]]:
     return shown, left
 
 
-def test_an_index_of_format_15_is_filled_in_from_what_it_holds_without_reading_a_message(setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
-    assert _upgraded_from(setup, "15", monkeypatch) == []  # no message read at all
+@pytest.mark.parametrize("version", ["15", "16"])
+def test_an_index_of_format_15_or_16_is_filled_in_from_the_headers_only(setup: Setup, monkeypatch: pytest.MonkeyPatch, version: str) -> None:
+    read = _upgraded_from(setup, version, monkeypatch)
+    assert read and all(raw == header_block(raw) for raw in read)  # the headers only, never the whole message
     assert _shown_and_left(setup) == (("bea@example.org", 1), (0,))
 
 
@@ -113,4 +119,44 @@ def test_the_account_sort_reads_the_names_in_sqlite_with_no_call_per_message(tmp
         index.add(replace(entry, received_by=account))
     assert [row.subject for row in index.search("", ("Inbox",), sort=SortField.ACCOUNT, descending=False)] == ["Mail 3", "Mail 2", "Mail 1"]
     assert {row.subject: row.received_by for row in index.search("", ("Inbox",))} == {"Mail 1": "Bea", "Mail 2": "Ann", "Mail 3": ""}
+    index.close()
+
+
+def test_a_recipients_name_that_looks_like_an_address_is_still_shown_and_sorted(tmp_path: Path) -> None:
+    """The owner's mail: a recipient named by its own address ("rob@x.com <rob@x.com>") made the joined text unreadable to Python 3.14, so
+    From / To showed (unknown) and 4.2.429 sorted it as empty; the person now comes from the message's own addresses."""
+    index = Index(tmp_path / "index.sqlite")
+    raw = raw_message(subject="Odd name", to="zed@example.org <zed@example.org>, \"Doe, John\" <john@example.org>", message_id="<odd@x>")
+    entry = entry_from_raw(MessageRef("a" * 32, ("Sent",), "1" * 32), "cur/x", frozenset(), len(raw), raw)
+    assert entry.to_shown == "zed@example.org"
+    index.add(entry)
+    (row,) = index.search("", ("Sent",), sort=SortField.TO_SHOWN)
+    assert row.to_shown == "zed@example.org"
+    index.close()
+
+
+def test_names_with_a_comma_or_an_at_are_written_so_they_can_be_read_back() -> None:
+    from email.utils import parseaddr
+
+    from chrono_mail.core import written_address
+
+    assert parseaddr(written_address("rob@x.com", "rob@x.com")) == ("rob@x.com", "rob@x.com")
+    assert parseaddr(written_address("Doe, John", "john@example.org")) == ("Doe, John", "john@example.org")
+    assert written_address("Ann", "ann@example.org") == "Ann <ann@example.org>" and written_address("", "a@b.c") == "a@b.c"
+
+
+def test_the_junk_filter_trusts_a_person_written_to_whatever_the_other_recipients_are_called(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    raw = raw_message(subject="To Ann", to="ann@example.org, rob@x.com <rob@x.com>", message_id="<ann@x>")
+    index.add(entry_from_raw(MessageRef("a" * 32, ("Sent",), "2" * 32), "cur/x", frozenset(), len(raw), raw))
+    assert index.wrote_to(("Sent",), "Ann@Example.org") and not index.wrote_to(("Sent",), "nobody@example.org")
+    index.close()
+
+
+def test_the_junk_filters_trust_reads_the_old_text_while_a_row_is_not_filled_in_yet(tmp_path: Path) -> None:
+    index = Index(tmp_path / "index.sqlite")
+    raw = raw_message(subject="To Ann", to="ann@example.org", message_id="<ann2@x>")
+    index.add(entry_from_raw(MessageRef("a" * 32, ("Sent",), "3" * 32), "cur/x", frozenset(), len(raw), raw))
+    index._connection.execute("UPDATE messages SET recipient_addresses = ''")  # noqa: SLF001 - as an upgrade from format 13 leaves it until filled in
+    assert index.wrote_to(("Sent",), "ann@example.org")
     index.close()

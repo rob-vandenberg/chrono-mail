@@ -6,12 +6,14 @@ from chrono_mail.core import FolderRole
 from chrono_mail.core.folder import OWN_FOLDERS
 from chrono_mail.pim.times import local_time
 from chrono_mail.engine.changes import MessageRow
+from chrono_mail.engine.commands_mail import contact_address
 from chrono_mail.ui.formatting import coming_date, display_name, file_size, short_date
 
 # --- Version ------------------------------------------------------------
-__version__ = "columns.py 4.2.426"
+__version__ = "columns.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: From / To for mail one sent shows the person as the index keeps it (to_shown); the Contact column takes the first address from the address columns
 # v4.2.426: the From / To column sorts by its own sort (from_to), what it shows, never together with From
 # v4.2.421: one From and one To column, shown one way each (D-291): every way is called From or To; a saved list keeps at most one way of
 #           each, the leftmost; people_group and people_shown tell the way of From or To a list shows
@@ -143,9 +145,7 @@ def without_snoozed_column(columns: tuple[str, ...]) -> tuple[str, ...]:
 
 def person_address(row: MessageRow, recipients_first: bool) -> str:
     """The e-mail address (lower case) of the person the row shows: the sender, or in Sent, Drafts and Outbox the first recipient."""
-    recipients = row.recipients
-    found = getaddresses([recipients if recipients_first and recipients else row.sender])
-    return found[0][1].strip().lower() if found else ""
+    return contact_address(recipients_first, row.recipient_addresses, row.recipients, row.sender_address, row.sender)  # one rule with the Contact sort
 
 
 def _first_address(text: str) -> str:
@@ -181,7 +181,9 @@ def cell_text(column_id: str, row: MessageRow, recipients_first: bool, date_styl
     if column_id == "replied":
         return SYMBOLS["replied"] if "replied" in flags else ""
     if column_id == "from_to":
-        return display_name(_first_address(recipients) if recipients_first and recipients else sender) or "(unknown)"
+        if recipients_first:
+            return row.to_shown or display_name(_first_address(recipients) if recipients else sender) or "(unknown)"  # as the index keeps it (D-295)
+        return display_name(sender) or "(unknown)"
     if column_id == "from":
         return display_name(sender) or "(unknown)"
     if column_id == "from_full":

@@ -18,9 +18,10 @@ from chrono_mail.ui.tagchips import TagColourBook, paint_chips
 from chrono_mail.ui.tagging import paint_tag_marks
 
 # --- Version ------------------------------------------------------------
-__version__ = "delegate.py 3.6.352"
+__version__ = "delegate.py 4.2.430"
 
 # --- Version history ----------------------------------------------------
+# v4.2.430: a card of mail one sent shows the person as the From / To column does (to_shown)
 # v3.6.352: the Contact and Delete icons of the column layout are made once, not read from their file for every cell (D-266)
 # v2.2.314: a card in the Outbox says Send and its time, as in the Scheduled folder (a delayed send, B-21)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -171,7 +172,7 @@ class MessageDelegate(QStyledItemDelegate):
         flags: tuple[str, ...] = row.flags
         unread = "seen" not in flags
         who_text = (row.recipients if self.show_recipients else row.sender) or "(no one)"
-        who = display_name(who_text.split(",")[0]) if self.show_recipients else display_name(who_text)
+        who = (row.to_shown or display_name(who_text.split(",")[0])) if self.show_recipients else display_name(who_text)  # as the From / To column shows it (D-295)
         rect = full
         # avatar
         avatar = QRect(rect.left() + lpx(MARGIN), rect.top() + (rect.height() - lpx(AVATAR_SIZE)) // 2, lpx(AVATAR_SIZE), lpx(AVATAR_SIZE))
