@@ -1,7 +1,7 @@
 from collections.abc import Callable
 
 import pytest
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QModelIndex, QObject
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_mail import MESSAGE_PLACES
@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_list_resort.py 4.2.432"
+__version__ = "test_ui_list_resort.py 4.2.433"
 
 # --- Version history ----------------------------------------------------
+# v4.2.433: a selected message moved under a folded group bar opens it; one not selected leaves it folded
 # v4.2.432: Initial: a message that changed where it is moves to its new place in the list's sort, and stays selected (D-146)
 
 
@@ -177,3 +178,33 @@ def test_the_headings_stay_right_when_a_message_is_placed_by_one_still_moving(wo
     wait(qtbot, lambda: _ids(model) == [first, moving, follower, second, last])
     groups = world.call("message.groups", account=world.account_id, folder="Scheduled", sort="snoozed", oldest_first=True)
     wait(qtbot, lambda: _heading_sizes(model) == [group.count for group in groups])
+
+
+def _later_folded(world: World, qtbot: QtBot) -> tuple[str, str, str]:
+    """A sent in an hour, B and C in 60 and 61 days (Later, whatever the weekday), shown in groups; the group bar of Later folded shut."""
+    soon, later, last = _scheduled(world, qtbot, (("A", 1), ("B", 24 * 60), ("C", 24 * 61)))
+    model = world.window.list_model
+    world.window.act_show_groups.setChecked(True)  # View > Show groups
+    wait(qtbot, lambda: model.is_header(0) and _ids(model) == [soon, later, last])
+    model.toggle_group(model.header_rows()[-1])  # a click on the group bar of Later
+    wait(qtbot, lambda: _ids(model) == [soon])
+    return soon, later, last
+
+
+def test_a_selected_message_moved_under_a_folded_group_bar_opens_it_and_stays_selected(world: World, qtbot: QtBot) -> None:
+    soon, later, last = _later_folded(world, qtbot)
+    model = world.window.list_model
+    world.window.list_view.setCurrentIndex(model.index(model.find(soon), 0))
+    world.call("mail.repeat-change", account=world.account_id, folder="Scheduled", message=soon, start=in_hours(24 * 62))
+    wait(qtbot, lambda: _ids(model) == [later, last, soon])  # Later opened: the person still sees the message
+    assert _selected(world) == [soon] and world.window.list_view.currentIndex().row() == model.find(soon)
+
+
+def test_a_message_not_selected_moved_under_a_folded_group_bar_leaves_it_folded(world: World, qtbot: QtBot) -> None:
+    soon, later, last = _later_folded(world, qtbot)
+    model = world.window.list_model
+    world.window.list_view.clearSelection()
+    world.window.list_view.setCurrentIndex(QModelIndex())
+    world.call("mail.repeat-change", account=world.account_id, folder="Scheduled", message=soon, start=in_hours(24 * 62))
+    wait(qtbot, lambda: model.find(soon) == -1 and model.message_count() == 3)  # under Later, which stays folded: nobody was looking at it
+    assert _ids(model) == [] and len(model.header_rows()) == 1

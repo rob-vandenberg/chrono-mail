@@ -231,6 +231,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (4.2.429) Index speed: the filling in after an upgrade reads only what it needs and steps aside while the person works; the Account sort inside the database; From / To for sent mail sorts by exactly what it shows (index format 16); after a Linux update Close Chrono Mail, and no question at all (D-229, D-293, D-295).
 - DONE (4.2.430) From / To for sent mail: the person from each message's own addresses, shown and sorted as kept (index format 17); the Contact column and sort by the first address (D-295).
 - DONE (4.2.431) An option that shows an (i) has no hover text while the (i) shows (D-294).
+- DONE (4.2.433) A selected message that moves under a folded group bar opens it and stays in view (D-146).
 - DONE (4.2.432) Block 6: a message that changed where it is moves to its new place in the sort (D-146); the Contact mark and sort judge the person the row shows, one rule per list (D-295).
 
 ## Milestone 3: Calendars, tasks and contacts, local (design: ARCHITECTURE.md section 9, D-071)

@@ -26,9 +26,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.432"
+__version__ = "messagelist.py 4.2.433"
 
 # --- Version history ----------------------------------------------------
+# v4.2.433: a selected message that moves under a folded group bar opens it and stays in view, selected
 # v4.2.432: a message that changed where it is moves to its new place in the sort, under its heading, keeping the selection (D-146)
 # v4.2.429: the group headings of to_shown (From / To for mail one sent, D-295)
 # v4.2.426: the time column is Send at in Favorites > Scheduled and Outbox too
@@ -205,6 +206,7 @@ class MessageListModel(QAbstractTableModel):
     load_failed = Signal(str)
     loaded = Signal()
     rearranged = Signal()  # the same messages were put in another order; Qt's selection moved with them
+    selected_moved = Signal(list)  # the ids of selected messages that moved to their new place in the sort (the current one is brought into view)
     placed = Signal()  # the whole order of the view is in: every message has its place (a large view comes start first, W12b)
     refetch_wanted = Signal()  # a folder fact changed which messages the view holds: the pane fetches it again, once, one at a time (D-287)
     took_in = Signal()  # the messages that came in at one moment are at their places (once for all of them, not once per row)
@@ -1810,7 +1812,8 @@ class MessageListModel(QAbstractTableModel):
     def _move_to_places(self, moves: list[tuple[str, int, str, str, str]], left_meanwhile: bool = False) -> None:
         """Messages of the view go to their new places (key, its place in the engine's order, the key of the message it now comes before
         or "" for the end, the key and name of its heading), in one layout change: every index Qt holds moves with its message, so the
-        selection and the current message stay with their messages; a heading that empties goes, a new one comes. All of them are taken
+        selection and the current message stay with their messages; a heading that empties goes, a new one comes; a folded group bar a
+        selected message moves under opens, and the current message is brought into view. All of them are taken
         out first and put back in the engine's order, so two that now come before the same message stand in the right order. Nothing
         changes when every one is at its place already. left_meanwhile: a fact came, messages left the order or a new order came while the
         question was out, so a message named that is not held may have left meanwhile: asked again at once (each such ask needs a new fact, so
@@ -1844,6 +1847,7 @@ class MessageListModel(QAbstractTableModel):
         now = sorted(moving, key=self._order.position)
         if all(in_place(key, before, group_key) for key, _, before, group_key, _ in wanted) and now == [move[0] for move in wanted]:
             return
+        selected = {key for row in self.selected_rows() if (position := self.message_position(row)) is not None and (key := self._order.key_at(position)) in moving}
         self.layoutAboutToBeChanged.emit()
         held = self.persistentIndexList()
         held_places: list[tuple[str | None, int | None]] = []
@@ -1869,6 +1873,10 @@ class MessageListModel(QAbstractTableModel):
             if self._group_counts is not None:
                 self._count_into_group(place, group_key, name)
             self._order.insert(place, key, folders[key])
+        folded = self._folded.get(self._fold_key(), set())
+        for key in selected:  # a selected message that moved under a folded group bar opens it: the person still sees it, selected
+            if self._group_counts and folded:
+                folded.discard(self._group_counts[self._group_index(self._order.position(key))][0])
         self._layout_groups()
         moved: list[QModelIndex] = []
         for index, (key, position) in zip(held, held_places, strict=True):
@@ -1882,6 +1890,8 @@ class MessageListModel(QAbstractTableModel):
         self.changePersistentIndexList(held, moved)
         self.layoutChanged.emit()
         self.groups_changed.emit()
+        if selected:
+            self.selected_moved.emit([split_key(key)[1] for key in selected])
 
     def _in_folder(self, mailbox: str, folder: str) -> list[str]:
         """The keys of the messages of the view that are in this folder of this mailbox."""

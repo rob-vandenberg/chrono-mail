@@ -29,9 +29,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelistpane.py 4.2.432"
+__version__ = "messagelistpane.py 4.2.433"
 
 # --- Version history ----------------------------------------------------
+# v4.2.433: the current message stays in view when a selected message moves to its new place in the sort
 # v4.2.432: the folders that show their recipients are the engine's list (RECIPIENT_VIEWS), one rule with the Contact sort (D-295)
 # v4.2.429: From / To where it shows the recipients sorts by exactly what it shows (to_shown, D-295)
 # v4.2.426: the From / To column sorts by what it shows (engine_sort: the recipients where it shows them, else the sender), never
@@ -212,6 +213,7 @@ class MessageListPane(QObject):
         self.model.places_lost.connect(self._places_lost)
         self.model.layoutAboutToBeChanged.connect(self._note_selection)
         self.model.rearranged.connect(self._show_current_row)
+        self.model.selected_moved.connect(self._show_moved_current_row)
         self._to_select: list[str] = []  # messages Undo brought back, selected as they take their place in the list
         self._selected_back: set[str] = set()  # those of them selected already (a later batch adds only its own)
         self.model.load_failed.connect(self._forget_to_select)  # the rest of the order will not come: they are not waited for any longer
@@ -461,6 +463,14 @@ class MessageListPane(QObject):
         """After the list was rearranged: the current message is in view."""
         current = self.view.currentIndex()
         if current.isValid():
+            self.view.scrollTo(current)
+
+    def _show_moved_current_row(self, message_ids: list[str]) -> None:
+        """Selected messages moved to their new place in the sort: when the current message is one of them, it is brought into view where
+        it went (a list scrolled away from a current message that did not move stays where it is)."""
+        current = self.view.currentIndex()
+        row = self.model.row_at(current.row()) if current.isValid() else None
+        if row is not None and row.message_id in message_ids:
             self.view.scrollTo(current)
 
     def has_selection(self) -> bool:
