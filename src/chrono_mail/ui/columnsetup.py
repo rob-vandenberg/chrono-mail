@@ -7,9 +7,10 @@ from chrono_mail.ui.currentview import CurrentView, EntryKind
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "columnsetup.py 4.2.426"
+__version__ = "columnsetup.py 4.2.436"
 
 # --- Version history ----------------------------------------------------
+# v4.2.436: KIND_NAMES: how the hover texts of Apply to all, Default and Reset name each kind of folder
 # v4.2.426: the From / To column has a sort of its own (from_to), never shared with From (the owner: a column sorts by itself); a saved
 #           setup saved before (no format 2) sorted by sender that shows From / To and no From is sorted by From / To (saved_sort)
 # v4.2.421: a sort of From or To follows the way the column shows (sort_of_way_shown), also in a saved setup (D-291)
@@ -50,6 +51,11 @@ STARTING: dict[FolderType, ColumnSetup] = {
     "snoozed": ColumnSetup(("flag", "attachment", "from_to", "subject", SNOOZED_COLUMN, "size", "trash"), "snoozed", oldest_first=True),
     # a search of several folders: sent and received mail together, so both From and To, and where each message is (D-288)
     "search": ColumnSetup(("flag", "status", "attachment", "from", "to", "subject", "folder", "date", "size", "contact", "trash"), "date"),
+}
+# How the hover texts of Apply to all, Default and Reset name the folders of each kind (the owner, 4.2.436)
+KIND_NAMES: dict[FolderType, str] = {
+    "incoming": "received mail folders", "sent": "Sent folders", "drafts": "Drafts folders", "outbox": "Outbox folders",
+    "scheduled": "Scheduled folders", "snoozed": "Snoozed folders", "search": "search folders",
 }
 _OUTGOING_FAVORITES: dict[str, FolderType] = {"sent": "sent", "drafts": "drafts", "outbox": "outbox", "scheduled": "scheduled", "snoozed": "snoozed"}
 _LOCAL_FOLDERS: dict[str, FolderType] = {"outbox": "outbox", "scheduled": "scheduled", "snoozed": "snoozed"}  # by the folder's role (CR-36)

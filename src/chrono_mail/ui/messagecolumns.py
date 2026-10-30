@@ -10,9 +10,10 @@ from chrono_mail.ui.columns import (
     BY_ID, CARD, DEFAULT_COLUMNS, PEOPLE_COLUMNS, SAVED_LABEL, SNOOZED_COLUMN, keep_snoozed_column, people_group, people_shown, with_new_columns,
     without_snoozed_column,
 )
+from chrono_mail.ui.columnsdialog import ColumnPicker, PickerSetup
 from chrono_mail.ui.columnsetup import (
-    FOLDER_TYPES, FROM_TO_SORT, SORT_COLUMNS, STARTING, ColumnSetup, FolderType, fallback_sort, folder_type, read_setups, renamed_key, setup_key, setups_text,
-    saved_sort, sort_of_way_shown, sort_shown,
+    FOLDER_TYPES, FROM_TO_SORT, KIND_NAMES, SORT_COLUMNS, STARTING, ColumnSetup, FolderType, fallback_sort, folder_type, read_setups, renamed_key,
+    setup_key, setups_text, saved_sort, sort_of_way_shown, sort_shown,
 )
 from chrono_mail.ui.delegate import COLUMN_ROW_HEIGHTS
 from chrono_mail.ui.mailstate import MailState
@@ -21,9 +22,13 @@ from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.prefs import InUse, Remembered
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagecolumns.py 4.2.426"
+__version__ = "messagecolumns.py 4.2.436"
 
 # --- Version history ----------------------------------------------------
+# v4.2.436: a window with the column list (Message list window, Settings > Message list) tries its changes out on the open folder at
+#           once: ticks, Move up, Move down, Default (the kind's stored setup: columns, order, widths, sort), Reset (the kind's setup
+#           after a fresh install) and Apply to all; nothing is saved before OK, Cancel puts back every setup as it was (D-104, D-228);
+#           its list follows another folder opened meanwhile; a restore meanwhile is what Cancel puts back
 # v4.2.426: the tick of the last column shown is greyed in the header menu (OR-15), as its Don't show; a setup taken over from before
 #           2.0.280 keeps a sort of From / To (saved_sort); Sorted by Sender or To sorts by the From / To column where only it shows them
 # v4.2.422: the sort falls back only when a change of columns took away the column it was shown by; a sort no column showed
@@ -64,6 +69,8 @@ class MessageColumns(QObject):
         self.layout: str = chosen.list_layout if chosen.list_layout in ("columns", "cards") else "columns"
         self._folder_setups: dict[str, tuple[ColumnSetup, FolderType]] = {}
         self._type_setups: dict[FolderType, ColumnSetup] = {}
+        self._before_try: tuple[dict[str, tuple[ColumnSetup, FolderType]], dict[FolderType, ColumnSetup]] | None = None  # the setups saved while a window tries others out
+        self._picker: ColumnPicker | None = None  # the column list of that window: it follows the folder open here
         self._read_setups()
         self._take_over_earlier_setup()
         self._key: str | None = None  # the setup in use: the open folder's (None before a folder is open)
@@ -95,6 +102,8 @@ class MessageColumns(QObject):
         """Every folder's and every kind's setup as the settings hold them now (a restore wrote the backup's): the open folder shows its
         own at once, as does every folder opened next."""
         self._read_setups()
+        if self._before_try is not None:  # a window tries setups out: Cancel puts back these, the restored ones
+            self._before_try = (dict(self._folder_setups), dict(self._type_setups))
         self._key = None  # the open folder's setup is taken in again, not kept from before
         self.follow_view()
 
@@ -135,12 +144,17 @@ class MessageColumns(QObject):
         chosen = without_snoozed_column(columns) if columns else start.columns
         wanted, oldest = sort if sort is not None else (start.sort, start.oldest_first)
         self._type_setups["incoming"] = ColumnSetup(chosen, fallback_sort(chosen, "date" if wanted == "snoozed" else saved_sort(chosen, wanted)), oldest, widths)
-        self._save_type_setups()
+        self._store()
 
     def standard_setup(self, kind: FolderType | None = None) -> ColumnSetup:
         """The setup a folder of this kind (the open one's) starts with: the one Apply to all folders gave it, else the program's."""
         chosen = kind if kind is not None else self.folder_type
         return self._type_setups.get(chosen, STARTING[chosen])
+
+    def picker_setup(self) -> PickerSetup:
+        """What a column list (Message list window, Settings > Message list) needs of the open kind of folder."""
+        kind = self.folder_type
+        return PickerSetup(self.standard_setup().columns, STARTING[kind].columns, KIND_NAMES[kind], self.apply_action.isEnabled())
 
     def follow_view(self) -> None:
         """Another folder or view is shown: its own setup (columns, widths, sort) is taken into use before the list asks for it;
@@ -160,49 +174,117 @@ class MessageColumns(QObject):
         self._messages.model.set_column_labels({"sent": SAVED_LABEL} if kind == "drafts" else {})
         self._messages.use_sort(setup.sort, setup.oldest_first)
         self.apply_list_layout()
+        if self._picker is not None:  # a column list is shown: it shows this folder now, never the one before
+            self._picker.follow(without_snoozed_column(self.columns), self.picker_setup())
 
     def _current_setup(self) -> ColumnSetup:
         widths = self._column_layout.to_text() if self._column_layout is not None else ""
         return ColumnSetup(self.columns, self._messages.sort, self._messages.oldest_first, widths)
 
     def _keep(self) -> None:
-        """The person changed the open folder's columns, widths or sort: kept for that folder only."""
-        if self._key is None:
+        """The person changed the open folder's columns, widths or sort: kept for that folder only; never while the list shows
+        nothing at all (an account without an Inbox), which has no folder to keep it for."""
+        if self._key is None or not self.apply_action.isEnabled():
             return
         self._folder_setups[self._key] = (self._current_setup(), self.folder_type)
-        self._memory.folder_columns = setups_text(self._folder_setups)
+        self._store()
 
-    def _save_type_setups(self) -> None:
-        self._memory.type_columns = setups_text({kind: (setup, kind) for kind, setup in self._type_setups.items() if kind in FOLDER_TYPES})
+    def _store(self) -> None:
+        """Every folder's and every kind's setup into the settings; while a window tries setups out, the ones from before it opened
+        (OK keeps the tried ones, end_try)."""
+        folders, kinds = self._before_try if self._before_try is not None else (self._folder_setups, self._type_setups)
+        self._memory.folder_columns = setups_text(folders)
+        self._memory.type_columns = setups_text({kind: (setup, kind) for kind, setup in kinds.items() if kind in FOLDER_TYPES})
 
     def apply_to_all(self) -> None:
         """Apply to all folders: the open setup for every folder and view of its kind, in every account, and for those made later.
-        Their own setups go: they all use the kind's setup from now on."""
-        if self._key is None:
+        Their own setups go: they all use the kind's setup from now on. Not while the list shows nothing at all."""
+        if self._key is None or not self.apply_action.isEnabled():
             return
         kind = self.folder_type
         self._type_setups[kind] = self._current_setup()
         self._folder_setups = {key: found for key, found in self._folder_setups.items() if found[1] != kind}
-        self._save_type_setups()
-        self._memory.folder_columns = setups_text(self._folder_setups)
+        self._store()
+
+    def load_default(self) -> None:
+        """Default: the open folder shows its kind's stored setup (columns, order, widths, sort) and follows it from now on."""
+        if self._key is None:
+            return
+        self._show_setup(self.standard_setup())
+        self._folder_setups.pop(self._key, None)  # after the sort, which keeps a setup of its own
+        self._store()
+
+    def load_factory(self) -> None:
+        """Reset: the open folder shows its kind's setup after a fresh install, as a setup of its own; the stored setup stays."""
+        if self._key is None:
+            return
+        self._show_setup(STARTING[self.folder_type])
+        self._keep()
+
+    def _show_setup(self, setup: ColumnSetup) -> None:
+        """The open folder shows this setup now: its columns, widths and sort, the rows rearranged in place for another sort."""
+        self.columns = setup.columns
+        self._column_layout = read_layout(setup.widths)
+        self.apply_list_layout()
+        if (setup.sort, setup.oldest_first) != (self._messages.sort, self._messages.oldest_first):
+            self._messages.set_sort(setup.sort, setup.oldest_first)
+
+    # --- a window that tries setups out (Message list window, Settings > Message list; D-104) -------------------------
+
+    def try_in(self, picker: ColumnPicker) -> None:
+        """A window with this column list opens: what it changes is shown in the open folder at once; nothing is saved before
+        end_try, which keeps it (OK) or puts every setup back (Cancel)."""
+        self._before_try = (dict(self._folder_setups), dict(self._type_setups))
+        self._picker = picker
+        picker.columns_changed.connect(lambda: self._take_picked(picker.columns()))
+        picker.default_chosen.connect(self.load_default)
+        picker.reset_chosen.connect(self.load_factory)
+        picker.apply_to_all_chosen.connect(self.apply_to_all)
+
+    def _take_picked(self, picked: tuple[str, ...]) -> None:
+        """A tick, Move up or Move down in the column list: the open folder shows those columns, only when they differ (a folder
+        that follows its kind's setup keeps following it); Snoozed until, not in the list, keeps its place."""
+        wanted = keep_snoozed_column(picked, self.columns)
+        if wanted != self.columns:
+            self.set_columns(wanted)
+
+    def end_try(self, keep: bool) -> None:
+        """The window closed: OK saves the setups it tried out; Cancel shows and keeps those from before it opened."""
+        before, self._before_try = self._before_try, None
+        self._picker = None
+        if before is None:
+            return
+        if not keep:
+            folders, kinds = before
+            found = folders.get(self._key) if self._key is not None else None
+            self._show_setup(found[0] if found is not None else kinds.get(self.folder_type, STARTING[self.folder_type]))
+            self._folder_setups, self._type_setups = dict(folders), dict(kinds)  # after the sort, which keeps a setup of its own
+        self._store()
 
     def folder_renamed(self, account: str, old: str, new: str) -> None:
-        """A folder (and what is below it) has a new name, here or on another computer: its setup goes along."""
-        moved: dict[str, tuple[ColumnSetup, FolderType]] = {}
-        for key, found in self._folder_setups.items():
-            moved[renamed_key(key, account, old, new) or key] = found
+        """A folder (and what is below it) has a new name, here or on another computer: its setup goes along (also in the setups
+        from before a window that tries others out)."""
+
+        def moved(setups: dict[str, tuple[ColumnSetup, FolderType]]) -> dict[str, tuple[ColumnSetup, FolderType]]:
+            return {renamed_key(key, account, old, new) or key: found for key, found in setups.items()}
+
         if self._key is not None:
             self._key = renamed_key(self._key, account, old, new) or self._key
-        if moved != self._folder_setups:
-            self._folder_setups = moved
-            self._memory.folder_columns = setups_text(self._folder_setups)
+        self._folder_setups = moved(self._folder_setups)
+        if self._before_try is not None:
+            self._before_try = (moved(self._before_try[0]), self._before_try[1])
+        self._store()
 
     def folder_deleted(self, account: str, path: str) -> None:
-        """A folder (and what is below it) is gone: its setup is forgotten."""
-        kept = {key: found for key, found in self._folder_setups.items() if renamed_key(key, account, path, "") is None}
-        if kept != self._folder_setups:
-            self._folder_setups = kept
-            self._memory.folder_columns = setups_text(self._folder_setups)
+        """A folder (and what is below it) is gone: its setup is forgotten (also in the setups from before a window that tries others out)."""
+
+        def kept(setups: dict[str, tuple[ColumnSetup, FolderType]]) -> dict[str, tuple[ColumnSetup, FolderType]]:
+            return {key: found for key, found in setups.items() if renamed_key(key, account, path, "") is None}
+
+        self._folder_setups = kept(self._folder_setups)
+        if self._before_try is not None:
+            self._before_try = (kept(self._before_try[0]), self._before_try[1])
+        self._store()
 
     def _follow_sort(self, before: tuple[str, ...]) -> None:
         """The columns changed from these: sorted by From or To, the sort follows the way the column shows (D-291); when the change
@@ -471,7 +553,11 @@ class MessageColumns(QObject):
         self.layout, self.date_style = layout, date_style
         self._prefs.keep(changed(self._prefs.read(), list_layout=self.layout, date_style=self.date_style, list_density=density))
         self.apply_list_look()
-        self.set_columns(keep_snoozed_column(columns, self.columns))  # Snoozed until is not offered there: it keeps its place
+        wanted = keep_snoozed_column(columns, self.columns)  # Snoozed until is not offered there: it keeps its place
+        if wanted != self.columns:
+            self.set_columns(wanted)
+        else:
+            self.apply_list_layout()  # shown already (tried out): a folder that follows its kind's setup (Default) keeps following it
 
     def apply_list_look(self, factor: float | None = None) -> None:
         """The message list at its own size factor (a factor given here is tried out, not saved): its text is the

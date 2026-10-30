@@ -45,8 +45,8 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend, alive
-from chrono_mail.ui.columns import DEFAULT_COLUMNS, keep_snoozed_column
-from chrono_mail.ui.columnsdialog import DATE_STYLES, DENSITY_LABELS, LAYOUTS, READING_PANES, ColumnPicker
+from chrono_mail.ui.columns import DEFAULT_COLUMNS
+from chrono_mail.ui.columnsdialog import DATE_STYLES, DENSITY_LABELS, LAYOUTS, READING_PANES, ColumnPicker, PickerSetup
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.rulespanel import RulesPanel
 from chrono_mail.ui.scheduledpanel import ScheduledPanel
@@ -58,9 +58,12 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.431"
+__version__ = "settingsdialog.py 4.2.436"
 
 # --- Version history ----------------------------------------------------
+# v4.2.436: Message list: the column list gets the open kind of folder's stored and fresh-install columns, its name for the hover
+#           texts and whether Apply to all can be used (PickerSetup), for its Apply to all, Default and Reset (D-228); chosen_columns
+#           is gone: the main window shows and keeps every change of the list itself
 # v4.2.431: the options of Settings > General that show an (i) have no hover text while it shows (D-294)
 # v4.2.424: General: an (i) after the start at login, the update tick and the three ticks of the notification area while greyed, saying why; the line about a missing notification area is gone (D-294)
 # v4.2.419: General: Automatically check for updates, greyed with its reason in a copy that is not updated through an installer (D-293)
@@ -261,7 +264,7 @@ class SettingsContext:
     local_folders: tuple[tuple[str, str], ...] = ()  # the standard folders of Local Folders: (kind, folder)
     hidden_local: frozenset[str] = frozenset()
     columns: tuple[str, ...] = DEFAULT_COLUMNS  # the columns of the folder open in the window (B-16)
-    standard_columns: tuple[str, ...] = DEFAULT_COLUMNS  # the columns its kind of folder starts with (Standard columns)
+    column_choices: PickerSetup = PickerSetup()  # its kind of folder's stored and fresh-install columns (Default, Reset, Apply to all)
 
 
 def verify_line(outcome: VerifyResult) -> str:
@@ -299,7 +302,7 @@ class SettingsDialog(QDialog):
         self._settings: QSettings = settings
         self._chosen: Preferences = read_preferences(settings)  # the settings as they are when the window opens (R-12)
         self._columns: tuple[str, ...] = known.columns or DEFAULT_COLUMNS  # the open folder's (B-16)
-        self._standard_columns: tuple[str, ...] = known.standard_columns
+        self._column_choices: PickerSetup = known.column_choices
         self._shortcut_actions: dict[str, tuple[str, str]] = dict(known.shortcut_actions)
         self.setWindowTitle("Settings")
         self.setMinimumSize(wpx(MINIMUM_WIDTH), wpx(MINIMUM_HEIGHT))
@@ -630,7 +633,7 @@ class SettingsDialog(QDialog):
             self._set_accent(chosen.name())
 
     def _list_page(self) -> QWidget:
-        page = forms.load("settings_message_list", self, {"columnsPicker": lambda parent: ColumnPicker(self._columns, parent, self._standard_columns)})
+        page = forms.load("settings_message_list", self, {"columnsPicker": lambda parent: ColumnPicker(self._columns, parent, self._column_choices)})
         self.layout_box = _fill_combo(part(page, QComboBox, "layoutBox"), LAYOUTS, self._chosen.list_layout)
         self.pane_box = _fill_combo(part(page, QComboBox, "paneBox"), READING_PANES, self._chosen.reading_pane)
         self.date_box = _fill_combo(part(page, QComboBox, "dateBox"), DATE_STYLES, self._chosen.date_style)
@@ -956,10 +959,6 @@ class SettingsDialog(QDialog):
             startup=StartupView.parse(str(self.startup_box.currentData() or "")),
             shortcuts={action_id: keys for action_id, keys in self.shortcut_values().items() if keys != self._shortcut_actions[action_id][1]},
         )
-
-    def chosen_columns(self) -> tuple[str, ...]:
-        """The columns chosen for the folder open in the window (Snoozed until, not offered here, keeps its place)."""
-        return keep_snoozed_column(self.columns_picker.columns() or self._standard_columns, self._columns)
 
     def save(self) -> None:
         save_preferences(self._settings, self.chosen())

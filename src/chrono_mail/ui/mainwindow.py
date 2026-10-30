@@ -66,9 +66,12 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.429"
+__version__ = "mainwindow.py 4.2.436"
 
 # --- Version history ----------------------------------------------------
+# v4.2.436: the Message list window and Settings > Message list show every change in the main window at once (Layout, Reading pane,
+#           Dates, Row height through the Settings window's try-out; the columns, Apply to all, Default and Reset through the column
+#           part's); OK keeps them, Cancel puts them back (D-104, D-228)
 # v4.2.429: quit_for_update: after an update Chrono Mail closes without questions (unsaved messages go to Drafts)
 # v4.2.427: quitting stops a download of an update at once; an update is offered only while the window is on screen
 # v4.2.419: About is a window of its own with Check for updates; a Refresh that goes online also looks for updates (Updates, D-293)
@@ -1054,10 +1057,12 @@ class MainWindow(QMainWindow):
         dialog.reading_scale_tried.connect(self.try_reading_scale)
         dialog.list_scale_tried.connect(self.try_list_scale)
         dialog.list_settings_tried.connect(self.try_list_settings)
+        self.columns.try_in(dialog.columns_picker)
         try:
             self._settings_closed(dialog, dialog.exec() == SettingsDialog.DialogCode.Accepted)
         finally:
             self.prefs.try_out(None)  # never a try left behind
+            self.columns.end_try(False)  # nor a column setup (after _settings_closed this does nothing)
             dialog.deleteLater()  # it was kept for good with every opening (about 490 parts each time)
 
     def _settings_closed(self, dialog: SettingsDialog, accepted: bool) -> None:
@@ -1077,6 +1082,7 @@ class MainWindow(QMainWindow):
             self.report.finished("Scheduled messages changed")  # each action told its facts: the rows already follow (D-146)
         if dialog.tags_saved:
             self.tags.load()  # the rows follow the "mailbox changed" of renaming or deleting a tag (D-146)
+        self.columns.end_try(accepted)  # the columns shown since they were chosen: kept, or put back (B-16, D-228)
         tried = self.prefs.trying is not None
         self.prefs.try_out(None)
         if not accepted:
@@ -1085,8 +1091,6 @@ class MainWindow(QMainWindow):
             return
         dialog.save()
         self.apply_preferences()
-        if dialog.chosen_columns() != self.columns.columns:
-            self.columns.set_columns(dialog.chosen_columns())  # the open folder's columns only (B-16)
         self.folders.change_favorites(dialog.sidebar_page.commands())
 
     def _settings_context(self) -> SettingsContext:
@@ -1098,7 +1102,7 @@ class MainWindow(QMainWindow):
             tags=state.tags, favorites=state.favorites_in_use(), hidden_favorites=frozenset(model.hidden), pins=tuple(self.folders.pin_labels()),
             has_tags=bool(model.tags), local_id=state.local_id(), tree_accounts=tuple(state.tree_accounts()),
             hidden_trees=frozenset(model.hidden_trees), local_folders=tuple(state.local_standard_folders()),
-            hidden_local=frozenset(model.hidden_local), columns=self.columns.columns, standard_columns=self.columns.standard_setup().columns,
+            hidden_local=frozenset(model.hidden_local), columns=self.columns.columns, column_choices=self.columns.picker_setup(),
         )
 
     def _folder_moved(self, account: str, old: str, new: str) -> None:
@@ -1412,6 +1416,7 @@ class MainWindow(QMainWindow):
             self.act_delete_folder.setEnabled(False)
             self.act_rename_folder.setEnabled(False)
             self.reading.clear()
+            self.columns.follow_view()  # nothing shown: no folder whose setup Apply to all could give, so it is greyed
             self.messages.show_empty()
             self._update_unread_summary()
             return
@@ -1541,11 +1546,28 @@ class MainWindow(QMainWindow):
         """Message list…: layout, columns, reading pane, date style and row height."""
         density = self.prefs.read().list_density
         dialog = ColumnsDialog(ListChoice(
-            self.columns.layout, self.columns.columns, self.reading.place, self.columns.date_style, density, self.columns.standard_setup().columns,
-        ), self)
-        if dialog.exec() != ColumnsDialog.DialogCode.Accepted:
-            return
-        self.apply_list_choice(dialog.choice())
+            self.columns.layout, self.columns.columns, self.reading.place, self.columns.date_style, density,
+        ), self, self.columns.picker_setup())
+        dialog.list_settings_tried.connect(self._try_list_choice)
+        self.columns.try_in(dialog.picker)
+        accepted = False
+        try:
+            accepted = dialog.exec() == ColumnsDialog.DialogCode.Accepted
+        finally:
+            tried = self.prefs.trying is not None
+            self.prefs.try_out(None)  # never a try left behind
+            self.columns.end_try(accepted)
+            if accepted:
+                self.apply_list_choice(dialog.choice())
+            elif tried:
+                self.apply_preferences()  # Cancel: Layout, Reading pane, Dates and Row height as they were, as Settings does
+
+    def _try_list_choice(self, choice: object) -> None:
+        """The Message list window changed its Layout, Reading pane, Dates or Row height: shown at once, as Settings > Message list does (D-104)."""
+        if isinstance(choice, ListChoice):
+            self.try_list_settings(changed(
+                self.prefs.saved(), list_layout=choice.layout, reading_pane=choice.reading_pane, date_style=choice.date_style, list_density=choice.density,
+            ))
 
     def apply_list_choice(self, choice: ListChoice) -> None:
         self.columns.choose(choice.layout, choice.columns, choice.date_style, choice.density)

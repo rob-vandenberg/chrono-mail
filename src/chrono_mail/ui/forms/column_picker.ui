@@ -19,7 +19,7 @@
     <widget class="QListWidget" name="list" />
    </item>
    <item>
-    <layout class="QVBoxLayout" name="side" stretch="0,0,0,1">
+    <layout class="QVBoxLayout" name="side" stretch="0,0,0,0,0,1">
      <item>
       <widget class="QPushButton" name="moveUp">
        <property name="text">
@@ -35,9 +35,23 @@
       </widget>
      </item>
      <item>
-      <widget class="QPushButton" name="standardColumns">
+      <widget class="QPushButton" name="applyToAll">
        <property name="text">
-        <string>Standard columns</string>
+        <string>Apply to all</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="defaultColumns">
+       <property name="text">
+        <string>Default</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="resetColumns">
+       <property name="text">
+        <string>Reset</string>
        </property>
       </widget>
      </item>

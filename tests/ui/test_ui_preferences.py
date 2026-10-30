@@ -22,9 +22,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 2.0.298"
+__version__ = "test_ui_preferences.py 4.2.436"
 
 # --- Version history ----------------------------------------------------
+# v4.2.436: Apply to all, Default and Reset (were Standard columns) greyed in the card layout
 # v2.0.298: Settings > Sidebar's Favorites ticks in the owner's new order (D-061)
 # v2.0.290: Settings > Sidebar's Favorites ticks in the owner's order (D-061)
 # v2.0.281: Rebuild the search index is done by the main window (rebuild_requested, D-229)
@@ -162,9 +163,9 @@ def test_the_columns_are_chosen_on_the_message_list_page(world: World, qtbot: Qt
         picker.list.item(row).setCheckState(Qt.CheckState.Unchecked)
     picker.list.item(3).setCheckState(Qt.CheckState.Checked)
     chosen = str(picker.list.item(3).data(Qt.ItemDataRole.UserRole))
-    assert dialog.chosen_columns() == ("snoozed", chosen)  # Snoozed until is not offered here and keeps its place (Subject before it went)
+    assert picker.columns() == (chosen,)  # Snoozed until is not offered here: the main window keeps its place (keep_snoozed_column)
     dialog.layout_box.setCurrentIndex(dialog.layout_box.findData("cards"))
-    assert not picker.list.isEnabled() and not picker.reset_button.isEnabled()
+    assert not picker.list.isEnabled() and not picker.reset_button.isEnabled() and not picker.default_button.isEnabled() and not picker.apply_button.isEnabled()
     dialog.layout_box.setCurrentIndex(dialog.layout_box.findData("columns"))
     assert picker.list.isEnabled()
 
