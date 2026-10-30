@@ -22,9 +22,10 @@ from chrono_mail.ui.plainboxes import plain_message_boxes
 from chrono_mail.ui.singleinstance import ShowRequests, ask_to_show
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 4.2.402"
+__version__ = "app.py 4.2.434"
 
 # --- Version history ----------------------------------------------------
+# v4.2.434: a copy run from the project folder tells the desktop it belongs to chrono-mail-project, the built program to chrono-mail (desktop_file_name)
 # v4.2.402: --minimized (the start at login with the window minimized, D-284): the window starts minimized (MainWindow.start_minimized), a
 #           maximized one stays maximized when it is opened; while the program runs already such a start does nothing
 # v3.6.370: the passwords and the key are kept under the profile's own wallet name (a demo's are never mixed with the person's own,
@@ -43,6 +44,14 @@ __version__ = "app.py 4.2.402"
 
 APPLICATION_NAME: str = "Chrono Mail"
 DESKTOP_FILE_NAME: str = "chrono-mail"  # the launcher file packaging/chrono-mail.desktop; the desktop portal looks it up by this name
+PROJECT_DESKTOP_FILE_NAME: str = "chrono-mail-project"  # a copy run from the project folder: the owner's own entry "Chrono Mail (project)"
+
+
+def desktop_file_name() -> str:
+    """The start-menu entry a window of this copy belongs to, as the desktop is told (the taskbar puts the window on that entry's button):
+    the built program (Nuitka marks it with __compiled__; the .deb, .rpm and setup.exe) says chrono-mail, a copy run from the project
+    folder says chrono-mail-project, so the two never share a button. Decided when the program starts; the build needs nothing of it."""
+    return DESKTOP_FILE_NAME if "__compiled__" in globals() else PROJECT_DESKTOP_FILE_NAME
 
 
 APPLICATION_ID: str = "chrono-mail.ChronoMail"  # what Windows knows the program by (the taskbar groups windows and takes the icon by it)
@@ -119,7 +128,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     app = QApplication(arguments)
     app.setApplicationName(APPLICATION_NAME)
     app.setOrganizationName("chrono-mail")
-    app.setDesktopFileName(DESKTOP_FILE_NAME)
+    app.setDesktopFileName(desktop_file_name())
     app.setQuitOnLastWindowClosed(False)  # the window may be hidden in the tray; closing it for good quits explicitly
     app.setWindowIcon(application_icon())
     plain_message_boxes()  # text from mail and servers in a message box is never markup (RV-167); nothing watches every event
