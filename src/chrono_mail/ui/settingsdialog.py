@@ -42,6 +42,7 @@ from chrono_mail.ui import appearance, forms, prefs, scale
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.prefs import Preferences, StartupView, read_preferences, save_preferences
 from chrono_mail.ui.scale import wpx
+from chrono_mail.ui.serverfields import account_line
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend, alive
@@ -58,9 +59,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.436"
+__version__ = "settingsdialog.py 4.2.444"
 
 # --- Version history ----------------------------------------------------
+# v4.2.444: Settings > Accounts writes each row with account_line, shared with the For list of a calendar server
 # v4.2.436: Message list: the column list gets the open kind of folder's stored and fresh-install columns, its name for the hover
 #           texts and whether Apply to all can be used (PickerSetup), for its Apply to all, Default and Reset (D-228); chosen_columns
 #           is gone: the main window shows and keeps every change of the list itself
@@ -860,10 +862,8 @@ class SettingsDialog(QDialog):
             for account in result:
                 if account.kind == "local":
                     continue  # Local Folders is not an account: it is shown through the accounts that keep their mail there
-                name = account.account_name or account.display_name
                 calendars_only = account.kind == "dav"  # no address and no mail: never the default account
-                text = f"{name}  - {account.server_label}" if calendars_only else f"{name}  <{account.email_address}>  - {account.server_label}"
-                item = QListWidgetItem(text)
+                item = QListWidgetItem(account_line(account))
                 item.setData(ROLE_ACCOUNT, account)
                 self.accounts.addItem(item)
                 if not calendars_only:

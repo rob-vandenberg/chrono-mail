@@ -17,12 +17,14 @@ from chrono_mail.ui.colours import green, red_style
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
 from chrono_mail.ui.passwordfield import make_password_field
+from chrono_mail.ui.serverfields import account_line
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 4.2.441"
+__version__ = "calendaraccount.py 4.2.444"
 
 # --- Version history ----------------------------------------------------
+# v4.2.444: For lists each mail account as Settings > Accounts does: name, address, server and kind (account_line)
 # v4.2.441: a server whose certificate could not be verified asks at once (Verify certificate) after Find; Connect finds again; the Look at
 #           the server's certificate… button is gone (UR-05, D-299)
 # v4.2.439: the calendar window is a part of Add account (CalendarFields, ui/forms/calendar_fields.ui): CalDAV and CardDAV are choices of its
@@ -64,7 +66,7 @@ class CalendarFields(QWidget):
         self.target.addItem(NEW_ACCOUNT_TEXT, NEW_ACCOUNT)
         for account in mail_accounts:
             if account.kind != "local":
-                self.target.addItem((account.shown_name or account.email_address), account.account_id)
+                self.target.addItem(account_line(account), account.account_id)  # as Settings > Accounts lists it
         self.account_name: QLineEdit = part(form, QLineEdit, "accountName")
         self.url: QLineEdit = part(form, QLineEdit, "url")
         self.username: QLineEdit = part(form, QLineEdit, "username")
