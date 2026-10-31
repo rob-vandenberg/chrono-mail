@@ -448,3 +448,59 @@ def test_the_heading_sits_next_to_the_sign_and_the_certificate_has_a_blank_line_
     below_question = details.mapTo(dialog, details.rect().topLeft()).y() - question.mapTo(dialog, question.rect().bottomLeft()).y()
     above_tick = tick.mapTo(dialog, tick.rect().topLeft()).y() - details.mapTo(dialog, details.rect().bottomLeft()).y()
     assert below_question >= line and above_tick >= line
+
+
+@pytest.fixture
+def one_machine(tmp_path: Path) -> Generator[Setup]:
+    """Incoming and outgoing mail on one machine, with one certificate (two ports)."""
+    (tmp_path / "c").mkdir()
+    context, _ = make_certificate(tmp_path / "c")
+    engine = make_engine(tmp_path / "e")
+    with FakePop3Server({}, implicit_tls=context) as pop, FakeSmtpServer(implicit_tls=context) as smtp:
+        backend = Backend(engine)
+        yield Setup(backend, pop, smtp)
+        backend.wait_for_done(5000)
+
+
+@pytest.mark.parametrize("connect", [True, False], ids=["connect", "do-not-connect"])
+def test_one_certificate_on_both_ports_of_a_server_asks_once(one_machine: Setup, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, connect: bool) -> None:
+    shown: list[VerifyCertificateDialog] = []
+    answer(monkeypatch, shown, connect=connect)
+    dialog = AccountDialog(one_machine.backend)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    fill(dialog, one_machine)
+    dialog.test_button.click()
+    if connect:
+        wait(qtbot, lambda: dialog.result_label.text().count("✓") == 2, timeout=15000)  # tested again once, with both ports accepted
+        assert len(dialog.trusted) == 2 and len(one_machine.backend.engine.pins()) == 2
+    else:
+        wait(qtbot, lambda: len(shown) == 1)
+        qtbot.wait(300)
+        assert dialog.trusted == [] and one_machine.backend.engine.pins() == ()
+    assert len(shown) == 1
+
+
+def test_a_port_met_again_while_its_window_is_open_joins_that_window(one_machine: Setup, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    held: list[VerifyCertificateDialog] = []
+
+    def opened(self: VerifyCertificateDialog) -> None:
+        held.append(self)  # left open for now
+
+    monkeypatch.setattr(VerifyCertificateDialog, "open", opened)
+    tester = QWidget()
+    qtbot.addWidget(tester)
+    tester.show()
+    questions = questions_for(one_machine.backend)
+    retried: list[str] = []
+    pop = CertificateTrouble("127.0.0.1", one_machine.pop.port, "tls", "pop3", changed=False)
+    smtp = CertificateTrouble("127.0.0.1", one_machine.smtp.port, "tls", "smtp", changed=False)
+    questions.ask(pop, lambda: retried.append("incoming"), tester)
+    questions.ask(smtp, lambda: retried.append("outgoing"), tester)
+    wait(qtbot, lambda: len(held) == 1)
+    questions.ask(smtp, lambda: retried.append("outgoing again"), tester)  # met again while the window is open
+    qtbot.wait(300)
+    assert len(held) == 1
+    held[0].done(QDialog.DialogCode.Rejected)  # Do not connect
+    qtbot.wait(300)
+    assert len(held) == 1 and retried == []

@@ -23,9 +23,11 @@ from chrono_mail.ui.backend import Backend, alive
 from chrono_mail.ui.certificatedialog import VerifyCertificateDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "certificatequestions.py 4.2.442"
+__version__ = "certificatequestions.py 4.2.443"
 
 # --- Version history ----------------------------------------------------
+# v4.2.443: one window per server name and certificate: the other ports of that server showing the same certificate (incoming, outgoing,
+#           calendars on one machine) get the same answer, and the work they met is done again once
 # v4.2.442: by_person: a Send the person made asks also after Do not connect earlier in this run (D-299)
 # v4.2.441: Initial version: a certificate that could not be verified asks at once, one Verify certificate window at a time (UR-05, D-299)
 
@@ -56,6 +58,11 @@ class _Question:
     accounts: list[str] = field(default_factory=list)  # every account that met this server: Don't ask me again keeps it with each
 
 
+def _look(trouble: CertificateTrouble) -> CertificateParameters:
+    """certificate.inspect for the server of this trouble."""
+    return CertificateParameters(trouble.host, trouble.port, SECURITIES.get(trouble.security, "tls"), KINDS.get(trouble.kind, "imap"))
+
+
 def _open(window: QWidget | None) -> bool:
     """A window of a test or Find that is still there and shown (closed, its question and its work are no longer wanted)."""
     return window is not None and alive(window) and window.isVisible()
@@ -71,6 +78,7 @@ class CertificateQuestions(QObject):
         self._on_screen: Callable[[], bool] = lambda: True
         self._waiting: list[_Question] = []
         self._asking: _Question | None = None  # looked at or shown now
+        self._group: list[_Question] = []  # every question its window answers (the other ports of that server with its certificate)
         self.open_dialog: VerifyCertificateDialog | None = None
         self._declined: set[Server] = set()  # Do not connect: the Refreshes of this run ask no more about these servers
         self._done_again: set[tuple[str, int, str]] = set()  # a certificate accepted already, whose work was done again once (never a loop)
@@ -94,13 +102,14 @@ class CertificateQuestions(QObject):
             self._declined.discard(server)
         if not by_hand and server in self._declined:
             return
-        for question in [self._asking, *self._waiting]:
+        asked = self._group or ([self._asking] if self._asking is not None else [])
+        for question in [*asked, *self._waiting]:
             if question is not None and (question.trouble.host.lower(), question.trouble.port) == server:
                 self._join(question, trouble, retry, parent, keep)
                 if by_hand and not question.by_hand:
                     question.by_hand, question.parent = True, parent  # the person waits for it: asked over their window, also when it is read now
                     self._declined.discard(server)
-                    if question is not self._asking:
+                    if question not in asked:
                         self._waiting.remove(question)
                         self._waiting.insert(0, question)  # asked first
                         self._next()
@@ -148,12 +157,12 @@ class CertificateQuestions(QObject):
 
         def looked(result: CertificateResult) -> None:
             if result.accepted_by_default:  # put right meanwhile: nothing to ask; the next attempt connects
-                self._done(question, connect=False)
+                self._done([question], connect=False)
                 return
             if result.accepted_for_run:  # accepted meanwhile (a test that ran while it was asked): its work is done again, once per certificate
                 again = (trouble.host.lower(), trouble.port, result.fingerprint) not in self._done_again
                 self._done_again.add((trouble.host.lower(), trouble.port, result.fingerprint))
-                self._done(question, connect=again)
+                self._done([question], connect=again)
                 return
             if not self._may_ask(question):  # a question opened meanwhile, or the window went: asked once that is over
                 self._asking = None
@@ -161,71 +170,111 @@ class CertificateQuestions(QObject):
                 QTimer.singleShot(0, self._next)
                 return
             if not self._wanted(question):
-                self._done(question, connect=False)
+                self._done([question], connect=False)
                 return
-            self._show(question, result)
+            self._gather(question, result)
 
         def failed(error: ChronoMailError) -> None:
-            self._done(question, connect=False)  # the server cannot be reached now: the next attempt meets it again
+            self._done([question], connect=False)  # the server cannot be reached now: the next attempt meets it again
 
-        parameters = CertificateParameters(trouble.host, trouble.port, SECURITIES.get(trouble.security, "tls"), KINDS.get(trouble.kind, "imap"))
-        self._backend.ask(CERTIFICATE_INSPECT, parameters, looked, failed, owner=self)
+        self._backend.ask(CERTIFICATE_INSPECT, _look(trouble), looked, failed, owner=self)
 
-    def _show(self, question: _Question, result: CertificateResult) -> None:
+    def _gather(self, question: _Question, result: CertificateResult) -> None:
+        """The other ports of the same server name that wait to be asked about (incoming, outgoing, calendars on one machine): those that show
+        this very certificate are answered with it, in one window; another certificate gets a window of its own."""
+        host = question.trouble.host.lower()
+        others = [waiting for waiting in self._waiting if waiting.trouble.host.lower() == host]
+        group = [question]
+
+        def look_next() -> None:
+            if not others:
+                for member in group[1:]:
+                    if member in self._waiting:
+                        self._waiting.remove(member)
+                self._group = group  # asked now: a question met meanwhile joins them, never a second window
+                if not any(self._wanted(member) for member in group):  # their windows closed while the other ports were read
+                    self._done(group, connect=False)
+                    return
+                self._show(group, result)
+                return
+            other = others.pop(0)
+
+            def looked(seen: CertificateResult) -> None:
+                if seen.fingerprint == result.fingerprint and other in self._waiting:
+                    group.append(other)
+                look_next()
+
+            self._backend.ask(CERTIFICATE_INSPECT, _look(other.trouble), looked, lambda error: look_next(), owner=self)
+
+        look_next()
+
+    def _show(self, group: list[_Question], result: CertificateResult) -> None:
+        question = group[0]
         parent = question.parent if _open(question.parent) else self._window  # the test's window was closed: over the main window
-        dialog = VerifyCertificateDialog(question.trouble.host, result, question.trouble.changed, parent)
+        dialog = VerifyCertificateDialog(question.trouble.host, result, any(member.trouble.changed for member in group), parent)
         self.open_dialog = dialog
 
         def answered(code: int) -> None:
             self.open_dialog = None
             dialog.deleteLater()
             if code == QDialog.DialogCode.Accepted:
-                self._accept(question, result.fingerprint, dialog.remember)
+                self._accept(group, result.fingerprint, dialog.remember)
             else:
-                if not question.by_hand:
-                    self._declined.add((question.trouble.host.lower(), question.trouble.port))
-                self._done(question, connect=False)
+                for member in group:
+                    if not member.by_hand:
+                        self._declined.add((member.trouble.host.lower(), member.trouble.port))
+                self._done(group, connect=False)
 
         dialog.finished.connect(answered)
         dialog.open()
 
-    def _accept(self, question: _Question, fingerprint: str, remember: bool) -> None:
-        """Connect: exactly this certificate, until Chrono Mail closes; with Don't ask me again for good, with every account that met it."""
-        trouble = question.trouble
-        pin = f"{trouble.host.strip().lower()}:{trouble.port}={fingerprint}"
-        waiting: list[str] = list(question.accounts) if remember else []
+    def _accept(self, group: list[_Question], fingerprint: str, remember: bool) -> None:
+        """Connect: exactly this certificate, for every port of the server that showed it, until Chrono Mail closes; with Don't ask me again
+        for good, with every account that met it."""
+        steps = [(member, account) for member in group for account in ([""] + (list(member.accounts) if remember else []))]  # "": until closing
 
-        def kept_for_good(_: AccountSummary | None = None) -> None:
-            if waiting:
-                account = waiting.pop(0)
-                self._backend.ask(ACCOUNT_TRUST_CERTIFICATE, TrustParameters(account, trouble.host, trouble.port, fingerprint), kept_for_good, not_kept, owner=self)
-            else:
-                self._done(question, connect=True)
+        def step(_: object = None) -> None:
+            if not steps:
+                self._done(group, connect=True)
+                return
+            member, account = steps.pop(0)
+            trouble = member.trouble
+            if not account:
+                self._backend.ask(CERTIFICATE_TRUST_FOR_RUN, RunTrustParameters(trouble.host, trouble.port, fingerprint), kept, failed, owner=self)
+                return
+            self._backend.ask(ACCOUNT_TRUST_CERTIFICATE, TrustParameters(account, trouble.host, trouble.port, fingerprint), step, not_kept, owner=self)
 
-        def not_kept(error: ChronoMailError) -> None:
-            kept_for_good()  # that account is gone meanwhile: the others still keep it, and the work goes on (it is trusted for this run)
-
-        def trusted(_: RunTrustResult) -> None:
+        def kept(trusted: RunTrustResult) -> None:  # trusted until closing; with the tick, the windows keep it too
             try:
                 if remember:
-                    for keep, owner in question.keeps:
-                        if owner is None or _open(owner):  # never into a window closed meanwhile
-                            keep(pin)
+                    for member in group:
+                        for keep, owner in member.keeps:
+                            if f"{member.trouble.host.strip().lower()}:{member.trouble.port}=" in trusted.pin and (owner is None or _open(owner)):
+                                keep(trusted.pin)  # never into a window closed meanwhile
             finally:
-                kept_for_good()  # the accounts keep it and the work goes on, whatever a window did with it
+                step()
+
+        def not_kept(error: ChronoMailError) -> None:
+            step()  # that account is gone meanwhile: the others still keep it, and the work goes on (it is trusted for this run)
 
         def failed(error: ChronoMailError) -> None:
-            self._done(question, connect=False)
+            self._done(group, connect=False)
 
-        self._backend.ask(CERTIFICATE_TRUST_FOR_RUN, RunTrustParameters(trouble.host, trouble.port, fingerprint), trusted, failed, owner=self)
+        step()
 
-    def _done(self, question: _Question, connect: bool) -> None:
+    def _done(self, group: list[_Question], connect: bool) -> None:
         self._asking = None
+        self._group = []
         QTimer.singleShot(0, self._next)  # the next question comes whatever the work done again does
-        if connect:
-            for retry in question.retries:
-                if retry.owner is None or _open(retry.owner):  # never the work of a window closed meanwhile
-                    retry.again()
+        if not connect:
+            return
+        done: list[Callable[[], None]] = []
+        for retry in (retry for member in group for retry in member.retries):
+            if retry.again in done:
+                continue  # the same work met several ports of the server (a test of incoming and outgoing): done again once
+            if retry.owner is None or _open(retry.owner):  # never the work of a window closed meanwhile
+                done.append(retry.again)
+                QTimer.singleShot(0, retry.again)  # each on its own: one that fails never keeps the others from being done
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
