@@ -8,9 +8,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
-    QInputDialog,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -24,11 +22,13 @@ from chrono_mail.engine.commands_accounts import (
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.forms import part
+from chrono_mail.ui.passwordfield import PasswordBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "recoverydialog.py 4.0.376"
+__version__ = "recoverydialog.py 4.2.437"
 
 # --- Version history ----------------------------------------------------
+# v4.2.437: the recovery file's passphrase is asked in the password box, with the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/recovery_code.ui, D-276); Copy comes back with the form's text; its smallest width follows the size factor
 # v3.6.350: a code that could not be shown can be asked again with Try again (during a restore "Stop the restore" was the only way on)
 # v3.6.349: the tick and Copy work only once the code is shown: a code never seen is never noted as stored (RV-210); a saved recovery file allows the tick too
@@ -134,10 +134,10 @@ class RecoveryDialog(QDialog):
         path, _ = QFileDialog.getSaveFileName(self, "Save the recovery file", str(Path.home() / "chrono-mail-recovery.key"))
         if not path:
             return
-        passphrase, ok = QInputDialog.getText(self, "Protect the recovery file", "Choose a passphrase for the file:", QLineEdit.EchoMode.Password)
+        passphrase, ok = PasswordBox.ask(self, "Protect the recovery file", "Choose a passphrase for the file:")
         if not ok or not passphrase:
             return
-        again, ok = QInputDialog.getText(self, "Protect the recovery file", "Type the passphrase again:", QLineEdit.EchoMode.Password)
+        again, ok = PasswordBox.ask(self, "Protect the recovery file", "Type the passphrase again:")
         if not ok or again != passphrase:
             QMessageBox.warning(self, "Recovery file", "The two passphrases are not the same. Nothing was saved.")
             return

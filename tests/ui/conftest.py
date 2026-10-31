@@ -11,14 +11,16 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QColorDialog, QDialog, QFileDialog, QInputDialog, QMessageBox, QStyle, QWidget
 
 from chrono_mail.ui import appearance, colours, scale, sendnotices
+from chrono_mail.ui.passwordfield import PasswordBox
 from tests.ui.world import dialogs, world
 
 __all__ = ["dialogs", "world"]  # fixtures, found by pytest in this directory
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 4.2.409"
+__version__ = "conftest.py 4.2.437"
 
 # --- Version history ----------------------------------------------------
+# v4.2.437: the password box (PasswordBox.ask) that no test answers is answered with Cancel and fails the test, as QInputDialog.getText
 # v4.2.409: after every test no key is held: a simulated Ctrl+Z left Qt sure that Ctrl was still down, so a later test's selection in
 #           code was a Ctrl-click that selected nothing (let_go_of_keys)
 # v3.6.349: the About boxes and the print window too (they run without QDialog.exec; the reviewer of 3.5.348)
@@ -132,6 +134,7 @@ _PICKERS: tuple[tuple[type[QWidget], str, object], ...] = (
     (QMessageBox, "about", None),  # made and run inside Qt itself, so the stand-in exec never sees them
     (QMessageBox, "aboutQt", None),
     (QInputDialog, "getText", ("", False)),
+    (PasswordBox, "ask", ("", False)),
     (QInputDialog, "getItem", ("", False)),
     (QInputDialog, "getInt", (0, False)),
     (QFileDialog, "getOpenFileName", ("", "")),

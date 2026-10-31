@@ -16,12 +16,14 @@ from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import green, red_style
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
+from chrono_mail.ui.passwordfield import make_password_field
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 4.0.376"
+__version__ = "calendaraccount.py 4.2.437"
 
 # --- Version history ----------------------------------------------------
+# v4.2.437: the password field has the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/calendar_account.ui, D-276); its smallest width follows the size factor
 # v3.6.349: while the account is being added Find, the certificate and the fields are greyed too, and a Find never enables a second
 #           Add (RV-209); Find does nothing during an add, and Add after a failed add only with what Find found
@@ -58,7 +60,7 @@ class CalendarAccountDialog(QDialog):
         self.url: QLineEdit = part(form, QLineEdit, "url")
         self.username: QLineEdit = part(form, QLineEdit, "username")
         self.password: QLineEdit = part(form, QLineEdit, "password")
-        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        make_password_field(self.password)
         self.find_button: QPushButton = part(form, QPushButton, "find")
         self.certificate_button: QPushButton = part(form, QPushButton, "lookAtCertificate")
         self.result_label: QLabel = part(form, QLabel, "result")

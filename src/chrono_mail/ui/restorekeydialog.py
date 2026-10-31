@@ -5,9 +5,7 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
-    QInputDialog,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -23,12 +21,14 @@ from chrono_mail.ui import forms
 from chrono_mail.ui.backend import AnyStep, Backend, Step
 from chrono_mail.ui.colours import green_style, red_style
 from chrono_mail.ui.forms import part
+from chrono_mail.ui.passwordfield import PasswordBox
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "restorekeydialog.py 4.0.376"
+__version__ = "restorekeydialog.py 4.2.437"
 
 # --- Version history ----------------------------------------------------
+# v4.2.437: the recovery file's passphrase is asked in the password box, with the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/restore_key.ui, D-276); the Tab order follows the window from top to bottom (Start
 #           without this mail came first); its smallest width follows the size factor
 # v3.6.350: mail of Local Folders kept on this computer whose settings were lost: the dialog says so, and Start without this mail sets it
@@ -231,7 +231,7 @@ class RestoreKeyDialog(QDialog):
         path, _ = QFileDialog.getOpenFileName(self, "Choose the recovery file")
         if not path:
             return
-        passphrase, accepted = QInputDialog.getText(self, "Recovery file", "The passphrase of the recovery file:", QLineEdit.EchoMode.Password)
+        passphrase, accepted = PasswordBox.ask(self, "Recovery file", "The passphrase of the recovery file:")
         if not accepted or not passphrase:
             return
         self._run(Step(KEY_RESTORE_FILE, KeyRestoreFileParameters(path, passphrase)))

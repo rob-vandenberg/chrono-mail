@@ -37,13 +37,15 @@ from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import green, red_style
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.foundfolders import FolderTicks
+from chrono_mail.ui.passwordfield import make_password_field
 from chrono_mail.ui.serverfields import ServerFields, kind_of, mail_server_kind, policy_of, security_of, start_values_of, test_result_text
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.0.376"
+__version__ = "accountedit.py 4.2.437"
 
 # --- Version history ----------------------------------------------------
+# v4.2.437: the calendar server's password field has the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/account_edit.ui, D-276) with every tab in it; the tabs and rows an account of this kind
 #           has not are taken out (before, the unused Server copies page of an IMAP account was drawn over the tabs at the top left); its
 #           smallest width follows the size factor and never cuts a text off
@@ -139,7 +141,7 @@ class AccountEditDialog(QDialog):
         self.dav_username: QLineEdit = part(form, QLineEdit, "davUsername")
         self.dav_username.setText(account.dav_username)
         self.dav_password: QLineEdit = part(form, QLineEdit, "davPassword")
-        self.dav_password.setEchoMode(QLineEdit.EchoMode.Password)
+        make_password_field(self.dav_password)
         self.dav_result: QLabel = part(form, QLabel, "davResult")
         self.dav_result.setTextFormat(Qt.TextFormat.RichText)
         self.dav_check_button: QPushButton = part(form, QPushButton, "findDav")

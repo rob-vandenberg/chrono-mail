@@ -13,11 +13,13 @@ from chrono_mail.engine.commands_accounts import AccountCheckParameters, Kind, P
 from chrono_mail.ui import forms
 from chrono_mail.ui.colours import green, red
 from chrono_mail.ui.forms import part
+from chrono_mail.ui.passwordfield import make_password_field
 
 # --- Version ------------------------------------------------------------
-__version__ = "serverfields.py 4.0.376"
+__version__ = "serverfields.py 4.2.437"
 
 # --- Version history ----------------------------------------------------
+# v4.2.437: the two password fields have the eye (UR-03, D-296)
 # v4.0.376: the two boxes are built from their Qt Designer form (ui/forms/server_fields.ui, D-276) as one part (widget) that Add account
 #           and Edit account place in their own forms; the Tab order follows the boxes from top to bottom
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -100,7 +102,7 @@ class ServerFields:
             port.setRange(1, 65535)
             port.setValue(value)
         for password, label in ((self.password, "passwordLabel"), (self.outgoing_password, "outgoingPasswordLabel")):
-            password.setEchoMode(QLineEdit.EchoMode.Password)
+            make_password_field(password)
             if editing:
                 password.setPlaceholderText("(unchanged)")
                 part(form, QLabel, label).setText("New password")

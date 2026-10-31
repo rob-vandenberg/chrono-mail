@@ -27,6 +27,7 @@ Every changelist says how it keeps this rule. Nothing counts as obvious: what th
 | `ARCHITECTURE.md` | Module map, layers, storage design, account model | Before any code task |
 | `ARCHITECTURE-ARCHIVE.md` | Old text of ARCHITECTURE.md; git-ignored | Never read whole; search when the history of the design is needed |
 | `ROADMAP.md` | Milestones and tasks, each with a status | When picking or finishing a task |
+| `USER-REQUESTS.md` | The backlog of requests and problems from people who use Chrono Mail (UR-numbers) | When picking a task |
 | `REFACTOR.md` | The senior refactor: the inventory (R-numbers), the agreed order, the progress | Every session during the refactor, after STATUS.md |
 | `DECISIONS.md` | Every design decision as it stands now, by topic, short (D-162); D-193 (the basic rule) first | Every session, after STATUS.md; before proposing to change a design choice |
 | `DECISIONS-ARCHIVE.md` | The full original text of D-001 to D-161 (measurements, cause chains, rejected options) | Never read whole; search by number when the history of a decision is needed |

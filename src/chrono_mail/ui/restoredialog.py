@@ -8,9 +8,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFileDialog,
-    QInputDialog,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
@@ -41,15 +39,17 @@ from chrono_mail.engine.commands_backup import (
 from chrono_mail.engine.restore import DOING_ITEMS, DOING_MESSAGES, BackupPasswordNeeded, RestoreCancelled, WrongBackupPassword
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.passwordfield import PasswordBox
 from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowsettings import apply_window_settings
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restoredialog.py 4.0.376"
+__version__ = "restoredialog.py 4.2.437"
 
 # --- Version history ----------------------------------------------------
+# v4.2.437: the backup password is asked in the password box, with the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/restore.ui, D-276): the parts the backup does not hold are hidden; the file's name is
 #           plain text, as the summary and the report; Close comes back with the form's text; its sizes and blank lines follow the size factor
 # v3.5.346: The recovery code is shown before every restore until it was confirmed as stored, not only when the key was just made (RV-03)
@@ -364,7 +364,7 @@ class RestoreWindow(QObject):
         elif not isinstance(error, BackupPasswordNeeded):
             QMessageBox.warning(self._parent, "Restore", str(error))
             return
-        typed, ok = QInputDialog.getText(self._parent, "Backup password", f"The backup password of {path.name}:", QLineEdit.EchoMode.Password)
+        typed, ok = PasswordBox.ask(self._parent, "Backup password", f"The backup password of {path.name}:")
         if ok and typed.strip():
             self._read(path, typed.strip())
 
