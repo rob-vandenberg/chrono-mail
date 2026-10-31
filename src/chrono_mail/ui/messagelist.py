@@ -26,9 +26,12 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.433"
+__version__ = "messagelist.py 4.2.456"
 
 # --- Version history ----------------------------------------------------
+# v4.2.456: a question of the order or of the new places that named the view's folder by a name it lost meanwhile (renamed while it was
+#           on its way) is asked again under the new name: its answer, an error ("There is no folder") or an empty list, is never shown;
+#           the same for the places of messages that came in meanwhile (none is left out)
 # v4.2.433: a selected message that moves under a folded group bar opens it and stays in view, selected
 # v4.2.432: a message that changed where it is moves to its new place in the sort, under its heading, keeping the selection (D-146)
 # v4.2.429: the group headings of to_shown (From / To for mail one sent, D-295)
@@ -573,6 +576,17 @@ class MessageListModel(QAbstractTableModel):
             whole=whole, first=PAGE_SIZE, rows_of=tuple(rows_of), headings=headings,
         )
 
+    def _renamed_since(self, spec: ViewSpec) -> ViewSpec | None:
+        """This spec under its folder's new name, when the view followed a rename of that folder (or one above it) while a question asked
+        with it was on its way: the question named the old name and is asked again under the new one, as every other fact heard meanwhile
+        is applied to its answer. Only the folder and the sort may differ from the view now (a new sort may be on its way, and stays).
+        None for anything else."""
+        now = self._spec
+        if now is None or spec.folder is None or now.folder is None or now.folder == spec.folder:
+            return None
+        renamed = dataclasses.replace(spec, folder=now.folder)
+        return renamed if self._same_messages(renamed, now) else None
+
     def _ask_order(self, spec: ViewSpec, whole: bool, rows_of: Sequence[str], purpose: str) -> None:
         """Ask the order of the view: purpose show (the first answer of a view shown), complete (the whole order after its
         start), rearrange (a new sort: the rows loaded stay) or reload (fetched again: the rows come again)."""
@@ -592,6 +606,10 @@ class MessageListModel(QAbstractTableModel):
             if view != self._view or number != self._ordering:
                 return  # another view, or another order was asked for meanwhile
             self._ordering = None
+            now = self._renamed_since(spec)
+            if now is not None:  # it named the folder by its old name: read after the rename, it holds nothing of the folder (or an error)
+                self._ask_order(now, whole, rows_of, purpose)
+                return
             self._take_order(spec, order, facts, purpose)
             self._arrivals_done()
 
@@ -600,6 +618,10 @@ class MessageListModel(QAbstractTableModel):
             if view != self._view or number != self._ordering:
                 return
             self._ordering = None
+            now = self._renamed_since(spec)
+            if now is not None:  # it named the folder by its old name: asked under the new one, nothing went wrong
+                self._ask_order(now, whole, rows_of, purpose)
+                return
             self._failed(error)
             if not self._complete:  # what waits for the rest of the order would wait for ever: it is not done, and that is said (RV-206)
                 self.places_epoch += 1
@@ -638,7 +660,7 @@ class MessageListModel(QAbstractTableModel):
             self.rearranged.emit()
         self.loaded.emit()
         if not self._complete:
-            self._ask_order(spec, whole=True, rows_of=[], purpose="complete")
+            self._ask_order(self._renamed_since(spec) or spec, whole=True, rows_of=[], purpose="complete")  # under the folder's name now
             return
         self.placed.emit()
         wanted, self._wanted_pages = sorted(self._wanted_pages), set()
@@ -1597,10 +1619,21 @@ class MessageListModel(QAbstractTableModel):
         view = self._view
         asked_stay = frozenset(self._stay)
 
+        def place_again() -> None:
+            """They are asked again, under the view's new folder name, once no order is on its way (it may count them)."""
+            for key, row in placing.items():
+                self._arriving.setdefault(key, row)
+            if self._ordering is None:
+                self._arrival_planned = True
+                QTimer.singleShot(0, self, self._take_in)
+
         def located(result: PlacesResult) -> None:
             if view != self._view or self._placing is not placing:
                 return
             self._placing = None
+            if self._renamed_since(spec) is not None:  # it named the folder by its old name: asked under the new one
+                place_again()
+                return
             if self._ordering is not None or not self._stay <= asked_stay:  # an order went out meanwhile: they are placed after it (it may count
                 for key, row in placing.items():  # them); or a message the list holds was kept meanwhile (read while shown, D-149): the answer
                     self._arriving.setdefault(key, row)  # left it out, so what comes before it is asked again
@@ -1644,6 +1677,9 @@ class MessageListModel(QAbstractTableModel):
         def failed(error: ChronoMailError) -> None:
             if self._placing is placing:
                 self._placing = None
+                if view == self._view and self._renamed_since(spec) is not None:  # it named the folder by its old name: asked under the
+                    place_again()  # new one, nothing went wrong, and none of them is left out
+                    return
             self._failed(error)
             self._arrivals_done()
 
@@ -1781,6 +1817,9 @@ class MessageListModel(QAbstractTableModel):
             if view != self._view or self._resort_asked is not asked:
                 return  # another view is shown: its own questions are its own
             self._resort_asked = None
+            if self._renamed_since(spec) is not None:
+                again()  # it named the folder by its old name: asked under the new one, nothing went wrong
+                return
             for key in keys:
                 self._resorting.setdefault(key, None)
                 self._parked.add(key)  # kept, asked again at the next change of the list (never over and over for the same failure)
