@@ -3502,3 +3502,7 @@ The owner: the For list of a calendar server (Add an account > CalDAV or CardDAV
 ## 2026-10-31, 4.2.445: Verify certificate opens at 700 pixels; widths as the owner measures them
 
 The owner: Verify certificate at least 500, opened at 700 pixels; asked whether pixels or Qt's units, the choice is Claude's. Qt's units at the size slider are the base (they grow with the screen's scale and the slider, as the text does; plain screen pixels would be too narrow on a 200 % screen), set so that on the owner's Linux computer (125 %, windows slider 0.95) they are exactly his numbers: forms.owner_width (500 is 421, 700 is 589 at the standard size) and forms.open_at (the smallest width as forms.smallest, and the width the window opens at, never below its layout's need nor wider than its screen). Event colours (4.2.442, 500 screen pixels whatever the slider) uses the same: still 500 on his screen. New and changed tests in tests/ui/test_ui_palette_width.py and tests/ui/test_ui_certificates.py (fail on 4.2.444).
+
+## 2026-10-31, 4.2.446: Verify certificate opens at 740 pixels
+
+The owner: 740 instead of 700 (forms.owner_width(740), 623 at the standard size). Its test expects 740; not run (the owner).
