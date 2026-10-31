@@ -10,9 +10,10 @@ from tests.ui.test_ui_push import Imap, build
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_folderchoices.py 2.3.316"
+__version__ = "test_ui_folderchoices.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: the Send and Receive tick is saved; the per-account interval and its timer are gone (D-059)
 # v2.3.316: the own-interval timer test lets the timers only receive (since 2.2.314 they send first by default)
 # v1.9.271: The account editor's changes are typed (R-19)
 # v1.9.265: the general timer also passes the accounts of calendars only (since 1.1.217): the stand-in takes it (R-44)
@@ -69,42 +70,15 @@ def test_the_folders_tab_lists_the_server_folders_and_saves_the_changes(tmp_path
         assert not getattr(folders["Projects"], "shown") and getattr(folders["Projects"], "chosen_role") == "archive"
 
 
-def test_unchanged_folders_save_nothing_and_a_check_interval_is_saved(world: World, qtbot: QtBot) -> None:
+def test_unchanged_folders_save_nothing_and_the_send_and_receive_tick_is_saved(world: World, qtbot: QtBot) -> None:
     listed = world.call("account.list")
     dialog = AccountEditDialog(world.backend, listed[0])
     qtbot.addWidget(dialog)
     dialog.show()
     assert dialog.folder_table is None and dialog._folder_changes() is None  # noqa: SLF001 - a POP3 account has no folders tab
-    assert dialog.check_minutes.value() == 0 and dialog._values() is None  # noqa: SLF001
-    dialog.check_minutes.setValue(20)
-    assert given(dialog._values()) == {"check_minutes": 20}  # noqa: SLF001
+    assert dialog.in_send_receive.isChecked() and dialog._values() is None  # noqa: SLF001
+    dialog.in_send_receive.setChecked(False)
+    assert given(dialog._values()) == {"in_send_receive": False}  # noqa: SLF001
     dialog.save_button.click()
     wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
-    assert world.call("account.list")[0].check_minutes == 20
-
-
-def test_an_account_with_its_own_interval_has_its_own_timer(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    world.window.settings.setValue("scheduled_refresh", "receive")  # which accounts each timer checks; sending first is tested in test_ui_delayed_send
-    world.window.start()
-    wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
-    assert world.window.checking.account_timers == {}  # noqa: SLF001
-    world.call("account.edit", account=world.account_id, check_minutes=7)
-    world.window.reload_accounts(select_saved=False)
-    wait(qtbot, lambda: world.account_id in world.window.checking.account_timers)  # noqa: SLF001
-    timer = world.window.checking.account_timers[world.account_id]  # noqa: SLF001
-    assert timer.isActive() and timer.interval() == 7 * 60_000
-    checked: list[set[str] | None] = []
-
-    def record(only: set[str] | None, also_calendars: set[str] | None = None) -> None:
-        checked.append(only)
-
-    monkeypatch.setattr(world.window.checking, "check_accounts", record)
-    world.window.checking.check_on_general_interval()  # noqa: SLF001 - this account has its own interval: the general timer leaves it out
-    timer.timeout.emit()
-    assert checked == [set(), {world.account_id}]
-    world.window.act_auto.setChecked(False)
-    assert world.account_id not in world.window.checking.account_timers and not timer.isActive()  # noqa: SLF001 - no automatic checking, no timers
-    world.call("account.edit", account=world.account_id, check_minutes=0)
-    world.window.act_auto.setChecked(True)
-    world.window.reload_accounts(select_saved=False)
-    wait(qtbot, lambda: world.account_id not in world.window.checking.account_timers)  # noqa: SLF001
+    assert world.call("account.list")[0].in_send_receive is False

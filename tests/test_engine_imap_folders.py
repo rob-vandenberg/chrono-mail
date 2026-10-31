@@ -14,9 +14,10 @@ from tests.test_engine_imap import World, world  # noqa: F401 - world is a fixtu
 __all__ = ["setup", "world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap_folders.py 1.1.241"
+__version__ = "test_engine_imap_folders.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: the tick "Include this account in Send and Receive" instead of the per-account check interval (D-059)
 # v1.1.241: A folder taken off the server's list of folders to show goes from the folder list; a standard folder stays (R-34)
 # v0.5.123: A folder left out is no longer shown here (D-120)
 # v0.0.44: Initial tests of folder choices, roles and the check interval per account
@@ -94,26 +95,24 @@ def test_a_pop3_account_has_no_server_folders(setup: Setup) -> None:
         call(setup.engine, "account.set-folders", account=setup.account_id, hide=["x"])
 
 
-def test_the_check_interval_of_an_account(setup: Setup) -> None:
-    assert call(setup.engine, "account.list")[0].check_minutes == 0
-    assert call(setup.engine, "account.edit", account=setup.account_id, check_minutes=15).check_minutes == 15
-    assert call(setup.engine, "account.list")[0].check_minutes == 15
-    assert call(setup.engine, "account.edit", account=setup.account_id, display_name="Other").check_minutes == 15  # not given: unchanged
-    for bad in (-1, 241):
-        with pytest.raises(ConfigurationError):
-            call(setup.engine, "account.edit", account=setup.account_id, check_minutes=bad)
-    assert call(setup.engine, "account.edit", account=setup.account_id, check_minutes=0).check_minutes == 0
+def test_an_account_can_be_left_out_of_send_and_receive(setup: Setup) -> None:
+    assert call(setup.engine, "account.list")[0].in_send_receive is True  # included by default
+    assert call(setup.engine, "account.edit", account=setup.account_id, in_send_receive=False).in_send_receive is False
+    assert call(setup.engine, "account.list")[0].in_send_receive is False
+    assert call(setup.engine, "account.edit", account=setup.account_id, display_name="Other").in_send_receive is False  # not given: unchanged
+    assert call(setup.engine, "account.edit", account=setup.account_id, in_send_receive=True).in_send_receive is True
 
 
-def test_the_interval_is_kept_in_the_settings_file() -> None:
+def test_the_tick_is_kept_in_the_settings_file_and_an_old_interval_is_ignored() -> None:
     from dataclasses import replace
 
     base = make_config()
-    changed = base.with_account(replace(base.accounts[0], check_minutes=7))
-    assert parse_config(config_to_text(changed)).accounts[0].check_minutes == 7
+    changed = base.with_account(replace(base.accounts[0], in_send_receive=False))
+    assert parse_config(config_to_text(changed)).accounts[0].in_send_receive is False
     data = json.loads(config_to_text(changed))
-    del data["accounts"][0]["check_minutes"]
-    assert parse_config(json.dumps(data)).accounts[0].check_minutes == 0  # older files
-    data["accounts"][0]["check_minutes"] = "often"
-    with pytest.raises(ConfigurationError, match="check_minutes"):
+    del data["accounts"][0]["in_send_receive"]
+    data["accounts"][0]["check_minutes"] = 15  # a file from before 4.2.451
+    assert parse_config(json.dumps(data)).accounts[0].in_send_receive is True  # included, following the general refresh
+    data["accounts"][0]["in_send_receive"] = "no"
+    with pytest.raises(ConfigurationError, match="in_send_receive"):
         parse_config(json.dumps(data))

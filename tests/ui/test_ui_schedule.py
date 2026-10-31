@@ -16,9 +16,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, gone, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_schedule.py 2.4.333"
+__version__ = "test_ui_schedule.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: an account's entry in the Refresh menu is a submenu: Send and Receive, Send, Receive (D-059)
 # v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
 # v2.0.298: Scheduled in the owner's new order of the standard folders (D-232)
 # v2.0.292: Scheduled in the owner's order of the standard folders (D-232)
@@ -192,7 +193,7 @@ def test_a_repeating_message_is_listed_paused_and_resumed_in_the_window(world: W
 
 
 def test_refresh_has_a_menu_to_receive_all_or_one_account(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    from PySide6.QtWidgets import QToolButton
+    from PySide6.QtWidgets import QMenu, QToolButton
 
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
@@ -208,7 +209,9 @@ def test_refresh_has_a_menu_to_receive_all_or_one_account(world: World, qtbot: Q
     world.window._fill_refresh_menu()  # noqa: SLF001
     actions = world.window.refresh_menu.actions()
     assert [action.text() for action in actions] == ["Send and Receive All", "Receive All", "Send All", "", '"me@example.com" only']
-    actions[4].trigger()
+    own = actions[4].menu()
+    assert isinstance(own, QMenu) and [action.text() for action in own.actions()] == ["Send and Receive", "Send", "Receive"]  # D-059
+    own.actions()[2].trigger()  # that account's Receive
     actions[1].trigger()
     assert checked == [{world.account_id}, None]
 

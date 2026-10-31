@@ -6,9 +6,10 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAI
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.2.438"
+__version__ = "model.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
 # v4.2.438: calendar_timed_background: Month shows the account's timed events in their colour (UR-02, D-297)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v2.1.308: junk_filter: new mail of the account goes through the junk filter (D-238)
@@ -51,7 +52,6 @@ def fingerprints_for(pins: tuple[str, ...], host: str, port: int) -> frozenset[s
     """The fingerprints accepted for one server: the ones pinned to its host and port and the bare ones of older entries."""
     wanted = f"{host.strip().lower()}:{port}="
     return frozenset(pin.removeprefix(wanted) if pin.startswith(wanted) else pin for pin in pins if "=" not in pin or pin.startswith(wanted))
-MAXIMUM_CHECK_MINUTES: int = 240
 MAXIMUM_LEFT_OUT_FOLDERS: int = 1000
 MAXIMUM_ACCOUNT_NAME_CHARACTERS: int = 200
 MAXIMUM_COLLECTION_LOOKS: int = 1000
@@ -85,7 +85,6 @@ class AccountSettings:
     encrypted: bool = True
     signature: str = ""  # plain text, added to new messages
     trusted_certificates: tuple[str, ...] = ()  # SHA-256 fingerprints of server certificates the person accepted
-    check_minutes: int = 0  # how often to check this account for mail; 0 follows the general setting
     dav_url: str = ""  # the address of the CalDAV and CardDAV server of this account; empty: no calendars, tasks and contacts from a server
     dav_username: str = ""  # the user name for it; empty: the same as for incoming mail
     dav_left_out: tuple[str, ...] = ()  # the folders of that server the person left out (folder_key: what it holds and where); every other one is kept in step
@@ -98,6 +97,7 @@ class AccountSettings:
     calendar_timed_background: bool = False  # Month shows the account's timed events in their colour, as all-day ones, not as a dot (D-297)
     collection_looks: tuple[CollectionLook, ...] = ()  # the name and colour of its server's collections as Chrono Mail holds them, by their place (D-192)
     junk_filter: bool = True  # new mail goes through the junk filter: junk to the Junk folder before the rules run (D-238)
+    in_send_receive: bool = True  # the account takes part in every refresh that is not its own; unticked only its own Refresh menu entry (D-059)
 
     def look(self, key: str) -> CollectionLook | None:
         return next((item for item in self.collection_looks if item.key == key), None)
@@ -117,8 +117,6 @@ class AccountSettings:
             raise ConfigurationError("The address or user name of the calendar and contacts server is too long")
         if len(self.dav_left_out) > MAXIMUM_LEFT_OUT_FOLDERS or any(not 0 < len(item) <= 1000 for item in self.dav_left_out):
             raise ConfigurationError("Too many folders of the calendar and contacts server are left out (or one is not a folder)")
-        if not 0 <= self.check_minutes <= MAXIMUM_CHECK_MINUTES:
-            raise ConfigurationError(f"The number of minutes between checks must be between 0 and {MAXIMUM_CHECK_MINUTES}")
         if len(self.trusted_certificates) > MAXIMUM_TRUSTED_CERTIFICATES or len(set(self.trusted_certificates)) != len(self.trusted_certificates):
             raise ConfigurationError("Too many accepted certificates (or one twice)")
         if self.calendar_palette is not None and (problem := palette_problem(self.calendar_palette, self.calendar_own_colour_name)):

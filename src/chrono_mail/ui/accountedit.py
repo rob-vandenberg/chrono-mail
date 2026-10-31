@@ -43,9 +43,10 @@ from chrono_mail.ui.serverfields import ServerFields, kind_of, policy_of, securi
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.2.447"
+__version__ = "accountedit.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: General has the tick "Include this account in Send and Receive", for every kind of account, instead of "Check this account every" (D-059)
 # v4.2.447: Test connection and the calendar server's check always check the certificates themselves; the test after Connect uses the
 #           answer; Connect without the tick takes back the account's kept certificate (D-299)
 # v4.2.441: a server whose certificate could not be verified asks at once (Verify certificate) after Test connection and the calendar
@@ -110,13 +111,12 @@ class AccountEditDialog(QDialog):
         self.signature.setPlainText(account.signature)
         self.signature.setMinimumHeight(110)
         self.signature_count: QLabel = part(form, QLabel, "signatureCount")
-        self.check_minutes: QSpinBox = part(form, QSpinBox, "checkMinutes")
-        self.check_minutes.setRange(0, 240)
-        self.check_minutes.setValue(account.check_minutes)
+        self.in_send_receive: QCheckBox = part(form, QCheckBox, "inSendReceive")
+        self.in_send_receive.setChecked(account.in_send_receive)
         self.junk_filter: QCheckBox = part(form, QCheckBox, "junkFilter")
         self.junk_filter.setChecked(account.junk_filter)
         if calendars_only:  # the mail fields keep their stored values (nothing about them is sent) and are never shown
-            for field in (self.name, self.email, self.signature, self.signature_count, self.check_minutes, self.junk_filter):
+            for field in (self.name, self.email, self.signature, self.signature_count, self.junk_filter):
                 general.setRowVisible(field, False)
         storage = part(form, QComboBox, "storage")
         self.storage: QComboBox | None = None
@@ -296,7 +296,7 @@ class AccountEditDialog(QDialog):
             outgoing_security=differing(security_of(self.outgoing_security.currentData()), account.outgoing_security),
             delete_policy=differing(policy_of(self.policy.currentData()), account.delete_policy),
             delete_days=differing(self.days.value(), account.delete_days),
-            check_minutes=differing(self.check_minutes.value(), account.check_minutes),
+            in_send_receive=differing(self.in_send_receive.isChecked(), account.in_send_receive),
             outgoing_same_login=differing(self.same_login.isChecked(), account.outgoing_same_login),
             junk_filter=differing(self.junk_filter.isChecked(), account.junk_filter),
         )

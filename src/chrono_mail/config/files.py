@@ -18,9 +18,10 @@ from chrono_mail.core import (
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 4.2.438"
+__version__ = "files.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
 # v4.2.438: calendar_timed_background read and saved with the account (UR-02, D-297)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.1.308: junk_filter per account (D-238)
@@ -97,9 +98,9 @@ def _account(data: object, position: int) -> AccountSettings:
     if not isinstance(pins, list) or not all(isinstance(item, str) for item in pins):
         raise ConfigurationError(f"Setting '{where}.trusted_certificates' is not a list of text")
     try:
-        check = data.get("check_minutes", 0)
-        if not isinstance(check, int) or isinstance(check, bool):
-            raise ConfigurationError(f"Setting '{where}.check_minutes' is not a number")
+        in_send_receive = data.get("in_send_receive", True)  # an older file's check_minutes is ignored: every account follows the general refresh
+        if not isinstance(in_send_receive, bool):
+            raise ConfigurationError(f"Setting '{where}.in_send_receive' is not true or false")
         storage = data.get("storage", "own")
         if not isinstance(storage, str):
             raise ConfigurationError(f"Setting '{where}.storage' is not text")
@@ -128,11 +129,11 @@ def _account(data: object, position: int) -> AccountSettings:
         if not isinstance(timed_background, bool):
             raise ConfigurationError(f"Setting '{where}.calendar_timed_background' is not true or false")
         return AccountSettings(
-            account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check, storage=storage, dav_url=dav_url, dav_username=dav_username,
+            account, Pop3Options(policy, days), encrypted, signature, tuple(pins), storage=storage, dav_url=dav_url, dav_username=dav_username,
             dav_left_out=tuple(left_out), outgoing_same_login=same_login, account_name=account_name, skip_known_mail=skip_known,
             calendar_palette=_palette(data.get("calendar_palette"), where), calendar_own_colour_name=own_colour_name,
             calendar_timed_background=timed_background,
-            collection_looks=_looks(data.get("collection_looks", []), where), junk_filter=junk_filter,
+            collection_looks=_looks(data.get("collection_looks", []), where), junk_filter=junk_filter, in_send_receive=in_send_receive,
         )
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
@@ -196,7 +197,7 @@ def config_to_text(config: AppConfig) -> str:
                     "pop3": {"policy": settings.pop3.policy.value, "days": settings.pop3.days},
                     "signature": settings.signature,
                     "trusted_certificates": list(settings.trusted_certificates),
-                    "check_minutes": settings.check_minutes,
+                    "in_send_receive": settings.in_send_receive,
                     "storage": settings.storage,
                     "dav_url": settings.dav_url,
                     "dav_username": settings.dav_username,

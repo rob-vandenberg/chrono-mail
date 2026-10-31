@@ -15,9 +15,10 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 4.2.449"
+__version__ = "test_ui_dav.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: a calendars-only account has one item in the Refresh menu, which synchronises it (D-059)
 # v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
 # v4.2.439: the calendar window is a part of the Add window (D-298): the sidebars open it on CalDAV or CardDAV
 # v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
@@ -265,7 +266,8 @@ def test_an_account_of_calendars_only_stays_out_of_everything_about_mail(world: 
         wait(qtbot, lambda: bool(world.window.tree_model.findItems("me@example.com", Qt.MatchFlag.MatchRecursive)))
         assert not world.window.tree_model.findItems("Family calendar", Qt.MatchFlag.MatchRecursive)
         world.window._fill_refresh_menu()  # noqa: SLF001
-        assert not any("Family calendar" in action.text() for action in world.window.refresh_menu.actions())
+        (own,) = [action for action in world.window.refresh_menu.actions() if "Family calendar" in action.text()]
+        assert own.menu() is None  # one item that synchronises it, no mail submenu (D-059)
         settings = SettingsDialog(world.backend, world.window.settings)
         qtbot.addWidget(settings)
         settings.show()

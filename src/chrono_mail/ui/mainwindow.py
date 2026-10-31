@@ -66,9 +66,12 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.449"
+__version__ = "mainwindow.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: the Refresh menu: each mail account has Send and Receive, Send and Receive in a submenu, each calendars-only account one
+#           item that synchronises it; they work whether the account is included in Send and Receive or not; no first fill for an
+#           account left out (D-059)
 # v4.2.449: a new account gets its first fill (IMAP and calendars always, POP3 only when a refresh of its own receives); an import fills
 #           only the IMAP and calendar accounts it made; nothing checks by itself after a restore, a rebuild or an Edit account (D-300)
 # v4.2.442: a message window's Send stopped by a certificate asks through the mail checking part (D-299)
@@ -586,18 +589,25 @@ class MainWindow(QMainWindow):
         button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
 
     def _fill_refresh_menu(self) -> None:
-        """Send and receive all, receive all, send all, or receive the mail of one account only."""
+        """Send and receive all, receive all, send all (the accounts included in Send and Receive), or one account by itself, included or not
+        (D-059): a mail account's submenu sends and receives, sends or receives; a calendars-only account's item synchronises it."""
         checking = self.checking
         self.refresh_menu.clear()
         self.refresh_menu.addAction("Send and Receive All", checking.send_and_receive)
         self.refresh_menu.addAction("Receive All", lambda: checking.check_accounts(None, manual=True))
         self.refresh_menu.addAction("Send All", lambda: checking.send_outbox(manual=True))
-        accounts = self.mail_state.mail_accounts()
+        accounts = [account for account in self.mail_state.all_accounts if account.kind != "local"]  # Local Folders is no account to refresh
         if accounts:
             self.refresh_menu.addSeparator()
         for account in accounts:
-            account_id = account.account_id
-            self.refresh_menu.addAction(f"\"{account.shown_name}\" only", lambda chosen=account_id: checking.check_accounts({chosen}, manual=True))
+            account_id, text = account.account_id, f"\"{account.shown_name}\" only"
+            if account.kind == "dav":  # no mail of its own: it only synchronises
+                self.refresh_menu.addAction(text, lambda chosen=account_id: checking.refresh_account(chosen, "receive"))
+                continue
+            one = self.refresh_menu.addMenu(text)
+            one.addAction("Send and Receive", lambda chosen=account_id: checking.refresh_account(chosen, "send_receive"))
+            one.addAction("Send", lambda chosen=account_id: checking.refresh_account(chosen, "send"))
+            one.addAction("Receive", lambda chosen=account_id: checking.refresh_account(chosen, "receive"))
 
     def _build_toolbar(self) -> None:
         self.window_toolbar = WindowToolbar("Main", self)  # the one toolbar: it shows the row of the section on screen
@@ -1375,7 +1385,7 @@ class MainWindow(QMainWindow):
 
     def _calendars_given(self, account_id: str) -> None:
         """Edit account gave an account a calendar server, or changed it: the window learns it, then its calendars only receive (D-300)."""
-        self.reload_accounts(select_saved=False, known=lambda: self.checking.first_fill(set(), {account_id}))
+        self.reload_accounts(select_saved=False, known=lambda: self._first_fill({account_id}, mail=False))
 
     def _first_fill(self, account_ids: set[str], mail: bool, pop3: bool = True) -> None:
         """New accounts only receive, once (D-300): IMAP mail and calendars always (a new one has nothing of its own, only the server's); POP3 mail
@@ -1383,7 +1393,7 @@ class MainWindow(QMainWindow):
         refresh, not Send only)."""
         prefs = self.prefs.read()
         receives = pop3 and ((prefs.check_on_start and prefs.start_refresh != "send") or (prefs.auto_check and prefs.scheduled_refresh != "send"))
-        chosen = [account for account in self.mail_state.all_accounts if account.account_id in account_ids]
+        chosen = [account for account in self.mail_state.all_accounts if account.account_id in account_ids and account.in_send_receive]  # D-059
         fill_mail = {account.account_id for account in chosen if mail and (account.kind == "imap" or (account.kind == "pop3" and receives))}
         calendars = {account.account_id for account in chosen if account.dav_url}
         self.checking.first_fill(fill_mail, calendars)
@@ -1405,7 +1415,7 @@ class MainWindow(QMainWindow):
                 return
 
             def linked(_summary: AccountSummary) -> None:
-                self.reload_accounts(select_saved=False, known=lambda: self.checking.first_fill(set(), {account_id}))  # only receives (D-300)
+                self.reload_accounts(select_saved=False, known=lambda: self._first_fill({account_id}, mail=False))  # only receives (D-300)
 
             parameters = LinkParameters(account_id, result.url, dialog.left_out(), result.pin)
             self.backend.ask(DAV_LINK, parameters, linked, lambda error: self.report.report("Calendars and contacts could not be added", error), owner=self)

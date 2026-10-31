@@ -16,9 +16,10 @@ from tests.fakedav import FakeDav
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_first_fill.py 4.2.449"
+__version__ = "test_ui_first_fill.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: the news test waits on a real IMAP account (a wait is only kept for an account that may have one, D-059)
 # v4.2.449: a new account only receives, once, and only by the rule of D-300; the automatic refresh's clocks start again after it; a new
 #           account's push waits for the next full check, also the very first one; nothing is checked after a restore or an Edit account;
 #           a calendar server given in Edit account only receives; no calendar sync by itself during an import; a first fill a full check
@@ -223,7 +224,7 @@ def test_news_of_new_mail_checks_every_account_but_the_fresh_ones(world: World, 
     known = state.all_accounts
     new = replace(known[0], account_id="f" * 32, kind="imap")
     calendars = replace(known[0], account_id="c" * 32, kind="dav")
-    state.set_accounts([*known, new, calendars])  # an IMAP account just added, and an older account of calendars only
+    state.set_accounts([*(replace(account, kind="imap") for account in known), new, calendars])  # an IMAP account just added, and an older account of calendars only
     checking.fresh = {new.account_id}
     checked: list[tuple[set[str] | None, set[str] | None]] = []
 
@@ -238,7 +239,7 @@ def test_news_of_new_mail_checks_every_account_but_the_fresh_ones(world: World, 
     monkeypatch.setattr(checking, "check_accounts", check_accounts)
     monkeypatch.setattr(world.backend, "ask", ask)
     monkeypatch.setattr(checking._auto, "isChecked", lambda: True)  # noqa: SLF001 - Automatic refresh on, without starting the real waits
-    checking._watch("a" * 32)  # noqa: SLF001 - an IMAP account's wait for new mail
+    checking._watch(world.account_id)  # noqa: SLF001 - an IMAP account's wait for new mail
     assert checked == [({world.account_id}, {calendars.account_id})]  # all but the fresh one: it keeps its whole interval (D-300)
 
 

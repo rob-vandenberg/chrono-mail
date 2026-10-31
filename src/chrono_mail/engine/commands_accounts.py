@@ -52,9 +52,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.2.447"
+__version__ = "commands_accounts.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
 # v4.2.447: account.check fresh (a test the person starts: the usual checks only); certificate.inspect tells whether the certificate is kept
 #           with an account (kept); account.forget-certificate takes one back (D-299)
 # v4.2.441: account.check names a server whose certificate could not be verified (incoming_certificate, outgoing_certificate) and takes the
@@ -361,7 +362,7 @@ class AccountSummary:
     outgoing_security: str = ""
     outgoing_username: str = ""
     trusted_certificates: tuple[str, ...] = ()
-    check_minutes: int = 0
+    in_send_receive: bool = True  # unticked: left out of every refresh but its own (D-059)
     storage: str = "own"
     dav_url: str = ""
     dav_username: str = ""
@@ -394,7 +395,7 @@ def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) 
         item.account.outgoing.security.value,
         item.account.outgoing.username,
         item.trusted_certificates,
-        item.check_minutes,
+        item.in_send_receive,
         item.storage,
         item.dav_url,
         item.dav_username,
@@ -483,7 +484,7 @@ class AccountEditParameters:
     outgoing_security: Security | None = field(default=None, metadata=option("tls, starttls or none"))
     delete_policy: Policy | None = field(default=None, metadata=option("What happens to a message on the server after it was downloaded and verified"))
     delete_days: int | None = field(default=None, metadata=option("Days before deleting, for delete_after_days"))
-    check_minutes: int | None = field(default=None, metadata=option("Minutes between automatic checks of this account (0: as set in the general settings)"))
+    in_send_receive: bool | None = field(default=None, metadata=option("Include this account in Send and Receive (off: only its own refresh reaches it)"))
     outgoing_same_login: bool | None = field(default=None, metadata=option("The outgoing server uses the user name and password of the incoming one"))
     junk_filter: bool | None = field(default=None, metadata=option("New mail goes through the junk filter: junk to the Junk folder before the rules run"))
 
@@ -523,7 +524,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
         settings.pop3.days if parameters.delete_days is None else parameters.delete_days,
     )
     signature = settings.signature if parameters.signature is None else parameters.signature.replace("\r\n", "\n").rstrip()
-    check_minutes = settings.check_minutes if parameters.check_minutes is None else parameters.check_minutes
+    in_send_receive = settings.in_send_receive if parameters.in_send_receive is None else parameters.in_send_receive
     account_name = settings.account_name if parameters.account_name is None else parameters.account_name.strip()
     junk_filter = settings.junk_filter if parameters.junk_filter is None else parameters.junk_filter
 
@@ -535,7 +536,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
             account=replace(current.account, display_name=name, email_address=email, incoming=incoming, outgoing=outgoing),
             pop3=pop3,
             signature=signature,
-            check_minutes=check_minutes,
+            in_send_receive=in_send_receive,
             account_name=account_name,
             outgoing_same_login=same_login,
             junk_filter=junk_filter,

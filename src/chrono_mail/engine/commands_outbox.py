@@ -14,9 +14,10 @@ from chrono_mail.store import MessageNotFoundError, Properties, StoredMessage
 from chrono_mail.sync import file_sent_again, send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 4.2.441"
+__version__ = "commands_outbox.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: senders: only the messages sent from these accounts; the others wait (an account left out of Send and Receive, D-059)
 # v4.2.441: mail.send-outbox names each server whose certificate could not be verified (certificates), so the window asks (D-299)
 # v4.2.418: the account a message is sent from is recorded with it in Sent (D-292)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
@@ -42,6 +43,7 @@ class SendOutboxParameters:
     account: str | None = field(default=None, metadata=option("Only this account (default: all accounts)"))
     message: str | None = field(default=None, metadata=option("Only this message, now, also before its waiting time is over (Send now, the end of a countdown)"))
     now: bool = field(default=False, metadata=option("Also the messages whose waiting time is not over (Send now on Quit)"))
+    senders: tuple[str, ...] = field(default=(), metadata=option("Only the messages sent from these accounts (repeat for more; default: from every account)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +99,10 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                     continue
                 if _due_time(parsed) is not None or _notes(parsed).get(KIND) == "recurring":
                     continue
+                if parameters.senders:
+                    chosen = _sender(members, parsed)
+                    if chosen is not None and chosen.account.account_id not in parameters.senders:
+                        continue  # sent from an account left out of this send: it waits (D-059); no sender at all is told below as before
                 recipients = _recipients(tuple(address.address for address in (*parsed.to_addresses, *parsed.cc_addresses, *parsed.bcc_addresses)))
                 if sent_already:  # nothing goes to a server: no recipient or password is needed to file it in Sent
                     known = _sender(members, parsed) or members[0]

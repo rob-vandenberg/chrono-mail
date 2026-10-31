@@ -25,9 +25,12 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.2.449"
+__version__ = "mailchecking.py 4.2.451"
 
 # --- Version history ----------------------------------------------------
+# v4.2.451: an account not included in Send and Receive takes part in nothing but its own refresh (refresh_account: Send and Receive,
+#           Send, Receive; a calendars-only account synchronises): not in the refresh at start, the timer, the push, the All actions, the
+#           Calendar Refresh or Send All; the per-account check timers are gone (D-059)
 # v4.2.449: first_fill: a new account only receives (mail.first-fill, dav.sync receive_only), then the automatic refresh's clocks start again
 #           from zero; its push waits for the next full check; check_mail removed: nothing checks by itself after a rebuild, a restore or an
 #           import; no automatic calendar sync during an import; the server's new-mail signal leaves the fresh accounts out and,
@@ -126,7 +129,6 @@ class MailChecking(QObject):
         self.due_timer.start(DUE_CHECK_MS)
         self.timer: QTimer = QTimer(self)
         self.timer.timeout.connect(self.check_on_general_interval)
-        self.account_timers: dict[str, QTimer] = {}  # accounts that have a check interval of their own
         if prefs_in_use.read().auto_check:
             self.timer.start(self.auto_minutes() * 60 * 1000)
         auto.toggled.connect(self._toggle_auto_check)
@@ -135,8 +137,6 @@ class MailChecking(QObject):
         """The program ends: no more checks and no more waits for new mail."""
         self.quitting = True
         self.due_timer.stop()
-        for timer in self.account_timers.values():
-            timer.stop()
 
     def auto_minutes(self) -> int:
         return self._prefs.read().auto_check_minutes  # 1 to 240, checked where it is read
@@ -144,43 +144,34 @@ class MailChecking(QObject):
     # --- timers and waits ------------------------------------------------------------------------------------------
 
     def accounts_loaded(self) -> None:
-        """The accounts were loaded: the waits for new mail and the timers of the accounts follow them. An account that came since the last
+        """The accounts were loaded: the waits for new mail follow them. An account that came since the last
         load (added, imported, restored) is fresh until the next full refresh takes it in (D-300)."""
         current = {account.account_id for account in self._state.all_accounts}
         if self._known_accounts is not None:
             self.fresh |= current - self._known_accounts
         self._known_accounts = current
         self.start_watchers()
-        self.apply_account_timers()
 
-    def apply_account_timers(self) -> None:
-        """A timer for every account that has an interval of its own (and only while automatic checking is on)."""
-        wanted = {
-            account.account_id: account.check_minutes for account in self._state.mail_accounts()
-            if account.check_minutes > 0 and self._auto.isChecked()
-        }
-        for account_id in list(self.account_timers):
-            if account_id not in wanted:
-                self.account_timers.pop(account_id).stop()
-        for account_id, minutes in wanted.items():
-            timer = self.account_timers.get(account_id)
-            if timer is None:
-                timer = QTimer(self)
-                timer.timeout.connect(lambda chosen=account_id: self.scheduled_refresh({chosen}))
-                self.account_timers[account_id] = timer
-            if timer.interval() != minutes * 60_000 or not timer.isActive():
-                timer.start(minutes * 60_000)
+    def _may_wait(self, account_id: str) -> bool:
+        """An IMAP account included in Send and Receive, not new: its server's news of new mail is waited for (D-059, D-300). An account
+        unticked, removed or new since stops its wait the next time it answers."""
+        account = next((item for item in self._state.all_accounts if item.account_id == account_id), None)
+        return account is not None and account.kind == "imap" and account.in_send_receive and account_id not in self.fresh
+
+    def _included(self) -> set[str]:
+        """The accounts that take part in Send and Receive (every refresh but an account's own, D-059)."""
+        return {account.account_id for account in self._state.all_accounts if account.in_send_receive}
 
     def start_watchers(self) -> None:
         """For every IMAP account: wait for the server to report new mail (IDLE) and check at once when it does."""
         if not self._auto.isChecked():
             return
         for account in self._state.mail_accounts():
-            if account.kind == "imap" and account.account_id not in self.fresh:
+            if account.kind == "imap" and account.in_send_receive and account.account_id not in self.fresh:
                 self._watch(account.account_id)
 
     def _watch(self, account_id: str) -> None:
-        if account_id in self.watching or self.quitting or account_id in self.no_push:
+        if account_id in self.watching or self.quitting or account_id in self.no_push or not self._may_wait(account_id):
             return
         self.watching.add(account_id)
 
@@ -208,7 +199,6 @@ class MailChecking(QObject):
             self.timer.start(self.auto_minutes() * 60 * 1000)
         else:
             self.timer.stop()
-        self.apply_account_timers()
 
     def take_in_auto_check(self, on: bool) -> None:
         """Settings OK changed the automatic check or its interval."""
@@ -277,8 +267,8 @@ class MailChecking(QObject):
         if self.importing or self.rebuilding:
             self._news_held = True
             return
-        mail = set(self._state.mail_account_ids()) - self.fresh
-        calendars_only = {account.account_id for account in self._state.all_accounts if account.kind == "dav"} - self.fresh
+        mail = (set(self._state.mail_account_ids()) & self._included()) - self.fresh
+        calendars_only = {account.account_id for account in self._state.all_accounts if account.kind == "dav"} & self._included() - self.fresh
         self.check_accounts(mail, also_calendars=calendars_only)
 
     def first_fill(self, mail: set[str], calendars: set[str]) -> None:
@@ -292,13 +282,28 @@ class MailChecking(QObject):
             self.sync_calendars(calendars, receive_only=True)
 
     def _restart_clocks(self) -> None:
-        """After a first fill: the general timer and every account's own one count again from now (D-300)."""
+        """After a first fill: the automatic refresh counts again from now (D-300)."""
         if self.quitting:
             return
         if self._auto.isChecked():
             self.timer.start(self.auto_minutes() * 60 * 1000)
-        for timer in self.account_timers.values():
-            timer.start(timer.interval())
+
+    def _calendars_only(self) -> set[str]:
+        return {account.account_id for account in self._state.all_accounts if account.kind == "dav"}
+
+    def refresh_account(self, account_id: str, how: str) -> None:
+        """The Refresh menu's entry of one account, whether it is included in Send and Receive or not (D-059): send_receive (its Outbox, then
+        its mail and calendars), send (its Outbox), receive (its mail and calendars); a calendars-only account synchronises."""
+        if account_id in self._calendars_only():
+            self.sync_calendars({account_id}, manual=True)
+            return
+        if how == "receive":
+            self.check_accounts({account_id}, manual=True)
+            return
+        if how == "send":
+            self.send_outbox(manual=True, account=account_id)
+            return
+        self.send_outbox(then=lambda: self.check_accounts({account_id}, manual=True, new_round=False), manual=True, account=account_id)
 
     def start_refresh(self) -> None:
         """The refresh when the program starts: what Settings > General chose for it."""
@@ -348,7 +353,12 @@ class MailChecking(QObject):
         """Send All: the messages that wait in the Outbox (scheduled ones, and delayed ones whose countdown runs, wait for their time). Manual:
         the person asked for it (the Operations window may open). account: only its Outbox; message: only that one, now (B-21). Nothing is
         sent while an import runs (then still follows). now: also the delayed ones whose countdown runs (Quit)."""
-        if self.importing:
+        senders: tuple[str, ...] = ()  # one message chosen, or the Outbox at Quit: as the person asked
+        if account is not None and message is None and not now:
+            senders = (account,)  # that account's own messages, also from a shared Local Folders Outbox
+        elif message is None and not now:
+            senders = tuple(sorted(self._included() - self._calendars_only()))  # Send All: the accounts included in Send and Receive (D-059)
+        if self.importing or (message is None and not now and not senders):
             if then is not None:
                 then()
             return
@@ -384,7 +394,7 @@ class MailChecking(QObject):
             else:
                 self._settle_operations()
 
-        self._backend.ask(MAIL_SEND_OUTBOX, SendOutboxParameters(account, message, now), done, failed, owner=self)
+        self._backend.ask(MAIL_SEND_OUTBOX, SendOutboxParameters(account, message, now, senders), done, failed, owner=self)
 
     def ask_after_send(self, trouble: CertificateTrouble, message_id: str) -> None:
         """A message window's Send stopped by the outgoing server's certificate: the message waits in the Outbox, and the Verify certificate
@@ -398,10 +408,8 @@ class MailChecking(QObject):
         questions_for(self._backend).ask(trouble, again)
 
     def check_on_general_interval(self) -> None:
-        """The general timer: the accounts that have no interval of their own."""
-        calendars_only = {account.account_id for account in self._state.all_accounts if account.kind == "dav"}
-        due = {account.account_id for account in self._state.mail_accounts() if account.check_minutes == 0}
-        self.scheduled_refresh(due, also_calendars=calendars_only)
+        """The automatic refresh: every account included in Send and Receive (D-059)."""
+        self.scheduled_refresh(None)
 
     def check_accounts(
         self, only: set[str] | None, manual: bool = False, new_round: bool = True, also_calendars: set[str] | None = None, first_fill: bool = False,
@@ -413,10 +421,12 @@ class MailChecking(QObject):
         if self.importing or (self.rebuilding and not (manual or first_fill)):
             return  # the timers and the push skip their turn; the refresh a rebuild held back runs after it
         self._messages.load_contact_addresses()  # Refresh also brings contacts that came from a server
+        if only is None:
+            only = self._included()  # all: those included in Send and Receive (D-059)
         mail_ids = set(self._state.mail_account_ids())
-        wanted = mail_ids if only is None else only & mail_ids
+        wanted = only & mail_ids
         if not first_fill:
-            self.sync_calendars(None if only is None else only | (also_calendars or set()))
+            self.sync_calendars(only | (also_calendars or set()))
         if self.checking and first_fill:
             self._mail_fills |= wanted  # it runs when the check under way is done
             return
@@ -608,6 +618,11 @@ class MailChecking(QObject):
                 page.refresh()
             self._status.show("No account has a calendar and contacts server; what is on this computer is shown")
             return
+        if not self._state.calendar_accounts(self._included()):
+            for page in self._pages.values():
+                page.refresh()
+            self._status.show("Every account with calendars is left out of Send and Receive; Mail's Refresh menu refreshes one by itself")
+            return
         if self.dav_syncing:
             self._status.show(f"{CALENDARS_WORDS}: synchronising…")  # one synchronisation at a time: the one under way will tell
             return
@@ -623,7 +638,7 @@ class MailChecking(QObject):
         the first fill of new accounts (D-300), which waits for a synchronisation under way. Never by itself while an import runs."""
         if self.importing and not manual:
             return
-        accounts = self._state.calendar_accounts(only)
+        accounts = self._state.calendar_accounts(self._included() if only is None else only)  # all: those included in Send and Receive (D-059)
         if self.dav_syncing and receive_only:
             self._calendar_fills |= set(accounts)
             return
@@ -681,6 +696,6 @@ class MailChecking(QObject):
             if waiting:
                 self.sync_calendars(waiting, receive_only=True)
 
-        parameters = SyncParameters(receive_only=receive_only) if only is None else SyncParameters(accounts=tuple(accounts), receive_only=receive_only)
+        parameters = SyncParameters(accounts=tuple(accounts), receive_only=receive_only)  # always named: the engine's "all" would take accounts left out too
         self._backend.ask(DAV_SYNC, parameters, done, failed, owner=self)
         self.went_online.emit()

@@ -69,23 +69,13 @@
        <item row="4" column="1">
         <widget class="QLabel" name="signatureCount" />
        </item>
-       <item row="5" column="0">
-        <widget class="QLabel" name="checkMinutesLabel">
-         <property name="text">
-          <string>Check this account every</string>
-         </property>
-         <property name="buddy">
-          <cstring>checkMinutes</cstring>
-         </property>
-        </widget>
-       </item>
        <item row="5" column="1">
-        <widget class="QSpinBox" name="checkMinutes">
-         <property name="suffix">
-          <string> minutes</string>
+        <widget class="QCheckBox" name="inSendReceive">
+         <property name="text">
+          <string>Include this account in Send and Receive</string>
          </property>
-         <property name="specialValueText">
-          <string>As set in the general settings</string>
+         <property name="toolTip">
+          <string>Unticked, this account is refreshed only when you choose it in the Refresh button's menu</string>
          </property>
         </widget>
        </item>
