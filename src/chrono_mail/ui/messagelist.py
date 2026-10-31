@@ -26,9 +26,12 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.tagchips import TagColourBook
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagelist.py 4.2.456"
+__version__ = "messagelist.py 4.2.457"
 
 # --- Version history ----------------------------------------------------
+# v4.2.457: a refetch while a new sort is on its way fetches the view in the new sort (_coming): it replaced the sort's question, so the
+#           list stayed in the old order while the sort menu showed the new one; another view shown forgets the old view's question at once
+#           (a refetch brought back the view left, and the list said it was loading for ever after an empty view)
 # v4.2.456: a question of the order or of the new places that named the view's folder by a name it lost meanwhile (renamed while it was
 #           on its way) is asked again under the new name: its answer, an error ("There is no folder") or an empty list, is never shown;
 #           the same for the places of messages that came in meanwhile (none is left out)
@@ -222,6 +225,7 @@ class MessageListModel(QAbstractTableModel):
         self._view: int = 0  # counts the views shown: an answer about another view than the one shown is not used
         self._questions: int = 0  # numbers the questions about the order
         self._ordering: int | None = None  # the question about the order on its way (only the last one asked is used)
+        self._coming: ViewSpec | None = None  # the view that order is for (a new sort, until its answer): a refetch asks for it, never for the one it replaces
         self.settled: bool = True  # the view has its first answer (or shows nothing): an empty list is really empty
         self._order: MessageOrder = MessageOrder()  # every message of the view in order (only the first ones while not complete)
         self._complete: bool = True
@@ -409,6 +413,7 @@ class MessageListModel(QAbstractTableModel):
         self.beginResetModel()
         self._view += 1
         self._spec = spec
+        self._ordering = self._coming = None  # the old view's order question is answered for nobody now (its answer is dropped): never fetched again
         self._hold_nothing()
         self._group_counts = None
         self._layout_groups()
@@ -421,8 +426,10 @@ class MessageListModel(QAbstractTableModel):
 
     def reload(self) -> None:
         """Fetch the same view again (after a change from outside: new mail, another program, a big job). The rows on screen stay
-        until the new order and their new rows are there; each selected message keeps its selection."""
-        self.rearrange(self._spec, fresh=True)
+        until the new order and their new rows are there; each selected message keeps its selection. While a new sort is on its way it
+        is the view fetched: this question replaces the sort's, so the sort shown in the menu is kept."""
+        coming = self._coming if self._ordering is not None else None
+        self.rearrange(coming or self._spec, fresh=True)
 
     def rearrange(self, spec: ViewSpec | None, fresh: bool = False) -> None:
         """Show the same view in another order (a new sort), or the same order fetched again (fresh). Nothing is thrown away: the
@@ -600,12 +607,13 @@ class MessageListModel(QAbstractTableModel):
         question, view = self._ask(), self._view
         self._questions += 1
         number = self._ordering = self._questions
+        self._coming = spec
 
         def answered(order: ViewOrder) -> None:
             facts = self._answered(question)
             if view != self._view or number != self._ordering:
                 return  # another view, or another order was asked for meanwhile
-            self._ordering = None
+            self._ordering = self._coming = None
             now = self._renamed_since(spec)
             if now is not None:  # it named the folder by its old name: read after the rename, it holds nothing of the folder (or an error)
                 self._ask_order(now, whole, rows_of, purpose)
@@ -617,7 +625,7 @@ class MessageListModel(QAbstractTableModel):
             self._answered(question)
             if view != self._view or number != self._ordering:
                 return
-            self._ordering = None
+            self._ordering = self._coming = None
             now = self._renamed_since(spec)
             if now is not None:  # it named the folder by its old name: asked under the new one, nothing went wrong
                 self._ask_order(now, whole, rows_of, purpose)
@@ -2096,6 +2104,8 @@ class MessageListModel(QAbstractTableModel):
                     waiting[key] = dataclasses.replace(row, folder=renamed(row.folder))
         if self._spec is not None and self._spec.folder is not None and self._spec.combined is None:
             self._spec = dataclasses.replace(self._spec, folder=renamed(self._spec.folder))
+        if self._coming is not None and self._coming.folder is not None and self._coming.combined is None:
+            self._coming = dataclasses.replace(self._coming, folder=renamed(self._coming.folder))  # a refetch meanwhile asks under the new name
         self.refresh_cells()
 
     def _failed(self, error: ChronoMailError) -> None:
