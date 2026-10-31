@@ -20,12 +20,14 @@ from chrono_mail.ui.columnsdialog import ListChoice
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import COUNT_ROLE, FOLDER_PATH_ROLE, KIND_ROLE
 from chrono_mail.ui.messagelist import GROUP_HEADER_ROLE, ROW_ROLE
+from chrono_mail.ui.textbox import TextBox
 from tests.ui.world import account_node, Dialogs, World, answer_input, answer_save_file, build_world, mail, record_opened_urls, row_of, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_window.py 4.2.419"
+__version__ = "test_ui_window.py 4.2.454"
 
 # --- Version history ----------------------------------------------------
+# v4.2.454: F2 in the folder list asks through TextBox.ask (Rename folder opens 360 pixels wide)
 # v4.2.419: About is a window of its own (D-293)
 # v4.2.407: a search starts on All folders; the tests of one folder choose This folder only (D-287)
 # v4.2.406: All folders is the third choice of where the search looks (D-287)
@@ -630,7 +632,7 @@ def test_f2_in_the_folder_list_renames_the_folder(world: World, qtbot: QtBot, mo
     projects = window.folders.find_item((world.account_id, "folder", "Projects"))  # noqa: SLF001
     assert projects is not None
     window.tree.setCurrentIndex(projects)  # one of the person's own folders: a standard folder is never renamed (D-269)
-    monkeypatch.setattr(QInputDialog, "getText", staticmethod(get_text))
+    monkeypatch.setattr(TextBox, "ask", staticmethod(get_text))  # Rename folder asks with the text box of its own width
     window.tree.setFocus()
     wait(qtbot, lambda: window.tree.hasFocus())
     qtbot.keyClick(window.tree, Qt.Key.Key_F2)

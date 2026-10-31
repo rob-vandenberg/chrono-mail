@@ -16,15 +16,17 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import KIND_ROLE
 from chrono_mail.ui.passwordfield import PasswordBox
+from chrono_mail.ui.textbox import TextBox
 from tests.enginefactory import make_engine
 from tests.fakepop3 import FakePop3Server
 from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 4.2.437"
+__version__ = "world.py 4.2.454"
 
 # --- Version history ----------------------------------------------------
+# v4.2.454: answer_input answers the text box of a given width too (TextBox.ask, Rename folder)
 # v4.2.437: answer_input answers the password box too, from the same list
 # v3.5.346: the recovery code of the world's key counts as stored, as after Done at the first account (D-260: else every restore shows it first)
 # v2.2.314: the window of a test does not ask about the Outbox when it closes (warn_outbox_on_quit off; its own tests switch it on, B-20)
@@ -85,7 +87,7 @@ def row_of(window: MainWindow, position: int) -> Any:  # noqa: ANN401 - a loaded
 
 
 def answer_input(monkeypatch: pytest.MonkeyPatch, answers: list[tuple[str, bool]]) -> None:
-    """QInputDialog.getText and the password box (PasswordBox.ask) return these (text, accepted) pairs in turn, from one list (the last
+    """QInputDialog.getText, the password box (PasswordBox.ask) and the text box of a given width (TextBox.ask) return these (text, accepted) pairs in turn, from one list (the last
     one repeats)."""
     remaining = list(answers)
 
@@ -94,6 +96,7 @@ def answer_input(monkeypatch: pytest.MonkeyPatch, answers: list[tuple[str, bool]
 
     monkeypatch.setattr(QInputDialog, "getText", staticmethod(get_text))
     monkeypatch.setattr(PasswordBox, "ask", staticmethod(get_text))
+    monkeypatch.setattr(TextBox, "ask", staticmethod(get_text))
 
 
 def answer_save_file(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:

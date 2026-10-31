@@ -17,6 +17,7 @@ from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
 from chrono_mail.engine.commands_folders import FOLDER_LIST, FolderInfo
 from chrono_mail.engine.commands_sidebar import EMPTY_SIDEBAR, SIDEBAR_SHOW, SidebarInfo
+from chrono_mail.ui import forms
 from chrono_mail.ui.backend import AnyStep, Backend
 from chrono_mail.ui.burst import Burst
 from chrono_mail.ui.currentview import EntryKind
@@ -35,11 +36,13 @@ from chrono_mail.ui.sections import CALENDAR, CONTACTS, TASKS
 from chrono_mail.ui.sidebarpage import startup_forces
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
+from chrono_mail.ui.textbox import TextBox
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.2.453"
+__version__ = "folderpane.py 4.2.454"
 
 # --- Version history ----------------------------------------------------
+# v4.2.454: Rename folder opens 360 pixels wide on the owner's screen (TextBox, the owner)
 # v4.2.453: Rename folder and Delete folder… say what the rules that move mail to the folder did (D-302)
 # v4.2.450: a load started while one runs takes it over: the older one's answers are ignored, what was to follow it runs when the newer
 #           one is done, in the order asked, and the saved folder is opened when either asked for it
@@ -66,6 +69,7 @@ __version__ = "folderpane.py 4.2.453"
 
 SIDEBAR_KEY: str = "sidebar"  # stands for the sidebar answer among the folder lists that are awaited
 MAXIMUM_TREE_STATE: int = 2000  # opened or closed nodes that are remembered
+RENAME_WIDTH: int = forms.owner_width(360)  # the owner: Rename folder opens 360 pixels wide on his screen
 
 
 def with_rules(text: str, rules: tuple[str, ...]) -> str:
@@ -805,7 +809,7 @@ class FolderPane(QObject):
         if view.account is None or view.folder is None:
             return
         parent, _, current = view.folder.rpartition("/")
-        name, ok = QInputDialog.getText(self._parent, "Rename folder", "New name of the folder:", text=current)
+        name, ok = TextBox.ask(self._parent, "Rename folder", "New name of the folder:", current, RENAME_WIDTH)
         name = name.strip()
         if not ok or not name or name == current or not self._folder_name_allowed(name):
             return
