@@ -31,9 +31,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "operations.py 4.0.375"
+__version__ = "operations.py 4.2.448"
 
 # --- Version history ----------------------------------------------------
+# v4.2.448: the first error of a send and receive switches to the Errors tab, once per round (B-25)
 # v4.0.375: the window, an account's row and an error's row are built from their Qt Designer forms (ui/forms/operations.ui, operation_row.ui,
 #           error_row.ui, D-276); the sizes, the bar and the tabs' look stay the program's
 # v3.6.352: the busy bar keeps its place and is empty while nothing runs (shown and hidden, it laid the whole window out again at every action, D-266)
@@ -43,6 +44,7 @@ __version__ = "operations.py 4.0.375"
 # v0.5.145: Initial version: the Operations window (Operations, Errors and Log) of send and receive
 
 TABS: tuple[str, ...] = ("Operations", "Errors", "Log")
+ERRORS_TAB: int = TABS.index("Errors")
 MAXIMUM_LOG_LINES: int = 5000  # the log is kept only while the program runs
 WAITING: str = "Waiting"
 DONE: str = "Done"
@@ -363,6 +365,8 @@ class OperationsWindow(QDialog):
         self._errors.append(row)
         self.round_errors += 1
         self._show_errors_page()
+        if self.round_errors == 1:  # the first error of a send and receive shows the Errors tab, once (B-25); going back to Operations stays
+            self.tabs.setCurrentIndex(ERRORS_TAB)
 
     def clear_errors(self) -> None:
         """Ignore All."""
