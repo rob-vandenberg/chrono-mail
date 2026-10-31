@@ -37,9 +37,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.2.449"
+__version__ = "folderpane.py 4.2.450"
 
 # --- Version history ----------------------------------------------------
+# v4.2.450: a load started while one runs takes it over: the older one's answers are ignored, what was to follow it runs when the newer
+#           one is done, in the order asked, and the saved folder is opened when either asked for it
 # v4.2.449: a mailbox that told a fact while the folder lists loaded is counted again once they are in place: the lists may have been
 #           read before it (a new account's first fill makes its folders then, D-300)
 # v4.2.399: a top row (an account, Local Folders) offers no Rename folder or Delete folder; one place says whether the row
@@ -99,6 +101,9 @@ class FolderPane(QObject):
         self._numbers: Burst = Burst(self._show_numbers, self)  # the numbers of a large delete go on the list ten times a second, not per message
         self._round: Callable[[], None] | None = None  # while the folder lists load: what a tags answer calls instead of a lay-out
         self._told_while_loading: set[str] = set()  # mailboxes that told a fact while the folder lists loaded: counted again after
+        self._loading: object | None = None  # the load under way: answers of an older one it took over are ignored
+        self._follow_ups: list[Callable[[], None]] = []  # what was to follow the loads under way, in the order asked
+        self._select_saved: bool = False  # one of the loads under way opens the saved folder
         self.recounting: set[str] = set()  # mailboxes whose folders are being counted again after a change from outside
         self.recount_again: set[str] = set()
         self.tree_state: dict[str, bool] = memory.tree_state  # node -> opened (True) or closed (False) by the person
@@ -127,7 +132,8 @@ class FolderPane(QObject):
     # --- loading ------------------------------------------------------------------------------------------------
 
     def clear(self) -> None:
-        """No account at all."""
+        """No account at all. A load under way ends here (its answers are ignored); what was to follow it waits for the next load."""
+        self._round, self._loading, self._select_saved = None, None, False
         self._state.folders = {}
         self.model.populate([], {})
 
@@ -137,38 +143,51 @@ class FolderPane(QObject):
         that keeps its mail in Local Folders has no folders of its own."""
         remaining = set(self._state.accounts_with_mail()) | {SIDEBAR_KEY}
         collected: dict[str, list[FolderInfo]] = {}
+        this = object()  # a load started while another runs takes it over: that one's answers are ignored from now on
+        self._loading = this
+        self._select_saved = self._select_saved or select_saved
+        if then is not None:
+            self._follow_ups.append(then)
+
+        def current() -> bool:
+            return self._loading is this
 
         def arrived() -> None:
-            if not remaining and self._tags.ready:
+            if current() and not remaining and self._tags.ready:
                 finish_loading()
 
         def sidebar_done(result: SidebarInfo) -> None:
+            if not current():
+                return
             self._state.sidebar = result
             remaining.discard(SIDEBAR_KEY)
             arrived()
 
         def sidebar_failed(error: ChronoMailError) -> None:
+            if not current():
+                return
             self._state.sidebar = EMPTY_SIDEBAR
             remaining.discard(SIDEBAR_KEY)
             self._status.report("Favorites and groups", error)
             arrived()
 
         def finish_loading() -> None:
-            newest = self._round is arrived  # a load started after this one is still under way: it ends the round and counts again
-            if newest:
-                self._round = None
+            self._round, self._loading = None, None
+            select, self._select_saved = self._select_saved, False
+            follow_ups, self._follow_ups = self._follow_ups, list[Callable[[], None]]()
             self._state.folders = collected
-            self.lay_out(select_saved)
+            self.lay_out(select)
             self.numbers_changed.emit()
-            if newest:
-                told, self._told_while_loading = self._told_while_loading, set()
-                for mailbox in sorted(told):
-                    self.recount(mailbox)  # its list may have been read before that fact: asked again, only what differs changes
-            if then is not None:
-                then()
+            told, self._told_while_loading = self._told_while_loading, set()
+            for mailbox in sorted(told):
+                self.recount(mailbox)  # its list may have been read before that fact: asked again, only what differs changes
+            for follow_up in follow_ups:  # of this load and of those it took over, in the order asked
+                follow_up()
 
         def make_done(account_id: str) -> Callable[[tuple[FolderInfo, ...]], None]:
             def done(result: tuple[FolderInfo, ...]) -> None:
+                if not current():
+                    return
                 collected[account_id] = [info for info in result if isinstance(info, FolderInfo)]
                 remaining.discard(account_id)
                 arrived()
@@ -177,6 +196,8 @@ class FolderPane(QObject):
 
         def make_failed(account_id: str) -> Callable[[ChronoMailError], None]:
             def failed(error: ChronoMailError) -> None:
+                if not current():
+                    return
                 collected[account_id] = []
                 remaining.discard(account_id)
                 self._status.report("Folders", error)
