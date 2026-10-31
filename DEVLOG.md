@@ -3552,3 +3552,7 @@ Tests: tests/test_engine_rule_folders.py (19), tests/ui/test_ui_rule_folders.py 
 ## 2026-10-31, 4.2.454: Rename folder opens 360 pixels wide (the owner)
 
 Built: ui/textbox.py, TextBox.ask: Qt's own text box (getText cannot be given a width), filled in and resized before it opens: the owner's 360 pixels on his screen (forms.owner_width), in Qt's units at the size slider (wpx), never narrower than its parts need nor wider than its screen, not held at that width. Rename folder uses it; New folder and the other text boxes are unchanged. The window tests' answer_input and the unanswered-box guard answer TextBox.ask too; the F2 test patches it. Tests: tests/ui/test_ui_textbox.py (2, new; they cannot run on 4.2.453, which has no such box). Related window tests (254) and the guards passed; Pyrefly 0 (Linux, win32) on the program and the new test, the touched old test files unchanged (2 old notes); layer check kept.
+
+## 2026-10-31, 4.2.455: the import test fell behind 4.2.452 (tests only)
+
+tests/test_engine_changes.py::test_an_import_is_one_fact_per_batch_not_one_per_message imports mail only again: calendars=False (4.2.452's Calendars and tasks choice is on by default and needs the backup, which the test has not got). Failed on 4.2.452 to 4.2.454, passes now (the file: 11 passed); the program unchanged; Pyrefly 0 (Linux, win32), layer check kept.

@@ -14,9 +14,10 @@ from tests.test_import_emclient import make_exports
 __all__ = ["setup", "world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_changes.py 1.1.250"
+__version__ = "test_engine_changes.py 4.2.455"
 
 # --- Version history ----------------------------------------------------
+# v4.2.455: the import test imports mail only: calendars=False (the Calendars and tasks choice of 4.2.452 is on by default and needs the backup)
 # v1.1.250: every fact about mail brings the numbers of the folders it touched, as the index has them right after the change (R-10)
 # v0.5.165: facts are compared without their numbers
 # v0.5.164: a mail check tells each new message as a fact (D-150; this test still expected one "mailbox changed")
@@ -120,7 +121,7 @@ def test_an_import_is_one_fact_per_batch_not_one_per_message(setup: Setup, tmp_p
     (tmp_path / "exports").mkdir()
     exports = make_exports(tmp_path / "exports")
     told = listen(setup)
-    call(setup.engine, "import.emclient", settings_file=None, mail_folder=str(exports.mail), backup_file=None, accounts=False, rules=False, contacts=False)
+    call(setup.engine, "import.emclient", settings_file=None, mail_folder=str(exports.mail), backup_file=None, accounts=False, rules=False, contacts=False, calendars=False)
     assert told == [Change("mailbox_changed", LOCAL_ACCOUNT_ID)]
 
 
