@@ -1,7 +1,10 @@
+from dataclasses import dataclass
+
 # --- Version ------------------------------------------------------------
-__version__ = "errors.py 2.0.281"
+__version__ = "errors.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: CertificateError and CertificateTrouble: a certificate that could not be verified names its server, so the window can ask (UR-05, D-299)
 # v2.0.281: RebuildAborted, the person aborted rebuilding an index (D-229)
 # v0.0.10: AuthenticationError
 # v0.0.4: Initial error hierarchy
@@ -24,6 +27,26 @@ class ProtocolError(ChronoMailError):
 
 class AuthenticationError(ProtocolError):
     """The server refused the user name or password. Retrying with the same password is pointless."""
+
+
+@dataclass(frozen=True, slots=True)
+class CertificateTrouble:
+    """A server whose certificate could not be verified: enough to look at that certificate again and ask the person (D-299)."""
+
+    host: str
+    port: int
+    security: str  # tls or starttls, as certificate.inspect takes it
+    kind: str  # pop3, imap, smtp or https
+    changed: bool  # a certificate the person accepted was there, and the server now shows another one
+    account: str = ""  # the account it was met for (empty: none yet, a new account being tried)
+
+
+class CertificateError(ProtocolError):
+    """The server's certificate could not be verified (or it is not the one the person accepted)."""
+
+    def __init__(self, message: str, trouble: CertificateTrouble) -> None:
+        super().__init__(message)
+        self.trouble: CertificateTrouble = trouble
 
 
 class StorageError(ChronoMailError):

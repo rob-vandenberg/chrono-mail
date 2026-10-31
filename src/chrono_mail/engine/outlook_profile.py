@@ -15,14 +15,15 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.store.atomic import replace_file_atomically
 
 # --- Version ------------------------------------------------------------
-__version__ = "outlook_profile.py 4.2.386"
+__version__ = "outlook_profile.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: the weak security (D-299) is exported as TLS: that program has no choice without the check
 # v4.2.386: Initial version: accounts to an Outlook profile file (.prf, no passwords), rules into a running Outlook
 
 PROFILE_NAME: str = "Chrono Mail"
 OPEN_OUTLOOK_EXPORT: str = "Open Outlook to export the rules to it"
-_SECURITY: dict[ConnectionSecurity, Security] = {ConnectionSecurity.TLS: "tls", ConnectionSecurity.STARTTLS: "starttls", ConnectionSecurity.NONE: "none"}
+_SECURITY: dict[ConnectionSecurity, Security] = {ConnectionSecurity.TLS: "tls", ConnectionSecurity.STARTTLS: "starttls", ConnectionSecurity.NONE: "none", ConnectionSecurity.TLS_UNCHECKED: "tls"}  # that program has no weak choice: it checks
 _SSL_VALUE: dict[Security, int] = {"none": 0, "tls": 1, "starttls": 2}  # Use SSL / Secure Connection: none, SSL/TLS, STARTTLS
 _MAPPING: str = """[I_Mail]
 AccountType=POP3

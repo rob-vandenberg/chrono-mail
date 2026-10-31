@@ -5,14 +5,14 @@ from collections.abc import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QPushButton, QWidget
 
-from chrono_mail.core import ChronoMailError
+from chrono_mail.core import CertificateError, CertificateTrouble, ChronoMailError
 from chrono_mail.engine.commands_accounts import ACCOUNT_TRUST_CERTIFICATE, AccountAddResult, AccountSummary, TrustParameters
 from chrono_mail.engine.commands_dav import (
     ACCOUNT_ADD_DAV, DAV_FIND, DAV_FIND_NEW, DAV_LINK, AddDavParameters, FindNewParameters, FindParameters, FoundServer, LinkParameters, web_address,
 )
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.certificatedialog import inspect_and_ask
+from chrono_mail.ui.certificatequestions import questions_for
 from chrono_mail.ui.colours import green, red_style
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.foundfolders import FoundFoldersDialog
@@ -20,9 +20,11 @@ from chrono_mail.ui.passwordfield import make_password_field
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 4.2.439"
+__version__ = "calendaraccount.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: a server whose certificate could not be verified asks at once (Verify certificate) after Find; Connect finds again; the Look at
+#           the server's certificate… button is gone (UR-05, D-299)
 # v4.2.439: the calendar window is a part of Add account (CalendarFields, ui/forms/calendar_fields.ui): CalDAV and CardDAV are choices of its
 #           Account type; CalDAV starts with the calendars and task lists ticked, CardDAV with the address books (UR-04, D-298)
 # v4.2.437: the password field has the eye (UR-03, D-296)
@@ -69,11 +71,9 @@ class CalendarFields(QWidget):
         self.password: QLineEdit = part(form, QLineEdit, "password")
         make_password_field(self.password)
         self.find_button: QPushButton = part(form, QPushButton, "find")
-        self.certificate_button: QPushButton = part(form, QPushButton, "lookAtCertificate")
         self.result_label: QLabel = part(form, QLabel, "result")
         self.result_label.setTextFormat(Qt.TextFormat.RichText)
         self.find_button.clicked.connect(self._find)
-        self.certificate_button.clicked.connect(self._look_at_certificate)
         self.target.currentIndexChanged.connect(self._target_changed)
         for field in (self.url, self.username, self.password, self.account_name):
             field.textChanged.connect(self._forget_found)
@@ -103,7 +103,7 @@ class CalendarFields(QWidget):
         self.result_label.setText(f"<span style='{red_style()}'>{text.replace('<', '&lt;')}</span>")
 
     def _find(self) -> None:
-        if self._adding or self._finding:  # never during an add, nor a second Find (an accepted certificate ends in one)
+        if self._adding or self._finding:  # never during an add, nor a second Find (a Connect ends in one)
             return
         url = self.url.text().strip()
         username, password = self.username.text().strip(), self.password.text()
@@ -116,6 +116,7 @@ class CalendarFields(QWidget):
 
         def found(result: FoundServer) -> None:
             self._looking(False)
+            self._ask_about(result.certificate)
             if not result.folders:
                 self._show_problem(result.problem or "No calendars, contacts or tasks were found")
                 return
@@ -126,6 +127,8 @@ class CalendarFields(QWidget):
         def failed(error: ChronoMailError) -> None:
             self._looking(False)
             self._show_problem(str(error))
+            if isinstance(error, CertificateError):
+                self._ask_about(error.trouble)
 
         if self._new():
             self._backend.ask(DAV_FIND_NEW, FindNewParameters(url, username, password, self._fingerprint), found, failed, owner=self)
@@ -133,31 +136,31 @@ class CalendarFields(QWidget):
             self._backend.ask(DAV_FIND, FindParameters(str(self.target.currentData()), url, username, password or None), found, failed, owner=self)
 
     def _looking(self, looking: bool) -> None:
-        """A Find runs: no second Find and no certificate look until it answered (each would start another Find)."""
+        """A Find runs: no second Find until it answered."""
         self._finding = looking
-        for widget in (self.find_button, self.certificate_button):
-            widget.setEnabled(not looking and not self._adding)
+        self.find_button.setEnabled(not looking and not self._adding)
 
-    def _look_at_certificate(self) -> None:
+    def _ask_about(self, trouble: CertificateTrouble | None) -> None:
+        """A server whose certificate could not be verified: the Verify certificate window asks at once; Connect finds again (D-299)."""
+        if trouble is not None:
+            questions_for(self._backend).ask(trouble, self._find, self, self._keep)
+
+    def _keep(self, pin: str) -> None:
+        """Don't ask me again: kept with the new account when it is added, or at once with the mail account chosen in For."""
+        server, _, fingerprint = pin.rpartition("=")
         parts = urllib.parse.urlsplit(web_address(self.url.text()))
-        if parts.scheme != "https" or not parts.hostname:
-            self._show_problem("Type an address that starts with https:// (or a host name) first.")
+        try:
+            port = parts.port or 443
+        except ValueError:  # a port that is no number: not the server the certificate came from
             return
-        host, port = parts.hostname, parts.port or 443
-
-        def accepted(fingerprint: str) -> None:
-            if self._new():
-                self._fingerprint = fingerprint
-                self._find()
-                return
-
-            def trusted(_result: AccountSummary) -> None:
-                self._find()
-
-            values = TrustParameters(str(self.target.currentData()), host, port, fingerprint)
-            self._backend.ask(ACCOUNT_TRUST_CERTIFICATE, values, trusted, lambda error: self._show_problem(str(error)), owner=self)
-
-        inspect_and_ask(self._backend, self, host, port, "tls", "https", accepted)
+        if f"{(parts.hostname or '').lower()}:{port}" != server:
+            return  # the address was changed meanwhile: the certificate was for another server
+        if self._new():
+            self._fingerprint = fingerprint
+            return
+        host, _, port = server.rpartition(":")
+        values = TrustParameters(str(self.target.currentData()), host, int(port), fingerprint)
+        self._backend.ask(ACCOUNT_TRUST_CERTIFICATE, values, lambda _result: None, lambda error: self._show_problem(str(error)), owner=self)
 
     def add(self, adding: Callable[[bool], None], added: Callable[[AccountAddResult | None], None]) -> None:
         """Additional folders found, CalDAV's or CardDAV's ticked first (the rest listed to tick); its OK adds the account, or gives the mail
@@ -186,10 +189,10 @@ class CalendarFields(QWidget):
             self._backend.ask(DAV_LINK, link, lambda _result: added(None), failed, owner=self)
 
     def set_adding(self, adding: bool) -> None:
-        """While the account is being added nothing here can be changed: no Find, no certificate, no field (RV-209)."""
+        """While the account is being added nothing here can be changed: no Find, no field (RV-209)."""
         self._adding = adding
-        for widget in (self.find_button, self.certificate_button, self.target, self.account_name, self.url, self.username, self.password):
+        for widget in (self.find_button, self.target, self.account_name, self.url, self.username, self.password):
             widget.setEnabled(not adding)
         if not adding:
             self.account_name.setEnabled(self._new())  # a mail account has its own name
-            self._looking(self._finding)  # a Find still runs (started before a change of kind): Find and the certificate look wait for it
+            self._looking(self._finding)  # a Find still runs (started before a change of kind): Find waits for it

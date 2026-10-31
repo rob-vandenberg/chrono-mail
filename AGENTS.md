@@ -102,7 +102,7 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 1. Message bodies and attachments are encrypted on disk by default (ARCHITECTURE.md §4).
 2. Passwords and keys are stored in the operating system's credential store, never in plain-text config files.
 3. HTML mail is shown in Qt WebEngine (part of Qt): no JavaScript, no remote content unless the user allows it for that message or sender.
-4. TLS certificate verification is always on. A user may accept an exception explicitly; the app never does so silently.
+4. TLS certificate verification is on by default; the person may choose to connect without it, never the program on its own. A user may accept an exception explicitly; the app never does so silently (D-299).
 5. Never log message contents, passwords or keys.
 
 ## 5. Code conventions

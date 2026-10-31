@@ -1,5 +1,5 @@
 import html
-import urllib.parse
+from collections.abc import Callable
 from typing import Literal
 
 from PySide6.QtCore import Qt
@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chrono_mail.core import AccountKind, ChronoMailError
+from chrono_mail.core import AccountKind, CertificateError, CertificateTrouble, ChronoMailError
 from chrono_mail.engine.commands_accounts import (
     ACCOUNT_CHECK, ACCOUNT_EDIT, ACCOUNT_FORGET_CERTIFICATES, ACCOUNT_TRUST_CERTIFICATE, AccountCheckResult, AccountEditParameters, AccountParameters, AccountSummary,
     TrustParameters,
@@ -33,18 +33,20 @@ from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, 
 from chrono_mail.ui.accountdialog import POLICIES
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.certificatedialog import inspect_and_ask
+from chrono_mail.ui.certificatequestions import questions_for
 from chrono_mail.ui.colours import green, red_style
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.foundfolders import FolderTicks
 from chrono_mail.ui.passwordfield import make_password_field
-from chrono_mail.ui.serverfields import ServerFields, kind_of, mail_server_kind, policy_of, security_of, start_values_of, test_result_text
+from chrono_mail.ui.serverfields import ServerFields, kind_of, policy_of, security_of, start_values_of, test_result_text
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.2.437"
+__version__ = "accountedit.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: a server whose certificate could not be verified asks at once (Verify certificate) after Test connection and the calendar
+#           server's check; Connect tests or looks again; the three Look at the … certificate… buttons are gone (UR-05, D-299)
 # v4.2.437: the calendar server's password field has the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/account_edit.ui, D-276) with every tab in it; the tabs and rows an account of this kind
 #           has not are taken out (before, the unused Server copies page of an IMAP account was drawn over the tabs at the top left); its
@@ -131,8 +133,6 @@ class AccountEditDialog(QDialog):
         self.test_button: QPushButton = part(form, QPushButton, "testConnection")
         self.trusted: list[str] = list(account.trusted_certificates)
         self.certificates_label: QLabel = part(form, QLabel, "certificates")
-        self.incoming_certificate_button: QPushButton = part(form, QPushButton, "incomingCertificate")
-        self.outgoing_certificate_button: QPushButton = part(form, QPushButton, "outgoingCertificate")
         self.forget_certificates_button: QPushButton = part(form, QPushButton, "forgetCertificates")
         self._show_certificates()
 
@@ -147,9 +147,7 @@ class AccountEditDialog(QDialog):
         self.dav_check_button: QPushButton = part(form, QPushButton, "findDav")
         self.dav_folders: FolderTicks = part(form, FolderTicks, "davFolders")
         self._dav_found: FoundServer | None = None  # the folders shown, as the server gave them
-        self.dav_certificate_button: QPushButton = part(form, QPushButton, "davCertificate")
         self.dav_check_button.clicked.connect(self._check_dav)
-        self.dav_certificate_button.clicked.connect(self._look_at_dav)
 
         self.policy: QComboBox = part(form, QComboBox, "policy")
         for value, label in POLICIES:
@@ -195,8 +193,6 @@ class AccountEditDialog(QDialog):
         forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
         self.signature.textChanged.connect(self._count_signature)
         self.test_button.clicked.connect(self._test)
-        self.incoming_certificate_button.clicked.connect(lambda: self._look_at("incoming"))
-        self.outgoing_certificate_button.clicked.connect(lambda: self._look_at("outgoing"))
         self.forget_certificates_button.clicked.connect(self._forget_certificates)
         self.policy.currentIndexChanged.connect(self._policy_changed)
         self._policy_changed()
@@ -207,31 +203,6 @@ class AccountEditDialog(QDialog):
         account = self._account
         self.servers = ServerFields(parent, kind_of(account), editing=True, start=start_values_of(account))
         return self.servers.widget
-
-    def _dav_address(self) -> tuple[str, int] | None:
-        parts = urllib.parse.urlsplit(self.dav_url.text().strip())
-        if parts.scheme != "https" or not parts.hostname:
-            return None
-        return parts.hostname, parts.port or 443
-
-    def _look_at_dav(self) -> None:
-        address = self._dav_address()
-        if address is None:
-            self.dav_result.setText("Type an address that starts with https:// first.")
-            return
-
-        def accepted(fingerprint: str) -> None:
-            def done(result: AccountSummary) -> None:
-                self.trusted = list(result.trusted_certificates)
-                self._show_certificates()
-                self.dav_result.setText("The certificate was accepted.")
-
-            def failed(error: ChronoMailError) -> None:
-                self.dav_result.setText(f"<span style='{red_style()}'>{html.escape(str(error))}</span>")
-
-            self._backend.ask(ACCOUNT_TRUST_CERTIFICATE, TrustParameters(self._account.account_id, address[0], address[1], fingerprint), done, failed, owner=self)
-
-        inspect_and_ask(self._backend, self, address[0], address[1], "tls", "https", accepted)
 
     def _check_dav(self) -> None:
         self._find_dav_folders(loading=False)
@@ -244,8 +215,12 @@ class AccountEditDialog(QDialog):
         account_id = self._account.account_id
         username, password = self.dav_username.text().strip(), self.dav_password.text() or None
 
+        def again() -> None:
+            self._find_dav_folders(loading)
+
         def found(result: FoundServer) -> None:
             self.dav_check_button.setEnabled(True)
+            self._ask_about(result.certificate, again)
             if not result.folders:
                 problem = result.problem or "No calendars, contacts or tasks were found on the incoming mail server or the domain of the address"
                 self.dav_result.setText(f"<span style='{red_style()}'>{problem.replace('<', '&lt;')}.</span>")
@@ -258,6 +233,8 @@ class AccountEditDialog(QDialog):
         def failed(error: ChronoMailError) -> None:
             self.dav_check_button.setEnabled(True)
             self.dav_result.setText(f"<span style='{red_style()}'>{str(error).replace('<', '&lt;')}</span>")
+            if isinstance(error, CertificateError):
+                self._ask_about(error.trouble, again)
 
         self._backend.ask(DAV_FIND, FindParameters(account_id, self.dav_url.text().strip(), username, password), found, failed, owner=self)
 
@@ -380,24 +357,26 @@ class AccountEditDialog(QDialog):
     def _show_certificates(self) -> None:
         count = len(self.trusted)
         self.certificates_label.setText(
-            f"{counted(count, 'server certificate')} accepted for this account. Each is trusted only for the server it was accepted for, and only exactly that certificate; a different one from that server is refused until you look at it again."
+            f"{counted(count, 'server certificate')} accepted for this account. Each is trusted only for the server it was accepted for, and only exactly that certificate; when that server shows another one, Chrono Mail asks again."
             if count else "No server certificate was accepted for this account: the usual checks apply."
         )
         self.forget_certificates_button.setEnabled(count > 0)
 
-    def _look_at(self, which: str) -> None:
-        host, port, security = self.servers.endpoint(which)
-        kind = mail_server_kind(self.servers.kind.value) if which == "incoming" else "smtp"
+    def _ask_about(self, trouble: CertificateTrouble | None, again: Callable[[], None]) -> None:
+        """A server whose certificate could not be verified: the Verify certificate window asks at once; Connect does the work again (D-299)."""
+        if trouble is not None:
+            questions_for(self._backend).ask(trouble, again, self, self._keep)
 
-        def accepted(fingerprint: str) -> None:
-            def done(result: AccountSummary) -> None:
-                self.trusted = list(result.trusted_certificates)
-                self._show_certificates()
-                self.result_label.setText("The certificate was accepted.")
+    def _keep(self, pin: str) -> None:
+        """Don't ask me again: the certificate is kept with this account for good, and the list of accepted certificates here follows."""
+        server, _, fingerprint = pin.rpartition("=")
+        host, _, port = server.rpartition(":")
 
-            self._backend.ask(ACCOUNT_TRUST_CERTIFICATE, TrustParameters(self._account.account_id, host, port, fingerprint), done, self._certificate_failed, owner=self)
+        def done(result: AccountSummary) -> None:
+            self.trusted = list(result.trusted_certificates)
+            self._show_certificates()
 
-        inspect_and_ask(self._backend, self, host, port, security_of(security), kind, accepted)
+        self._backend.ask(ACCOUNT_TRUST_CERTIFICATE, TrustParameters(self._account.account_id, host, int(port), fingerprint), done, self._certificate_failed, owner=self)
 
     def _certificate_failed(self, error: ChronoMailError) -> None:
         self.result_label.setText(f"<span style='{red_style()}'>{html.escape(str(error))}</span>")
@@ -415,6 +394,8 @@ class AccountEditDialog(QDialog):
 
     def _test(self) -> None:
         """The servers as they are in the boxes now; a password not typed is the stored one, taken by the engine (never asked for again)."""
+        if not self.test_button.isEnabled():
+            return  # a test runs (a Connect ends in another one once it is answered)
         self.test_button.setEnabled(False)
         self.result_label.setText("Testing…")
         parameters = self.servers.check_parameters(self._account.account_id, tuple(self.trusted))
@@ -422,6 +403,8 @@ class AccountEditDialog(QDialog):
         def done(result: AccountCheckResult) -> None:
             self.test_button.setEnabled(True)
             self.result_label.setText(test_result_text(result))
+            self._ask_about(result.incoming_certificate, self._test)
+            self._ask_about(result.outgoing_certificate, self._test)
 
         def failed(error: ChronoMailError) -> None:
             self.test_button.setEnabled(True)

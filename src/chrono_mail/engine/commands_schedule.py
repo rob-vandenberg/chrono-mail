@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 from chrono_mail.config import AccountSettings, ServerRole
-from chrono_mail.core import AccountKind, ChronoMailError, ConfigurationError, FolderRole, MessageFlag, MessageRef, StorageError
+from chrono_mail.core import AccountKind, CertificateTrouble, ChronoMailError, ConfigurationError, FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, DraftSaveResult, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, SendParameters, _check_id, outgoing_message
 from chrono_mail.engine.junkfilter import learn
@@ -18,9 +18,10 @@ from chrono_mail.sync import send_and_file
 from chrono_mail.core import written_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 4.2.430"
+__version__ = "commands_schedule.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: mail.send-due names each server whose certificate could not be verified (certificates), so the window asks (D-299)
 # v4.2.430: a scheduled message's addresses written so the window can read them back
 # v4.2.418: the account a message is sent from is recorded with it in Sent (D-292)
 # v3.6.351: what follows a scheduled or repeating send the server took never makes it fail or be sent again (told_after_send); a
@@ -326,6 +327,7 @@ class SendDueResult:
     failed: tuple[str, ...]
     waiting: int
     line: ScheduledInfo | None = None  # a message named: its line as it is now (a repeating one waits for its next send); None: it no longer waits
+    certificates: tuple[CertificateTrouble, ...] = ()  # the servers whose certificate could not be verified, each once per account (D-299)
 
 
 def _outgoing(sender: AccountSettings, parsed: ParsedMessage) -> OutgoingMessage:
@@ -344,6 +346,7 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
     never sends it twice. A repeating message is found the same way: it carries its next send in itself."""
     now, sent, waiting = engine.clock(), 0, 0
     failed: list[str] = []
+    certificates: list[CertificateTrouble] = []
     line: ScheduledInfo | None = None
     for members in _places(engine, parameters.account):
         with open_mailbox(engine, members[0].account.account_id) as mailbox:
@@ -360,7 +363,7 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                     _unreadable(engine, mailbox, reference.store_id, error, failed)
                     continue
                 if _notes(parsed).get(KIND) == "recurring":
-                    more_sent, more_waiting = _send_repeat(engine, members, mailbox, reference, parameters.message is not None, now, failed)
+                    more_sent, more_waiting = _send_repeat(engine, members, mailbox, reference, parameters.message is not None, now, failed, certificates)
                     sent, waiting = sent + more_sent, waiting + more_waiting
                     continue
                 due = _due_time(parsed)  # the message itself is the truth
@@ -410,15 +413,28 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
                 else:
                     _keep_reply_link(mailbox, outcome.reference, parsed)
                     failed.append(f"{parsed.subject}: {outcome.error} (it stays in the Outbox and is tried again at the next refresh that sends)")
+                    _named(certificates, outcome.certificate, sender)
             if named and parameters.message:
                 line = _line(members, mailbox, parameters.message)
-    return SendDueResult(sent, tuple(failed), waiting, line)
+    return SendDueResult(sent, tuple(failed), waiting, line, tuple(certificates))
+
+
+def _named(certificates: list[CertificateTrouble], trouble: CertificateTrouble | None, sender: AccountSettings | None) -> None:
+    """A send stopped by a certificate that could not be verified: its server, once per account, so the window asks (D-299)."""
+    if trouble is None:
+        return
+    named = replace(trouble, account=sender.account.account_id if sender is not None else trouble.account)
+    if all((known.host, known.port, known.account) != (named.host, named.port, named.account) for known in certificates):
+        certificates.append(named)
 
 
 MAIL_SEND_DUE: TypedCommand[SendDueParameters, SendDueResult] = TypedCommand("mail.send-due", SendDueParameters, SendDueResult)
 
 
-def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbox, reference: MessageRef, forced: bool, now: float, failed: list[str]) -> tuple[int, int]:
+def _send_repeat(
+    engine: Engine, members: list[AccountSettings], mailbox: Mailbox, reference: MessageRef, forced: bool, now: float, failed: list[str],
+    certificates: list[CertificateTrouble] | None = None,
+) -> tuple[int, int]:
     """Send a repeating message whose time has come (or now, when forced), as (sent, waiting). The pattern stays in the Scheduled
     folder and records in itself how far the series is: the timetable moves on before the server is asked, so a crash can lose
     one send but never makes two; a send that failed for certain is tried again at the next check, up to three times."""
@@ -471,6 +487,8 @@ def _send_repeat(engine: Engine, members: list[AccountSettings], mailbox: Mailbo
                 sent_reference = outcome.reference if outcome.sent else None
                 if not outcome.sent:  # the series tries this send again itself: its copy must not wait in the Outbox to be sent as well (RV-123)
                     error = outcome.error or "the server refused the message"
+                    if certificates is not None:
+                        _named(certificates, outcome.certificate, sender)
                     try:
                         mailbox.delete(outcome.reference, permanent=True)
                     except ChronoMailError as not_removed:

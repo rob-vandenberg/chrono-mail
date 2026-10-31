@@ -5,7 +5,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from chrono_mail.config import AccountSettings, AppConfig, ServerRole, fingerprints_for, new_account_id, server_pin
-from chrono_mail.core import AccountKind, AuthenticationError, ChronoMailError, CollectionLook, ConfigurationError, LOCAL_ACCOUNT_ID, ProtocolError
+from chrono_mail.core import AccountKind, AuthenticationError, CertificateError, CertificateTrouble, ChronoMailError, CollectionLook, ConfigurationError, LOCAL_ACCOUNT_ID, ProtocolError
 from chrono_mail.core.account import Account, ConnectionSecurity, ServerSettings
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_accounts import AccountAddResult, AccountSummary, _refuse_same_account, _summary
@@ -20,9 +20,11 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 3.6.371"
+__version__ = "commands_dav.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: every calendar server connection also takes the certificates accepted until Chrono Mail closes; dav.sync goes on with the other
+#           accounts when one's certificate cannot be verified and names that server (certificate), as dav.find does when it looked by itself (D-299)
 # v3.6.371: a stored calendar password gets a readable label in the wallet (B-23, D-275)
 # v3.5.346: account.add-dav says whether the recovery code still has to be shown (RV-03)
 # v3.0.339: a restore waits until this command has ended and holds it back meanwhile (talks_to_servers, RV-60)
@@ -63,7 +65,7 @@ def _client(
         raise ConfigurationError("No password is stored for the calendar and contacts server")
     user = (username if username is not None else settings.dav_username) or settings.account.incoming.username
     if trusted is None:
-        trusted = _accepted_for(settings, address)
+        trusted = _accepted_for(engine, settings, address)
     return DavClient(address, user, secret, trusted)
 
 
@@ -72,8 +74,9 @@ def _host_and_port(address: str) -> tuple[str, int]:
     return (parts.hostname or "").lower(), parts.port or (443 if parts.scheme == "https" else 80)
 
 
-def _accepted_for(settings: AccountSettings, address: str) -> frozenset[str]:
-    return fingerprints_for(settings.trusted_certificates, *_host_and_port(address))
+def _accepted_for(engine: Engine, settings: AccountSettings, address: str) -> frozenset[str]:
+    """The certificates accepted for this place: for good with the account, or until Chrono Mail closes (D-299)."""
+    return fingerprints_for(engine.pins(settings.trusted_certificates), *_host_and_port(address))
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +156,7 @@ class DavSyncSummary:
     errors: tuple[str, ...]
     removed: int = 0  # calendars, task lists and address books the server confirmed deleted, taken away here too (R-25)
     made_on_server: int = 0  # made here offline, now made on the server (R-29)
+    certificate: CertificateTrouble | None = None  # its server's certificate could not be verified: nothing was synchronised (D-299)
 
 
 def keep_looks(engine: Engine, account_id: str, before: Mapping[str, CollectionLook | None], after: Mapping[str, CollectionLook | None]) -> None:
@@ -194,6 +198,15 @@ def _sync_account(engine: Engine, settings: AccountSettings) -> DavSyncSummary:
     )
 
 
+def _sync_or_name(engine: Engine, settings: AccountSettings) -> DavSyncSummary:
+    """One account's synchronisation; a certificate that could not be verified stops only this account and names its server (D-299)."""
+    try:
+        return _sync_account(engine, settings)
+    except CertificateError as error:
+        account_id = settings.account.account_id
+        return DavSyncSummary(account_id, 0, 0, 0, 0, 0, 0, 0, (str(error),), certificate=replace(error.trouble, account=account_id))
+
+
 def _state_path(engine: Engine, account_id: str) -> Path:
     return engine.directories.pim_directory(account_id) / "dav-state.json"
 
@@ -203,11 +216,11 @@ def dav_sync(engine: Engine, parameters: SyncParameters) -> tuple[DavSyncSummary
     """Bring the calendars, task lists and address books of an account in line with its server, both ways."""
     config = engine.config()
     if parameters.account is not None:
-        return (_sync_account(engine, engine.resolve_account(parameters.account, config)),)
+        return (_sync_or_name(engine, engine.resolve_account(parameters.account, config)),)
     if parameters.accounts:
         chosen = [engine.resolve_account(name, config) for name in parameters.accounts]
-        return tuple(_sync_account(engine, item) for item in chosen if item.dav_url and item.account.account_id != LOCAL_ACCOUNT_ID)
-    return tuple(_sync_account(engine, item) for item in config.accounts if item.dav_url and item.account.account_id != LOCAL_ACCOUNT_ID)
+        return tuple(_sync_or_name(engine, item) for item in chosen if item.dav_url and item.account.account_id != LOCAL_ACCOUNT_ID)
+    return tuple(_sync_or_name(engine, item) for item in config.accounts if item.dav_url and item.account.account_id != LOCAL_ACCOUNT_ID)
 
 
 # --- finding the server by itself (D-181) ----------------------------------------------------------------------------------------------------
@@ -240,6 +253,7 @@ class FoundServer:
     pin: str  # host:port=fingerprint to accept with it: the certificate accepted for this account's mail (D-180); empty when not needed
     folders: tuple[FoundFolder, ...]
     problem: str  # when nothing was found: what went wrong at a place that looked like a calendar server (a certificate, the login); else empty
+    certificate: CertificateTrouble | None = None  # when nothing was found: the first place whose certificate could not be verified (D-299)
 
 
 def _places(settings: AccountSettings) -> list[str]:
@@ -270,10 +284,10 @@ def _answers_as_calendar_server(address: str, trusted: frozenset[str]) -> bool:
         return False
 
 
-def _with_certificate(settings: AccountSettings, address: str, attempt: Callable[[frozenset[str]], bool]) -> tuple[bool, str]:
+def _with_certificate(engine: Engine, settings: AccountSettings, address: str, attempt: Callable[[frozenset[str]], bool]) -> tuple[bool, str]:
     """Run an attempt at a place with the certificates accepted for it. When the certificate fails and it is exactly one the person accepted for this
     account's mail, it is accepted for this place too, without asking (D-180): (the attempt's answer, the pin to keep or "")."""
-    trusted = _accepted_for(settings, address)
+    trusted = _accepted_for(engine, settings, address)
     try:
         return attempt(trusted), ""
     except DavCertificateError:
@@ -301,6 +315,7 @@ def dav_find(engine: Engine, parameters: FindParameters) -> FoundServer:
         raise UsageError("The Local Folders have no server")
     given = parameters.url.strip()
     problems: list[str] = []
+    certificate: CertificateTrouble | None = None
     for address in [given] if given else _places(settings):
         found: list[RemoteCollection] = []
 
@@ -312,18 +327,20 @@ def dav_find(engine: Engine, parameters: FindParameters) -> FoundServer:
             return True
 
         try:
-            answered, pin = _with_certificate(settings, address, attempt)
+            answered, pin = _with_certificate(engine, settings, address, attempt)
         except ProtocolError as error:  # also a refused login or certificate
             if given:
                 raise
             if isinstance(error, (DavCertificateError, AuthenticationError)):
                 problems.append(f"{_host_and_port(address)[0]}: {error}")
+            if isinstance(error, CertificateError) and certificate is None:
+                certificate = replace(error.trouble, account=settings.account.account_id)
             continue
         if answered and found:
             return FoundServer(address, pin, _found(settings, address, found), "")
         if given:
             return FoundServer(address, pin, (), "The server was reached, but it offers no calendars, task lists or address books")
-    return FoundServer("", "", (), "; ".join(problems))
+    return FoundServer("", "", (), "; ".join(problems), certificate)
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,17 +413,17 @@ class FindNewParameters:
     fingerprint: str = field(default="", metadata=option("The SHA-256 fingerprint of a certificate the person accepted for this server"))
 
 
-def _new_client(url: str, username: str, password: str, fingerprint: str) -> DavClient:
+def _new_client(engine: Engine, url: str, username: str, password: str, fingerprint: str) -> DavClient:
     host, port = _host_and_port(url)
     if not host:
         raise UsageError("Type the address of the calendar and contacts server")
-    return DavClient(url, username, password, frozenset({fingerprint}) if fingerprint else frozenset())
+    return DavClient(url, username, password, fingerprints_for(engine.pins((server_pin(host, port, fingerprint),) if fingerprint else ()), host, port))
 
 
 def dav_find_new(engine: Engine, parameters: FindNewParameters) -> FoundServer:
     """What a calendar and contacts server offers to a login that is not an account yet: every folder, the public ones too, all ticked."""
     url = web_address(parameters.url)
-    with _new_client(url, parameters.username.strip(), parameters.password, parameters.fingerprint.strip()) as client:
+    with _new_client(engine, url, parameters.username.strip(), parameters.password, parameters.fingerprint.strip()) as client:
         found = client.all_collections()
     pin = server_pin(*_host_and_port(url), parameters.fingerprint.strip()) if parameters.fingerprint.strip() else ""
     folders = tuple(FoundFolder(folder_key(item), item.name, item.kind, item.public, item.read_only, True) for item in found)
@@ -431,7 +448,7 @@ def account_add_dav(engine: Engine, parameters: AddDavParameters) -> AccountAddR
     if not username:
         raise UsageError("Type the user name")
     fingerprint = parameters.fingerprint.strip()
-    with _new_client(url, username, parameters.password, fingerprint) as client:
+    with _new_client(engine, url, username, parameters.password, fingerprint) as client:
         offered = client.all_collections()
     if not offered:
         raise UsageError("The server was reached, but it offers no calendars, task lists or address books")

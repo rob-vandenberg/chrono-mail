@@ -141,20 +141,6 @@
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="incomingCertificate">
-         <property name="text">
-          <string>Look at the incoming server's certificate…</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="outgoingCertificate">
-         <property name="text">
-          <string>Look at the outgoing server's certificate…</string>
-         </property>
-        </widget>
-       </item>
-       <item>
         <widget class="QPushButton" name="forgetCertificates">
          <property name="text">
           <string>Forget the accepted certificates</string>
@@ -266,13 +252,6 @@
         <widget class="QPushButton" name="findDav">
          <property name="text">
           <string>Find calendars, contacts and tasks</string>
-         </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="davCertificate">
-         <property name="text">
-          <string>Look at the server's certificate…</string>
          </property>
         </widget>
        </item>

@@ -34,9 +34,11 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.2.429"
+__version__ = "session.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: certificates the person accepted until Chrono Mail closes (run_pins, trust_for_run; never saved), taken by every connection;
+#           tls_context tells the pinned context the server's security and kind, so a renewal that passes the usual checks connects (D-299)
 # v4.2.429: person_work and step_aside: the filling in of an index waits while a command of the person runs (D-229)
 # v4.2.427: download_interrupts: what stops each update download under way at once
 # v4.2.419: releases_address, stopped_downloads and verified_updates: where the releases are read, the downloads Cancel stopped, the updates checked (D-293)
@@ -349,6 +351,8 @@ class Engine:
     sidebar_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)  # every read-change-save of the sidebar file (R-41)
     _imap_links: dict[str, ImapLink] = field(default_factory=dict, init=False, repr=False)
     _imap_links_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _run_pins: set[str] = field(default_factory=set, init=False, repr=False)  # host:port=fingerprint accepted until Chrono Mail closes (D-299)
+    _run_pins_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _cached_keys: dict[bytes, DataKey] = field(default_factory=dict, init=False, repr=False)
     _cache_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _config_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # held while config.json is read or written
@@ -467,11 +471,22 @@ class Engine:
             with link.lock:
                 link.close()
 
+    def trust_for_run(self, pin: str) -> None:
+        """The person accepted a certificate until Chrono Mail closes (Connect without Don't ask me again): kept in memory only (D-299)."""
+        with self._run_pins_lock:
+            self._run_pins.add(pin)
+
+    def pins(self, kept: tuple[str, ...] = ()) -> tuple[str, ...]:
+        """The certificates accepted for good (kept with an account) and those accepted until Chrono Mail closes."""
+        with self._run_pins_lock:
+            return (*kept, *sorted(self._run_pins))
+
     def tls_context(self, settings: AccountSettings, outgoing: bool = False) -> ssl.SSLContext | None:
         """The TLS context for the incoming (or outgoing) server of an account; None means the usual checks apply to it,
-        which is so unless a certificate was accepted for that very server."""
+        which is so unless a certificate was accepted for that very server (for good or until Chrono Mail closes)."""
         server = settings.account.outgoing if outgoing else settings.account.incoming
-        return context_for(fingerprints_for(settings.trusted_certificates, server.host, server.port))
+        kind = "smtp" if outgoing else settings.account.kind.value
+        return context_for(fingerprints_for(self.pins(settings.trusted_certificates), server.host, server.port), server.security, kind)
 
     # --- configuration -------------------------------------------------------------------------
 

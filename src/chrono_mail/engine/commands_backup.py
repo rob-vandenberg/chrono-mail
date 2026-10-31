@@ -24,9 +24,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, option
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_backup.py 3.6.349"
+__version__ = "commands_backup.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: the weak security (tls-unchecked) is tested after a restore as chosen (D-299)
 # v3.6.349: backup.restore counts only damaged messages and items as damaged; a damaged setting is told in the notes (RV-199)
 # v3.5.346: key.ensure also says whether the recovery code was never confirmed as stored, also for a key made before (RV-03)
 # v2.4.334: backup.restore says where the damaged messages and items were
@@ -164,7 +165,7 @@ class CheckAccountResult:
     text: str
 
 
-SECURITY_WORDS: dict[ConnectionSecurity, Security] = {ConnectionSecurity.NONE: "none", ConnectionSecurity.STARTTLS: "starttls", ConnectionSecurity.TLS: "tls"}
+SECURITY_WORDS: dict[ConnectionSecurity, Security] = {ConnectionSecurity.NONE: "none", ConnectionSecurity.STARTTLS: "starttls", ConnectionSecurity.TLS: "tls", ConnectionSecurity.TLS_UNCHECKED: "tls-unchecked"}
 
 
 def key_ensure(engine: Engine, parameters: NoParameters) -> KeyEnsured:

@@ -9,12 +9,14 @@ from typing import Self
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 from chrono_mail.protocols.lineconnection import LineConnection
+from chrono_mail.protocols.tls import client_context, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap.py 3.6.351"
+__version__ = "imap.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: a certificate that could not be verified is a CertificateError naming the server; the weak security encrypts without the check (D-299)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.6.349: a refusal keeps what the server sent before it; uid_fetch_what_comes gives it (RV-202); a refused SELECT leaves no folder
 #           open here either
@@ -258,7 +260,7 @@ class ImapClient:
         self._settings: ServerSettings = settings
         self._password: str = password
         self._limits: ImapLimits = limits
-        self._context: ssl.SSLContext = ssl_context if ssl_context is not None else ssl.create_default_context()
+        self._context: ssl.SSLContext = client_context(settings.security, ssl_context)
         self._connection: LineConnection = LineConnection(limits.maximum_line_bytes, limits.read_timeout_seconds)
         self._counter: int = 0
         self._tokens: int = 0
@@ -281,7 +283,7 @@ class ImapClient:
         try:
             raw = socket.create_connection((settings.host, settings.port), timeout=self._limits.connect_timeout_seconds)
             raw.settimeout(self._limits.read_timeout_seconds)
-            if settings.security is ConnectionSecurity.TLS:
+            if settings.security.from_start:
                 raw = self._context.wrap_socket(raw, server_hostname=settings.host)
             self._connection.socket = raw
             greeting = self._read_response()
@@ -303,7 +305,7 @@ class ImapClient:
             raise
         except ssl.SSLCertVerificationError as error:
             self.close()
-            raise ProtocolError(f"The server's certificate could not be verified: {error.verify_message}") from None
+            raise failure(error, settings.host, settings.port, settings.security, "imap") from None
         except (OSError, ssl.SSLError) as error:
             self.close()
             raise ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}") from None

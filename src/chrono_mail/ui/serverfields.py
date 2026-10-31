@@ -3,7 +3,6 @@ Settings > Accounts > Add and in Edit > Servers (R-05). A port follows the secur
 a port the person typed stays. Also the one way to show the result of Test connection."""
 
 from dataclasses import dataclass
-from typing import Literal
 
 from PySide6.QtWidgets import QCheckBox, QComboBox, QGroupBox, QLabel, QLineEdit, QSpinBox, QWidget
 
@@ -16,9 +15,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.passwordfield import make_password_field
 
 # --- Version ------------------------------------------------------------
-__version__ = "serverfields.py 4.2.437"
+__version__ = "serverfields.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: Security has a fourth choice, "TLS, certificate not checked (weak)", with the ports of TLS (OR-6, D-299)
 # v4.2.437: the two password fields have the eye (UR-03, D-296)
 # v4.0.376: the two boxes are built from their Qt Designer form (ui/forms/server_fields.ui, D-276) as one part (widget) that Add account
 #           and Edit account place in their own forms; the Tab order follows the boxes from top to bottom
@@ -27,10 +27,13 @@ __version__ = "serverfields.py 4.2.437"
 # v1.9.271: R-19: check_parameters gives account.check's typed parameters; security_of, mail_kind_of, policy_of
 # v1.1.243: Initial: the server boxes of Add account and the account editor, built once (R-05)
 
-SECURITY_CHOICES: tuple[tuple[str, str], ...] = (("tls", "TLS (encrypted from the start)"), ("starttls", "STARTTLS (upgrade to encrypted)"), ("none", "None (not encrypted)"))
-POP3_PORTS: dict[str, int] = {"tls": 995, "starttls": 110, "none": 110}
-IMAP_PORTS: dict[str, int] = {"tls": 993, "starttls": 143, "none": 143}
-OUTGOING_PORTS: dict[str, int] = {"tls": 465, "starttls": 587, "none": 25}
+SECURITY_CHOICES: tuple[tuple[str, str], ...] = (  # from strong to none: the person is guided to security, never forced (D-299)
+    ("tls", "TLS (encrypted from the start)"), ("starttls", "STARTTLS (upgrade to encrypted)"),
+    ("tls-unchecked", "TLS, certificate not checked (weak)"), ("none", "None (not encrypted)"),
+)
+POP3_PORTS: dict[str, int] = {"tls": 995, "starttls": 110, "tls-unchecked": 995, "none": 110}
+IMAP_PORTS: dict[str, int] = {"tls": 993, "starttls": 143, "tls-unchecked": 993, "none": 143}
+OUTGOING_PORTS: dict[str, int] = {"tls": 465, "starttls": 587, "tls-unchecked": 465, "none": 25}
 SAME_LOGIN_TEXT: str = "Use the same user name and password as for incoming mail"
 
 
@@ -172,24 +175,19 @@ class ServerFields:
         )
 
 
-SECURITIES: dict[str, Security] = {"tls": "tls", "starttls": "starttls", "none": "none"}
+SECURITIES: dict[str, Security] = {"tls": "tls", "starttls": "starttls", "tls-unchecked": "tls-unchecked", "none": "none"}
 MAIL_KINDS: dict[AccountKind, Kind] = {AccountKind.POP3: "pop3", AccountKind.IMAP: "imap"}
 DELETE_POLICIES: dict[str, Policy] = {"keep": "keep", "delete_after_download": "delete_after_download", "delete_after_days": "delete_after_days", "delete_when_deleted_locally": "delete_when_deleted_locally"}
 
 
 def security_of(chosen: object) -> Security:
-    """A Security choice's data as the engine's value (the boxes hold only these three)."""
+    """A Security choice's data as the engine's value (the boxes hold only these four)."""
     return SECURITIES.get(str(chosen), "tls")
 
 
 def mail_kind_of(kind: AccountKind) -> Kind:
     """A mail account's kind as the engine's value (the server boxes are only for POP3 and IMAP)."""
     return MAIL_KINDS.get(kind, "pop3")
-
-
-def mail_server_kind(kind: str) -> Literal["pop3", "imap"]:
-    """The incoming server's kind as certificate.inspect takes it (a mail account is POP3 or IMAP)."""
-    return "imap" if kind == "imap" else "pop3"
 
 
 def policy_of(chosen: object) -> Policy:

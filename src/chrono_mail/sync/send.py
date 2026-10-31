@@ -3,16 +3,17 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
-from chrono_mail.core import ChronoMailError, MessageFlag, MessageRef, ProtocolError, ServerSettings, StorageError
+from chrono_mail.core import CertificateError, CertificateTrouble, ChronoMailError, MessageFlag, MessageRef, ProtocolError, ServerSettings, StorageError
 from chrono_mail.index import Index, entry_from_raw
 from chrono_mail.mime import OutgoingMessage, as_it_goes_out, build_message, envelope_recipients
 from chrono_mail.protocols.smtp import Refusal, SmtpLimits, send_message
 from chrono_mail.store import SENT_LETTER, Store
 
 # --- Version ------------------------------------------------------------
-__version__ = "send.py 4.2.428"
+__version__ = "send.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: a send stopped by a certificate that could not be verified names the server (SendOutcome.certificate, D-299)
 # v4.2.428: what goes to the server never carries the program's own X-Chrono-Mail notes (a draft moved into the Outbox)
 # v4.2.418: account: the account a message is sent from is recorded with it once it is in Sent, never changed after (D-292)
 # v3.6.350: sent but not moved to Sent: marked first by a letter in its file name (a rename needs no free space, so a full disk cannot
@@ -40,6 +41,7 @@ class SendOutcome:
     refused: tuple[Refusal, ...] = ()
     error: str | None = None  # why it was not sent (the message is still in the Outbox)
     warning: str | None = None  # it was sent, but could not be filed away completely
+    certificate: CertificateTrouble | None = None  # not sent because the server's certificate could not be verified: the window asks (D-299)
 
 
 def send_and_file(
@@ -81,6 +83,8 @@ def send_and_file(
         raise
     try:
         result = send_message(settings, password, outgoing.from_address.address, recipients, as_it_goes_out(raw), limits, ssl_context)
+    except CertificateError as error:
+        return SendOutcome(False, reference, error=str(error), certificate=error.trouble)
     except ProtocolError as error:
         return SendOutcome(False, reference, error=str(error))
     checkpoint("send:after-smtp")
@@ -107,6 +111,8 @@ def send_stored(
     It is not stored again: until the server has accepted it, the copy in the Outbox is the only one and it stays there."""
     try:
         result = send_message(settings, password, sender, recipients, as_it_goes_out(raw), limits, ssl_context)
+    except CertificateError as error:
+        return SendOutcome(False, reference, error=str(error), certificate=error.trouble)
     except ProtocolError as error:
         return SendOutcome(False, reference, error=str(error))
     checkpoint("send:after-smtp")

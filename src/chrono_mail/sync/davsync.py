@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from chrono_mail.core import LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, AuthenticationError, CollectionInfo, CollectionKind, CollectionLook, ProtocolError, StorageError
+from chrono_mail.core import LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAITING, AuthenticationError, CertificateError, CollectionInfo, CollectionKind, CollectionLook, ProtocolError, StorageError
 from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.merge import Clash, merge
 from chrono_mail.pimstore.extract import extract
@@ -52,9 +52,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 3.6.350"
+__version__ = "davsync.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: a certificate that could not be verified stops the synchronisation of that account, as a refused login does: the window asks (D-299)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v2.0.286: A collection's name or colour changed here and on the server, or a name the server refused for good, is a sync conflict (kept in
@@ -337,7 +338,7 @@ def sync_dav(
             local = _follow(client, store, local, remote, report.looks[key] if key in report.looks else (looks or {}).get(key), report)
             report.collections += 1
             _sync_collection(client, store, local, remote, state, report, push)
-        except AuthenticationError:
+        except (AuthenticationError, CertificateError):  # the whole synchronisation stops: the window asks (D-299)
             raise
         except (ProtocolError, StorageError) as error:
             report.errors.append(f"{remote.name}: {error}")
@@ -370,7 +371,7 @@ def _send_creates(client: DavClient, store: PimStore, report: DavReport) -> None
             continue
         try:
             remote = make_on_server(client, info.kind.value, info.name, info.colour)
-        except AuthenticationError:
+        except (AuthenticationError, CertificateError):  # the whole synchronisation stops: the window asks (D-299)
             raise
         except ProtocolError as error:
             if passing_failure(error):
@@ -414,7 +415,7 @@ def _send_deletes(client: DavClient, store: PimStore, listed: set[str], report: 
             client.delete(waiting.href)
             forget_delete(store, href)
             report.deleted_on_server += 1
-        except AuthenticationError:
+        except (AuthenticationError, CertificateError):  # the whole synchronisation stops: the window asks (D-299)
             raise
         except ProtocolError as error:
             if passing_failure(error):
@@ -435,7 +436,7 @@ def _gone_from_list(
     key = f"{info.server_value('component')} {canonical_href(href)}"
     try:
         there = client.exists(href)
-    except AuthenticationError:
+    except (AuthenticationError, CertificateError):  # the whole synchronisation stops: the window asks (D-299)
         raise
     except ProtocolError as error:
         report.errors.append(f"{info.name}: no longer in the server's list, but the server did not confirm it was deleted ({error}); it is kept and asked again at the next synchronisation")
@@ -700,7 +701,7 @@ def _push(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
             links[href] = ItemLink(link.item_id, etag or client.etag_of(href), digest_of(text))
             drop_base(store, collection, link.item_id)
             report.pushed += 1
-        except AuthenticationError:
+        except (AuthenticationError, CertificateError):  # the whole synchronisation stops: the window asks (D-299)
             raise
         except (ProtocolError, StorageError) as error:
             report.errors.append(f"{remote.name}: {error}")
@@ -727,7 +728,7 @@ def _push(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
             links[href] = ItemLink(item_id, etag or client.etag_of(href), digest_of(text))
             drop_base(store, collection, item_id)
             report.pushed += 1
-        except AuthenticationError:
+        except (AuthenticationError, CertificateError):  # the whole synchronisation stops: the window asks (D-299)
             raise
         except (ProtocolError, StorageError) as error:
             report.errors.append(f"{remote.name}: {error}")

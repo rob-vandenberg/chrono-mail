@@ -7,11 +7,13 @@ from typing import override
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 from chrono_mail.core.words import digits
+from chrono_mail.protocols.tls import client_context, failure
 
 # --- Version ------------------------------------------------------------
-__version__ = "smtp.py 3.6.351"
+__version__ = "smtp.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: a certificate that could not be verified is a CertificateError naming the server; the weak security encrypts without the check (D-299)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.1.341: once the server accepted the message, a failed QUIT no longer makes the send fail (it was sent again, RV-140)
 # v0.0.13: check_login; shared connection and error mapping
@@ -95,8 +97,8 @@ def _check_address(address: str, what: str) -> None:
 
 
 @contextmanager
-def _mapped_errors() -> Generator[None]:
-    """Turn what smtplib and the network raise into AuthenticationError and ProtocolError (text made safe)."""
+def _mapped_errors(settings: ServerSettings) -> Generator[None]:
+    """Turn what smtplib and the network raise into AuthenticationError, CertificateError and ProtocolError (text made safe)."""
     try:
         yield
     except smtplib.SMTPAuthenticationError as error:
@@ -109,7 +111,7 @@ def _mapped_errors() -> Generator[None]:
     except smtplib.SMTPException as error:
         raise ProtocolError(f"Sending failed: {type(error).__name__}") from None
     except ssl.SSLCertVerificationError as error:
-        raise ProtocolError(f"The server's certificate could not be verified: {error.verify_message}") from None
+        raise failure(error, settings.host, settings.port, settings.security, "smtp") from None
     except (OSError, ssl.SSLError) as error:
         raise ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}") from None
 
@@ -118,7 +120,7 @@ def _open(
     settings: ServerSettings, password: str, limits: SmtpLimits, context: ssl.SSLContext, local_hostname: str | None
 ) -> smtplib.SMTP:
     """Connect, secure the connection and log in. The caller closes the connection."""
-    if settings.security is ConnectionSecurity.TLS:
+    if settings.security.from_start:
         connection: smtplib.SMTP = _SmtpSsl(settings.host, settings.port, local_hostname, timeout=limits.timeout_seconds, context=context)
     else:
         connection = _Smtp(settings.host, settings.port, local_hostname, timeout=limits.timeout_seconds)
@@ -147,8 +149,8 @@ def check_login(
     local_hostname: str | None = None,
 ) -> None:
     """Connect and log in without sending anything (a connection test). Raises like send_message."""
-    context = ssl_context if ssl_context is not None else ssl.create_default_context()
-    with _mapped_errors():
+    context = client_context(settings.security, ssl_context)
+    with _mapped_errors(settings):
         connection = _open(settings, password, limits, context, local_hostname)
         try:
             connection.quit()
@@ -180,8 +182,8 @@ def send_message(
         _check_address(recipient, "recipient")
     if len(raw) > limits.maximum_message_bytes:
         raise ProtocolError("The message is larger than the limit")
-    context = ssl_context if ssl_context is not None else ssl.create_default_context()
-    with _mapped_errors():
+    context = client_context(settings.security, ssl_context)
+    with _mapped_errors(settings):
         connection = _open(settings, password, limits, context, local_hostname)
         try:
             if connection.has_extn("size"):

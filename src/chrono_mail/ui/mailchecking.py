@@ -6,7 +6,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMessageBox, QWidget
 
-from chrono_mail.core import ChronoMailError
+from chrono_mail.core import CertificateError, CertificateTrouble, ChronoMailError
 from chrono_mail.engine.commands_accounts import WALLET_LABEL, AccountParameters, NoParameters, WalletLabelResult
 from chrono_mail.engine.commands_dav import DAV_SYNC, DavSyncSummary, SyncParameters
 from chrono_mail.engine.commands_mail import MAIL_FETCH, MAIL_SETTLE, BlockedFolder, FetchResult, SettleParameters
@@ -15,6 +15,7 @@ from chrono_mail.engine.commands_schedule import MAIL_SEND_DUE, MESSAGE_WAKE, Se
 from chrono_mail.engine.commands_watch import MAIL_WAIT, WaitParameters, WaitResult
 from chrono_mail.engine.junkfilter import JUNK_LEARN_EXISTING, JunkLearnResult
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.certificatequestions import questions_for, with_account
 from chrono_mail.ui.mailstate import MailState
 from chrono_mail.ui.messagelistpane import MessageListPane
 from chrono_mail.ui.operations import OperationsWindow
@@ -24,9 +25,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.2.419"
+__version__ = "mailchecking.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: a Refresh that meets a server whose certificate could not be verified (receiving, sending, the calendar sync) asks: Verify
+#           certificate over the main window; Connect does that account's work again (UR-05, D-299)
 # v4.2.419: went_online: a mail check, a send that reached a server or a calendar sync tried the internet; the check for updates goes along (D-293)
 # v3.6.371: label_wallet at start: readable labels in the wallet (B-23, D-275)
 # v3.5.348: A question with buttons of its own shows plain text (RV-167, without a filter on the whole program)
@@ -212,6 +215,8 @@ class MailChecking(QObject):
             changes["sent"] = result.sent
             for text in result.failed:
                 self._status.show(f"Scheduled message: {text}", error=True)
+            for trouble in result.certificates:  # Connect sends that account's Outbox (a one-off waits there; a repeating one goes at its next try)
+                self._ask_about(trouble, lambda account=trouble.account: self.send_outbox(account=account or None))
             self._backend.ask(MESSAGE_WAKE, WakeParameters(), woke, lambda error: finish(), owner=self)
 
         def woke(result: WakeResult) -> None:
@@ -303,6 +308,8 @@ class MailChecking(QObject):
             sent, failed, accounts = result.sent, result.failed, result.failed_accounts
             for position, text in enumerate(failed):
                 self._finish_operation(accounts[position] if position < len(accounts) else "", "send", text)
+            for trouble in result.certificates:  # Connect sends that account's Outbox again (D-299)
+                self._ask_about(trouble, lambda account=trouble.account: self.send_outbox(account=account or None))
             self.operations.finish_all("send")
             if failed:
                 self._status.show("Sending: " + "; ".join(failed), error=True)
@@ -326,6 +333,11 @@ class MailChecking(QObject):
                 self._settle_operations()
 
         self._backend.ask(MAIL_SEND_OUTBOX, SendOutboxParameters(account, message, now), done, failed, owner=self)
+
+    def _ask_about(self, trouble: CertificateTrouble, again: Callable[[], None]) -> None:
+        """A Refresh met a server whose certificate could not be verified: Verify certificate asks over the main window as soon as it is on
+        screen (never twice for one server, never again after Do not connect in this run); Connect does that work again (UR-05, D-299)."""
+        questions_for(self._backend).ask(trouble, again)
 
     def check_on_general_interval(self) -> None:
         """The general timer: the accounts that have no interval of their own."""
@@ -394,6 +406,8 @@ class MailChecking(QObject):
 
         def make_failed(account_id: str) -> Callable[[ChronoMailError], None]:
             def failed(error: ChronoMailError) -> None:
+                if isinstance(error, CertificateError):  # Connect checks that account again (D-299)
+                    self._ask_about(with_account(error.trouble, account_id), lambda: self.check_accounts({account_id}))
                 problems.append(str(error))
                 self._finish_operation(account_id, "receive", str(error))
                 remaining.discard(account_id)
@@ -543,6 +557,9 @@ class MailChecking(QObject):
             self._calendar_buttons(True)
             self._messages.load_contact_addresses()  # contacts that came from a server get their icon in the message list at once
             rows = list(result)
+            for row in rows:
+                if row.certificate is not None:  # Connect synchronises that account again (D-299)
+                    self._ask_about(row.certificate, lambda account=row.account: self.sync_calendars({account}, manual))
             problems = [text for row in rows for text in row.errors]
             pulled = sum(row.pulled for row in rows)
             removed = sum(row.deleted_here for row in rows)
@@ -568,6 +585,8 @@ class MailChecking(QObject):
             self.dav_syncing = False
             self._calendar_buttons(True)
             self._status.show(f"{CALENDARS_WORDS}: {error}", error=True)
+            if isinstance(error, CertificateError):
+                self._ask_about(error.trouble, lambda: self.sync_calendars(only, manual))
 
         self._backend.ask(DAV_SYNC, SyncParameters() if only is None else SyncParameters(accounts=tuple(accounts)), done, failed, owner=self)
         self.went_online.emit()

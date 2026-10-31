@@ -98,13 +98,6 @@
       </widget>
      </item>
      <item>
-      <widget class="QPushButton" name="lookAtCertificate">
-       <property name="text">
-        <string>Look at the server's certificate…</string>
-       </property>
-      </widget>
-     </item>
-     <item>
       <spacer name="findRowEnd">
        <property name="orientation">
         <enum>Qt::Horizontal</enum>

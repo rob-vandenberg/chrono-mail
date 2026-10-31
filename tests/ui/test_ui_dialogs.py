@@ -12,9 +12,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dialogs.py 4.2.439"
+__version__ = "test_ui_dialogs.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: the Look at the server's certificate… button is gone (UR-05, D-299)
 # v4.2.439: the RV-209 test on the calendar part of the Add window (D-298)
 # v3.6.350: a code that could not be shown is asked again with Try again
 # v3.6.349: while adding, nothing else in the window can be used (RV-207, RV-208, RV-209); the recovery code's tick needs the code (RV-210)
@@ -302,10 +303,9 @@ def test_while_adding_nothing_else_in_the_window_can_be_used(blank: World, qtbot
     qtbot.addWidget(dialog)
     dialog.show()
     fill(dialog, blank)
-    dialog.certificate_button.show()
     with qtbot.waitSignal(dialog.accepted, timeout=8000):
         dialog.add_button.click()
-        assert not any(widget.isEnabled() for widget in (dialog.restore_button, dialog.certificate_button, dialog.test_button, dialog.email, dialog.password))
+        assert not any(widget.isEnabled() for widget in (dialog.restore_button, dialog.test_button, dialog.email, dialog.password))
         dialog.restore_button.click()  # greyed: nothing happens
         dialog._restore_instead()  # noqa: SLF001 - and not even when reached another way
     qtbot.wait(50)

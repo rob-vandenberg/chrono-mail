@@ -18,22 +18,24 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.config import server_pin
-from chrono_mail.core import AccountKind, ChronoMailError
+from chrono_mail.core import AccountKind, CertificateTrouble, ChronoMailError
 from chrono_mail.engine.commands_accounts import (
     ACCOUNT_ADD, ACCOUNT_CHECK, AccountAddParameters, AccountAddResult, AccountCheckParameters, AccountCheckResult, AccountSummary,
 )
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.calendaraccount import CALDAV_KINDS, CARDDAV_KINDS, CalendarFields
-from chrono_mail.ui.certificatedialog import inspect_and_ask
+from chrono_mail.ui.certificatequestions import questions_for
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.forms import part
-from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, mail_server_kind, policy_of, security_of, test_result_text
+from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.2.440"
+__version__ = "accountdialog.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: a server whose certificate could not be verified asks at once (Verify certificate) after Test and Add; Connect tests or adds
+#           again; the Look at the server's certificate… button is gone (UR-05, D-299)
 # v4.2.440: a long error text is shown whole: the smallest height follows what the wrapping texts need at the width, never above the screen
 # v4.2.439: Account type offers POP3, IMAP, CalDAV and CardDAV: the calendar window is a part of this one (the sidebars' Add account…
 #           opens it on CalDAV or CardDAV); the first-account window says "your first account" (UR-04, D-298)
@@ -93,7 +95,6 @@ class AccountDialog(QDialog):
         self._mail_accounts: list[AccountSummary] = list(mail_accounts or [])  # those CalDAV and CardDAV may give a server (For)
         self._backend: Backend = backend
         self._pins: dict[str, tuple[tuple[str, int, str], str]] = {}  # incoming/outgoing -> (host, port, security) it was accepted for, fingerprint
-        self._cert_servers: list[str] = []
         self.created_account_id: str | None = None
         self.key_created: bool = False
         self.show_recovery_code: bool = False  # this computer's recovery code was never confirmed as stored: shown after the add (RV-03)
@@ -133,8 +134,6 @@ class AccountDialog(QDialog):
         self.encrypt.setChecked(True)
         self.result_label: QLabel = part(form, QLabel, "result")  # the mail part's; the calendar part has its own
         self.result_label.setTextFormat(Qt.TextFormat.RichText)
-        self.certificate_button: QPushButton = part(form, QPushButton, "lookAtCertificate")
-        self.certificate_button.hide()  # not in the button box: the box shows every button it holds
         buttons = part(form, QDialogButtonBox, "buttons")
         self.test_button = QPushButton("Test connection", buttons)
         self.add_button = QPushButton("Add account", buttons)
@@ -154,7 +153,6 @@ class AccountDialog(QDialog):
 
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self.email.textEdited.connect(self._guess_from_address)
-        self.certificate_button.clicked.connect(self._look_at_certificates)
         self.test_button.clicked.connect(self._test)
         self.add_button.clicked.connect(self._add)
 
@@ -184,7 +182,6 @@ class AccountDialog(QDialog):
         for widget in (self._who, self.servers.widget, self._options, self.test_button, self.result_label):
             widget.setVisible(not calendar)
         self.calendar.setVisible(calendar)
-        self.certificate_button.setVisible(not calendar and bool(self._cert_servers))
         if calendar:
             self.calendar.ticked_kinds = CARDDAV_KINDS if str(self.kind.currentData()) == CARDDAV else CALDAV_KINDS
         else:
@@ -257,10 +254,18 @@ class AccountDialog(QDialog):
             self._last_guess_host = f"mail.{domain}"
         self._last_guess_user = text
 
-    def _certificate_trouble(self, *messages: tuple[str, str]) -> None:
-        """When a server's certificate was the problem, offer to look at it (and accept it, if the person knows it is theirs)."""
-        self._cert_servers = [name for name, message in messages if "certificate" in message.lower()]
-        self.certificate_button.setVisible(bool(self._cert_servers) and not self._is_calendar())
+    def _ask_about(self, trouble: CertificateTrouble | None, again: Callable[[], None]) -> None:
+        """A server whose certificate could not be verified: the Verify certificate window asks at once; Connect does the work again (D-299)."""
+        if trouble is not None:
+            questions_for(self._backend).ask(trouble, again, self, self._keep)
+
+    def _keep(self, pin: str) -> None:
+        """Don't ask me again for an account not added yet: the certificate goes with it when it is added, for the server it was met at."""
+        server, _, fingerprint = pin.rpartition("=")
+        for which in ("incoming", "outgoing"):
+            endpoint = self._endpoint(which)
+            if f"{endpoint[0].strip().lower()}:{endpoint[1]}" == server:
+                self._pins[which] = (endpoint, fingerprint)
 
     def _endpoint(self, which: str) -> tuple[str, int, str]:
         return self.servers.endpoint(which)
@@ -269,25 +274,6 @@ class AccountDialog(QDialog):
     def trusted(self) -> list[str]:
         """The certificates the person accepted for the servers as they are now, each for its own server (host:port=fingerprint): one accepted for an address that was changed since is dropped."""
         return [server_pin(endpoint[0], endpoint[1], fingerprint) for which, (endpoint, fingerprint) in self._pins.items() if endpoint == self._endpoint(which)]
-
-    def _look_at_certificates(self) -> None:
-        servers = list(self._cert_servers)
-
-        def ask_next() -> None:
-            if not servers:
-                self._test()  # try again with what was accepted
-                return
-            which = servers.pop(0)
-            host, port, security = self._endpoint(which)
-            kind = mail_server_kind(str(self.kind.currentData())) if which == "incoming" else "smtp"
-
-            def accepted(fingerprint: str) -> None:
-                self._pins[which] = ((host, port, security), fingerprint)
-                ask_next()
-
-            inspect_and_ask(self._backend, self, host, port, security_of(security), kind, accepted)
-
-        ask_next()
 
     _last_guess_user: str = ""
     _last_guess_host: str = ""
@@ -298,26 +284,24 @@ class AccountDialog(QDialog):
         return self.servers.check_parameters(trusted=tuple(self.trusted))
 
     def _busy(self, busy: bool) -> None:
-        """A test runs: Test and the certificate look wait for its answer (each would start another test), and so does the mail part's Add."""
+        """A test runs: Test waits for its answer (it would start another test), and so does the mail part's Add."""
         self._testing = busy
-        for widget in (self.test_button, self.certificate_button):
-            widget.setEnabled(not busy and not self._adding)  # a test that ends during an add never brings Add back (RV-208)
+        self.test_button.setEnabled(not busy and not self._adding)  # a test that ends during an add never brings Add back (RV-208)
         self._allow_add()
 
     def _set_adding(self, adding: bool) -> None:
-        """While the account is being added nothing else can be done here: no Cancel, no test, no certificate, no restore, no field
+        """While the account is being added nothing else can be done here: no Cancel, no test, no restore, no field
         changed (a test started then let the window close half-way, and Add start twice; RV-02, RV-207, RV-208)."""
         self._adding = adding
         widgets: list[QWidget | None] = [
-            self.test_button, self.add_button, self.cancel_button, self.restore_button, self.certificate_button, self._who,
+            self.test_button, self.add_button, self.cancel_button, self.restore_button, self._who,
             self.servers.incoming_group, self.servers.outgoing_group, self._options,
         ]
         for widget in widgets:
             if widget is not None:
                 widget.setEnabled(not adding)
-        if not adding and self._testing:  # a test still runs (started before a change of kind): Test and the certificate look wait for it
+        if not adding and self._testing:  # a test still runs (started before a change of kind): Test waits for it
             self.test_button.setEnabled(False)
-            self.certificate_button.setEnabled(False)
         self.kind.setEnabled(not adding)
         self.calendar.set_adding(adding)
         self._allow_add()  # after a failed add: as the kind shown allows it (the calendar part's only with what Find found)
@@ -332,7 +316,7 @@ class AccountDialog(QDialog):
         return True
 
     def _test(self) -> None:
-        if self._adding or self._testing or not self._complete():  # never during an add, nor a second test (a certificate look ends in one)
+        if self._adding or self._testing or not self._complete():  # never during an add, nor a second test (a Connect ends in one)
             return
         self._busy(True)
         self.result_label.setText("Testing…")
@@ -340,7 +324,8 @@ class AccountDialog(QDialog):
         def done(result: AccountCheckResult) -> None:
             self._busy(False)
             self.result_label.setText(test_result_text(result))
-            self._certificate_trouble(("incoming", result.incoming_message), ("outgoing", result.outgoing_message))
+            self._ask_about(result.incoming_certificate, self._test)
+            self._ask_about(result.outgoing_certificate, self._test)
 
         def failed(error: ChronoMailError) -> None:
             self._busy(False)
@@ -377,7 +362,6 @@ class AccountDialog(QDialog):
         def failed(error: ChronoMailError) -> None:
             self._set_adding(False)
             self.result_label.setText(f"<span style='color:{red()}'>The account could not be added: {html.escape(str(error))}</span>")
-            self._certificate_trouble(("incoming", str(error)))
 
         self._backend.ask(ACCOUNT_ADD, parameters, done, failed, owner=self)
 

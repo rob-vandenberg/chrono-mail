@@ -12,9 +12,10 @@ from tests.test_engine_commands import call
 from tests.test_sync_dav import card, event, task
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_dav.py 2.0.286"
+__version__ = "test_engine_dav.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: dav.sync names a server whose certificate could not be verified and goes on with the other accounts (D-299)
 # v2.0.286: a name clash is a sync conflict, no error line (F3)
 # v1.1.221: the name and colour of a server's calendar: on the server first, offline later, refused kept, followed from the server, kept with the
 #           account through untick and re-tick, compared in one form, two computers (D-191, D-192)
@@ -76,8 +77,8 @@ def test_a_certificate_that_was_accepted_for_the_account_is_used(tmp_path: Path)
     engine, account = add_account(tmp_path)
     with FakeDav(tls=True) as server:
         call(engine, "account.set-dav", account=account, url=server.url)
-        with pytest.raises(Exception, match="certificate"):
-            call(engine, "dav.sync", account=account)
+        refused = call(engine, "dav.sync", account=account)[0]  # the other accounts go on; this one names its server (D-299)
+        assert refused.certificate is not None and refused.certificate.host == "127.0.0.1" and "certificate" in refused.errors[0]
         call(engine, "account.trust-certificate", account=account, host="127.0.0.1", port=int(server.url.rsplit(":", 1)[1].split("/")[0]), fingerprint=fingerprint(server.certificate))
         assert call(engine, "dav.sync", account=account)[0].errors == ()
 

@@ -5,6 +5,8 @@ from chrono_mail.core.appinfo import program_version
 from chrono_mail.core.credentials import SERVICE_NAME, CredentialBackend, CredentialEntries, CredentialFailure
 from chrono_mail.core.errors import (
     AuthenticationError,
+    CertificateError,
+    CertificateTrouble,
     ChronoMailError,
     ConfigurationError,
     CryptoError,
@@ -33,9 +35,10 @@ from chrono_mail.core.pim import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 4.2.438"
+__version__ = "__init__.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: Export CertificateError and CertificateTrouble (D-299)
 # v4.2.438: chosen_own_name (the name of a calendar's own colour that the person gave it)
 # v4.2.430: Export written_address
 # v2.0.281: Export RebuildAborted
@@ -71,6 +74,8 @@ __all__ = [
     "AuthenticationError",
     "ChronoMailError",
     "ConfigurationError",
+    "CertificateError",
+    "CertificateTrouble",
     "ConnectionSecurity",
     "CredentialBackend",
     "CredentialEntries",

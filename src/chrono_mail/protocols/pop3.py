@@ -6,11 +6,13 @@ from typing import Self
 
 from chrono_mail.core import AuthenticationError, ConnectionSecurity, ProtocolError, ServerSettings
 from chrono_mail.protocols.lineconnection import LineConnection
+from chrono_mail.protocols.tls import client_context, failure
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3.py 1.8.263"
+__version__ = "pop3.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: a certificate that could not be verified is a CertificateError naming the server; the weak security encrypts without the check (D-299)
 # v1.8.263: R-16: sending and reading lines go through LineConnection (protocols/lineconnection.py), shared with IMAP
 # v0.0.10: Initial POP3 client
 
@@ -49,7 +51,7 @@ class Pop3Client:
         self._settings: ServerSettings = settings
         self._password: str = password
         self._limits: Pop3Limits = limits
-        self._context: ssl.SSLContext = ssl_context if ssl_context is not None else ssl.create_default_context()
+        self._context: ssl.SSLContext = client_context(settings.security, ssl_context)
         self._connection: LineConnection = LineConnection(limits.maximum_line_bytes, limits.read_timeout_seconds)
         self.capabilities: frozenset[str] = frozenset()
 
@@ -68,7 +70,7 @@ class Pop3Client:
         try:
             raw = socket.create_connection((settings.host, settings.port), timeout=self._limits.connect_timeout_seconds)
             raw.settimeout(self._limits.read_timeout_seconds)
-            if settings.security is ConnectionSecurity.TLS:
+            if settings.security.from_start:
                 raw = self._context.wrap_socket(raw, server_hostname=settings.host)
             self._connection.socket = raw
             self._expect_ok(self._connection.read_line(), "greeting")
@@ -87,7 +89,7 @@ class Pop3Client:
             raise
         except ssl.SSLCertVerificationError as error:
             self.close()
-            raise ProtocolError(f"The server's certificate could not be verified: {error.verify_message}") from None
+            raise failure(error, settings.host, settings.port, settings.security, "pop3") from None
         except (OSError, ssl.SSLError) as error:
             self.close()
             raise ProtocolError(f"Connection failed: {error.strerror or type(error).__name__}") from None

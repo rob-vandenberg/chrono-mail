@@ -10,14 +10,16 @@ from collections.abc import Iterable, Mapping
 from types import TracebackType
 from dataclasses import dataclass, field
 
-from chrono_mail.core import AuthenticationError, ProtocolError
-from chrono_mail.protocols.tls import context_for
+from chrono_mail.core import AuthenticationError, CertificateError, ConnectionSecurity, ProtocolError
+from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 3.6.351"
+__version__ = "dav.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: DavCertificateError is a CertificateError that names the server, so the window can ask (D-299); a renewed certificate that passes
+#           the usual checks is taken where one was accepted
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v1.10.278: read: one item by the multiget first (Kerio answers a GET of an existing contact with 404); not there only on the server's 404, any
 #            other failure raises (D-196); fetch and read share _multiget
@@ -65,7 +67,7 @@ class DavConflict(DavError):
     """The item on the server is not the one that was changed (precondition failed), or it exists already."""
 
 
-class DavCertificateError(ProtocolError):
+class DavCertificateError(CertificateError):
     """The certificate of the server was not accepted (the usual checks, or it is not the one the person accepted)."""
 
 
@@ -244,7 +246,7 @@ class DavClient:
         self.port: int = parsed.port or (443 if parsed.scheme == "https" else 80)
         self.base_path: str = parsed.path or "/"
         self._authorization: str = "Basic " + base64.b64encode(f"{username}:{password}".encode()).decode("ascii") if username or password else ""
-        self._context: ssl.SSLContext | None = context_for(trusted) if parsed.scheme == "https" else None
+        self._context: ssl.SSLContext | None = context_for(trusted, ConnectionSecurity.TLS, "https") if parsed.scheme == "https" else None
         self.timeout: float = timeout
         self._open: http.client.HTTPConnection | None = None  # the connection kept open for the next request
         self._last_used: float = 0.0  # time.monotonic() of its last answer
@@ -341,7 +343,8 @@ class DavClient:
                 with self._lock:
                     result = self._exchange(method, target, body, send)
             except ssl.SSLCertVerificationError as error:
-                raise DavCertificateError(f"The certificate of the server is not accepted: {error.verify_message or error.reason}") from None
+                named = failure(error, self.host, self.port, ConnectionSecurity.TLS, "https")
+                raise DavCertificateError(str(named), named.trouble) from None
             except ssl.SSLError as error:
                 raise ProtocolError(f"The secure connection failed: {error.reason or error}") from None
             except TimeoutError:

@@ -12,7 +12,7 @@ from typing import Literal
 
 from chrono_mail.pim.times import local_zone, moment_at
 from chrono_mail.config import AccountSettings, ServerRole
-from chrono_mail.core import AccountKind, written_address, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag, MessageRef
+from chrono_mail.core import AccountKind, written_address, CertificateTrouble, ChronoMailError, ConfigurationError, Folder, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine.commands_accounts import AccountParameters
 from chrono_mail.engine.commands_addressbook import AddressesParameters, contact_addresses
 from chrono_mail.engine.import_common import fingerprint_of_raw, known_messages
@@ -36,9 +36,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.2.432"
+__version__ = "commands_mail.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: mail.send names the outgoing server when its certificate could not be verified (certificate), so the window asks (D-299)
 # v4.2.432: the Contact sort judges every row by the person the list shows (shows_recipients), one rule for the whole list (D-295)
 # v4.2.430: addresses shown to the window written so they can be read back (written_address); a row carries to_shown; the Contact sort takes the first address from the address columns, never the names read back
 # v4.2.429: the sort order to_shown: From / To for mail one sent, exactly as it shows (D-295)
@@ -463,6 +464,7 @@ class SendResult:
     warning: str | None
     scheduled: str | None = None  # when it will be sent, if it was not sent now
     waiting: bool = False  # it waits in the Outbox (a delayed send): nothing was sent yet
+    certificate: CertificateTrouble | None = None  # not sent: the outgoing server's certificate could not be verified; the window asks (D-299)
 
 
 def kept_attachments(raw: bytes | None, positions: tuple[str, ...]) -> tuple[Attachment, ...]:
@@ -708,6 +710,7 @@ def _send(engine: Engine, mailbox: Mailbox, parameters: SendParameters, replaced
         tuple(f"{item.address}: {item.code} {item.text}" for item in outcome.refused),
         outcome.error,
         "; ".join(text for text in (outcome.warning, told) if text),
+        certificate=None if outcome.certificate is None else replace(outcome.certificate, account=settings.account.account_id),
     )
 
 

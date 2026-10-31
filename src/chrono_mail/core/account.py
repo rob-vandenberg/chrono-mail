@@ -4,9 +4,10 @@ from enum import Enum
 from chrono_mail.core.errors import ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "account.py 1.1.212"
+__version__ = "account.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: TLS_UNCHECKED, encrypted from the start without checking the certificate: the person's own choice, never the program's (OR-6, D-299)
 # v1.1.212: An account of calendars, contacts and tasks only, without mail (D-185)
 # v0.0.45: Local Folders
 # v0.0.31: IMAP accounts
@@ -27,6 +28,12 @@ class ConnectionSecurity(Enum):
     NONE = "none"
     STARTTLS = "starttls"  # also STLS for POP3
     TLS = "tls"  # implicit TLS
+    TLS_UNCHECKED = "tls-unchecked"  # implicit TLS, the certificate not checked: chosen by the person only (weak, OR-6, D-299)
+
+    @property
+    def from_start(self) -> bool:
+        """Encrypted from the first byte (implicit TLS), checked or not."""
+        return self in (ConnectionSecurity.TLS, ConnectionSecurity.TLS_UNCHECKED)
 
 
 @dataclass(frozen=True, slots=True)

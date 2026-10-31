@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, replace
 
 from chrono_mail.config import AccountSettings, ServerRole
-from chrono_mail.core import ChronoMailError, FolderRole, MessageFlag, MessageRef
+from chrono_mail.core import CertificateTrouble, ChronoMailError, FolderRole, MessageFlag, MessageRef
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import _check_id
 from chrono_mail.engine.commands_schedule import KIND, _due_time, _mark_replied, _notes, _places, _sender, _shown
@@ -14,9 +14,10 @@ from chrono_mail.store import MessageNotFoundError, Properties, StoredMessage
 from chrono_mail.sync import file_sent_again, send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 4.2.418"
+__version__ = "commands_outbox.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: mail.send-outbox names each server whose certificate could not be verified (certificates), so the window asks (D-299)
 # v4.2.418: the account a message is sent from is recorded with it in Sent (D-292)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
 # v3.6.351: what follows a send the server took never makes it fail or stops the rest of the Outbox (a warning)
@@ -48,6 +49,7 @@ class SendOutboxResult:
     sent: int
     failed: tuple[str, ...]
     failed_accounts: tuple[str, ...] = ()  # per failure, the id of the account it was sent from ("" when not known)
+    certificates: tuple[CertificateTrouble, ...] = ()  # the servers whose certificate could not be verified, each once per account: the window asks (D-299)
 
 
 def _recipients(parsed_to: tuple[str, ...]) -> tuple[str, ...]:
@@ -71,6 +73,7 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
     sent = 0
     failed: list[str] = []
     failed_accounts: list[str] = []
+    certificates: list[CertificateTrouble] = []
 
     def fail(account_id: str, text: str) -> None:
         failed.append(text)
@@ -155,9 +158,12 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                         fail(account_id, f"{parsed.subject}: {outcome.warning}")
                 elif outcome is not None:
                     fail(account_id, f"{parsed.subject}: {outcome.error} (it stays in the Outbox)")
+                    trouble = outcome.certificate
+                    if trouble is not None and all((known.host, known.port, known.account) != (trouble.host, trouble.port, account_id) for known in certificates):
+                        certificates.append(replace(trouble, account=account_id))
                 if counted[account_id] == totals[account_id]:
                     engine.activity(account_id, "send", "Disconnected", None, None)
-    return SendOutboxResult(sent, tuple(failed), tuple(failed_accounts))
+    return SendOutboxResult(sent, tuple(failed), tuple(failed_accounts), tuple(certificates))
 
 
 def _properties(mailbox: Mailbox, reference: MessageRef) -> Properties:

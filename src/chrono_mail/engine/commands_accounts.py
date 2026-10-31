@@ -22,6 +22,8 @@ from chrono_mail.core import (
     LOCAL_ACCOUNT_ID,
     Account,
     AccountKind,
+    CertificateError,
+    CertificateTrouble,
     ChronoMailError,
     ConfigurationError,
     ConnectionSecurity,
@@ -50,9 +52,11 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 3.6.371"
+__version__ = "commands_accounts.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: account.check names a server whose certificate could not be verified (incoming_certificate, outgoing_certificate) and takes the
+#           certificates accepted until Chrono Mail closes; certificate.trust-for-run; security tls-unchecked, the weak choice (D-299)
 # v3.6.371: the passwords and the key get readable labels in the wallet when stored or the account is renamed; wallet.label at start (B-23, D-275)
 # v3.6.353: the kept index connections are let go before the mail kept on this computer is set aside (D-266)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
@@ -86,7 +90,7 @@ __version__ = "commands_accounts.py 3.6.371"
 # v0.0.13: account.check
 # v0.0.12: Initial account and key commands
 
-Security = Literal["tls", "starttls", "none"]
+Security = Literal["tls", "starttls", "none", "tls-unchecked"]  # tls-unchecked: encrypted, the certificate not checked (weak; the person's own choice, D-299)
 Kind = Literal["pop3", "imap"]
 Policy = Literal["keep", "delete_after_download", "delete_after_days", "delete_when_deleted_locally"]
 
@@ -237,13 +241,16 @@ class AccountCheckResult:
     incoming_message: str
     outgoing_ok: bool
     outgoing_message: str
+    incoming_certificate: CertificateTrouble | None = None  # the incoming server's certificate could not be verified: the window asks (D-299)
+    outgoing_certificate: CertificateTrouble | None = None
 
 
 def account_check(engine: Engine, parameters: AccountCheckParameters) -> AccountCheckResult:
     """Try to connect and log in to both servers, before an account is created or with the changes of one being edited. Nothing is stored or
     sent. For an account that exists a password not typed is the stored one: a password typed once is never asked for again (R-05)."""
-    pins = _pins(parameters.trusted_certificate)
+    pins = engine.pins(_pins(parameters.trusted_certificate))  # also those accepted until Chrono Mail closes (D-299)
     password, outgoing_password = parameters.password, parameters.outgoing_password
+    account_id = ""
     if parameters.account:
         account_id = engine.resolve_account(parameters.account).account.account_id
         password = password or engine.passwords.get(account_id, ServerRole.INCOMING) or ""
@@ -253,21 +260,25 @@ def account_check(engine: Engine, parameters: AccountCheckParameters) -> Account
         raise ConfigurationError("No password was typed, and none is stored for this account")
     try:
         incoming = ServerSettings(parameters.incoming_host.strip(), parameters.incoming_port, _security(parameters.incoming_security), parameters.username)
-        context = context_for(fingerprints_for(pins, incoming.host, incoming.port))
+        context = context_for(fingerprints_for(pins, incoming.host, incoming.port), incoming.security, parameters.kind)
         if parameters.kind == "imap":
             ImapClient(incoming, password, ImapLimits(connect_timeout_seconds=15, read_timeout_seconds=20), context).connect()
         else:
             Pop3Client(incoming, password, Pop3Limits(connect_timeout_seconds=15, read_timeout_seconds=20), context).connect()
-        incoming_ok, incoming_message = True, "Connected and logged in"
+        incoming_ok, incoming_message, incoming_certificate = True, "Connected and logged in", None
+    except CertificateError as error:
+        incoming_ok, incoming_message, incoming_certificate = False, str(error), replace(error.trouble, account=account_id)
     except ChronoMailError as error:
-        incoming_ok, incoming_message = False, str(error)
+        incoming_ok, incoming_message, incoming_certificate = False, str(error), None
     try:
         outgoing = ServerSettings(parameters.outgoing_host.strip(), parameters.outgoing_port, _security(parameters.outgoing_security), parameters.outgoing_username or parameters.username)
-        check_login(outgoing, outgoing_password or password, SmtpLimits(timeout_seconds=20), context_for(fingerprints_for(pins, outgoing.host, outgoing.port)))
-        outgoing_ok, outgoing_message = True, "Connected and logged in"
+        check_login(outgoing, outgoing_password or password, SmtpLimits(timeout_seconds=20), context_for(fingerprints_for(pins, outgoing.host, outgoing.port), outgoing.security, "smtp"))
+        outgoing_ok, outgoing_message, outgoing_certificate = True, "Connected and logged in", None
+    except CertificateError as error:
+        outgoing_ok, outgoing_message, outgoing_certificate = False, str(error), replace(error.trouble, account=account_id)
     except ChronoMailError as error:
-        outgoing_ok, outgoing_message = False, str(error)
-    return AccountCheckResult(incoming_ok, incoming_message, outgoing_ok, outgoing_message)
+        outgoing_ok, outgoing_message, outgoing_certificate = False, str(error), None
+    return AccountCheckResult(incoming_ok, incoming_message, outgoing_ok, outgoing_message, incoming_certificate, outgoing_certificate)
 
 
 @dataclass(frozen=True, slots=True)
@@ -739,14 +750,17 @@ class CertificateResult:
     expired: bool
     accepted_by_default: bool  # would the usual checks accept it? (then there is nothing to accept)
     problem: str | None
+    accepted_for_run: bool = False  # the person accepted exactly this certificate meanwhile (until Chrono Mail closes, or for good): nothing to ask
 
 
 def certificate_inspect(engine: Engine, parameters: CertificateParameters) -> CertificateResult:
     """Look at the certificate a server presents, without logging in. Nothing is trusted by looking."""
     if parameters.kind == "https" and parameters.security != "tls":
         raise UsageError("A calendar and contacts server (https) is reached with tls only")
-    info = inspect_certificate(parameters.host.strip(), parameters.port, _security(parameters.security), parameters.kind)
-    return CertificateResult(info.fingerprint, info.subject, info.issuer, info.names, info.not_before, info.not_after, info.expired, info.verified, info.problem)
+    host = parameters.host.strip()
+    info = inspect_certificate(host, parameters.port, _security(parameters.security), parameters.kind)
+    accepted = info.fingerprint in fingerprints_for(engine.pins(), host, parameters.port)
+    return CertificateResult(info.fingerprint, info.subject, info.issuer, info.names, info.not_before, info.not_after, info.expired, info.verified, info.problem, accepted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -776,6 +790,26 @@ def account_trust_certificate(engine: Engine, parameters: TrustParameters) -> Ac
     return _summary(config.find(account_id))
 
 
+@dataclass(frozen=True, slots=True)
+class RunTrustParameters:
+    host: str = field(metadata=option("The server the certificate belongs to"))
+    port: int = field(metadata=option("The port of that server"))
+    fingerprint: str = field(metadata=option("The SHA-256 fingerprint of the certificate to accept, as shown by certificate.inspect"))
+
+
+@dataclass(frozen=True, slots=True)
+class RunTrustResult:
+    pin: str  # host:port=fingerprint, accepted until Chrono Mail closes
+
+
+def certificate_trust_for_run(engine: Engine, parameters: RunTrustParameters) -> RunTrustResult:
+    """Accept one server certificate until Chrono Mail closes, on the person's explicit say-so (Connect, D-299). Kept in memory only, never
+    saved: the next start asks again. Only that exact certificate is trusted."""
+    (pin,) = _pins((f"{parameters.host.strip()}:{parameters.port}={parameters.fingerprint}",))
+    engine.trust_for_run(pin)
+    return RunTrustResult(pin)
+
+
 def account_forget_certificates(engine: Engine, parameters: AccountParameters) -> AccountSummary:
     """Take back every accepted certificate of an account: the usual checks apply again."""
     config = engine.config()
@@ -788,6 +822,7 @@ def account_forget_certificates(engine: Engine, parameters: AccountParameters) -
 CERTIFICATE_INSPECT: TypedCommand[CertificateParameters, CertificateResult] = TypedCommand("certificate.inspect", CertificateParameters, CertificateResult)
 ACCOUNT_TRUST_CERTIFICATE: TypedCommand[TrustParameters, AccountSummary] = TypedCommand("account.trust-certificate", TrustParameters, AccountSummary)
 ACCOUNT_FORGET_CERTIFICATES: TypedCommand[AccountParameters, AccountSummary] = TypedCommand("account.forget-certificates", AccountParameters, AccountSummary)
+CERTIFICATE_TRUST_FOR_RUN: TypedCommand[RunTrustParameters, RunTrustResult] = TypedCommand("certificate.trust-for-run", RunTrustParameters, RunTrustResult)
 ACCOUNT_ADD: TypedCommand[AccountAddParameters, AccountAddResult] = TypedCommand("account.add", AccountAddParameters, AccountAddResult)
 ACCOUNT_CHECK: TypedCommand[AccountCheckParameters, AccountCheckResult] = TypedCommand("account.check", AccountCheckParameters, AccountCheckResult)
 ACCOUNT_EDIT: TypedCommand[AccountEditParameters, AccountSummary] = TypedCommand("account.edit", AccountEditParameters, AccountSummary)
@@ -825,6 +860,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(WALLET_LABEL.id, "Give Chrono Mail's passwords and key a readable name in the wallet (only the names change)", NoParameters, wallet_label, doing="Naming Chrono Mail's passwords in your wallet")
     registry.register(CERTIFICATE_INSPECT.id, "Look at the certificate of a server (nothing is accepted by looking)", CertificateParameters, certificate_inspect, doing="Reading the server's certificate")
     registry.register(ACCOUNT_TRUST_CERTIFICATE.id, "Accept a server certificate for an account (by its fingerprint)", TrustParameters, account_trust_certificate, doing="Accepting a certificate")
+    registry.register(CERTIFICATE_TRUST_FOR_RUN.id, "Accept a server certificate until Chrono Mail closes (by its fingerprint; never saved)", RunTrustParameters, certificate_trust_for_run, doing="Accepting a certificate")
     registry.register(ACCOUNT_FORGET_CERTIFICATES.id, "Forget the accepted certificates of an account", AccountParameters, account_forget_certificates, doing="Forgetting the accepted certificates")
     registry.register(ACCOUNT_ADD.id, "Add a POP3/SMTP account and create its (encrypted) message store", AccountAddParameters, account_add, doing="Adding an account")
     registry.register(ACCOUNT_CHECK.id, "Test the connection and login to both servers before creating an account", AccountCheckParameters, account_check, doing="Testing the connection to the servers")

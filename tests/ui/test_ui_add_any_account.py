@@ -9,9 +9,10 @@ from tests.fakedav import FakeDav
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_add_any_account.py 4.2.440"
+__version__ = "test_ui_add_any_account.py 4.2.441"
 
 # --- Version history ----------------------------------------------------
+# v4.2.441: the Look at the server's certificate… button is gone (UR-05, D-299)
 # v4.2.440: a long error text is shown whole; the smallest height follows the text and the width
 # v4.2.439: Initial tests: every kind of account is added in the one Add window (UR-04, D-298); its size and the type waiting for a test
 
@@ -121,12 +122,12 @@ def test_an_answer_after_a_change_of_kind_stays_with_its_own_part(world: World, 
     dialog.kind.setCurrentIndex(dialog.kind.findData(CALDAV))
     fields = dialog.calendar
     wait(qtbot, lambda: dialog.result_label.text() != "Testing…")  # the test's answer, in the mail part's own line
-    assert not dialog.add_button.isEnabled() and fields.result_label.text() == "" and not dialog.certificate_button.isVisibleTo(dialog)
+    assert not dialog.add_button.isEnabled() and fields.result_label.text() == ""
     fields.url.setText("https://127.0.0.1:1/")
     fields.username.setText("ann")
     fields.password.setText("secret")
     fields.find_button.click()
-    assert fields.result_label.text() == "Looking…" and not fields.certificate_button.isEnabled()
+    assert fields.result_label.text() == "Looking…" and not fields.find_button.isEnabled()
     dialog.kind.setCurrentIndex(0)
     assert dialog.add_button.isEnabled()  # the mail part's Add: no test runs
     wait(qtbot, lambda: fields.result_label.text() != "Looking…")
@@ -160,7 +161,7 @@ def test_a_certificate_look_never_starts_a_second_test_or_find(world: World, qtb
 
 
 def test_the_window_follows_its_part_after_a_switch_and_its_timer_never_outlives_it(world: World, qtbot: QtBot) -> None:
-    """The third review of 4.2.439: after a switch the window could not grow when the certificate button appeared; the size step ran after
+    """The third review of 4.2.439: after a switch the window could not grow when a longer result appeared; the size step ran after
     the window was deleted."""
     dialog = AccountDialog(world.backend)
     qtbot.addWidget(dialog)
@@ -168,8 +169,7 @@ def test_the_window_follows_its_part_after_a_switch_and_its_timer_never_outlives
     qtbot.waitExposed(dialog)
     dialog.kind.setCurrentIndex(dialog.kind.findData("imap"))
     wait(qtbot, lambda: dialog.height() <= dialog.sizeHint().height() + 2)
-    dialog._certificate_trouble(("incoming", "certificate verify failed"))  # noqa: SLF001 - what a failed test does
-    assert dialog.certificate_button.isVisibleTo(dialog)
+    dialog.result_label.setText("The server's certificate could not be verified: certificate verify failed. " * 4)  # what a failed test shows
     wait(qtbot, lambda: dialog.height() >= dialog.minimumSizeHint().height())
     gone = AccountDialog(world.backend)
     gone.show()
@@ -190,7 +190,7 @@ def test_a_failed_add_never_frees_a_test_or_find_still_running(world: World, qtb
     dialog.test_button.click()
     dialog._set_adding(True)  # noqa: SLF001 - an add of the other part, which then fails
     dialog._set_adding(False)  # noqa: SLF001
-    assert not dialog.test_button.isEnabled() and not dialog.certificate_button.isEnabled()
+    assert not dialog.test_button.isEnabled()
     wait(qtbot, dialog.test_button.isEnabled)  # the test's answer frees them
     dialog.kind.setCurrentIndex(dialog.kind.findData(CALDAV))
     fields = dialog.calendar
@@ -199,7 +199,7 @@ def test_a_failed_add_never_frees_a_test_or_find_still_running(world: World, qtb
     fields.find_button.click()
     dialog._set_adding(True)  # noqa: SLF001
     dialog._set_adding(False)  # noqa: SLF001
-    assert not fields.find_button.isEnabled() and not fields.certificate_button.isEnabled()
+    assert not fields.find_button.isEnabled()
     wait(qtbot, fields.find_button.isEnabled)
 
 
