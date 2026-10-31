@@ -9,9 +9,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 3.6.351"
+__version__ = "test_engine_calendar.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: a calendar's own colour is named "Default calendar colour"; the old default's name a calendar kept never wins (D-297)
 # v3.6.351: a change of the attendee list keeps what each attendee's line said; floating events and tasks stay floating
 # v3.6.349: a series whose days the rule sets keeps its skipped dates when its first date moves (RV-185); one date of an invitation is
 #           edited exactly (RV-186); an RDATE series keeps its exceptions (RV-187); a changed date never moved in time moves along (RV-188); a task without a due time keeps no RELATED=END (RV-189); a rule change keeps every changed date, a hostile
@@ -220,7 +221,7 @@ def calendar_summary(engine: Engine, cal: str) -> object:
 def test_a_calendar_has_its_own_colour_first_and_the_suggestions_after_it(engine: Engine) -> None:
     cal = collection(engine, "events")
     palette = calendar_summary(engine, cal).palette
-    assert (palette[0].colour_id, palette[0].name) == ("calendar", "Calendar colour") and palette[0].colour == calendar_summary(engine, cal).colour
+    assert (palette[0].colour_id, palette[0].name) == ("calendar", "Default calendar colour") and palette[0].colour == calendar_summary(engine, cal).colour
     assert [entry.name for entry in palette[1:]] == ["Tomato", "Flamingo", "Tangerine", "Banana", "Sage", "Basil", "Peacock", "Blueberry", "Lavender", "Grape", "Graphite"]
     assert palette[1].colour == "#d50000" and palette[-1].colour == "#616161"
     tasks = next(item for item in call(engine, "collection.list") if item.kind == "tasks")
@@ -317,6 +318,32 @@ def test_the_palettes_calendars_kept_are_taken_over_by_their_account_once(tmp_pa
     assert palette[0].name == "Mine" and calendar_summary(later, second).palette == (calendar_summary(later, second).palette[0], *palette[1:])
     assert len(told) == 1 and "Rood" in told[0] and "Work" in told[0]  # never silent: the colour that could not be kept is named
     assert all("palette" not in json.loads((root / "collections" / c / "collection.json").read_text()) for c in (first, second))
+
+
+def test_the_default_name_a_calendar_kept_never_wins_over_a_chosen_one(tmp_path: Path) -> None:
+    """D-297: the old default's name ("Calendar colour") kept by an old calendar is no name of its own: a later calendar's chosen name wins and
+    nothing is told as lost."""
+    import json
+
+    engine = make_engine(tmp_path)
+    call(engine, "pim.enable")
+    first = collection(engine, "events")
+    second = call(engine, "collection.create", kind="events", name="Work").collection
+    root = engine.directories.pim_directory("0" * 31 + "1")
+    for collection_id, name in ((first, "Calendar colour"), (second, "Mine")):  # as 1.1.219 kept them
+        path = root / "collections" / collection_id / "collection.json"
+        data = json.loads(path.read_text())
+        data["palette"] = {"own_name": name, "colours": []}
+        path.write_text(json.dumps(data))
+    told: list[str] = []
+    from chrono_mail.engine.session import Engine as Session
+
+    later = Session(engine.directories, engine.passwords, engine.keys, durable=False, notice=told.append)
+    from chrono_mail.engine.commands_pim import CollectionSummary
+
+    summary = calendar_summary(later, first)
+    assert isinstance(summary, CollectionSummary)
+    assert summary.palette[0].name == "Mine" and told == []
 
 
 def test_the_fact_of_a_calendar_carries_its_palette_and_a_palette_change_tells_every_calendar(engine: Engine) -> None:

@@ -1,7 +1,10 @@
 import html
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from typing import override
+
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPainter, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QColorDialog,
     QComboBox,
     QDialog,
@@ -28,9 +31,11 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import px_for, wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 4.2.431"
+__version__ = "paletteeditor.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: the tick "Show background colour for timed events in Month view", kept with the account's colours; its text wraps and a click on it
+#           works the tick (UR-02, D-297)
 # v4.2.431: the + of a read-only calendar and the Delete of its own colour have no hover text while their (i) shows
 # v4.2.424: an (i) after the greyed Delete of the calendar's own colour, and after + of a read-only calendar, saying why; a read-only calendar greys each row's parts, never the (i) (D-294)
 # v4.0.378: the editor and a colour's row are built from their Qt Designer forms (ui/forms/palette_editor.ui, palette_colour.ui, D-276); the
@@ -80,6 +85,23 @@ def colour_from(calendar: CollectionSummary | None, colour_id: str, other: str) 
     return palette[0].colour if palette else ((calendar.colour if calendar is not None else "") or COLLECTION_WITHOUT_COLOUR)
 
 
+class TextWorksTick(QObject):
+    """A click on the text beside a tick works the tick, as a tick's own text does; the text wraps where a tick's own text cannot."""
+
+    def __init__(self, label: QLabel, tick: QCheckBox) -> None:
+        super().__init__(label)
+        self._tick: QCheckBox = tick
+        label.installEventFilter(self)  # this one label only
+
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if (event.type() == QEvent.Type.MouseButtonRelease and isinstance(event, QMouseEvent) and event.button() == Qt.MouseButton.LeftButton
+                and self._tick.isEnabled() and isinstance(watched, QWidget) and watched.rect().contains(event.position().toPoint())):  # let go on the text
+            self._tick.toggle()
+            return True
+        return False
+
+
 class ColourRow(QWidget):
     """One colour in the palette editor: its colour (a click picks another), its name, and a bin (greyed for the calendar's own colour)."""
 
@@ -127,6 +149,10 @@ class PaletteEditor(QDialog):
         self.calendar.addItem(f"{calendar.account_name} — {calendar.name}")
         self.calendar.setEnabled(False)
         part(form, QScrollArea, "scroll").setMinimumHeight(wpx(320))
+        self.timed_background: QCheckBox = part(form, QCheckBox, "timedBackground")  # the account's choice, with its colours (D-297)
+        self.timed_background.setChecked(calendar.timed_background)
+        self.timed_background_text: QLabel = part(form, QLabel, "timedBackgroundText")
+        TextWorksTick(self.timed_background_text, self.timed_background)
         self.result_label: QLabel = part(form, QLabel, "result")
         self.add_button: QToolButton = part(form, QToolButton, "add")
         self.add_button.setIcon(theme_icon("list-add"))
@@ -139,7 +165,8 @@ class PaletteEditor(QDialog):
         if self.rows:
             self.rows[0].colour_button.setFocus()  # it opens on the first colour, as before (the list's scroll area comes first in the Tab order)
         if calendar.read_only:  # a read-only calendar's colours are shown, not changed; the (i) of a row stays usable (D-294)
-            for widget in (self.add_button, self.save_button, *(control for row in self.rows for control in (row.colour_button, row.name, row.delete_button))):
+            for widget in (self.add_button, self.save_button, self.timed_background, self.timed_background_text,
+                           *(control for row in self.rows for control in (row.colour_button, row.name, row.delete_button))):
                 widget.setEnabled(False)
             part(form, InfoMark, "addInfo").explain("Event colours", READ_ONLY_COLOURS, self.add_button)  # D-294: no hover text beside the (i)
 
@@ -177,7 +204,7 @@ class PaletteEditor(QDialog):
     def parameters(self) -> PaletteParameters:
         own = next(row for row in self.rows if row.colour_id == OWN_COLOUR_ID)
         others = tuple(f"{row.colour_id}\t{row.name.text().strip()}\t{row.colour}" for row in self.rows if row.colour_id != OWN_COLOUR_ID)
-        return PaletteParameters(self._calendar.collection, own.name.text().strip(), own.colour, others)
+        return PaletteParameters(self._calendar.collection, own.name.text().strip(), own.colour, others, self.timed_background.isChecked())
 
     def _save(self) -> None:
         if any(not row.name.text().strip() for row in self.rows):

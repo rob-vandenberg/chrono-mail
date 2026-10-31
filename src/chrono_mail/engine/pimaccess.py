@@ -5,7 +5,7 @@ from typing import cast
 
 from chrono_mail.config import AccountSettings
 from chrono_mail.config import AppConfig
-from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionInfo, CollectionKind, ConfigurationError, PaletteColour, StorageError, palette_of
+from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionInfo, CollectionKind, ConfigurationError, PaletteColour, StorageError, chosen_own_name, palette_of
 from chrono_mail.core.colours import FIRST_ADDRESS_BOOK, FIRST_CALENDAR, FIRST_TASK_LIST
 from chrono_mail.core.pim import MAXIMUM_PALETTE_COLOURS
 from chrono_mail.engine.changes import Change, ChangeKind
@@ -16,9 +16,10 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.pimstore import IndexedItem, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "pimaccess.py 1.9.265"
+__version__ = "pimaccess.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: timed_background_for; every calendar fact carries its account's choice (UR-02, D-297)
 # v1.9.265: The fact of a calendar made or changed carries its palette (tell_look); a change of the account's palette tells it for each calendar (R-44)
 # v1.1.221: The palette of appointment colours belongs to the account (palette_for); what calendars kept themselves is taken over once (D-191)
 # v1.1.211: An account is named as everywhere in the window: its account name, else its address (shown_name, D-184)
@@ -59,11 +60,12 @@ def _open(engine: Engine, account_id: str, create: bool) -> PimStore:
     store = PimStore.open_or_create(directory, key, durable=engine.durable) if create else PimStore.open(directory, key, durable=engine.durable)
 
     def report(kind: str, collection: str, item: str, to_collection: str, new_item: str, info: CollectionInfo | None) -> None:
-        palette = palette_for(_settings(engine, account_id), info) if info is not None else ()  # a calendar's colours, as the sidebar shows them
+        settings = _settings(engine, account_id) if info is not None else None
+        palette = palette_for(settings, info) if settings is not None and info is not None else ()  # a calendar's colours, as the sidebar shows them
         engine.report(Change(
             cast(ChangeKind, kind), account_id, collection, item, to_folder=to_collection, new_message_id=new_item,  # the store names its changes as the facts do
             role=info.kind.value if info is not None else "", name=info.name if info is not None else "", colour=info.colour if info is not None else "",
-            palette=palette, read_only=info.read_only if info is not None else False,
+            palette=palette, read_only=info.read_only if info is not None else False, timed_background=timed_background_for(settings, info),
         ))
 
     store.reporter = report
@@ -78,7 +80,7 @@ def tell_palettes(engine: Engine, account_id: str, store: PimStore) -> None:
     for info in store.collections(CollectionKind.EVENTS):
         engine.report(Change(
             "collection_edited", account_id, info.collection_id, role=info.kind.value, name=info.name, colour=info.colour, palette=palette_for(settings, info),
-            read_only=info.read_only,
+            read_only=info.read_only, timed_background=timed_background_for(settings, info),
         ))
 
 
@@ -87,6 +89,11 @@ def palette_for(settings: AccountSettings, info: CollectionInfo) -> tuple[Palett
     if info.kind is not CollectionKind.EVENTS:
         return ()
     return palette_of(info.colour, settings.calendar_palette, settings.calendar_own_colour_name)
+
+
+def timed_background_for(settings: AccountSettings | None, info: CollectionInfo | None) -> bool:
+    """Whether Month shows a calendar's timed events in their colour (D-297): its account's choice, with its colours; never for other kinds."""
+    return settings is not None and info is not None and info.kind is CollectionKind.EVENTS and settings.calendar_timed_background
 
 
 def _take_over_palettes(engine: Engine, account_id: str, store: PimStore) -> None:
@@ -98,14 +105,15 @@ def _take_over_palettes(engine: Engine, account_id: str, store: PimStore) -> Non
         return
     settings = _settings(engine, account_id)
     palette = list(settings.calendar_palette) if settings.calendar_palette is not None else None
-    own_name = settings.calendar_own_colour_name
+    own_name = chosen_own_name(settings.calendar_own_colour_name)
     lost: list[str] = []
     for kept in old:
-        if kept.own_name and kept.own_name != own_name:
+        kept_name = chosen_own_name(kept.own_name)  # the default's name was never chosen (D-297)
+        if kept_name and kept_name != own_name:
             if own_name:
-                lost.append(f"the name “{kept.own_name}” of {kept.name}")
+                lost.append(f"the name “{kept_name}” of {kept.name}")
             else:
-                own_name = kept.own_name
+                own_name = kept_name
         if kept.palette is None:
             continue  # it never changed the suggestions: nothing of its own
         if palette is None:

@@ -4,9 +4,10 @@ from datetime import date, datetime, timedelta, tzinfo
 from chrono_mail.engine.commands_calendar import OccurrenceInfo
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarlayout.py 2.0.307"
+__version__ = "calendarlayout.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: Entry.filled: Month draws a timed event in its colour (UR-02, D-297)
 # v2.0.307: A condition that gave the same last day either way removed (SonarQube Cloud, D-237)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v0.0.64: Initial layout of events in days, weeks, months and lists (no drawing, no Qt)
@@ -35,6 +36,7 @@ class Entry:
     end: datetime  # exclusive; all-day events: midnight after their last day
     all_day: bool
     colour: str = ""
+    filled: bool = False  # Month shows it, timed, in its colour with a dot, as an all-day one; its account's choice (D-297)
 
     @property
     def first_day(self) -> date:

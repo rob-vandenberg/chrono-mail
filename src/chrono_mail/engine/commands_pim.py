@@ -3,13 +3,13 @@ from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from chrono_mail.config import TAG_KINDS, AppConfig, load_tags, save_tags
-from chrono_mail.core import LOCAL_ACCOUNT_ID, OWN_COLOUR_ID, CollectionInfo, CollectionKind, ConfigurationError, PaletteColour, StorageError, palette_problem
+from chrono_mail.core import LOCAL_ACCOUNT_ID, OWN_COLOUR_ID, chosen_own_name, CollectionInfo, CollectionKind, ConfigurationError, PaletteColour, StorageError, palette_problem
 from chrono_mail.engine.collection_create import create_collection
 from chrono_mail.engine.collection_delete import delete_collection, together
 from chrono_mail.engine.collection_looks import change_look
 from chrono_mail.engine.commands_tags import mail_tag_counts, rename_in_mail
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_collection, open_pim, palette_for, pim_account_ids, tell_palettes
+from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_collection, open_pim, palette_for, pim_account_ids, tell_palettes, timed_background_for
 from chrono_mail.pim.edit import retag_item
 from chrono_mail.pimstore import PimStore
 from chrono_mail.engine.pim_server import item_writer
@@ -17,9 +17,10 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_pim.py 2.1.311"
+__version__ = "commands_pim.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: collection.set-palette keeps timed_background with the account's colours; a calendar's summary has it (UR-02, D-297)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.273: R-19: typed pim.enable, collection.list, -edit, -delete
 # v1.9.271: R-19: typed tag.rename, tag.colour
@@ -53,6 +54,7 @@ class CollectionSummary:
     palette: tuple[PaletteColour, ...] = ()  # a calendar's colours: its own, then its account's (D-191); empty for other kinds
     server: bool = False  # kept in step with a server: Delete deletes it there too (D-197)
     together: tuple[str, ...] = ()  # the names of the other collections here at its place on the server, which a Delete takes too
+    timed_background: bool = False  # a calendar: Month shows its timed events in their colour, its account's choice (D-297)
 
 
 def _palette(engine: Engine, account: str, info: CollectionInfo) -> tuple[PaletteColour, ...]:
@@ -66,6 +68,7 @@ def _summary(engine: Engine, account: str, store: PimStore, info: CollectionInfo
         account, account_name(engine, account), info.collection_id, info.kind.value, info.name, info.colour, info.read_only,
         store.index.count(ItemQuery(collections=(info.collection_id,))), _palette(engine, account, info),
         bool(info.server_value("href")), tuple(other.name for other in together(store, info)[1:]),
+        timed_background_for(engine.config().find(account), info),
     )
 
 
@@ -163,9 +166,10 @@ def collection_edit(engine: Engine, parameters: EditParameters) -> CollectionSum
 @dataclass(frozen=True, slots=True)
 class PaletteParameters:
     collection: str = field(metadata=option("The calendar id (see collection.list)"))
-    own_name: str = field(default="", metadata=option("The name of the calendar's own colour (empty: Calendar colour)"))
+    own_name: str = field(default="", metadata=option("The name of the calendar's own colour (empty: Default calendar colour)"))
     own_colour: str = field(default="", metadata=option("The calendar's own colour, #rrggbb (empty: as it is)"))
     colours: tuple[str, ...] = field(default=(), metadata=option("The other colours in order, each as id<TAB>name<TAB>#rrggbb; an empty id makes a new colour (repeat)"))
+    timed_background: bool | None = field(default=None, metadata=option("Month shows the account's timed events in their colour, not as a dot (empty: as it is)"))
 
 
 def collection_set_palette(engine: Engine, parameters: PaletteParameters) -> CollectionSummary:
@@ -181,7 +185,7 @@ def collection_set_palette(engine: Engine, parameters: PaletteParameters) -> Col
         if colour_id == OWN_COLOUR_ID:
             raise UsageError("The calendar's own colour is given with own_name and own_colour")
         entries.append(PaletteColour(colour_id or secrets.token_hex(4), name, colour))
-    own_name = " ".join(parameters.own_name.split())
+    own_name = chosen_own_name(" ".join(parameters.own_name.split()))  # the default's name is kept as no name of its own
     if problem := palette_problem(tuple(entries), own_name):
         raise UsageError(problem)
     try:
@@ -191,7 +195,8 @@ def collection_set_palette(engine: Engine, parameters: PaletteParameters) -> Col
 
             def change(fresh: AppConfig) -> AppConfig:
                 current = fresh.find(account)
-                return fresh.with_account(replace(current, calendar_palette=tuple(entries), calendar_own_colour_name=own_name))
+                background = current.calendar_timed_background if parameters.timed_background is None else parameters.timed_background
+                return fresh.with_account(replace(current, calendar_palette=tuple(entries), calendar_own_colour_name=own_name, calendar_timed_background=background))
 
             engine.change_config(change)
             # the calendar's own colour as a recolour (on its server first); then every calendar of the account is told its palette now

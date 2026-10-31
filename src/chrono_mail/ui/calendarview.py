@@ -44,9 +44,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 3.6.351"
+__version__ = "calendarview.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: an entry is filled when its calendar's account says so (UR-02, D-297)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.5.348: The question "this occurrence or all" shows plain text (RV-167, without a filter on the whole program)
 # v3.5.346: The computer's named time zone, as the engine uses (today's fixed offset put every event past a daylight-saving change an hour off; RV-15)
@@ -433,12 +434,13 @@ class CalendarPage(PimPage):
     # --- changing -----------------------------------------------------------------------------
 
     def _coloured(self, entries: list[Entry]) -> list[Entry]:
-        """The entries in their colours as the calendars' palettes are now (D-191)."""
-        return [
-            dataclasses.replace(entry, colour=colour_from(self.panel.info(entry.row.collection), entry.row.colour_id,
-                                                          entry.row.other_colour))
-            for entry in entries
-        ]
+        """The entries in their colours as the calendars' palettes are now (D-191), and whether Month fills their timed ones (D-297)."""
+        coloured: list[Entry] = []
+        for entry in entries:
+            calendar = self.panel.info(entry.row.collection)
+            coloured.append(dataclasses.replace(entry, colour=colour_from(calendar, entry.row.colour_id, entry.row.other_colour),
+                                                filled=calendar is not None and calendar.timed_background))
+        return coloured
 
     def _recolour(self) -> None:
         """A calendar's colour or palette changed: the appointments on the screen take their colours again, nothing is fetched."""

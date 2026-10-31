@@ -18,9 +18,10 @@ from chrono_mail.core import (
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 3.6.350"
+__version__ = "files.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: calendar_timed_background read and saved with the account (UR-02, D-297)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.1.308: junk_filter per account (D-238)
 # v1.1.221: calendar_palette, calendar_own_colour_name, collection_looks
@@ -123,10 +124,14 @@ def _account(data: object, position: int) -> AccountSettings:
         own_colour_name = data.get("calendar_own_colour_name", "")
         if not isinstance(own_colour_name, str):
             raise ConfigurationError(f"Setting '{where}.calendar_own_colour_name' is not text")
+        timed_background = data.get("calendar_timed_background", False)
+        if not isinstance(timed_background, bool):
+            raise ConfigurationError(f"Setting '{where}.calendar_timed_background' is not true or false")
         return AccountSettings(
             account, Pop3Options(policy, days), encrypted, signature, tuple(pins), check, storage=storage, dav_url=dav_url, dav_username=dav_username,
             dav_left_out=tuple(left_out), outgoing_same_login=same_login, account_name=account_name, skip_known_mail=skip_known,
             calendar_palette=_palette(data.get("calendar_palette"), where), calendar_own_colour_name=own_colour_name,
+            calendar_timed_background=timed_background,
             collection_looks=_looks(data.get("collection_looks", []), where), junk_filter=junk_filter,
         )
     except ConfigurationError as error:
@@ -201,6 +206,7 @@ def config_to_text(config: AppConfig) -> str:
                     "skip_known_mail": settings.skip_known_mail,
                     "calendar_palette": None if settings.calendar_palette is None else [[entry.colour_id, entry.name, entry.colour] for entry in settings.calendar_palette],
                     "calendar_own_colour_name": settings.calendar_own_colour_name,
+                    "calendar_timed_background": settings.calendar_timed_background,
                     "collection_looks": [{name: getattr(look, name) for name in LOOK_FIELDS} for look in settings.collection_looks],
                     "junk_filter": settings.junk_filter,
                 }

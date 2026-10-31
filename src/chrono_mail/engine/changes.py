@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag, PaletteColour
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 4.2.430"
+__version__ = "changes.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: timed_background: a calendar fact says whether Month fills its timed events (UR-02, D-297)
 # v4.2.430: MessageRow.to_shown: the person From / To shows for mail one sent, as the index keeps it (D-295)
 # v4.2.417: MessageRow: the people columns (From (email), To (name), To (email), D-291) and the account that received the message (D-292)
 # v2.2.314: "changed" also for a message in the Outbox whose waiting time changed (B-21)
@@ -135,5 +136,6 @@ class Change:
     colour: str = ""  # collections: the colour
     palette: tuple[PaletteColour, ...] = ()  # calendars (collection_made, collection_edited): the palette after the change, its own colour first (D-191)
     read_only: bool = False  # collections (collection_made, collection_edited): read only on its server after the change
+    timed_background: bool = False  # calendars (collection_made, collection_edited): Month shows its timed events in their colour (D-297)
     sequence: int = 0  # the number of this fact among the facts of its mailbox, counted from 1 since the program started (D-152)
     numbers: tuple[FolderNumbers, ...] = ()  # mail facts (NUMBERED_KINDS): the numbers of folder (and to_folder) right after the change (R-10)

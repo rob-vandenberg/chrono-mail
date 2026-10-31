@@ -5,7 +5,7 @@
   <property name="windowTitle">
    <string>Event colours</string>
   </property>
-  <layout class="QVBoxLayout" name="layout" stretch="0,1,0,0">
+  <layout class="QVBoxLayout" name="layout" stretch="0,1,0,0,0">
    <item>
     <layout class="QFormLayout" name="fields">
      <item row="0" column="0">
@@ -33,6 +33,26 @@
      </property>
      <widget class="QWidget" name="rows" />
     </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="timedRow" stretch="0,1">
+     <item alignment="Qt::AlignTop">
+      <widget class="QCheckBox" name="timedBackground" />
+     </item>
+     <item>
+      <widget class="QLabel" name="timedBackgroundText">
+       <property name="text">
+        <string>Show background colour for timed events in Month view</string>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
+       </property>
+       <property name="buddy">
+        <cstring>timedBackground</cstring>
+       </property>
+      </widget>
+     </item>
+    </layout>
    </item>
    <item>
     <widget class="QLabel" name="result">

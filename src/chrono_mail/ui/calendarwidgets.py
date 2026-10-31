@@ -16,9 +16,10 @@ from chrono_mail.ui.tagchips import TagColourBook
 WHEEL_NOTCH: int = 120  # one notch of a mouse wheel, as Qt counts it
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarwidgets.py 3.5.346"
+__version__ = "calendarwidgets.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: Month draws a filled timed event as an all-day one, its dot in the text's colour; paint_block draws the dot (UR-02, D-297)
 # v3.5.346: Every view takes the keyboard focus from its first click (it did only after a turn of the wheel), so Delete deletes the event, not the calendar (RV-22)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.230: The mark where the text would start, with the same small gap after it as after the dot (the owner)
@@ -50,9 +51,16 @@ def item_of(entry: Entry) -> str:
     return entry.row.item
 
 
-def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, font: QFont, lines: list[str], faded: bool = False, mark: str = "") -> QRectF | None:
-    """An event as a rounded block in the colour of its calendar, with its text; selected ones get an outline; its sync mark (D-194) before the
-    first line. Returns where the mark was drawn (None without one), so a click or a hover there can be told apart."""
+DOT_CENTRE: float = 7.0  # a timed event's dot in Month: its centre from the left of its line, its radius, the room before its text
+DOT_RADIUS: float = 3.5
+DOT_ROOM: int = 9
+
+
+def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, font: QFont, lines: list[str], faded: bool = False, mark: str = "",
+                dot: bool = False) -> QRectF | None:
+    """An event as a rounded block in the colour of its calendar, with its text; selected ones get an outline; a dot in the text's colour first
+    when asked (a timed event in Month, D-297), then its sync mark (D-194) before the first line. Returns where the mark was drawn (None
+    without one), so a click or a hover there can be told apart."""
     colour = fill_colour(entry)
     if faded:
         colour = QColor(colour)
@@ -62,7 +70,8 @@ def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, f
     painter.setPen(QPen(QColor(theme().swatch_selected), 1.6) if selected else Qt.PenStyle.NoPen)
     painter.setBrush(colour)
     painter.drawRoundedRect(rect, 4, 4)
-    painter.setPen(TagColourBook.text_colour(colour))
+    text_colour = TagColourBook.text_colour(colour)  # white or black, whichever reads better on the colour; the dot follows it (D-297)
+    painter.setPen(text_colour)
     painter.setClipRect(rect.adjusted(3, 0, -2, 0))
     bold = QFont(font)
     bold.setBold(True)
@@ -70,11 +79,18 @@ def paint_block(painter: QPainter, rect: QRectF, entry: Entry, selected: bool, f
     metrics = QFontMetrics(bold)
     y = rect.top() + (2 if rect.height() >= 2 * metrics.height() else max(0.0, (rect.height() - metrics.height()) / 2))  # a short block: the title in the middle
     size = min(MARK_SIZE, metrics.height())
-    mark_area = QRectF(rect.left() + 4, int(y + metrics.height() / 2) - size // 2, size, size) if mark else None
+    lead = DOT_ROOM if dot else 0  # the dot comes first, then the mark and the text, as in a timed event without a background
+    mark_left = rect.left() + (lead + 5 if dot else 4)  # with the dot the mark and the text start where they do on a line without a background
+    mark_area = QRectF(mark_left, int(y + metrics.height() / 2) - size // 2, size, size) if mark else None
     for index, line in enumerate(lines):
         painter.setFont(bold if index == 0 else font)
-        mark_room = paint_mark(painter, int(rect.left() + 4), int(y + metrics.height() / 2), mark, size) if index == 0 else 0
-        text_left = rect.left() + (4 + mark_room if mark_room else 5)  # after a mark the same small gap as after the dot (the owner)
+        if dot and index == 0:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(text_colour)
+            painter.drawEllipse(QPointF(rect.left() + DOT_CENTRE, y + metrics.height() / 2), DOT_RADIUS, DOT_RADIUS)
+            painter.setPen(text_colour)
+        mark_room = paint_mark(painter, int(mark_left), int(y + metrics.height() / 2), mark, size) if index == 0 else 0
+        text_left = mark_left + mark_room if mark_room else rect.left() + lead + 5  # after a mark the same small gap as after the dot (the owner)
         painter.drawText(QRectF(text_left, y, rect.right() - 3 - text_left, metrics.height()), Qt.AlignmentFlag.AlignVCenter,
                          QFontMetrics(font).elidedText(line, Qt.TextElideMode.ElideRight, int(rect.right() - 3 - text_left)))
         y += metrics.height()
@@ -515,6 +531,13 @@ class MonthView(EntryHits):
                 free_rows = max(0, room - bar_rows)
                 for position, entry in enumerate(timed[:free_rows]):
                     y = top + 22 + (bar_rows + position) * line_height
+                    if entry.filled:  # in its colour as an all-day event, its dot in the text's colour (D-297)
+                        rect = QRectF(left + 2, y, width - 4, line_height - 2)
+                        selected = self.selected is not None and entry.row == self.selected.row and entry.start == self.selected.start
+                        self.note_mark(paint_block(painter, rect, entry, selected, small, [f"{entry.start.strftime('%H:%M')} {entry.summary}"],
+                                                   mark=self.mark_of(item_of(entry)), dot=True), entry)
+                        self.hits.append((rect, entry))
+                        continue
                     rect = QRectF(left + 3, y, width - 6, line_height - 1)
                     marker = fill_colour(entry)
                     painter.setPen(Qt.PenStyle.NoPen)

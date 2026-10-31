@@ -6,9 +6,10 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAI
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 3.6.351"
+__version__ = "model.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: calendar_timed_background: Month shows the account's timed events in their colour (UR-02, D-297)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v2.1.308: junk_filter: new mail of the account goes through the junk filter (D-238)
 # v1.1.221: calendar_palette and calendar_own_colour_name: the account's appointment colours (D-191); collection_looks: the name and colour
@@ -93,7 +94,8 @@ class AccountSettings:
     account_name: str = ""  # how Chrono Mail names the account in its own lists (never in mail); empty: the e-mail address (D-184)
     skip_known_mail: bool = False  # an imported account: on its first check, mail that is already here is recorded as downloaded, not stored twice
     calendar_palette: tuple[PaletteColour, ...] | None = None  # the account's appointment colours after each calendar's own; None: never changed (the suggestions, D-191)
-    calendar_own_colour_name: str = ""  # the name of a calendar's own colour in that palette; empty: "Calendar colour"
+    calendar_own_colour_name: str = ""  # the name of a calendar's own colour in that palette; empty: "Default calendar colour"
+    calendar_timed_background: bool = False  # Month shows the account's timed events in their colour, as all-day ones, not as a dot (D-297)
     collection_looks: tuple[CollectionLook, ...] = ()  # the name and colour of its server's collections as Chrono Mail holds them, by their place (D-192)
     junk_filter: bool = True  # new mail goes through the junk filter: junk to the Junk folder before the rules run (D-238)
 

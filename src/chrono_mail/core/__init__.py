@@ -26,15 +26,17 @@ from chrono_mail.core.pim import (
     CollectionKind,
     CollectionLook,
     PaletteColour,
+    chosen_own_name,
     is_colour,
     palette_of,
     palette_problem,
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "__init__.py 4.2.430"
+__version__ = "__init__.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: chosen_own_name (the name of a calendar's own colour that the person gave it)
 # v4.2.430: Export written_address
 # v2.0.281: Export RebuildAborted
 # v1.8.263: Export CredentialEntries, CredentialFailure and SERVICE_NAME (R-16)
@@ -57,6 +59,7 @@ __all__ = [
     "LOOK_WAITING",
     "is_colour",
     "palette_problem",
+    "chosen_own_name",
     "OWN_COLOUR_ID",
     "PaletteColour",
     "palette_of",

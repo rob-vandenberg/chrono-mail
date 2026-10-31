@@ -39,9 +39,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 2.4.334"
+__version__ = "collectionpanel.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: a calendar fact brings its timed_background (UR-02, D-297)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
 # v1.10.277: Contact groups under their address book (R-39): kept in step in place (set_groups), their menu and Delete key given by the Contacts
@@ -431,10 +432,11 @@ class CollectionPanel(QWidget):
             self.add(dataclasses.replace(
                 template, collection=collection, name=change.name, colour=change.colour, items=0,
                 read_only=change.read_only,
-                palette=tuple(change.palette),
+                palette=tuple(change.palette), timed_background=change.timed_background,
             ))
         elif kind == "collection_edited":
-            self._replace(collection, lambda info: dataclasses.replace(info, name=change.name, colour=change.colour, palette=change.palette, read_only=change.read_only))
+            self._replace(collection, lambda info: dataclasses.replace(info, name=change.name, colour=change.colour, palette=change.palette, read_only=change.read_only,
+                                                                        timed_background=change.timed_background))
             self.infos_changed.emit()  # its colours are in the fact: the section redraws in them
         elif kind == "collection_removed":
             entry = self._entry(collection)

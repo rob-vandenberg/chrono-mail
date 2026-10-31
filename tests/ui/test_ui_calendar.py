@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 3.6.351"
+__version__ = "test_ui_calendar.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: a calendar's own colour is named "Default calendar colour"
 # v3.6.351: a reminder at a set time shows as that, never as "No reminder"
 # v3.5.346: a click on an event gives its view the keyboard (RV-22); events past a daylight-saving change keep their hour (RV-15)
 # v3.2.342: This occurrence of an all-day event stays all-day (RV-21); reminders the window does not show survive a Save (RV-18)
@@ -367,9 +368,9 @@ def test_the_editor_has_a_colour_row_with_the_calendars_colours(world: World, qt
     row, _ = form.getWidgetPosition(editor.colour)
     label = form.itemAt(row, QFormLayout.ItemRole.LabelRole).widget()
     assert isinstance(label, QLabel) and label.text() == "Colour" and form.getWidgetPosition(editor.calendar)[0] == row - 1
-    assert editor.colour.text() == "Calendar colour"
+    assert editor.colour.text() == "Default calendar colour"
     names = [action.text() for action in editor.colour_menu.actions()]
-    assert names[:3] == ["Calendar colour", "Tomato", "Flamingo"] and names[-1] == "Edit colours…" and len([n for n in names if n]) == 13
+    assert names[:3] == ["Default calendar colour", "Tomato", "Flamingo"] and names[-1] == "Edit colours…" and len([n for n in names if n]) == 13
     tomato = editor.colour_menu.actions()[1]
     tomato.trigger()
     assert editor.colour.text() == "Tomato" and editor.parameters().colour == "g11"
@@ -398,7 +399,7 @@ def test_the_palette_editor_keeps_its_own_colour_and_saves_the_rest(world: World
     editor._save()  # noqa: SLF001
     wait(qtbot, lambda: editor.result_summary is not None)
     names = [entry.name for entry in world.call("collection.list", kind="events")[0].palette]
-    assert names[:2] == ["Calendar colour", "Rood"] and "Flamingo" not in names and names[-1] == "Geel" and len(names) == 12
+    assert names[:2] == ["Default calendar colour", "Rood"] and "Flamingo" not in names and names[-1] == "Geel" and len(names) == 12
 
 
 def test_appointments_take_their_new_colour_at_once(world: World, qtbot: QtBot) -> None:

@@ -4,9 +4,10 @@ from enum import Enum
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR, SUGGESTED_EVENT_COLOURS
 
 # --- Version ------------------------------------------------------------
-__version__ = "pim.py 1.1.221"
+__version__ = "pim.py 4.2.438"
 
 # --- Version history ----------------------------------------------------
+# v4.2.438: a calendar's own colour is named "Default calendar colour" (the owner)
 # v1.1.221: The palette belongs to the account (palette_of takes the account's colours, palette_problem); CollectionLook: a server collection's name and
 #           colour as Chrono Mail holds them, kept with the account (D-191, D-192)
 # v1.1.219: A calendar's own palette of named colours (palette, own_colour_name, palette_of, D-191)
@@ -22,7 +23,8 @@ class CollectionKind(Enum):
 
 
 OWN_COLOUR_ID: str = "calendar"  # the first colour of every palette: the calendar's own colour; it cannot be deleted
-OWN_COLOUR_NAME: str = "Calendar colour"
+OWN_COLOUR_NAME: str = "Default calendar colour"
+OLD_OWN_COLOUR_NAMES: frozenset[str] = frozenset({"Calendar colour"})  # what the default was called before; never a name the person chose
 MAXIMUM_PALETTE_COLOURS: int = 100
 MAXIMUM_COLOUR_NAME: int = 60
 
@@ -54,9 +56,15 @@ class CollectionInfo:
         return default
 
 
+def chosen_own_name(name: str) -> str:
+    """The name the person gave a calendar's own colour; empty when it is the default's name, now or as it was called before, so the default's
+    name is never kept as if chosen (a Save of the shown default kept it, and a renamed default never reached that account)."""
+    return "" if name in OLD_OWN_COLOUR_NAMES or name == OWN_COLOUR_NAME else name
+
+
 def palette_of(own_colour: str, palette: tuple[PaletteColour, ...] | None, own_name: str = "") -> tuple[PaletteColour, ...]:
     """A calendar's palette as it is shown: its own colour first, then its account's colours (the suggestions while the person never changed them)."""
-    own = PaletteColour(OWN_COLOUR_ID, own_name or OWN_COLOUR_NAME, own_colour or COLLECTION_WITHOUT_COLOUR)
+    own = PaletteColour(OWN_COLOUR_ID, chosen_own_name(own_name) or OWN_COLOUR_NAME, own_colour or COLLECTION_WITHOUT_COLOUR)
     rest = palette if palette is not None else tuple(PaletteColour(*entry) for entry in SUGGESTED_EVENT_COLOURS)
     return (own, *rest)
 
