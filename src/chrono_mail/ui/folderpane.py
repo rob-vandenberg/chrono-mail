@@ -37,9 +37,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.2.450"
+__version__ = "folderpane.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: Rename folder and Delete folder… say what the rules that move mail to the folder did (D-302)
 # v4.2.450: a load started while one runs takes it over: the older one's answers are ignored, what was to follow it runs when the newer
 #           one is done, in the order asked, and the saved folder is opened when either asked for it
 # v4.2.449: a mailbox that told a fact while the folder lists loaded is counted again once they are in place: the lists may have been
@@ -65,6 +66,11 @@ __version__ = "folderpane.py 4.2.450"
 
 SIDEBAR_KEY: str = "sidebar"  # stands for the sidebar answer among the folder lists that are awaited
 MAXIMUM_TREE_STATE: int = 2000  # opened or closed nodes that are remembered
+
+
+def with_rules(text: str, rules: tuple[str, ...]) -> str:
+    """The line of a folder renamed or deleted, with what the rules that move mail to it did (D-302)."""
+    return ". ".join((text, *rules))
 
 
 class FolderMenu:
@@ -804,7 +810,7 @@ class FolderPane(QObject):
         if not ok or not name or name == current or not self._folder_name_allowed(name):
             return
         path = f"{parent}/{name}" if parent else name  # the folder stays where it is
-        self._backend.ask(FOLDER_RENAME, FolderRenameParameters(view.account, view.folder, path), lambda result: self._status.show("Folder renamed"), lambda error: self._status.report("Could not rename the folder", error), owner=self)
+        self._backend.ask(FOLDER_RENAME, FolderRenameParameters(view.account, view.folder, path), lambda result: self._status.show(with_rules("Folder renamed", result.rules)), lambda error: self._status.report("Could not rename the folder", error), owner=self)
 
     def _folder_name_allowed(self, name: str) -> bool:
         """A folder's name is one name: "/" nests folders, so it would quietly make folders the person did not ask for."""
@@ -828,4 +834,4 @@ class FolderPane(QObject):
         answer = QMessageBox.question(self._parent, "Delete folder", f"Delete the folder “{view.folder}”, its subfolders and all the messages in them?\n\nThe files are not erased: they are kept in the store's .deleted directory.")
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self._backend.ask(FOLDER_DELETE, FolderDeleteParameters(view.account, view.folder, with_messages=True, include_subfolders=True), lambda result: self._status.show("Folder deleted"), lambda error: self._status.report("Could not delete the folder", error), owner=self)
+        self._backend.ask(FOLDER_DELETE, FolderDeleteParameters(view.account, view.folder, with_messages=True, include_subfolders=True), lambda result: self._status.show(with_rules("Folder deleted", result.rules)), lambda error: self._status.report("Could not delete the folder", error), owner=self)

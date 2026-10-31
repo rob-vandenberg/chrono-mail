@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_rules import (
@@ -28,9 +29,10 @@ from chrono_mail.ui.colours import red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "rulespanel.py 3.6.373"
+__version__ = "rulespanel.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: the page follows the rules changed by a folder renamed or deleted (rules_changed, D-302)
 # v3.6.373: built from the form settings_rules.ui (parts, texts, layout; D-276); nothing visible changed
 # v3.6.350: an error text inside markup is escaped: a server's or a file's words are never drawn as markup (D-259)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -80,12 +82,18 @@ class RulesPanel(QWidget):
         self.list.currentItemChanged.connect(self._selection_changed)
         self._loading = False
         self._selection_changed()  # nothing is selected until the rules have been listed
+        backend.changed.connect(self._fact)
         self.reload()
 
     @override
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
         self.reload()  # rules may have been changed elsewhere since the page was made
+
+    def _fact(self, change: object) -> None:
+        """Rules followed a folder that was renamed or deleted (D-302): the page on screen shows them as they are now."""
+        if isinstance(change, Change) and change.kind == "rules_changed" and self.isVisible():
+            self.reload()
 
     # --- the list -----------------------------------------------------------------------------------------------
 

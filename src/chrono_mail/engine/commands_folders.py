@@ -14,9 +14,10 @@ from chrono_mail.index.entry import header_block
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.2.430"
+__version__ = "commands_folders.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: folder.rename and folder.delete answer what the rules that move mail to the folder did (rules, D-302)
 # v4.2.430: the filling in from what the index held is gone: the person From / To shows is read from each message's headers
 # v4.2.429: index.fill-sent reads only the headers when that is all an upgrade needs, and steps aside while a command of the person runs;
 #           the filling in, a rebuild and the tidying run behind the person's work
@@ -69,6 +70,7 @@ class FolderParameters:
 @dataclass(frozen=True, slots=True)
 class FolderResult:
     folder: str
+    rules: tuple[str, ...] = ()  # rename: what the rules that move mail to it did (D-302)
 
 
 def folder_create(engine: Engine, parameters: FolderParameters) -> FolderResult:
@@ -88,7 +90,7 @@ def folder_rename(engine: Engine, parameters: FolderRenameParameters) -> FolderR
     with open_mailbox(engine, parameters.account) as mailbox:
         old, new = mailbox.folder(parameters.folder), parse_folder(parameters.new_name)
         mailbox.rename_folder(old, new)
-        return FolderResult("/".join(new))
+        return FolderResult("/".join(new), tuple(mailbox.rule_notes))
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +107,7 @@ class FolderDeleteResult:
     messages_removed: int
     kept_in: str
     folders_removed: int = 1
+    rules: tuple[str, ...] = ()  # what the rules that moved mail to it did (D-302)
 
 
 def folder_delete(engine: Engine, parameters: FolderDeleteParameters) -> FolderDeleteResult:
@@ -131,7 +134,7 @@ def folder_delete(engine: Engine, parameters: FolderDeleteParameters) -> FolderD
                 mailbox.refuse_unseen(targets)  # all of them looked at before any is deleted (RV-176)
             for path in targets:  # the deepest folders first, so that no folder is ever left without its parent
                 removed += mailbox.delete_folder(path, require_empty=not parameters.with_messages)
-        return FolderDeleteResult("/".join(folder), removed, str(mailbox.store.root / ".deleted"), len(targets))
+        return FolderDeleteResult("/".join(folder), removed, str(mailbox.store.root / ".deleted"), len(targets), tuple(mailbox.rule_notes))
 
 
 # --- maintenance -------------------------------------------------------------------------------------------

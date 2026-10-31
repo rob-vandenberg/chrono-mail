@@ -20,9 +20,10 @@ from chrono_mail.core.folder import OWN_FOLDERS, own_role
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "store.py 4.2.418"
+__version__ = "store.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: folder_paths: the folder paths of a store read from their descriptions only, nothing opened or written (the rules follow their folders, D-302)
 # v4.2.418: received_by: which account received each message, written once (store/receivedby.py); a copy keeps it (D-292)
 # v4.2.403: make_parents_real: a folder that is only the parent of others becomes a folder of its own (D-285); a rename takes the
 #           folder lock, refuses a move into itself, and (noted: mail kept here) keeps RENAME_NOTE while its folders move:
@@ -55,6 +56,26 @@ def folder_description(text: str) -> tuple[tuple[str, ...], FolderRole]:
     path, role = tuple(str(segment) for segment in description["path"]), FolderRole(description["role"])
     Folder("check", path, role)  # the store refuses an empty path or an empty name in it (ValueError), as Store.refresh does
     return path, role
+
+
+def folder_paths(root: Path) -> set[tuple[str, ...]]:
+    """The paths of the mail folders of the store at root, read only from their folder.json files: nothing is opened, written or
+    taken over, so another command may use the store meanwhile (D-302). A description that cannot be read is left out; a store
+    that cannot be read raises StorageError."""
+    folders_root = root / "folders"
+    paths: set[tuple[str, ...]] = set()
+    try:
+        if not folders_root.is_dir():
+            return paths
+        directories = sorted(folders_root.iterdir())
+    except OSError as error:
+        raise StorageError(f"The folders could not be read: {error.strerror}") from None
+    for directory in directories:
+        try:
+            paths.add(folder_description((directory / "folder.json").read_text("utf-8"))[0])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue  # a damaged description: as Store.refresh, that folder is not there
+    return paths
 
 
 RECOVERED_PATH: tuple[str, ...] = OWN_FOLDERS[FolderRole.RECOVERED]

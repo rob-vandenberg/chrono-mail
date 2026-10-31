@@ -16,9 +16,10 @@ from chrono_mail.engine.registry import UsageError
 from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "outlook_settings.py 4.2.420"
+__version__ = "outlook_settings.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: the imported rules are added under engine.rules_lock (D-302)
 # v4.2.420: the rules that could not be imported are collected in a list (Pyrefly could not settle the tuple's type in the loop)
 # v4.2.386: Initial version: accounts with their passwords, rules with the junk list's blocked senders, and signatures from Outlook's profile
 
@@ -179,18 +180,19 @@ def import_profile(engine: Engine, accounts: bool, rules: bool, signatures: bool
     if outlook is not None:
         found = _read_rules(engine, outlook)
         not_imported.extend(found.not_imported)
-        rule_set = load_rules(engine.directories.rules_file)
-        for rule in found.rules:
-            if any((known.name, known.conditions, known.actions, known.match, known.accounts) == (rule.name, rule.conditions, rule.actions, rule.match, rule.accounts) for known in rule_set.rules):
-                rules_existing += 1
-                continue
-            try:
-                rule_set = rule_set.with_rule(rule)
-            except ChronoMailError as error:
-                not_imported.append(f"{rule.name}: {error}")
-                continue
-            rules_added += 1
-        save_rules(engine.directories.rules_file, rule_set)
+        with engine.rules_lock:  # one read-change-save at a time: a folder rename may move rules meanwhile (D-302)
+            rule_set = load_rules(engine.directories.rules_file)
+            for rule in found.rules:
+                if any((known.name, known.conditions, known.actions, known.match, known.accounts) == (rule.name, rule.conditions, rule.actions, rule.match, rule.accounts) for known in rule_set.rules):
+                    rules_existing += 1
+                    continue
+                try:
+                    rule_set = rule_set.with_rule(rule)
+                except ChronoMailError as error:
+                    not_imported.append(f"{rule.name}: {error}")
+                    continue
+                rules_added += 1
+            save_rules(engine.directories.rules_file, rule_set)
         if found.safe:
             notes.append(f"Safe senders: {found.safe:,}; Chrono Mail has no list like it, so they are not imported")
     return ProfileImport(added, existing, tuple(without_password), rules_added, rules_existing, tuple(not_imported), given, tuple(notes))

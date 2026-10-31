@@ -1,4 +1,5 @@
 import html
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
@@ -7,7 +8,8 @@ from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_pim import TAG_LIST
-from chrono_mail.engine.commands_rules import RULE_ADD, RULE_EDIT, RuleAddParameters, RuleEditParameters, RuleInfo
+from chrono_mail.engine.changes import Change
+from chrono_mail.engine.commands_rules import RULE_ADD, RULE_EDIT, RULE_LIST, NoRuleParameters, RuleAddParameters, RuleEditParameters, RuleInfo
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import red
@@ -16,9 +18,11 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "ruleedit.py 4.0.377"
+__version__ = "ruleedit.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: For keeps a rule of several accounts (one choice that names them all); the window follows a folder rename or delete made while
+#           it is open, so Save never puts back what the rules followed (D-302)
 # v4.0.377: the rule editor and its condition and action rows are built from their Qt Designer forms (ui/forms/rule_edit.ui, rule_condition.ui,
 #           rule_action.ui, D-276); Tab goes through the rows where they are on screen (they came after Save and Cancel); the sizes follow
 #           the size factor
@@ -44,6 +48,7 @@ TEXT_OPERATORS: tuple[tuple[str, str], ...] = (
 SIZE_OPERATORS: tuple[tuple[str, str], ...] = (("greater_than", "is larger than"), ("less_than", "is smaller than"))
 ATTACHMENT_OPERATORS: tuple[tuple[str, str], ...] = (("is", "is"),)
 TAG_OPERATORS: tuple[tuple[str, str], ...] = (("is", "is"), ("is_not", "is not"))
+SEVERAL: str = "several"  # the For choice that holds a rule's several accounts (D-302)
 ACTIONS: tuple[tuple[str, str], ...] = (
     ("move_to", "Move to folder"), ("mark_read", "Mark as read"), ("mark_unread", "Mark as unread"), ("flag", "Flag"),
     ("unflag", "Remove the flag"), ("delete", "Move to Trash"), ("mark_junk", "Mark as junk"), ("add_tag", "Add tag"), ("remove_tag", "Remove tag"),
@@ -211,6 +216,9 @@ class RuleEditDialog(QDialog):
         self._backend: Backend = backend
         self._folders: list[str] = folders
         self._rule_id: str | None = None if rule is None else rule.rule_id
+        self._shown_rule: RuleInfo | None = rule  # the rule as the window last read it: what a folder rename changes meanwhile is followed (D-302)
+        self._labels: dict[str, str] = {item.account_id: item.label for item in accounts}
+        self._asked: int = 0  # how often the rule was asked for again: only the newest answer counts (answers may come in any order)
         self.setWindowTitle("Rule" if rule is None else f"Rule: {rule.name}")
         form = forms.fill(self, "rule_edit")  # the name, the conditions, the actions and Save (D-276)
         self.name: QLineEdit = part(form, QLineEdit, "name")
@@ -242,14 +250,54 @@ class RuleEditDialog(QDialog):
         else:
             self.name.setText(rule.name)
             self.match.setCurrentIndex(max(0, self.match.findData(rule.match)))
-            accounts_of_rule = tuple(rule.accounts)
-            if accounts_of_rule:
-                self.account.setCurrentIndex(max(0, self.account.findData(accounts_of_rule[0])))
+            self._show_accounts(tuple(rule.accounts))
             for text in rule.conditions:
                 self.add_condition(text)
             for text in rule.actions:
                 self.add_action(text)
         forms.smallest(self, 640)  # with its rows in: its texts are never cut off, also at the largest size
+        backend.changed.connect(self._fact)
+
+    def _show_accounts(self, accounts: tuple[str, ...]) -> None:
+        """For: All accounts, one account, or, for a rule of several accounts (a rule split when a folder was renamed or deleted, D-302),
+        one choice that names them all, so a Save keeps every one of them."""
+        several = self.account.findData(SEVERAL, Qt.ItemDataRole.UserRole + 1)
+        if several >= 0:
+            self.account.removeItem(several)
+        if len(accounts) > 1:
+            self.account.insertItem(1, ", ".join(self._labels.get(account, account) for account in accounts), accounts)
+            self.account.setItemData(1, SEVERAL, Qt.ItemDataRole.UserRole + 1)
+            self.account.setCurrentIndex(1)
+        else:
+            self.account.setCurrentIndex(max(0, self.account.findData(accounts[0])) if accounts else 0)
+
+    def _chosen_accounts(self) -> tuple[str, ...]:
+        chosen = self.account.currentData()
+        if isinstance(chosen, (tuple, list)):
+            return tuple(str(account) for account in chosen)
+        return (str(chosen),) if chosen else ()
+
+    def _fact(self, change: object) -> None:
+        """Rules followed a folder renamed or deleted while this window is open (a mail check, the main window): read the rule again."""
+        if isinstance(change, Change) and change.kind == "rules_changed" and self._rule_id is not None:
+            self._asked += 1
+            asked = self._asked
+            self._backend.ask(RULE_LIST, NoRuleParameters(), lambda result: self._follow_rule(result) if asked == self._asked else None, lambda error: None, owner=self)
+
+    def _follow_rule(self, result: tuple[RuleInfo, ...]) -> None:
+        """The rule as it is now: an action the rename changed takes its new folder here too, and the accounts of a split rule follow,
+        unless the person changed that row or the For choice already, so Save never puts back what the rename changed (D-302)."""
+        current = next((rule for rule in result if rule.rule_id == self._rule_id), None)
+        before = self._shown_rule
+        if current is None or before is None:
+            return
+        moved = {old: new for old, new in zip(before.actions, current.actions) if old != new}
+        for row in self.action_rows:
+            if row.action() in moved:
+                row.set_action(moved[row.action()])
+        if current.accounts != before.accounts and self._chosen_accounts() == tuple(before.accounts):
+            self._show_accounts(tuple(current.accounts))
+        self._shown_rule = current
 
     def _tags_loaded(self, result: tuple[TagInfo, ...]) -> None:
         tags = tuple(result) if isinstance(result, (tuple, list)) else ()
@@ -331,10 +379,9 @@ class RuleEditDialog(QDialog):
             self._update_moves()
 
     def values(self) -> RuleAddParameters:
-        account = str(self.account.currentData())
         return RuleAddParameters(
             name=self.name.text().strip(), condition=tuple(row.condition() for row in self.condition_rows if not row.is_blank()),
-            action=tuple(row.action() for row in self.action_rows), match=str(self.match.currentData()), account=(account,) if account else (),
+            action=tuple(row.action() for row in self.action_rows), match=str(self.match.currentData()), account=self._chosen_accounts(),
         )
 
     def _save(self) -> None:

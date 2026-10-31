@@ -45,9 +45,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "restore.py 4.2.418"
+__version__ = "restore.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: the rules are restored under engine.rules_lock (D-302)
 # v4.2.418: a message that comes back into an account that is here keeps the account that received it, as the backup recorded it (D-292)
 # v3.6.371: the restored passwords get readable labels in the wallet (B-23, D-275)
 # v3.6.354: Chrono Mail's own folders known by their role, their names written once (core OWN_FOLDERS) (CR-36)
@@ -1244,18 +1245,19 @@ def _restore_rules(engine: Engine, archive: _Reading, names: list[str], replace_
         return
     backup = _rules_for(parse_rules(_read(archive, "config/rules.json").decode("utf-8")), ids_here)
     path = engine.directories.rules_file
-    try:
-        here = load_rules(path) if path.exists() else RuleSet()
-    except ConfigurationError as error:  # this computer's rules file, not the backup's (RV-198)
-        if not _kept_as_bad(path):  # never written over while it is the only copy of this computer's rules
-            report.notes.append(f"This computer's rules could not be read, so the rules of the backup were not added: {error}")
-            return
-        report.notes.append(f"This computer's rules could not be read; they are kept in {path.name}.bad, and the rules of the backup took their place")
-        here = RuleSet()
-    by_id = {rule.rule_id: rule for rule in backup.rules}
-    kept = tuple(by_id.pop(rule.rule_id) if replace_existing and rule.rule_id in by_id else rule for rule in here.rules)
-    known = {rule.rule_id for rule in kept}
-    save_rules(path, RuleSet(kept + tuple(rule for rule in backup.rules if rule.rule_id not in known)))
+    with engine.rules_lock:  # one read-change-save at a time: a folder rename may move rules meanwhile (D-302)
+        try:
+            here = load_rules(path) if path.exists() else RuleSet()
+        except ConfigurationError as error:  # this computer's rules file, not the backup's (RV-198)
+            if not _kept_as_bad(path):  # never written over while it is the only copy of this computer's rules
+                report.notes.append(f"This computer's rules could not be read, so the rules of the backup were not added: {error}")
+                return
+            report.notes.append(f"This computer's rules could not be read; they are kept in {path.name}.bad, and the rules of the backup took their place")
+            here = RuleSet()
+        by_id = {rule.rule_id: rule for rule in backup.rules}
+        kept = tuple(by_id.pop(rule.rule_id) if replace_existing and rule.rule_id in by_id else rule for rule in here.rules)
+        known = {rule.rule_id for rule in kept}
+        save_rules(path, RuleSet(kept + tuple(rule for rule in backup.rules if rule.rule_id not in known)))
 
 
 def _shown(settings: AccountSettings) -> str:

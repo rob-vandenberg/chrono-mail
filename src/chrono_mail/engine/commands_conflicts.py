@@ -56,9 +56,10 @@ from chrono_mail.sync.mailconflicts import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_conflicts.py 2.1.311"
+__version__ = "commands_conflicts.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: Use Server data for a folder deleted on the server switches off the rules that move mail to it (D-302)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.286: A collection's name or colour changed here and on the server (Use Chrono Mail, Use Server data, per field) or a name the server
 #           refused (Use Server data, Retry sync): the choice goes into what the account keeps, the synchronisation started at once does it (D-192, F3)
@@ -529,7 +530,7 @@ def _settle_gone_folder(mailbox: Mailbox, conflict: MailConflict, side: str) -> 
         inside = sorted((folder.path for folder in mailbox.folders() if folder.path[: len(conflict.folder)] == conflict.folder), key=len, reverse=True)
         try:
             for path in inside:
-                mailbox.drop_unsynchronised_folder(path)
+                mailbox.drop_unsynchronised_folder(path, gone=True)  # deleted on the server: its rules are switched off (D-302)
         except ChronoMailError as error:
             return str(error)
         mailbox.forget_sync_conflict(conflict.conflict_id)

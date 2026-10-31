@@ -8,9 +8,10 @@ from chrono_mail.engine.rule_engine import RuleReport, Subject, apply_rules, app
 from chrono_mail.engine.session import Engine, quiet_command
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_rules.py 2.1.311"
+__version__ = "commands_rules.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: every change of the rules file holds engine.rules_lock (a folder rename moves rules meanwhile, D-302)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v1.9.271: R-19: typed rule.list, -add, -edit, -remove, -enable, -move, -run
 # v0.5.156: Run rules on a folder is a big job: one "mailbox changed" at its end (D-146)
@@ -87,15 +88,16 @@ class RuleAddParameters:
 
 
 def rule_add(engine: Engine, parameters: RuleAddParameters) -> RuleInfo:
-    rule = Rule(
-        new_rule_id(), parameters.name.strip(), tuple(parse_condition(text) for text in parameters.condition), tuple(parse_action(text) for text in parameters.action),
-        parameters.match.strip().lower(), not parameters.disabled, _accounts(engine, parameters.account),
-    )
-    rules = load_rules(engine.directories.rules_file).with_rule(rule)
-    if parameters.position is not None:
-        rules = rules.moved(rule.rule_id, parameters.position)
-    save_rules(engine.directories.rules_file, rules)
-    return _info(rule)
+    with engine.rules_lock:  # one read-change-save at a time: a folder rename may move rules meanwhile (D-302)
+        rule = Rule(
+            new_rule_id(), parameters.name.strip(), tuple(parse_condition(text) for text in parameters.condition), tuple(parse_action(text) for text in parameters.action),
+            parameters.match.strip().lower(), not parameters.disabled, _accounts(engine, parameters.account),
+        )
+        rules = load_rules(engine.directories.rules_file).with_rule(rule)
+        if parameters.position is not None:
+            rules = rules.moved(rule.rule_id, parameters.position)
+        save_rules(engine.directories.rules_file, rules)
+        return _info(rule)
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,18 +113,19 @@ class RuleEditParameters:
 
 
 def rule_edit(engine: Engine, parameters: RuleEditParameters) -> RuleInfo:
-    rules = load_rules(engine.directories.rules_file)
-    rule = rules.find(parameters.rule)
-    changed = replace(
-        rule,
-        name=rule.name if parameters.name is None else parameters.name.strip(),
-        conditions=() if parameters.no_conditions else (tuple(parse_condition(text) for text in parameters.condition) or rule.conditions),
-        actions=tuple(parse_action(text) for text in parameters.action) or rule.actions,
-        match=rule.match if parameters.match is None else parameters.match.strip().lower(),
-        accounts=() if parameters.every_account else (_accounts(engine, parameters.account) or rule.accounts),
-    )
-    save_rules(engine.directories.rules_file, rules.with_rule(changed))
-    return _info(changed)
+    with engine.rules_lock:  # one read-change-save at a time: a folder rename may move rules meanwhile (D-302)
+        rules = load_rules(engine.directories.rules_file)
+        rule = rules.find(parameters.rule)
+        changed = replace(
+            rule,
+            name=rule.name if parameters.name is None else parameters.name.strip(),
+            conditions=() if parameters.no_conditions else (tuple(parse_condition(text) for text in parameters.condition) or rule.conditions),
+            actions=tuple(parse_action(text) for text in parameters.action) or rule.actions,
+            match=rule.match if parameters.match is None else parameters.match.strip().lower(),
+            accounts=() if parameters.every_account else (_accounts(engine, parameters.account) or rule.accounts),
+        )
+        save_rules(engine.directories.rules_file, rules.with_rule(changed))
+        return _info(changed)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,10 +134,11 @@ class RuleIdParameters:
 
 
 def rule_remove(engine: Engine, parameters: RuleIdParameters) -> RuleInfo:
-    rules = load_rules(engine.directories.rules_file)
-    removed = rules.find(parameters.rule)
-    save_rules(engine.directories.rules_file, rules.without(parameters.rule))
-    return _info(removed)
+    with engine.rules_lock:  # one read-change-save at a time: a folder rename may move rules meanwhile (D-302)
+        rules = load_rules(engine.directories.rules_file)
+        removed = rules.find(parameters.rule)
+        save_rules(engine.directories.rules_file, rules.without(parameters.rule))
+        return _info(removed)
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,9 +148,10 @@ class RuleEnableParameters:
 
 
 def rule_enable(engine: Engine, parameters: RuleEnableParameters) -> RuleInfo:
-    rules = load_rules(engine.directories.rules_file).toggled(parameters.rule, parameters.enabled)
-    save_rules(engine.directories.rules_file, rules)
-    return _info(rules.find(parameters.rule))
+    with engine.rules_lock:  # one read-change-save at a time: a folder rename may move rules meanwhile (D-302)
+        rules = load_rules(engine.directories.rules_file).toggled(parameters.rule, parameters.enabled)
+        save_rules(engine.directories.rules_file, rules)
+        return _info(rules.find(parameters.rule))
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,9 +161,10 @@ class RuleMoveParameters:
 
 
 def rule_move(engine: Engine, parameters: RuleMoveParameters) -> tuple[RuleInfo, ...]:
-    rules = load_rules(engine.directories.rules_file).moved(parameters.rule, parameters.position)
-    save_rules(engine.directories.rules_file, rules)
-    return tuple(_info(rule) for rule in rules.rules)
+    with engine.rules_lock:  # one read-change-save at a time: a folder rename may move rules meanwhile (D-302)
+        rules = load_rules(engine.directories.rules_file).moved(parameters.rule, parameters.position)
+        save_rules(engine.directories.rules_file, rules)
+        return tuple(_info(rule) for rule in rules.rules)
 
 
 @dataclass(frozen=True, slots=True)

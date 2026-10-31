@@ -1,6 +1,6 @@
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from chrono_mail.pim.times import moment_at
@@ -19,6 +19,7 @@ from chrono_mail.engine.changes import NUMBERED_KINDS, Change, FolderNumbers, Me
 from chrono_mail.engine.imap_online import LOCAL_ONLY, GoneFromServer, ServerSession, is_imap, server_session
 from chrono_mail.engine.old_files import settle_old_files
 from chrono_mail.engine.registry import UsageError
+from chrono_mail.engine.rule_folders import follow_delete, follow_rename
 from chrono_mail.engine.schedule import SCHEDULED_FOLDER, SNOOZED_FOLDER
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import Index, entry_from_raw, facts_lost, facts_told, told_at_once
@@ -32,9 +33,11 @@ from chrono_mail.sync.mailconflicts import listed as listed_mail_conflicts
 from chrono_mail.sync.mailconflicts import load as load_mail_conflicts
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailbox.py 4.2.430"
+__version__ = "mailbox.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: the rules follow a folder renamed or moved and are switched off when it is deleted, before the fact is told; rules_changed
+#           with what they did, and rule_notes for the command's answer; a folder only hidden here changes no rule (D-302)
 # v4.2.430: a row carries the person From / To shows (to_shown, D-295)
 # v4.2.428: a message that leaves Drafts, the Outbox or Scheduled unsent is no longer recorded: only a retrieval or a send fixes an account (the owner)
 # v4.2.418: a copy keeps the account that received the original through its properties (D-292)
@@ -114,6 +117,7 @@ class Mailbox:
     index: Index
     _held: int = 0  # how often this mailbox holds its place lock: from an index write until the fact of the change is told
     _session: ServerSession | None = None  # the server session an action on many messages keeps open (together, R-08)
+    rule_notes: list[str] = field(default_factory=list)  # what the rules did when a folder of this mailbox was renamed or deleted (D-302)
 
     @contextmanager
     def _server(self) -> Generator[ServerSession]:
@@ -414,10 +418,27 @@ class Mailbox:
         message = self.index.get(store_id)
         return message is not None and MessageFlag.SEEN not in message.flags
 
-    def _tell(self, change: Change) -> None:
+    def _rules_follow(self, change: Change, deleted: bool) -> tuple[str, ...]:
+        """A folder of this mailbox was renamed or moved (in every way it can be: here, on the server first, followed from the server,
+        put back after a refusal, finished after an interruption) or deleted: the rules that move mail to it follow it, or are switched
+        off, before the fact is told (D-302). A folder only hidden here (deleted is False for it) changes no rule."""
+        try:
+            if change.kind == "folder_renamed":
+                return follow_rename(self.engine, self._place, tuple(change.folder.split("/")), tuple(change.to_folder.split("/")), self._folder_paths())
+            if change.kind == "folder_deleted" and deleted:
+                return follow_delete(self.engine, self._place, tuple(change.folder.split("/")), self._folder_paths())
+        except Exception:  # noqa: BLE001 - the last line of defence: whatever went wrong with the rules, the folder change has happened and is told (a mail check goes on, OR-3); the rules stay as they were, and that is said
+            return (f"The rules could not follow the folder {change.folder}: please look at them in Settings > Rules",)
+        return ()  # every other fact: nothing is looked at
+
+    def _folder_paths(self) -> set[tuple[str, ...]]:
+        return {folder.path for folder in self.store.list_folders()}
+
+    def _tell(self, change: Change, rules_follow: bool = True) -> None:
         try:
             if change.kind == "folder_renamed":
                 self._pins_follow(change.folder, change.to_folder)
+            notes = self._rules_follow(change, rules_follow)
             if change.kind in NUMBERED_KINDS and not self.engine.is_quiet():  # a quiet big job tells only "mailbox changed" at its end
                 with self.engine.place_lock(self._place):  # the numbers belong to this fact: no other change of the mailbox comes between (D-151)
                     folders = dict.fromkeys(folder for folder in (change.folder, change.to_folder if change.kind == "moved" else "") if folder)
@@ -425,6 +446,9 @@ class Mailbox:
                 facts_told()
                 return
             self.engine.report(change)
+            if notes:
+                self.rule_notes.extend(notes)
+                self.engine.report(Change("rules_changed", self._place, change.folder, notes=notes))
             if not self.engine.is_quiet():
                 facts_told()
         finally:
@@ -936,13 +960,15 @@ class Mailbox:
     def _on_server(self, path: tuple[str, ...]) -> bool:
         return is_imap(self.settings) and path[0] not in LOCAL_ONLY
 
-    def drop_unsynchronised_folder(self, path: tuple[str, ...]) -> None:
+    def drop_unsynchronised_folder(self, path: tuple[str, ...], gone: bool = False) -> None:
         """The person left an IMAP folder out of the synchronisation: its copy here is no longer shown. Nothing changes on
         the server, where the mail stays; the files are kept in the store's .deleted directory, not erased. The only change
-        of folders made here alone: the caller checked that the folder holds nothing the server has not got."""
+        of folders made here alone: the caller checked that the folder holds nothing the server has not got. gone: the server
+        deleted it (a sync conflict settled with the server's side), so the rules that move mail to it are switched off; a folder
+        only hidden here changes no rule (OR-20, D-302)."""
         self.store.delete_folder(path, require_empty=False)
         self.index.remove_folder(path)
-        self._tell(Change("folder_deleted", self._place, "/".join(path)))
+        self._tell(Change("folder_deleted", self._place, "/".join(path)), rules_follow=gone)
 
     def ensure_folder(self, path: tuple[str, ...], role: FolderRole = FolderRole.OTHER) -> tuple[Folder, bool]:
         """The folder with this path, made when there is none (and whether it was made): on the server first."""

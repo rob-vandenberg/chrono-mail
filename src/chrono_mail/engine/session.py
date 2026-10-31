@@ -34,9 +34,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.2.441"
+__version__ = "session.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: rules_lock: every read-change-save of the rules file; rules_changed is told also during a quiet big job (D-302)
 # v4.2.441: certificates the person accepted until Chrono Mail closes (run_pins, trust_for_run; never saved), taken by every connection;
 #           tls_context tells the pinned context the server's security and kind, so a renewal that passes the usual checks connects (D-299)
 # v4.2.429: person_work and step_aside: the filling in of an index waits while a command of the person runs (D-229)
@@ -349,6 +350,7 @@ class Engine:
     _report_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # re-entrant: a listener in the same thread may cause a fact of its own
     _place_locks_guard: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     sidebar_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)  # every read-change-save of the sidebar file (R-41)
+    rules_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)  # every read-change-save of the rules file (a folder rename moves rules while the window changes them, D-302)
     _imap_links: dict[str, ImapLink] = field(default_factory=dict, init=False, repr=False)
     _imap_links_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     _run_pins: set[str] = field(default_factory=set, init=False, repr=False)  # host:port=fingerprint accepted until Chrono Mail closes (D-299)
@@ -381,7 +383,7 @@ class Engine:
     def report(self, change: Change) -> None:
         """A change of mail happened: tell it, unless a big job of this thread runs quietly (then its mailbox is noted)."""
         quiet = self._quiet_state()
-        if quiet.depth == 0 or change.kind in ("conflicts_changed", "waiting_changed"):  # these say only that a list is to be asked again (D-194)
+        if quiet.depth == 0 or change.kind in ("conflicts_changed", "waiting_changed", "rules_changed"):  # a list to be asked again (D-194); what the rules did (D-302)
             self._tell(change)
             return
         summary = "collection_changed" if change.kind.startswith(("item_", "collection_")) else "mailbox_changed"

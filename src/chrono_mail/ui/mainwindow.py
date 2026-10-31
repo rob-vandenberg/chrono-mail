@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.core.colours import NEW_TAG
+from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_updates import interrupt_downloads
 from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, KEY_STATUS, AccountSummary, KeyStatus, NoParameters
 from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, FoundServer, LinkParameters
@@ -66,9 +67,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.451"
+__version__ = "mainwindow.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: the status line says what the rules did when a folder was renamed or deleted (rules_changed, D-302)
 # v4.2.451: the Refresh menu: each mail account has Send and Receive, Send and Receive in a submenu, each calendars-only account one
 #           item that synchronises it; they work whether the account is included in Send and Receive or not; no first fill for an
 #           account left out (D-059)
@@ -827,6 +829,7 @@ class MainWindow(QMainWindow):
         self.backend.changed.connect(self.list_model.apply)  # every change of mail, applied to the rows on screen (D-146)
         self.backend.changed.connect(self.folders.fact)  # ... to the numbers and folders of the folder list
         self.backend.changed.connect(self.messages.fact)  # ... and a mailbox changed from outside fetches the list again when it shows it
+        self.backend.changed.connect(self._rules_followed)  # ... and what the rules did when a folder was renamed or deleted (D-302)
         self.checking.new_mail.connect(self._notify_new_mail)
         self.sync_marks = SyncMarks(self.backend, self)  # the sync conflicts and what waits for the servers (D-194)
         self.waiting_label = QLabel("", self)
@@ -843,6 +846,11 @@ class MainWindow(QMainWindow):
             page.conflict_requested.connect(self._open_conflict)
         for page in self.pages.values():
             self.backend.changed.connect(page.apply_fact)  # ... and to the calendars, task lists and address books
+
+    def _rules_followed(self, change: Change) -> None:
+        """Rules followed a folder that was renamed or deleted (also by the server, during a check): the status line says what they did (D-302)."""
+        if change.kind == "rules_changed" and change.notes:
+            self.report.show(". ".join(change.notes))
 
     # --- state ------------------------------------------------------------------------------------------
 

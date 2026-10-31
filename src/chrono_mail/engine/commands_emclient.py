@@ -45,9 +45,10 @@ from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 4.2.452"
+__version__ = "commands_emclient.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: the imported rules are added under engine.rules_lock (D-302)
 # v4.2.452: IMAP accounts are made (their mail comes from the server, D-193); calendar accounts become the calendar server of the mail
 #           account with their address, else an account of calendars and contacts (a CalDAV and a CardDAV account of one login are one);
 #           every account takes eM Client's "include in global operations" as its Send and Receive tick (UR-01, D-059, D-301)
@@ -377,33 +378,34 @@ def _same_rule(first: Rule, second: Rule) -> bool:
 
 
 def _import_rules(engine: Engine, export: SettingsExport, accounts: dict[str, str], notes: list[str]) -> tuple[int, int, list[str]]:
-    rules = load_rules(engine.directories.rules_file)
-    added = existing = 0
-    not_imported: list[str] = []
-    for source in export.rules:
-        if source.problem is not None:
-            not_imported.append(f"{source.name}: {source.problem}")
-            continue
-        for_accounts: tuple[str, ...] = ()
-        if source.account_uid is not None:
-            account = accounts.get(source.account_uid)
-            if account is None:
-                not_imported.append(f"{source.name}: its account was not imported")
+    with engine.rules_lock:  # one read-change-save at a time: a folder rename may move rules meanwhile (D-302)
+        rules = load_rules(engine.directories.rules_file)
+        added = existing = 0
+        not_imported: list[str] = []
+        for source in export.rules:
+            if source.problem is not None:
+                not_imported.append(f"{source.name}: {source.problem}")
                 continue
-            for_accounts = (account,)
-        try:
-            rule = Rule(new_rule_id(), source.name, source.conditions, source.actions, source.match, source.enabled, for_accounts)
-            if any(_same_rule(rule, known) for known in rules.rules):
-                existing += 1
+            for_accounts: tuple[str, ...] = ()
+            if source.account_uid is not None:
+                account = accounts.get(source.account_uid)
+                if account is None:
+                    not_imported.append(f"{source.name}: its account was not imported")
+                    continue
+                for_accounts = (account,)
+            try:
+                rule = Rule(new_rule_id(), source.name, source.conditions, source.actions, source.match, source.enabled, for_accounts)
+                if any(_same_rule(rule, known) for known in rules.rules):
+                    existing += 1
+                    continue
+                rules = rules.with_rule(rule)
+            except ChronoMailError as error:
+                not_imported.append(f"{source.name}: {error}")
                 continue
-            rules = rules.with_rule(rule)
-        except ChronoMailError as error:
-            not_imported.append(f"{source.name}: {error}")
-            continue
-        added += 1
-        if source.left_out:
-            notes.append(f"Rule {source.name}: not imported: {', '.join(source.left_out)}")
-    save_rules(engine.directories.rules_file, rules)
+            added += 1
+            if source.left_out:
+                notes.append(f"Rule {source.name}: not imported: {', '.join(source.left_out)}")
+        save_rules(engine.directories.rules_file, rules)
     return added, existing, not_imported
 
 

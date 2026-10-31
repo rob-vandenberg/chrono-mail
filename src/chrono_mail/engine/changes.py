@@ -5,9 +5,10 @@ from typing import Literal
 from chrono_mail.core import MessageFlag, PaletteColour
 
 # --- Version ------------------------------------------------------------
-__version__ = "changes.py 4.2.438"
+__version__ = "changes.py 4.2.453"
 
 # --- Version history ----------------------------------------------------
+# v4.2.453: rules_changed with its notes: rules followed a renamed or deleted folder (D-302)
 # v4.2.438: timed_background: a calendar fact says whether Month fills its timed events (UR-02, D-297)
 # v4.2.430: MessageRow.to_shown: the person From / To shows for mail one sent, as the index keeps it (D-295)
 # v4.2.417: MessageRow: the people columns (From (email), To (name), To (email), D-291) and the account that received the message (D-292)
@@ -99,6 +100,7 @@ ChangeKind = Literal[
     "collection_changed",  # a big job (a sync with the server, an import, a tag renamed) changed the collections of this account: views of them fetch again
     "conflicts_changed",  # the sync conflicts of this account changed (found, brought up to date or settled, D-194): their list asks again
     "waiting_changed",  # what of this account waits for its server changed (D-194)
+    "rules_changed",  # rules followed a folder of this mailbox that was renamed or deleted (D-302): notes says what each did
 ]
 
 
@@ -137,5 +139,6 @@ class Change:
     palette: tuple[PaletteColour, ...] = ()  # calendars (collection_made, collection_edited): the palette after the change, its own colour first (D-191)
     read_only: bool = False  # collections (collection_made, collection_edited): read only on its server after the change
     timed_background: bool = False  # calendars (collection_made, collection_edited): Month shows its timed events in their colour (D-297)
+    notes: tuple[str, ...] = ()  # rules_changed: one line per rule changed, for the status line (D-302)
     sequence: int = 0  # the number of this fact among the facts of its mailbox, counted from 1 since the program started (D-152)
     numbers: tuple[FolderNumbers, ...] = ()  # mail facts (NUMBERED_KINDS): the numbers of folder (and to_folder) right after the change (R-10)
