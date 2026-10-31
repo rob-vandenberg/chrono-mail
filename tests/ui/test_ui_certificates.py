@@ -14,6 +14,7 @@ from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import CHANGED_REASON, CertificateDialog, VerifyCertificateDialog
 from chrono_mail.ui.certificatequestions import questions_for
+from chrono_mail.ui import forms
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.serverfields import SECURITY_CHOICES
 from tests.certs import make_certificate
@@ -23,9 +24,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.ui.world import REGISTRY, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_certificates.py 4.2.442"
+__version__ = "test_ui_certificates.py 4.2.445"
 
 # --- Version history ----------------------------------------------------
+# v4.2.445: the Verify window opens at 700 and goes down to 500 pixels of the owner's screen
 # v4.2.442: the heading sits next to the sign; a blank line above and below the certificate information
 # v4.2.441: a certificate that could not be verified asks at once (Verify certificate): Connect with and without Don't ask me again, Do not
 #           connect, a changed certificate, a Refresh asks only while the window is on screen; the weak Security choice (UR-05, D-299)
@@ -504,3 +506,12 @@ def test_a_port_met_again_while_its_window_is_open_joins_that_window(one_machine
     held[0].done(QDialog.DialogCode.Rejected)  # Do not connect
     qtbot.wait(300)
     assert len(held) == 1 and retried == []
+
+
+def test_the_verify_window_opens_at_700_and_goes_down_to_500_pixels_of_the_owners_screen(qtbot: QtBot) -> None:
+    dialog = VerifyCertificateDialog("mailserver.example.org", result(), changed=False)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert dialog.width() == wpx(forms.owner_width(700))
+    assert dialog.minimumWidth() == max(wpx(forms.owner_width(500)), dialog.minimumSizeHint().width())

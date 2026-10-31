@@ -11,9 +11,10 @@ from chrono_mail.ui import theme
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "forms.py 4.0.376"
+__version__ = "forms.py 4.2.445"
 
 # --- Version history ----------------------------------------------------
+# v4.2.445: open_at: a smallest width and the width a window opens at; owner_width: a width as the owner measures it on his screen
 # v4.0.376: smallest sets only the width (the height is the layout's)
 # v4.0.375: fill: a window takes its title from its form (the form's windowTitle), so the title is designed with the rest; the spacers are
 #           scaled in the form's text before Qt reads it (asking the layouts for their items left Python stand-ins that outlived the
@@ -116,6 +117,25 @@ def smallest(window: QWidget, width: int) -> None:
     screen = window.screen()
     room = screen.availableGeometry().width() if screen is not None else wpx(width)
     window.setMinimumWidth(min(max(wpx(width), window.minimumSizeHint().width()), max(wpx(width), room)))
+
+
+def owner_width(pixels: int) -> int:
+    """A width the owner gave as he sees it on his screen (125 % screen scale, windows' size slider 0.95), as a width at the standard size:
+    in Qt's units it then follows every screen's scale and the size slider, as the text does, and is exactly that width on his screen."""
+    return round(pixels / (OWNER_SCREEN_SCALE * OWNER_WINDOWS_FACTOR))
+
+
+OWNER_SCREEN_SCALE: float = 1.25  # the owner's screen, on which he measures the widths he gives
+OWNER_WINDOWS_FACTOR: float = 0.95  # his windows' size slider
+
+
+def open_at(window: QWidget, smallest_width: int, width: int) -> None:
+    """A window's smallest width (as smallest does) and the width it opens at, both at the standard size; never below what its layout
+    needs, never wider than the screen it opens on. Called once the window holds its parts."""
+    smallest(window, smallest_width)
+    screen = window.screen()
+    room = screen.availableGeometry().width() if screen is not None else wpx(width)
+    window.resize(max(window.minimumWidth(), min(wpx(width), room)), window.sizeHint().height())
 
 
 def part[T: QObject](form: QWidget, kind: type[T], name: str) -> T:

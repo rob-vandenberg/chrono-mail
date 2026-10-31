@@ -31,9 +31,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import px_for, wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 4.2.442"
+__version__ = "paletteeditor.py 4.2.445"
 
 # --- Version history ----------------------------------------------------
+# v4.2.445: its 500 pixels are the owner's screen's, in Qt's units at the size slider (forms.owner_width), so it follows every screen's scale
 # v4.2.442: opens at, and never goes below, 500 pixels on the screen (the owner); it was 440 at the size factor
 # v4.2.438: the tick "Show background colour for timed events in Month view", kept with the account's colours; its text wraps and a click on it
 #           works the tick (UR-02, D-297)
@@ -135,7 +136,7 @@ class ColourRow(QWidget):
             self._show_colour()
 
 
-SCREEN_WIDTH: int = 500  # the owner: Event colours opens at, and never goes below, 500 pixels on the screen, whatever the size factor
+WIDTH: int = forms.owner_width(500)  # the owner: Event colours opens at, and never goes below, 500 pixels on his screen
 
 
 class PaletteEditor(QDialog):
@@ -165,7 +166,7 @@ class PaletteEditor(QDialog):
         self.save_button = box.button(QDialogButtonBox.StandardButton.Save)
         box.accepted.connect(self._save)
         box.rejected.connect(self.reject)
-        self._open_at_width()
+        forms.open_at(self, WIDTH, WIDTH)  # its texts are never cut off, also at the largest size
         if self.rows:
             self.rows[0].colour_button.setFocus()  # it opens on the first colour, as before (the list's scroll area comes first in the Tab order)
         if calendar.read_only:  # a read-only calendar's colours are shown, not changed; the (i) of a row stays usable (D-294)
@@ -189,16 +190,6 @@ class PaletteEditor(QDialog):
         self.rows_layout.insertWidget(self.rows_layout.count() - 1, row)
         self.rows.append(row)
         return row
-
-    def _open_at_width(self) -> None:
-        """Its smallest width, and the width it opens at: 500 pixels on the screen (the screen's own scale taken out, no size factor), never below
-        what its texts need, never wider than the screen it opens on."""
-        screen = self.screen()
-        wanted = round(SCREEN_WIDTH / (screen.devicePixelRatio() if screen is not None else 1.0))
-        room = screen.availableGeometry().width() if screen is not None else wanted
-        width = min(max(wanted, self.minimumSizeHint().width()), max(wanted, room))
-        self.setMinimumWidth(width)
-        self.resize(width, self.sizeHint().height())
 
     def _new_row(self) -> None:
         last = self.rows[-1].delete_button if self.rows else self.calendar

@@ -10,9 +10,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.icons import bundled_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "certificatedialog.py 4.2.441"
+__version__ = "certificatedialog.py 4.2.445"
 
 # --- Version history ----------------------------------------------------
+# v4.2.445: Verify certificate opens 700 pixels wide and is at least 500 (the owner's screen, forms.owner_width)
 # v4.2.441: VerifyCertificateDialog, the question that opens by itself (UR-05, D-299); CertificateDialog only shows a certificate (Show
 #           certificate), with Close: accepting is Connect; inspect_and_ask is gone with the Look at the server's certificate… buttons
 # v4.0.376: built from its Qt Designer form (ui/forms/certificate.ui, D-276); its smallest width follows the size factor
@@ -104,7 +105,7 @@ class VerifyCertificateDialog(QDialog):
         box.accepted.connect(self.accept)
         box.rejected.connect(self.reject)
         self.show_button.clicked.connect(self._show_certificate)
-        forms.smallest(self, 520)
+        forms.open_at(self, forms.owner_width(500), forms.owner_width(700))  # the owner: 500 at least, opened at 700 pixels on his screen
 
     @property
     def remember(self) -> bool:
