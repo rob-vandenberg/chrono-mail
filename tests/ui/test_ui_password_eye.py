@@ -6,14 +6,14 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.engine.commands_accounts import AccountSummary
 from chrono_mail.ui.accountdialog import AccountDialog
 from chrono_mail.ui.accountedit import AccountEditDialog
-from chrono_mail.ui.calendaraccount import CalendarAccountDialog
 from chrono_mail.ui.passwordfield import HIDE_TEXT, SHOW_TEXT, PasswordBox, make_password_field, run_password_box
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_password_eye.py 4.2.437"
+__version__ = "test_ui_password_eye.py 4.2.439"
 
 # --- Version history ----------------------------------------------------
+# v4.2.439: the calendar part is in the Add window (D-298)
 # v4.2.437: Initial tests: the eye in every password field (UR-03, D-296)
 
 
@@ -69,9 +69,9 @@ def test_edit_account_has_the_eye_in_every_password(world: World, qtbot: QtBot) 
 
 
 def test_the_calendar_account_window_has_the_eye(world: World, qtbot: QtBot) -> None:
-    dialog = CalendarAccountDialog(world.backend, world.window.mail_state.mail_accounts())
+    dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts(), start_kind="caldav")
     qtbot.addWidget(dialog)
-    assert_hidden_with_eye(dialog.password)
+    assert_hidden_with_eye(dialog.calendar.password)
 
 
 def test_the_password_box_asks_with_the_eye_hidden_and_answers_what_was_typed(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:

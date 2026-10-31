@@ -18,18 +18,23 @@ from PySide6.QtWidgets import (
 
 from chrono_mail.config import server_pin
 from chrono_mail.core import AccountKind, ChronoMailError
-from chrono_mail.engine.commands_accounts import ACCOUNT_ADD, ACCOUNT_CHECK, AccountAddParameters, AccountAddResult, AccountCheckParameters, AccountCheckResult
+from chrono_mail.engine.commands_accounts import (
+    ACCOUNT_ADD, ACCOUNT_CHECK, AccountAddParameters, AccountAddResult, AccountCheckParameters, AccountCheckResult, AccountSummary,
+)
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
+from chrono_mail.ui.calendaraccount import CALDAV_KINDS, CARDDAV_KINDS, CalendarFields
 from chrono_mail.ui.certificatedialog import inspect_and_ask
 from chrono_mail.ui.colours import red
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, mail_server_kind, policy_of, security_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.0.376"
+__version__ = "accountdialog.py 4.2.439"
 
 # --- Version history ----------------------------------------------------
+# v4.2.439: Account type offers POP3, IMAP, CalDAV and CardDAV: the calendar window is a part of this one (the sidebars' Add account…
+#           opens it on CalDAV or CardDAV); the first-account window says "your first account" (UR-04, D-298)
 # v4.0.376: built from its Qt Designer form (ui/forms/account_add.ui, D-276), the server boxes at its "servers" place; its smallest width
 #           follows the size factor and never cuts a text off; add_name_rows is gone (each form has its own rows)
 # v3.6.350: a server's error text is shown as text, never markup (D-259)
@@ -55,6 +60,9 @@ __version__ = "accountdialog.py 4.0.376"
 # v0.0.13: Initial account dialog
 
 KINDS: tuple[tuple[AccountKind, str], ...] = ((AccountKind.POP3, "POP3: the mail is downloaded to this computer"), (AccountKind.IMAP, "IMAP: the mail stays on the server and is kept in step"))
+CALDAV: str = "caldav"  # the Account type choices of a calendar and contacts server (D-185, D-298): one kind of account, other folders ticked
+CARDDAV: str = "carddav"
+CALENDAR_KINDS: tuple[tuple[str, str], ...] = ((CALDAV, "CalDAV: calendars and tasks from a server"), (CARDDAV, "CardDAV: contacts from a server"))
 POLICIES: tuple[tuple[str, str], ...] = (
     ("keep", "Leave all mail on the server (default)"),
     ("delete_after_download", "Delete from the server once downloaded and verified"),
@@ -64,7 +72,8 @@ POLICIES: tuple[tuple[str, str], ...] = (
 
 
 class AccountDialog(QDialog):
-    """Adds a POP3/SMTP account. Nothing is created until the connection has been tested or the person insists."""
+    """Adds an account of any kind (D-298): POP3 or IMAP with SMTP (nothing is created until the connection has been tested or the person
+    insists), or CalDAV or CardDAV, a calendar and contacts server (the CalendarFields part), as an account of its own or for a mail account."""
 
     def _restore_instead(self) -> None:
         """Restore a backup… instead of adding an account: this window closes, then the restore starts (its windows are never under this one)."""
@@ -74,17 +83,23 @@ class AccountDialog(QDialog):
         if self._restore is not None:
             QTimer.singleShot(0, self._restore)
 
-    def __init__(self, backend: Backend, first_account: bool = False, parent: QWidget | None = None, restore: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self, backend: Backend, first_account: bool = False, parent: QWidget | None = None, restore: Callable[[], None] | None = None,
+        mail_accounts: list[AccountSummary] | None = None, start_kind: str = AccountKind.POP3.value,
+    ) -> None:
         super().__init__(parent)
+        self._mail_accounts: list[AccountSummary] = list(mail_accounts or [])  # those CalDAV and CardDAV may give a server (For)
         self._backend: Backend = backend
         self._pins: dict[str, tuple[tuple[str, int, str], str]] = {}  # incoming/outgoing -> (host, port, security) it was accepted for, fingerprint
         self._cert_servers: list[str] = []
         self.created_account_id: str | None = None
         self.key_created: bool = False
         self.show_recovery_code: bool = False  # this computer's recovery code was never confirmed as stored: shown after the add (RV-03)
+        self.calendars_added: bool = False  # a calendar and contacts server was added or given to a mail account: synchronise it
         self._adding: bool = False  # Add account is running: the window stays until the engine answered (RV-02)
         self._restore: Callable[[], None] | None = restore  # the first-account window's Restore a backup…: the main window's restore
-        form = forms.fill(self, "account_add", {"servers": self._server_fields})  # D-276
+        self._testing: bool = False  # Test connection of the mail part runs: its Add waits
+        form = forms.fill(self, "account_add", {"servers": self._server_fields, "calendarFields": self._calendar_fields})  # D-276
         part(form, QLabel, "welcome").setVisible(first_account)
         self.restore_button: QPushButton = part(form, QPushButton, "restoreBackup")
         self.restore_button.setVisible(first_account and restore is not None)
@@ -94,6 +109,8 @@ class AccountDialog(QDialog):
         self.kind: QComboBox = part(form, QComboBox, "kind")
         for kind, label in KINDS:
             self.kind.addItem(label, kind.value)
+        for value, label in CALENDAR_KINDS:
+            self.kind.addItem(label, value)
         self.account_name: QLineEdit = part(form, QLineEdit, "accountName")
         self.name: QLineEdit = part(form, QLineEdit, "yourName")
         self.email: QLineEdit = part(form, QLineEdit, "email")
@@ -112,7 +129,7 @@ class AccountDialog(QDialog):
         self.storage.addItem("Local Folders, together with the other accounts that keep their mail there", "local")
         self.encrypt: QCheckBox = part(form, QCheckBox, "encrypt")
         self.encrypt.setChecked(True)
-        self.result_label: QLabel = part(form, QLabel, "result")
+        self.result_label: QLabel = part(form, QLabel, "result")  # the mail part's; the calendar part has its own
         self.result_label.setTextFormat(Qt.TextFormat.RichText)
         self.certificate_button: QPushButton = part(form, QPushButton, "lookAtCertificate")
         self.certificate_button.hide()  # not in the button box: the box shows every button it holds
@@ -124,7 +141,14 @@ class AccountDialog(QDialog):
         buttons.addButton(self.add_button, QDialogButtonBox.ButtonRole.AcceptRole)
         self.cancel_button: QPushButton | None = buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
         buttons.rejected.connect(self.reject)
+        self.calendar.changed = self._allow_add
+        self.kind.setCurrentIndex(max(0, self.kind.findData(start_kind)))
+        self._kind_changed()  # only the chosen kind's part is shown when the window measures itself: it opens at that part's size
         forms.smallest(self, 520)  # its texts are never cut off, also at the largest size
+        layout = self.layout()
+        sides = 0 if layout is None else layout.contentsMargins().left() + layout.contentsMargins().right()
+        mail_width = max(widget.minimumSizeHint().width() for widget in (self._who, self.servers.widget, self._options))
+        self.setMinimumWidth(max(self.minimumWidth(), mail_width + sides))  # the mail part is the wider: neither part is ever cut off
 
         self.kind.currentIndexChanged.connect(self._kind_changed)
         self.email.textEdited.connect(self._guess_from_address)
@@ -137,18 +161,53 @@ class AccountDialog(QDialog):
         self.servers = ServerFields(parent, AccountKind.POP3, editing=False)
         return self.servers.widget
 
+    def _calendar_fields(self, parent: QWidget) -> QWidget:
+        """The CalDAV and CardDAV part, made at its place in the form; it shares the window's Add button and result line."""
+        self.calendar = CalendarFields(self._backend, self._mail_accounts, parent)
+        return self.calendar
+
     # --- what follows what ------------------------------------------------------------------------
 
     def _is_imap(self) -> bool:
         return str(self.kind.currentData()) == AccountKind.IMAP.value
 
+    def _is_calendar(self) -> bool:
+        return str(self.kind.currentData()) in (CALDAV, CARDDAV)
+
     def _kind_changed(self) -> None:
-        """POP3 or IMAP: the title and the port follow, and the choice about copies on the server only matters for POP3."""
-        self.servers.set_kind(AccountKind(str(self.kind.currentData())))
-        self.policy.setEnabled(not self._is_imap())
-        self.storage.setEnabled(not self._is_imap())
-        if self._is_imap():
-            self.storage.setCurrentIndex(0)  # an IMAP account always has the folders of its server
+        """POP3 or IMAP: the mail part, its title and port follow, and the choice about copies on the server only matters for POP3. CalDAV or
+        CardDAV: the calendar part instead (the mail fields belong to another kind of account, so they are not shown). Each part keeps what was
+        typed, its own result line and what its work answered, so an answer that comes after a change of kind stays with its own part."""
+        calendar = self._is_calendar()
+        for widget in (self._who, self.servers.widget, self._options, self.test_button, self.result_label):
+            widget.setVisible(not calendar)
+        self.calendar.setVisible(calendar)
+        self.certificate_button.setVisible(not calendar and bool(self._cert_servers))
+        if calendar:
+            self.calendar.ticked_kinds = CARDDAV_KINDS if str(self.kind.currentData()) == CARDDAV else CALDAV_KINDS
+        else:
+            self.servers.set_kind(AccountKind(str(self.kind.currentData())))
+            self.policy.setEnabled(not self._is_imap())
+            self.storage.setEnabled(not self._is_imap())
+            if self._is_imap():
+                self.storage.setCurrentIndex(0)  # an IMAP account always has the folders of its server
+        self._allow_add()
+        if self.isVisible():  # before the window is shown Qt sizes it to the part shown when it opens
+            QTimer.singleShot(0, self, self._fit)  # tied to the window (never after it is gone), once Qt has laid out the part shown again (measured before that, it came out far too tall)
+
+    def _fit(self) -> None:
+        """The window takes the size of the kind's part now shown, from a fresh measure (a stale one opened it far too tall)."""
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        self.setMinimumHeight(self.minimumSizeHint().height())  # this kind's; the smallest width keeps the mail part's, the wider one
+        self.resize(self.width(), max(self.minimumHeight(), self.sizeHint().height()))  # a width the person chose stays
+
+    def _allow_add(self) -> None:
+        """Add account as the kind now shown allows it: the mail part while no test runs, the calendar part once Find found something; never
+        while an account is being added."""
+        allowed = self.calendar.found is not None if self._is_calendar() else not self._testing
+        self.add_button.setEnabled(allowed and not self._adding)
 
     def _guess_from_address(self, text: str) -> None:
         """Suggest the user name and the server names from the e-mail address, until the person types their own."""
@@ -165,7 +224,9 @@ class AccountDialog(QDialog):
     def _certificate_trouble(self, *messages: tuple[str, str]) -> None:
         """When a server's certificate was the problem, offer to look at it (and accept it, if the person knows it is theirs)."""
         self._cert_servers = [name for name, message in messages if "certificate" in message.lower()]
-        self.certificate_button.setVisible(bool(self._cert_servers))
+        self.certificate_button.setVisible(bool(self._cert_servers) and not self._is_calendar())
+        if self.isVisible():
+            QTimer.singleShot(0, self, self._fit)  # the part grew or shrank by the button: the window follows
 
     def _endpoint(self, which: str) -> tuple[str, int, str]:
         return self.servers.endpoint(which)
@@ -203,8 +264,11 @@ class AccountDialog(QDialog):
         return self.servers.check_parameters(trusted=tuple(self.trusted))
 
     def _busy(self, busy: bool) -> None:
-        for widget in (self.test_button, self.add_button):
+        """A test runs: Test and the certificate look wait for its answer (each would start another test), and so does the mail part's Add."""
+        self._testing = busy
+        for widget in (self.test_button, self.certificate_button):
             widget.setEnabled(not busy and not self._adding)  # a test that ends during an add never brings Add back (RV-208)
+        self._allow_add()
 
     def _set_adding(self, adding: bool) -> None:
         """While the account is being added nothing else can be done here: no Cancel, no test, no certificate, no restore, no field
@@ -217,6 +281,12 @@ class AccountDialog(QDialog):
         for widget in widgets:
             if widget is not None:
                 widget.setEnabled(not adding)
+        if not adding and self._testing:  # a test still runs (started before a change of kind): Test and the certificate look wait for it
+            self.test_button.setEnabled(False)
+            self.certificate_button.setEnabled(False)
+        self.kind.setEnabled(not adding)
+        self.calendar.set_adding(adding)
+        self._allow_add()  # after a failed add: as the kind shown allows it (the calendar part's only with what Find found)
 
     def _complete(self) -> bool:
         if not (self.email.text().strip() and self.username.text().strip() and self.password.text() and self.incoming_host.text().strip() and self.outgoing_host.text().strip()):
@@ -228,7 +298,7 @@ class AccountDialog(QDialog):
         return True
 
     def _test(self) -> None:
-        if self._adding or not self._complete():  # reached from an accepted certificate while the account is being added: never then
+        if self._adding or self._testing or not self._complete():  # never during an add, nor a second test (a certificate look ends in one)
             return
         self._busy(True)
         self.result_label.setText("Testing…")
@@ -245,6 +315,9 @@ class AccountDialog(QDialog):
         self._backend.ask(ACCOUNT_CHECK, self._values(), done, failed, owner=self)
 
     def _add(self) -> None:
+        if self._is_calendar():
+            self._add_calendars()
+            return
         if not self._complete():
             return
         self._set_adding(True)
@@ -273,6 +346,18 @@ class AccountDialog(QDialog):
             self._certificate_trouble(("incoming", str(error)))
 
         self._backend.ask(ACCOUNT_ADD, parameters, done, failed, owner=self)
+
+    def _add_calendars(self) -> None:
+        def added(result: AccountAddResult | None) -> None:
+            self._adding = False
+            self.calendars_added = True
+            if result is not None:  # an account of its own (a mail account given its server has nothing more to tell)
+                self.created_account_id = result.account_id
+                self.key_created = result.key_created
+                self.show_recovery_code = result.show_recovery_code
+            self.accept()
+
+        self.calendar.add(self._set_adding, added)
 
     @override
     def reject(self) -> None:

@@ -12,9 +12,10 @@ from chrono_mail.ui.recoverydialog import RecoveryDialog
 from tests.ui.world import Dialogs, World, answer_input, answer_save_file, build_world, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dialogs.py 3.6.350"
+__version__ = "test_ui_dialogs.py 4.2.439"
 
 # --- Version history ----------------------------------------------------
+# v4.2.439: the RV-209 test on the calendar part of the Add window (D-298)
 # v3.6.350: a code that could not be shown is asked again with Try again
 # v3.6.349: while adding, nothing else in the window can be used (RV-207, RV-208, RV-209); the recovery code's tick needs the code (RV-210)
 # v3.5.346: the window cannot close while the account is being added (RV-02); Done of the recovery code notes it as stored (RV-03)
@@ -313,15 +314,16 @@ def test_while_adding_nothing_else_in_the_window_can_be_used(blank: World, qtbot
 
 def test_while_a_calendar_account_is_added_find_cannot_start_a_second_add(blank: World, qtbot: QtBot) -> None:
     """RV-209: during Adding… Find and the fields stayed usable; a finished Find enabled Add again, and a second add could start."""
-    from chrono_mail.ui.calendaraccount import CalendarAccountDialog
+    from chrono_mail.ui.accountdialog import CALDAV
 
-    dialog = CalendarAccountDialog(blank.backend, [])
+    dialog = AccountDialog(blank.backend, start_kind=CALDAV)
     qtbot.addWidget(dialog)
+    fields = dialog.calendar
     dialog._set_adding(True)  # noqa: SLF001 - the state while Add runs
-    assert not any(widget.isEnabled() for widget in (dialog.find_button, dialog.url, dialog.username, dialog.password, dialog.add_button))
+    assert not any(widget.isEnabled() for widget in (fields.find_button, fields.url, fields.username, fields.password, dialog.add_button, dialog.kind))
     assert dialog.cancel_button is not None and not dialog.cancel_button.isEnabled()
     dialog._set_adding(False)  # noqa: SLF001 - it failed: the person may try again
-    assert dialog.find_button.isEnabled() and dialog.cancel_button.isEnabled()
+    assert fields.find_button.isEnabled() and dialog.cancel_button.isEnabled() and not dialog.add_button.isEnabled()  # Add needs a Find
 
 
 def test_the_recovery_code_cannot_be_ticked_as_stored_before_it_is_shown(blank: World, qtbot: QtBot) -> None:

@@ -10,9 +10,10 @@ from chrono_mail.ui.settingsdialog import SettingsDialog
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_forms.py 4.0.378"
+__version__ = "test_ui_forms.py 4.2.439"
 
 # --- Version history ----------------------------------------------------
+# v4.2.439: the calendar part is in the Add window (D-298)
 # v4.0.378: the texts of the calendar, contacts and tasks windows fit at the smallest and largest size; Tab goes through a contact's entries
 #           and addresses, and a colour added, where they are on screen
 # v4.0.377: the texts of the mail windows fit at the smallest and largest size; Tab goes through the rule rows where they are on screen
@@ -395,7 +396,6 @@ def test_every_text_of_the_account_and_safety_windows_fits(world: World, qtbot: 
     from chrono_mail.ui.accountdialog import AccountDialog
     from chrono_mail.ui.accountedit import AccountEditDialog
     from chrono_mail.ui.backupdialog import BackupDialog
-    from chrono_mail.ui.calendaraccount import CalendarAccountDialog
     from chrono_mail.ui.certificatedialog import CertificateDialog
     from chrono_mail.ui.foundfolders import FoundFoldersDialog
     from chrono_mail.ui.importdialog import ImportDialog
@@ -410,7 +410,7 @@ def test_every_text_of_the_account_and_safety_windows_fits(world: World, qtbot: 
     world.window.try_windows_scale(factor)
     try:
         windows: list[QWidget] = [
-            AccountDialog(world.backend, True, world.window, lambda: None), CalendarAccountDialog(world.backend, [], world.window),
+            AccountDialog(world.backend, True, world.window, lambda: None), AccountDialog(world.backend, parent=world.window, start_kind="caldav"),
             FoundFoldersDialog(found, world.window), CertificateDialog("mail.example.org", certificate, world.window),
             RecoveryDialog(world.backend, world.window, True), RestoreKeyDialog(world.backend, world.window, KeyStatus("ab" * 16, False, "not there", kept=True)),
             BackupDialog(world.backend, world.window.settings, world.window),

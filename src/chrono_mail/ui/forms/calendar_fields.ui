@@ -1,11 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>AddCalendarAccount</class>
- <widget class="QWidget" name="AddCalendarAccount">
-  <property name="windowTitle">
-   <string>Add account</string>
-  </property>
-  <layout class="QVBoxLayout" name="layout" stretch="0,0,0,1,0">
+ <class>CalendarFields</class>
+ <widget class="QWidget" name="CalendarFields">
+  <layout class="QVBoxLayout" name="layout" stretch="0,0,0">
+   <property name="leftMargin">
+    <number>0</number>
+   </property>
+   <property name="topMargin">
+    <number>0</number>
+   </property>
+   <property name="rightMargin">
+    <number>0</number>
+   </property>
+   <property name="bottomMargin">
+    <number>0</number>
+   </property>
    <item>
     <layout class="QFormLayout" name="fields">
      <item row="0" column="0">
@@ -119,25 +128,6 @@
       <bool>true</bool>
      </property>
     </widget>
-   </item>
-   <item>
-    <spacer name="resultEnd">
-     <property name="orientation">
-      <enum>Qt::Vertical</enum>
-     </property>
-     <property name="sizeType">
-      <enum>QSizePolicy::Expanding</enum>
-     </property>
-     <property name="sizeHint" stdset="0">
-      <size>
-       <width>0</width>
-       <height>0</height>
-      </size>
-     </property>
-    </spacer>
-   </item>
-   <item>
-    <widget class="QDialogButtonBox" name="buttons" />
    </item>
   </layout>
  </widget>

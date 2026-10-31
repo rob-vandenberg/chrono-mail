@@ -9,7 +9,7 @@
    <item>
     <widget class="QLabel" name="welcome">
      <property name="text">
-      <string>&lt;b&gt;Welcome to Chrono Mail.&lt;/b&gt;&lt;br&gt;Add your first e-mail account to get started, or bring back a backup of Chrono Mail.</string>
+      <string>&lt;b&gt;Welcome to Chrono Mail.&lt;/b&gt;&lt;br&gt;Add your first account to get started, or bring back a backup of Chrono Mail.</string>
      </property>
      <property name="wordWrap">
       <bool>true</bool>
@@ -24,25 +24,29 @@
     </widget>
    </item>
    <item>
+    <layout class="QFormLayout" name="kindForm">
+     <item row="0" column="0">
+      <widget class="QLabel" name="kindLabel">
+       <property name="text">
+        <string>Account type</string>
+       </property>
+       <property name="buddy">
+        <cstring>kind</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QComboBox" name="kind" />
+     </item>
+    </layout>
+   </item>
+   <item>
     <widget class="QGroupBox" name="yourAccount">
      <property name="title">
       <string>Your account</string>
      </property>
      <layout class="QFormLayout" name="yourAccountForm">
       <item row="0" column="0">
-       <widget class="QLabel" name="kindLabel">
-        <property name="text">
-         <string>Account type</string>
-        </property>
-        <property name="buddy">
-         <cstring>kind</cstring>
-        </property>
-       </widget>
-      </item>
-      <item row="0" column="1">
-       <widget class="QComboBox" name="kind" />
-      </item>
-      <item row="1" column="0">
        <widget class="QLabel" name="accountNameLabel">
         <property name="text">
          <string>Account name</string>
@@ -52,10 +56,10 @@
         </property>
        </widget>
       </item>
-      <item row="1" column="1">
+      <item row="0" column="1">
        <widget class="QLineEdit" name="accountName" />
       </item>
-      <item row="2" column="0">
+      <item row="1" column="0">
        <widget class="QLabel" name="yourNameLabel">
         <property name="text">
          <string>Your name</string>
@@ -65,10 +69,10 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="1">
+      <item row="1" column="1">
        <widget class="QLineEdit" name="yourName" />
       </item>
-      <item row="3" column="0">
+      <item row="2" column="0">
        <widget class="QLabel" name="emailLabel">
         <property name="text">
          <string>E-mail address</string>
@@ -78,7 +82,7 @@
         </property>
        </widget>
       </item>
-      <item row="3" column="1">
+      <item row="2" column="1">
        <widget class="QLineEdit" name="email" />
       </item>
      </layout>
@@ -132,6 +136,9 @@
       </item>
      </layout>
     </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="calendarFields" />
    </item>
    <item>
     <widget class="QLabel" name="result">

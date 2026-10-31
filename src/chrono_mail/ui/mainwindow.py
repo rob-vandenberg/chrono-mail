@@ -15,9 +15,8 @@ from chrono_mail.engine.commands_accounts import ACCOUNT_LIST, KEY_STATUS, Accou
 from chrono_mail.engine.commands_dav import DAV_FIND, DAV_LINK, FindParameters, FoundServer, LinkParameters
 from chrono_mail.engine.commands_schedule import ScheduledInfo
 from chrono_mail.ui import appearance, scale, theme
-from chrono_mail.ui.accountdialog import AccountDialog
+from chrono_mail.ui.accountdialog import CALDAV, CARDDAV, AccountDialog
 from chrono_mail.ui.backend import Backend, alive
-from chrono_mail.ui.calendaraccount import CalendarAccountDialog
 from chrono_mail.ui.calendarview import CalendarPage
 from chrono_mail.ui.columnsdialog import ColumnsDialog, ListChoice
 from chrono_mail.ui.composing import Composing
@@ -66,9 +65,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.436"
+__version__ = "mainwindow.py 4.2.439"
 
 # --- Version history ----------------------------------------------------
+# v4.2.439: the sidebars' Add account… opens the one Add window on CalDAV or CardDAV; a calendar server added there is synchronised (UR-04, D-298)
 # v4.2.436: the Message list window and Settings > Message list show every change in the main window at once (Layout, Reading pane,
 #           Dates, Row height through the Settings window's try-out; the columns, Apply to all, Default and Reset through the column
 #           part's); OK keeps them, Cancel puts them back (D-104, D-228)
@@ -453,7 +453,7 @@ class MainWindow(QMainWindow):
             self.side_stack.addWidget(page.side)
             self.content_stack.addWidget(page.content)
             page.status = lambda text, shown=page: self.checking.page_status(shown, text)
-            page.panel.add_account_requested.connect(self.add_calendar_account)
+            page.panel.add_account_requested.connect(lambda kind=CARDDAV if page is self.contacts_page else CALDAV: self.add_calendar_account(kind))
             page.servers = lambda: self.checking.refresh_calendars()
         self.content_splitter.addWidget(self.messages.pane)
         self.content_splitter.addWidget(self.reading_pane)
@@ -1334,12 +1334,27 @@ class MainWindow(QMainWindow):
         self.tags.reload()
         self.backend.ask(ACCOUNT_LIST, NoParameters(), listed, lambda error: self.report.report("Accounts", error), owner=self)
 
-    def add_account(self, first: bool = False, after: Callable[[], None] | None = None) -> None:
+    def add_account(self, first: bool = False, after: Callable[[], None] | None = None, kind: str = "pop3", parent: QWidget | None = None) -> None:
+        """Add an account of any kind in the one Add window (D-298): from Settings > Accounts, Menu, the first start, or a section's sidebar."""
         self._in_sight()
-        dialog = AccountDialog(self.backend, first_account=first, parent=self, restore=self.restores.start)  # Restore a backup… (W2)
+        without_server = [account for account in self.mail_state.mail_accounts() if not account.dav_url]  # those CalDAV and CardDAV may give a server
+        dialog = AccountDialog(
+            self.backend, first_account=first, parent=parent or self, restore=self.restores.start, mail_accounts=without_server, start_kind=kind,
+        )  # Restore a backup… (W2)
         if dialog.exec() != AccountDialog.DialogCode.Accepted:
             return
         show_code = dialog.show_recovery_code
+        if dialog.calendars_added:
+
+            def synchronised() -> None:
+                if show_code:
+                    RecoveryDialog(self.backend, self).exec()
+                if after is not None:
+                    after()
+                self.checking.sync_calendars()
+
+            self.reload_accounts(select_saved=False, then=synchronised)
+            return
         if dialog.created_account_id:
             self._find_calendars(dialog.created_account_id)
 
@@ -1352,21 +1367,10 @@ class MainWindow(QMainWindow):
 
         self.reload_accounts(select_saved=False, then=loaded)
 
-    def add_calendar_account(self) -> None:
-        """Add account… in the Calendar, Contacts and Tasks sidebars: a calendar server for a mail account that has none, or a new account of
-        calendars, contacts and tasks only (D-185)."""
-        without_server = [account for account in self.mail_state.mail_accounts() if not account.dav_url]
-        dialog = CalendarAccountDialog(self.backend, without_server, QApplication.activeModalWidget() or self)
-        if dialog.exec() != CalendarAccountDialog.DialogCode.Accepted:
-            return
-        show_code = dialog.show_recovery_code
-
-        def loaded() -> None:
-            if show_code:
-                RecoveryDialog(self.backend, self).exec()
-            self.checking.sync_calendars()
-
-        self.reload_accounts(select_saved=False, then=loaded)
+    def add_calendar_account(self, kind: str) -> None:
+        """Add account… in the Calendar, Contacts and Tasks sidebars: the one Add window on CalDAV (Calendar, Tasks) or CardDAV (Contacts), for a
+        mail account that has no calendar server or an account of calendars, contacts and tasks only (D-185, D-298)."""
+        self.add_account(kind=kind, parent=QApplication.activeModalWidget() or self)
 
     def _find_calendars(self, account_id: str) -> None:
         """After an account was added: look for its calendars, task lists and address books in the background. When there are any, the person ticks

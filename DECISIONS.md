@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-297 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-298 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-298**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-299**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -119,6 +119,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-060** A POP3 account keeps its mail in its own folders or in Local Folders (a pseudo-account). Changing storage: copy, verify, save the setting, remove the originals (resumable). A reply goes from the account the mail was addressed to.
 - **D-081** Two accounts are the same only with the same incoming user name, host and protocol.
 - **D-184** (the owner) An optional **Account name** is shown only inside Chrono Mail (empty: the address; server and protocol added when two would look the same). **Your name** with the address is the From line. Rejected: a "show name or address" choice.
+- **D-298** (UR-04, the owner) **Every kind of account is added in one window**, Add an account: its Account type offers POP3, IMAP, CalDAV and CardDAV. CalDAV and CardDAV show the calendar and contacts server's fields (For: a new account or a mail account without a server) and make the same Calendars and contacts account (D-185); CalDAV starts with calendars and task lists ticked, CardDAV with address books, the rest listed. A kind's fields show only while it is chosen. The sidebars' Add account… opens this window on CalDAV or CardDAV. Why: a second window elsewhere was so confusing it counted as a bug.
 - **D-186** (the owner) A login per server: Outgoing has "Use the same user name and password as for incoming mail" (on by default). No grey help lines in account windows.
 - **D-204** (R-05, the owner) Add and Edit account use one set of server boxes; the Port follows Security only while it holds the standard port. **A stored password is never asked for again**: tests and checks take it from the wallet through the engine.
 - **D-126** Mail checks have their own pool of 4, so the person's actions never wait behind them. The first check of an imported account reads headers only.

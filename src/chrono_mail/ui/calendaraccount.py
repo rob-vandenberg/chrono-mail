@@ -1,9 +1,9 @@
+import dataclasses
 import urllib.parse
-
-from typing import override
+from collections.abc import Callable
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QLabel, QLineEdit, QPushButton, QWidget
+from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QPushButton, QWidget
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import ACCOUNT_TRUST_CERTIFICATE, AccountAddResult, AccountSummary, TrustParameters
@@ -20,9 +20,11 @@ from chrono_mail.ui.passwordfield import make_password_field
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 4.2.437"
+__version__ = "calendaraccount.py 4.2.439"
 
 # --- Version history ----------------------------------------------------
+# v4.2.439: the calendar window is a part of Add account (CalendarFields, ui/forms/calendar_fields.ui): CalDAV and CardDAV are choices of its
+#           Account type; CalDAV starts with the calendars and task lists ticked, CardDAV with the address books (UR-04, D-298)
 # v4.2.437: the password field has the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/calendar_account.ui, D-276); its smallest width follows the size factor
 # v3.6.349: while the account is being added Find, the certificate and the fields are greyed too, and a Find never enables a second
@@ -36,21 +38,26 @@ __version__ = "calendaraccount.py 4.2.437"
 
 NEW_ACCOUNT: str = ""  # the For choice of a new account of calendars, contacts and tasks only
 NEW_ACCOUNT_TEXT: str = "A new account (calendars, contacts and tasks only)"
+CALDAV_KINDS: frozenset[str] = frozenset({"events", "tasks"})  # what CalDAV starts with ticked in Additional folders found
+CARDDAV_KINDS: frozenset[str] = frozenset({"contacts"})  # what CardDAV starts with ticked
 
 
-class CalendarAccountDialog(QDialog):
-    """Add account: a calendar and contacts server typed by hand, for a mail account that has none or as an account of its own. Find asks the
-    server; Add shows the folders found with a tick each, and their OK adds the account (or links the mail account)."""
+class CalendarFields(QWidget):
+    """The CalDAV and CardDAV part of Add account: a calendar and contacts server typed by hand, for a mail account that has none or as an
+    account of its own (D-185, D-298). Find asks the server; the window's Add shows the folders found with a tick each, and their OK adds the
+    account (or links the mail account). It has its own result line; the window's Add asks `found` (and is told by `changed`), so an answer
+    of this part never touches the mail part, shown or not."""
 
-    def __init__(self, backend: Backend, mail_accounts: list[AccountSummary], parent: QWidget | None = None) -> None:
+    def __init__(self, backend: Backend, mail_accounts: list[AccountSummary], parent: QWidget) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
-        self.key_created: bool = False
-        self.show_recovery_code: bool = False  # this computer's recovery code was never confirmed as stored: shown after the add (RV-03)
-        self._adding: bool = False  # Add is running: the window stays until the engine answered (RV-02)
+        self._adding: bool = False  # Add is running: nothing here changes until the engine answered (RV-02, RV-209)
         self._found: FoundServer | None = None
+        self._finding: bool = False  # a Find runs
         self._fingerprint: str = ""  # a certificate the person accepted in this window, for a new account
-        form = forms.fill(self, "calendar_account")  # D-276
+        self.ticked_kinds: frozenset[str] = CALDAV_KINDS  # which folders Additional folders found starts with ticked
+        self.changed: Callable[[], None] = lambda: None  # what Find found changed: the window's Add follows
+        form = forms.fill(self, "calendar_fields")  # D-276
         self.target: QComboBox = part(form, QComboBox, "target")
         self.target.addItem(NEW_ACCOUNT_TEXT, NEW_ACCOUNT)
         for account in mail_accounts:
@@ -65,18 +72,17 @@ class CalendarAccountDialog(QDialog):
         self.certificate_button: QPushButton = part(form, QPushButton, "lookAtCertificate")
         self.result_label: QLabel = part(form, QLabel, "result")
         self.result_label.setTextFormat(Qt.TextFormat.RichText)
-        box = part(form, QDialogButtonBox, "buttons")
-        self.add_button = box.addButton("Add", QDialogButtonBox.ButtonRole.AcceptRole)
-        self.cancel_button: QPushButton | None = box.addButton(QDialogButtonBox.StandardButton.Cancel)
-        box.accepted.connect(self._add)
-        box.rejected.connect(self.reject)
-        forms.smallest(self, 520)  # its texts are never cut off, also at the largest size
         self.find_button.clicked.connect(self._find)
         self.certificate_button.clicked.connect(self._look_at_certificate)
         self.target.currentIndexChanged.connect(self._target_changed)
         for field in (self.url, self.username, self.password, self.account_name):
             field.textChanged.connect(self._forget_found)
         self._target_changed()
+
+    @property
+    def found(self) -> FoundServer | None:
+        """What Find found as the fields are now; None until it found something (the window's Add needs it)."""
+        return self._found
 
     def _new(self) -> bool:
         return str(self.target.currentData()) == NEW_ACCOUNT
@@ -91,13 +97,13 @@ class CalendarAccountDialog(QDialog):
 
     def _forget_found(self) -> None:
         self._found = None
-        self.add_button.setEnabled(False)
+        self.changed()
 
     def _show_problem(self, text: str) -> None:
         self.result_label.setText(f"<span style='{red_style()}'>{text.replace('<', '&lt;')}</span>")
 
     def _find(self) -> None:
-        if self._adding:  # reached from an accepted certificate while the account is being added: never then
+        if self._adding or self._finding:  # never during an add, nor a second Find (an accepted certificate ends in one)
             return
         url = self.url.text().strip()
         username, password = self.username.text().strip(), self.password.text()
@@ -105,26 +111,32 @@ class CalendarAccountDialog(QDialog):
             self._show_problem("Type the server address, the user name and the password.")
             return
         self._forget_found()
-        self.find_button.setEnabled(False)
+        self._looking(True)
         self.result_label.setText("Looking…")
 
         def found(result: FoundServer) -> None:
-            self.find_button.setEnabled(not self._adding)
+            self._looking(False)
             if not result.folders:
                 self._show_problem(result.problem or "No calendars, contacts or tasks were found")
                 return
             self._found = result
-            self.add_button.setEnabled(not self._adding)  # never a second Add while one runs (RV-209)
+            self.changed()  # the window's Add, never while an add runs (RV-209)
             self.result_label.setText(f"<span style='color:{green()}'><b>✓</b> {counted(len(result.folders), 'folder')} found on {result.url.replace('<', '&lt;')}.</span>")
 
         def failed(error: ChronoMailError) -> None:
-            self.find_button.setEnabled(not self._adding)
+            self._looking(False)
             self._show_problem(str(error))
 
         if self._new():
             self._backend.ask(DAV_FIND_NEW, FindNewParameters(url, username, password, self._fingerprint), found, failed, owner=self)
         else:
             self._backend.ask(DAV_FIND, FindParameters(str(self.target.currentData()), url, username, password or None), found, failed, owner=self)
+
+    def _looking(self, looking: bool) -> None:
+        """A Find runs: no second Find and no certificate look until it answered (each would start another Find)."""
+        self._finding = looking
+        for widget in (self.find_button, self.certificate_button):
+            widget.setEnabled(not looking and not self._adding)
 
     def _look_at_certificate(self) -> None:
         parts = urllib.parse.urlsplit(web_address(self.url.text()))
@@ -147,53 +159,37 @@ class CalendarAccountDialog(QDialog):
 
         inspect_and_ask(self._backend, self, host, port, "tls", "https", accepted)
 
-    def _add(self) -> None:
+    def add(self, adding: Callable[[bool], None], added: Callable[[AccountAddResult | None], None]) -> None:
+        """Additional folders found, CalDAV's or CardDAV's ticked first (the rest listed to tick); its OK adds the account, or gives the mail
+        account its server. adding(True) when the engine starts, adding(False) when it failed; added(the result, or None for a mail account)."""
         found = self._found
         if found is None:
             return
-        dialog = FoundFoldersDialog(found, self)
+        offered = dataclasses.replace(found, folders=tuple(dataclasses.replace(folder, ticked=folder.ticked and folder.kind in self.ticked_kinds)
+                                                           for folder in found.folders))
+        dialog = FoundFoldersDialog(offered, self.window())
         if dialog.exec() != FoundFoldersDialog.DialogCode.Accepted:
             return
-        self._set_adding(True)
+        adding(True)
         self.result_label.setText("Adding…")
         username, password = self.username.text().strip(), self.password.text()
 
         def failed(error: ChronoMailError) -> None:
-            self._set_adding(False)
+            adding(False)
             self._show_problem(str(error))
-
-        def added(result: AccountAddResult) -> None:
-            self._adding = False
-            self.key_created = result.key_created
-            self.show_recovery_code = result.show_recovery_code
-            self.accept()
-
-        def linked(_result: AccountSummary) -> None:
-            self._adding = False
-            self.accept()
 
         if self._new():
             parameters = AddDavParameters(found.url, username, password, self.account_name.text().strip(), dialog.left_out(), self._fingerprint)
             self._backend.ask(ACCOUNT_ADD_DAV, parameters, added, failed, owner=self)
         else:
             link = LinkParameters(str(self.target.currentData()), found.url, dialog.left_out(), found.pin, username, password or None)
-            self._backend.ask(DAV_LINK, link, linked, failed, owner=self)
+            self._backend.ask(DAV_LINK, link, lambda _result: added(None), failed, owner=self)
 
-    def _set_adding(self, adding: bool) -> None:
-        """While the account is being added nothing else can be done here: no Cancel, no Find, no certificate, no field changed (RV-209)."""
+    def set_adding(self, adding: bool) -> None:
+        """While the account is being added nothing here can be changed: no Find, no certificate, no field (RV-209)."""
         self._adding = adding
-        widgets: list[QWidget | None] = [
-            self.add_button, self.cancel_button, self.find_button, self.certificate_button, self.target, self.account_name, self.url, self.username, self.password,
-        ]
-        for widget in widgets:
-            if widget is not None:
-                widget.setEnabled(not adding)
+        for widget in (self.find_button, self.certificate_button, self.target, self.account_name, self.url, self.username, self.password):
+            widget.setEnabled(not adding)
         if not adding:
             self.account_name.setEnabled(self._new())  # a mail account has its own name
-            self.add_button.setEnabled(self._found is not None)  # Add needs what Find found
-
-    @override
-    def reject(self) -> None:
-        """Cancel, Escape or the close button: not while the account is being added (it is then added, and its recovery code is shown)."""
-        if not self._adding:
-            super().reject()
+            self._looking(self._finding)  # a Find still runs (started before a change of kind): Find and the certificate look wait for it

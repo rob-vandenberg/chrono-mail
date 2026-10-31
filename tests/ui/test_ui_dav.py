@@ -7,7 +7,7 @@ from chrono_mail.engine import commands_dav
 from chrono_mail.engine.commands_dav import FoundFolder, FoundServer
 from chrono_mail.protocols.tls import fingerprint
 from chrono_mail.ui.accountedit import AccountEditDialog
-from chrono_mail.ui.calendaraccount import CalendarAccountDialog
+from chrono_mail.ui.accountdialog import CALDAV, CARDDAV, AccountDialog
 from chrono_mail.ui.settingsdialog import SettingsDialog
 from chrono_mail.ui.foundfolders import FolderTicks, FoundFoldersDialog, folder_text
 from tests.fakedav import FakeDav
@@ -15,9 +15,10 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 2.4.333"
+__version__ = "test_ui_dav.py 4.2.439"
 
 # --- Version history ----------------------------------------------------
+# v4.2.439: the calendar window is a part of the Add window (D-298): the sidebars open it on CalDAV or CardDAV
 # v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.1.236: New calendar… on an account's heading is set to that account and made on its server; on the empty area to the local ones (R-29)
@@ -197,33 +198,42 @@ def accept_all(dialog: FoundFoldersDialog) -> int:
 
 
 def test_the_sidebar_menu_starts_with_add_account_and_it_opens_the_window(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
-    opened: list[object] = []
-    monkeypatch.setattr(CalendarAccountDialog, "exec", lambda dialog: opened.append(dialog) or QDialog.DialogCode.Rejected.value)
+    opened: list[AccountDialog] = []
+
+    def shown(dialog: AccountDialog) -> int:
+        opened.append(dialog)
+        return QDialog.DialogCode.Rejected.value
+
+    monkeypatch.setattr(AccountDialog, "exec", shown)
     for page in world.window.pages.values():
         menu = page.panel.menu_at(page.panel.tree.rect().center())
         assert [action.text() for action in menu.actions()][:2] == ["Add account…", ""]
         page.panel.add_account_requested.emit()
-    assert len(opened) == 3
-    assert [opened[0].target.itemText(index) for index in range(opened[0].target.count())][0] == "A new account (calendars, contacts and tasks only)"
+    assert len(opened) == 3  # the one Add window (D-298), on CalDAV from Calendar and Tasks, on CardDAV from Contacts
+    kinds = {name: dialog.kind.currentData() for name, dialog in zip(world.window.pages, opened, strict=True)}
+    assert kinds == {"calendar": CALDAV, "tasks": CALDAV, "contacts": CARDDAV}, kinds
+    assert opened[0].calendar.target.itemText(0) == "A new account (calendars, contacts and tasks only)" and opened[0].calendar.isVisibleTo(opened[0])
 
 
 def test_a_new_account_of_calendars_only_is_added_in_the_window(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(FoundFoldersDialog, "exec", accept_all)
     with FakeDav() as server:
-        dialog = CalendarAccountDialog(world.backend, world.window.mail_state.mail_accounts())  # noqa: SLF001
+        dialog = AccountDialog(world.backend, mail_accounts=world.window.mail_state.mail_accounts(), start_kind=CALDAV)  # noqa: SLF001
         qtbot.addWidget(dialog)
-        assert not dialog.add_button.isEnabled() and dialog.account_name.isEnabled()
-        dialog.find_button.click()
-        wait(qtbot, lambda: "Type the server address" in dialog.result_label.text())
-        dialog.url.setText(server.url)
-        dialog.username.setText("ann")
-        dialog.password.setText("secret")
-        dialog.account_name.setText("Family calendar")
-        dialog.find_button.click()
-        wait(qtbot, lambda: "3 folders found" in dialog.result_label.text())
+        fields = dialog.calendar
+        assert not dialog.add_button.isEnabled() and fields.account_name.isEnabled()
+        fields.find_button.click()
+        wait(qtbot, lambda: "Type the server address" in fields.result_label.text())
+        fields.url.setText(server.url)
+        fields.username.setText("ann")
+        fields.password.setText("secret")
+        fields.account_name.setText("Family calendar")
+        fields.find_button.click()
+        wait(qtbot, lambda: "3 folders found" in fields.result_label.text())
         assert dialog.add_button.isEnabled()
         dialog.add_button.click()
         wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
+        assert dialog.calendars_added
         added = next(item for item in world.call("account.list") if item.kind == "dav")
         assert added.shown_name == "Family calendar" and added.dav_url == server.url
 
@@ -231,14 +241,15 @@ def test_a_new_account_of_calendars_only_is_added_in_the_window(world: World, qt
 def test_the_window_can_give_a_mail_account_its_calendar_server(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(FoundFoldersDialog, "exec", accept_all)
     with FakeDav(user="user") as server:
-        dialog = CalendarAccountDialog(world.backend, list(world.call("account.list")))
+        dialog = AccountDialog(world.backend, mail_accounts=list(world.call("account.list")), start_kind=CALDAV)
         qtbot.addWidget(dialog)
-        dialog.target.setCurrentIndex(1)
-        assert not dialog.account_name.isEnabled() and dialog.username.placeholderText() == "(the same as for mail)"
-        dialog.url.setText(server.url)
-        dialog.find_button.click()
-        wait(qtbot, lambda: " found" in dialog.result_label.text() or "span" in dialog.result_label.text())
-        assert " found" in dialog.result_label.text(), dialog.result_label.text()
+        fields = dialog.calendar
+        fields.target.setCurrentIndex(1)
+        assert not fields.account_name.isEnabled() and fields.username.placeholderText() == "(the same as for mail)"
+        fields.url.setText(server.url)
+        fields.find_button.click()
+        wait(qtbot, lambda: " found" in fields.result_label.text() or "span" in fields.result_label.text())
+        assert " found" in fields.result_label.text(), fields.result_label.text()
         dialog.add_button.click()
         wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
         assert world.call("account.list")[0].dav_url == server.url and not any(item.kind == "dav" for item in world.call("account.list"))
