@@ -14,6 +14,7 @@ from chrono_mail.ui.accountedit import AccountEditDialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.certificatedialog import CHANGED_REASON, CertificateDialog, VerifyCertificateDialog
 from chrono_mail.ui.certificatequestions import questions_for
+from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.serverfields import SECURITY_CHOICES
 from tests.certs import make_certificate
 from tests.enginefactory import make_engine
@@ -22,9 +23,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.ui.world import REGISTRY, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_certificates.py 4.2.441"
+__version__ = "test_ui_certificates.py 4.2.442"
 
 # --- Version history ----------------------------------------------------
+# v4.2.442: the heading sits next to the sign; a blank line above and below the certificate information
 # v4.2.441: a certificate that could not be verified asks at once (Verify certificate): Connect with and without Don't ask me again, Do not
 #           connect, a changed certificate, a Refresh asks only while the window is on screen; the weak Security choice (UR-05, D-299)
 # v3.0.339: the texts of a certificate are shown as text, never as layout (RV-01)
@@ -425,3 +427,24 @@ def test_a_test_that_joins_a_refresh_question_being_read_is_asked_over_its_windo
     questions.ask(trouble, lambda: retried.append("test"), tester)
     wait(qtbot, lambda: sorted(retried) == ["refresh", "test"])
     assert len(shown) == 1
+
+
+def test_the_heading_sits_next_to_the_sign_and_the_certificate_has_a_blank_line_above_and_below(qtbot: QtBot) -> None:
+    dialog = VerifyCertificateDialog("mailserver.example.org", result(), changed=False)
+    qtbot.addWidget(dialog)
+    dialog.resize(700, dialog.sizeHint().height())
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    def labelled(name: str) -> QWidget:
+        found = dialog.findChild(QWidget, name)
+        assert found is not None
+        return found
+
+    sign, heading, question, details, tick = (labelled(name) for name in ("sign", "heading", "question", "details", "dontAsk"))
+    gap = heading.mapTo(dialog, heading.rect().topLeft()).x() - sign.mapTo(dialog, sign.rect().topRight()).x()
+    assert gap < 40  # the text column takes the room, not the sign (a huge gap before)
+    line = wpx(16)
+    below_question = details.mapTo(dialog, details.rect().topLeft()).y() - question.mapTo(dialog, question.rect().bottomLeft()).y()
+    above_tick = tick.mapTo(dialog, tick.rect().topLeft()).y() - details.mapTo(dialog, details.rect().bottomLeft()).y()
+    assert below_question >= line and above_tick >= line

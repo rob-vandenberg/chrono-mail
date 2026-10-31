@@ -23,9 +23,10 @@ from chrono_mail.ui.backend import Backend, alive
 from chrono_mail.ui.certificatedialog import VerifyCertificateDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "certificatequestions.py 4.2.441"
+__version__ = "certificatequestions.py 4.2.442"
 
 # --- Version history ----------------------------------------------------
+# v4.2.442: by_person: a Send the person made asks also after Do not connect earlier in this run (D-299)
 # v4.2.441: Initial version: a certificate that could not be verified asks at once, one Verify certificate window at a time (UR-05, D-299)
 
 # A server whose certificate could not be verified asks the person at once, wherever it was met: a test or Find the person started (asked
@@ -80,12 +81,17 @@ class CertificateQuestions(QObject):
         self._on_screen = on_screen
         window.installEventFilter(self)
 
-    def ask(self, trouble: CertificateTrouble, retry: Callable[[], None], parent: QWidget | None = None, keep: Keep | None = None) -> None:
+    def ask(
+        self, trouble: CertificateTrouble, retry: Callable[[], None], parent: QWidget | None = None, keep: Keep | None = None, by_person: bool = False,
+    ) -> None:
         """Ask about this server's certificate; after Connect, retry runs. parent: the window of a test or Find the person started (asked at
         once over it); None: met by a Refresh (asked over the main window when it is on screen). keep: where an accepted-for-good certificate
-        goes when it is not an account's yet (or the window edits that account's certificates itself)."""
+        goes when it is not an account's yet (or the window edits that account's certificates itself). by_person: the person's own work without a
+        window of its own (Send in a message window that has closed): asked as a Refresh's, but also after Do not connect earlier in this run."""
         by_hand = parent is not None
         server = (trouble.host.lower(), trouble.port)
+        if by_person:
+            self._declined.discard(server)
         if not by_hand and server in self._declined:
             return
         for question in [self._asking, *self._waiting]:

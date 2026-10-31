@@ -47,9 +47,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.ui.whendialog import WhenDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "composer.py 4.2.430"
+__version__ = "composer.py 4.2.442"
 
 # --- Version history ----------------------------------------------------
+# v4.2.442: a Send stopped by the outgoing server's certificate closes the window without its box and says so (certificate_stopped): the Verify certificate window asks then (D-299)
 # v4.2.430: an escaped quote inside a quoted name never ends it when the addresses are split
 # v4.2.429: save_and_close_quietly and close_for_quit: after an update Chrono Mail closes without a Cancel; what is not saved goes to Drafts first
 # v3.6.358: after a save only the attachments it took are marked as stored, at the places the save gives, in place; what was added or removed
@@ -181,6 +182,7 @@ class ComposeWindow(QMainWindow):
     scheduled = Signal(str)  # the id of the message that now waits in the Outbox to be sent at its time
     scheduled_changed = Signal(object)  # edit mode: the ScheduledInfo of the message as it waits now (the same id)
     waiting = Signal(str, str, str, int)  # a delayed send waits in the Outbox: account, message id, subject, seconds of its countdown (0: none, B-21)
+    certificate_stopped = Signal(object, str)  # the outgoing server's certificate could not be verified: its CertificateTrouble, the message id (D-299)
 
     def __init__(
         self,
@@ -773,6 +775,12 @@ class ComposeWindow(QMainWindow):
             self._handed_over()
             self.sent.emit(str(self.from_box.currentData()))
             self.waiting.emit(str(self.from_box.currentData()), result.message_id, self.subject.text(), self._delay)
+            self.close()
+            return
+        if not result.sent and result.certificate is not None:  # the Verify certificate window asks once this one has closed (D-299)
+            self._handed_over()
+            self.sent.emit(str(self.from_box.currentData()))  # the Outbox changed
+            self.certificate_stopped.emit(result.certificate, result.message_id)
             self.close()
             return
         if not result.sent:  # the message is in the Outbox now, sent from there: this window no longer holds it (a second Send sent it twice, RV-155)

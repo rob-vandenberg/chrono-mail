@@ -23,9 +23,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 4.2.429"
+__version__ = "composing.py 4.2.442"
 
 # --- Version history ----------------------------------------------------
+# v4.2.442: a message window's Send stopped by a certificate is passed on (certificate_stopped, D-299)
 # v4.2.429: save_all_and_close: after an update every message window saves to Drafts without a question and closes
 # v4.2.414: Edit draft goes by the message's own folder in a search of several folders (D-287)
 # v4.0.374: a message window opened from Settings > Scheduled messages tells the page only while Settings is still open
@@ -50,6 +51,7 @@ class Composing(QObject):
     """The message windows that write mail: the one owner of the list of open ones."""
 
     send_waiting = Signal(str, str, str, int)  # a delayed send waits in the Outbox: account, message id, subject, seconds of its countdown (B-21)
+    certificate_stopped = Signal(object, str)  # a Send stopped by the outgoing server's certificate: its CertificateTrouble, the message id (D-299)
     left_outbox = Signal(str)  # a message was taken out of the Outbox to be changed: its message id (a countdown for it goes, RV-156)
     sent_already = Signal(str, str, str)  # the Outbox message opened was sent already (its move to Sent failed): its account, folder and id,
     # to open exactly it to be read (RV-181)
@@ -140,6 +142,7 @@ class Composing(QObject):
             settings=self._prefs.settings, schedule_only=schedule_only, editing=editing, taken_back=taken_back,
         )
         window.waiting.connect(self.send_waiting)
+        window.certificate_stopped.connect(self.certificate_stopped)
         if to:
             window.to.setText(to)
         window.destroyed.connect(lambda: self.composers.remove(window) if window in self.composers else None)

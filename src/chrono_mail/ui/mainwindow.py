@@ -66,9 +66,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.441"
+__version__ = "mainwindow.py 4.2.442"
 
 # --- Version history ----------------------------------------------------
+# v4.2.442: a message window's Send stopped by a certificate asks through the mail checking part (D-299)
 # v4.2.441: the certificate questions of a Refresh are asked over this window while it is on screen (UR-05, D-299)
 # v4.2.439: the sidebars' Add account… opens the one Add window on CalDAV or CardDAV; a calendar server added there is synchronised (UR-04, D-298)
 # v4.2.436: the Message list window and Settings > Message list show every change in the main window at once (Layout, Reading pane,
@@ -367,6 +368,7 @@ class MainWindow(QMainWindow):
             backend, self.prefs, self, self.quit_program, self.closed_for_good, self._on_screen, self.quit_for_update,
         )
         self.checking.went_online.connect(self.updates.went_online)
+        self.composing.certificate_stopped.connect(self.checking.ask_after_send)  # Send stopped by a certificate: asks once its window closed
         questions_for(backend).watch(self, self._on_screen)  # a certificate met by a Refresh asks over this window, while it is on screen (D-299)
         self._build_toolbar()
         self._build_menus()

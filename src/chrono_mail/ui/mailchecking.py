@@ -25,9 +25,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.2.441"
+__version__ = "mailchecking.py 4.2.442"
 
 # --- Version history ----------------------------------------------------
+# v4.2.442: ask_after_send: a message window's Send stopped by a certificate asks once that window has closed; Connect sends that message (D-299)
 # v4.2.441: a Refresh that meets a server whose certificate could not be verified (receiving, sending, the calendar sync) asks: Verify
 #           certificate over the main window; Connect does that account's work again (UR-05, D-299)
 # v4.2.419: went_online: a mail check, a send that reached a server or a calendar sync tried the internet; the check for updates goes along (D-293)
@@ -333,6 +334,12 @@ class MailChecking(QObject):
                 self._settle_operations()
 
         self._backend.ask(MAIL_SEND_OUTBOX, SendOutboxParameters(account, message, now), done, failed, owner=self)
+
+    def ask_after_send(self, trouble: CertificateTrouble, message_id: str) -> None:
+        """A message window's Send stopped by the outgoing server's certificate: the message waits in the Outbox, and the Verify certificate
+        window asks now the message window has closed; Connect sends exactly that message (D-299)."""
+        self._status.show(f"The message waits in your Outbox: the certificate of {trouble.host} could not be verified", error=True)
+        questions_for(self._backend).ask(trouble, lambda: self.send_outbox(manual=True, account=trouble.account or None, message=message_id), by_person=True)
 
     def _ask_about(self, trouble: CertificateTrouble, again: Callable[[], None]) -> None:
         """A Refresh met a server whose certificate could not be verified: Verify certificate asks over the main window as soon as it is on
