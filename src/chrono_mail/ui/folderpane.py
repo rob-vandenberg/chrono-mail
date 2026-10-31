@@ -37,9 +37,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.tagging import offered_for_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "folderpane.py 4.2.399"
+__version__ = "folderpane.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: a mailbox that told a fact while the folder lists loaded is counted again once they are in place: the lists may have been
+#           read before it (a new account's first fill makes its folders then, D-300)
 # v4.2.399: a top row (an account, Local Folders) offers no Rename folder or Delete folder; one place says whether the row
 #           chosen is a folder
 # v4.2.398: New folder and Rename folder ask only for the folder's name (New: inside the folder chosen, else at the top of
@@ -96,6 +98,7 @@ class FolderPane(QObject):
         self._parent: QWidget = parent
         self._numbers: Burst = Burst(self._show_numbers, self)  # the numbers of a large delete go on the list ten times a second, not per message
         self._round: Callable[[], None] | None = None  # while the folder lists load: what a tags answer calls instead of a lay-out
+        self._told_while_loading: set[str] = set()  # mailboxes that told a fact while the folder lists loaded: counted again after
         self.recounting: set[str] = set()  # mailboxes whose folders are being counted again after a change from outside
         self.recount_again: set[str] = set()
         self.tree_state: dict[str, bool] = memory.tree_state  # node -> opened (True) or closed (False) by the person
@@ -151,10 +154,16 @@ class FolderPane(QObject):
             arrived()
 
         def finish_loading() -> None:
-            self._round = None
+            newest = self._round is arrived  # a load started after this one is still under way: it ends the round and counts again
+            if newest:
+                self._round = None
             self._state.folders = collected
             self.lay_out(select_saved)
             self.numbers_changed.emit()
+            if newest:
+                told, self._told_while_loading = self._told_while_loading, set()
+                for mailbox in sorted(told):
+                    self.recount(mailbox)  # its list may have been read before that fact: asked again, only what differs changes
             if then is not None:
                 then()
 
@@ -500,6 +509,8 @@ class FolderPane(QObject):
     def fact(self, change: Change) -> None:
         """A fact of the engine: the numbers per folder, a folder made, renamed or deleted, or a change from outside."""
         kind, mailbox, folder = str(change.kind), change.mailbox, change.folder
+        if self._round is not None and mailbox in self._state.accounts_with_mail():
+            self._told_while_loading.add(mailbox)  # the list being loaded may be older than this fact
         if kind == "mailbox_changed":
             self.recount(mailbox)  # a big job changed a mailbox: only its folders are counted again, once, one at a time
             return

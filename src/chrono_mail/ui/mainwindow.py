@@ -66,9 +66,11 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.442"
+__version__ = "mainwindow.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: a new account gets its first fill (IMAP and calendars always, POP3 only when a refresh of its own receives); an import fills
+#           only the IMAP and calendar accounts it made; nothing checks by itself after a restore, a rebuild or an Edit account (D-300)
 # v4.2.442: a message window's Send stopped by a certificate asks through the mail checking part (D-299)
 # v4.2.441: the certificate questions of a Refresh are asked over this window while it is on screen (UR-05, D-299)
 # v4.2.439: the sidebars' Add account… opens the one Add window on CalDAV or CardDAV; a calendar server added there is synchronised (UR-04, D-298)
@@ -360,7 +362,7 @@ class MainWindow(QMainWindow):
         self.rebuilds: IndexRebuilds = IndexRebuilds(backend, self.report, self.mail_state.account_name, self)  # D-229
         self.backups: BackupWindow = BackupWindow(backend, settings, self.report, self)  # File > Backup… (D-244)
         self.restores: RestoreWindow = RestoreWindow(backend, settings, self)  # File > Restore…: the mail checks wait while it runs
-        self.restores.running_changed.connect(self.checking.import_running)
+        self.restores.running_changed.connect(self.checking.restore_running)
         self.restores.restored.connect(self._after_restore)
         self.rebuilds.running_changed.connect(self.checking.rebuild_running)
         self.rebuilds.quit_requested.connect(self.quit_program)
@@ -840,7 +842,7 @@ class MainWindow(QMainWindow):
             self.apply_preferences()
             self.columns.take_in_setups()
             self._restore_state()
-        self.rebuilds.start(lambda: self.reload_accounts(select_saved=True, then=self.checking.check_mail))
+        self.rebuilds.start(lambda: self.reload_accounts(select_saved=True))  # nothing is checked by itself after a restore (D-300)
 
     def _restore_state(self) -> None:
         restore_geometry(self, self.settings, "geometry")
@@ -1047,7 +1049,8 @@ class MainWindow(QMainWindow):
         if page is not None:
             dialog.show_page(page)
         dialog.add_account_requested.connect(lambda: self.add_account(after=lambda: dialog.reload() if alive(dialog) else None))  # it may be closed by then
-        dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False, then=self.checking.sync_calendars))
+        dialog.accounts_changed.connect(lambda: self.reload_accounts(select_saved=False))  # nothing is synchronised by itself (D-300)
+        dialog.calendars_given.connect(self._calendars_given)
         dialog.restore_key_requested.connect(self.restore_key)
         dialog.rebuild_requested.connect(self.rebuilds.rebuild_all)
         dialog.scheduled_panel.new_requested.connect(lambda: self.composing.new_scheduled_message(dialog.scheduled_panel))
@@ -1326,15 +1329,20 @@ class MainWindow(QMainWindow):
         """File > Use a recovery code: ask for the key and, when it is back, load everything; the key's status first, so the window says why."""
         self.backend.ask(KEY_STATUS, NoParameters(), lambda status: self._ask_for_key(lambda: self.reload_accounts(select_saved=True), worth_telling(status)), lambda error: self._ask_for_key(lambda: self.reload_accounts(select_saved=True)), owner=self)
 
-    def reload_accounts(self, select_saved: bool = False, then: Callable[[], None] | None = None) -> None:
+    def reload_accounts(self, select_saved: bool = False, then: Callable[[], None] | None = None, known: Callable[[], None] | None = None) -> None:
+        """The accounts again; known runs the moment the window knows them (before the folder list is laid out, so no timer comes first: the
+        first fill of a new account, D-300), then once the folder list is ready."""
         def listed(result: tuple[AccountSummary, ...]) -> None:
             self.mail_state.set_accounts(list(result))
             if not self.mail_state.all_accounts:
                 self.folders.clear()
+                self.checking.accounts_loaded()  # none yet: the first account added is a new one (its push waits, D-300)
                 self.add_account(first=True)
                 return
-            self.folders.load(select_saved, then)
             self.checking.accounts_loaded()
+            if known is not None:
+                known()
+            self.folders.load(select_saved, then)
 
         self.tags.reload()
         self.backend.ask(ACCOUNT_LIST, NoParameters(), listed, lambda error: self.report.report("Accounts", error), owner=self)
@@ -1349,28 +1357,36 @@ class MainWindow(QMainWindow):
         if dialog.exec() != AccountDialog.DialogCode.Accepted:
             return
         show_code = dialog.show_recovery_code
-        if dialog.calendars_added:
-
-            def synchronised() -> None:
-                if show_code:
-                    RecoveryDialog(self.backend, self).exec()
-                if after is not None:
-                    after()
-                self.checking.sync_calendars()
-
-            self.reload_accounts(select_saved=False, then=synchronised)
-            return
-        if dialog.created_account_id:
+        new = dialog.calendars_account_id if dialog.calendars_added else dialog.created_account_id
+        if dialog.created_account_id and not dialog.calendars_added:
             self._find_calendars(dialog.created_account_id)
+
+        def fill() -> None:
+            if new:  # the moment the window knows it: no full check of a timer comes before it (D-300)
+                self._first_fill({new}, mail=dialog.created_account_id is not None)  # a mail account only given a calendar server: its calendars
 
         def loaded() -> None:
             if show_code:
                 RecoveryDialog(self.backend, self).exec()
             if after is not None:
                 after()
-            self.checking.check_mail()
 
-        self.reload_accounts(select_saved=False, then=loaded)
+        self.reload_accounts(select_saved=False, then=loaded, known=fill)
+
+    def _calendars_given(self, account_id: str) -> None:
+        """Edit account gave an account a calendar server, or changed it: the window learns it, then its calendars only receive (D-300)."""
+        self.reload_accounts(select_saved=False, known=lambda: self.checking.first_fill(set(), {account_id}))
+
+    def _first_fill(self, account_ids: set[str], mail: bool, pop3: bool = True) -> None:
+        """New accounts only receive, once (D-300): IMAP mail and calendars always (a new one has nothing of its own, only the server's); POP3 mail
+        only when mail is wanted, pop3 (never after an import) and a refresh of its own receives (Refresh when the program starts or Automatic
+        refresh, not Send only)."""
+        prefs = self.prefs.read()
+        receives = pop3 and ((prefs.check_on_start and prefs.start_refresh != "send") or (prefs.auto_check and prefs.scheduled_refresh != "send"))
+        chosen = [account for account in self.mail_state.all_accounts if account.account_id in account_ids]
+        fill_mail = {account.account_id for account in chosen if mail and (account.kind == "imap" or (account.kind == "pop3" and receives))}
+        calendars = {account.account_id for account in chosen if account.dav_url}
+        self.checking.first_fill(fill_mail, calendars)
 
     def add_calendar_account(self, kind: str) -> None:
         """Add account… in the Calendar, Contacts and Tasks sidebars: the one Add window on CalDAV (Calendar, Tasks) or CardDAV (Contacts), for a
@@ -1389,7 +1405,7 @@ class MainWindow(QMainWindow):
                 return
 
             def linked(_summary: AccountSummary) -> None:
-                self.reload_accounts(select_saved=False, then=self.checking.sync_calendars)
+                self.reload_accounts(select_saved=False, known=lambda: self.checking.first_fill(set(), {account_id}))  # only receives (D-300)
 
             parameters = LinkParameters(account_id, result.url, dialog.left_out(), result.pin)
             self.backend.ask(DAV_LINK, parameters, linked, lambda error: self.report.report("Calendars and contacts could not be added", error), owner=self)
@@ -1405,10 +1421,16 @@ class MainWindow(QMainWindow):
         ExportDialog(self.backend, self, memory=self.memory).exec()
 
     def _after_import(self) -> None:
-        """New accounts, folders and mail: the folder list with its counts, then the list on screen (its selection did not change, so it would keep the old messages)."""
-        prefs = self.prefs.read()
-        check = prefs.check_on_start or prefs.auto_check  # send and receive only when the owner lets it run by itself (at startup or at an interval)
-        self.reload_accounts(select_saved=True, then=self.checking.check_mail if check else None)  # the checks that waited for the import: once, with the accounts it made
+        """New accounts, folders and mail: the folder list with its counts, then the list on screen (its selection did not change, so it would keep the
+        old messages). The IMAP and calendar accounts the import made get their first fill; POP3 mail waits for a refresh (D-300)."""
+        before = {account.account_id for account in self.mail_state.all_accounts}
+
+        def known() -> None:
+            made = {account.account_id for account in self.mail_state.all_accounts} - before
+            if made:
+                self._first_fill(made, mail=True, pop3=False)
+
+        self.reload_accounts(select_saved=True, known=known)
 
     # --- an entry of the folder list is opened ---------------------------------------------------------------------
 

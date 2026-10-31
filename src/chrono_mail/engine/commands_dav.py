@@ -20,9 +20,10 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 4.2.447"
+__version__ = "commands_dav.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: dav.sync receive_only, the first fill of a new account (D-300): only downloads; nothing sent, nothing removed here
 # v4.2.447: dav.find and dav.find-new fresh: a Find the person starts checks the certificate with the usual checks only (D-299)
 # v4.2.441: every calendar server connection also takes the certificates accepted until Chrono Mail closes; dav.sync goes on with the other
 #           accounts when one's certificate cannot be verified and names that server (certificate), as dav.find does when it looked by itself (D-299)
@@ -142,6 +143,7 @@ def dav_discover(engine: Engine, parameters: DiscoverParameters) -> tuple[DavCol
 class SyncParameters:
     account: str | None = field(default=None, metadata=option("The account (omit: every account that has a calendar and contacts server)"))
     accounts: tuple[str, ...] = field(default=(), metadata=option("These accounts (repeat for more), each when it has a calendar and contacts server"))
+    receive_only: bool = field(default=False, metadata=option("Only download (the first fill of a new account): nothing is sent to the server, nothing removed here"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,13 +183,15 @@ def keep_looks(engine: Engine, account_id: str, before: Mapping[str, CollectionL
     engine.change_config(change)
 
 
-def _sync_account(engine: Engine, settings: AccountSettings) -> DavSyncSummary:
+def _sync_account(engine: Engine, settings: AccountSettings, receive_only: bool = False) -> DavSyncSummary:
     account_id = settings.account.account_id
     with _client(engine, settings) as client, _lock_for(account_id):
         with open_pim(engine, account_id, create=True) as store:
             fresh = engine.config().find(account_id)  # read inside the lock: a name or colour changed just before is in it
             looks = {look.key: look for look in fresh.collection_looks}
-            report = sync_dav(client, store, _state_path(engine, account_id), engine.durable, left_out=frozenset(settings.dav_left_out), looks=looks)
+            report = sync_dav(
+                client, store, _state_path(engine, account_id), engine.durable, push=not receive_only, left_out=frozenset(settings.dav_left_out), looks=looks,
+            )
             keep_looks(engine, account_id, {key: looks.get(key) for key in report.looks}, report.looks)
     if report.conflicts:
         engine.report(Change("conflicts_changed", account_id))
@@ -199,10 +203,10 @@ def _sync_account(engine: Engine, settings: AccountSettings) -> DavSyncSummary:
     )
 
 
-def _sync_or_name(engine: Engine, settings: AccountSettings) -> DavSyncSummary:
+def _sync_or_name(engine: Engine, settings: AccountSettings, receive_only: bool = False) -> DavSyncSummary:
     """One account's synchronisation; a certificate that could not be verified stops only this account and names its server (D-299)."""
     try:
-        return _sync_account(engine, settings)
+        return _sync_account(engine, settings, receive_only)
     except CertificateError as error:
         account_id = settings.account.account_id
         return DavSyncSummary(account_id, 0, 0, 0, 0, 0, 0, 0, (str(error),), certificate=replace(error.trouble, account=account_id))
@@ -216,12 +220,13 @@ def _state_path(engine: Engine, account_id: str) -> Path:
 def dav_sync(engine: Engine, parameters: SyncParameters) -> tuple[DavSyncSummary, ...]:
     """Bring the calendars, task lists and address books of an account in line with its server, both ways."""
     config = engine.config()
+    only = parameters.receive_only
     if parameters.account is not None:
-        return (_sync_or_name(engine, engine.resolve_account(parameters.account, config)),)
+        return (_sync_or_name(engine, engine.resolve_account(parameters.account, config), only),)
     if parameters.accounts:
         chosen = [engine.resolve_account(name, config) for name in parameters.accounts]
-        return tuple(_sync_or_name(engine, item) for item in chosen if item.dav_url and item.account.account_id != LOCAL_ACCOUNT_ID)
-    return tuple(_sync_or_name(engine, item) for item in config.accounts if item.dav_url and item.account.account_id != LOCAL_ACCOUNT_ID)
+        return tuple(_sync_or_name(engine, item, only) for item in chosen if item.dav_url and item.account.account_id != LOCAL_ACCOUNT_ID)
+    return tuple(_sync_or_name(engine, item, only) for item in config.accounts if item.dav_url and item.account.account_id != LOCAL_ACCOUNT_ID)
 
 
 # --- finding the server by itself (D-181) ----------------------------------------------------------------------------------------------------

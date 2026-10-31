@@ -32,9 +32,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.2.447"
+__version__ = "accountdialog.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: calendars_account_id: the account that got the calendar server, also a mail account given one (its first fill, D-300)
 # v4.2.447: Test connection always checks the certificates itself; the test after Connect uses the answer; Connect without the tick takes back
 #           a certificate kept here (D-299)
 # v4.2.441: a server whose certificate could not be verified asks at once (Verify certificate) after Test and Add; Connect tests or adds
@@ -102,6 +103,7 @@ class AccountDialog(QDialog):
         self.key_created: bool = False
         self.show_recovery_code: bool = False  # this computer's recovery code was never confirmed as stored: shown after the add (RV-03)
         self.calendars_added: bool = False  # a calendar and contacts server was added or given to a mail account: synchronise it
+        self.calendars_account_id: str | None = None  # the account that has it now
         self._adding: bool = False  # Add account is running: the window stays until the engine answered (RV-02)
         self._restore: Callable[[], None] | None = restore  # the first-account window's Restore a backup…: the main window's restore
         self._testing: bool = False  # Test connection of the mail part runs: its Add waits
@@ -385,6 +387,7 @@ class AccountDialog(QDialog):
         def added(result: AccountAddResult | None) -> None:
             self._adding = False
             self.calendars_added = True
+            self.calendars_account_id = result.account_id if result is not None else str(self.calendar.target.currentData())
             if result is not None:  # an account of its own (a mail account given its server has nothing more to tell)
                 self.created_account_id = result.account_id
                 self.key_created = result.key_created

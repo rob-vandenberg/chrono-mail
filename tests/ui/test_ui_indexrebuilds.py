@@ -11,9 +11,10 @@ from tests.test_engine_rebuilds import as_format_11
 from tests.ui.world import World, wait, world  # noqa: F401
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_indexrebuilds.py 4.2.428"
+__version__ = "test_ui_indexrebuilds.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: no check runs after a rebuild (D-300)
 # v4.2.428: at start, once the index round ended, every place's record of who received the mail is tidied in the background (D-292)
 # v4.0.374: the rebuild window made above Settings is forgotten when Settings is deleted, and the next one belongs to the main window
 # v2.1.311: the hover text's last line says what a click does (the lines above name what runs)
@@ -126,7 +127,7 @@ def test_the_abort_question_says_what_happens_and_continues_by_default(world: Wo
     assert sorted(buttons) == sorted(["Abort" if usable else "Abort and close", "Continue rebuilding"])
 
 
-def test_the_automatic_checks_wait_while_an_index_is_rebuilt_and_one_runs_after(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_automatic_checks_wait_while_an_index_is_rebuilt_and_none_runs_after(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     checking = world.window.checking
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3 and world.backend._pending == {})  # noqa: SLF001
@@ -136,7 +137,7 @@ def test_the_automatic_checks_wait_while_an_index_is_rebuilt_and_one_runs_after(
     checking.check_accounts(None)
     assert started == [] and not checking.checking  # the timer's turn is skipped
     checking.rebuild_running(False)
-    assert started == ["automatic"]  # one check when it is done
+    assert started == []  # a rebuild checks nothing by itself; the next refresh does (D-300)
     wait(qtbot, lambda: not checking.checking and world.backend._pending == {})  # noqa: SLF001
 
 

@@ -12,9 +12,10 @@ from chrono_mail.sync.announce import SILENT, Announcer
 from chrono_mail.sync.pop3_state import DownloadRecord, Pop3State
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3_fetch.py 4.2.428"
+__version__ = "pop3_fetch.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: receive_only, the first fill of a new account (D-300): downloads only, never a delete on the server whatever the account says
 # v4.2.428: the downloading account goes with each index entry; the accounts of a whole check are recorded in one write (the receiver, held)
 # v4.2.418: the downloading account is recorded with the message before it is indexed (D-292)
 # v4.2.417: receiving: the account that downloads, kept with each message's index entry (the Account column, D-292)
@@ -86,6 +87,7 @@ def fetch_pop3(
     step: Step | None = None,
     announcer: Announcer = SILENT,
     receiving: str = "",
+    receive_only: bool = False,
 ) -> FetchReport:
     """Download new messages through a connected client.
 
@@ -95,6 +97,8 @@ def fetch_pop3(
     the server; a failure of the connection ends the run and keeps everything done so far.
     With already_here, a message that is already in the store is recorded with the store id of that copy instead of
     being stored again; the account's delete policy then treats it like any downloaded message.
+    receive_only (the first fill of a new account, D-300): the delete policy is not applied, so nothing is deleted on the server; the next
+    normal check applies it.
     """
     run = _Run()
     try:
@@ -114,7 +118,10 @@ def fetch_pop3(
                 if progress is not None:
                     progress(position, len(new))
                 _download_one(client, store, index, state, inbox, options, maximum_message_bytes, now, checkpoint, run, number, unique_id, sizes.get(number), already_here, announcer, receiving)
-        _apply_policy(store, state, options, now, run, on_server)
+        if receive_only:
+            run.to_delete.clear()  # a message is put here when downloaded with "delete after download": never in a first fill
+        else:
+            _apply_policy(store, state, options, now, run, on_server)
         if run.to_delete:
             if step is not None:
                 step("Deleting messages on the server")

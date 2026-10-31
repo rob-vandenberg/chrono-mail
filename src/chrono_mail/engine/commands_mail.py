@@ -36,9 +36,11 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.2.441"
+__version__ = "commands_mail.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: mail.first-fill, the first fill of a new account (D-300): only receives; POP3 deletes nothing on the server, IMAP sends
+#           nothing to it and runs no junk filter or rules there (they move mail on the server)
 # v4.2.441: mail.send names the outgoing server when its certificate could not be verified (certificate), so the window asks (D-299)
 # v4.2.432: the Contact sort judges every row by the person the list shows (shows_recipients), one rule for the whole list (D-295)
 # v4.2.430: addresses shown to the window written so they can be read back (written_address); a row carries to_shown; the Contact sort takes the first address from the address columns, never the names read back
@@ -241,7 +243,18 @@ class FetchResult:
 
 @talks_to_servers  # a restore waits for it and holds it back meanwhile (RV-60)
 def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
-    with open_mailbox(engine, parameters.account) as mailbox:
+    return _fetch(engine, parameters.account, receive_only=False)
+
+
+@talks_to_servers
+def mail_first_fill(engine: Engine, parameters: AccountParameters) -> FetchResult:
+    """The first fill of a new account (D-300): only what the server has comes here; nothing is sent, deleted or changed on the server, nothing
+    removed here. The next normal check does the rest (POP3: the account's delete policy; IMAP: the two-way comparison)."""
+    return _fetch(engine, parameters.account, receive_only=True)
+
+
+def _fetch(engine: Engine, account: str, receive_only: bool) -> FetchResult:
+    with open_mailbox(engine, account) as mailbox:
         settings = mailbox.settings
         if settings.account.kind is AccountKind.LOCAL:
             raise UsageError("Local Folders has no server: there is no mail to fetch")
@@ -249,7 +262,7 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
         if password is None:
             raise ConfigurationError("No password is stored for this account")
         if settings.account.kind is AccountKind.IMAP:
-            return _imap_fetch(engine, mailbox, password)
+            return _imap_fetch(engine, mailbox, password, receive_only=receive_only)
         state = Pop3State(engine.directories.pop3_state_file(mailbox.account_id), durable=engine.durable)
         inbox = mailbox.role_folder(FolderRole.INBOX)
         known = known_messages(mailbox) if settings.skip_known_mail else None  # an imported account: its mail may be here already
@@ -272,6 +285,7 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
                 progress=downloading, already_here=already_here if known is not None else None,
                 step=lambda text: engine.activity(account_id, "receive", text, None, None), announcer=MailboxAnnouncer(mailbox),
                 receiving=account_id,  # the account that received each new message, recorded with it (D-292)
+                receive_only=receive_only,
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
         if report.new_references:
@@ -297,8 +311,11 @@ def mail_fetch(engine: Engine, parameters: AccountParameters) -> FetchResult:
     )
 
 
-def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tuple[tuple[tuple[str, ...], str], ...] = ()) -> FetchResult:
-    """mail.fetch for an IMAP account: the two-way sync of store and server (confirmed: the person's answers for blocked folders)."""
+def _imap_fetch(
+    engine: Engine, mailbox: Mailbox, password: str, confirmed: tuple[tuple[tuple[str, ...], str], ...] = (), receive_only: bool = False,
+) -> FetchResult:
+    """mail.fetch for an IMAP account: the two-way sync of store and server (confirmed: the person's answers for blocked folders; receive_only:
+    the first fill, D-300, which only downloads and leaves the junk filter and the rules out, as they move mail on the server)."""
     link = engine.imap_link(mailbox.account_id)
     with link.lock:  # the actions done on the server first wait until the sync is done, and the other way round
         link.folders = None  # the sync may make, renumber or forget folders
@@ -317,7 +334,7 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
         with ImapClient(mailbox.settings.account.incoming, password, ssl_context=engine.tls_context(mailbox.settings)) as client:
             engine.activity(account_id, "receive", "Connected", None, None)
             report = sync_imap(
-                client, mailbox.store, mailbox.index, state, ImapSyncOptions(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES, confirmed=confirmed),
+                client, mailbox.store, mailbox.index, state, ImapSyncOptions(maximum_message_bytes=MAXIMUM_MESSAGE_BYTES, confirmed=confirmed, receive_only=receive_only),
                 progress=downloading, step=lambda text: engine.activity(account_id, "receive", text, None, None), announcer=announcer,
             )
         engine.activity(account_id, "receive", "Disconnected", None, None)
@@ -327,9 +344,10 @@ def _imap_fetch(engine: Engine, mailbox: Mailbox, password: str, confirmed: tupl
     if waiting_marker(engine, account_id).exists():
         engine.report(Change("waiting_changed", account_id))  # what waited may have gone: the window asks again
     inbox = mailbox.role_folder(FolderRole.INBOX)
-    if report.new_references:
+    if report.new_references and not receive_only:
         engine.activity(account_id, "receive", "Applying rules", None, None)
-    kept, junked = filter_new(mailbox, [reference for reference in report.new_references if reference.folder_path == inbox])  # junk first (D-238)
+    arrived: list[MessageRef] = [] if receive_only else [reference for reference in report.new_references if reference.folder_path == inbox]
+    kept, junked = filter_new(mailbox, arrived)  # junk first (D-238)
     ruled = apply_to_new(engine, mailbox, kept)
     notes = (f"{item.folder}: {item.note}" for item in report.folders if item.note and item.blocked is None)  # a blocked folder is a question, not an error
     remarks = (*report.failed, *report.notes, *notes, *junked.failed, *ruled.failed)
@@ -1349,6 +1367,7 @@ MESSAGE_COMPOSE: TypedCommand[ComposeParameters, ComposeResult] = TypedCommand("
 MAIL_SEND: TypedCommand[SendParameters, SendResult] = TypedCommand("mail.send", SendParameters, SendResult)
 MESSAGE_DELETE: TypedCommand[DeleteParameters, DeleteResult] = TypedCommand("message.delete", DeleteParameters, DeleteResult)
 MAIL_FETCH: TypedCommand[AccountParameters, FetchResult] = TypedCommand("mail.fetch", AccountParameters, FetchResult)
+MAIL_FIRST_FILL: TypedCommand[AccountParameters, FetchResult] = TypedCommand("mail.first-fill", AccountParameters, FetchResult)
 MAIL_SETTLE: TypedCommand[SettleParameters, FetchResult] = TypedCommand("mail.settle", SettleParameters, FetchResult)
 MESSAGE_PLACES: TypedCommand[PlacesParameters, PlacesResult] = TypedCommand("message.places", PlacesParameters, PlacesResult)
 MESSAGE_MOVE: TypedCommand[TransferParameters, TransferResult] = TypedCommand("message.move", TransferParameters, TransferResult)
@@ -1359,6 +1378,7 @@ MESSAGE_SEARCH: TypedCommand[SearchParameters, tuple[MessageRow, ...]] = TypedCo
 
 def register(registry: CommandRegistry) -> None:
     registry.register(MAIL_FETCH.id, "Download new messages from the server (POP3), or synchronise with it (IMAP)", AccountParameters, mail_fetch, doing="Checking for new mail")  # each change is told as a fact (D-150)
+    registry.register(MAIL_FIRST_FILL.id, "Download the mail of a new account only: nothing is sent, deleted or changed on the server", AccountParameters, mail_first_fill, doing="Receiving the mail of a new account")
     registry.register(MAIL_SETTLE.id, "Answer for an IMAP folder that a safety rule held back (may delete on the server or here)", SettleParameters, mail_settle, destructive=True, doing="Synchronising a folder")
     registry.register(MAIL_SEND.id, "Send a message (a copy stays in Outbox until it is sent, then moves to Sent)", SendParameters, mail_send, doing="Sending a message")
     registry.register("message.list", "List the messages of a folder", ListParameters, message_list, doing="Loading the messages")

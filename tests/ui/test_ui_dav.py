@@ -15,9 +15,10 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 4.2.439"
+__version__ = "test_ui_dav.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
 # v4.2.439: the calendar window is a part of the Add window (D-298): the sidebars open it on CalDAV or CardDAV
 # v2.4.333: the counts in the texts are written one way ("1 message", "3 messages"), never "message(s)"
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
@@ -176,7 +177,7 @@ def test_the_window_synchronises_the_calendars_when_mail_is_checked(world: World
         world.call("account.set-dav", account=account, url=server.url, username="ann", password="secret")
         world.window.reload_accounts(select_saved=False)
         wait(qtbot, lambda: bool(world.window.mail_state.accounts) and bool(getattr(world.window.mail_state.accounts[0], "dav_url", "")))  # noqa: SLF001
-        world.window.checking.check_mail()
+        world.window.checking.check_accounts(None)
         wait(qtbot, lambda: len([item for item in world.call("collection.list") if item.account == account]) == 3)
         wait(qtbot, lambda: not world.window.checking.dav_syncing)  # noqa: SLF001
         assert [item.name for item in world.call("contact.list").contacts] == ["Ann Lee"]

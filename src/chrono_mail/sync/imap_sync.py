@@ -16,9 +16,11 @@ from chrono_mail.sync.imap_pending import send_pending
 from chrono_mail.sync.mailconflicts import FOLDER_REFUSED, MARKS_REFUSED, MESSAGE_REFUSED, MOVE_REFUSED, held, held_under, record
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_sync.py 4.2.428"
+__version__ = "imap_sync.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: receive_only, the first fill of a new account (D-300): folders opened read-only, only downloads; nothing sent to the server,
+#           nothing made, moved, deleted or marked there, nothing removed here, no checkpoint (the next full check asks everything)
 # v4.2.428: the accounts of a folder's downloaded messages are recorded in one write (the index's receiver, held), never one per message
 # v4.2.418: a message downloaded is recorded as received by the IMAP account (D-292)
 # v4.2.387: a folder the server does not mark is known by its name in the language of the server's folders (core roles_by_name, ten
@@ -94,6 +96,8 @@ class ImapSyncOptions:
     # The person's answer for a folder that a safety rule blocked: (local folder, choice). Choices: "delete_on_server" or
     # "restore_here" when most of it is missing here, "remove_here" or "keep_here" when most of it is gone from the server.
     confirmed: tuple[tuple[tuple[str, ...], str], ...] = ()
+    # The first fill of a new account (D-300): only what the server has comes here; nothing is sent to the server, nothing removed here.
+    receive_only: bool = False
 
 
 BLOCKED_MISSING_HERE: str = "missing_here"  # most mapped messages of the folder are missing from the store
@@ -384,7 +388,7 @@ def sync_imap(
             step("Listing folders")
         client.enable_changes()  # the server tells what changed in a folder, where it can (R-09)
         listed = client.list_folders()
-        if state.pending and send_pending(client, store, state, listed, notes):  # renamed or deleted here offline: on the server first (R-31)
+        if state.pending and not options.receive_only and send_pending(client, store, state, listed, notes):  # renamed or deleted here offline: on the server first (R-31)
             listed = client.list_folders()
         subscribed = frozenset(entry.name for entry in client.list_folders(subscribed_only=True))
         for name in sorted(state.forced & subscribed):
@@ -394,14 +398,15 @@ def sync_imap(
         waiting = {change.server_name for change in state.pending.values()}  # still waiting (a conflict): never made here again under that name
         plans = [plan for plan in plans if plan.server_name not in state.hidden and plan.server_name not in waiting]
         selectable = frozenset(entry.name for entry in listed if "\\noselect" not in entry.attributes and "\\nonexistent" not in entry.attributes)
-        leaving = leaving_folders(store, state, selectable, subscribed, {plan.local_path for plan in plans}, waiting, LOCAL_ONLY)
+        leaving: list[Planned] = [] if options.receive_only else leaving_folders(store, state, selectable, subscribed, {plan.local_path for plan in plans}, waiting, LOCAL_ONLY)
         plans.extend(FolderPlan(plan.server_name, plan.local_path, plan.role) for plan in leaving)  # one last time (R-34)
         held_messages, held_folders = held(store)
-        followed = follow_server_folders(  # before anything is made here: a renamed folder is renamed, not made anew (R-30)
-            client, store, index, state, [Planned(plan.server_name, plan.local_path, plan.role) for plan in plans], held_folders, LOCAL_ONLY,
-            _marks_changed, announcer,
-        )
-        notes.extend(followed.notes)
+        if not options.receive_only:  # a first fill takes nothing away here
+            followed = follow_server_folders(  # before anything is made here: a renamed folder is renamed, not made anew (R-30)
+                client, store, index, state, [Planned(plan.server_name, plan.local_path, plan.role) for plan in plans], held_folders, LOCAL_ONLY,
+                _marks_changed, announcer,
+            )
+            notes.extend(followed.notes)
         existing = {folder.path for folder in store.list_folders()}
         plans = _forget_deleted_folders(store, state, plans, existing, notes)
         for plan in plans:
@@ -417,9 +422,11 @@ def sync_imap(
         held_messages, held_folders = held(store)
         for plan in plans:
             state.set_server_name(plan.local_path, plan.server_name)
-        plans.extend(_create_on_server(client, store, state, listed, plans, notes, held_folders))
+        if not options.receive_only:  # a first fill makes nothing on the server
+            plans.extend(_create_on_server(client, store, state, listed, plans, notes, held_folders))
         here = _Here.read(store)  # once per check (R-09)
-        moved = _move_pass(client, store, index, state, plans, notes, held_messages, here.locations)
+        if not options.receive_only:  # ... and moves nothing there
+            moved = _move_pass(client, store, index, state, plans, notes, held_messages, here.locations)
         for plan in plans:
             counts = _Counts(announcer=announcer)
             if step is not None:
@@ -536,7 +543,7 @@ def _sync_folder(
 ) -> None:
     local = plan.local_path
     here = here if here is not None else _Here.read(store)
-    info = client.select(plan.server_name)
+    info = client.select(plan.server_name, read_only=options.receive_only)  # a first fill only looks (EXAMINE)
     previous = state.validity.get(local)
     orphans: set[str] = set()
     if previous is not None and previous != info.uid_validity:
@@ -560,13 +567,16 @@ def _sync_folder(
     if not view.keywords and any(store_id in tags for store_id in view.stored) and counts.note is None:
         counts.note = "the server keeps no tags for this folder; its tags stay on this computer"
     choice = dict(options.confirmed).get(local)
-    _remove_gone(store, index, state, view, counts, choice)
-    _push_expunges(client, store, state, view, counts, choice)
-    _push_flags(client, store, index, state, view, counts)
+    if not options.receive_only:  # a first fill removes nothing here and sends nothing
+        _remove_gone(store, index, state, view, counts, choice)
+        _push_expunges(client, store, state, view, counts, choice)
+        _push_flags(client, store, index, state, view, counts)
     _update_flags(store, index, state, view, counts)
     pool = _unmapped(store, index, state, view)
     new = sorted(uid for uid in on_server if uid not in state.folder_entries(local))
     _download(client, store, index, state, options, view, new, pool, counts, progress)
+    if options.receive_only:
+        return  # no checkpoint: the next full check asks the server for everything and does what a first fill leaves out
     leftovers = [store_id for store_id in pool if store_id in orphans]
     if leftovers:
         _recover(store, index, local, leftovers, counts, view.locations)

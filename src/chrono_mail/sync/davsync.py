@@ -52,9 +52,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davsync.py 4.2.441"
+__version__ = "davsync.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: push False is the first fill of a new account (D-300): nothing sent (items, names, colours, merges), nothing removed here
 # v4.2.441: a certificate that could not be verified stops the synchronisation of that account, as a refused login does: the window asks (D-299)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -244,7 +245,9 @@ def _first_look(local: CollectionInfo, remote: RemoteCollection, report: DavRepo
     return look
 
 
-def _follow(client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, kept: CollectionLook | None, report: DavReport) -> CollectionInfo:
+def _follow(
+    client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, kept: CollectionLook | None, report: DavReport, push: bool = True,
+) -> CollectionInfo:
     """Bring a collection's name and colour here in line with the server and the account's kept look: the server's when nothing is kept; a change
     waiting here is sent when the server still has what it had then; a clash, or a name the server refused, is a sync conflict and nothing is sent
     (D-192); a colour the server does not take is kept here (D-201)."""
@@ -258,7 +261,7 @@ def _follow(client: DavClient, store: PimStore, local: CollectionInfo, remote: R
         (Clash("colour", "Colour", colour, remote.colour),) if colour_step == "clash" else ()
     )
     refused = ""
-    if name_step == "send" or colour_step == "send":
+    if push and (name_step == "send" or colour_step == "send"):  # without push a waiting name or colour stays waiting
         outcomes, reason = send_look(client, remote.href, name if name_step == "send" else None, colour if colour_step == "send" else None)
         if outcomes.get("name") == DONE:
             name_state, base_name = LOOK_FOLLOWS, ""
@@ -311,7 +314,8 @@ def sync_dav(
     """Bring the calendars, task lists and address books of an account in line with its server, both ways. A server that cannot be reached or does not
     accept the login stops it; trouble with one collection or item is reported and the rest goes on. Nothing is deleted on either side unless the other
     side shows it was deleted there (or, for the server side, the item was deleted here and the server still has the version we knew). The folders the
-    account leaves out (their folder_key) are not looked at; every other folder, also one made on the server later, is kept in step (D-183)."""
+    account leaves out (their folder_key) are not looked at; every other folder, also one made on the server later, is kept in step (D-183).
+    push False is the first fill of a new account (D-300): only what the server has comes here; nothing is sent and nothing removed here."""
     report = DavReport()
     state = DavState(state_path, durable)
     if push:
@@ -335,7 +339,7 @@ def sync_dav(
             elif local.read_only != remote.read_only:
                 local = store.update_collection(local.collection_id, read_only=remote.read_only)
             key = folder_key(remote)
-            local = _follow(client, store, local, remote, report.looks[key] if key in report.looks else (looks or {}).get(key), report)
+            local = _follow(client, store, local, remote, report.looks[key] if key in report.looks else (looks or {}).get(key), report, push)
             report.collections += 1
             _sync_collection(client, store, local, remote, state, report, push)
         except (AuthenticationError, CertificateError):  # the whole synchronisation stops: the window asks (D-299)
@@ -344,7 +348,7 @@ def sync_dav(
             report.errors.append(f"{remote.name}: {error}")
         finally:
             state.save()
-    for info in store.collections():
+    for info in store.collections() if push else ():  # a first fill takes nothing away here
         href = canonical_href(info.server_value("href"))
         if href and (href, info.server_value("component")) not in wanted_keys:
             _gone_from_list(client, store, info, state, looks or {}, report)
@@ -491,7 +495,7 @@ def matching_collection(store: PimStore, key: str) -> CollectionInfo | None:
 
 def _sync_collection(client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, state: DavState, report: DavReport, push: bool) -> None:
     collection_state = state.get(local.collection_id)
-    _pull(client, store, local, remote, collection_state, report)
+    _pull(client, store, local, remote, collection_state, report, remove_here=push)
     state.save()
     if push and not remote.read_only:
         _push(client, store, local, remote, collection_state, report)
@@ -516,7 +520,9 @@ def _listing(client: DavClient, remote: RemoteCollection, collection_state: Coll
     return client.items(remote), [], remote.ctag, True
 
 
-def _pull(client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, collection_state: CollectionState, report: DavReport) -> None:
+def _pull(
+    client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, collection_state: CollectionState, report: DavReport, remove_here: bool = True,
+) -> None:
     listing = _listing(client, remote, collection_state)
     if listing is None:
         return
@@ -553,10 +559,13 @@ def _pull(client: DavClient, store: PimStore, local: CollectionInfo, remote: Rem
         if not _component_present(local.kind, text):
             continue  # an item of the other kind in a calendar that holds both
         try:
-            _receive(client, store, local, collection_state, href, etag, text, report)
+            if not _receive(client, store, local, collection_state, href, etag, text, report, send=remove_here):
+                complete_fetch = False  # left for the next full synchronisation: the listing is not remembered, so it comes again
         except StorageError as error:
             report.errors.append(f"{remote.name}: {error}")
             complete_fetch = False
+    if not remove_here and removed:
+        removed, complete_fetch = list[str](), False  # a first fill removes nothing here; the listing is not remembered, so the next sync sees them again
     for href in removed:
         link = links.pop(href, None)
         if link is None:
@@ -612,7 +621,9 @@ def weigh(
 
 def _receive(
     client: DavClient, store: PimStore, local: CollectionInfo, collection_state: CollectionState, href: str, etag: str, text: str, report: DavReport,
-) -> None:
+    send: bool = True,
+) -> bool:
+    """Take one item of the server in. False only when it was left for the next full synchronisation (send False and a merge needed)."""
     links = collection_state.links
     collection = local.collection_id
     link = links.get(href)
@@ -633,19 +644,21 @@ def _receive(
             current = None
     if link is not None and current is None and link.item_id not in store.item_ids(collection):
         if digest_of(text) == link.digest:
-            return  # unchanged there (a server that lists no version tags): the push sends the delete
+            return True  # unchanged there (a server that lists no version tags): the push sends the delete
         # deleted here (offline) and changed on the server since: the person decides, as for a delete made online (D-194); nothing is made here,
         # and the delete is not sent while the conflict is open (a damaged item here is not "deleted": it is not in this branch)
         record(store, new_conflict(collection, href, "", local.kind.value, CHANGED_ON_SERVER, title_of(local.kind, text), etag, text))
         report.conflicts += 1
-        return
+        return True
     if item_id is not None and current is not None and current != text and (known_digest is None or digest_of(current) != known_digest):
         # changed here as well: merged field by field, or a sync conflict the person settles (D-194)
+        if not send:
+            return False  # a first fill sends no merge (D-300): left as it is and unlinked, so the next full synchronisation weighs it
         if weigh(client, store, local, collection_state, href, item_id, current, etag, text) == "conflict":
             report.conflicts += 1
         else:
             report.pulled += 1
-        return
+        return True
     if current is not None and current != text:
         item_id = store.put(collection, text, item_id)
         report.pulled += 1
@@ -653,9 +666,10 @@ def _receive(
         item_id = store.put(collection, text)
         report.pulled += 1
     if item_id is None:
-        return
+        return True
     links[href] = ItemLink(item_id, etag, digest_of(text))
     drop_base(store, collection, item_id)
+    return True
 
 
 def _push(client: DavClient, store: PimStore, local: CollectionInfo, remote: RemoteCollection, collection_state: CollectionState, report: DavReport) -> None:

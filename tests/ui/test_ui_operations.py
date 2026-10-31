@@ -11,9 +11,10 @@ from chrono_mail.ui.settingsdialog import SettingsContext, SettingsDialog
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_operations.py 4.0.375"
+__version__ = "test_ui_operations.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
 # v4.0.375: the text of the empty Errors page is the form's (D-276)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.2.253: the Settings window hands back the typed settings (chosen(), R-12)
@@ -94,7 +95,7 @@ def test_it_does_not_open_on_refresh_when_that_is_off(qtbot: QtBot, world: World
 def test_an_automatic_check_opens_it_without_the_focus(qtbot: QtBot, world: World) -> None:
     ready(qtbot, world)
     shown = opened(world.window)
-    world.window.checking.check_mail()  # the timer and the push check this way
+    world.window.checking.check_accounts(None)  # the timer and the push check this way
     idle(qtbot, world)
     assert shown == [False] and not world.window.operations.isVisible()  # opened quietly, closed when it was done
 
@@ -112,7 +113,7 @@ def test_an_error_opens_it_and_keeps_it_open(qtbot: QtBot, world: World) -> None
     ready(qtbot, world)
     world.engine.passwords.set(world.account_id, ServerRole.INCOMING, "wrong")
     world.window.settings.setValue("operations_show_on_send_receive", False)
-    world.window.checking.check_mail()  # automatic, and the window does not open for send and receive
+    world.window.checking.check_accounts(None)  # automatic, and the window does not open for send and receive
     idle(qtbot, world)
     operations = world.window.operations
     assert operations.isVisible()  # the error opened it, and it stays although it hides when done
@@ -129,7 +130,7 @@ def test_without_show_on_error_an_error_does_not_open_it_and_does_not_keep_it(qt
     world.window.settings.setValue("operations_show_on_error", False)
     world.window.settings.setValue("operations_show_on_send_receive", False)
     shown = opened(world.window)
-    world.window.checking.check_mail()
+    world.window.checking.check_accounts(None)
     idle(qtbot, world)
     assert not shown and len(world.window.operations.error_texts()) == 1
     world.window.settings.setValue("operations_show_on_send_receive", True)

@@ -59,9 +59,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.444"
+__version__ = "settingsdialog.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: calendars_given: Edit account linked or changed a calendar server; only then its calendars get a first fill (D-300)
 # v4.2.444: Settings > Accounts writes each row with account_line, shared with the For list of a calendar server
 # v4.2.436: Message list: the column list gets the open kind of folder's stored and fresh-install columns, its name for the hover
 #           texts and whether Apply to all can be used (PickerSetup), for its Apply to all, Default and Reset (D-228); chosen_columns
@@ -285,6 +286,7 @@ class SettingsDialog(QDialog):
     the safety of the stored mail and the keyboard. Nothing is changed until OK; OK writes everything to the settings."""
 
     accounts_changed = Signal()
+    calendars_given = Signal(str)  # Edit account gave the account (its id) a calendar server or changed it: its first fill (D-300)
     add_account_requested = Signal()
     restore_key_requested = Signal()
     rebuild_requested = Signal(object)  # Rebuild the search index: the main window rebuilds and calls this back with a line per place (D-229)
@@ -902,7 +904,10 @@ class SettingsDialog(QDialog):
         if dialog.exec() == AccountEditDialog.DialogCode.Accepted:
             self.status.setText("Account saved")
             self.reload()
-            self.accounts_changed.emit()
+            if dialog.dav_changed:
+                self.calendars_given.emit(account.account_id)
+            else:
+                self.accounts_changed.emit()
 
     def remove_selected(self) -> None:
         account = self._selected()

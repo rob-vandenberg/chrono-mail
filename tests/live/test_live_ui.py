@@ -18,9 +18,10 @@ from tests.live.account import LiveAccount
 from tests.ui.world import Dialogs, dialogs, row_of, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_ui.py 0.5.165"
+__version__ = "test_live_ui.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: the check is the mail checking part's check_accounts(None) (window.check_mail was long gone)
 # v0.5.165: the account trusts the server's certificate fingerprint when the live settings give one (a self-signed server such as Kerio)
 # v0.5.164: rows of the message list are asked for with their column (the list has no index method of its own any more)
 # v0.4.122: The Trash list has group header rows: they are skipped when the message is looked for
@@ -76,7 +77,7 @@ def test_send_receive_read_and_delete_through_the_window(live_window: tuple[Main
         assert not dialogs.shown or all(kind != "warning" for kind, _, _ in dialogs.shown), dialogs.shown
 
         def arrived() -> bool:
-            window.check_mail()
+            window.checking.check_accounts(None)
             qtbot.wait(3000)
             return any(token in str(getattr(row_of(window, row), "subject", "")) for row in range(window.list_model.rowCount()) if row_of(window, row) is not None)
 

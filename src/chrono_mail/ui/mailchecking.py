@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QMessageBox, QWidget
 from chrono_mail.core import CertificateError, CertificateTrouble, ChronoMailError
 from chrono_mail.engine.commands_accounts import WALLET_LABEL, AccountParameters, NoParameters, WalletLabelResult
 from chrono_mail.engine.commands_dav import DAV_SYNC, DavSyncSummary, SyncParameters
-from chrono_mail.engine.commands_mail import MAIL_FETCH, MAIL_SETTLE, BlockedFolder, FetchResult, SettleParameters
+from chrono_mail.engine.commands_mail import MAIL_FETCH, MAIL_FIRST_FILL, MAIL_SETTLE, BlockedFolder, FetchResult, SettleParameters
 from chrono_mail.engine.commands_outbox import MAIL_SEND_OUTBOX, SendOutboxParameters, SendOutboxResult
 from chrono_mail.engine.commands_schedule import MAIL_SEND_DUE, MESSAGE_WAKE, SendDueParameters, SendDueResult, WakeParameters, WakeResult
 from chrono_mail.engine.commands_watch import MAIL_WAIT, WaitParameters, WaitResult
@@ -25,9 +25,13 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.2.442"
+__version__ = "mailchecking.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: first_fill: a new account only receives (mail.first-fill, dav.sync receive_only), then the automatic refresh's clocks start again
+#           from zero; its push waits for the next full check; check_mail removed: nothing checks by itself after a rebuild, a restore or an
+#           import; no automatic calendar sync during an import; the server's new-mail signal leaves the fresh accounts out and,
+#           during an import or a rebuild, is checked when that ends, never after a restore (D-300)
 # v4.2.442: ask_after_send: a message window's Send stopped by a certificate asks once that window has closed; Connect sends that message (D-299)
 # v4.2.441: a Refresh that meets a server whose certificate could not be verified (receiving, sending, the calendar sync) asks: Verify
 #           certificate over the main window; Connect does that account's work again (UR-05, D-299)
@@ -107,6 +111,11 @@ class MailChecking(QObject):
         self.rebuilding: bool = False  # an index is rebuilt or filled in: the automatic checks wait (D-229)
         self._held_refresh: str | None = None  # the choice of a refresh the rebuild held back (send_receive or receive): it runs afterwards
         self.dav_syncing: bool = False
+        self._mail_fills: set[str] = set()  # new accounts whose first fill waits for a running check (D-300)
+        self._news_held: bool = False  # a server told of new mail while an import or a rebuild held the checks back: checked after it
+        self._calendar_fills: set[str] = set()  # ... for a running calendar sync
+        self.fresh: set[str] = set()  # new accounts not yet taken in by a full refresh: no new-mail signal checks them, nor waits for theirs (D-300)
+        self._known_accounts: set[str] | None = None  # the accounts of the last load (None before the first)
         self.watching: set[str] = set()  # accounts with a wait for new mail in progress
         self.no_push: set[str] = set()  # accounts whose server cannot tell about new mail
         self.quitting: bool = False
@@ -135,7 +144,12 @@ class MailChecking(QObject):
     # --- timers and waits ------------------------------------------------------------------------------------------
 
     def accounts_loaded(self) -> None:
-        """The accounts were loaded: the waits for new mail and the timers of the accounts follow them."""
+        """The accounts were loaded: the waits for new mail and the timers of the accounts follow them. An account that came since the last
+        load (added, imported, restored) is fresh until the next full refresh takes it in (D-300)."""
+        current = {account.account_id for account in self._state.all_accounts}
+        if self._known_accounts is not None:
+            self.fresh |= current - self._known_accounts
+        self._known_accounts = current
         self.start_watchers()
         self.apply_account_timers()
 
@@ -162,7 +176,7 @@ class MailChecking(QObject):
         if not self._auto.isChecked():
             return
         for account in self._state.mail_accounts():
-            if account.kind == "imap":
+            if account.kind == "imap" and account.account_id not in self.fresh:
                 self._watch(account.account_id)
 
     def _watch(self, account_id: str) -> None:
@@ -177,7 +191,7 @@ class MailChecking(QObject):
                 return
             if self._auto.isChecked() and not self.quitting:
                 if result.changed and self._prefs.read().scheduled_refresh != "send":
-                    self.check_accounts(None)  # news of incoming mail: only fetched (never when the person chose to send only)
+                    self._news_of_mail()  # news of incoming mail: fetched (never when the person chose to send only)
                 self._watch(account_id)
 
         def failed(error: ChronoMailError) -> None:
@@ -227,27 +241,64 @@ class MailChecking(QObject):
         self._backend.ask(MAIL_SEND_DUE, SendDueParameters(), sent, lambda error: self._status.report("Scheduled messages", error), owner=self)
 
     def rebuild_running(self, running: bool) -> None:
-        """An index is rebuilt or filled in: the timers and the push skip their turn (Refresh still works); when it ends, one check (D-229):
-        the refresh it held back with that refresh's own choice (the one at start, a timer's), else one that only receives (D-245)."""
+        """An index is rebuilt or filled in: the timers and the push skip their turn (Refresh still works); when it ends, the refresh it held back
+        runs with its own choice (the one at start, a timer's); nothing else: a rebuild never checks by itself (D-229, D-300)."""
         was, self.rebuilding = self.rebuilding, running
         if was and not running:
             held, self._held_refresh = self._held_refresh, None
+            news, self._news_held = self._news_held, False
             if held is not None:
-                self.scheduled_refresh(None, how=held)
-            else:
-                self.check_mail()
+                self.scheduled_refresh(None, how=held)  # it fetches what the news was about too
+            elif news:
+                self._news_of_mail()  # a server told of new mail meanwhile, and tells it only once
+
+    def restore_running(self, running: bool) -> None:
+        """A restore starts or ends: no mail checks meanwhile, as during an import; news of new mail that came meanwhile is not checked after
+        it, since the restore changed the accounts it was about and nothing checks by itself after a restore (D-300)."""
+        if not running:
+            self._news_held = False  # before the end of the hold: nothing is checked after it
+        self.import_running(running)
 
     def import_running(self, running: bool) -> None:
         """An import starts or ends: no mail checks meanwhile, and Refresh is off."""
         self.importing = running
         self._refresh.setEnabled(not running and not self.checking)
+        if not running and self._news_held:
+            self._news_held = False
+            self._news_of_mail()  # a server told of new mail meanwhile, and tells it only once
 
     # --- send and receive ----------------------------------------------------------------------------------------------
 
-    def check_mail(self) -> None:
-        """The check after an index rebuild, an import, a restore or a first account: it brings the servers' mail in and never sends the
-        Outbox, which only the person, the refresh at start and the timers do (D-245: a restore of an old backup sent its old Outbox)."""
-        self.check_accounts(None)
+    def _news_of_mail(self) -> None:
+        """An IMAP server told of new mail: every account is checked, except the fresh ones, which keep their whole interval after their first
+        fill (D-300). During an import or a rebuild it is remembered and checked when that ends, since the server tells it only once."""
+        if self.quitting:
+            return
+        if self.importing or self.rebuilding:
+            self._news_held = True
+            return
+        mail = set(self._state.mail_account_ids()) - self.fresh
+        calendars_only = {account.account_id for account in self._state.all_accounts if account.kind == "dav"} - self.fresh
+        self.check_accounts(mail, also_calendars=calendars_only)
+
+    def first_fill(self, mail: set[str], calendars: set[str]) -> None:
+        """The first fill of new accounts (D-300): only what their servers have comes here, nothing is sent, deleted or changed there, the
+        Outbox is never touched. When it is done the automatic refresh's clocks start again from zero, so the first full refresh comes a
+        whole interval later; until that full refresh they are fresh. mail: the accounts whose mail comes; calendars: whose calendars."""
+        self.fresh |= mail | {account.account_id for account in self._state.all_accounts if account.kind == "dav" and account.account_id in calendars}
+        if mail:
+            self.check_accounts(mail, first_fill=True)
+        if calendars:
+            self.sync_calendars(calendars, receive_only=True)
+
+    def _restart_clocks(self) -> None:
+        """After a first fill: the general timer and every account's own one count again from now (D-300)."""
+        if self.quitting:
+            return
+        if self._auto.isChecked():
+            self.timer.start(self.auto_minutes() * 60 * 1000)
+        for timer in self.account_timers.values():
+            timer.start(timer.interval())
 
     def start_refresh(self) -> None:
         """The refresh when the program starts: what Settings > General chose for it."""
@@ -352,22 +403,31 @@ class MailChecking(QObject):
         due = {account.account_id for account in self._state.mail_accounts() if account.check_minutes == 0}
         self.scheduled_refresh(due, also_calendars=calendars_only)
 
-    def check_accounts(self, only: set[str] | None, manual: bool = False, new_round: bool = True, also_calendars: set[str] | None = None) -> None:
+    def check_accounts(
+        self, only: set[str] | None, manual: bool = False, new_round: bool = True, also_calendars: set[str] | None = None, first_fill: bool = False,
+    ) -> None:
         """Check these accounts (all when None) for new mail, and bring their calendars, task lists and address books in step (also_calendars: the
         accounts of calendars only that the general timer adds). Manual: the person asked for it (the Operations window may open); new_round False:
-        it goes on from a send (Refresh), whose rows stay. Nothing is checked while an import runs."""
-        if self.importing or (self.rebuilding and not manual):
-            return  # the timers and the push skip their turn; one check runs when the import or the rebuild is done
+        it goes on from a send (Refresh), whose rows stay. first_fill: new accounts, which only receive (D-300); their calendars are not touched
+        here. Nothing is checked while an import runs."""
+        if self.importing or (self.rebuilding and not (manual or first_fill)):
+            return  # the timers and the push skip their turn; the refresh a rebuild held back runs after it
         self._messages.load_contact_addresses()  # Refresh also brings contacts that came from a server
         mail_ids = set(self._state.mail_account_ids())
         wanted = mail_ids if only is None else only & mail_ids
-        self.sync_calendars(None if only is None else only | (also_calendars or set()))
+        if not first_fill:
+            self.sync_calendars(None if only is None else only | (also_calendars or set()))
+        if self.checking and first_fill:
+            self._mail_fills |= wanted  # it runs when the check under way is done
+            return
         if self.checking or not wanted:
             return
         if new_round:
             self._begin_operations(manual)
         for account_id in sorted(wanted, key=self._state.account_name):
             self.operations.add(account_id, "receive")
+        if not first_fill:
+            self.fresh -= wanted  # a full check of these accounts starts: they are fresh no more (D-300)
         self.checking = True
         self._refresh.setEnabled(False)
         remaining = set(wanted)
@@ -379,6 +439,11 @@ class MailChecking(QObject):
         def finish() -> None:
             self.checking = False
             self._refresh.setEnabled(not self.importing)
+            if first_fill:
+                self._restart_clocks()
+            else:  # a full check: the new accounts it took in may now wait for new mail, and need no first fill any more
+                self._mail_fills -= wanted
+                self.start_watchers()
             if problems:
                 self._status.show("Mail check: " + "; ".join(problems), error=True)
             else:
@@ -393,6 +458,9 @@ class MailChecking(QObject):
                 finally:
                     self._asking_blocked = False
             self._settle_operations()  # new mail came as "mailbox changed": the list and the numbers of that mailbox follow (D-146)
+            waiting, self._mail_fills = self._mail_fills, set()
+            if waiting:
+                self.check_accounts(waiting, first_fill=True)
 
         def make_done(account_id: str) -> Callable[[FetchResult], None]:
             def done(result: FetchResult) -> None:
@@ -414,7 +482,7 @@ class MailChecking(QObject):
         def make_failed(account_id: str) -> Callable[[ChronoMailError], None]:
             def failed(error: ChronoMailError) -> None:
                 if isinstance(error, CertificateError):  # Connect checks that account again (D-299)
-                    self._ask_about(with_account(error.trouble, account_id), lambda: self.check_accounts({account_id}))
+                    self._ask_about(with_account(error.trouble, account_id), lambda: self.check_accounts({account_id}, first_fill=first_fill))
                 problems.append(str(error))
                 self._finish_operation(account_id, "receive", str(error))
                 remaining.discard(account_id)
@@ -424,8 +492,9 @@ class MailChecking(QObject):
             return failed
 
         self._status.show("Checking for mail…")
+        command = MAIL_FIRST_FILL if first_fill else MAIL_FETCH
         for account_id in list(remaining):
-            self._backend.ask(MAIL_FETCH, AccountParameters(account_id), make_done(account_id), make_failed(account_id), owner=self, checking=True)
+            self._backend.ask(command, AccountParameters(account_id), make_done(account_id), make_failed(account_id), owner=self, checking=True)
         self.went_online.emit()
 
     def learn_existing_junk(self) -> None:
@@ -548,13 +617,21 @@ class MailChecking(QObject):
         for page in self._pages.values():
             page.act_refresh.setEnabled(enabled)
 
-    def sync_calendars(self, only: set[str] | None = None, manual: bool = False) -> None:
+    def sync_calendars(self, only: set[str] | None = None, manual: bool = False, receive_only: bool = False) -> None:
         """Bring the calendars, task lists and address books of the accounts that have a server (all, or only these) in step with it, in the
-        background, one synchronisation at a time. Manual (Refresh in a section): the status line says it runs and what came of it."""
+        background, one synchronisation at a time. Manual (Refresh in a section): the status line says it runs and what came of it. receive_only:
+        the first fill of new accounts (D-300), which waits for a synchronisation under way. Never by itself while an import runs."""
+        if self.importing and not manual:
+            return
         accounts = self._state.calendar_accounts(only)
+        if self.dav_syncing and receive_only:
+            self._calendar_fills |= set(accounts)
+            return
         if self.dav_syncing or not accounts:
             return
         self.dav_syncing = True
+        if not receive_only:  # a full synchronisation of these accounts starts: one of calendars only is fresh no more (D-300)
+            self.fresh -= {account.account_id for account in self._state.all_accounts if account.kind == "dav" and account.account_id in accounts}
         self._calendar_buttons(False)  # greyed while it runs, never hidden
         if manual:
             self._status.show(f"{CALENDARS_WORDS}: synchronising…")
@@ -566,7 +643,7 @@ class MailChecking(QObject):
             rows = list(result)
             for row in rows:
                 if row.certificate is not None:  # Connect synchronises that account again (D-299)
-                    self._ask_about(row.certificate, lambda account=row.account: self.sync_calendars({account}, manual))
+                    self._ask_about(row.certificate, lambda account=row.account: self.sync_calendars({account}, manual, receive_only))
             problems = [text for row in rows for text in row.errors]
             pulled = sum(row.pulled for row in rows)
             removed = sum(row.deleted_here for row in rows)
@@ -587,13 +664,23 @@ class MailChecking(QObject):
             if changed_here:
                 for page in self._pages.values():
                     page.refresh()
+            ended()
 
         def failed(error: ChronoMailError) -> None:
             self.dav_syncing = False
             self._calendar_buttons(True)
             self._status.show(f"{CALENDARS_WORDS}: {error}", error=True)
             if isinstance(error, CertificateError):
-                self._ask_about(error.trouble, lambda: self.sync_calendars(only, manual))
+                self._ask_about(error.trouble, lambda: self.sync_calendars(only, manual, receive_only))
+            ended()
 
-        self._backend.ask(DAV_SYNC, SyncParameters() if only is None else SyncParameters(accounts=tuple(accounts)), done, failed, owner=self)
+        def ended() -> None:
+            if receive_only:
+                self._restart_clocks()
+            waiting, self._calendar_fills = self._calendar_fills, set()
+            if waiting:
+                self.sync_calendars(waiting, receive_only=True)
+
+        parameters = SyncParameters(receive_only=receive_only) if only is None else SyncParameters(accounts=tuple(accounts), receive_only=receive_only)
+        self._backend.ask(DAV_SYNC, parameters, done, failed, owner=self)
         self.went_online.emit()

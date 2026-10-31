@@ -20,9 +20,10 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 4.2.431"
+__version__ = "test_ui_import.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: nothing is checked after an import that made no account; the automatic check is check_accounts(None) (D-300)
 # v4.2.431: Import's reason is in its (i), not in a hover text
 # v4.2.391: while the exports are read the bar moves as a busy bar and the (i) notice shows, Import grey with its hover text; both stop at the answer
 # v4.2.390: every Browse with an empty field opens where the last Browse picked, remembered at once (the owner's report)
@@ -300,14 +301,14 @@ def fetches(world: World, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return asked
 
 
-def test_no_mail_is_checked_while_an_import_runs_and_once_when_it_is_done(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_mail_is_checked_while_an_import_runs_nor_after_it(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     window = world.window
     window.start()
     wait(qtbot, lambda: bool(window.mail_state.accounts) and world.backend._pending == {})
     asked = fetches(world, monkeypatch)
     window.checking.import_running(True)  # what the Import window tells when an import starts
     assert not window.act_refresh.isEnabled()
-    window.checking.check_mail()  # the timer and the push
+    window.checking.check_accounts(None)  # the timer and the push
     window.checking.check_accounts({world.account_id})  # an account's own timer
     window.checking.send_and_receive()  # F5 while the action is off does nothing either
     window.checking.send_outbox(manual=True)
@@ -315,8 +316,8 @@ def test_no_mail_is_checked_while_an_import_runs_and_once_when_it_is_done(world:
     window.checking.import_running(False)
     assert window.act_refresh.isEnabled()
     window._after_import()  # what the Import window calls when it is done
-    wait(qtbot, lambda: asked == ["mail.fetch"])  # one check after it, which only receives: an import never sends (D-245)
-    wait(qtbot, lambda: not window.checking.checking and world.backend._pending == {})
+    wait(qtbot, lambda: world.backend._pending == {})
+    assert asked == [] and not window.checking.checking  # no account was made: its POP3 mail comes with the next refresh (D-300)
     assert window.act_refresh.isEnabled()
 
 

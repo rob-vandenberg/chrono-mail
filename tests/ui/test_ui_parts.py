@@ -16,9 +16,10 @@ from chrono_mail.ui.statusreport import MISSING_WARNING
 from tests.ui.world import Dialogs, World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_parts.py 4.2.426"
+__version__ = "test_ui_parts.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
 # v4.2.426: Favorites > Scheduled is a timed view (it shows Send at)
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42); the size guards are gone (the window under 1,100 code lines, a part under 650): limits the owner never set, against his rule
 #           that a code file may have up to 2,000 lines
@@ -157,7 +158,7 @@ def test_no_check_and_no_send_while_an_import_runs(world: World, qtbot: QtBot) -
     window.backend.call = call  # type: ignore[method-assign]
     window.checking.import_running(True)
     assert not window.act_refresh.isEnabled()
-    window.checking.check_mail()
+    window.checking.check_accounts(None)
     window.checking.send_outbox(manual=True)
     assert "mail.fetch" not in asked and "mail.send-outbox" not in asked
     window.checking.import_running(False)

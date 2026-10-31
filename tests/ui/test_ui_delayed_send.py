@@ -16,9 +16,10 @@ from tests.ui.test_ui_window import open_folder, started
 from tests.ui.world import World, dialogs, wait, world  # noqa: F401 - fixtures
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_delayed_send.py 4.0.374"
+__version__ = "test_ui_delayed_send.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: nothing is checked or sent after a rebuild (D-300)
 # v4.0.374: the stand-in of the status line takes the running flag of 3.6.364 and passes it on
 # v3.1.341: a message opened from the Outbox leaves it first, with its countdown (RV-156)
 # v2.4.327: the check after a restore, a rebuild, an import or a first account never sends; a refresh a rebuild held back runs after it (D-245)
@@ -276,17 +277,18 @@ def test_the_refresh_at_start_does_its_own_choice(world: World, qtbot: QtBot, mo
     assert len(world.smtp.received) == (1 if start == "send_receive" else 0)
 
 
-def test_the_check_after_a_restore_or_a_rebuild_never_sends(world: World, qtbot: QtBot) -> None:
-    """The Windows computer's W6: the check after a restore sent the restored Outbox. It only receives (D-245)."""
+def test_nothing_is_checked_or_sent_after_a_rebuild(world: World, qtbot: QtBot) -> None:
+    """The Windows computer's W6: the check after a restore sent the restored Outbox (D-245); since 4.2.449 a rebuild checks nothing by itself (D-300)."""
     delays(world, 0, on_refresh=True)
     world.window.settings.setValue("scheduled_refresh", "send_receive")
+    world.window.settings.setValue("auto_check", True)
     written(qtbot, world).send_button.click()
     wait(qtbot, lambda: held(world, "Outbox") == 1)
     checking = world.window.checking
-    checking.check_mail()
     checking.rebuild_running(True)
-    checking.rebuild_running(False)  # nothing was held back: the check after it only receives
-    wait(qtbot, lambda: not checking.checking and not checking.sending and world.backend._pending == {})  # noqa: SLF001
+    checking.rebuild_running(False)  # nothing was held back: nothing runs
+    assert not checking.checking and not checking.sending
+    wait(qtbot, lambda: world.backend._pending == {})  # noqa: SLF001
     assert world.smtp.received == [] and held(world, "Outbox") == 1
 
 

@@ -15,9 +15,10 @@ from tests.mailfactory import raw_message
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tray.py 4.2.405"
+__version__ = "test_ui_tray.py 4.2.449"
 
 # --- Version history ----------------------------------------------------
+# v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
 # v4.2.405: Wayland (simulated): a tray click brings back a window without the focus and hides one with it (or with a dialog that has
 #           it); a second start shows the window again, never under its dialog nor while it has the focus (D-286)
 # v4.2.404: a maximized window closed to the tray comes back maximized from the tray icon (the owner's report from Windows)
@@ -93,7 +94,7 @@ def test_new_mail_gives_a_notification_with_a_number_and_no_content(shown: list[
     world.pop.messages["uid-new-1"] = raw_message(subject="Secret subject", body="Secret body\n", message_id="<n1@x>")
     world.pop.messages["uid-new-2"] = raw_message(subject="Another secret", body="more\n", message_id="<n2@x>")
     wait(qtbot, lambda: not world.window.checking.checking)  # noqa: SLF001
-    world.window.checking.check_mail()
+    world.window.checking.check_accounts(None)
     wait(qtbot, lambda: shown != [])
     assert shown == [("New mail", "2 new messages")]
     assert not any("ecret" in text for _, text in shown)
@@ -105,7 +106,7 @@ def test_no_notification_while_the_window_is_in_use(shown: list[tuple[str, str]]
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
     wait(qtbot, lambda: not world.window.checking.checking)  # noqa: SLF001
     world.pop.messages["uid-seen"] = raw_message(subject="Seen at once", body="x\n", message_id="<s@x>")
-    world.window.checking.check_mail()
+    world.window.checking.check_accounts(None)
     wait(qtbot, lambda: world.window.list_model.rowCount() == 4)
     assert shown == []
 
@@ -114,12 +115,12 @@ def test_notifications_can_be_turned_off_and_nothing_new_is_silent(shown: list[t
     window_in_use(monkeypatch, False)
     world.window.start()
     wait(qtbot, lambda: world.window.list_model.rowCount() == 3)
-    world.window.checking.check_mail()  # nothing new
+    world.window.checking.check_accounts(None)  # nothing new
     qtbot.wait(300)
     assert shown == []
     world.window.settings.setValue("notifications", False)
     world.pop.messages["uid-quiet"] = raw_message(subject="Quiet", body="x\n", message_id="<q@x>")
-    world.window.checking.check_mail()
+    world.window.checking.check_accounts(None)
     wait(qtbot, lambda: world.window.list_model.rowCount() == 4)
     assert shown == []
 
