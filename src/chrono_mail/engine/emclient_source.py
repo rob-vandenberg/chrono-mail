@@ -25,9 +25,11 @@ from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.core.folder import roles_by_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "emclient_source.py 4.2.387"
+__version__ = "emclient_source.py 4.2.452"
 
 # --- Version history ----------------------------------------------------
+# v4.2.452: IMAP accounts and calendar accounts (Dav: their address, login and password) are read too, with "include in global operations"
+#           (the account takes part in Send and Receive, D-059); local calendars and tasks of the backup (UR-01)
 # v4.2.387: the standard folders by name in ten languages (core roles_by_name) instead of an English table; Outbox still goes to Drafts
 # v1.2.254: A rule that moves to a standard folder by its name ("Junk E-mail", "Deleted Items", "Sent Items" …) goes to Chrono Mail's own
 #           standard folder, as the mail of that folder does (STANDARD_FOLDERS, one table for both): to Junk is Move to Junk, to Trash is Delete;
@@ -52,7 +54,11 @@ MAXIMUM_MESSAGE_BYTES: int = 256 * 1024 * 1024  # the same limit as a download
 Security = Literal["tls", "starttls", "none"]
 _TICKS_AT_1970: int = 621_355_968_000_000_000  # .NET ticks (100 ns since the year 1) at 1970-01-01 UTC
 _READ_BIT, _FLAGGED_BIT = 2, 4
-_BACKUP_FILES: tuple[str, ...] = ("Local Folders/folders.dat", "Local Folders/mail_index.dat", "Local Folders/contact_index.dat")
+_BACKUP_FILES: tuple[str, ...] = (
+    "Local Folders/folders.dat", "Local Folders/mail_index.dat", "Local Folders/contact_index.dat",
+    "Local Folders/event_index.dat", "Local Folders/event_data.dat", "Local Folders/task_index.dat", "Local Folders/task_data.dat", "Local Folders/note_data.dat",
+)  # by number: 0.dat, 1.dat …; the first two must be there
+MAXIMUM_ITEMS: int = 200_000  # events or tasks of Local Folders read from a backup
 
 # The passwords in the settings file are XOR-ed with a fixed key of the program. The key is kept here as two rows that
 # only mean something together, so that it is not a readable string in the source or in the built program.
@@ -117,12 +123,14 @@ class SourceAccount:
     name: str  # the name of the account in eM Client
     person_name: str  # the name in the From of sent mail
     email_address: str
-    kind: str  # pop3, imap or another protocol (only pop3 is imported)
-    incoming: SourceServer
-    outgoing: SourceServer
+    kind: str  # pop3, imap or dav (calendars and contacts only); another protocol is not imported
+    incoming: SourceServer  # dav: its login (host and port are in dav_url)
+    outgoing: SourceServer  # dav: empty
     leave_on_server: bool
     delete_after_days: int  # -1 or 0: never
     remove_when_deleted: bool
+    included: bool = True  # "include in global operations": the account takes part in Send and Receive (D-059)
+    dav_url: str = ""  # dav: the address of its calendar and contacts server
 
 
 def _security(encryption: str, port: int) -> Security:
@@ -148,12 +156,23 @@ def _account(item: ElementTree.Element, crypted: bool) -> SourceAccount | None:
     if account is None:
         return None
     protocols = [element for element in account if _local(element.tag) == "Protocol"]
-    outgoing = next((element for element in protocols if _text(element, "Type").upper() == "SMTP"), None)
-    incoming = next((element for element in protocols if _text(element, "Type").upper() != "SMTP"), None)
-    if incoming is None or outgoing is None:
-        return None
     addresses = _child(account, "Addresses")
     email = _text(addresses, "Address") if addresses is not None else ""
+    included = _text(account, "IncludeInGlobalOperations").lower() != "false"
+    dav = next((element for element in protocols if _text(element, "Type").upper() == "DAV"), None)
+    if dav is not None and len(protocols) == 1:  # an account of calendars or contacts (eM Client keeps CalDAV and CardDAV apart)
+        login = _server(dav, account, crypted)
+        url = _text(dav, "Server")
+        if not url:
+            return None
+        return SourceAccount(
+            account.get("uid", ""), _text(item, "AccountName") or email, _text(account, "PersonName"), email, "dav", login,
+            SourceServer("", 0, "tls", "", None), True, -1, False, included, url,
+        )
+    outgoing = next((element for element in protocols if _text(element, "Type").upper() == "SMTP"), None)
+    incoming = next((element for element in protocols if _text(element, "Type").upper() not in ("SMTP", "DAV")), None)  # never its calendar server
+    if incoming is None or outgoing is None:
+        return None
     return SourceAccount(
         account.get("uid", ""),
         _text(item, "AccountName") or email,
@@ -165,6 +184,7 @@ def _account(item: ElementTree.Element, crypted: bool) -> SourceAccount | None:
         _text(incoming, "LeaveMessagesOnServer").lower() != "false",
         _number(_text(incoming, "DeleteMessageInDays"), -1),
         _text(incoming, "RemoveWhenDeleted").lower() == "true",
+        included,
     )
 
 
@@ -608,13 +628,26 @@ class SourceContact:
     birthday: str  # 1980-04-15, or empty
 
 
+@dataclass(frozen=True, slots=True)
+class SourceItem:
+    """An appointment or task of Local Folders: its calendar or task list (the folder's name) and its iCalendar text, as eM Client keeps it,
+    with the changed occurrences of a series put back into it."""
+
+    folder: str
+    ical: str
+
+
 @dataclass
 class BackupData:
-    """What the backup adds to the mail export: the marks of each message and the contacts."""
+    """What the backup adds to the mail export: the marks of each message, the contacts, and Local Folders' appointments and tasks."""
 
     marks: dict[tuple[str, str], list[tuple[frozenset[MessageFlag], tuple[str, ...]]]] = field(default_factory=dict)  # (folder key, id:… or date:…) -> marks and tags
     contacts: tuple[SourceContact, ...] = ()
     tagged: tuple[tuple[str | None, int | None, tuple[str, ...]], ...] = ()  # (Message-ID, date, tags) of every message with categories
+    events: tuple[SourceItem, ...] = ()
+    tasks: tuple[SourceItem, ...] = ()
+    notes: int = 0  # Chrono Mail has no notes: only counted, for the import's report
+    problems: tuple[str, ...] = ()  # parts of Local Folders' calendars, tasks or notes that could not be read (the rest of the backup still comes in)
 
     def take(self, folder: tuple[str, ...], message_id: str | None, moment: int | None) -> tuple[frozenset[MessageFlag], tuple[str, ...]] | None:
         """The marks and tags of this message in the backup (each found entry is used once), or None when it is not there."""
@@ -699,6 +732,60 @@ def _contacts(connection: sqlite3.Connection) -> tuple[SourceContact, ...]:
     return tuple(found)
 
 
+def _vevents(text: str, component: str) -> str:
+    """The component blocks (VEVENT or VTODO) of an iCalendar text, for adding them to another."""
+    start, end = f"BEGIN:{component}", f"END:{component}"
+    blocks: list[str] = []
+    position = 0
+    while (begin := text.find(start, position)) != -1:
+        stop = text.find(end, begin)
+        if stop == -1:
+            break
+        blocks.append(text[begin:stop + len(end)])
+        position = stop + len(end)
+    return "\r\n".join(blocks)
+
+
+def _items(index: sqlite3.Connection, data: sqlite3.Connection, table: str, folders: dict[int, str], component: str) -> tuple[SourceItem, ...]:
+    """Each item's iCalendar text (property "calendar"), a series with its changed occurrences (kept as items of their own, with the series
+    as parent) in one text, in its folder."""
+    rows = {
+        identifier: (folder, parent) for identifier, folder, parent in index.execute(f'SELECT id, folder, parent FROM "{table}" ORDER BY id LIMIT {MAXIMUM_ITEMS}')
+        if isinstance(identifier, int)
+    }
+    texts: dict[int, str] = {}
+    for identifier, value in data.execute(f'SELECT id, properties FROM "{table.replace("Items", "ItemContents")}" WHERE propertyName = \'calendar\''):
+        if isinstance(identifier, int) and identifier in rows and isinstance(value, (bytes, str)):
+            text = value.decode("utf-8", "replace") if isinstance(value, bytes) else value
+            if f"BEGIN:{component}" in text:
+                texts[identifier] = text
+    children: dict[int, list[str]] = {}
+    for identifier, (_, parent) in rows.items():
+        if isinstance(parent, int) and parent and identifier in texts:
+            children.setdefault(parent, []).append(_vevents(texts[identifier], component))
+    found: list[SourceItem] = []
+    for identifier, (folder, parent) in rows.items():
+        if (isinstance(parent, int) and parent) or identifier not in texts:
+            continue
+        text = texts[identifier]
+        extra = [block for block in children.get(identifier, []) if block]
+        if extra:
+            closing = text.rfind("END:VCALENDAR")
+            if closing != -1:
+                text = text[:closing] + "\r\n".join(extra) + "\r\n" + text[closing:]
+        found.append(SourceItem(folders.get(folder, "") if isinstance(folder, int) else "", text))
+    return tuple(found)
+
+
+def _count(path: Path, table: str) -> int:
+    connection = _open_database(path)
+    try:
+        row = connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()
+        return row[0] if row is not None and isinstance(row[0], int) else 0
+    finally:
+        connection.close()
+
+
 @contextmanager
 def _unpacked(backup: Path, work: Path) -> Generator[Path]:
     """The three small database files of the backup, unpacked into a folder of their own that is always removed afterwards."""
@@ -708,13 +795,15 @@ def _unpacked(backup: Path, work: Path) -> Generator[Path]:
         try:
             with zipfile.ZipFile(backup) as archive:
                 names = {item.filename: item for item in archive.infolist()}
-                for number, name in enumerate(_BACKUP_FILES):
+                for number, name in enumerate(_BACKUP_FILES):  # each small, also in a backup of a large mailbox
                     item = names.get(name)
                     if item is None:
                         if number < 2:
                             raise ImportSourceError(f"The backup has no {name}; it is not a backup of eM Client")
                         continue
                     if item.file_size > MAXIMUM_DATABASE_BYTES:
+                        if number >= 3:
+                            continue  # calendars, tasks or notes: left out and told (read_backup), the mail and contacts still come
                         raise ImportSourceError(f"{name} in the backup is far too large")
                     with archive.open(item) as source, open(folder / f"{number}.dat", "wb") as target:
                         shutil.copyfileobj(source, target, 1024 * 1024)
@@ -735,7 +824,9 @@ def read_backup(backup: Path, work: Path) -> BackupData:
         try:
             connection = _open_database(folder / "0.dat")
             try:
-                folders = {identifier: folder_key(tuple(path.strip("/").split("/"))) for identifier, path in connection.execute("SELECT id, path FROM Folders") if isinstance(identifier, int) and isinstance(path, str)}
+                listed = [(identifier, path) for identifier, path in connection.execute("SELECT id, path FROM Folders") if isinstance(identifier, int) and isinstance(path, str)]
+                folders = {identifier: folder_key(tuple(path.strip("/").split("/"))) for identifier, path in listed}
+                names = {identifier: path.strip("/").split("/")[-1].strip() for identifier, path in listed}
             finally:
                 connection.close()
             connection = _open_database(folder / "1.dat")
@@ -752,4 +843,28 @@ def read_backup(backup: Path, work: Path) -> BackupData:
                     connection.close()
         except sqlite3.Error as error:
             raise ImportSourceError(f"The backup's database cannot be read: {error}") from None
-    return BackupData(marks, contacts, tagged)
+        found: dict[str, tuple[SourceItem, ...]] = {}
+        problems: list[str] = []
+        for kind, words, index_file, data_file, table, component in (
+            ("events", "appointments", "3.dat", "4.dat", "EventItems", "VEVENT"), ("tasks", "tasks", "5.dat", "6.dat", "TaskItems", "VTODO"),
+        ):
+            if not (folder / index_file).exists() or not (folder / data_file).exists():
+                if (folder / index_file).exists() != (folder / data_file).exists():
+                    problems.append(f"Local Folders' {words} could not be read (part of them is not in the backup, or too large)")
+                continue
+            try:
+                index, data = _open_database(folder / index_file), _open_database(folder / data_file)
+                try:
+                    found[kind] = _items(index, data, table, names, component)
+                finally:
+                    index.close()
+                    data.close()
+            except sqlite3.Error as error:  # each part on its own: the mail's marks and the contacts still come in
+                problems.append(f"Local Folders' {words} could not be read: {error}")
+        notes = 0
+        if (folder / "7.dat").exists():
+            try:
+                notes = _count(folder / "7.dat", "NoteContent")
+            except sqlite3.Error:
+                notes = 0  # only counted for the report: nothing is lost
+    return BackupData(marks, contacts, tagged, found.get("events", ()), found.get("tasks", ()), notes, tuple(problems))

@@ -38,9 +38,11 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.431"
+__version__ = "importdialog.py 4.2.452"
 
 # --- Version history ----------------------------------------------------
+# v4.2.452: the summary counts the IMAP accounts and the calendar and contacts servers that are imported now; Calendars and tasks
+#           (Local Folders' appointments and tasks from the backup), notes counted as not imported (UR-01)
 # v4.2.431: Accounts, Rules, Signatures and Import have no hover text while their (i) shows (D-294)
 # v4.2.424: an (i) after Accounts, Rules and Signatures while greyed, and after Import while it waits for the reading, saying why (D-294)
 # v4.2.404: the "Import again" box shows its text as plain text, as every message box (RV-167, D-259)
@@ -152,12 +154,16 @@ def _listed(items: tuple[str, ...]) -> str:
 def scan_summary(scan: ScanResult) -> str:
     """What an import would bring in, in plain words."""
     lines: list[str] = []
-    if scan.accounts or scan.accounts_not_pop3:
+    if scan.accounts or scan.accounts_not_imported or scan.calendar_servers:
         line = f"Accounts: {scan.accounts}"
+        if scan.imap:
+            line += f" ({scan.accounts - scan.imap} POP3, {scan.imap} IMAP)"
         if scan.accounts_existing:
             line += f", of which {scan.accounts_existing} already here (not made again)"
-        if scan.accounts_not_pop3:
-            line += f"; {scan.accounts_not_pop3} not POP3 (not imported)"
+        if scan.calendar_servers:
+            line += f"; calendars and contacts: {counted(scan.calendar_servers, 'server')}"
+        if scan.accounts_not_imported:
+            line += f"; {scan.accounts_not_imported} of a kind Chrono Mail cannot make (not imported)"
         lines.append(line + ".")
     if scan.passwords_missing:
         lines.append(f"Passwords that cannot be read (you type them later): {_listed(scan.passwords_missing)}.")
@@ -172,6 +178,10 @@ def scan_summary(scan: ScanResult) -> str:
         lines.append(f"Read, flagged and replied marks for {counted(scan.marks, 'message')}.")
     if scan.contacts:
         lines.append(f"Contacts: {scan.contacts}.")
+    if scan.events or scan.tasks:
+        lines.append(f"Calendars and tasks of Local Folders: {counted(scan.events, 'appointment')}, {counted(scan.tasks, 'task')}.")
+    if scan.notes:
+        lines.append(f"Notes: {counted(scan.notes, 'note')} (Chrono Mail has no notes; they are not imported).")
     if scan.tags or scan.tagged:
         lines.append(f"Tags: {scan.tags} categories; {scan.tagged} tagged messages.")
     return "\n".join(lines) if lines else "Nothing to import was found."
@@ -196,20 +206,35 @@ def merge(total: ImportResult, batch: ImportResult) -> ImportResult:
         tags_added=total.tags_added + batch.tags_added,
         messages_tagged=total.messages_tagged + batch.messages_tagged,
         notes=total.notes + batch.notes,
+        calendars_given=total.calendars_given + batch.calendars_given,
+        events_added=total.events_added + batch.events_added,
+        events_existing=total.events_existing + batch.events_existing,
+        tasks_added=total.tasks_added + batch.tasks_added,
+        tasks_existing=total.tasks_existing + batch.tasks_existing,
     )
 
 
 def import_summary(result: ImportResult, stopped: bool) -> str:
-    nothing_new = not (result.accounts_added or result.rules_added or result.contacts_added or result.messages_imported or result.tags_added or result.messages_tagged)
+    nothing_new = not (
+        result.accounts_added or result.rules_added or result.contacts_added or result.messages_imported or result.tags_added or result.messages_tagged
+        or result.events_added or result.tasks_added or result.calendars_given
+    )
     lines = [_first_line(stopped, nothing_new)]
     if result.accounts_added or result.accounts_existing:
         lines.append(f"Accounts made: {result.accounts_added}; already here: {result.accounts_existing}.")
+    if result.calendars_given:
+        lines.append(f"Calendars and contacts given to the mail account of their address: {result.calendars_given}.")
     if result.accounts_without_password:
         lines.append(f"Type the password in Settings > Accounts for: {_listed(result.accounts_without_password)}.")
     if result.rules_added or result.rules_existing or result.rules_not_imported:
         lines.append(f"Rules imported: {result.rules_added}; already here: {result.rules_existing}" + (f"; not imported: {_listed(result.rules_not_imported)}" if result.rules_not_imported else "") + ".")
     if result.contacts_added or result.contacts_existing:
         lines.append(f"Contacts imported: {result.contacts_added}; already here: {result.contacts_existing}.")
+    if result.events_added or result.events_existing or result.tasks_added or result.tasks_existing:
+        lines.append(
+            f"Appointments imported: {result.events_added}; already here: {result.events_existing}. "
+            f"Tasks imported: {result.tasks_added}; already here: {result.tasks_existing}."
+        )
     if result.tags_added or result.messages_tagged:
         lines.append(f"Tags made: {result.tags_added}; messages that got their tags: {result.messages_tagged}.")
     if result.messages_imported or result.messages_duplicate or result.messages_failed:
@@ -376,8 +401,9 @@ class ImportDialog(QDialog):
         self.rules: QCheckBox = forms.part(form, QCheckBox, "rules")
         self.mail: QCheckBox = forms.part(form, QCheckBox, "mail")
         self.contacts: QCheckBox = forms.part(form, QCheckBox, "contacts")
+        self.calendars: QCheckBox = forms.part(form, QCheckBox, "calendars")
         self.tags: QCheckBox = forms.part(form, QCheckBox, "tags")
-        for box in (self.accounts, self.rules, self.mail, self.contacts, self.tags):
+        for box in (self.accounts, self.rules, self.mail, self.contacts, self.calendars, self.tags):
             box.setChecked(True)
         self.settings_file: QLineEdit = forms.part(form, QLineEdit, "settingsFile")
         self.mail_folder: QLineEdit = forms.part(form, QLineEdit, "mailFolder")
@@ -626,7 +652,7 @@ class ImportDialog(QDialog):
         sources = self._sources()
         chosen = (
             (self.accounts, sources.settings_file), (self.rules, sources.settings_file), (self.mail, sources.mail_folder), (self.contacts, sources.backup_file),
-            (self.tags, "tags come from any export"),
+            (self.calendars, sources.backup_file), (self.tags, "tags come from any export"),
         )
         return frozenset(part for part, (box, export) in zip(PARTS, chosen, strict=True) if box.isChecked() and export)
 
@@ -643,7 +669,7 @@ class ImportDialog(QDialog):
     def _inputs(self) -> tuple[QWidget, ...]:
         """What is off while an import runs."""
         return (
-            self.import_button, self.close_button, self.sources, self.accounts, self.rules, self.mail, self.contacts, self.tags, self.settings_file, self.mail_folder,
+            self.import_button, self.close_button, self.sources, self.accounts, self.rules, self.mail, self.contacts, self.calendars, self.tags, self.settings_file, self.mail_folder,
             self.backup_file, *self._data_file_types(), self.data_files, *self.data_file_later,
         )
 
@@ -667,7 +693,7 @@ class ImportDialog(QDialog):
         sources = self._sources()
         parameters = ImportParameters(
             sources.settings_file, sources.mail_folder, sources.backup_file, accounts=self.accounts.isChecked(), rules=self.rules.isChecked(), mail=self.mail.isChecked(),
-            contacts=self.contacts.isChecked(), tags=self.tags.isChecked(), batch=BATCH, again=self._again,
+            contacts=self.contacts.isChecked(), tags=self.tags.isChecked(), calendars=self.calendars.isChecked(), batch=BATCH, again=self._again,
         )
         self._again = False  # the first batch starts over; the next ones continue
         self._backend.ask(IMPORT_EMCLIENT, parameters, self._batch_done, self._failed, owner=self)

@@ -1,3 +1,5 @@
+import sqlite3
+import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -6,20 +8,26 @@ from typing import Any  # command results are command-specific dataclasses
 import pytest
 
 from chrono_mail.config import ServerRole, load_rules
-from chrono_mail.core import LOCAL_ACCOUNT_ID, MessageFlag, MessageRef
+from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, CollectionKind, MessageFlag, MessageRef
 from chrono_mail.engine import Engine, UsageError
 from chrono_mail.engine import commands_emclient
 from chrono_mail.engine.commands_emclient import JOURNAL_FILE, fingerprint, fingerprint_of_raw
+from chrono_mail.engine.emclient_source import read_backup, read_settings
 from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.engine.pimaccess import open_pim
 from tests.enginefactory import make_engine
 from tests.mailfactory import raw_message
-from tests.test_emclient_source import FakeAccount, FakeContact, FakeItem, category_xml, rule_xml, ui_rule, words, write_backup, write_mail_export, write_settings
+from tests.test_emclient_source import (
+    NAMESPACE, FakeAccount, FakeContact, FakeItem, category_xml, encode_password, rule_xml, settings_xml, ui_rule, words, write_backup, write_mail_export, write_settings,
+)
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 4.2.395"
+__version__ = "test_import_emclient.py 4.2.452"
 
 # --- Version history ----------------------------------------------------
+# v4.2.452: IMAP accounts and calendar servers are made without asking any server, "include in global operations" is the Send and Receive
+#           tick, Local Folders' appointments and tasks come from the backup, notes are counted (UR-01); the batch test leaves calendars out
 # v4.2.395: the count comes every 100 messages and at the last of each batch
 # v4.2.388: a newer export in the same place is a new import; the scan says what was finished; again starts over without doubles
 # v4.2.385: the journal is written only when the batch was made safe on disk
@@ -252,7 +260,7 @@ def test_the_batch_is_made_safe_on_disk_before_it_is_written_as_done(tmp_path: P
     events: list[str] = []
     journal = engine.directories.data_directory / JOURNAL_FILE
     monkeypatch.setattr("os.sync", lambda: events.append(f"sync, journal lines {len(journal.read_text('utf-8').splitlines())}"), raising=False)  # Windows has no os.sync
-    call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False, batch=3))
+    call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False, calendars=False, batch=3))
     assert events == ["sync, journal lines 1"]  # one sync for the batch, while only the journal's first line was written
     assert len(journal.read_text("utf-8").splitlines()) == 4
 
@@ -493,3 +501,197 @@ def test_import_again_starts_over_and_brings_back_what_was_deleted(tmp_path: Pat
     again: Any = call(engine, "import.emclient", **exports.values(accounts=False, rules=False, contacts=False, again=True))
     assert (again.messages_imported, again.messages_duplicate) == (1, 6)
     assert len(local_messages(engine)) == 7
+
+
+# --- every kind of account, and Local Folders' calendars and tasks (UR-01) --------------------------------
+
+NOWHERE: str = "https://127.0.0.1:1/dav/"  # nothing answers there: an import that asked the server would fail
+
+
+def dav_xml(uid: str, email: str, login: str, url: str = NOWHERE, included: str = "true", avatar: int = 17) -> str:
+    return f"""<account><AccountName>{email}</AccountName>
+  <Account xmlns="{NAMESPACE}" uid="{uid}">
+    <PersonName /><LoginName>{login}</LoginName><Password>{encode_password('Cal12345')}</Password>
+    <IncludeInGlobalOperations>{included}</IncludeInGlobalOperations><Addresses><Address>{email}</Address></Addresses><AvatarType>{avatar}</AvatarType>
+    <Protocol uid="d{uid}"><Type>Dav</Type><Server>{url}</Server><CredentialsMode>UseAccountDefaults</CredentialsMode>
+      <LoginName>{login}</LoginName><Password>{encode_password('Cal12345')}</Password><Enabled>true</Enabled></Protocol>
+  </Account></account>"""
+
+
+def left_out(xml: str) -> str:
+    """An account's xml with "include in global operations" switched off."""
+    return xml.replace("<Addresses>", "<IncludeInGlobalOperations>false</IncludeInGlobalOperations><Addresses>", 1)
+
+
+def write_export(folder: Path) -> Path:
+    imap = FakeAccount("i1", "ann@example.com", "annlogin", incoming_host="imap.example.com", kind="IMAP", port=143)
+    pop3 = FakeAccount("p1", "bob@example.com", "boblogin")
+    accounts = [imap.xml(), left_out(pop3.xml()), dav_xml("c1", "ann@example.com", "annlogin"), dav_xml("c2", "ann@example.com", "annlogin", avatar=8),
+                dav_xml("c3", "club@example.org", "clubber", url="https://127.0.0.1:1/club/", included="false")]
+    text = settings_xml([], []).replace("</crypted></accounts>", "</crypted>" + "".join(accounts) + "</accounts>")
+    path = folder / "settings.xml"
+    path.write_text(text, "utf-8")
+    return path
+
+
+EVENT: str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1@example.com\r\nDTSTART:20260105T090000Z\r\nDTEND:20260105T100000Z\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nSUMMARY:Team meeting\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+MOVED: str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:e1@example.com\r\nRECURRENCE-ID:20260112T090000Z\r\nDTSTART:20260112T140000Z\r\nDTEND:20260112T150000Z\r\nSUMMARY:Team meeting (moved)\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+TASK: str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:t1@example.com\r\nSUMMARY:Water the plants\r\nEND:VTODO\r\nEND:VCALENDAR\r\n"
+
+
+def add_local_items(backup: Path, work: Path) -> None:
+    """Local Folders' appointments (a weekly series with one moved occurrence, kept as an item of its own), a task and two notes."""
+    work.mkdir(parents=True, exist_ok=True)
+    for kind, rows in (("Event", [(1, 50, None, EVENT), (2, 50, 1, MOVED)]), ("Task", [(1, 60, None, TASK)])):
+        index = sqlite3.connect(work / f"{kind.lower()}_index.dat")
+        index.execute(f"CREATE TABLE {kind}Items (id INTEGER PRIMARY KEY, folder INTEGER, parent INTEGER)")
+        index.executemany(f"INSERT INTO {kind}Items VALUES (?, ?, ?)", [(number, folder, parent) for number, folder, parent, _ in rows])
+        index.commit()
+        index.close()
+        data = sqlite3.connect(work / f"{kind.lower()}_data.dat")
+        data.execute(f"CREATE TABLE {kind}ItemContents (id INTEGER, propertyName TEXT, properties, PRIMARY KEY (id, propertyName))")
+        data.executemany(f"INSERT INTO {kind}ItemContents VALUES (?, 'calendar', ?)", [(number, text.encode()) for number, _, _, text in rows])
+        data.commit()
+        data.close()
+    notes = sqlite3.connect(work / "note_data.dat")
+    notes.execute("CREATE TABLE NoteContent (id INTEGER PRIMARY KEY, body TEXT)")
+    notes.executemany("INSERT INTO NoteContent (body) VALUES (?)", [("one",), ("two",)])
+    notes.commit()
+    notes.close()
+    folders = sqlite3.connect(work / "folders.dat")
+    folders.execute("CREATE TABLE Folders (id INTEGER PRIMARY KEY, name TEXT, path TEXT)")
+    folders.executemany("INSERT INTO Folders VALUES (?, ?, ?)", [(1, "Inbox", "/Inbox"), (50, "Holidays", "/Holidays"), (60, "Tasks", "/Tasks")])
+    folders.commit()
+    folders.close()
+    with zipfile.ZipFile(backup) as archive:
+        kept = {name: archive.read(name) for name in archive.namelist() if name != "Local Folders/folders.dat"}
+    with zipfile.ZipFile(backup, "w") as archive:
+        for name, content in kept.items():
+            archive.writestr(name, content)
+        for name in ("folders.dat", "event_index.dat", "event_data.dat", "task_index.dat", "task_data.dat", "note_data.dat"):
+            archive.write(work / name, f"Local Folders/{name}")
+
+
+def imported(engine: Engine, settings: Path, backup: Path | None = None) -> object:
+    values: dict[str, object] = {"settings_file": str(settings), "mail": False, "contacts": backup is not None, "calendars": backup is not None, "tags": False}
+    if backup is not None:
+        values["backup_file"] = str(backup)
+    return call(engine, "import.emclient", **values)
+
+
+def test_calendar_accounts_are_read_with_their_server_and_the_include_tick(tmp_path: Path) -> None:
+    export = read_settings(write_export(tmp_path))
+    kinds = {account.uid: account for account in export.accounts}
+    assert [kinds[uid].kind for uid in ("i1", "p1", "c1", "c2", "c3")] == ["imap", "pop3", "dav", "dav", "dav"]
+    assert (kinds["c1"].dav_url, kinds["c1"].incoming.username, kinds["c1"].incoming.password) == (NOWHERE, "annlogin", "Cal12345")
+    assert (kinds["i1"].included, kinds["p1"].included, kinds["c3"].included) == (True, False, False)
+
+
+def test_imap_accounts_and_calendar_servers_are_made_without_asking_any_server(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    result = imported(engine, write_export(tmp_path))
+    assert (getattr(result, "accounts_added"), getattr(result, "calendars_given")) == (3, 1)  # IMAP, POP3, the club's calendars; Ann's given to her IMAP account
+    config = engine.config()
+    by_address = {settings.account.email_address: settings for settings in config.accounts if settings.account.kind is not AccountKind.LOCAL}
+    ann = by_address["ann@example.com"]
+    assert (ann.account.kind, ann.storage, ann.skip_known_mail, ann.account.incoming.port, ann.in_send_receive) == (AccountKind.IMAP, "own", False, 143, True)
+    assert (ann.dav_url, ann.dav_username) == (NOWHERE, "annlogin")  # its calendars and contacts: given to the mail account of that address
+    assert engine.passwords.get(ann.account.account_id, ServerRole.DAV) == "Cal12345"
+    assert by_address["bob@example.com"].in_send_receive is False  # eM Client's "include in global operations" was off
+    club = next(settings for settings in config.accounts if settings.account.kind is AccountKind.DAV)
+    assert (club.dav_url, club.account.incoming.username, club.in_send_receive) == ("https://127.0.0.1:1/club/", "clubber", False)
+    assert engine.passwords.get(club.account.account_id, ServerRole.INCOMING) == "Cal12345"
+    assert len([settings for settings in config.accounts if settings.account.kind is AccountKind.DAV]) == 1
+
+
+def test_an_import_again_makes_no_account_or_calendar_server_twice(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    settings = write_export(tmp_path)
+    imported(engine, settings)
+    again = call(engine, "import.emclient", settings_file=str(settings), mail=False, contacts=False, calendars=False, tags=False, again=True)
+    assert (getattr(again, "accounts_added"), getattr(again, "accounts_existing"), getattr(again, "calendars_given")) == (0, 4, 0)
+    assert len(engine.config().accounts) == 4  # Local Folders, IMAP, POP3, the club's calendars
+
+
+def test_local_appointments_and_tasks_come_in_with_their_moved_occurrence_and_notes_are_counted(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    backup = write_backup(tmp_path, [])
+    add_local_items(backup, tmp_path / "items")
+    data = read_backup(backup, tmp_path / "work")
+    assert (len(data.events), len(data.tasks), data.notes) == (1, 1, 2)
+    assert data.events[0].folder == "Holidays" and "RECURRENCE-ID" in data.events[0].ical  # the moved occurrence is part of its series
+    result = imported(engine, write_export(tmp_path), backup)
+    assert (getattr(result, "events_added"), getattr(result, "tasks_added")) == (1, 1)
+    assert any("2 notes not imported" in note for note in getattr(result, "notes"))
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        holidays = next(info for info in store.collections(CollectionKind.EVENTS) if info.name == "Holidays")
+        assert store.index.find_uid(holidays.collection_id, "e1@example.com") is not None
+        text = store.get(holidays.collection_id, store.index.find_uid(holidays.collection_id, "e1@example.com").item_id)  # type: ignore[union-attr]
+        assert "Team meeting (moved)" in text and "RRULE" in text
+        tasks = next(info for info in store.collections(CollectionKind.TASKS) if info.name == "Tasks")
+        assert store.index.find_uid(tasks.collection_id, "t1@example.com") is not None
+    again = call(engine, "import.emclient", settings_file=str(write_export(tmp_path)), backup_file=str(backup), mail=False, tags=False, again=True)
+    assert (getattr(again, "events_added"), getattr(again, "events_existing"), getattr(again, "tasks_existing")) == (0, 1, 1)
+
+
+def test_a_scan_counts_imap_accounts_calendar_servers_appointments_tasks_and_notes(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    backup = write_backup(tmp_path, [])
+    add_local_items(backup, tmp_path / "items")
+    scan = call(engine, "import.emclient-scan", settings_file=str(write_export(tmp_path)), backup_file=str(backup))
+    assert (scan.accounts, scan.imap, scan.calendar_servers, scan.accounts_not_imported) == (2, 1, 2, 0)
+    assert (scan.events, scan.tasks, scan.notes) == (1, 1, 2)
+    assert len(engine.config().accounts) <= 1  # a scan changes nothing
+
+
+def test_calendars_and_tasks_alone_can_be_imported_and_a_part_that_cannot_be_read_leaves_the_rest(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    backup = write_backup(tmp_path, [], [FakeContact("Ann Example", ("ann@example.com",))])
+    add_local_items(backup, tmp_path / "items")
+    alone = call(engine, "import.emclient", backup_file=str(backup), accounts=False, rules=False, mail=False, contacts=False, tags=False)
+    assert getattr(alone, "events_added") == 1  # only Calendars and tasks ticked
+    broken = tmp_path / "broken"
+    broken.mkdir()
+    backup = write_backup(broken, [], [FakeContact("Bob Example", ("bob@example.com",))])
+    with zipfile.ZipFile(backup, "a") as archive:  # an appointment list of another shape
+        work = broken / "odd.dat"
+        odd = sqlite3.connect(work)
+        odd.execute("CREATE TABLE Something (id INTEGER)")
+        odd.commit()
+        odd.close()
+        archive.write(work, "Local Folders/event_index.dat")
+        archive.write(work, "Local Folders/event_data.dat")
+    result = call(engine, "import.emclient", backup_file=str(backup), accounts=False, rules=False, mail=False, tags=False)
+    assert getattr(result, "contacts_added") == 1  # the contacts still come
+    assert any("appointments could not be read" in note for note in getattr(result, "notes"))
+
+
+def test_a_calendar_server_that_could_not_be_added_comes_with_import_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(tmp_path / "profile")
+    settings = write_export(tmp_path)
+    real = commands_emclient.account_add_dav
+
+    def refused(engine: Engine, parameters: object) -> object:
+        raise UsageError("the password store did not answer")
+
+    monkeypatch.setattr(commands_emclient, "account_add_dav", refused)
+    first = imported(engine, settings)
+    assert any("were not added" in note for note in getattr(first, "notes"))
+    monkeypatch.setattr(commands_emclient, "account_add_dav", real)
+    second = call(engine, "import.emclient", settings_file=str(settings), mail=False, contacts=False, calendars=False, tags=False, again=True)
+    assert getattr(second, "accounts_added") == 1  # the club's calendars now, as the note said
+
+
+def test_a_calendar_protocol_is_never_taken_as_an_accounts_incoming_server(tmp_path: Path) -> None:
+    imap = FakeAccount("m1", "mixed@example.com", "mixed", incoming_host="imap.example.com", kind="IMAP", port=143)
+    xml = imap.xml().replace('<Protocol uid="im1">', f'<Protocol uid="dm1"><Type>Dav</Type><Server>{NOWHERE}</Server></Protocol><Protocol uid="im1">', 1)
+    path = tmp_path / "settings.xml"
+    path.write_text(settings_xml([], []).replace("</crypted></accounts>", "</crypted>" + xml + "</accounts>"), "utf-8")
+    (account,) = read_settings(path).accounts
+    assert (account.kind, account.incoming.host) == ("imap", "imap.example.com")
+
+
+def test_calendars_and_tasks_without_the_backup_are_refused(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    with pytest.raises(UsageError, match="calendars and tasks come from the backup"):
+        call(engine, "import.emclient", settings_file=str(write_export(tmp_path)), mail=False, contacts=False, tags=False)

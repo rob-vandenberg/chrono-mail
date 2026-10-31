@@ -20,9 +20,11 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 4.2.449"
+__version__ = "commands_dav.py 4.2.452"
 
 # --- Version history ----------------------------------------------------
+# v4.2.452: account.add-dav unchecked: an account taken over from another program is added without asking its server first (an import
+#           makes no connection; the first fill reaches it, D-300) (UR-01)
 # v4.2.449: dav.sync receive_only, the first fill of a new account (D-300): only downloads; nothing sent, nothing removed here
 # v4.2.447: dav.find and dav.find-new fresh: a Find the person starts checks the certificate with the usual checks only (D-299)
 # v4.2.441: every calendar server connection also takes the certificates accepted until Chrono Mail closes; dav.sync goes on with the other
@@ -452,6 +454,7 @@ class AddDavParameters:
     account_name: str = field(default="", metadata=option("How Chrono Mail names the account (empty: the user name)"))
     left_out: tuple[str, ...] = field(default=(), metadata=option("The folders not to keep in step (their key, as dav.find-new gave it)"))
     fingerprint: str = field(default="", metadata=option("The SHA-256 fingerprint of a certificate the person accepted for this server"))
+    unchecked: bool = field(default=False, metadata=option("Add it without asking the server first (an account in use in another program, imported)"))
 
 
 def account_add_dav(engine: Engine, parameters: AddDavParameters) -> AccountAddResult:
@@ -462,10 +465,11 @@ def account_add_dav(engine: Engine, parameters: AddDavParameters) -> AccountAddR
     if not username:
         raise UsageError("Type the user name")
     fingerprint = parameters.fingerprint.strip()
-    with _new_client(engine, url, username, parameters.password, fingerprint) as client:
-        offered = client.all_collections()
-    if not offered:
-        raise UsageError("The server was reached, but it offers no calendars, task lists or address books")
+    if not parameters.unchecked:
+        with _new_client(engine, url, username, parameters.password, fingerprint) as client:
+            offered = client.all_collections()
+        if not offered:
+            raise UsageError("The server was reached, but it offers no calendars, task lists or address books")
     host, port = _host_and_port(url)
     _refuse_same_account(engine.config().accounts, AccountKind.DAV, username, host, None)
     _, key_created = ensure_local_folders(engine, True)  # the data key the calendars are kept with exists from here on

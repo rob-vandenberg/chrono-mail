@@ -83,6 +83,13 @@
             </widget>
            </item>
            <item>
+            <widget class="QCheckBox" name="calendars">
+             <property name="text">
+              <string>Calendars and tasks</string>
+             </property>
+            </widget>
+           </item>
+           <item>
             <widget class="QCheckBox" name="tags">
              <property name="text">
               <string>Tags</string>

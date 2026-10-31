@@ -13,6 +13,11 @@ from pathlib import Path
 from chrono_mail.config import Rule, ServerRole, load_rules, load_tags, new_rule_id, save_rules, save_tags
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, ChronoMailError, CollectionKind, FolderRole, MessageFlag, MessageRef, StorageError
 from chrono_mail.engine.commands_accounts import AccountAddParameters, Policy, account_add
+from chrono_mail.engine.commands_calendar import ImportParameters as EventImportParameters, event_import
+from chrono_mail.engine.commands_dav import AddDavParameters, SetDavParameters, account_add_dav, dav_set
+from chrono_mail.engine.commands_pim import CreateParameters, collection_create
+from chrono_mail.engine.commands_tasklist import ImportParameters as TaskImportParameters, task_import
+from chrono_mail.pim.ical import parse_events, parse_tasks
 from chrono_mail.engine.commands_tags import give_colours
 from chrono_mail.engine.commands_addressbook import AddParameters, AddressesParameters, contact_add, contact_addresses
 from chrono_mail.engine.emclient_source import (
@@ -31,6 +36,7 @@ from chrono_mail.engine.emclient_source import (
 from chrono_mail.engine.import_common import EVERYTHING, MAXIMUM_REPORTED, PROGRESS_STEP, Journal, contents_fingerprint, fingerprint, fingerprint_of_raw, known_messages, still_here  # EVERYTHING and fingerprint: their names here stay
 from chrono_mail.engine.local import ensure_local_folders
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
+from chrono_mail.core.words import counted
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
@@ -39,9 +45,12 @@ from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 4.2.395"
+__version__ = "commands_emclient.py 4.2.452"
 
 # --- Version history ----------------------------------------------------
+# v4.2.452: IMAP accounts are made (their mail comes from the server, D-193); calendar accounts become the calendar server of the mail
+#           account with their address, else an account of calendars and contacts (a CalDAV and a CardDAV account of one login are one);
+#           every account takes eM Client's "include in global operations" as its Send and Receive tick (UR-01, D-059, D-301)
 # v4.2.395: the count of the mail goes to the window every 100 messages and at the last of each batch (the owner)
 # v4.2.391: the contents fingerprint of the exports is computed once per import run and kept with the run (not again for every batch);
 #           a scan that finds newer exports in the same place forgets the run of the older ones
@@ -72,7 +81,7 @@ JOURNAL_FILE: str = "import-emclient.log"
 _Journal = Journal  # the journal, the fingerprint and the check of a copy on disk are shared by every importer (import_common)
 _still_here = still_here
 FINISHED: str = "finished:"  # journal phase: a part (PARTS) an import of these exports went through to the end
-PARTS: tuple[str, ...] = ("accounts", "rules", "mail", "contacts", "tags")
+PARTS: tuple[str, ...] = ("accounts", "rules", "mail", "contacts", "calendars", "tags")
 
 
 # --- parameters and results -----------------------------------------------------------------------
@@ -95,15 +104,16 @@ class ImportParameters:
     mail: bool = field(default=True, metadata=option("Import the mail into Local Folders (needs the mail export)"))
     contacts: bool = field(default=True, metadata=option("Import the contacts (needs the backup)"))
     tags: bool = field(default=True, metadata=option("Import the categories as tags, and the tags of the mail (the settings export and the backup)"))
+    calendars: bool = field(default=True, metadata=option("Import the calendars and tasks of Local Folders (needs the backup)"))
     batch: int = field(default=0, metadata=option("Messages per run (0: all); run again to continue"))
     again: bool = field(default=False, metadata=option("Start over: go through everything again (what is here already is not added twice)"))
 
 
 @dataclass(frozen=True, slots=True)
 class ScanResult:
-    accounts: int
+    accounts: int  # mail accounts that can be imported (POP3 and IMAP)
     accounts_existing: int
-    accounts_not_pop3: int
+    accounts_not_imported: int  # of a kind Chrono Mail cannot make
     passwords_missing: tuple[str, ...]  # accounts whose password cannot be read from the settings file
     rules: int
     rules_not_imported: tuple[str, ...]  # "name: reason"
@@ -115,6 +125,11 @@ class ScanResult:
     tags: int = 0  # categories in the settings export
     tagged: int = 0  # messages with categories in the backup
     finished: tuple[str, ...] = ()  # the parts (PARTS) an earlier import of these very exports went through to the end
+    imap: int = 0  # of accounts: IMAP accounts
+    calendar_servers: int = 0  # calendar and contacts servers (one per address and login; CalDAV and CardDAV together)
+    events: int = 0  # appointments of Local Folders in the backup
+    tasks: int = 0
+    notes: int = 0  # notes in the backup: Chrono Mail has none, they are not imported
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,6 +149,11 @@ class ImportResult:
     tags_added: int = 0
     messages_tagged: int = 0
     notes: tuple[str, ...] = ()
+    calendars_given: int = 0  # calendar servers given to the mail account of their address (no account of their own)
+    events_added: int = 0
+    events_existing: int = 0
+    tasks_added: int = 0
+    tasks_existing: int = 0
 
 
 def _path(text: str | None, what: str) -> Path | None:
@@ -145,12 +165,34 @@ def _path(text: str | None, what: str) -> Path | None:
     return path
 
 
+KINDS: dict[str, AccountKind] = {"pop3": AccountKind.POP3, "imap": AccountKind.IMAP}
+
+
 def _same_account(engine: Engine, source: SourceAccount) -> str | None:
     """The id of the Chrono Mail account for the same mailbox (D-081: the same login, server and protocol)."""
+    kind = KINDS.get(source.kind)
     for settings in engine.config().accounts:
         account = settings.account
-        if account.kind is AccountKind.POP3 and account.incoming.username.lower() == source.incoming.username.lower() and account.incoming.host.lower() == source.incoming.host.lower():
+        if account.kind is kind and account.incoming.username.lower() == source.incoming.username.lower() and account.incoming.host.lower() == source.incoming.host.lower():
             return account.account_id
+    return None
+
+
+def _calendar_servers(export: SettingsExport) -> dict[tuple[str, str], list[SourceAccount]]:
+    """The calendar accounts of the export by server address and login: eM Client's CalDAV and CardDAV accounts of one login are one here (D-185)."""
+    servers: dict[tuple[str, str], list[SourceAccount]] = {}
+    for source in export.accounts:
+        if source.kind == "dav":
+            servers.setdefault((source.dav_url.strip().rstrip("/").lower(), source.incoming.username.lower()), []).append(source)
+    return servers
+
+
+def _same_calendar_server(engine: Engine, url: str, username: str) -> str | None:
+    """The account here that already keeps this calendar server with this login."""
+    for settings in engine.config().accounts:
+        login = settings.dav_username or settings.account.incoming.username
+        if settings.dav_url.strip().rstrip("/").lower() == url and login.lower() == username:
+            return settings.account.account_id
     return None
 
 
@@ -162,9 +204,10 @@ def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
     if settings_path is None and mail_path is None and backup_path is None:
         raise UsageError("Choose at least one export to import from")
     export = read_settings(settings_path) if settings_path is not None else SettingsExport((), (), False)
-    pop3 = [account for account in export.accounts if account.kind == "pop3"]
-    existing = sum(1 for account in pop3 if _same_account(engine, account) is not None)
-    missing = tuple(account.email_address for account in pop3 if account.incoming.password is None and _same_account(engine, account) is None)
+    mail = [account for account in export.accounts if account.kind in KINDS]
+    existing = sum(1 for account in mail if _same_account(engine, account) is not None)
+    missing = tuple(account.email_address for account in mail if account.incoming.password is None and _same_account(engine, account) is None)
+    servers = _calendar_servers(export)
     not_imported = tuple(f"{rule.name}: {rule.problem}" for rule in export.rules if rule.problem is not None)
     folders: set[tuple[str, ...]] = set()
     messages = done = 0
@@ -182,9 +225,10 @@ def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
                 done += 1
     backup = read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else BackupData()
     return ScanResult(
-        len(pop3), existing, len(export.accounts) - len(pop3), missing, len(export.rules) - len(not_imported), not_imported,
+        len(mail), existing, len(export.accounts) - len(mail) - sum(len(found) for found in servers.values()), missing, len(export.rules) - len(not_imported), not_imported,
         len(folders), messages, done, sum(len(found) for found in backup.marks.values()), len(backup.contacts), len(export.categories), len(backup.tagged),
         tuple(part for part in PARTS if journal is not None and FINISHED + part in journal.phases),
+        sum(1 for account in mail if account.kind == "imap"), len(servers), len(backup.events), len(backup.tasks), backup.notes,
     )
 
 
@@ -229,14 +273,17 @@ def _policy(account: SourceAccount) -> tuple[Policy, int]:
     return "keep", 30
 
 
-def _import_accounts(engine: Engine, export: SettingsExport, add: bool, notes: list[str]) -> tuple[dict[str, str], int, int, list[str]]:
-    """Make the POP3 accounts that are not here yet (their mail in Local Folders). Returns uid -> account id, added, existing, without password."""
+def _import_accounts(engine: Engine, export: SettingsExport, add: bool, notes: list[str]) -> tuple[dict[str, str], int, int, list[str], int]:
+    """Make the accounts that are not here yet: POP3 (their mail in Local Folders), IMAP (their mail comes from the server, D-193), then the
+    calendar servers (UR-01). Returns uid -> account id, added, existing, without password, calendar servers given to a mail account."""
     found: dict[str, str] = {}
     added = existing = 0
     without_password: list[str] = []
     for source in export.accounts:
-        if source.kind != "pop3":
-            notes.append(f"{source.email_address or source.name}: only POP3 accounts are imported")
+        if source.kind == "dav":
+            continue  # after the mail accounts: one may be the mail account it belongs to
+        if source.kind not in KINDS:
+            notes.append(f"{source.email_address or source.name}: a {source.kind.upper() or 'kind of'} account cannot be made in Chrono Mail")
             continue
         same = _same_account(engine, source)
         if same is not None:
@@ -246,7 +293,8 @@ def _import_accounts(engine: Engine, export: SettingsExport, add: bool, notes: l
         if not add:
             continue
         email = source.email_address or (source.incoming.username if "@" in source.incoming.username else "")
-        policy, days = _policy(source)
+        pop3 = source.kind == "pop3"
+        policy, days = _policy(source) if pop3 else ("keep", 30)
         incoming, outgoing = source.incoming, source.outgoing
         different_login = outgoing.username and outgoing.username != incoming.username
         try:
@@ -255,22 +303,73 @@ def _import_accounts(engine: Engine, export: SettingsExport, add: bool, notes: l
                 AccountAddParameters(
                     display_name=source.person_name or source.name, email_address=email, username=incoming.username,
                     password=incoming.password or "", incoming_host=incoming.host, outgoing_host=outgoing.host,
-                    incoming_port=incoming.port or 110, incoming_security=incoming.security, outgoing_port=outgoing.port or 25,
+                    incoming_port=incoming.port or (110 if pop3 else 143), incoming_security=incoming.security, outgoing_port=outgoing.port or 25,
                     outgoing_security=outgoing.security, outgoing_username=outgoing.username if different_login else None,
                     outgoing_password=outgoing.password if outgoing.password != incoming.password else None,
-                    delete_policy=policy, delete_days=days, kind="pop3", storage="local",
+                    delete_policy=policy, delete_days=days, kind="pop3" if pop3 else "imap", storage="local" if pop3 else "own",
                 ),
             )
         except ChronoMailError as error:
             notes.append(f"{email or source.name}: the account was not made (Import again makes it): {error}")
             continue
         account_id = result.account_id
-        engine.change_config(lambda config: config.with_account(replace(config.find(account_id), skip_known_mail=True)))
+        included = source.included
+        engine.change_config(lambda config: config.with_account(replace(config.find(account_id), skip_known_mail=pop3, in_send_receive=included)))
         found[source.uid] = result.account_id
         added += 1
         if incoming.password is None or outgoing.password is None:
             without_password.append(email)
-    return found, added, existing, without_password
+    calendars_added, calendars_existing, given = _import_calendar_servers(engine, export, found, add, notes, without_password)
+    return found, added + calendars_added, existing + calendars_existing, without_password, given
+
+
+def _import_calendar_servers(
+    engine: Engine, export: SettingsExport, found: dict[str, str], add: bool, notes: list[str], without_password: list[str],
+) -> tuple[int, int, int]:
+    """Each calendar server of the export (D-301): given to the mail account with its address that has none, as Add an account's For does;
+    else an account of calendars and contacts of its own. Nothing is asked of the server: the first fill after the import reaches it (D-300).
+    Returns accounts added, existing, and servers given to a mail account."""
+    added = existing = given = 0
+    for (url, username), sources in _calendar_servers(export).items():
+        first = sources[0]
+        here = _same_calendar_server(engine, url, username)
+        if here is not None:
+            for source in sources:
+                found[source.uid] = here
+            existing += 1
+            continue
+        if not add:
+            continue
+        address = first.email_address.lower()
+        config = engine.config()
+        mail = next((
+            settings for settings in config.accounts
+            if settings.account.kind in (AccountKind.POP3, AccountKind.IMAP) and not settings.dav_url and settings.account.email_address.lower() == address
+        ), None) if address else None
+        password = first.incoming.password
+        try:
+            if mail is not None:
+                account_id = mail.account.account_id
+                dav_set(engine, SetDavParameters(account_id, first.dav_url.strip(), first.incoming.username, password))
+            else:
+                made = account_add_dav(engine, AddDavParameters(
+                    first.dav_url.strip(), first.incoming.username, password or "", account_name=first.name, unchecked=True,
+                ))
+                account_id = made.account_id
+                included = all(source.included for source in sources)
+                engine.change_config(lambda fresh: fresh.with_account(replace(fresh.find(account_id), in_send_receive=included)))
+        except ChronoMailError as error:
+            notes.append(f"{first.email_address or first.name}: the calendars and contacts were not added (Import again adds them): {error}")
+            continue
+        for source in sources:
+            found[source.uid] = account_id
+        if mail is not None:
+            given += 1
+        else:
+            added += 1
+        if password is None:
+            without_password.append(first.email_address or first.name)
+    return added, existing, given
 
 
 def _same_rule(first: Rule, second: Rule) -> bool:
@@ -349,6 +448,56 @@ def _tag_present_mail(engine: Engine, backup: BackupData) -> tuple[int, int]:
                 mailbox.set_tags(MessageRef(mailbox.store.account_id, row.folder, store_id), wanted)
             tagged += 1
     return tagged, missing
+
+
+def _local_collection(engine: Engine, kind: CollectionKind, name: str, made: dict[tuple[CollectionKind, str], str]) -> str | None:
+    """Local Folders' calendar or task list of that name, made once when there is none; no name: its first one."""
+    key = (kind, name.casefold())
+    if key in made:
+        return made[key]
+    with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+        present = [info for info in store.collections(kind) if not info.read_only]
+    found = next((info.collection_id for info in present if name and info.name.casefold() == name.casefold()), None)
+    if found is None and not name:
+        found = present[0].collection_id if present else None
+    if found is None:
+        found = collection_create(engine, CreateParameters(kind="events" if kind is CollectionKind.EVENTS else "tasks", name=name or "Calendar")).collection
+    made[key] = found
+    return found
+
+
+def _import_local_items(engine: Engine, backup: BackupData, notes: list[str]) -> tuple[int, int, int, int]:
+    """Local Folders' appointments and tasks of the backup into Chrono Mail's Local Folders, each in a calendar or task list of its own name,
+    as they are; one whose UID is there already is left (UR-01). Returns events added and existing, tasks added and existing."""
+    ensure_local_pim(engine)
+    notes.extend(backup.problems)  # a part of the backup that could not be read: the rest comes in
+    made: dict[tuple[CollectionKind, str], str] = {}
+    counts = [0, 0, 0, 0]
+    for kind, items, offset in ((CollectionKind.EVENTS, backup.events, 0), (CollectionKind.TASKS, backup.tasks, 2)):
+        for item in items:
+            uids = [series.master.uid for series in parse_events(item.ical)] if kind is CollectionKind.EVENTS else [task.uid for task in parse_tasks(item.ical)]
+            if not uids:
+                notes.append(f"{item.folder or 'Local Folders'}: {'an appointment' if kind is CollectionKind.EVENTS else 'a task'} that could not be read was left out")
+                continue
+            try:
+                collection = _local_collection(engine, kind, item.folder, made)
+                if collection is None:
+                    continue
+                with open_pim(engine, LOCAL_ACCOUNT_ID) as store:
+                    if all(uid and store.index.find_uid(collection, uid) is not None for uid in uids):
+                        counts[offset + 1] += 1
+                        continue
+                if kind is CollectionKind.EVENTS:
+                    event_import(engine, EventImportParameters(collection, item.ical))
+                else:
+                    task_import(engine, TaskImportParameters(collection, item.ical))
+            except ChronoMailError as error:
+                notes.append(f"{item.folder or 'Local Folders'}: an item was not imported: {error}")
+                continue
+            counts[offset] += 1
+    if backup.notes:
+        notes.append(f"Notes: {counted(backup.notes, 'note')} not imported (Chrono Mail has no notes)")
+    return counts[0], counts[1], counts[2], counts[3]
 
 
 def _import_contacts(engine: Engine, backup: BackupData, notes: list[str]) -> tuple[int, int]:
@@ -549,7 +698,9 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         raise UsageError("The mail comes from the mail export folder: choose it, or leave the mail out")
     if parameters.contacts and backup_path is None:
         raise UsageError("The contacts come from the backup: choose it, or leave them out")
-    if not (parameters.accounts or parameters.rules or parameters.mail or parameters.contacts or parameters.tags):  # tags without their exports: nothing to do
+    if parameters.calendars and backup_path is None:
+        raise UsageError("The calendars and tasks come from the backup: choose it, or leave them out")
+    if not (parameters.accounts or parameters.rules or parameters.mail or parameters.contacts or parameters.calendars or parameters.tags):  # tags without their exports: nothing to do
         raise UsageError("Choose what to import")
     journal_path = engine.directories.data_directory / JOURNAL_FILE
     if parameters.again:  # start over: everything is gone through again (the duplicate checks keep what is here from being added twice)
@@ -562,9 +713,9 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
     export = read_settings(settings_path) if settings_path is not None else SettingsExport((), (), False)
     if (parameters.accounts or parameters.rules) and "settings" not in journal.phases:
         before = len(notes)
-        accounts, added, existing, without = _import_accounts(engine, export, parameters.accounts, notes)
+        accounts, added, existing, without, given = _import_accounts(engine, export, parameters.accounts, notes)
         not_made = any("the account was not made" in note for note in notes[before:])
-        result = replace(result, accounts_added=added, accounts_existing=existing, accounts_without_password=tuple(without))
+        result = replace(result, accounts_added=added, accounts_existing=existing, accounts_without_password=tuple(without), calendars_given=given)
         if parameters.rules:
             rules_added, rules_existing, not_imported = _import_rules(engine, export, accounts, notes)
             result = replace(result, rules_added=rules_added, rules_existing=rules_existing, rules_not_imported=tuple(not_imported))
@@ -576,6 +727,10 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         contacts_added, contacts_existing = _import_contacts(engine, backup, notes)
         result = replace(result, contacts_added=contacts_added, contacts_existing=contacts_existing)
         journal.phase("contacts")
+    if parameters.calendars and backup is not None and "calendars" not in journal.phases:
+        events_added, events_existing, tasks_added, tasks_existing = _import_local_items(engine, backup, notes)
+        result = replace(result, events_added=events_added, events_existing=events_existing, tasks_added=tasks_added, tasks_existing=tasks_existing)
+        journal.phase("calendars")
     if parameters.tags and "tags" not in journal.phases and (export.categories or (backup is not None and backup.tagged)):
         names_in_mail = tuple(dict.fromkeys(tag for _, _, tags in (backup.tagged if backup is not None else ()) for tag in tags))
         added = _import_categories(engine, export.categories, names_in_mail)
@@ -605,7 +760,10 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
         if tags_later:
             notes.append(f"Tags: {tags_later} messages are imported; their tags come with the next import")
     if result.messages_left == 0:  # the parts chosen went through to the end (an account not made yet is tried again: not finished)
-        chosen = {"accounts": parameters.accounts, "rules": parameters.rules, "mail": parameters.mail, "contacts": parameters.contacts, "tags": parameters.tags}
+        chosen = {
+            "accounts": parameters.accounts, "rules": parameters.rules, "mail": parameters.mail, "contacts": parameters.contacts, "calendars": parameters.calendars,
+            "tags": parameters.tags,
+        }
         for part in PARTS:
             if chosen[part] and (part not in ("accounts", "rules") or "settings" in journal.phases) and FINISHED + part not in journal.phases:
                 journal.phase(FINISHED + part)

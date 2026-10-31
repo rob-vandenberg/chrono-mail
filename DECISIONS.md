@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-300 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-301 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-301**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-302**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -340,7 +340,8 @@ The design rules as they stand now, by topic, one short entry each. Every number
 
 ## 13. Importer (the reference client may be named only here)
 
-- **D-124** Menu > Import…; the program chosen in the window. **Everything mappable is imported as it is, without asking**; only the impossible is reported. POP3 accounts into Local Folders; the Outbox into Drafts (an import never sends); no duplicates; resumable by journal. Passwords: 12 known characters (task I.2).
+- **D-124** Menu > Import…; the program chosen in the window. **Everything mappable is imported as it is, without asking**; only the impossible is reported (notes are counted, Chrono Mail has none). POP3 accounts into Local Folders; IMAP accounts are made and their mail comes from the server (D-193); calendar accounts by D-301; every account takes the source's "include" switch as its Send and Receive tick (D-059); Local Folders' calendars and tasks into Local Folders' calendars and task lists of the same name. The Outbox into Drafts (an import never sends); no duplicates; resumable by journal; no server is asked during an import. Passwords: 12 known characters (task I.2).
+- **D-301** (UR-01, the owner) **An imported calendar account is given to the mail account with its address** (as Add an account's For does) when that one has no calendar server yet; else it becomes a Calendars and contacts account. The source's separate CalDAV and CardDAV accounts of one server address and login are one here (D-185). Nothing is asked of the server at the import; its first fill reaches it (D-300).
 - **D-212** (R-42) One table of the export's standard folder names serves the mail and the rules, so a rule to "Junk E-mail" goes to Chrono Mail's Junk.
 - **D-131** Categories become tags; mail gets its tags from the backup.
 - **D-134** The Import button stays off until the exports have been read.

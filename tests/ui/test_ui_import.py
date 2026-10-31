@@ -20,9 +20,10 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 4.2.449"
+__version__ = "test_ui_import.py 4.2.452"
 
 # --- Version history ----------------------------------------------------
+# v4.2.452: an account the import cannot make is "of a kind Chrono Mail cannot make" (IMAP is made now, UR-01)
 # v4.2.449: nothing is checked after an import that made no account; the automatic check is check_accounts(None) (D-300)
 # v4.2.431: Import's reason is in its (i), not in a hover text
 # v4.2.391: while the exports are read the bar moves as a busy bar and the (i) notice shows, Import grey with its hover text; both stop at the answer
@@ -141,7 +142,7 @@ def test_a_failed_batch_reloads_the_window_and_import_continues(qtbot: QtBot, se
 def test_the_summaries_in_plain_words() -> None:
     scan = ScanResult(3, 1, 1, ("a@example.com",), 2, ("Script: it is written as a script",), 4, 1200, 200, 1100, 5)
     text = scan_summary(scan)
-    assert "Accounts: 3, of which 1 already here (not made again); 1 not POP3 (not imported)." in text
+    assert "Accounts: 3, of which 1 already here (not made again); 1 of a kind Chrono Mail cannot make (not imported)." in text
     assert "Passwords that cannot be read (you type them later): a@example.com." in text
     assert "Mail: 1,200 messages in 4 folders, 200 of them done by an earlier import (it continues)." in text
     assert scan_summary(ScanResult(0, 0, 0, (), 0, (), 0, 0, 0, 0, 0)) == "Nothing to import was found."
@@ -183,7 +184,7 @@ def test_after_an_import_the_list_on_screen_shows_the_imported_mail(world: World
     assert window.list_model.rowCount() == 0
     (tmp_path / "exports").mkdir()
     exports = make_exports(tmp_path / "exports")
-    world.call("import.emclient", settings_file=None, mail_folder=str(exports.mail), backup_file=None, accounts=False, rules=False, contacts=False)
+    world.call("import.emclient", settings_file=None, mail_folder=str(exports.mail), backup_file=None, accounts=False, rules=False, contacts=False, calendars=False)
     window._after_import()  # what the Import window calls when it is done
     wait(qtbot, lambda: window.list_model.rowCount() > 0)
 
@@ -416,3 +417,13 @@ def test_an_empty_fields_browse_opens_where_the_last_browse_picked(qtbot: QtBot,
     again._browse_backup()
     assert opened[-1] == folder
 
+
+
+def test_the_summaries_name_imap_accounts_calendar_servers_appointments_tasks_and_notes() -> None:
+    scan = ScanResult(26, 0, 0, (), 0, (), 0, 0, 0, 0, 0, imap=1, calendar_servers=1, events=12, tasks=3, notes=2)
+    text = scan_summary(scan)
+    assert "Accounts: 26 (25 POP3, 1 IMAP); calendars and contacts: 1 server." in text
+    assert "Calendars and tasks of Local Folders: 12 appointments, 3 tasks." in text and "Notes: 2 notes (Chrono Mail has no notes; they are not imported)." in text
+    done = import_summary(ImportResult(accounts_added=26, calendars_given=1, events_added=12, tasks_added=2, tasks_existing=1), stopped=False)
+    assert "Accounts made: 26; already here: 0." in done and "Calendars and contacts given to the mail account of their address: 1." in done
+    assert "Appointments imported: 12; already here: 0. Tasks imported: 2; already here: 1." in done
