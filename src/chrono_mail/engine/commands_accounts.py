@@ -52,9 +52,11 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.2.441"
+__version__ = "commands_accounts.py 4.2.447"
 
 # --- Version history ----------------------------------------------------
+# v4.2.447: account.check fresh (a test the person starts: the usual checks only); certificate.inspect tells whether the certificate is kept
+#           with an account (kept); account.forget-certificate takes one back (D-299)
 # v4.2.441: account.check names a server whose certificate could not be verified (incoming_certificate, outgoing_certificate) and takes the
 #           certificates accepted until Chrono Mail closes; certificate.trust-for-run; security tls-unchecked, the weak choice (D-299)
 # v3.6.371: the passwords and the key get readable labels in the wallet when stored or the account is renamed; wallet.label at start (B-23, D-275)
@@ -233,6 +235,7 @@ class AccountCheckParameters:
     kind: Kind = field(default="pop3", metadata=option("pop3 or imap"))
     trusted_certificate: tuple[str, ...] = field(default=(), metadata=option("The SHA-256 fingerprint of a server certificate to accept (repeat for more)"))
     account: str = field(default="", metadata=option("An account that exists: a password not given is its stored one (nothing is changed)"))
+    fresh: bool = field(default=False, metadata=option("Check the certificates with the usual checks only (a test the person starts): none accepted before counts"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,7 +251,7 @@ class AccountCheckResult:
 def account_check(engine: Engine, parameters: AccountCheckParameters) -> AccountCheckResult:
     """Try to connect and log in to both servers, before an account is created or with the changes of one being edited. Nothing is stored or
     sent. For an account that exists a password not typed is the stored one: a password typed once is never asked for again (R-05)."""
-    pins = engine.pins(_pins(parameters.trusted_certificate))  # also those accepted until Chrono Mail closes (D-299)
+    pins = () if parameters.fresh else engine.pins(_pins(parameters.trusted_certificate))  # also those accepted until closing; a fresh test: none (D-299)
     password, outgoing_password = parameters.password, parameters.outgoing_password
     account_id = ""
     if parameters.account:
@@ -737,6 +740,7 @@ class CertificateParameters:
     port: int = field(metadata=option("Its port"))
     security: Security = field(default="tls", metadata=option("tls (implicit TLS) or starttls"))
     kind: Literal["pop3", "imap", "smtp", "https"] = field(default="imap", metadata=option("Which kind of server it is: pop3, imap, smtp, or https (a calendar and contacts server)"))
+    account: str = field(default="", metadata=option("The account to tell whether this certificate is kept with it for good (kept)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -751,6 +755,7 @@ class CertificateResult:
     accepted_by_default: bool  # would the usual checks accept it? (then there is nothing to accept)
     problem: str | None
     accepted_for_run: bool = False  # the person accepted exactly this certificate meanwhile (until Chrono Mail closes, or for good): nothing to ask
+    kept: bool = False  # kept for good with the account named (Don't ask me again): the window's tick starts ticked (D-299)
 
 
 def certificate_inspect(engine: Engine, parameters: CertificateParameters) -> CertificateResult:
@@ -760,7 +765,15 @@ def certificate_inspect(engine: Engine, parameters: CertificateParameters) -> Ce
     host = parameters.host.strip()
     info = inspect_certificate(host, parameters.port, _security(parameters.security), parameters.kind)
     accepted = info.fingerprint in fingerprints_for(engine.pins(), host, parameters.port)
-    return CertificateResult(info.fingerprint, info.subject, info.issuer, info.names, info.not_before, info.not_after, info.expired, info.verified, info.problem, accepted)
+    kept = False
+    if parameters.account:
+        try:
+            kept = info.fingerprint in fingerprints_for(engine.resolve_account(parameters.account).trusted_certificates, host, parameters.port)
+        except ConfigurationError:
+            kept = False  # the account is gone meanwhile: nothing is kept with it
+    return CertificateResult(
+        info.fingerprint, info.subject, info.issuer, info.names, info.not_before, info.not_after, info.expired, info.verified, info.problem, accepted, kept,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -810,6 +823,19 @@ def certificate_trust_for_run(engine: Engine, parameters: RunTrustParameters) ->
     return RunTrustResult(pin)
 
 
+def account_forget_certificate(engine: Engine, parameters: TrustParameters) -> AccountSummary:
+    """Take back one accepted certificate of an account (Connect without Don't ask me again, D-299): the usual checks apply to it again
+    after Chrono Mail closes. Nothing else is changed."""
+    config = engine.config()
+    settings = engine.resolve_account(parameters.account, config)
+    (gone,) = _pins((f"{parameters.host}:{parameters.port}={parameters.fingerprint}",))
+    account_id = settings.account.account_id
+    config = engine.change_config(lambda fresh: fresh.with_account(replace(
+        fresh.find(account_id), trusted_certificates=tuple(pin for pin in fresh.find(account_id).trusted_certificates if pin != gone),
+    )))
+    return _summary(config.find(account_id))
+
+
 def account_forget_certificates(engine: Engine, parameters: AccountParameters) -> AccountSummary:
     """Take back every accepted certificate of an account: the usual checks apply again."""
     config = engine.config()
@@ -822,6 +848,7 @@ def account_forget_certificates(engine: Engine, parameters: AccountParameters) -
 CERTIFICATE_INSPECT: TypedCommand[CertificateParameters, CertificateResult] = TypedCommand("certificate.inspect", CertificateParameters, CertificateResult)
 ACCOUNT_TRUST_CERTIFICATE: TypedCommand[TrustParameters, AccountSummary] = TypedCommand("account.trust-certificate", TrustParameters, AccountSummary)
 ACCOUNT_FORGET_CERTIFICATES: TypedCommand[AccountParameters, AccountSummary] = TypedCommand("account.forget-certificates", AccountParameters, AccountSummary)
+ACCOUNT_FORGET_CERTIFICATE: TypedCommand[TrustParameters, AccountSummary] = TypedCommand("account.forget-certificate", TrustParameters, AccountSummary)
 CERTIFICATE_TRUST_FOR_RUN: TypedCommand[RunTrustParameters, RunTrustResult] = TypedCommand("certificate.trust-for-run", RunTrustParameters, RunTrustResult)
 ACCOUNT_ADD: TypedCommand[AccountAddParameters, AccountAddResult] = TypedCommand("account.add", AccountAddParameters, AccountAddResult)
 ACCOUNT_CHECK: TypedCommand[AccountCheckParameters, AccountCheckResult] = TypedCommand("account.check", AccountCheckParameters, AccountCheckResult)
@@ -860,6 +887,7 @@ def register(registry: CommandRegistry) -> None:
     registry.register(WALLET_LABEL.id, "Give Chrono Mail's passwords and key a readable name in the wallet (only the names change)", NoParameters, wallet_label, doing="Naming Chrono Mail's passwords in your wallet")
     registry.register(CERTIFICATE_INSPECT.id, "Look at the certificate of a server (nothing is accepted by looking)", CertificateParameters, certificate_inspect, doing="Reading the server's certificate")
     registry.register(ACCOUNT_TRUST_CERTIFICATE.id, "Accept a server certificate for an account (by its fingerprint)", TrustParameters, account_trust_certificate, doing="Accepting a certificate")
+    registry.register(ACCOUNT_FORGET_CERTIFICATE.id, "Forget one accepted certificate of an account (by its fingerprint)", TrustParameters, account_forget_certificate, doing="Forgetting a certificate")
     registry.register(CERTIFICATE_TRUST_FOR_RUN.id, "Accept a server certificate until Chrono Mail closes (by its fingerprint; never saved)", RunTrustParameters, certificate_trust_for_run, doing="Accepting a certificate")
     registry.register(ACCOUNT_FORGET_CERTIFICATES.id, "Forget the accepted certificates of an account", AccountParameters, account_forget_certificates, doing="Forgetting the accepted certificates")
     registry.register(ACCOUNT_ADD.id, "Add a POP3/SMTP account and create its (encrypted) message store", AccountAddParameters, account_add, doing="Adding an account")

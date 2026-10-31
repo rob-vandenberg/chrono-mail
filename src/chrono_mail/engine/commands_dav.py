@@ -20,9 +20,10 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 4.2.441"
+__version__ = "commands_dav.py 4.2.447"
 
 # --- Version history ----------------------------------------------------
+# v4.2.447: dav.find and dav.find-new fresh: a Find the person starts checks the certificate with the usual checks only (D-299)
 # v4.2.441: every calendar server connection also takes the certificates accepted until Chrono Mail closes; dav.sync goes on with the other
 #           accounts when one's certificate cannot be verified and names that server (certificate), as dav.find does when it looked by itself (D-299)
 # v3.6.371: a stored calendar password gets a readable label in the wallet (B-23, D-275)
@@ -235,6 +236,7 @@ class FindParameters:
     url: str = field(default="", metadata=option("Check this address (empty: look on the incoming mail server and on the domain of the address)"))
     username: str | None = field(default=None, metadata=option("Try this user name instead of the stored one"))
     password: str | None = field(default=None, metadata=option("Try this password instead of the stored one", secret=True))
+    fresh: bool = field(default=False, metadata=option("Check the certificates with the usual checks only (a Find the person starts): none accepted before counts"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,9 +286,13 @@ def _answers_as_calendar_server(address: str, trusted: frozenset[str]) -> bool:
         return False
 
 
-def _with_certificate(engine: Engine, settings: AccountSettings, address: str, attempt: Callable[[frozenset[str]], bool]) -> tuple[bool, str]:
+def _with_certificate(
+    engine: Engine, settings: AccountSettings, address: str, attempt: Callable[[frozenset[str]], bool], fresh: bool = False,
+) -> tuple[bool, str]:
     """Run an attempt at a place with the certificates accepted for it. When the certificate fails and it is exactly one the person accepted for this
     account's mail, it is accepted for this place too, without asking (D-180): (the attempt's answer, the pin to keep or "")."""
+    if fresh:  # a Find the person starts: the usual checks only, the Verify certificate window asks about the rest (D-299)
+        return attempt(frozenset()), ""
     trusted = _accepted_for(engine, settings, address)
     try:
         return attempt(trusted), ""
@@ -327,7 +333,7 @@ def dav_find(engine: Engine, parameters: FindParameters) -> FoundServer:
             return True
 
         try:
-            answered, pin = _with_certificate(engine, settings, address, attempt)
+            answered, pin = _with_certificate(engine, settings, address, attempt, parameters.fresh)
         except ProtocolError as error:  # also a refused login or certificate
             if given:
                 raise
@@ -411,19 +417,22 @@ class FindNewParameters:
     username: str = field(metadata=option("The user name"))
     password: str = field(metadata=option("The password", secret=True))
     fingerprint: str = field(default="", metadata=option("The SHA-256 fingerprint of a certificate the person accepted for this server"))
+    fresh: bool = field(default=False, metadata=option("Check the certificate with the usual checks only (a Find the person starts): none accepted before counts"))
 
 
-def _new_client(engine: Engine, url: str, username: str, password: str, fingerprint: str) -> DavClient:
+def _new_client(engine: Engine, url: str, username: str, password: str, fingerprint: str, fresh: bool = False) -> DavClient:
     host, port = _host_and_port(url)
     if not host:
         raise UsageError("Type the address of the calendar and contacts server")
+    if fresh:
+        return DavClient(url, username, password)
     return DavClient(url, username, password, fingerprints_for(engine.pins((server_pin(host, port, fingerprint),) if fingerprint else ()), host, port))
 
 
 def dav_find_new(engine: Engine, parameters: FindNewParameters) -> FoundServer:
     """What a calendar and contacts server offers to a login that is not an account yet: every folder, the public ones too, all ticked."""
     url = web_address(parameters.url)
-    with _new_client(engine, url, parameters.username.strip(), parameters.password, parameters.fingerprint.strip()) as client:
+    with _new_client(engine, url, parameters.username.strip(), parameters.password, parameters.fingerprint.strip(), parameters.fresh) as client:
         found = client.all_collections()
     pin = server_pin(*_host_and_port(url), parameters.fingerprint.strip()) if parameters.fingerprint.strip() else ""
     folders = tuple(FoundFolder(folder_key(item), item.name, item.kind, item.public, item.read_only, True) for item in found)

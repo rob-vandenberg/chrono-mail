@@ -11,8 +11,10 @@ from chrono_mail.engine.commands_accounts import (
     AccountCheckResult,
     CertificateParameters,
     RunTrustParameters,
+    TrustParameters,
     account_add,
     account_check,
+    account_forget_certificate,
     certificate_inspect,
     certificate_trust_for_run,
 )
@@ -31,9 +33,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_verify_certificate.py 4.2.441"
+__version__ = "test_engine_verify_certificate.py 4.2.447"
 
 # --- Version history ----------------------------------------------------
+# v4.2.447: a fresh check and Find count nothing accepted before; certificate.inspect kept; account.forget-certificate
 # v4.2.441: Initial version: a certificate that could not be verified names its server, Connect until closing, the weak security (UR-05, D-299)
 
 MESSAGE = raw_message(subject="Over TLS", body="x\r\n", message_id="<verify1@x>")
@@ -181,3 +184,38 @@ def test_a_pinned_smtp_server_with_a_greeting_of_several_lines_is_checked(monkey
         tls._start_tls(ours, "smtp")  # noqa: SLF001 - the step the second look takes
         sent = server.recv(200)
     assert sent == b"EHLO chrono-mail.invalid\r\nSTARTTLS\r\n"
+
+
+def test_a_fresh_check_counts_nothing_accepted_before_and_one_certificate_can_be_taken_back(tmp_path: Path) -> None:
+    server_context, _ = make_certificate(tmp_path)
+    engine = make_engine(tmp_path / "e")
+    with FakePop3Server({}, implicit_tls=server_context) as pop, FakeSmtpServer(implicit_tls=server_context) as smtp:
+        pin = fingerprint_of(engine, pop.port)
+        kept = (f"127.0.0.1:{pop.port}={pin}",)
+        certificate_trust_for_run(engine, RunTrustParameters("127.0.0.1", smtp.port, pin))
+        assert check(engine, pop.port, smtp.port, kept).incoming_ok and check(engine, pop.port, smtp.port, kept).outgoing_ok
+        fresh = account_check(engine, AccountCheckParameters(
+            username="user", incoming_host="127.0.0.1", outgoing_host="127.0.0.1", password="secret", incoming_port=pop.port, incoming_security="tls",
+            outgoing_port=smtp.port, outgoing_security="tls", trusted_certificate=kept, fresh=True,
+        ))
+        assert fresh.incoming_certificate is not None and fresh.outgoing_certificate is not None  # the usual checks only
+        created = account_add(engine, AccountAddParameters(
+            display_name="Me", email_address="me@example.com", username="user", password="secret", incoming_host="127.0.0.1", outgoing_host="127.0.0.1",
+            incoming_port=pop.port, outgoing_port=smtp.port, outgoing_security="tls", trusted_certificate=kept,
+        ))
+        looked = certificate_inspect(engine, CertificateParameters("127.0.0.1", pop.port, "tls", "pop3", created.account_id))
+        assert looked.kept and not certificate_inspect(engine, CertificateParameters("127.0.0.1", pop.port, "tls", "pop3")).kept
+        left = account_forget_certificate(engine, TrustParameters(created.account_id, "127.0.0.1", pop.port, pin))
+        assert left.trusted_certificates == ()
+        assert not certificate_inspect(engine, CertificateParameters("127.0.0.1", pop.port, "tls", "pop3", created.account_id)).kept
+
+
+def test_a_fresh_find_counts_nothing_accepted_before(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "e")
+    with FakeDav(tls=True) as server:
+        host, port = "127.0.0.1", int(server.url.rsplit(":", 1)[1].split("/")[0])
+        pin = certificate_inspect(engine, CertificateParameters(host, port, "tls", "https")).fingerprint
+        certificate_trust_for_run(engine, RunTrustParameters(host, port, pin))
+        dav_find_new(engine, FindNewParameters(server.url, "ann", "secret"))  # Connect counts for this run
+        with pytest.raises(CertificateError):
+            dav_find_new(engine, FindNewParameters(server.url, "ann", "secret", fresh=True))

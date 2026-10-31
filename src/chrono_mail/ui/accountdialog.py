@@ -1,3 +1,4 @@
+import dataclasses
 import html
 from collections.abc import Callable
 from typing import Literal, override
@@ -31,9 +32,11 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, policy_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.2.441"
+__version__ = "accountdialog.py 4.2.447"
 
 # --- Version history ----------------------------------------------------
+# v4.2.447: Test connection always checks the certificates itself; the test after Connect uses the answer; Connect without the tick takes back
+#           a certificate kept here (D-299)
 # v4.2.441: a server whose certificate could not be verified asks at once (Verify certificate) after Test and Add; Connect tests or adds
 #           again; the Look at the server's certificate… button is gone (UR-05, D-299)
 # v4.2.440: a long error text is shown whole: the smallest height follows what the wrapping texts need at the width, never above the screen
@@ -254,18 +257,22 @@ class AccountDialog(QDialog):
             self._last_guess_host = f"mail.{domain}"
         self._last_guess_user = text
 
-    def _ask_about(self, trouble: CertificateTrouble | None, again: Callable[[], None]) -> None:
+    def _ask_about(self, trouble: CertificateTrouble | None, again: Callable[[], None], fresh: bool = False) -> None:
         """A server whose certificate could not be verified: the Verify certificate window asks at once; Connect does the work again (D-299)."""
         if trouble is not None:
-            questions_for(self._backend).ask(trouble, again, self, self._keep)
+            questions_for(self._backend).ask(trouble, again, self, self._keep, kept=lambda: self.trusted, fresh=fresh)
 
-    def _keep(self, pin: str) -> None:
-        """Don't ask me again for an account not added yet: the certificate goes with it when it is added, for the server it was met at."""
+    def _keep(self, pin: str, keep: bool) -> None:
+        """Don't ask me again for an account not added yet: the certificate goes with it when it is added, for the server it was met at;
+        Connect without it takes back one kept here before."""
         server, _, fingerprint = pin.rpartition("=")
         for which in ("incoming", "outgoing"):
             endpoint = self._endpoint(which)
             if f"{endpoint[0].strip().lower()}:{endpoint[1]}" == server:
-                self._pins[which] = (endpoint, fingerprint)
+                if keep:
+                    self._pins[which] = (endpoint, fingerprint)
+                elif which in self._pins and self._pins[which][1] == fingerprint:
+                    del self._pins[which]
 
     def _endpoint(self, which: str) -> tuple[str, int, str]:
         return self.servers.endpoint(which)
@@ -280,8 +287,9 @@ class AccountDialog(QDialog):
 
     # --- the commands -----------------------------------------------------------------------------
 
-    def _values(self) -> AccountCheckParameters:
-        return self.servers.check_parameters(trusted=tuple(self.trusted))
+    def _values(self, fresh: bool = False) -> AccountCheckParameters:
+        """fresh: a test the person starts, which checks the certificates with the usual checks only (D-299)."""
+        return dataclasses.replace(self.servers.check_parameters(trusted=tuple(self.trusted)), fresh=fresh)
 
     def _busy(self, busy: bool) -> None:
         """A test runs: Test waits for its answer (it would start another test), and so does the mail part's Add."""
@@ -316,6 +324,14 @@ class AccountDialog(QDialog):
         return True
 
     def _test(self) -> None:
+        """Test connection: it always checks the certificates itself, whatever was answered before (D-299)."""
+        self._check(fresh=True)
+
+    def _retest(self) -> None:
+        """The test after Connect: with what was answered."""
+        self._check(fresh=False)
+
+    def _check(self, fresh: bool) -> None:
         if self._adding or self._testing or not self._complete():  # never during an add, nor a second test (a Connect ends in one)
             return
         self._busy(True)
@@ -324,14 +340,14 @@ class AccountDialog(QDialog):
         def done(result: AccountCheckResult) -> None:
             self._busy(False)
             self.result_label.setText(test_result_text(result))
-            self._ask_about(result.incoming_certificate, self._test)
-            self._ask_about(result.outgoing_certificate, self._test)
+            self._ask_about(result.incoming_certificate, self._retest, fresh)
+            self._ask_about(result.outgoing_certificate, self._retest, fresh)
 
         def failed(error: ChronoMailError) -> None:
             self._busy(False)
             self.result_label.setText(f"<span style='color:{red()}'>{html.escape(str(error))}</span>")
 
-        self._backend.ask(ACCOUNT_CHECK, self._values(), done, failed, owner=self)
+        self._backend.ask(ACCOUNT_CHECK, self._values(fresh), done, failed, owner=self)
 
     def _add(self) -> None:
         if self._is_calendar():

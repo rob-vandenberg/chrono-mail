@@ -3506,3 +3506,7 @@ The owner: Verify certificate at least 500, opened at 700 pixels; asked whether 
 ## 2026-10-31, 4.2.446: Verify certificate opens at 740 pixels
 
 The owner: 740 instead of 700 (forms.owner_width(740), 623 at the standard size). Its test expects 740; not run (the owner).
+
+## 2026-10-31, 4.2.447: Test connection and Find always check the certificate themselves
+
+The owner: a test he starts must test, whatever he answered or ticked before. account.check, dav.find and dav.find-new have fresh (the usual checks only, no certificate accepted before, also not D-180's); the Test and Find buttons ask fresh, the check after Connect (_retest, _refind) does not. A question met by a fresh check asks even when accepted meanwhile; one met by the check after Connect keeps the redo-once path (else that check, answered before the second Connect counted, asked again). certificate.inspect tells whether the certificate is kept with the account (kept), the windows say what they keep for an account not added yet; the Verify window's tick starts so; Connect without it takes the certificate back (account.forget-certificate, or out of the window's list), with it keeps it; Do not connect changes nothing kept. Refreshes and sends are unchanged. Tests: engine (fresh check, fresh Find, kept, forget one) and window (a second Test asks again and the test after Connect passes; the tick starts as kept and Connect without it takes it back; a Refresh after Connect asks nothing); they fail on 4.2.446.

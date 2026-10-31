@@ -10,9 +10,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.icons import bundled_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "certificatedialog.py 4.2.446"
+__version__ = "certificatedialog.py 4.2.447"
 
 # --- Version history ----------------------------------------------------
+# v4.2.447: the tick starts ticked for a certificate kept before (kept)
 # v4.2.446: Verify certificate opens 740 pixels wide (the owner)
 # v4.2.445: Verify certificate opens 700 pixels wide and is at least 500 (the owner's screen, forms.owner_width)
 # v4.2.441: VerifyCertificateDialog, the question that opens by itself (UR-05, D-299); CertificateDialog only shows a certificate (Show
@@ -74,7 +75,7 @@ class VerifyCertificateDialog(QDialog):
     """Asks whether to connect to a server whose certificate could not be verified (UR-05, D-299): Connect accepts exactly this certificate,
     until Chrono Mail closes or, with Don't ask me again, for good; Do not connect closes it; Show certificate shows the certificate."""
 
-    def __init__(self, host: str, info: CertificateResult, changed: bool, parent: QWidget | None = None) -> None:
+    def __init__(self, host: str, info: CertificateResult, changed: bool, parent: QWidget | None = None, kept: bool = False) -> None:
         super().__init__(parent)
         self.host: str = host
         self.info: CertificateResult = info
@@ -98,6 +99,7 @@ class VerifyCertificateDialog(QDialog):
             f"<tr><td>Expiration date</td><td>{expires}</td></tr></table>"
         )
         self.dont_ask: QCheckBox = part(form, QCheckBox, "dontAsk")
+        self.dont_ask.setChecked(kept)  # kept with Don't ask me again before: unticking it and Connect takes it back (D-299)
         box = part(form, QDialogButtonBox, "buttons")
         self.connect_button: QPushButton = box.addButton("Connect", QDialogButtonBox.ButtonRole.AcceptRole)
         self.refuse_button: QPushButton = box.addButton("Do not connect", QDialogButtonBox.ButtonRole.RejectRole)

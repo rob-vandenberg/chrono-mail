@@ -1,5 +1,5 @@
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Literal, override
 
@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QWidget
 
 from chrono_mail.core import CertificateTrouble, ChronoMailError
 from chrono_mail.engine.commands_accounts import (
+    ACCOUNT_FORGET_CERTIFICATE,
     ACCOUNT_TRUST_CERTIFICATE,
     CERTIFICATE_INSPECT,
     CERTIFICATE_TRUST_FOR_RUN,
@@ -23,9 +24,11 @@ from chrono_mail.ui.backend import Backend, alive
 from chrono_mail.ui.certificatedialog import VerifyCertificateDialog
 
 # --- Version ------------------------------------------------------------
-__version__ = "certificatequestions.py 4.2.443"
+__version__ = "certificatequestions.py 4.2.447"
 
 # --- Version history ----------------------------------------------------
+# v4.2.447: a test or Find the person starts always asks (even when accepted meanwhile); the tick starts ticked for a kept certificate, and
+#           Connect without it takes that one back (from the account, or from the window of an account not added yet)
 # v4.2.443: one window per server name and certificate: the other ports of that server showing the same certificate (incoming, outgoing,
 #           calendars on one machine) get the same answer, and the work they met is done again once
 # v4.2.442: by_person: a Send the person made asks also after Do not connect earlier in this run (D-299)
@@ -39,7 +42,8 @@ __version__ = "certificatequestions.py 4.2.443"
 Server = tuple[str, int]
 KINDS: dict[str, Literal["pop3", "imap", "smtp", "https"]] = {"pop3": "pop3", "imap": "imap", "smtp": "smtp", "https": "https"}
 SECURITIES: dict[str, Security] = {"tls": "tls", "starttls": "starttls"}
-Keep = Callable[[str], None]  # keeps an accepted certificate (host:port=fingerprint) with an account being added or edited
+Keep = Callable[[str, bool], None]  # keeps (True) or takes back (False) a certificate (host:port=fingerprint) with an account being added or edited
+Kept = Callable[[], Sequence[str]]  # the certificates a window keeps with an account not added yet (host:port=fingerprint)
 
 
 @dataclass(slots=True)
@@ -56,11 +60,13 @@ class _Question:
     retries: list[_Retry] = field(default_factory=list)
     keeps: list[tuple[Keep, QWidget | None]] = field(default_factory=list)  # with the window each belongs to
     accounts: list[str] = field(default_factory=list)  # every account that met this server: Don't ask me again keeps it with each
+    kept: list[Kept] = field(default_factory=list)  # what the windows that asked keep: the tick starts ticked for one of these
+    fresh: bool = False  # met by a check the person started (Test, Find): asked even when accepted meanwhile
 
 
 def _look(trouble: CertificateTrouble) -> CertificateParameters:
-    """certificate.inspect for the server of this trouble."""
-    return CertificateParameters(trouble.host, trouble.port, SECURITIES.get(trouble.security, "tls"), KINDS.get(trouble.kind, "imap"))
+    """certificate.inspect for the server of this trouble (and whether the certificate is kept with its account)."""
+    return CertificateParameters(trouble.host, trouble.port, SECURITIES.get(trouble.security, "tls"), KINDS.get(trouble.kind, "imap"), trouble.account)
 
 
 def _open(window: QWidget | None) -> bool:
@@ -91,6 +97,7 @@ class CertificateQuestions(QObject):
 
     def ask(
         self, trouble: CertificateTrouble, retry: Callable[[], None], parent: QWidget | None = None, keep: Keep | None = None, by_person: bool = False,
+        kept: Kept | None = None, fresh: bool = False,
     ) -> None:
         """Ask about this server's certificate; after Connect, retry runs. parent: the window of a test or Find the person started (asked at
         once over it); None: met by a Refresh (asked over the main window when it is on screen). keep: where an accepted-for-good certificate
@@ -105,7 +112,8 @@ class CertificateQuestions(QObject):
         asked = self._group or ([self._asking] if self._asking is not None else [])
         for question in [*asked, *self._waiting]:
             if question is not None and (question.trouble.host.lower(), question.trouble.port) == server:
-                self._join(question, trouble, retry, parent, keep)
+                self._join(question, trouble, retry, parent, keep, kept)
+                question.fresh = question.fresh or fresh  # a check the person started: asked, also when its certificate is being read now
                 if by_hand and not question.by_hand:
                     question.by_hand, question.parent = True, parent  # the person waits for it: asked over their window, also when it is read now
                     self._declined.discard(server)
@@ -114,8 +122,8 @@ class CertificateQuestions(QObject):
                         self._waiting.insert(0, question)  # asked first
                         self._next()
                 return
-        question = _Question(trouble, by_hand, parent)
-        self._join(question, trouble, retry, parent, keep)
+        question = _Question(trouble, by_hand, parent, fresh=fresh)
+        self._join(question, trouble, retry, parent, keep, kept)
         if by_hand:
             self._declined.discard(server)  # asked by hand: a refusal before counts no more
             self._waiting.insert(0, question)
@@ -124,8 +132,12 @@ class CertificateQuestions(QObject):
         self._next()
 
     @staticmethod
-    def _join(question: _Question, trouble: CertificateTrouble, retry: Callable[[], None], parent: QWidget | None, keep: Keep | None) -> None:
+    def _join(
+        question: _Question, trouble: CertificateTrouble, retry: Callable[[], None], parent: QWidget | None, keep: Keep | None, kept: Kept | None,
+    ) -> None:
         """One more piece of work met this server: done again after Connect, and its account keeps the certificate with the tick."""
+        if kept is not None:
+            question.kept.append(kept)
         question.retries.append(_Retry(retry, parent))
         if keep is not None:
             question.keeps.append((keep, parent))
@@ -159,7 +171,7 @@ class CertificateQuestions(QObject):
             if result.accepted_by_default:  # put right meanwhile: nothing to ask; the next attempt connects
                 self._done([question], connect=False)
                 return
-            if result.accepted_for_run:  # accepted meanwhile (a test that ran while it was asked): its work is done again, once per certificate
+            if result.accepted_for_run and not question.fresh:  # accepted meanwhile (a check the person started always asks) (a test that ran while it was asked): its work is done again, once per certificate
                 again = (trouble.host.lower(), trouble.port, result.fingerprint) not in self._done_again
                 self._done_again.add((trouble.host.lower(), trouble.port, result.fingerprint))
                 self._done([question], connect=again)
@@ -211,14 +223,16 @@ class CertificateQuestions(QObject):
     def _show(self, group: list[_Question], result: CertificateResult) -> None:
         question = group[0]
         parent = question.parent if _open(question.parent) else self._window  # the test's window was closed: over the main window
-        dialog = VerifyCertificateDialog(question.trouble.host, result, any(member.trouble.changed for member in group), parent)
+        pins = {f"{member.trouble.host.strip().lower()}:{member.trouble.port}={result.fingerprint}" for member in group}
+        kept = result.kept or any(pin in pins for member in group for given in member.kept for pin in given())  # the tick shows what is kept
+        dialog = VerifyCertificateDialog(question.trouble.host, result, any(member.trouble.changed for member in group), parent, kept)
         self.open_dialog = dialog
 
         def answered(code: int) -> None:
             self.open_dialog = None
             dialog.deleteLater()
             if code == QDialog.DialogCode.Accepted:
-                self._accept(group, result.fingerprint, dialog.remember)
+                self._accept(group, result.fingerprint, dialog.remember, kept)
             else:
                 for member in group:
                     if not member.by_hand:
@@ -228,10 +242,11 @@ class CertificateQuestions(QObject):
         dialog.finished.connect(answered)
         dialog.open()
 
-    def _accept(self, group: list[_Question], fingerprint: str, remember: bool) -> None:
+    def _accept(self, group: list[_Question], fingerprint: str, remember: bool, was_kept: bool = False) -> None:
         """Connect: exactly this certificate, for every port of the server that showed it, until Chrono Mail closes; with Don't ask me again
-        for good, with every account that met it."""
-        steps = [(member, account) for member in group for account in ([""] + (list(member.accounts) if remember else []))]  # "": until closing
+        for good, with every account that met it; without it, one kept before is taken back (the tick showed it kept, D-299)."""
+        change = remember or was_kept  # keep it, or take it back
+        steps = [(member, account) for member in group for account in ([""] + (list(member.accounts) if change else []))]  # "": until closing
 
         def step(_: object = None) -> None:
             if not steps:
@@ -242,15 +257,16 @@ class CertificateQuestions(QObject):
             if not account:
                 self._backend.ask(CERTIFICATE_TRUST_FOR_RUN, RunTrustParameters(trouble.host, trouble.port, fingerprint), kept, failed, owner=self)
                 return
-            self._backend.ask(ACCOUNT_TRUST_CERTIFICATE, TrustParameters(account, trouble.host, trouble.port, fingerprint), step, not_kept, owner=self)
+            command = ACCOUNT_TRUST_CERTIFICATE if remember else ACCOUNT_FORGET_CERTIFICATE
+            self._backend.ask(command, TrustParameters(account, trouble.host, trouble.port, fingerprint), step, not_kept, owner=self)
 
-        def kept(trusted: RunTrustResult) -> None:  # trusted until closing; with the tick, the windows keep it too
+        def kept(trusted: RunTrustResult) -> None:  # trusted until closing; the windows keep it, or take it back, as the tick says
             try:
-                if remember:
+                if change:
                     for member in group:
                         for keep, owner in member.keeps:
                             if f"{member.trouble.host.strip().lower()}:{member.trouble.port}=" in trusted.pin and (owner is None or _open(owner)):
-                                keep(trusted.pin)  # never into a window closed meanwhile
+                                keep(trusted.pin, remember)  # never into a window closed meanwhile
             finally:
                 step()
 

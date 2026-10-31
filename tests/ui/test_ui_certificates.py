@@ -24,9 +24,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.ui.world import REGISTRY, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_certificates.py 4.2.446"
+__version__ = "test_ui_certificates.py 4.2.447"
 
 # --- Version history ----------------------------------------------------
+# v4.2.447: Test and Find always ask; the tick starts as kept and Connect without it takes the certificate back
 # v4.2.446: the Verify window opens at 740
 # v4.2.445: the Verify window opens at 700 and goes down to 500 pixels of the owner's screen
 # v4.2.442: the heading sits next to the sign; a blank line above and below the certificate information
@@ -188,7 +189,7 @@ def test_the_edit_window_asks_after_a_test_and_keeps_and_forgets_certificates(se
     edit.test_button.click()
     wait(qtbot, lambda: "2 server certificate" in edit.certificates_label.text())  # the outgoing server asked; kept with the account
     wait(qtbot, lambda: edit.result_label.text().count("✓") == 2, timeout=15000)  # tested again
-    assert len(shown) == 1 and len(pins_of_the_account(secure.backend)) == 2
+    assert len(shown) == 2 and len({pin.rpartition('=')[2] for pin in pins_of_the_account(secure.backend)}) == 2  # Test asks about the kept one too
 
     def yes(*args: object, **kwargs: object) -> QMessageBox.StandardButton:
         return QMessageBox.StandardButton.Yes
@@ -385,7 +386,7 @@ def test_keeps_of_a_closed_window_are_skipped_and_the_refresh_work_still_goes_on
     questions.ask(trouble, lambda: retried.append("refresh"))
     edit = QWidget()
     edit.show()
-    questions.ask(trouble, lambda: retried.append("edit"), edit, kept.append)  # merged with the Refresh's
+    questions.ask(trouble, lambda: retried.append("edit"), edit, lambda pin, keep: kept.append(pin))  # merged with the Refresh's
     edit.deleteLater()  # closed before its certificate was read
     QApplication.processEvents()
     on_screen[0] = True
@@ -516,3 +517,58 @@ def test_the_verify_window_opens_at_740_and_goes_down_to_500_pixels_of_the_owner
     qtbot.waitExposed(dialog)
     assert dialog.width() == wpx(forms.owner_width(740))
     assert dialog.minimumWidth() == max(wpx(forms.owner_width(500)), dialog.minimumSizeHint().width())
+
+
+def ticks_when_shown(monkeypatch: pytest.MonkeyPatch, remember: bool) -> list[bool]:
+    """Every Verify window is answered with Connect (with the tick as given); gives how its tick stood when it opened."""
+    started: list[bool] = []
+
+    def opened(self: VerifyCertificateDialog) -> None:
+        started.append(self.dont_ask.isChecked())
+        self.dont_ask.setChecked(remember)
+        self.done(QDialog.DialogCode.Accepted)
+
+    monkeypatch.setattr(VerifyCertificateDialog, "open", opened)
+    return started
+
+
+def test_test_connection_asks_again_after_connect_and_the_test_after_connect_passes(one_machine: Setup, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started = ticks_when_shown(monkeypatch, remember=False)
+    dialog = AccountDialog(one_machine.backend)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    fill(dialog, one_machine)
+    dialog.test_button.click()
+    wait(qtbot, lambda: dialog.result_label.text().count("✓") == 2, timeout=15000)  # the test after Connect passes
+    assert len(started) == 1
+    dialog.test_button.click()  # a Test the person clicks again: it asks again, although Connect counts until Chrono Mail closes
+    wait(qtbot, lambda: len(started) == 2)
+    wait(qtbot, lambda: dialog.result_label.text().count("✓") == 2, timeout=15000)
+
+
+def test_the_tick_starts_as_kept_and_connect_without_it_takes_the_certificate_back(one_machine: Setup, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started = ticks_when_shown(monkeypatch, remember=True)
+    dialog = AccountDialog(one_machine.backend)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    fill(dialog, one_machine)
+    dialog.test_button.click()
+    wait(qtbot, lambda: len(dialog.trusted) == 2)
+    assert started == [False]
+    wait(qtbot, lambda: dialog.result_label.text().count("✓") == 2, timeout=15000)
+    taken_back = ticks_when_shown(monkeypatch, remember=False)
+    dialog.test_button.click()
+    wait(qtbot, lambda: len(taken_back) == 1 and dialog.trusted == [])
+    assert taken_back == [True]  # it showed what was kept
+
+
+def test_a_refresh_after_connect_or_with_a_kept_certificate_asks_nothing(one_machine: Setup, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    started = ticks_when_shown(monkeypatch, remember=False)
+    questions = questions_for(one_machine.backend)
+    retried: list[str] = []
+    trouble = CertificateTrouble("127.0.0.1", one_machine.pop.port, "tls", "pop3", changed=False)
+    questions.ask(trouble, lambda: retried.append("first"))
+    wait(qtbot, lambda: retried == ["first"])
+    questions.ask(trouble, lambda: retried.append("again"))  # a Refresh meets it again in this run: accepted meanwhile, no window
+    wait(qtbot, lambda: retried == ["first", "again"])
+    assert len(started) == 1
