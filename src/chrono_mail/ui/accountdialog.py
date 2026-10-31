@@ -2,7 +2,8 @@ import html
 from collections.abc import Callable
 from typing import Literal, override
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, Qt, QTimer
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -30,9 +31,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.serverfields import SAME_LOGIN_TEXT, ServerFields, mail_server_kind, policy_of, security_of, test_result_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "accountdialog.py 4.2.439"
+__version__ = "accountdialog.py 4.2.440"
 
 # --- Version history ----------------------------------------------------
+# v4.2.440: a long error text is shown whole: the smallest height follows what the wrapping texts need at the width, never above the screen
 # v4.2.439: Account type offers POP3, IMAP, CalDAV and CardDAV: the calendar window is a part of this one (the sidebars' Add account…
 #           opens it on CalDAV or CardDAV); the first-account window says "your first account" (UR-04, D-298)
 # v4.0.376: built from its Qt Designer form (ui/forms/account_add.ui, D-276), the server boxes at its "servers" place; its smallest width
@@ -200,8 +202,42 @@ class AccountDialog(QDialog):
         layout = self.layout()
         if layout is not None:
             layout.activate()
-        self.setMinimumHeight(self.minimumSizeHint().height())  # this kind's; the smallest width keeps the mail part's, the wider one
-        self.resize(self.width(), max(self.minimumHeight(), self.sizeHint().height()))  # a width the person chose stays
+        needed = self._height_needed()
+        self.setMinimumHeight(needed)  # this kind's; the smallest width keeps the mail part's, the wider one
+        self.resize(self.width(), max(needed, self.sizeHint().height()))  # a width the person chose stays
+
+    def _height_needed(self) -> int:
+        """The height the window needs at its width, a result line that wraps over several lines counted too (Qt's own measure leaves
+        such a text out, so a long error was cut off)."""
+        layout = self.layout()
+        wrapped = layout.heightForWidth(self.width()) if layout is not None and layout.hasHeightForWidth() else 0
+        needed = max(self.minimumSizeHint().height(), wrapped)
+        screen = self.screen()
+        return needed if screen is None else min(needed, screen.availableGeometry().height())  # never taller than its screen
+
+    def _follow(self) -> None:
+        """The smallest height is always what the window needs at its width now, up or down; the window grows when it is shorter than
+        that, and never shrinks here (a height the person chose stays)."""
+        needed = self._height_needed()
+        if needed != self.minimumHeight():
+            self.setMinimumHeight(needed)
+        if needed > self.height():
+            self.resize(self.width(), needed)
+
+    @override
+    def event(self, event: QEvent) -> bool:
+        """Qt asks the window to lay itself out again (another result text, a part shown or hidden): its height follows."""
+        handled = super().event(event)
+        if event.type() == QEvent.Type.LayoutRequest and self.isVisible():
+            QTimer.singleShot(0, self, self._follow)
+        return handled
+
+    @override
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Another width wraps the texts otherwise: the height they need is measured again."""
+        super().resizeEvent(event)
+        if event.size().width() != event.oldSize().width() and self.isVisible():
+            QTimer.singleShot(0, self, self._follow)
 
     def _allow_add(self) -> None:
         """Add account as the kind now shown allows it: the mail part while no test runs, the calendar part once Find found something; never
@@ -225,8 +261,6 @@ class AccountDialog(QDialog):
         """When a server's certificate was the problem, offer to look at it (and accept it, if the person knows it is theirs)."""
         self._cert_servers = [name for name, message in messages if "certificate" in message.lower()]
         self.certificate_button.setVisible(bool(self._cert_servers) and not self._is_calendar())
-        if self.isVisible():
-            QTimer.singleShot(0, self, self._fit)  # the part grew or shrank by the button: the window follows
 
     def _endpoint(self, which: str) -> tuple[str, int, str]:
         return self.servers.endpoint(which)

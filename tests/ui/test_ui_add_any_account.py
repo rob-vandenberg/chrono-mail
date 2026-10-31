@@ -1,6 +1,6 @@
 import pytest
 import shiboken6
-from PySide6.QtWidgets import QDialog, QLabel
+from PySide6.QtWidgets import QApplication, QDialog, QLabel
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui.accountdialog import CALDAV, CARDDAV, AccountDialog
@@ -9,9 +9,10 @@ from tests.fakedav import FakeDav
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_add_any_account.py 4.2.439"
+__version__ = "test_ui_add_any_account.py 4.2.440"
 
 # --- Version history ----------------------------------------------------
+# v4.2.440: a long error text is shown whole; the smallest height follows the text and the width
 # v4.2.439: Initial tests: every kind of account is added in the one Add window (UR-04, D-298); its size and the type waiting for a test
 
 CHOICES = [
@@ -174,7 +175,7 @@ def test_the_window_follows_its_part_after_a_switch_and_its_timer_never_outlives
     gone.show()
     gone.kind.setCurrentIndex(gone.kind.findData(CALDAV))  # its size step waits for the next pass of the event loop
     shiboken6.delete(gone)  # gone at once, before that pass
-    qtbot.wait(50)  # the step never runs on the deleted window (it raised there)
+    QApplication.processEvents()  # the pass in which its size step was due: it never runs on the deleted window (it raised there)
 
 
 def test_a_failed_add_never_frees_a_test_or_find_still_running(world: World, qtbot: QtBot) -> None:
@@ -200,3 +201,47 @@ def test_a_failed_add_never_frees_a_test_or_find_still_running(world: World, qtb
     dialog._set_adding(False)  # noqa: SLF001
     assert not fields.find_button.isEnabled() and not fields.certificate_button.isEnabled()
     wait(qtbot, fields.find_button.isEnabled)
+
+
+@pytest.mark.parametrize("kind", ["pop3", CALDAV])
+def test_a_long_error_text_is_shown_whole(world: World, qtbot: QtBot, kind: str) -> None:
+    """The review of 4.2.439 (older fault): a result text wrapping over several lines was not counted in the window's height, so its last
+    lines were cut off."""
+    dialog = AccountDialog(world.backend, start_kind=kind)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    line = dialog.calendar.result_label if kind == CALDAV else dialog.result_label
+    line.setText("The server could not be reached: " + "the connection was refused by the other side, " * 12)
+
+    def whole() -> bool:
+        return line.height() >= line.heightForWidth(line.width()) and dialog.height() >= dialog.minimumHeight()
+
+    wait(qtbot, whole)
+
+
+def test_the_smallest_height_follows_the_text_and_the_width_and_never_passes_the_screen(world: World, qtbot: QtBot) -> None:
+    """The review of the long-text fix: the smallest height only went up (a short text after a long one, a wider window, the certificate
+    button gone), a narrower window was not measured again, and a huge server text made the window far taller than its screen."""
+    dialog = AccountDialog(world.backend, start_kind=CALDAV)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    line = dialog.calendar.result_label
+    line.setText("Looking…")  # the short text measured with the font of this screen (an empty line is one pixel lower on some)
+    wait(qtbot, lambda: dialog.minimumHeight() >= dialog.minimumSizeHint().height() and line.height() >= line.heightForWidth(line.width()))
+    short_need = dialog.minimumHeight()
+    line.setText("The server could not be reached: " + "the connection was refused by the other side, " * 12)
+    wait(qtbot, lambda: dialog.minimumHeight() > short_need)
+    long_need = dialog.minimumHeight()
+    dialog.resize(dialog.width() + 400, dialog.height())  # wider: the text needs fewer lines
+    wait(qtbot, lambda: dialog.minimumHeight() < long_need)
+    dialog.resize(dialog.minimumWidth(), dialog.height())  # narrower by hand: measured again, shown whole
+    wait(qtbot, lambda: line.height() >= line.heightForWidth(line.width()))
+    line.setText("Looking…")
+    wait(qtbot, lambda: dialog.minimumHeight() == short_need)  # it can be made small again
+    line.setText("err " * 20000)  # a huge text from a server
+    screen = dialog.screen()
+    assert screen is not None
+    wait(qtbot, lambda: dialog.minimumHeight() > short_need)
+    assert dialog.minimumHeight() <= screen.availableGeometry().height() and dialog.height() <= screen.availableGeometry().height()
