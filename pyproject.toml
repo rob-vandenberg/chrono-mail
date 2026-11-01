@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chrono-mail"
-version = "4.2.467"
+version = "4.2.468"
 description = "An open-source desktop email client for Linux, with the functions of a full mail program."
 readme = "README.md"
 requires-python = ">=3.14"
@@ -55,7 +55,7 @@ search-path = ["src", "."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not live and not oskeyring and not perf'"
+addopts = "-m 'not live and not oskeyring and not perf' --no-qt-log"  # --no-qt-log: pytest-qt swapped its Qt message handler at every test, freeing the old one while Qt's web engine thread could still call it, which crashed the test process; Qt's own handler writes every message to stderr
 faulthandler_timeout = 20  # a test that waits longer prints where every thread waits (tests/conftest.py stops it)
 markers = [
     "live: talks to a real mail server (opt-in: pytest -m live)",
