@@ -1,7 +1,7 @@
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
 import pytest
 from PySide6.QtCore import QModelIndex, QSettings, QUrl
@@ -12,6 +12,8 @@ from shiboken6 import isValid
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine import Engine, build_registry
+from chrono_mail.engine.newkey import recovery_code_stored
+from chrono_mail.ui import importdialog
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.models import KIND_ROLE
@@ -23,9 +25,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "world.py 4.2.454"
+__version__ = "world.py 4.2.463"
 
 # --- Version history ----------------------------------------------------
+# v4.2.463: record_recovery_codes answers the recovery code window of the Import window, ticked or not (UR-08)
 # v4.2.454: answer_input answers the text box of a given width too (TextBox.ask, Rename folder)
 # v4.2.437: answer_input answers the password box too, from the same list
 # v3.5.346: the recovery code of the world's key counts as stored, as after Done at the first account (D-260: else every restore shows it first)
@@ -68,6 +71,35 @@ class World:
 
     def call(self, command: str, **values: object) -> Any:  # noqa: ANN401 - command-specific result
         return REGISTRY.run(self.engine, command, values)
+
+
+class RecoveryCodes:
+    """The recovery code windows the Import window opened; ticked: Done with the tick, as the person stores the code (D-260)."""
+
+    def __init__(self, engine: Engine) -> None:
+        self.engine: Engine = engine
+        self.shown: int = 0
+        self.ticked: bool = True
+        self.parents: list[QWidget | None] = []  # the window each one opened over
+
+
+def record_recovery_codes(monkeypatch: pytest.MonkeyPatch, engine: Engine) -> RecoveryCodes:
+    """The Import window's recovery code window, answered: counted, and closed with Done and the tick (or without it)."""
+    codes = RecoveryCodes(engine)
+
+    class Answered:
+        def __init__(self, backend: Backend, parent: QWidget | None = None, restoring: bool = False) -> None:
+            self.parent: QWidget | None = parent
+
+        def exec(self) -> int:
+            codes.shown += 1
+            codes.parents.append(self.parent)
+            if codes.ticked:
+                recovery_code_stored(codes.engine)
+            return QDialog.DialogCode.Accepted.value
+
+    monkeypatch.setattr(importdialog, "RecoveryDialog", Answered)
+    return codes
 
 
 def menu_named(window: MainWindow, *path: str) -> QMenu:
@@ -146,6 +178,7 @@ class _CloseAtTheEnd(QWidget):
         super().__init__()
         self._window: QWidget = window
 
+    @override
     def closeEvent(self, event: QCloseEvent) -> None:
         if isValid(self._window):
             self._window.close()

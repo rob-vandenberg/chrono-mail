@@ -14,12 +14,13 @@ from chrono_mail.ui.importdialog import WINDOWS_ONLY, ImportDialog, data_file_im
 from tests.enginefactory import make_engine
 from tests.test_import_outlook import FakeFile, data_file, files  # noqa: F401 - files is the fixture of the made-up data files
 from tests.test_import_outlook_profile import machine  # noqa: F401 - the fixture of the made-up profile
-from tests.ui.world import wait
+from tests.ui.world import RecoveryCodes, record_recovery_codes, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import_outlook.py 4.2.431"
+__version__ = "test_ui_import_outlook.py 4.2.463"
 
 # --- Version history ----------------------------------------------------
+# v4.2.463: an import of a data file that made this computer's key shows its recovery code when it ends (UR-08)
 # v4.2.431: the data file's later choices: the reason in their (i), no hover text
 # v4.2.388: a data file imported before: Import asks first; Import again says nothing new came in
 # v4.2.386: on the Windows computer with a readable profile: Accounts, Rules and Signatures offered, its data files listed without asking
@@ -30,8 +31,9 @@ __version__ = "test_ui_import_outlook.py 4.2.431"
 
 
 class Setup:
-    def __init__(self, backend: Backend, path: Path) -> None:
+    def __init__(self, backend: Backend, path: Path, codes: RecoveryCodes) -> None:
         self.backend, self.path = backend, path
+        self.codes = codes  # the recovery code windows the import showed (UR-08)
         self.changed = 0
 
     def dialog(self, qtbot: QtBot) -> ImportDialog:
@@ -50,9 +52,9 @@ class Setup:
 
 
 @pytest.fixture
-def setup(tmp_path: Path, files: dict[Path, FakeFile]) -> Generator[Setup]:  # noqa: F811 - the fixture of the made-up data files
+def setup(tmp_path: Path, files: dict[Path, FakeFile], monkeypatch: pytest.MonkeyPatch) -> Generator[Setup]:  # noqa: F811 - the fixture of the made-up data files
     backend = Backend(make_engine(tmp_path / "profile"))
-    yield Setup(backend, data_file(files, tmp_path, "personal.pst", "Personal Folders"))
+    yield Setup(backend, data_file(files, tmp_path, "personal.pst", "Personal Folders"), record_recovery_codes(monkeypatch, backend.engine))
     backend.wait_for_done(5000)
 
 
@@ -200,3 +202,13 @@ def test_a_data_file_imported_before_asks_first_and_import_again_says_nothing_ne
     wait(qtbot, lambda: dialog.summary.text().startswith("Nothing new: everything is already here."))
     assert asked == [dialog] and "Messages imported: 0; already here: 6; failed: 0." in dialog.summary.text()
     assert setup.messages() == 6
+
+
+def test_a_data_file_import_that_made_the_key_shows_its_recovery_code(qtbot: QtBot, setup: Setup) -> None:
+    """UR-08: the import of a data file made this computer's key (Local Folders); its recovery code is shown when the import ends."""
+    dialog = setup.dialog(qtbot)
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    wait(qtbot, lambda: setup.codes.shown == 1)
+    assert dialog.summary.text().startswith("The import is done.")

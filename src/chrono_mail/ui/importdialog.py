@@ -7,6 +7,7 @@ from typing import override
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QFileDialog,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.engine.commands_accounts import KEY_CODE_PENDING, CodePending, NoParameters
 from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, IMPORT_EMCLIENT_SCAN, PARTS, ImportParameters, ImportResult, ScanParameters, ScanResult
 from chrono_mail.engine import commands_outlook
 from chrono_mail.engine.commands_outlook import IMPORT_OUTLOOK, IMPORT_OUTLOOK_SCAN, PROGRESS_TEXT
@@ -34,13 +36,16 @@ from chrono_mail.ui import forms
 from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.prefs import Remembered
+from chrono_mail.ui.recoverydialog import RecoveryDialog
 from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.458"
+__version__ = "importdialog.py 4.2.463"
 
 # --- Version history ----------------------------------------------------
+# v4.2.463: when an import ends (done, stopped or failed) the recovery code is shown while it was never confirmed as stored: an import
+#           may make this computer's key, whose code was never shown (UR-08, D-260)
 # v4.2.458: the summary says where Local Folders was found in the mail export and what happens with each other account's store next to it;
 #           Mail is greyed with an (i) when the chosen folder holds no messages to import
 # v4.2.452: the summary counts the IMAP accounts and the calendar and contacts servers that are imported now; Calendars and tasks
@@ -653,6 +658,7 @@ class ImportDialog(QDialog):
         done = data_file_import_summary(self._data_result, stopped=True) if self._reading_data_files() else import_summary(self._result, stopped=True)
         self.summary.setText(f"{error}\n{done}")
         self._on_changed()
+        self._offer_recovery_code()
 
     # --- the import ---------------------------------------------------------------------------
 
@@ -759,6 +765,7 @@ class ImportDialog(QDialog):
         self._finish()
         self.summary.setText(import_summary(self._result, stopped))
         self._on_changed()
+        self._offer_recovery_code()
 
     def _data_file_batch_done(self, result: commands_outlook.ImportResult) -> None:
         self._data_result = merge_data_files(self._data_result, result)
@@ -775,6 +782,20 @@ class ImportDialog(QDialog):
         self._finish()
         self.summary.setText(data_file_import_summary(self._data_result, stopped))
         self._on_changed()
+        self._offer_recovery_code()
+
+    def _offer_recovery_code(self) -> None:
+        """An import may have made this computer's key (Local Folders, an account): its recovery code is shown, as after Add account, while
+        it was never confirmed as stored (UR-08, D-260). When the question fails nothing is shown; the summary stays as it is."""
+
+        def answered(result: CodePending) -> None:
+            if not result.pending or self._running:  # not while another import of this window already runs
+                return
+            if QApplication.activeModalWidget() not in (self, None):
+                return  # another question or Import window is open: the end of the next import, or Add account, shows it then
+            RecoveryDialog(self._backend, self if self.isVisible() else self.parentWidget()).exec()  # the Import window closed meanwhile
+
+        self._backend.ask(KEY_CODE_PENDING, NoParameters(), answered, lambda _error: None, owner=self)
 
     def request_stop(self) -> None:
         self._stop = True

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QObject, QSettings
-from PySide6.QtWidgets import QFileDialog, QMenu
+from PySide6.QtWidgets import QApplication, QFileDialog, QMenu, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, ChronoMailError
@@ -17,12 +17,14 @@ from chrono_mail.ui.prefs import Remembered
 from chrono_mail.ui.importdialog import MENU_TEXT, ImportDialog, import_summary, merge, scan_summary
 from tests.enginefactory import make_engine
 from tests.test_import_emclient import Exports, make_exports
-from tests.ui.world import World, wait
+from tests.ui.world import RecoveryCodes, World, record_recovery_codes, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 4.2.458"
+__version__ = "test_ui_import.py 4.2.463"
 
 # --- Version history ----------------------------------------------------
+# v4.2.463: an import that made this computer's key shows its recovery code when it ends, done, stopped or failed, until it is stored, over
+#           the main window when the Import window was closed, never over another question (UR-08)
 # v4.2.458: the summary says where Local Folders was found and what each store becomes; Mail greyed with its (i) when nothing is to import
 # v4.2.452: an account the import cannot make is "of a kind Chrono Mail cannot make" (IMAP is made now, UR-01)
 # v4.2.449: nothing is checked after an import that made no account; the automatic check is check_accounts(None) (D-300)
@@ -46,8 +48,9 @@ __version__ = "test_ui_import.py 4.2.458"
 
 
 class Setup:
-    def __init__(self, backend: Backend, exports: Exports) -> None:
+    def __init__(self, backend: Backend, exports: Exports, codes: RecoveryCodes) -> None:
         self.backend, self.exports = backend, exports
+        self.codes = codes  # the recovery code windows the import showed (UR-08)
         self.changed = 0
 
     def dialog(self) -> ImportDialog:
@@ -66,9 +69,9 @@ class Setup:
 
 
 @pytest.fixture
-def setup(tmp_path: Path) -> Generator[Setup]:
+def setup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[Setup]:
     backend = Backend(make_engine(tmp_path / "profile"))
-    yield Setup(backend, make_exports(tmp_path))
+    yield Setup(backend, make_exports(tmp_path), record_recovery_codes(monkeypatch, backend.engine))
     backend.wait_for_done(5000)
 
 
@@ -460,3 +463,104 @@ def test_mail_is_greyed_with_its_reason_when_the_folder_holds_nothing_to_import(
     dialog.scan()
     wait(qtbot, lambda: dialog.mail.isEnabled())
     assert dialog.mail.isChecked() and not dialog.mail_info.reason
+
+
+def test_an_import_that_made_the_key_shows_its_recovery_code_once(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """UR-08: the import made this computer's key (Local Folders), and its recovery code was never shown; once stored, never again."""
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    wait(qtbot, lambda: setup.codes.shown == 1)
+    assert setup.codes.parents == [dialog]  # over the Import window
+    assert dialog.summary.text().startswith("The import is done.")  # the summary is there under it
+    def import_again(parent: QObject) -> bool:
+        return True
+
+    monkeypatch.setattr(importdialog, "ask_import_again", import_again)
+    dialog.import_button.click()  # the code was stored (Done with the tick): another import shows nothing
+    wait(qtbot, lambda: dialog.summary.text().startswith("Nothing new"))
+    setup.backend.wait_for_done(5000)
+    qtbot.wait(50)
+    assert setup.codes.shown == 1
+
+
+def test_a_stopped_import_shows_the_code_and_again_until_it_is_stored(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """UR-08: the key exists once the first batch made it, also when the import stops; closed without the tick, it comes again."""
+    monkeypatch.setattr(importdialog, "BATCH", 3)
+    setup.codes.ticked = False
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    dialog.stop_button.click()
+    wait(qtbot, lambda: setup.codes.shown == 1)
+    assert dialog.summary.text().startswith("The import was stopped")
+    dialog.import_button.click()  # Import finishes the rest
+    wait(qtbot, lambda: setup.codes.shown == 2)
+    assert dialog.summary.text().startswith("The import is done.")
+
+
+def test_a_failed_import_shows_the_code_of_the_key_it_made(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """UR-08: a batch failed after the first made the key: its code is shown all the same."""
+    monkeypatch.setattr(importdialog, "BATCH", 3)
+    ask = setup.backend.ask
+    calls = [0]
+
+    def failing_second(command: object, parameters: object, done: Callable[[object], None], failed: Callable[[ChronoMailError], None], owner: QObject) -> None:
+        if command is IMPORT_EMCLIENT:
+            calls[0] += 1
+            if calls[0] == 2:
+                failed(ChronoMailError("The disk is full"))
+                return
+        ask(command, parameters, done, failed, owner=owner)  # pyrefly: ignore[bad-argument-type]
+
+    monkeypatch.setattr(setup.backend, "ask", failing_second)
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    wait(qtbot, lambda: setup.codes.shown == 1)
+    assert dialog.summary.text().startswith("The disk is full")
+
+
+def test_the_code_comes_over_the_main_window_when_the_import_window_was_closed(qtbot: QtBot, setup: Setup) -> None:
+    """UR-08: Close while the answer was on its way: the code still comes, over the window the Import window belonged to."""
+    main = QWidget()
+    qtbot.addWidget(main)
+    dialog = ImportDialog(setup.backend, lambda: None, main)
+    dialog.settings_file.setText(str(setup.exports.settings))
+    dialog.mail_folder.setText(str(setup.exports.mail))
+    dialog.backup_file.setText(str(setup.exports.backup))
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()  # never shown: as closed
+    wait(qtbot, lambda: setup.codes.shown == 1)
+    assert setup.codes.parents == [main]
+
+
+def test_the_code_waits_while_another_question_is_open(qtbot: QtBot, setup: Setup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """UR-08: an answer that comes while another question (Import again?) or Import window waits opens nothing over it; the end of the
+    next import shows the code."""
+    other = QWidget()
+    qtbot.addWidget(other)
+    open_question: list[QWidget | None] = [other]
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: open_question[0]))
+    monkeypatch.setattr(importdialog, "BATCH", 3)
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    dialog.import_button.click()
+    dialog.stop_button.click()
+    wait(qtbot, lambda: dialog.summary.text().startswith("The import was stopped"))
+    setup.backend.wait_for_done(5000)
+    qtbot.wait(50)
+    assert setup.codes.shown == 0
+    open_question[0] = None  # the question was answered
+    dialog.import_button.click()
+    wait(qtbot, lambda: setup.codes.shown == 1)

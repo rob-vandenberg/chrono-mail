@@ -20,9 +20,10 @@ from tests.test_config import make_config
 from tests.test_engine_commands import add_account, call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_local.py 3.6.350"
+__version__ = "test_engine_local.py 4.2.463"
 
 # --- Version history ----------------------------------------------------
+# v4.2.463: key.code-pending says whether the new key's recovery code was never confirmed as stored (UR-08)
 # v3.6.350: no new key while kept Local Folders needs its own; Start without this mail sets it aside, never deleted
 # v3.6.349: kept Local Folders whose key is gone names the recovery code, and that code brings it back (RV-177)
 # v3.0.340: Local Folders can never be removed, also when no account keeps its mail there (D-255)
@@ -920,3 +921,14 @@ def test_a_folder_that_cannot_be_opened_stops_taking_back(tmp_path: Path) -> Non
     finally:
         (local / relative).chmod(0o700)
     assert call(engine, "key.status").take_back and not any(engine.directories.data_directory.glob("set-aside-local-folders-older-key-*"))
+
+
+def test_the_recovery_code_is_pending_from_a_new_key_until_it_is_stored(tmp_path: Path) -> None:
+    """UR-08: the Import window asks whether the code of this computer's key still has to be shown."""
+    engine = make_engine(tmp_path)
+    assert not call(engine, "key.code-pending").pending  # no key yet
+    call(engine, "local.enable")  # makes this computer's key, as an import does
+    assert call(engine, "key.code-pending").pending
+    assert call(make_engine(tmp_path), "key.code-pending").pending  # also after a restart
+    call(engine, "key.code-stored")  # Done, with the tick
+    assert not call(engine, "key.code-pending").pending

@@ -53,9 +53,11 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.2.460"
+__version__ = "commands_accounts.py 4.2.463"
 
 # --- Version history ----------------------------------------------------
+# v4.2.463: key.code-pending: whether the recovery code of this computer's key was never confirmed as stored, without asking the wallet;
+#           the Import window shows the code after an import with it (UR-08, D-260)
 # v4.2.460: account.remove tells a collection_changed fact for an account with calendars: they leave the sections at once (D-146)
 # v4.2.459: wallet.move-profile: a profile's passwords and key move to its wallet name without "/" at start (D-274)
 # v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
@@ -686,6 +688,17 @@ def key_recovery_code(engine: Engine, parameters: NoParameters) -> RecoveryCode:
     return RecoveryCode(key.key_id.hex(), recovery_code_for(key))
 
 
+@dataclass(frozen=True, slots=True)
+class CodePending:
+    pending: bool  # the recovery code of this computer's key was never confirmed as stored (Done with the tick)
+
+
+def key_code_pending(engine: Engine, parameters: NoParameters) -> CodePending:
+    """Whether the recovery code of this computer's key still has to be shown: never confirmed as stored. Reads the settings and the
+    remembered fact only, never the wallet (UR-08)."""
+    return CodePending(recovery_code_not_stored(engine))
+
+
 def key_code_stored(engine: Engine, parameters: NoParameters) -> KeyStatus:
     """The person confirmed that the recovery code (or a recovery file) of this computer's key is stored in a safe place."""
     recovery_code_stored(engine)
@@ -865,6 +878,7 @@ KEY_STATUS: TypedCommand[NoParameters, KeyStatus] = TypedCommand("key.status", N
 KEY_EXPORT_FILE: TypedCommand[KeyExportParameters, KeyExportResult] = TypedCommand("key.export-file", KeyExportParameters, KeyExportResult)
 KEY_RECOVERY_CODE: TypedCommand[NoParameters, RecoveryCode] = TypedCommand("key.recovery-code", NoParameters, RecoveryCode)
 KEY_CODE_STORED: TypedCommand[NoParameters, KeyStatus] = TypedCommand("key.code-stored", NoParameters, KeyStatus)
+KEY_CODE_PENDING: TypedCommand[NoParameters, CodePending] = TypedCommand("key.code-pending", NoParameters, CodePending)
 KEY_RESTORE_FILE: TypedCommand[KeyRestoreFileParameters, KeyStatus] = TypedCommand("key.restore-file", KeyRestoreFileParameters, KeyStatus)
 KEY_RESTORE_CODE: TypedCommand[KeyRestoreCodeParameters, KeyStatus] = TypedCommand("key.restore-code", KeyRestoreCodeParameters, KeyStatus)
 KEY_START_WITHOUT_KEPT: TypedCommand[NoParameters, KeptSetAside] = TypedCommand("key.start-without-kept-mail", NoParameters, KeptSetAside)
@@ -937,6 +951,10 @@ def register(registry: CommandRegistry) -> None:
     registry.register(KEY_EXPORT_FILE.id, "Write the data key, protected by a passphrase, to a recovery file", KeyExportParameters, key_export_file, doing="Writing the recovery file")
     registry.register(KEY_RECOVERY_CODE.id, "Show the data key as a printable recovery code", NoParameters, key_recovery_code, doing="Reading the recovery code")
     registry.register(KEY_CODE_STORED.id, "Note that the recovery code of the data key is stored in a safe place", NoParameters, key_code_stored, doing="Noting the recovery code as stored")
+    registry.register(
+        KEY_CODE_PENDING.id, "Say whether the recovery code of the data key was never confirmed as stored", NoParameters, key_code_pending,
+        doing="Checking whether the recovery code is stored",
+    )
     registry.register(KEY_RESTORE_FILE.id, "Put the data key back into the credential store from a recovery file", KeyRestoreFileParameters, key_restore_file, doing="Restoring the key from the recovery file")
     registry.register(KEY_RESTORE_CODE.id, "Put the data key back into the credential store from a recovery code", KeyRestoreCodeParameters, key_restore_code, doing="Restoring the key from the recovery code")
     registry.register(
