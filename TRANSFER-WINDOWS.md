@@ -51,7 +51,8 @@ the cause first. Never change a test so that it stops showing a real fault of th
 
 **Tests: never the full suite.** Run only the test files that directly test what changed, plus Pyrefly and the layer
 check, and say which ran and that the full suite was not run. Check that every test file you name exists (else pytest
-runs everything). Run `tests/ui/test_ui_window.py` on its own.
+runs everything). Run `tests/ui/test_ui_window.py` on its own. The tests are copied one way only, from the Linux computer
+to the Windows computer; your own test fixes stay here (the owner decides if and when that changes).
 
 **Never lose mail; never crash on input; everything is a command; layers are enforced** (AGENTS.md section 4). IMAP is
 **server-first**: every IMAP action is done on the server first and in Chrono Mail only when the server confirmed it

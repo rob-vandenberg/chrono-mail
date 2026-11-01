@@ -1,6 +1,6 @@
 # AGENTS.md: guide for AI agents and contributors
 
-Chrono Mail is an open-source desktop email client for Linux (Windows and macOS as a bonus), written in Python with a Qt 6 user interface through PySide6. It aims to offer the full set of functions of a modern desktop mail program.
+Chrono Mail is an open-source desktop email client for Linux (and Windows; macOS is not supported for now, D-008), written in Python with a Qt 6 user interface through PySide6. It aims to offer the full set of functions of a modern desktop mail program.
 
 ## 0. The basic rule (D-193; only security and 4.1 Never lose mail come before it)
 
@@ -29,7 +29,8 @@ Every changelist says how it keeps this rule. Nothing counts as obvious: what th
 | `ROADMAP.md` | Milestones and tasks, each with a status | When picking or finishing a task |
 | `USER-REQUESTS.md` | The backlog of requests and problems from people who use Chrono Mail (UR-numbers) | When picking a task |
 | `REFACTOR.md` | The senior refactor: the inventory (R-numbers), the agreed order, the progress | Every session during the refactor, after STATUS.md |
-| `DECISIONS.md` | Every design decision as it stands now, by topic, short (D-162); D-193 (the basic rule) first | Every session, after STATUS.md; before proposing to change a design choice |
+| `CODE-REVIEW.md` | The whole-program code review: its areas, the register of every finding, the steps; private, git-ignored | Every session while the review runs, after STATUS.md; keep its "Now" line, register and log current |
+| `DECISIONS.md` | Every design decision as it stands now, by topic, short (D-162); D-193 (the basic rule) first. Kept near 40 KB: detail goes to DEVLOG.md, and an entry's old wording is copied to the archive before it is rewritten; when the file is tidied is the owner's decision | Every session, after STATUS.md; before proposing to change a design choice |
 | `DECISIONS-ARCHIVE.md` | The full original text of D-001 to D-161 (measurements, cause chains, rejected options) | Never read whole; search by number when the history of a decision is needed |
 | `DEVLOG.md` | Append-only log, one entry per completed task | When you need history |
 | `TRANSFER-WINDOWS.md` | Hand-over for the Windows machine (the Windows computer): its role (Windows runs, the setup.exe), the rules, the file map | On the Windows machine, first |
@@ -117,10 +118,11 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 
 The owner's rules apply in full: the general rules (G-nn), the Python rules (PY-nn) and `OWNER-RULES.md` (OR-nn), all loaded by themselves. How they map onto work in this project:
 
-1. **Within an approved changelist** (G-3), the agent may run tests and fix its own test failures, as long as the fixes stay inside the approved scope. Anything outside the scope needs a new changelist.
-2. **Delivery.** Files are edited in place in the repository. When a job is done and reviewed, the agent pushes it itself and names the pushed version (OR-31).
+1. **Within an approved changelist** (G-4), the agent may run tests and fix its own test failures, as long as the fixes stay inside the approved scope. Anything outside the scope needs a new changelist.
+2. **Delivery.** Files are edited in place in the repository. When a job is done and reviewed, the agent pushes it itself and names the pushed version (OR-31). A push GitHub refused half-way is finished with `./gitpush.sh` without a message.
 3. **Checks.** Run Pyrefly also with `--python-platform win32`. Prove that a new test fails on the previous version of the code.
 4. **Cautions.** Never use `pkill -f`. Never repeat or commit a password.
+5. **Scripts meant for later** go in the project's `scratchpad/` folder (private, never in git), not in the chat's temporary folder, which is emptied.
 
 ## 7. Before you finish a task
 

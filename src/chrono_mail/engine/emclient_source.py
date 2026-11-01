@@ -10,7 +10,8 @@ import sqlite3
 import tempfile
 import xml.etree.ElementTree as ElementTree
 import zipfile
-from collections.abc import Generator, Iterator, Sequence
+import zlib
+from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
@@ -25,9 +26,11 @@ from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.core.folder import roles_by_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "emclient_source.py 4.2.458"
+__version__ = "emclient_source.py 4.2.461"
 
 # --- Version history ----------------------------------------------------
+# v4.2.461: the backup's store of each POP3 account (a folder named by its id, UR-09) gives that account's mail its read, flagged and
+#           replied marks and its categories, as Local Folders' does; a store that cannot be read leaves only its marks out, and says so
 # v4.2.458: export_layout: where Local Folders is in the mail export (the chosen folder is it or holds it, else its parent is it, else the
 #           highest one further down) and the other accounts' stores next to it, matched to the mail accounts of the settings export
 # v4.2.452: IMAP accounts and calendar accounts (Dav: their address, login and password) are read too, with "include in global operations"
@@ -693,6 +696,16 @@ def server_addresses(accounts: Sequence[SourceAccount]) -> frozenset[str]:
     return frozenset(addresses("imap") - addresses("pop3"))
 
 
+def store_id(uid: str) -> str:
+    """An account's id as the backup names its store folder by it, compared ignoring case and braces."""
+    return uid.strip().strip("{}").casefold()
+
+
+def pop3_stores(accounts: Sequence[SourceAccount]) -> dict[str, str]:
+    """The POP3 accounts of the settings export whose store the backup may hold: store_id -> the account's name (for the report)."""
+    return {store_id(account.uid): account.name or account.email_address or "A POP3 account" for account in accounts if account.kind == "pop3" and store_id(account.uid)}
+
+
 def _found_layout(chosen: Path, accounts: Sequence[SourceAccount]) -> ExportLayout:
     """Where Local Folders is in the folder the person chose, as the owner set it: first the chosen folder itself (it is Local Folders, or
     holds it), then one level up (the chosen folder lies inside Local Folders), then further down (the highest Local Folders). The other
@@ -792,23 +805,32 @@ class SourceItem:
     ical: str
 
 
+Marks = dict[tuple[str, str], list[tuple[frozenset[MessageFlag], tuple[str, ...]]]]  # (folder key, id:… or date:…) -> marks and tags
+Tagged = tuple[tuple[str | None, int | None, tuple[str, ...]], ...]  # (Message-ID, date, tags) of every message with categories
+
+
 @dataclass
 class BackupData:
     """What the backup adds to the mail export: the marks of each message, the contacts, and Local Folders' appointments and tasks."""
 
-    marks: dict[tuple[str, str], list[tuple[frozenset[MessageFlag], tuple[str, ...]]]] = field(default_factory=dict)  # (folder key, id:… or date:…) -> marks and tags
+    marks: Marks = field(default_factory=dict)  # Local Folders' mail
     contacts: tuple[SourceContact, ...] = ()
     tagged: tuple[tuple[str | None, int | None, tuple[str, ...]], ...] = ()  # (Message-ID, date, tags) of every message with categories
     events: tuple[SourceItem, ...] = ()
     tasks: tuple[SourceItem, ...] = ()
     notes: int = 0  # Chrono Mail has no notes: only counted, for the import's report
     problems: tuple[str, ...] = ()  # parts of Local Folders' calendars, tasks or notes that could not be read (the rest of the backup still comes in)
+    store_marks: dict[str, Marks] = field(default_factory=dict)  # store_id of a POP3 account -> the marks of its own store's mail (UR-09)
+    store_tagged: dict[str, Tagged] = field(default_factory=dict)  # store_id -> its store's tagged messages
+    store_problems: tuple[str, ...] = ()  # POP3 accounts whose store's marks could not be read (their mail still comes in)
 
-    def take(self, folder: tuple[str, ...], message_id: str | None, moment: int | None) -> tuple[frozenset[MessageFlag], tuple[str, ...]] | None:
-        """The marks and tags of this message in the backup (each found entry is used once), or None when it is not there."""
+    def take(self, folder: tuple[str, ...], message_id: str | None, moment: int | None, store: str = "") -> tuple[frozenset[MessageFlag], tuple[str, ...]] | None:
+        """The marks and tags of this message in the backup (each found entry is used once), or None when it is not there. folder: its place
+        in its store; store: "" Local Folders, else the store_id of the POP3 account whose store it is."""
+        marks = self.marks if not store else self.store_marks.get(store, {})
         keys = ([f"id:{message_id}"] if message_id else []) + ([f"date:{moment}"] if moment is not None else [])
         for key in keys:
-            waiting = self.marks.get((folder_key(folder), key))
+            waiting = marks.get((folder_key(folder), key))
             if waiting:
                 return waiting.pop(0)
         return None
@@ -816,6 +838,14 @@ class BackupData:
     def take_marks(self, folder: tuple[str, ...], message_id: str | None, moment: int | None) -> frozenset[MessageFlag] | None:
         found = self.take(folder, message_id, moment)
         return found[0] if found is not None else None
+
+    def counted_marks(self) -> int:
+        """Messages with marks in the backup: Local Folders' and the POP3 accounts' stores'."""
+        return sum(len(found) for marks in (self.marks, *self.store_marks.values()) for found in marks.values())
+
+    def all_tagged(self) -> Tagged:
+        """Every tagged message: Local Folders' and the POP3 accounts' stores'."""
+        return (*self.tagged, *(entry for tagged in self.store_tagged.values() for entry in tagged))
 
 
 def _seconds(ticks: object) -> int | None:
@@ -835,8 +865,8 @@ def _message_tags(connection: sqlite3.Connection) -> dict[int, tuple[str, ...]]:
     return {identifier: tuple(dict.fromkeys(names)) for identifier, names in found.items()}
 
 
-def _marks(connection: sqlite3.Connection, folders: dict[int, str]) -> tuple[dict[tuple[str, str], list[tuple[frozenset[MessageFlag], tuple[str, ...]]]], tuple[tuple[str | None, int | None, tuple[str, ...]], ...]]:
-    found: dict[tuple[str, str], list[tuple[frozenset[MessageFlag], tuple[str, ...]]]] = {}
+def _marks(connection: sqlite3.Connection, folders: dict[int, str]) -> tuple[Marks, Tagged]:
+    found: Marks = {}
     tags_of = _message_tags(connection)
     tagged: list[tuple[str | None, int | None, tuple[str, ...]]] = []
     rows = connection.execute("SELECT id, folder, messageId, date, flags, replyDate FROM MailItems ORDER BY id")
@@ -941,11 +971,36 @@ def _count(path: Path, table: str) -> int:
         connection.close()
 
 
+@dataclass(frozen=True, slots=True)
+class _Unpacked:
+    folder: Path  # Local Folders' databases as 0.dat, 1.dat … (_BACKUP_FILES)
+    stores: dict[str, list[tuple[Path, Path]]]  # store_id -> each store of that account: its folders and mail_index databases
+    unreadable: frozenset[str]  # store_ids whose databases are too large or incomplete: their marks are left out
+
+
+_STORE_FILES: tuple[str, str] = ("folders.dat", "mail_index.dat")
+
+
+def _store_parts(names: Iterable[str], wanted: Mapping[str, str]) -> dict[str, dict[tuple[str, str], dict[str, str]]]:
+    """The POP3 accounts' stores in the backup: a folder named by the account's id, with a folder per store holding _STORE_FILES
+    (<id>/<store>/folders.dat). store_id -> (account folder, store folder) as written -> file name -> the name in the backup; the two files
+    of one store always come from one folder as written, never from two spellings of it."""
+    found: dict[str, dict[tuple[str, str], dict[str, str]]] = {}
+    for name in names:
+        parts = name.split("/")
+        if len(parts) == 3 and parts[2] in _STORE_FILES and store_id(parts[0]) in wanted:
+            found.setdefault(store_id(parts[0]), {}).setdefault((parts[0], parts[1]), {})[parts[2]] = name
+    return found
+
+
 @contextmanager
-def _unpacked(backup: Path, work: Path) -> Generator[Path]:
-    """The three small database files of the backup, unpacked into a folder of their own that is always removed afterwards."""
+def _unpacked(backup: Path, work: Path, wanted: Mapping[str, str]) -> Generator[_Unpacked]:
+    """The small database files of the backup (Local Folders', and the stores of the POP3 accounts in wanted), unpacked into a folder of
+    their own that is always removed afterwards."""
     work.mkdir(parents=True, exist_ok=True)
     folder = Path(tempfile.mkdtemp(prefix="import-", dir=work))
+    stores: dict[str, list[tuple[Path, Path]]] = {}
+    unreadable: set[str] = set()
     try:
         try:
             with zipfile.ZipFile(backup) as archive:
@@ -962,9 +1017,28 @@ def _unpacked(backup: Path, work: Path) -> Generator[Path]:
                         raise ImportSourceError(f"{name} in the backup is far too large")
                     with archive.open(item) as source, open(folder / f"{number}.dat", "wb") as target:
                         shutil.copyfileobj(source, target, 1024 * 1024)
+                unpacked = 0  # bytes of the stores together: at most MAXIMUM_DATABASE_BYTES, however many stores a backup names
+                for number, (account, found) in enumerate(sorted(_store_parts(names, wanted).items())):
+                    for part, (_, files) in enumerate(sorted(found.items())):
+                        if "mail_index.dat" not in files:
+                            continue  # a store without mail (a calendar account's): nothing to read
+                        size = sum(names[name].file_size for name in files.values())
+                        if len(files) < len(_STORE_FILES) or unpacked + size > MAXIMUM_DATABASE_BYTES:
+                            unreadable.add(account)  # mail without its folders (its marks cannot be placed), or too large
+                            continue
+                        unpacked += size
+                        paths = (folder / f"store-{number}-{part}-folders.dat", folder / f"store-{number}-{part}-mail.dat")
+                        try:  # each store on its own: a damaged entry leaves out only that account's marks
+                            for name, path in zip(_STORE_FILES, paths, strict=True):
+                                with archive.open(names[files[name]]) as source, open(path, "wb") as target:
+                                    shutil.copyfileobj(source, target, 1024 * 1024)
+                        except (OSError, zipfile.BadZipFile, zlib.error, NotImplementedError, RuntimeError, EOFError):
+                            unreadable.add(account)
+                            continue
+                        stores.setdefault(account, []).append(paths)
         except (OSError, zipfile.BadZipFile) as error:
             raise ImportSourceError(f"The backup cannot be read: {error}") from None
-        yield folder
+        yield _Unpacked(folder, stores, frozenset(unreadable))
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
@@ -973,17 +1047,41 @@ def _open_database(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"{path.as_uri()}?mode=ro&immutable=1", uri=True)
 
 
-def read_backup(backup: Path, work: Path) -> BackupData:
-    """The marks of the messages and the contacts of Local Folders from a backup (Menu > Backup); work is where it is unpacked for a moment."""
-    with _unpacked(backup, work) as folder:
+def _folders(path: Path) -> tuple[dict[int, str], dict[int, str]]:
+    """A store's folders: id -> folder key (its path in the store), and id -> its own name."""
+    connection = _open_database(path)
+    try:
+        listed = [(identifier, path) for identifier, path in connection.execute("SELECT id, path FROM Folders") if isinstance(identifier, int) and isinstance(path, str)]
+    finally:
+        connection.close()
+    return {identifier: folder_key(tuple(path.strip("/").split("/"))) for identifier, path in listed}, {identifier: path.strip("/").split("/")[-1].strip() for identifier, path in listed}
+
+
+def _store_marks(stores: Sequence[tuple[Path, Path]]) -> tuple[Marks, Tagged]:
+    """The marks and tagged messages of one account's stores (one or more), together."""
+    marks: Marks = {}
+    tagged: list[tuple[str | None, int | None, tuple[str, ...]]] = []
+    for folders_path, mail_path in stores:
+        folders, _ = _folders(folders_path)
+        connection = _open_database(mail_path)
         try:
-            connection = _open_database(folder / "0.dat")
-            try:
-                listed = [(identifier, path) for identifier, path in connection.execute("SELECT id, path FROM Folders") if isinstance(identifier, int) and isinstance(path, str)]
-                folders = {identifier: folder_key(tuple(path.strip("/").split("/"))) for identifier, path in listed}
-                names = {identifier: path.strip("/").split("/")[-1].strip() for identifier, path in listed}
-            finally:
-                connection.close()
+            found, found_tagged = _marks(connection, folders)
+        finally:
+            connection.close()
+        for key, entries in found.items():
+            marks.setdefault(key, []).extend(entries)
+        tagged.extend(found_tagged)
+    return marks, tuple(tagged)
+
+
+def read_backup(backup: Path, work: Path, pop3: Mapping[str, str] | None = None) -> BackupData:
+    """The marks of the messages and the contacts of Local Folders from a backup (Menu > Backup); work is where it is unpacked for a moment.
+    pop3 (pop3_stores): the POP3 accounts whose own store's marks are read too (UR-09); an IMAP or calendar account's store never is."""
+    wanted: Mapping[str, str] = pop3 if pop3 is not None else {}
+    with _unpacked(backup, work, wanted) as unpacked:
+        folder = unpacked.folder
+        try:
+            folders, names = _folders(folder / "0.dat")
             connection = _open_database(folder / "1.dat")
             try:
                 marks, tagged = _marks(connection, folders)
@@ -998,6 +1096,19 @@ def read_backup(backup: Path, work: Path) -> BackupData:
                     connection.close()
         except sqlite3.Error as error:
             raise ImportSourceError(f"The backup's database cannot be read: {error}") from None
+        store_marks: dict[str, Marks] = {}
+        store_tagged: dict[str, Tagged] = {}
+        unread = set(unpacked.unreadable)
+        for account, stores in unpacked.stores.items():
+            if account in unread:
+                continue  # one of its stores could not be read: none of its marks, as the report says
+            try:  # each account's stores on their own: a damaged one leaves out only that account's marks, its mail still comes in
+                store_marks[account], store_tagged[account] = _store_marks(stores)
+            except sqlite3.Error:
+                unread.add(account)
+        store_problems = tuple(
+            f"{wanted[account]}: the read, flagged and replied marks and the tags of its mail could not be read from the backup; its mail itself is not affected" for account in sorted(unread)
+        )
         found: dict[str, tuple[SourceItem, ...]] = {}
         problems: list[str] = []
         for kind, words, index_file, data_file, table, component in (
@@ -1022,4 +1133,4 @@ def read_backup(backup: Path, work: Path) -> BackupData:
                 notes = _count(folder / "7.dat", "NoteContent")
             except sqlite3.Error:
                 notes = 0  # only counted for the report: nothing is lost
-    return BackupData(marks, contacts, tagged, found.get("events", ()), found.get("tasks", ()), notes, tuple(problems))
+    return BackupData(marks, contacts, tagged, found.get("events", ()), found.get("tasks", ()), notes, tuple(problems), store_marks, store_tagged, store_problems)

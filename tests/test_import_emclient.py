@@ -14,7 +14,7 @@ from chrono_mail.engine import commands_emclient
 from chrono_mail.engine.commands_emclient import (
     JOURNAL_FILE, ImportParameters, ImportResult, ScanParameters, StoreFound, fingerprint, fingerprint_of_raw, run_import, scan as scan_exports,
 )
-from chrono_mail.engine.emclient_source import export_layout, read_backup, read_settings
+from chrono_mail.engine.emclient_source import export_layout, pop3_stores, read_backup, read_settings
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import open_pim
 from tests.enginefactory import make_engine
@@ -25,9 +25,11 @@ from tests.test_emclient_source import (
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 4.2.458"
+__version__ = "test_import_emclient.py 4.2.461"
 
 # --- Version history ----------------------------------------------------
+# v4.2.461: a POP3 account's store in the backup gives its mail its marks and tags, in its own folders and in Local Folders > its name; an
+#           IMAP or calendar account's store is never read; a damaged store leaves out only its marks; tags given later reach its mail (UR-09)
 # v4.2.458: Local Folders found by its place in the mail export (the chosen folder holds it, is it, lies inside it, or holds it further
 #           down); IMAP stores next to it left out, a POP3 store into its own account, any other store into Local Folders by its name
 # v4.2.452: IMAP accounts and calendar servers are made without asking any server, "include in global operations" is the Send and Receive
@@ -233,9 +235,9 @@ def test_the_export_and_the_backup_are_read_once_per_import(tmp_path: Path, monk
     reads: list[Path] = []
     original = commands_emclient.read_backup
 
-    def counted(path: Path, work: Path) -> object:
+    def counted(path: Path, work: Path, pop3: dict[str, str] | None = None) -> object:
         reads.append(path)
-        return original(path, work)
+        return original(path, work, pop3)
 
     monkeypatch.setattr(commands_emclient, "read_backup", counted)
     values = exports.values(accounts=False, rules=False, contacts=False, batch=2)
@@ -972,3 +974,247 @@ def test_an_address_counts_as_an_imap_store_only_where_a_store_sits(tmp_path: Pa
     own = make_engine(tmp_path / "own")
     chosen = write_eml_files(tmp_path / "export", {"bob@example.com/Inbox/ann@example.com/002.eml": 2})
     assert import_mail(own, chosen, settings).messages_imported == 1  # the person's own folder inside another store
+
+
+# --- a POP3 account's own store in the backup gives its mail its marks and tags (UR-09) --------------------------------------------------
+
+POP3_STORE: dict[str, int] = {
+    "Local Folders/Inbox/001.eml": 1,
+    "bob@example.com/Inbox/002.eml": 2,
+    "bob@example.com/Inbox/003.eml": 3,
+    "bob@example.com/Sent/004.eml": 4,
+}
+POP3_MARKS: list[FakeItem] = [
+    FakeItem("/Inbox", "m2@x", MOMENT, flags=0),  # unread
+    FakeItem("/Inbox", "m3@x", MOMENT, flags=2 | 4, tags=("Work",)),  # read and flagged, with a category
+    FakeItem("/Sent", "m4@x", MOMENT, replied=True),  # read and replied
+]
+
+
+def add_store(backup: Path, folder: Path, account_folder: str, items: list[FakeItem], damaged: bool = False) -> None:
+    """An account's store in the backup as the reference client writes it: <account id>/<store id>/folders.dat and mail_index.dat."""
+    made = zipfile.ZipFile(write_backup(folder, items))
+    with made, zipfile.ZipFile(backup, "a") as archive:
+        for name in ("folders.dat", "mail_index.dat"):
+            content = b"not a database" if damaged and name == "mail_index.dat" else made.read(f"Local Folders/{name}")
+            archive.writestr(f"{account_folder}/7f3a9c2e-0b1d-4e5f-8a6b-1c2d3e4f5a6b/{name}", content)
+
+
+def flags_and_tags(engine: Engine, account: str) -> dict[str, tuple[frozenset[MessageFlag], tuple[str, ...]]]:
+    """subject -> marks and tags of every message in an account's mailbox."""
+    with open_mailbox(engine, account) as mailbox:
+        return {
+            row.subject: (row.flags, tuple(mailbox.tags_of(row.store_id)))
+            for folder in mailbox.store.list_folders() for row in mailbox.index.page(folder.path, limit=100)
+        }
+
+
+def pop3_exports(folder: Path, damaged: bool = False) -> tuple[Path, Path, Path]:
+    """The mail export (Local Folders and Bob's own store), the settings export and the backup with Local Folders' marks and Bob's store."""
+    chosen = write_eml_files(folder / "export", POP3_STORE)
+    settings = write_store_settings(folder, [STORE_POP3])
+    backup = write_backup(folder, [FakeItem("/Inbox", "m1@x", MOMENT, flags=0)])
+    add_store(backup, folder / "store", "P1", POP3_MARKS, damaged)  # the id compared ignoring case
+    return chosen, settings, backup
+
+
+def import_all(engine: Engine, chosen: Path, settings: Path, backup: Path, accounts: bool = True, tags: bool = True, mail: bool = True) -> ImportResult:
+    return run_import(engine, ImportParameters(
+        str(settings), str(chosen), str(backup), accounts=accounts, rules=False, mail=mail, contacts=False, tags=tags, calendars=False,
+    ))
+
+
+def bob_id(engine: Engine) -> str:
+    return next(settings.account.account_id for settings in engine.config().accounts if settings.account.kind is AccountKind.POP3)
+
+
+def test_a_pop3_accounts_own_store_gives_its_mail_its_marks_and_tags(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path)
+    found = scan_exports(engine, ScanParameters(str(settings), str(chosen), str(backup)))
+    assert (found.marks, found.tagged) == (4, 1)  # Local Folders' one and Bob's store's three
+    result = import_all(engine, chosen, settings, backup)
+    assert (result.messages_imported, result.messages_failed) == (4, ())
+    assert flags_and_tags(engine, bob_id(engine)) == {
+        "Message 2": (frozenset(), ()),
+        "Message 3": (frozenset({MessageFlag.SEEN, MessageFlag.FLAGGED}), ("Work",)),
+        "Message 4": (frozenset({MessageFlag.SEEN, MessageFlag.REPLIED}), ()),
+    }
+    assert flags_and_tags(engine, LOCAL_ACCOUNT_ID) == {"Message 1": (frozenset(), ())}  # Local Folders' marks as before
+
+
+def test_a_pop3_store_that_goes_into_local_folders_by_its_name_keeps_its_marks(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path)
+    import_all(engine, chosen, settings, backup, accounts=False)  # no account for Bob here: his store into Local Folders > his address
+    assert where_mail(engine)["Message 2"] == ("bob@example.com", "Inbox")
+    marks = flags_and_tags(engine, LOCAL_ACCOUNT_ID)
+    assert (marks["Message 2"], marks["Message 3"][0], marks["Message 4"][0]) == (
+        (frozenset(), ()), frozenset({MessageFlag.SEEN, MessageFlag.FLAGGED}), frozenset({MessageFlag.SEEN, MessageFlag.REPLIED}),
+    )
+
+
+def test_the_store_of_an_imap_or_calendar_account_is_never_read(tmp_path: Path) -> None:
+    accounts = read_settings(write_store_settings(tmp_path, [STORE_IMAP, STORE_POP3])).accounts
+    backup = write_backup(tmp_path, [])
+    add_store(backup, tmp_path / "imap", "i1", [FakeItem("/Inbox", "m5@x", MOMENT)])  # the IMAP account's: its marks are the server's
+    add_store(backup, tmp_path / "calendar", "c9", [FakeItem("/Inbox", "m6@x", MOMENT)])  # a calendar account's (no mail account of the export)
+    add_store(backup, tmp_path / "pop3", "p1", POP3_MARKS)
+    data = read_backup(backup, tmp_path / "work", pop3_stores(accounts))
+    assert set(data.store_marks) == {"p1"}
+    assert data.counted_marks() == 3
+
+
+def test_a_store_that_cannot_be_read_leaves_out_only_its_marks_and_says_so(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path, damaged=True)
+    result = import_all(engine, chosen, settings, backup)
+    assert (result.messages_imported, result.messages_failed) == (4, ())  # the mail still comes in
+    assert any(note.startswith("bob@example.com: the read, flagged and replied marks and the tags of its mail could not be read") for note in result.notes)
+    assert flags_and_tags(engine, bob_id(engine))["Message 2"][0] == frozenset({MessageFlag.SEEN})  # without the backup's marks: read, as before
+    assert flags_and_tags(engine, LOCAL_ACCOUNT_ID) == {"Message 1": (frozenset(), ())}  # Local Folders' marks still come
+
+
+def test_tags_chosen_later_reach_the_mail_of_a_pop3_store_that_is_here(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path)
+    import_all(engine, chosen, settings, backup, tags=False)
+    assert flags_and_tags(engine, bob_id(engine))["Message 3"][1] == ()
+    later = import_all(engine, chosen, settings, backup, accounts=False, mail=False)
+    assert later.messages_tagged == 1
+    assert flags_and_tags(engine, bob_id(engine))["Message 3"][1] == ("Work",)
+
+
+def test_a_damaged_store_entry_in_the_zip_leaves_out_only_that_accounts_marks(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path)
+    name = "P1/7f3a9c2e-0b1d-4e5f-8a6b-1c2d3e4f5a6b/mail_index.dat"
+    with zipfile.ZipFile(backup) as archive:
+        entry = archive.getinfo(name)
+    damaged = bytearray(backup.read_bytes())
+    start = entry.header_offset + 30 + len(name.encode()) + int.from_bytes(damaged[entry.header_offset + 28:entry.header_offset + 30], "little")
+    damaged[start + 100] ^= 0xFF  # its contents no longer match its CRC-32
+    backup.write_bytes(bytes(damaged))
+    result = import_all(engine, chosen, settings, backup)
+    assert (result.messages_imported, result.messages_failed) == (4, ())
+    assert any(note.startswith("bob@example.com: the read, flagged and replied marks and the tags of its mail could not be read") for note in result.notes)
+    assert flags_and_tags(engine, LOCAL_ACCOUNT_ID) == {"Message 1": (frozenset(), ())}  # the rest of the backup still comes
+
+
+def test_an_account_folder_written_in_two_spellings_never_mixes_their_files(tmp_path: Path) -> None:
+    accounts = read_settings(write_store_settings(tmp_path, [STORE_POP3])).accounts
+    backup = write_backup(tmp_path, [])
+    add_store(backup, tmp_path / "lower", "p1", [FakeItem("/Inbox", "m2@x", MOMENT, flags=0)])
+    with zipfile.ZipFile(write_backup(tmp_path / "upper", [FakeItem("/Sent", "m9@x", MOMENT)])) as other, zipfile.ZipFile(backup, "a") as archive:
+        archive.writestr("P1/7f3a9c2e-0b1d-4e5f-8a6b-1c2d3e4f5a6b/folders.dat", other.read("Local Folders/folders.dat"))  # only half a store
+    data = read_backup(backup, tmp_path / "work", pop3_stores(accounts))
+    assert data.store_marks["p1"] == {("inbox", "id:m2@x"): [(frozenset(), ())]}  # its own folders file, never the other spelling's
+
+
+def test_import_again_gives_the_tags_to_a_pop3_stores_mail_that_is_here(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path)
+    import_all(engine, chosen, settings, backup, tags=False)
+    again = run_import(engine, ImportParameters(
+        str(settings), str(chosen), str(backup), accounts=False, rules=False, contacts=False, tags=True, calendars=False, again=True,
+    ))
+    assert (again.messages_imported, again.messages_duplicate, again.messages_tagged) == (0, 4, 1)
+    assert flags_and_tags(engine, bob_id(engine))["Message 3"][1] == ("Work",)
+
+
+def test_a_pop3_store_not_in_the_mail_export_is_not_read(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", {"Local Folders/Inbox/001.eml": 1})
+    settings = write_store_settings(tmp_path, [STORE_POP3])
+    backup = write_backup(tmp_path, [FakeItem("/Inbox", "m1@x", MOMENT, flags=0)])
+    add_store(backup, tmp_path / "store", "p1", POP3_MARKS)
+    found = scan_exports(engine, ScanParameters(str(settings), str(chosen), str(backup)))
+    assert (found.marks, found.tagged) == (1, 0)  # only what this import can give
+
+
+def test_import_again_with_tags_only_gives_the_tags_to_a_pop3_stores_mail_here_and_says_nothing_false(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path)
+    import_all(engine, chosen, settings, backup, tags=False)
+    for mail_too in (False, True):
+        again = run_import(engine, ImportParameters(
+            str(settings), str(chosen), str(backup), accounts=False, rules=False, mail=mail_too, contacts=False, tags=True, calendars=False, again=True,
+        ))
+        assert not any("not here yet" in note for note in again.notes)
+        assert flags_and_tags(engine, bob_id(engine))["Message 3"][1] == ("Work",)
+    assert again.messages_tagged == 1  # found where its store went, also on the second pass (its tags then unchanged)
+
+
+def test_a_store_that_cannot_be_read_is_said_once_per_import_also_with_tags_only(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path, damaged=True)
+    told = run_import(engine, ImportParameters(str(settings), str(chosen), str(backup), accounts=False, rules=False, mail=False, contacts=False, tags=True, calendars=False))
+    assert sum("could not be read from the backup" in note for note in told.notes) == 1
+    commands_emclient._finished_run()  # as after a failed batch or a restart: the same import goes on
+    later = run_import(engine, ImportParameters(str(settings), str(chosen), str(backup), accounts=False, rules=False, contacts=False, tags=True, calendars=False, batch=2))
+    assert not any("could not be read from the backup" in note for note in later.notes)
+
+
+def test_a_pop3_store_found_by_its_name_and_its_address_has_its_tags_counted_once(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    work = FakeAccount("p1", "bob@example.com", "boblogin")
+    chosen = write_eml_files(tmp_path / "export", {"Local Folders/Inbox/001.eml": 1, "bob@example.com/Inbox/003.eml": 3, "bob@example.com/Inbox/": 0})
+    (chosen / "Bob").mkdir()  # the same account by its name: eM Client names the folder after it
+    settings = tmp_path / "settings.xml"
+    settings.write_text(settings_xml([work], []).replace("<AccountName>bob@example.com</AccountName>", "<AccountName>Bob</AccountName>"), "utf-8")
+    backup = write_backup(tmp_path, [])
+    add_store(backup, tmp_path / "store", "p1", POP3_MARKS)
+    assert len(export_layout(chosen, read_settings(settings).accounts).stores) == 2
+    import_all(engine, chosen, settings, backup, tags=False)
+    again = import_all(engine, chosen, settings, backup, accounts=False, mail=False)
+    assert again.messages_tagged == 1
+
+
+def test_tags_that_could_not_be_given_reach_a_pop3_accounts_own_mailbox_later(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path)
+    real = commands_emclient.Mailbox.set_tags
+
+    def refused(self: object, reference: object, tags: object) -> None:
+        raise UsageError("the tags file could not be written")
+
+    monkeypatch.setattr(commands_emclient.Mailbox, "set_tags", refused)
+    first = import_all(engine, chosen, settings, backup)
+    assert (first.messages_imported, first.messages_failed) == (4, ())
+    monkeypatch.setattr(commands_emclient.Mailbox, "set_tags", real)
+    later = import_all(engine, chosen, settings, backup, accounts=False, mail=False)
+    assert later.messages_tagged >= 1
+    assert flags_and_tags(engine, bob_id(engine))["Message 3"][1] == ("Work",)
+
+
+def test_a_tag_that_fails_on_mail_already_here_is_no_failed_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path)
+    import_all(engine, chosen, settings, backup, tags=False)
+
+    def refused(self: object, reference: object, tags: object) -> None:
+        raise UsageError("the tags file could not be written")
+
+    monkeypatch.setattr(commands_emclient.Mailbox, "set_tags", refused)
+    def nothing_present(*arguments: object) -> tuple[int, int]:
+        return 0, 0
+
+    monkeypatch.setattr(commands_emclient, "_tag_present_mail", nothing_present)  # only the mail step's own tagging
+    again = run_import(engine, ImportParameters(str(settings), str(chosen), str(backup), accounts=False, rules=False, contacts=False, tags=True, calendars=False, again=True))
+    assert (again.messages_duplicate, again.messages_failed) == (4, ())
+
+
+def test_the_bad_store_line_comes_again_when_the_run_that_said_it_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen, settings, backup = pop3_exports(tmp_path, damaged=True)
+    real = commands_emclient._import_mail
+
+    def broken(*arguments: object) -> object:
+        raise UsageError("the disk is full")
+
+    monkeypatch.setattr(commands_emclient, "_import_mail", broken)
+    with pytest.raises(UsageError):
+        import_all(engine, chosen, settings, backup)
+    monkeypatch.setattr(commands_emclient, "_import_mail", real)
+    result = import_all(engine, chosen, settings, backup)
+    assert sum("could not be read from the backup" in note for note in result.notes) == 1

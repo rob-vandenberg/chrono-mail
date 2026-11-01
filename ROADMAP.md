@@ -147,6 +147,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | I.1 | Import from the reference client's three exports (settings .xml, mail .eml folder, backup .zip): POP3 accounts with passwords, rules, contacts, all mail into Local Folders with its read, flagged and replied marks; resumable, no duplicates. | done (0.5.132); the owner's own import and check to do |
 | I.2 | The rest of the password key (passwords longer than 12 characters), from a test export with a known long password. | open |
 | I.3 | The mail export as the reference client writes it: one folder per store, Local Folders found by its place (the chosen folder is it or holds it, its parent is it, or further down); IMAP stores left out, a POP3 store into its own account, any other into Local Folders by its name; the window says what was found. | done (4.2.459); the full import of the owner's export to check |
+| I.4 | Every POP3 account's mail gets its read, flagged and replied marks and its tags from its own store in the backup, as Local Folders' mail does (UR-09). | done (4.2.461) |
 
 ## Import from and export to the office suite's mail program (from 4.2.385, D-278)
 
