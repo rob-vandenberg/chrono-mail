@@ -1,8 +1,10 @@
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
 from chrono_mail.core import AccountKind, ChronoMailError, FolderRole, MessageRef, RebuildAborted, StorageError
+from chrono_mail.config import AccountSettings
 from chrono_mail.engine.changes import RebuildStep
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters, account_label
 from chrono_mail.engine.mailbox import open_mailbox, parse_folder
@@ -11,12 +13,15 @@ from chrono_mail.engine.session import Engine, index_lock, rebuild_abort, talks_
 from chrono_mail.engine.receiving import Receiver
 from chrono_mail.index import Index, IndexEntry, entry_from_raw
 from chrono_mail.index.entry import header_block
+from chrono_mail.index.schema import UNREAD_INDEXES
+from chrono_mail.store import Store
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.2.453"
+__version__ = "commands_folders.py 4.2.469"
 
 # --- Version history ----------------------------------------------------
+# v4.2.469: index.fill-sent also makes the unread sort indexes an upgraded index lacks, one at a time, stepping aside between them (D-305)
 # v4.2.453: folder.rename and folder.delete answer what the rules that move mail to the folder did (rules, D-302)
 # v4.2.430: the filling in from what the index held is gone: the person From / To shows is read from each message's headers
 # v4.2.429: index.fill-sent reads only the headers when that is all an upgrade needs, and steps aside while a command of the person runs;
@@ -183,7 +188,7 @@ def _index_need(engine: Engine, account_id: str, has_mail: bool) -> IndexNeed:
         except StorageError:
             return "rebuild"
         try:
-            return "fill" if index.sent_filling() is not None else ""
+            return "fill" if index.sent_filling() is not None or index.unread_indexes_to_make() else ""
         finally:
             index.close()
 
@@ -244,6 +249,7 @@ def index_fill_sent(engine: Engine, parameters: AccountParameters) -> FillResult
     store = engine.open_store(settings)
     receiver = Receiver(settings, engine.config().accounts, engine.directories.pop3_state_file, store)  # one for the whole filling; it records each message's account once (D-292)
     filled = 0
+    told = False  # a step of the filling in was shown: the bar then stays full while the indexes are made
     try:
         while True:
             engine.step_aside(aborted.is_set)  # never while the person's command runs: sorting and opening stay quick
@@ -272,13 +278,39 @@ def index_fill_sent(engine: Engine, parameters: AccountParameters) -> FillResult
                 index.close()
             filled += len(rows)
             engine.rebuilding(RebuildStep(account_id, state[0] + len(rows), state[1], usable=True))
+            told = True
             if finished:
                 break
+        if filled:
+            engine.mailbox_changed(account_id)  # the Sent column fills in, also when the indexes below are stopped
+        _make_unread_indexes(engine, settings, store, aborted.is_set, shown=not told)
     finally:
         engine.rebuilding(RebuildStep(account_id, 0, 0, usable=True, ended=True))
-    if filled:
-        engine.mailbox_changed(account_id)  # the Sent column fills in
     return FillResult(filled)
+
+
+def _make_unread_indexes(engine: Engine, settings: AccountSettings, store: Store, aborted: Callable[[], bool], shown: bool) -> None:
+    """The unread sort indexes an upgraded index does not have yet (D-305), one at a time, never while the person's command runs; when
+    shown, each step is told before it starts, as the share of the index's messages its indexes make up."""
+    account_id = settings.account.account_id
+    while True:
+        engine.step_aside(aborted)
+        if aborted() or engine.stop_event.is_set():
+            raise RebuildAborted("Filling in the index was aborted")  # what is made stays, the rest follows next time
+        index = engine.open_index(settings, store)
+        try:
+            waiting = index.unread_indexes_to_make()
+            if not waiting:
+                if shown:
+                    total = index.message_count()
+                    engine.rebuilding(RebuildStep(account_id, total, total, usable=True))  # full before it ends
+                return
+            if shown:
+                total = index.message_count()
+                engine.rebuilding(RebuildStep(account_id, total * (len(UNREAD_INDEXES) - len(waiting)) // len(UNREAD_INDEXES), total, usable=True))
+            index.make_unread_index(waiting[0])
+        finally:
+            index.close()
 
 
 @dataclass(frozen=True, slots=True)

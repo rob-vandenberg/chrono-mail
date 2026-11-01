@@ -34,13 +34,17 @@ from chrono_mail.index.schema import (
     UPGRADE_FROM_11,
     UPGRADE_FROM_13,
     UPGRADE_FROM_15,
+    UNREAD_INDEXES,
     FILL_HEADERS_KEY,
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.2.430"
+__version__ = "index.py 4.2.469"
 
 # --- Version history ----------------------------------------------------
+# v4.2.469: format 18: the sort indexes of unread mail (D-305), made afterwards one at a time in an upgraded index (unread_indexes_to_make,
+#           make_unread_index); 17 is upgraded without a filling in; a message kept in an unread view while read (D-149) no longer keeps
+#           the view from them: the marks are asked through them and the kept messages by their ids
 # v4.2.430: wrote_to reads the recipients' addresses column (the junk filter's trust), never the joined names; format 17: to_shown from each message's own addresses (the entry), read with every row; 16, 15 and 14 filled in from the headers
 # v4.2.429: format 16: to_shown, kept and sorted by (From / To for mail one sent, D-295); 15 and 14 filled in from the headers only;
 #           the Account sort and groups by the names in a table of the connection, never a call to the program per message
@@ -281,6 +285,8 @@ class Index(IndexDatabase):
             found = self._format()
             if found is None:
                 self._create_schema()
+            elif found == "17":  # 18 only adds the unread sort indexes: made afterwards (make_unread_index), nothing to fill in
+                self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
             elif found in ("11", "12", "13", "14", "15", "16"):
                 self._upgrade_in_place(found)
             elif found != str(SCHEMA_VERSION):
@@ -303,6 +309,18 @@ class Index(IndexDatabase):
             self._connection.execute("DELETE FROM meta WHERE key = ?", (FILL_HEADERS_KEY,))
         else:  # 14, 15 and 16: only what the headers say is new (the receiving account, D-292; the person From / To shows, D-295)
             self._connection.execute("INSERT OR REPLACE INTO meta VALUES (?, '1')", (FILL_HEADERS_KEY,))
+
+    def unread_indexes_to_make(self) -> list[str]:
+        """After an upgrade in place: the statements of the unread sort indexes this index does not have yet (D-305)."""
+        present = {str(row[0]) for row in self._connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+        return [statement for statement in UNREAD_INDEXES if statement.split()[5] not in present]
+
+    def make_unread_index(self, statement: str) -> None:
+        """One of the unread sort indexes (a statement unread_indexes_to_make gave), in a step of its own."""
+        if statement not in UNREAD_INDEXES:
+            raise ValueError("Not an unread sort index")
+        with self._transaction():
+            self._connection.execute(statement)
 
     def fill_from_headers(self) -> bool:
         """The filling in under way needs less than each whole message (an upgrade from format 14 or 15): the attachments stay as they are."""
@@ -681,7 +699,7 @@ class Index(IndexDatabase):
         descending: bool = True,
     ) -> list[IndexedMessage]:
         """Messages matching the words and the filters, newest first unless another order is asked for. An empty query lists by filters only."""
-        source, where, parameters = self._search_parts(query, folder, filters)
+        source, where, parameters = self._search_parts(query, folder, filters, max(0, offset) + max(0, limit))
         sql = f"SELECT {_COLUMNS} FROM {source}{where} ORDER BY {_order(sort, descending)} LIMIT ? OFFSET ?"
         parameters.extend([max(0, limit), max(0, offset)])
         try:
@@ -695,7 +713,7 @@ class Index(IndexDatabase):
     ) -> list[tuple[str, tuple[str, ...], bool]]:
         """Every message of a folder or a search in the order search() lists them (or the first limit of them), as (store id,
         folder, unread) only: the order of a view without reading its rows (R-15). Each folder is one shared tuple."""
-        source, where, parameters = self._search_parts(query, folder, filters)
+        source, where, parameters = self._search_parts(query, folder, filters, None if limit is None else max(0, limit))
         order = _order(sort, descending)
         tail = " LIMIT ?" if limit is not None else ""
         if limit is not None:
@@ -783,8 +801,17 @@ class Index(IndexDatabase):
             raise StorageError(f"The search could not be run: {error}") from None
         return [GroupCount(names[int(position)][0], names[int(position)][1], int(count)) for position, count in found]
 
-    def _search_parts(self, query: str, folder: tuple[str, ...] | None, filters: SearchFilter) -> tuple[str, str, list[object]]:
-        """The FROM and WHERE of a search, and the values for its question marks."""
+    def _few_unread(self, folder: tuple[str, ...] | None, rows: int) -> bool:
+        """Whether the unread mail of one folder is few enough to gather it all, rather than walk the folder in the sorted order until the
+        rows asked are found: that walk reads about the rows asked per share of unread mail, the gathering every unread message once (the
+        numbers the index keeps, D-208)."""
+        found = self._connection.execute("SELECT messages, unread FROM folder_numbers WHERE folder = ?", (_folder_key(folder or ()),)).fetchone() or (0, 0)
+        messages, unread = max(0, int(found[0])), max(0, int(found[1]))
+        return unread * unread <= rows * messages
+
+    def _search_parts(self, query: str, folder: tuple[str, ...] | None, filters: SearchFilter, rows: int | None = None) -> tuple[str, str, list[object]]:
+        """The FROM and WHERE of a search, and the values for its question marks; rows: how many of the first rows are asked (None: every
+        one, also for a count or the groups)."""
         conditions: list[str] = []
         parameters: list[object] = []
         source = "messages m"
@@ -802,13 +829,25 @@ class Index(IndexDatabase):
         if parsed.negative:
             conditions.append("m.id NOT IN (SELECT rowid FROM text WHERE text MATCH ?)")
             parameters.append(parsed.negative)
+        # An unread view that keeps messages read while shown (D-149) finds them by their ids and its unread mail through the unread sort
+        # indexes (below): the folder must then not lead, or SQLite walks every message of the folder in the sorted order (D-305). Only
+        # unread has such indexes: any other view keeps the plain condition, whose sort index stops at the rows asked for; so do the first
+        # rows of one folder mostly unread, where that walk reaches them at once and gathering all its unread mail first would not (no sort
+        # index orders several folders: there the walk reads them all).
+        one_folder = folder is not None and not filters.subfolders
+        keeping = filters.unread is True and bool(filters.stay) and not expression and (rows is None or not one_folder or self._few_unread(folder, rows))
+        place = ""  # the folder condition with {0} for the steer, asked again with the marks of a view that keeps messages
+        place_values: list[object] = []
         if folder is not None and filters.subfolders:  # the folder and those inside it: one range of the folder index ("\x1f" + 1 is "\x20")
             key = _folder_key(folder)
-            conditions.append(f"({steer}m.folder = ? OR ({steer}m.folder > ? AND {steer}m.folder < ?))")
-            parameters.extend((key, key + FOLDER_SEPARATOR, key + chr(ord(FOLDER_SEPARATOR) + 1)))
+            place = "({0}m.folder = ? OR ({0}m.folder > ? AND {0}m.folder < ?))"
+            place_values = [key, key + FOLDER_SEPARATOR, key + chr(ord(FOLDER_SEPARATOR) + 1)]
         elif folder is not None:
-            conditions.append(f"{steer}m.folder = ?")
-            parameters.append(_folder_key(folder))
+            place = "{0}m.folder = ?"
+            place_values = [_folder_key(folder)]
+        if place:
+            conditions.append(place.format("+" if keeping else steer))
+            parameters.extend(place_values)
         marks: list[str] = []  # the conditions on what a person changes while a view shows the message
         if filters.unread is not None:
             marks.append("(m.flags & 1) = 0" if filters.unread else "(m.flags & 1) != 0")
@@ -821,7 +860,16 @@ class Index(IndexDatabase):
             if tag:
                 marks.append("m.store_id IN (SELECT store_id FROM message_tags WHERE tag = ?)")
                 mark_values.append(" ".join(tag.split()).casefold())
-        if marks and filters.stay:  # read, unflagged or untagged while shown: it stays until the view is left
+        if keeping:  # read, unflagged or untagged while shown: it stays until the view is left
+            # The marks asked by themselves, with the folder, and the kept messages by their ids: "marks OR kept" in one condition would
+            # keep SQLite from the unread sort indexes, and every message of the folder would be read to find the unread ones (D-305).
+            stay = sorted(filters.stay)
+            within = " AND ".join([place.format(""), *marks] if place else marks)
+            conditions.append(
+                f"m.id IN (SELECT m.id FROM messages m WHERE {within} UNION SELECT k.id FROM messages k WHERE k.store_id IN ({', '.join('?' * len(stay))}))"
+            )
+            parameters.extend((*place_values, *mark_values, *stay))
+        elif marks and filters.stay:  # read, unflagged or untagged while shown: it stays until the view is left
             stay = sorted(filters.stay)
             conditions.append(f"(({' AND '.join(marks)}) OR m.store_id IN ({', '.join('?' * len(stay))}))")
             parameters.extend((*mark_values, *stay))

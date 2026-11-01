@@ -1,7 +1,9 @@
 # --- Version ------------------------------------------------------------
-__version__ = "schema.py 4.2.430"
+__version__ = "schema.py 4.2.469"
 
 # --- Version history ----------------------------------------------------
+# v4.2.469: format 18: every sort index has a copy that holds only unread mail (UNREAD_INDEXES), so an unread view reads only its unread
+#           mail, whatever the sort (D-305); 17 and the formats upgraded in place get them in the background
 # v4.2.430: format 17: to_shown filled in again from the headers (16, 15 and 14), from each message's own addresses
 # v4.2.429: format 16: to_shown, the person the From / To column shows for mail one sent, with its sort index; 15 and 14 are filled in from
 #           the headers only (FILL_HEADERS_KEY)
@@ -25,7 +27,7 @@ __version__ = "schema.py 4.2.430"
 # v0.0.13: Schema 2: a preview line per message and a partial index for unread counts
 # v0.0.8: Initial index schema
 
-SCHEMA_VERSION: int = 17  # 17: to_shown filled in again from each message's own addresses (16 read them back from the joined recipients, which a name that looks like an address breaks); 16: to_shown, the person the From / To column shows for mail one sent (its first recipient, else the sender), sorted by (D-295; 15 to 11 upgraded in place, filled in afterwards); 15: nothing new, but every message is filled in once more, so its receiving account is recorded with it (D-292); 14: the people columns and the receiving account (D-291, D-292; 13, 12 and 11 upgraded in place, filled in afterwards); 13: has_attachments by what the text shows (D-235; 12 and 11 upgraded in place, filled in afterwards); 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
+SCHEMA_VERSION: int = 18  # 18: every sort index has a copy holding only unread mail (UNREAD_INDEXES, D-305; 17 to 11 upgraded in place, the copies made afterwards); 17: to_shown filled in again from each message's own addresses (16 read them back from the joined recipients, which a name that looks like an address breaks); 16: to_shown, the person the From / To column shows for mail one sent (its first recipient, else the sender), sorted by (D-295; 15 to 11 upgraded in place, filled in afterwards); 15: nothing new, but every message is filled in once more, so its receiving account is recorded with it (D-292); 14: the people columns and the receiving account (D-291, D-292; 13, 12 and 11 upgraded in place, filled in afterwards); 13: has_attachments by what the text shows (D-235; 12 and 11 upgraded in place, filled in afterwards); 12: sent, the message's own Date (the Sent column, B-16; 11 is upgraded in place, D-229); 11: date is when the mail server received the message (D-226): an older index is rebuilt
 FOLDER_SEPARATOR: str = "\x1f"
 SENT_FILL_KEY: str = "sent_filled_to"  # meta, after an upgrade in place: the row id up to which sent, has_attachments, the people columns and received_by were read from the messages; gone when all are done
 UPGRADE_FROM_11: tuple[str, ...] = (  # format 12 only adds the sent moment: the old index stays usable, sent is filled in afterwards (index.fill-sent)
@@ -50,6 +52,29 @@ UPGRADE_FROM_13: tuple[str, ...] = (  # format 14 only adds columns: the old ind
     "ALTER TABLE messages ADD COLUMN recipient_addresses TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE messages ADD COLUMN received_by TEXT NOT NULL DEFAULT ''",
     *PEOPLE_INDEXES,
+)
+
+# A copy of every sort index that holds only unread mail (D-305): an unread view (Favorites > Unread, Filter > Unread) sorted by any column
+# reads only its unread messages; through the full sort index it would read every message of every folder to find them (21 s on a spinning
+# disk for 678 unread of 140,465). messages_by_unread needs none: it starts with the unread mark, and serves the date sort of unread mail too. The condition is written exactly as the
+# search writes it, or SQLite does not use them. IF NOT EXISTS: an upgraded index gets them afterwards, one at a time (Index.make_unread_index).
+UNREAD_INDEXES: tuple[str, ...] = tuple(
+    f"CREATE INDEX IF NOT EXISTS {name}_unread ON messages ({columns}) WHERE (flags & 1) = 0"
+    for name, columns in (
+        ("messages_by_sent", "folder, sent DESC, id DESC"),
+        ("messages_by_subject", "folder, subject COLLATE NOCASE, id"),
+        ("messages_by_sender_name", "folder, sender_name COLLATE NOCASE, id"),
+        ("messages_by_size", "folder, size, id"),
+        ("messages_by_to_shown", "folder, to_shown COLLATE NOCASE, id"),
+        ("messages_by_flagged", "folder, ((flags & 4) <> 0), date, id"),
+        ("messages_by_replied", "folder, ((flags & 2) <> 0), date, id"),
+        ("messages_by_attachment", "folder, has_attachments, date, id"),
+        ("messages_by_preview", "folder, preview COLLATE NOCASE, date, id"),
+        ("messages_by_sender", "folder, sender COLLATE NOCASE, id"),
+        ("messages_by_sender_address", "folder, sender_address COLLATE NOCASE, id"),
+        ("messages_by_recipient_names", "folder, recipient_names COLLATE NOCASE, id"),
+        ("messages_by_recipient_addresses", "folder, recipient_addresses COLLATE NOCASE, id"),
+    )
 )
 
 TAG_STATEMENTS: tuple[str, ...] = (
@@ -121,6 +146,7 @@ STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX messages_by_attachment ON messages (folder, has_attachments, date, id)",
     "CREATE INDEX messages_by_preview ON messages (folder, preview COLLATE NOCASE, date, id)",
     *PEOPLE_INDEXES,
+    *UNREAD_INDEXES,
     "CREATE INDEX messages_by_thread ON messages (thread_key)",
     "CREATE INDEX messages_by_message_id ON messages (message_id)",
     *TAG_STATEMENTS,

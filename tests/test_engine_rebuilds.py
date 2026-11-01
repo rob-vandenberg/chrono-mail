@@ -9,7 +9,7 @@ from chrono_mail.engine import commands_folders
 from chrono_mail.engine.changes import RebuildStep
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.index import Index
-from chrono_mail.index.schema import SENT_FILL_KEY, UPGRADE_FROM_13
+from chrono_mail.index.schema import SENT_FILL_KEY, UNREAD_INDEXES, UPGRADE_FROM_13
 from chrono_mail.sync import rebuild_index
 from tests.mailfactory import raw_message
 from tests.test_mime_parse import PICTURE_IN_A_PLAIN_TEXT_MESSAGE
@@ -17,9 +17,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_index_rebuild import make_store
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_rebuilds.py 4.2.429"
+__version__ = "test_engine_rebuilds.py 4.2.469"
 
 # --- Version history ----------------------------------------------------
+# v4.2.469: the older formats are made without format 18's unread sort indexes too (D-305)
 # v4.2.429: the older formats are made without format 16's column too
 # v4.2.418: the helpers that make an index of format 11 or 12 take away what format 14 added first (D-291, D-292)
 # v2.5.335: index.prepare tells how many messages it indexed (it said 0), also when no rebuild was needed
@@ -41,7 +42,10 @@ def fetched(setup: Setup) -> list[RebuildStep]:
 
 
 def without_format_16(connection: sqlite3.Connection) -> None:
-    """Take away what format 16 added (the person From / To shows for mail one sent, D-295)."""
+    """Take away what format 16 added (the person From / To shows for mail one sent, D-295), and what came after (format 18's unread sort
+    indexes, D-305)."""
+    for statement in UNREAD_INDEXES:
+        connection.execute(f"DROP INDEX {statement.split()[5]}")
     connection.execute("DROP INDEX messages_by_to_shown")
     connection.execute("ALTER TABLE messages DROP COLUMN to_shown")
 
