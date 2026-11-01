@@ -19,6 +19,7 @@ from PySide6.QtWebEngineCore import (
 )
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
@@ -39,9 +40,12 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.2.430"
+__version__ = "reader.py 4.2.464"
 
 # --- Version history ----------------------------------------------------
+# v4.2.464: a web view has a window of its own: in the main window's, every small change elsewhere (a busy bar step) made Qt put the
+#           whole window together again through OpenGL, in software on a computer without a graphics card; only the view and the parts it
+#           sits in get a window of their own, never their neighbours (D-266)
 # v4.2.430: the From, To and Cc lines show the addresses as a person reads them (no quotes added for Reply)
 # v4.2.396: a right-click on a link of the message (HTML or plain text) offers Copy link address (the link fully encoded; not for a link within
 #           the message itself); on a picture that is a link too, after Open attachment and Save as…; in plain text Copy and Select All follow (D-281)
@@ -220,6 +224,8 @@ def make_safe_view(parent: QWidget | None = None) -> tuple[QWebEngineView, SafeP
         settings.setAttribute(attribute, value)
     page.setBackgroundColor(QColor(MAIL_PAGE))  # mail is written for a white page, whatever the theme
     view = QWebEngineView(parent)
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)  # only the view and the parts it sits in get a window
+    view.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)  # its own window: a change elsewhere never makes Qt put the whole window together again (4.2.464)
     view.setPage(page)
     view.setContextMenuPolicy(view.contextMenuPolicy().NoContextMenu)
     return view, page, blocker, content

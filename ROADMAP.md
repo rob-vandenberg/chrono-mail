@@ -188,6 +188,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | CR.3 | Local Folders can never be removed (hidden yes). | done (3.0.340) |
 | CR.4 | The other batches of the fix plan (mail sent twice; lost or damaged; backup and restore; hostile input; the window's high ones; medium and low). | batch 1 done (3.1.341); batch 2 done (3.2.342); batch 3 done (3.3.343); batch 4 done (3.4.344); batch 5 done (3.5.346); the owner's re-check of 3.0.339 to 3.5.346 done (3.6.349); its Minor findings, the three design questions and five more review rounds done (3.6.350); the owner's final review by three independent reviewers, what two or more found fixed (3.6.351); next: the owner decides |
 | CR.5 | CodeRabbit once, to compare with the register. | run done (2026-10-26, 62 findings); handled one at a time: CR-36, CR-58, CR-19, CR-03, CR-07 (3.6.354 to 3.6.359), CR-15 (4.1.379); next CR-16 |
+| CR.6 | The owner's report (2026-11-01): after a Refresh an idle Chrono Mail kept using 25 % of the processor. The busy bar draws itself and stops when the work ends, 20 steps a second; the mail display has a window of its own, so a small change no longer redraws the whole window (D-266). | done (4.2.464) |
 
 ## Documentation (B-07, from 2.3.317, D-242)
 

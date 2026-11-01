@@ -31,9 +31,12 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "operations.py 4.2.448"
+__version__ = "operations.py 4.2.464"
 
 # --- Version history ----------------------------------------------------
+# v4.2.464: the busy bar of the status line draws itself and steps on its own timer, which runs only while work runs and the bar is on
+#           screen: Qt's own busy animation of a progress bar went on unseen after every piece of work, about 60 redraws a second; every
+#           moving bar steps 20 times a second (BUSY_STEP_MS 50), one pass still 1.5 s (D-266)
 # v4.2.448: the first error of a send and receive switches to the Errors tab, once per round (B-25)
 # v4.0.375: the window, an account's row and an error's row are built from their Qt Designer forms (ui/forms/operations.ui, operation_row.ui,
 #           error_row.ui, D-276); the sizes, the bar and the tabs' look stay the program's
@@ -50,8 +53,8 @@ WAITING: str = "Waiting"
 DONE: str = "Done"
 FAILED: str = "Failed"
 BUSY_PIECE: float = 0.3  # the share of the bar the moving piece takes while the end is not known
-BUSY_STEP_MS: int = 30
-BUSY_STEPS: int = 50  # steps from one end to the other
+BUSY_STEP_MS: int = 50  # 20 steps a second: fluent enough for a busy bar, and every step redraws (the owner, 4.2.464)
+BUSY_STEPS: int = 30  # steps from one end to the other: one pass takes 1.5 s
 Names = Callable[[str, str], str]  # account id, "receive" or "send" -> "address (POP3)"
 
 
@@ -84,31 +87,68 @@ def account_picture(size: int, palette: QPalette) -> QPixmap:
     return picture
 
 
+def moving_piece(width: int, position: int) -> tuple[int, int]:
+    """Where the moving piece of a busy bar starts and how wide it is, in pixels, at a step from 0 to 2 * BUSY_STEPS (there and back)."""
+    piece = max(1, round(width * BUSY_PIECE))
+    step = position if position <= BUSY_STEPS else 2 * BUSY_STEPS - position
+    return round((width - piece) * step / BUSY_STEPS), piece
+
+
 class ClickableBar(QProgressBar):
     """The busy bar of the status line: a click on it opens the Operations window. It keeps its place whether something runs or
     not and is simply empty while nothing does, without a hover text or a click (D-266): shown and hidden at every action, it laid
-    the whole window out again each time, and a held Delete key fell behind."""
+    the whole window out again each time, and a held Delete key fell behind. It draws itself and steps on its own timer, which runs
+    only while work runs and the bar is on screen: Qt's own busy animation stops only when the style paints the bar, which an empty
+    bar never lets it do, so it went on redrawing unseen after every piece of work (4.2.464)."""
 
     clicked = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.busy: bool = False
-        self.setRange(0, 1)  # still while nothing runs: it moves only while it is seen
+        self.position: int = 0  # the step of the moving piece, 0 to 2 * BUSY_STEPS (there and back)
+        self.setRange(0, 1)  # never Qt's busy mode (0, 0): its animation is the style's, and only a paint of the style stops it
+        self.setTextVisible(False)
+        self._timer: QTimer = QTimer(self)
+        self._timer.setInterval(BUSY_STEP_MS)
+        self._timer.timeout.connect(self._advance)
 
     def set_busy(self, busy: bool) -> None:
         if busy == self.busy:
             return
-        self.busy = busy
-        self.setRange(0, 0 if busy else 1)
+        self.busy, self.position = busy, 0
+        if busy and self.isVisible():
+            self._timer.start()
+        elif not busy:
+            self._timer.stop()
         self.update()
         if not busy and QToolTip.isVisible() and self.underMouse():
             QToolTip.hideText()  # the work ended while its hover text was read: an empty place says nothing
 
+    def _advance(self) -> None:
+        self.position = (self.position + 1) % (2 * BUSY_STEPS)
+        self.update()
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        if self.busy:
+            self._timer.start()
+        super().showEvent(event)
+
+    @override
+    def hideEvent(self, event: QHideEvent) -> None:
+        self._timer.stop()  # nothing to see: no step either
+        super().hideEvent(event)
+
     @override
     def paintEvent(self, event: QPaintEvent) -> None:
-        if self.busy:
-            super().paintEvent(event)
+        if not self.busy:
+            return  # nothing runs: an empty place
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self.palette().color(QPalette.ColorRole.Mid))
+        start, width = moving_piece(self.width(), self.position)
+        painter.fillRect(start, 0, width, self.height(), self.palette().color(QPalette.ColorRole.Highlight))
+        painter.end()
 
     @override
     def event(self, event: QEvent) -> bool:
@@ -164,9 +204,7 @@ class OperationBar(QWidget):
         width = self.width()
         if not self.busy:
             return 0, round(width * self.done / self.total)
-        piece = max(1, round(width * BUSY_PIECE))
-        step = self.position if self.position <= BUSY_STEPS else 2 * BUSY_STEPS - self.position
-        return round((width - piece) * step / BUSY_STEPS), piece
+        return moving_piece(width, self.position)
 
     def _advance(self) -> None:
         self.position = (self.position + 1) % (2 * BUSY_STEPS)

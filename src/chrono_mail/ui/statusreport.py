@@ -12,9 +12,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 4.2.392"
+__version__ = "statusreport.py 4.2.464"
 
 # --- Version history ----------------------------------------------------
+# v4.2.464: the busy bar hides Qt's text itself: it draws itself (D-266)
 # v4.2.392: progress_ended: the count of a command that ended (an import: done, stopped or failed) leaves the status bar at once
 # v3.6.365: the busy bar moves only for work that has run for a second; it stops as soon as nothing runs
 # v3.6.364: a line has its own clock: a minute after it came, whatever else runs (the busy bar plays no part); a line about work still running stays
@@ -55,7 +56,6 @@ class StatusReport(QObject):
         self.progress_bar.clicked.connect(self.bar_clicked)
         self.progress_bar.setToolTip(CLICK_OPERATIONS)
         self.progress_bar.setMaximumWidth(120)
-        self.progress_bar.setTextVisible(False)
         self.line: StatusLine = StatusLine(self.label, parent)  # while the pointer is on a link in the reading pane: where it leads (D-215)
         self._is_error: bool = False
         self._index_running: bool = False
