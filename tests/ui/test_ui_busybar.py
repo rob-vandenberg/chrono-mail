@@ -7,14 +7,15 @@ from PySide6.QtWidgets import QApplication, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
-from chrono_mail.ui.operations import ClickableBar, SteadyProgressBar
+from chrono_mail.ui.operations import BUSY_STEPS, ClickableBar, SteadyProgressBar
 from chrono_mail.ui.reader import make_safe_view
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_busybar.py 4.2.465"
+__version__ = "test_ui_busybar.py 4.2.466"
 
 # --- Version history ----------------------------------------------------
+# v4.2.466: a moving bar is Qt's framed bar with stripes sliding through it: each step a new picture, a whole round the first again
 # v4.2.465: a window's moving progress bar steps at most 20 times a second, only while on screen; Import, Backup, Restore and the update
 #           download use it (D-266)
 # v4.2.464: the busy bar is never redrawn once its work ended, steps at most 20 times a second, and stops its timer when hidden; a web
@@ -180,3 +181,32 @@ def test_import_export_backup_restore_and_the_update_download_use_the_steady_pro
     for window in windows:
         qtbot.addWidget(window)
         assert isinstance(part(window, QWidget, "progress"), SteadyProgressBar), type(window).__name__
+
+
+def test_a_moving_bar_is_qts_framed_bar_with_stripes_sliding_through_it(qtbot: QtBot) -> None:
+    QApplication.setStyle("Fusion")  # the program's style (D-158)
+    bar = SteadyProgressBar()
+    qtbot.addWidget(bar)
+    bar.setTextVisible(False)
+    bar.resize(200, 20)
+    bar.setRange(0, 1)
+    bar.setValue(1)
+    full = bar.grab().toImage()  # the style's own full bar: what a moving bar is made of
+    bar.setRange(0, 0)
+    bar.position = 0
+    first = bar.grab().toImage()
+    bar.position = 1
+    second = bar.grab().toImage()
+    bar.position = 2 * BUSY_STEPS  # a whole round (the step goes 0 to 2 * BUSY_STEPS - 1)
+    again = bar.grab().toImage()
+    assert first != second  # each step a new picture: the stripes slide
+    assert first == again  # a whole round: the first picture again, no jump
+    assert first != full and first.pixelColor(1, 10) == full.pixelColor(1, 10)  # stripes inside, the style's own frame around them
+    status = ClickableBar()
+    qtbot.addWidget(status)
+    status.resize(120, 12)
+    empty = status.grab().toImage()
+    status.set_busy(True)
+    assert status.grab().toImage() != empty
+    status.set_busy(False)
+    assert status.grab().toImage() == empty  # nothing runs: an empty place

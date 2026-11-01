@@ -3,8 +3,8 @@ from dataclasses import replace
 from datetime import datetime
 from typing import override
 
-from PySide6.QtCore import QEvent, QSettings, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QColor, QGuiApplication, QHideEvent, QMouseEvent, QPainter, QPaintEvent, QPalette, QPixmap, QShowEvent
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSettings, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QColor, QGuiApplication, QHideEvent, QMouseEvent, QPainter, QPainterPath, QPaintEvent, QPalette, QPixmap, QPolygonF, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStackedWidget,
+    QStyle,
+    QStyleOptionProgressBar,
     QTabBar,
     QToolTip,
     QVBoxLayout,
@@ -31,9 +33,11 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "operations.py 4.2.465"
+__version__ = "operations.py 4.2.466"
 
 # --- Version history ----------------------------------------------------
+# v4.2.466: a moving bar looks like Qt's own again: the style's framed blue bar with light stripes sliding through it, drawn by the
+#           program at 20 steps a second (draw_moving_bar); a window's bar keeps its shape when it starts counting
 # v4.2.465: SteadyProgressBar: the bar of a window that counts as Qt's and, while the end is not known, moves on its own timer at 20 steps a
 #           second, only while it is on screen (Import, Backup, Restore, the update download; Qt's own moved 60 times a second, D-266)
 # v4.2.464: the busy bar of the status line draws itself and steps on its own timer, which runs only while work runs and the bar is on
@@ -57,6 +61,10 @@ FAILED: str = "Failed"
 BUSY_PIECE: float = 0.3  # the share of the bar the moving piece takes while the end is not known
 BUSY_STEP_MS: int = 50  # 20 steps a second: fluent enough for a busy bar, and every step redraws (the owner, 4.2.464)
 BUSY_STEPS: int = 30  # steps from one end to the other: one pass takes 1.5 s
+STRIPE_PERIOD: int = 20  # pixels from one stripe of a moving bar to the next
+STRIPE_WIDTH: int = 8
+STRIPE_STEP: int = 2  # pixels a stripe slides per step: 2 * BUSY_STEPS steps slide them a whole number of periods, so the round is seamless
+STRIPE_ALPHA: int = 40  # the stripes are the highlighted text's colour, this opaque (of 255)
 Names = Callable[[str, str], str]  # account id, "receive" or "send" -> "address (POP3)"
 
 
@@ -96,6 +104,33 @@ def moving_piece(width: int, position: int) -> tuple[int, int]:
     return round((width - piece) * step / BUSY_STEPS), piece
 
 
+def draw_moving_bar(bar: QProgressBar, position: int) -> None:
+    """A moving bar as Qt's own looks: the style's framed bar, full, with light stripes sliding through it; drawn by the program at
+    the step given, so no animation of the style ever runs (D-266)."""
+    option = QStyleOptionProgressBar()
+    bar.initStyleOption(option)
+    for field, value in (("minimum", 0), ("maximum", 1), ("progress", 1), ("textVisible", False), ("styleObject", None)):
+        setattr(option, field, value)  # full and without its widget: the style draws it still, nothing to animate (setattr: the stubs type these fields wrongly)
+    painter = QPainter(bar)
+    bar.style().drawControl(QStyle.ControlElement.CE_ProgressBar, option, painter, bar)
+    inside = QRectF(bar.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+    clip = QPainterPath()
+    clip.addRoundedRect(inside, 2, 2)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setClipPath(clip)
+    stripe = QColor(bar.palette().color(QPalette.ColorRole.HighlightedText))
+    stripe.setAlpha(STRIPE_ALPHA)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(stripe)
+    height = inside.height()
+    left = -STRIPE_PERIOD - height + (position * STRIPE_STEP) % STRIPE_PERIOD
+    while left < inside.right() + height:
+        painter.drawPolygon(QPolygonF([QPointF(left, inside.bottom()), QPointF(left + STRIPE_WIDTH, inside.bottom()),
+                                       QPointF(left + STRIPE_WIDTH + height, inside.top()), QPointF(left + height, inside.top())]))
+        left += STRIPE_PERIOD
+    painter.end()
+
+
 class ClickableBar(QProgressBar):
     """The busy bar of the status line: a click on it opens the Operations window. It keeps its place whether something runs or
     not and is simply empty while nothing does, without a hover text or a click (D-266): shown and hidden at every action, it laid
@@ -108,7 +143,7 @@ class ClickableBar(QProgressBar):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.busy: bool = False
-        self.position: int = 0  # the step of the moving piece, 0 to 2 * BUSY_STEPS (there and back)
+        self.position: int = 0  # the step of the sliding stripes, 0 to 2 * BUSY_STEPS - 1 (draw_moving_bar)
         self.setRange(0, 1)  # never Qt's busy mode (0, 0): its animation is the style's, and only a paint of the style stops it
         self.setTextVisible(False)
         self._timer: QTimer = QTimer(self)
@@ -144,13 +179,8 @@ class ClickableBar(QProgressBar):
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:
-        if not self.busy:
-            return  # nothing runs: an empty place
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), self.palette().color(QPalette.ColorRole.Mid))
-        start, width = moving_piece(self.width(), self.position)
-        painter.fillRect(start, 0, width, self.height(), self.palette().color(QPalette.ColorRole.Highlight))
-        painter.end()
+        if self.busy:  # nothing runs: an empty place
+            draw_moving_bar(self, self.position)
 
     @override
     def event(self, event: QEvent) -> bool:
@@ -173,7 +203,7 @@ class SteadyProgressBar(QProgressBar):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.position: int = 0  # the step of the moving piece, 0 to 2 * BUSY_STEPS (there and back)
+        self.position: int = 0  # the step of the sliding stripes, 0 to 2 * BUSY_STEPS - 1 (draw_moving_bar)
         self._timer: QTimer = QTimer(self)
         self._timer.setInterval(BUSY_STEP_MS)
         self._timer.timeout.connect(self._advance)
@@ -215,11 +245,7 @@ class SteadyProgressBar(QProgressBar):
         if not self.moving():
             super().paintEvent(event)  # a count: Qt's own bar, which never moves by itself
             return
-        painter = QPainter(self)
-        painter.fillRect(self.rect(), self.palette().color(QPalette.ColorRole.Mid))
-        start, width = moving_piece(self.width(), self.position)
-        painter.fillRect(start, 0, width, self.height(), self.palette().color(QPalette.ColorRole.Highlight))
-        painter.end()
+        draw_moving_bar(self, self.position)
 
 
 class OperationBar(QWidget):

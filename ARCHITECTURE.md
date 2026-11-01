@@ -7,7 +7,7 @@ The design as it stands now (version 1.6.260). The rules behind it, with their r
 1. **Never lose mail.** Crash-safe storage; the server copy is only removed after the local copy is verified.
 2. **Confidential by default.** Message contents are encrypted on disk.
 3. **Scale.** Responsive with 500,000 messages.
-4. **One codebase** for KDE, GNOME, Windows and macOS.
+4. **One codebase** for KDE, GNOME and Windows (macOS is not supported for now, D-008).
 5. **Testable without a screen.** Every action is an engine command, reachable from a headless CLI.
 6. **Grows in steps.** POP3 and SMTP, IMAP, calendars, contacts and tasks are done; Gmail and Exchange come later. The internals are shaped like IMAP, so later steps extend rather than rewrite.
 
@@ -73,7 +73,7 @@ Only `ui` may import PySide6.
 
 ### 4.4 Keys (D-023)
 
-- The data key encrypts message files. It lives in the OS credential store (KWallet, GNOME Keyring/Secret Service, Windows Credential Manager, macOS Keychain) through `keyring`. A master-password mode is not built.
+- The data key encrypts message files. It lives in the OS credential store (KWallet, GNOME Keyring/Secret Service, Windows Credential Manager) through `keyring`. A master-password mode is not built.
 - **Key backup and recovery is mandatory:** a passphrase-protected recovery file (scrypt + AES-GCM) and a printable recovery code with a checksum.
 - AES-256-GCM from `cryptography`, with a per-file key derived by HKDF-SHA256.
 

@@ -3622,3 +3622,8 @@ Built: SteadyProgressBar (ui/operations.py) counts as Qt's bar; while its range 
 Review rounds: round 1 found Export missed (fixed); round 2 found none.
 Tests: tests/ui/test_ui_busybar.py (2 new; they fail on 4.2.464, where the class does not exist); the window tests of import, backup, restore, updates, forms, info marks, operations and the status line passed (257); Pyrefly 0 on the program and the new tests (Linux, win32); layer check kept.
 
+## 2026-11-01, 4.2.466: every moving bar looks like Qt's own again (the owner)
+Since 4.2.464 a moving bar was a flat blue block sliding on grey; Qt's own is its framed blue bar with light diagonal stripes sliding through it (compared in pictures, scratchpad/busybars*.png). Built: draw_moving_bar (ui/operations.py) has the style draw its full bar (as a count, without its widget, so no animation of the style runs) and paints the stripes over it, the palette's highlighted-text colour at 40 of 255, sliding 2 pixels per step; a round of 60 steps slides them exactly 6 periods, so it never jumps. The status line's bar and the windows' bar (SteadyProgressBar) use it; a window's bar keeps its framed shape when it starts counting. The Operations window's rows keep their flat bars (OperationBar).
+Review rounds: one fresh reviewer, nothing real (two comments about the steps corrected).
+Tests: tests/ui/test_ui_busybar.py (1 new: each step a new picture, a whole round the first again, the style's own frame around the stripes, the idle status bar empty; fails on 4.2.465); the related window tests passed (294 with the owner-rule tests); Pyrefly 0 on the program and the new test (Linux, win32); layer check kept.
+
