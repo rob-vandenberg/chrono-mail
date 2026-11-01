@@ -9,9 +9,10 @@ from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 4.2.438"
+__version__ = "test_engine_calendar.py 4.2.460"
 
 # --- Version history ----------------------------------------------------
+# v4.2.460: removing an account with calendars tells the sections (collection_changed)
 # v4.2.438: a calendar's own colour is named "Default calendar colour"; the old default's name a calendar kept never wins (D-297)
 # v3.6.351: a change of the attendee list keeps what each attendee's line said; floating events and tasks stay floating
 # v3.6.349: a series whose days the rule sets keeps its skipped dates when its first date moves (RV-185); one date of an invitation is
@@ -630,3 +631,14 @@ def test_an_occurrence_of_a_floating_series_is_deleted_as_a_floating_date(engine
     call(engine, "event.delete", item=item, occurrence=occurrences[1])
     assert len([o for o in call(engine, "event.list", from_date="2026-01-01", to_date="2026-01-31").events if o.item == item]) == 2
     assert "EXDATE:20260112T090000" in call(engine, "event.export", item=item).text
+
+
+def test_removing_an_account_with_calendars_tells_the_sections(engine: Engine) -> None:
+    """Its calendars must leave Calendar, Contacts and Tasks at once; a Refresh with nothing to synchronise reads nothing again (4.2.460)."""
+    from chrono_mail.engine.changes import Change
+
+    added = call(engine, "account.add-dav", url="https://127.0.0.1:1/dav/", username="club", password="made up", unchecked=True)
+    told: list[Change] = []
+    engine.changed = told.append
+    call(engine, "account.remove", account=getattr(added, "account_id"))
+    assert [(change.kind, change.mailbox) for change in told] == [("collection_changed", getattr(added, "account_id"))]

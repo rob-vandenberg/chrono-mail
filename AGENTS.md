@@ -118,7 +118,7 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 The owner's rules apply in full: the general rules (G-nn), the Python rules (PY-nn) and `OWNER-RULES.md` (OR-nn), all loaded by themselves. How they map onto work in this project:
 
 1. **Within an approved changelist** (G-3), the agent may run tests and fix its own test failures, as long as the fixes stay inside the approved scope. Anything outside the scope needs a new changelist.
-2. **Delivery.** Files are edited in place in the repository. Every reply that changed files ends with the files changed and the push line of OR-31; the owner pushes.
+2. **Delivery.** Files are edited in place in the repository. When a job is done and reviewed, the agent pushes it itself and names the pushed version (OR-31).
 3. **Checks.** Run Pyrefly also with `--python-platform win32`. Prove that a new test fails on the previous version of the code.
 4. **Cautions.** Never use `pkill -f`. Never repeat or commit a password.
 

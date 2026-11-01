@@ -39,6 +39,7 @@ from chrono_mail.crypto import (
     seal_key_with_passphrase,
     unseal_key_with_passphrase,
 )
+from chrono_mail.engine.changes import Change
 from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders, take_back
 from chrono_mail.engine.newkey import kept_local_key, kept_other_key, make_data_key, recovery_code_not_stored, recovery_code_stored, usable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
@@ -52,9 +53,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.2.459"
+__version__ = "commands_accounts.py 4.2.460"
 
 # --- Version history ----------------------------------------------------
+# v4.2.460: account.remove tells a collection_changed fact for an account with calendars: they leave the sections at once (D-146)
 # v4.2.459: wallet.move-profile: a profile's passwords and key move to its wallet name without "/" at start (D-274)
 # v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
 # v4.2.447: account.check fresh (a test the person starts: the usual checks only); certificate.inspect tells whether the certificate is kept
@@ -447,6 +449,8 @@ def account_remove(engine: Engine, parameters: AccountParameters) -> AccountRemo
     engine.passwords.delete(account_id, ServerRole.INCOMING)
     engine.passwords.delete(account_id, ServerRole.OUTGOING)
     engine.passwords.delete(account_id, ServerRole.DAV)
+    if settings.dav_url or settings.account.kind is AccountKind.DAV:
+        engine.report(Change("collection_changed", account_id))  # its calendars, task lists and address books leave the sections (D-146)
     return AccountRemoveResult(account_id, str(engine.directories.account_directory(account_id)))
 
 

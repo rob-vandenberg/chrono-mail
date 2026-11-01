@@ -25,9 +25,11 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.2.459"
+__version__ = "mailchecking.py 4.2.460"
 
 # --- Version history ----------------------------------------------------
+# v4.2.460: Refresh in Calendar, Contacts and Tasks with nothing to synchronise reads nothing again: its line is no longer covered at once by
+#           the section's count (the owner's report)
 # v4.2.459: move_profile_wallet: a profile's passwords and key move to its own wallet name before anything reads them (D-274)
 # v4.2.451: an account not included in Send and Receive takes part in nothing but its own refresh (refresh_account: Send and Receive,
 #           Send, Receive; a calendars-only account synchronises): not in the refresh at start, the timer, the push, the All actions, the
@@ -629,14 +631,10 @@ class MailChecking(QObject):
 
     def refresh_calendars(self) -> None:
         """Refresh in Calendar, Contacts and Tasks: bring every calendar, task list and address book in step with its server, and say so."""
-        if not self._state.calendar_accounts():
-            for page in self._pages.values():
-                page.refresh()
+        if not self._state.calendar_accounts():  # nothing to synchronise: nothing is read again (D-146), so the section's count never covers the line
             self._status.show("No account has a calendar and contacts server; what is on this computer is shown")
             return
         if not self._state.calendar_accounts(self._included()):
-            for page in self._pages.values():
-                page.refresh()
             self._status.show("Every account with calendars is left out of Send and Receive; Mail's Refresh menu refreshes one by itself")
             return
         if self.dav_syncing:
