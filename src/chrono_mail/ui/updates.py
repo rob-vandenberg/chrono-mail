@@ -32,6 +32,7 @@ from chrono_mail.engine.commands_updates import (
 )
 from chrono_mail.protocols.releases import DownloadInterrupted, DownloadStopped, GitHubBusy, GitHubUnreachable
 from chrono_mail.ui import forms
+from chrono_mail.ui.operations import SteadyProgressBar
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.mailchecking import ask_choice
@@ -39,9 +40,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.prefs import InUse
 
 # --- Version ------------------------------------------------------------
-__version__ = "updates.py 4.2.429"
+__version__ = "updates.py 4.2.465"
 
 # --- Version history ----------------------------------------------------
+# v4.2.465: the download's progress bar moves at 20 steps a second, only while on screen (SteadyProgressBar, D-266)
 # v4.2.429: after a Linux install: Restart Chrono Mail or Close Chrono Mail, both close without questions (unsaved messages go to Drafts)
 # v4.2.427: Cancel closes the download's window at once (the download stops behind it); Update available waits until the main window is
 #           on screen (not minimized, not only in the tray, no question or Settings open); About says what went wrong ("could not reach
@@ -102,7 +104,7 @@ class UpdateAvailableWindow(QDialog):
         self._ticket: str = ""  # the number of the download under way
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)  # never takes the keyboard from someone typing
-        form = forms.fill(self, "update_available")  # D-276
+        form = forms.fill(self, "update_available", {"progress": SteadyProgressBar})  # D-276
         _plain(form, "headline").setText(f"Chrono Mail {check.version} is available. You have {check.running}.")
         self.page_link: QLabel = part(form, QLabel, "pageLink")
         if check.page.startswith(RELEASE_PAGES):

@@ -7,14 +7,16 @@ from PySide6.QtWidgets import QApplication, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_accounts import AccountParameters, NoParameters
-from chrono_mail.ui.operations import ClickableBar
+from chrono_mail.ui.operations import ClickableBar, SteadyProgressBar
 from chrono_mail.ui.reader import make_safe_view
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_busybar.py 4.2.464"
+__version__ = "test_ui_busybar.py 4.2.465"
 
 # --- Version history ----------------------------------------------------
+# v4.2.465: a window's moving progress bar steps at most 20 times a second, only while on screen; Import, Backup, Restore and the update
+#           download use it (D-266)
 # v4.2.464: the busy bar is never redrawn once its work ended, steps at most 20 times a second, and stops its timer when hidden; a web
 #           view has a window of its own (D-266)
 # v2.1.311: Initial: the busy bar's hover text always names what runs, with its accounts, then what a click does
@@ -67,7 +69,7 @@ class PaintCount(QObject):
         return False
 
 
-def paints_during(qtbot: QtBot, bar: ClickableBar, seconds: float) -> int:
+def paints_during(qtbot: QtBot, bar: QWidget, seconds: float) -> int:
     counter = PaintCount(bar)
     bar.installEventFilter(counter)
     end = time.monotonic() + seconds
@@ -132,3 +134,49 @@ def test_only_the_mail_display_and_the_parts_it_sits_in_have_a_window_of_their_o
             part = part.parentWidget()
     natives = [type(part).__name__ for part in window.findChildren(QWidget) if part.internalWinId() and not part.isWindow() and id(part) not in allowed]
     assert natives == []  # their neighbours are never made windows of their own: splitters, toolbars and the status bar stay as they were
+
+
+def test_a_windows_moving_progress_bar_steps_at_most_20_times_a_second_and_only_while_it_moves_on_screen(qtbot: QtBot) -> None:
+    QApplication.setStyle("Fusion")  # the program's style (D-158): Qt's own moving bar of this style redraws 60 times a second
+    bar = SteadyProgressBar()
+    qtbot.addWidget(bar)
+    bar.resize(200, 20)
+    bar.show()
+    qtbot.waitExposed(bar)
+    bar.setRange(0, 0)  # the end is not known: it moves
+    assert paints_during(qtbot, bar, 0.5) > 0  # it moves
+    assert bar._timer.isActive() and bar._timer.interval() == 1000 // 20  # 20 steps a second (it was 60)
+    bar.setRange(0, 10)
+    bar.setValue(4)
+    assert not bar._timer.isActive()  # a count never moves by itself
+    qtbot.wait(100)
+    assert paints_during(qtbot, bar, 0.5) == 0
+    bar.setRange(0, 0)
+    bar.hide()
+    assert not bar._timer.isActive()  # nothing to see: no steps
+    bar.show()
+    assert bar._timer.isActive()
+
+
+def test_import_export_backup_restore_and_the_update_download_use_the_steady_progress_bar(world: World, qtbot: QtBot) -> None:
+    from pathlib import Path
+
+    from chrono_mail.engine.commands_backup import ContentsResult, ContentsRow
+    from chrono_mail.engine.commands_updates import UpdateCheck
+    from chrono_mail.ui.backupdialog import BackupDialog
+    from chrono_mail.ui.exportdialog import ExportDialog
+    from chrono_mail.ui.forms import part
+    from chrono_mail.ui.importdialog import ImportDialog
+    from chrono_mail.ui.restoredialog import RestoreDialog
+    from chrono_mail.ui.updates import UpdateAvailableWindow
+
+    parts = ("messages", "rules", "calendars", "contacts", "tasks", "settings")
+    contents = ContentsResult("2026-10-20T10:00:00", "4.0.375", parts, (ContentsRow("acc1", "anna@example.com", parts, 12, 3, False),), 12, 3, True, True)
+    check = UpdateCheck("available", "4.2.465", "4.2.466", "https://github.com/rob-vandenberg/chrono-mail/releases/tag/v4.2.466", "chrono-mail_4.2.466_amd64.deb", 1000)
+    windows: list[QWidget] = [
+        ImportDialog(world.backend, lambda: None, world.window), ExportDialog(world.backend, world.window), BackupDialog(world.backend, world.window.settings, world.window),
+        RestoreDialog(world.backend, world.window.settings, Path("backup.cmz"), None, contents, world.window), UpdateAvailableWindow(world.backend, check, world.window),
+    ]
+    for window in windows:
+        qtbot.addWidget(window)
+        assert isinstance(part(window, QWidget, "progress"), SteadyProgressBar), type(window).__name__

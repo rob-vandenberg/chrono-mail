@@ -3616,3 +3616,9 @@ Built: ClickableBar draws itself (a grey track with a blue piece, as the Operati
 Review rounds: round 1 found the neighbours made native (fixed, with a test).
 Tests: tests/ui/test_ui_busybar.py (4 new; each fails on the code before it: 62 redraws a second after the work ended, no timer of its own, no window of its own, neighbours made windows); 22 window test files that touch the reader, the busy bar or the Operations window passed (524 tests); Pyrefly 0 on the program and the new tests (Linux, win32); layer check kept.
 
+## 2026-11-01, 4.2.465: every busy bar steps 20 times a second (the owner)
+Qt's own progress bar in busy mode redraws 60 times a second under Fusion (measured); unlike the status line's bar of 4.2.464 it stops when hidden or counting (measured: 0 after hide or setRange(0, n)), so the cost was only while those windows showed a moving bar. A counting bar never moves by itself (0 a second), so the index rebuild window is unchanged; Export moves its bar while it reads the accounts (review round 1 found it missed).
+Built: SteadyProgressBar (ui/operations.py) counts as Qt's bar; while its range is 0 to 0 it draws its moving piece itself, as the status line's bar, on its own timer (20 steps a second) that runs only while it moves and is on screen. Import, Export, Backup, Restore and the update download make their "progress" part as one through forms.fill's own parts; the forms are unchanged (D-276).
+Review rounds: round 1 found Export missed (fixed); round 2 found none.
+Tests: tests/ui/test_ui_busybar.py (2 new; they fail on 4.2.464, where the class does not exist); the window tests of import, backup, restore, updates, forms, info marks, operations and the status line passed (257); Pyrefly 0 on the program and the new tests (Linux, win32); layer check kept.
+

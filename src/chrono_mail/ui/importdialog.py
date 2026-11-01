@@ -33,6 +33,7 @@ from chrono_mail.engine import commands_outlook
 from chrono_mail.engine.commands_outlook import IMPORT_OUTLOOK, IMPORT_OUTLOOK_SCAN, PROGRESS_TEXT
 from chrono_mail.engine.outlook_settings import WINDOWS_ONLY, ProfileImport, ProfileScan
 from chrono_mail.ui import forms
+from chrono_mail.ui.operations import SteadyProgressBar
 from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.prefs import Remembered
@@ -41,9 +42,10 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.463"
+__version__ = "importdialog.py 4.2.465"
 
 # --- Version history ----------------------------------------------------
+# v4.2.465: its progress bar moves at 20 steps a second, only while on screen (SteadyProgressBar, D-266)
 # v4.2.463: when an import ends (done, stopped or failed) the recovery code is shown while it was never confirmed as stored: an import
 #           may make this computer's key, whose code was never shown (UR-08, D-260)
 # v4.2.458: the summary says where Local Folders was found in the mail export and what happens with each other account's store next to it;
@@ -416,7 +418,7 @@ class ImportDialog(QDialog):
         self._finished_parts: tuple[str, ...] = ()  # what an earlier import of the chosen exports went through to the end
         self._scanned_files: tuple[commands_outlook.FileScan, ...] = ()  # the latest reading of the chosen data files
         self._again = False  # this import starts over (sent with its first batch only)
-        form = forms.fill(self, "import", info_marks("dataFileAccountsInfo", "dataFileRulesInfo", "dataFileSignaturesInfo", "importInfo", "mailInfo"))  # D-276
+        form = forms.fill(self, "import", info_marks("dataFileAccountsInfo", "dataFileRulesInfo", "dataFileSignaturesInfo", "importInfo", "mailInfo") | {"progress": SteadyProgressBar})  # D-276
         self.sources: QTreeWidget = forms.part(form, QTreeWidget, "sources")
         self.sources.setHeaderHidden(True)
         self.sources.setRootIsDecorated(False)

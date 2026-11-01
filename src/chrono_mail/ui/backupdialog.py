@@ -33,15 +33,17 @@ from chrono_mail.engine.commands_backup import (
     CancelResult,
 )
 from chrono_mail.ui import forms
+from chrono_mail.ui.operations import SteadyProgressBar
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.ui.windowsettings import window_settings_text
 
 # --- Version ------------------------------------------------------------
-__version__ = "backupdialog.py 4.0.376"
+__version__ = "backupdialog.py 4.2.465"
 
 # --- Version history ----------------------------------------------------
+# v4.2.465: its progress bar moves at 20 steps a second, only while on screen (SteadyProgressBar, D-266)
 # v4.0.376: built from its Qt Designer form (ui/forms/backup.ui, D-276): the parts' ticks by name, the status line is plain text; Copy and Close come back with the form's
 #           texts; its sizes and blank lines follow the size factor
 # v2.5.338: Copy stays usable while the backup is made (the owner)
@@ -84,7 +86,7 @@ class BackupDialog(QDialog):
         self._backend: Backend = backend
         self._settings: QSettings = settings
         self.running: bool = False
-        form = forms.fill(self, "backup")  # D-276
+        form = forms.fill(self, "backup", {"progress": SteadyProgressBar})  # D-276
         self.part_boxes: dict[str, QCheckBox] = {}
         for part_name, box_name in PART_BOXES:
             box = forms.part(form, QCheckBox, box_name)

@@ -38,6 +38,7 @@ from chrono_mail.engine.commands_backup import (
 )
 from chrono_mail.engine.restore import DOING_ITEMS, DOING_MESSAGES, BackupPasswordNeeded, RestoreCancelled, WrongBackupPassword
 from chrono_mail.ui import forms
+from chrono_mail.ui.operations import SteadyProgressBar
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.passwordfield import PasswordBox
 from chrono_mail.ui.recoverydialog import RecoveryDialog
@@ -46,9 +47,10 @@ from chrono_mail.ui.windowsettings import apply_window_settings
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "restoredialog.py 4.2.437"
+__version__ = "restoredialog.py 4.2.465"
 
 # --- Version history ----------------------------------------------------
+# v4.2.465: its progress bar moves at 20 steps a second, only while on screen (SteadyProgressBar, D-266)
 # v4.2.437: the backup password is asked in the password box, with the eye (UR-03, D-296)
 # v4.0.376: built from its Qt Designer form (ui/forms/restore.ui, D-276): the parts the backup does not hold are hidden; the file's name is
 #           plain text, as the summary and the report; Close comes back with the form's text; its sizes and blank lines follow the size factor
@@ -119,7 +121,7 @@ class RestoreDialog(QDialog):
         self._lines: list[str] = []  # the report after the restore
         self._tested: dict[str, str] = {}  # per account the restore made: what its test said (until then: testing)
         self.running: bool = False
-        form = forms.fill(self, "restore")  # D-276
+        form = forms.fill(self, "restore", {"progress": SteadyProgressBar})  # D-276
         file_name = forms.part(form, QLabel, "fileName")
         file_name.setTextFormat(Qt.TextFormat.PlainText)  # a file's name: never markup
         file_name.setText(path.name)

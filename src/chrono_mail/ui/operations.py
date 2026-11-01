@@ -31,9 +31,11 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "operations.py 4.2.464"
+__version__ = "operations.py 4.2.465"
 
 # --- Version history ----------------------------------------------------
+# v4.2.465: SteadyProgressBar: the bar of a window that counts as Qt's and, while the end is not known, moves on its own timer at 20 steps a
+#           second, only while it is on screen (Import, Backup, Restore, the update download; Qt's own moved 60 times a second, D-266)
 # v4.2.464: the busy bar of the status line draws itself and steps on its own timer, which runs only while work runs and the bar is on
 #           screen: Qt's own busy animation of a progress bar went on unseen after every piece of work, about 60 redraws a second; every
 #           moving bar steps 20 times a second (BUSY_STEP_MS 50), one pass still 1.5 s (D-266)
@@ -162,6 +164,62 @@ class ClickableBar(QProgressBar):
         if event.button() == Qt.MouseButton.LeftButton and self.busy:
             self.clicked.emit()
         super().mousePressEvent(event)
+
+
+class SteadyProgressBar(QProgressBar):
+    """A window's progress bar: it counts as Qt's own, and while the end is not known (the range 0 to 0) it draws its moving piece
+    itself, as every busy bar of the program, on its own timer that runs only while it moves and is on screen: Qt's own moving bar
+    redraws 60 times a second (D-266, 4.2.465)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.position: int = 0  # the step of the moving piece, 0 to 2 * BUSY_STEPS (there and back)
+        self._timer: QTimer = QTimer(self)
+        self._timer.setInterval(BUSY_STEP_MS)
+        self._timer.timeout.connect(self._advance)
+
+    def moving(self) -> bool:
+        """The end is not known: the piece moves."""
+        return self.minimum() == 0 and self.maximum() == 0
+
+    @override
+    def setRange(self, minimum: int, maximum: int) -> None:  # noqa: N802 - Qt's name
+        super().setRange(minimum, maximum)
+        self._follow()
+
+    def _follow(self) -> None:
+        if self.moving() and self.isVisible():
+            if not self._timer.isActive():
+                self.position = 0
+                self._timer.start()
+        else:
+            self._timer.stop()
+        self.update()
+
+    def _advance(self) -> None:
+        self.position = (self.position + 1) % (2 * BUSY_STEPS)
+        self.update()
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self._follow()
+
+    @override
+    def hideEvent(self, event: QHideEvent) -> None:
+        self._timer.stop()  # nothing to see: no step either
+        super().hideEvent(event)
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:
+        if not self.moving():
+            super().paintEvent(event)  # a count: Qt's own bar, which never moves by itself
+            return
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), self.palette().color(QPalette.ColorRole.Mid))
+        start, width = moving_piece(self.width(), self.position)
+        painter.fillRect(start, 0, width, self.height(), self.palette().color(QPalette.ColorRole.Highlight))
+        painter.end()
 
 
 class OperationBar(QWidget):
