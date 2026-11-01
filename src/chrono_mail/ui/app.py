@@ -22,9 +22,10 @@ from chrono_mail.ui.plainboxes import plain_message_boxes
 from chrono_mail.ui.singleinstance import ShowRequests, ask_to_show
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 4.2.434"
+__version__ = "app.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: credential_stores: a profile's entries not moved yet are found under its former wallet name (D-274)
 # v4.2.434: a copy run from the project folder tells the desktop it belongs to chrono-mail-project, the built program to chrono-mail (desktop_file_name)
 # v4.2.402: --minimized (the start at login with the window minimized, D-284): the window starts minimized (MainWindow.start_minimized), a
 #           maximized one stays maximized when it is opened; while the program runs already such a start does nothing
@@ -104,8 +105,10 @@ def directories_and_settings(profile: Path | None) -> tuple[AppDirectories, QSet
 
 
 def credential_stores(directories: AppDirectories, backend: CredentialBackend | None = None) -> tuple[KeyringPasswordStore, KeyringKeyStore]:
-    """The wallet stores of these directories: the passwords and the key under their own wallet name (a profile's, or the person's)."""
-    return KeyringPasswordStore(directories.credential_service, backend), KeyringKeyStore(directories.credential_service, backend)
+    """The wallet stores of these directories: the passwords and the key under their own wallet name (a profile's, or the person's); a
+    profile's entries not moved yet from its former name are found there (D-274)."""
+    former = directories.former_credential_service
+    return KeyringPasswordStore(directories.credential_service, backend, former), KeyringKeyStore(directories.credential_service, backend, former)
 
 
 def second_start() -> int:

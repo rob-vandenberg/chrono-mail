@@ -67,9 +67,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.453"
+__version__ = "mainwindow.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: at start a profile's wallet entries move to its own wallet name first (D-274)
 # v4.2.453: the status line says what the rules did when a folder was renamed or deleted (rules_changed, D-302)
 # v4.2.451: the Refresh menu: each mail account has Send and Receive, Send and Receive in a submenu, each calendars-only account one
 #           item that synchronises it; they work whether the account is included in Send and Receive or not; no first fill for an
@@ -1309,15 +1310,18 @@ class MainWindow(QMainWindow):
         """Called once the window is shown: make sure the key is there, load the accounts (or ask for the
         first one), then check for mail."""
         check = self.checking.start_refresh if self.prefs.read().check_on_start else None
-        self.messages.load_contact_addresses()
-        self.reading.forget_opened_copies()  # the copies of attachments opened in an earlier run go (D-236)
+
+        def moved() -> None:  # a profile's key is under its own wallet name now (D-274): only now anything reads it
+            self.messages.load_contact_addresses()
+            self.reading.forget_opened_copies()  # the copies of attachments opened in an earlier run go (D-236)
+            self._with_key(lambda: self.rebuilds.start(ready))  # every index usable first (D-229)
 
         def ready() -> None:
             self.reload_accounts(select_saved=True, then=check)
             self.checking.learn_existing_junk()  # once per place where mail is kept (D-238)
             self.checking.label_wallet()  # readable labels for the wallet's entries (B-23)
 
-        self._with_key(lambda: self.rebuilds.start(ready))  # every index usable first (D-229)
+        self.checking.move_profile_wallet(moved)
 
     def _with_key(self, then: Callable[[], None]) -> None:
         """Continue when the encryption key can be read; otherwise ask for it first."""

@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ElementTree
 import zipfile
 from collections.abc import Generator, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -25,9 +25,11 @@ from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.core.folder import roles_by_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "emclient_source.py 4.2.452"
+__version__ = "emclient_source.py 4.2.458"
 
 # --- Version history ----------------------------------------------------
+# v4.2.458: export_layout: where Local Folders is in the mail export (the chosen folder is it or holds it, else its parent is it, else the
+#           highest one further down) and the other accounts' stores next to it, matched to the mail accounts of the settings export
 # v4.2.452: IMAP accounts and calendar accounts (Dav: their address, login and password) are read too, with "include in global operations"
 #           (the account takes part in Send and Receive, D-059); local calendars and tasks of the backup (UR-01)
 # v4.2.387: the standard folders by name in ten languages (core roles_by_name) instead of an English table; Outbox still goes to Drafts
@@ -586,6 +588,159 @@ def message_files(root: Path) -> Iterator[MessageFile]:
             if name.lower().endswith(".eml"):
                 relative = (here / name).as_posix()
                 yield MessageFile(relative, here.parts)
+
+
+LOCAL_FOLDERS: str = "Local Folders"  # the folder eM Client's mail export gives the mail kept on this computer
+
+
+@dataclass(frozen=True, slots=True)
+class ExportStore:
+    """A place where eM Client kept an account's mail, as a folder of the mail export next to Local Folders."""
+
+    path: tuple[str, ...]  # its folder, below the export's base folder
+    account: SourceAccount | None  # the account of the settings export with its name or address; None: none
+
+
+@dataclass(frozen=True, slots=True)
+class ExportLayout:
+    """How the mail export the person chose is laid out: where Local Folders is, which folders next to it are other accounts' stores,
+    and which folders are read for messages. Every message file's path is below base."""
+
+    base: Path
+    local: tuple[str, ...] | None  # Local Folders' folder below base; None: not found (every folder goes into Local Folders by its name)
+    inside: tuple[str, ...] = ()  # the chosen folder lies inside Local Folders: its place there (its messages land below it)
+    stores: tuple[ExportStore, ...] = ()
+    read: tuple[tuple[str, ...], ...] = ((),)  # the folders below base whose messages are read
+    imap_addresses: frozenset[str] = frozenset()  # server_addresses: such a folder outside Local Folders is the server's mail
+    server_only: bool = False  # the chosen folder is (inside) an IMAP account's store: all of it is the server's mail
+
+    def store_of(self, folder: tuple[str, ...]) -> ExportStore | None:
+        """The other account's store a folder of the export lies in, if any."""
+        return next((store for store in self.stores if folder[: len(store.path)] == store.path), None)
+
+    def from_server(self, folder: tuple[str, ...]) -> bool:
+        """A folder of an IMAP account's store, also one outside Local Folders that is no store next to it (two exports in the chosen
+        folder): its mail comes from the server (D-193)."""
+        if self.server_only:
+            return True
+        store = self.store_of(folder)
+        if store is not None:
+            if store.account is not None:
+                return store.account.kind == "imap"
+            return bool(store.path) and store.path[-1].strip().casefold() in self.imap_addresses  # an address two accounts share: still the server's
+        if self.local is not None and folder[: len(self.local)] == self.local:
+            return False  # Local Folders' own folders may be named after an address: they are the person's
+        for index, part in enumerate(folder):  # an IMAP account's address where a store sits: the export's top, or next to a Local Folders
+            if part.strip().casefold() == LOCAL_FOLDERS.casefold():
+                return False  # another export's Local Folders: what is below it is the person's own
+            if part.strip().casefold() in self.imap_addresses:
+                beside = self.base.joinpath(*folder[:index])
+                if (index == 0 and self.local is None) or any(_is_local_folders(path) for path in _directories(beside)):
+                    return True
+        return False
+
+
+def _directories(folder: Path) -> list[Path]:
+    try:
+        return sorted(path for path in folder.iterdir() if path.is_dir() and not path.is_symlink())
+    except OSError:
+        return []
+
+
+def _is_local_folders(folder: Path) -> bool:
+    return folder.name.strip().casefold() == LOCAL_FOLDERS.casefold()
+
+
+def _holds_inbox(folder: Path) -> bool:
+    """It holds a folder that is an Inbox by its name (in the language of all its folders' names)."""
+    return FolderRole.INBOX in roles_by_name([path.name.strip() for path in _directories(folder)]).values()
+
+
+def _account_named(name: str, accounts: Sequence[SourceAccount], by_address: bool = False) -> SourceAccount | None:
+    """The mail account (POP3 or IMAP: a calendar account keeps no mail) whose store a folder of this name is: by the account's name or
+    address, or by_address only (a folder outside the chosen one, where a name such as Work may be anything)."""
+    wanted = name.strip().casefold()
+    mail = [account for account in accounts if account.kind in ("pop3", "imap")]
+    by_mail = [account for account in mail if wanted and account.email_address.strip().casefold() == wanted]
+    if by_mail or by_address:
+        return by_mail[0] if len(by_mail) == 1 else None  # two accounts of one address: unclear, no store
+    named = [account for account in mail if wanted and account.name.strip().casefold() == wanted]
+    return named[0] if len(named) == 1 else None  # a name two accounts share is unclear: no store
+
+
+def _topmost_local_folders(root: Path) -> Path | None:
+    """The highest folder named Local Folders below root (one holding an Inbox first, at that level), or None."""
+    level = _directories(root)
+    while level:
+        found = [path for path in level if _is_local_folders(path)]
+        if found:
+            return next((path for path in found if _holds_inbox(path)), found[0])
+        level = [child for path in level for child in _directories(path)]
+    return None
+
+
+def export_layout(chosen: Path, accounts: Sequence[SourceAccount] = ()) -> ExportLayout:
+    """The layout of the mail export the person chose (_found_layout), with the IMAP accounts' addresses: their folders are never imported."""
+    return replace(_found_layout(chosen, accounts), imap_addresses=server_addresses(accounts))
+
+
+def server_addresses(accounts: Sequence[SourceAccount]) -> frozenset[str]:
+    """The addresses (casefolded) whose folders are an IMAP account's mail: an address a POP3 account has too is unclear and left out (its
+    folder may be the only copy of POP3 mail: imported, never skipped)."""
+    def addresses(kind: str) -> set[str]:
+        return {account.email_address.strip().casefold() for account in accounts if account.kind == kind and account.email_address.strip()}
+
+    return frozenset(addresses("imap") - addresses("pop3"))
+
+
+def _found_layout(chosen: Path, accounts: Sequence[SourceAccount]) -> ExportLayout:
+    """Where Local Folders is in the folder the person chose, as the owner set it: first the chosen folder itself (it is Local Folders, or
+    holds it), then one level up (the chosen folder lies inside Local Folders), then further down (the highest Local Folders). The other
+    folders next to Local Folders are other accounts' stores (one outside the chosen folder only when it is named after a mail account's
+    address in the settings export: the folders around a chosen one may be anything). No Local Folders: every folder goes into Local Folders
+    by its name, as before; only a chosen folder named after an IMAP account's address is that account's store (its mail is the server's)."""
+    if not chosen.is_dir():
+        raise ImportSourceError("The mail export folder does not exist")
+    if _is_local_folders(chosen):
+        stores = tuple(
+            ExportStore((path.name,), account) for path in _directories(chosen.parent)
+            if path != chosen and (account := _account_named(path.name, accounts, by_address=True)) is not None
+        )
+        if not stores:
+            return ExportLayout(chosen, ())
+        return ExportLayout(chosen.parent, (chosen.name,), (), stores, ((chosen.name,), *(store.path for store in stores)))
+    child = next((path for path in _directories(chosen) if _is_local_folders(path)), None)
+    if child is None and _is_local_folders(chosen.parent) and chosen.parent != chosen:
+        return ExportLayout(chosen, (), (chosen.name,))
+    if child is None:
+        child = _topmost_local_folders(chosen)
+    if child is None:
+        if any(_is_local_folders(above) for above in chosen.parents):
+            return ExportLayout(chosen, None)  # deep inside Local Folders: the person's own folders, whatever their names (as before)
+        server = server_addresses(accounts)
+        for folder in (chosen, chosen.parent):  # the chosen folder is an IMAP account's store, or one of its top folders: its mail is the server's
+            if folder.name.strip().casefold() in server:
+                return ExportLayout(chosen, None, (), (ExportStore((), _account_named(folder.name, accounts, by_address=True)),), server_only=True)
+        return ExportLayout(chosen, None)
+    local = child.relative_to(chosen).parts
+    stores = tuple(ExportStore(local[:-1] + (path.name,), _account_named(path.name, accounts)) for path in _directories(child.parent) if path != child)
+    return ExportLayout(chosen, local, (), stores)
+
+
+def store_roots(layout: ExportLayout) -> dict[tuple[str, ...], list[str]]:
+    """Each store's folder (Local Folders' too) -> the names of its top folders, from which its standard folders are known (one language)."""
+    roots: dict[tuple[str, ...], list[str]] = {store.path: [path.name.strip() for path in _directories(layout.base.joinpath(*store.path))] for store in layout.stores}
+    home = layout.base.parent if layout.inside else layout.base.joinpath(*(layout.local or ()))  # no Local Folders: the chosen folder's, as before
+    roots[layout.local or ()] = [path.name.strip() for path in _directories(home)]
+    return roots
+
+
+def layout_files(layout: ExportLayout) -> Iterator[MessageFile]:
+    """Every .eml file of the folders the layout reads, always in the same order, with its path below the layout's base."""
+    for start in layout.read:
+        for item in message_files(layout.base.joinpath(*start)):
+            relative = "/".join((*start, item.relative)) if start else item.relative
+            yield MessageFile(relative, (*start, *item.folder))
 
 
 def folder_key(path: tuple[str, ...]) -> str:

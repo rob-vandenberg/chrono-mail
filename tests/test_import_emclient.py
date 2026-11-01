@@ -11,8 +11,10 @@ from chrono_mail.config import ServerRole, load_rules
 from chrono_mail.core import LOCAL_ACCOUNT_ID, AccountKind, CollectionKind, MessageFlag, MessageRef
 from chrono_mail.engine import Engine, UsageError
 from chrono_mail.engine import commands_emclient
-from chrono_mail.engine.commands_emclient import JOURNAL_FILE, fingerprint, fingerprint_of_raw
-from chrono_mail.engine.emclient_source import read_backup, read_settings
+from chrono_mail.engine.commands_emclient import (
+    JOURNAL_FILE, ImportParameters, ImportResult, ScanParameters, StoreFound, fingerprint, fingerprint_of_raw, run_import, scan as scan_exports,
+)
+from chrono_mail.engine.emclient_source import export_layout, read_backup, read_settings
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import open_pim
 from tests.enginefactory import make_engine
@@ -23,9 +25,11 @@ from tests.test_emclient_source import (
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_import_emclient.py 4.2.452"
+__version__ = "test_import_emclient.py 4.2.458"
 
 # --- Version history ----------------------------------------------------
+# v4.2.458: Local Folders found by its place in the mail export (the chosen folder holds it, is it, lies inside it, or holds it further
+#           down); IMAP stores next to it left out, a POP3 store into its own account, any other store into Local Folders by its name
 # v4.2.452: IMAP accounts and calendar servers are made without asking any server, "include in global operations" is the Send and Receive
 #           tick, Local Folders' appointments and tasks come from the backup, notes are counted (UR-01); the batch test leaves calendars out
 # v4.2.395: the count comes every 100 messages and at the last of each batch
@@ -695,3 +699,276 @@ def test_calendars_and_tasks_without_the_backup_are_refused(tmp_path: Path) -> N
     engine = make_engine(tmp_path / "profile")
     with pytest.raises(UsageError, match="calendars and tasks come from the backup"):
         call(engine, "import.emclient", settings_file=str(write_export(tmp_path)), mail=False, contacts=False, tags=False)
+
+
+# --- where the mail export's mail goes: Local Folders found by its place, the other accounts' stores next to it (4.2.458) ---------------
+
+STORE_IMAP = FakeAccount("i1", "ann@example.com", "annlogin", incoming_host="imap.example.com", kind="IMAP", port=143)
+STORE_POP3 = FakeAccount("p1", "bob@example.com", "boblogin")
+
+
+def write_eml_files(root: Path, messages: dict[str, int]) -> Path:
+    """relative path of a .eml file -> the number of its made-up message; empty folders end in /."""
+    for relative, number in messages.items():
+        path = root / relative
+        if relative.endswith("/"):
+            path.mkdir(parents=True, exist_ok=True)
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(mail(number))
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def write_store_settings(folder: Path, accounts: list[FakeAccount]) -> Path:
+    path = folder / "settings.xml"
+    path.write_text(settings_xml(accounts, []), "utf-8")
+    return path
+
+
+def where_mail(engine: Engine, account: str = LOCAL_ACCOUNT_ID) -> dict[str, tuple[str, ...]]:
+    """subject -> folder of every message in an account's mailbox."""
+    found: dict[str, tuple[str, ...]] = {}
+    with open_mailbox(engine, account) as mailbox:
+        for folder in mailbox.store.list_folders():
+            for message in mailbox.index.page(folder.path, limit=1000):
+                assert message.subject not in found, f"{message.subject} is there twice"
+                found[message.subject] = message.folder
+    return found
+
+
+def import_mail(engine: Engine, chosen: Path, settings: Path | None = None, backup: Path | None = None, accounts: bool = False) -> ImportResult:
+    return run_import(engine, ImportParameters(
+        str(settings) if settings is not None else None, str(chosen), str(backup) if backup is not None else None, accounts=accounts, rules=False,
+        contacts=False, tags=False, calendars=False,
+    ))
+
+
+# The export as eM Client writes it: one folder per store, Local Folders and an IMAP account's, next to each other
+STORES: dict[str, int] = {
+    "Local Folders/Inbox/001.eml": 1,
+    "Local Folders/Inbox/Sub/002.eml": 2,
+    "Local Folders/Junk E-mail/003.eml": 3,
+    "Local Folders/Clients/004.eml": 4,
+    "ann@example.com/Inbox/": 0,
+    "ann@example.com/Trash/005.eml": 5,
+    "ann@example.com/Public Folders/Tasks/006.eml": 6,
+}
+
+
+def test_the_folder_that_holds_local_folders_puts_its_mail_on_the_standard_folders_and_leaves_the_imap_store_out(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", STORES)
+    settings = write_store_settings(tmp_path, [STORE_IMAP])
+    backup = write_backup(tmp_path, [FakeItem("/Inbox", "m1@x", MOMENT, flags=0), FakeItem("/Inbox/Sub", "m2@x", MOMENT, flags=2 | 4)])
+    found = scan_exports(engine, ScanParameters(str(settings), str(chosen), str(backup)))
+    assert (found.layout, found.local_folders, found.messages, found.eml_files) == ("stores", "Local Folders", 4, 6)
+    assert found.stores == (StoreFound("ann@example.com", "imap", 2),)
+    result = import_mail(engine, chosen, settings, backup)
+    assert (result.messages_imported, result.messages_failed, result.messages_left) == (4, (), 0)
+    assert where_mail(engine) == {"Message 1": ("Inbox",), "Message 2": ("Inbox", "Sub"), "Message 3": ("Junk",), "Message 4": ("Clients",)}
+    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox:
+        flags = {row.subject: row.flags for folder in mailbox.store.list_folders() for row in mailbox.index.page(folder.path, limit=100)}
+    assert flags["Message 1"] == frozenset() and flags["Message 2"] == frozenset({MessageFlag.SEEN, MessageFlag.FLAGGED})  # the backup's marks still found
+
+
+def test_local_folders_is_found_further_down_and_folders_next_to_it_are_stores(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", {f"backup/{relative}": number for relative, number in STORES.items()} | {"backup/Archive/Old/007.eml": 7})
+    result = import_mail(engine, chosen, write_store_settings(tmp_path, [STORE_IMAP]))
+    assert result.messages_imported == 5
+    assert where_mail(engine) == {
+        "Message 1": ("Inbox",), "Message 2": ("Inbox", "Sub"), "Message 3": ("Junk",), "Message 4": ("Clients",), "Message 7": ("Archive", "Old"),
+    }  # Archive: a store of no account, into Local Folders by its name
+
+
+def test_local_folders_chosen_itself_finds_the_accounts_stores_next_to_it(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    write_eml_files(tmp_path / "export", STORES | {"Unrelated/008.eml": 8})
+    chosen = tmp_path / "export" / "Local Folders"
+    assert [store.path for store in export_layout(chosen, read_settings(write_store_settings(tmp_path, [STORE_IMAP])).accounts).stores] == [("ann@example.com",)]  # only an account's
+    result = import_mail(engine, chosen, write_store_settings(tmp_path, [STORE_IMAP]))
+    assert result.messages_imported == 4 and "Message 8" not in where_mail(engine)
+    alone = make_engine(tmp_path / "alone")
+    import_mail(alone, chosen)  # without the settings export: Local Folders alone, as before
+    assert where_mail(alone)["Message 3"] == ("Junk",)
+
+
+def test_a_folder_chosen_inside_local_folders_lands_at_its_place_there(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    write_eml_files(tmp_path / "export", STORES)
+    import_mail(engine, tmp_path / "export" / "Local Folders" / "Clients")
+    import_mail(engine, tmp_path / "export" / "Local Folders" / "Junk E-mail")
+    assert where_mail(engine) == {"Message 4": ("Clients",), "Message 3": ("Junk",)}
+
+
+def test_the_standard_folders_are_known_in_the_language_of_the_export(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", {"Local Folders/Postvak IN/001.eml": 1, "Local Folders/Ongewenste e-mail/002.eml": 2, "Local Folders/Klanten/003.eml": 3})
+    import_mail(engine, chosen)
+    assert where_mail(engine) == {"Message 1": ("Inbox",), "Message 2": ("Junk",), "Message 3": ("Klanten",)}
+
+
+def test_a_pop3_accounts_own_store_goes_into_its_own_folders(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", {"Local Folders/Inbox/001.eml": 1, "bob@example.com/Inbox/002.eml": 2, "bob@example.com/Sent/003.eml": 3})
+    settings = write_store_settings(tmp_path, [STORE_POP3])
+    assert scan_exports(engine, ScanParameters(str(settings), str(chosen), None)).stores == (StoreFound("bob@example.com", "pop3-new", 2),)
+    import_mail(engine, chosen, settings, accounts=True)
+    bob = next(settings.account for settings in engine.config().accounts if settings.account.kind is AccountKind.POP3)
+    assert engine.config().find(bob.account_id).storage == "own"
+    assert where_mail(engine, bob.account_id) == {"Message 2": ("Inbox",), "Message 3": ("Sent",)}
+    assert where_mail(engine) == {"Message 1": ("Inbox",)}
+
+
+def test_without_local_folders_every_folder_goes_into_local_folders_as_before(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", {"Inbox/001.eml": 1, "Projects/002.eml": 2})
+    found = scan_exports(engine, ScanParameters(None, str(chosen), None))
+    assert (found.layout, found.top_folders, found.stores) == ("none", ("Inbox", "Projects"), ())
+    import_mail(engine, chosen)
+    assert where_mail(engine) == {"Message 1": ("Inbox",), "Message 2": ("Projects",)}
+
+
+def test_a_folder_without_messages_or_only_an_imap_store_has_nothing_to_import(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    empty = write_eml_files(tmp_path / "empty", {"Something/": 0})
+    found = scan_exports(engine, ScanParameters(None, str(empty), None))
+    assert (found.messages, found.eml_files) == (0, 0)
+    imap_only = write_eml_files(tmp_path / "imap", {"ann@example.com/Inbox/001.eml": 1})
+    settings = write_store_settings(tmp_path, [STORE_IMAP])
+    found = scan_exports(engine, ScanParameters(str(settings), str(imap_only / "ann@example.com"), None))
+    assert (found.messages, found.eml_files, found.stores) == (0, 1, (StoreFound("ann@example.com", "imap", 1),))
+    assert import_mail(engine, imap_only / "ann@example.com", settings).messages_imported == 0
+
+
+def test_a_calendar_account_of_the_same_address_never_makes_an_imap_store_local_mail(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", STORES)
+    settings = tmp_path / "settings.xml"
+    settings.write_text(settings_xml([], []).replace("</crypted></accounts>", "</crypted>" + dav_xml("c1", "ann@example.com", "annlogin") + STORE_IMAP.xml() + "</accounts>"), "utf-8")
+    assert scan_exports(engine, ScanParameters(str(settings), str(chosen), None)).stores == (StoreFound("ann@example.com", "imap", 2),)
+    assert import_mail(engine, chosen, settings).messages_imported == 4
+
+
+def test_folders_around_a_chosen_local_folders_count_only_by_an_accounts_address(tmp_path: Path) -> None:
+    work = FakeAccount("w1", "work@example.com", "worklogin")
+    xml = work.xml().replace("<AccountName>work@example.com</AccountName>", "<AccountName>Work</AccountName>", 1)
+    settings = tmp_path / "settings.xml"
+    settings.write_text(settings_xml([], []).replace("</crypted></accounts>", "</crypted>" + xml + "</accounts>"), "utf-8")
+    write_eml_files(tmp_path / "home", {"Local Folders/Inbox/001.eml": 1, "Work/notes.eml": 2})
+    engine = make_engine(tmp_path / "profile")
+    assert import_mail(engine, tmp_path / "home" / "Local Folders", settings).messages_imported == 1  # ~/Work is no store of the account named Work
+
+
+def test_without_local_folders_a_folder_named_like_an_account_is_imported_as_before(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "bob@example.com", {"Inbox/001.eml": 1})
+    import_mail(engine, chosen, write_store_settings(tmp_path, [STORE_POP3]), accounts=True)
+    assert where_mail(engine) == {"Message 1": ("Inbox",)}  # into Local Folders, as before; only an IMAP account's address leaves it out
+
+
+def test_an_imap_accounts_folder_anywhere_outside_local_folders_is_left_out(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "exports", {f"2024/{relative}": number for relative, number in STORES.items()} | {
+        "2023/Local Folders/Inbox/007.eml": 7, "2023/ann@example.com/Inbox/008.eml": 8,
+    })
+    result = import_mail(engine, chosen, write_store_settings(tmp_path, [STORE_IMAP]))
+    assert "Message 8" not in where_mail(engine) and result.messages_imported == 5  # the 2023 Local Folders by its path, Ann's mail never
+
+
+def test_a_store_name_two_accounts_share_is_no_store_of_either(tmp_path: Path) -> None:
+    accounts = [FakeAccount("w1", "one@example.com", "one"), FakeAccount("w2", "two@example.com", "two", incoming_host="imap.example.com", kind="IMAP", port=143)]
+    xml = "".join(account.xml().replace(f"<AccountName>{account.email}</AccountName>", "<AccountName>Work</AccountName>", 1) for account in accounts)
+    settings = tmp_path / "settings.xml"
+    settings.write_text(settings_xml([], []).replace("</crypted></accounts>", "</crypted>" + xml + "</accounts>"), "utf-8")
+    chosen = write_eml_files(tmp_path / "export", {"Local Folders/Inbox/001.eml": 1, "Work/Inbox/002.eml": 2})
+    engine = make_engine(tmp_path / "profile")
+    assert scan_exports(engine, ScanParameters(str(settings), str(chosen), None)).stores == (StoreFound("Work", "other", 1),)
+
+
+def test_an_imap_store_whose_address_two_accounts_share_is_still_left_out(tmp_path: Path) -> None:
+    twin = FakeAccount("i2", "ann@example.com", "annother", incoming_host="imap2.example.com", kind="IMAP", port=143)
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", STORES)
+    assert import_mail(engine, chosen, write_store_settings(tmp_path, [STORE_IMAP, twin])).messages_imported == 4  # never Ann's 2
+
+
+def test_own_folders_named_after_an_address_in_a_second_export_are_imported(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "exports", {"A/Local Folders/Inbox/001.eml": 1, "B/Local Folders/ann@example.com/002.eml": 2, "B/ann@example.com/Inbox/003.eml": 3})
+    import_mail(engine, chosen, write_store_settings(tmp_path, [STORE_IMAP]))
+    found = where_mail(engine)
+    assert "Message 2" in found and "Message 3" not in found
+
+
+def test_a_folder_chosen_inside_an_imap_store_is_left_out(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    write_eml_files(tmp_path / "export", STORES)
+    assert import_mail(engine, tmp_path / "export" / "ann@example.com" / "Trash", write_store_settings(tmp_path, [STORE_IMAP])).messages_imported == 0
+
+
+def test_where_a_pop3_store_goes_is_decided_once_and_kept_through_a_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", {"Local Folders/Inbox/001.eml": 1, "bob@example.com/Inbox/002.eml": 2, "bob@example.com/Inbox/003.eml": 3})
+    settings = write_store_settings(tmp_path, [STORE_POP3])
+    values = ImportParameters(str(settings), str(chosen), None, accounts=False, rules=False, contacts=False, tags=False, calendars=False, batch=2)
+    run_import(engine, values)  # no account for Bob yet: his store goes into Local Folders > bob@example.com
+    commands_emclient._finished_run()  # as after a restart: the run in memory is gone
+    call(engine, "account.add", display_name="Bob", email_address="bob@example.com", username="boblogin", password="x", incoming_host="pop.example.com",
+         outgoing_host="smtp.example.com", storage="own")
+    run_import(engine, values)
+    assert where_mail(engine) == {"Message 1": ("Inbox",), "Message 2": ("bob@example.com", "Inbox"), "Message 3": ("bob@example.com", "Inbox")}
+
+
+def test_a_folder_deep_inside_local_folders_named_after_an_imap_address_is_the_persons(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    write_eml_files(tmp_path / "export", {"Local Folders/Archive/ann@example.com/001.eml": 1})
+    assert import_mail(engine, tmp_path / "export" / "Local Folders" / "Archive" / "ann@example.com", write_store_settings(tmp_path, [STORE_IMAP])).messages_imported == 1
+
+
+def test_a_store_whose_address_a_pop3_and_an_imap_account_share_is_imported_never_skipped(tmp_path: Path) -> None:
+    pop3 = FakeAccount("p2", "ann@example.com", "annpop")
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", STORES)
+    settings = write_store_settings(tmp_path, [STORE_IMAP, pop3])
+    assert scan_exports(engine, ScanParameters(str(settings), str(chosen), None)).stores == (StoreFound("ann@example.com", "other", 2),)
+    assert import_mail(engine, chosen, settings).messages_imported == 6  # unclear: into Local Folders > ann@example.com, the only copy is never lost
+
+
+def test_an_account_made_after_its_store_went_into_local_folders_keeps_its_mail_there(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", {"Local Folders/Inbox/001.eml": 1, "bob@example.com/Inbox/002.eml": 2, "bob@example.com/Inbox/003.eml": 3})
+    settings = write_store_settings(tmp_path, [STORE_POP3])
+    run_import(engine, ImportParameters(str(settings), str(chosen), None, accounts=False, rules=False, contacts=False, tags=False, calendars=False, batch=2))
+    commands_emclient._finished_run()
+    found = scan_exports(engine, ScanParameters(str(settings), str(chosen), None))
+    assert found.stores == (StoreFound("bob@example.com", "other", 2),)  # the scan says what the import will do: as already decided
+    run_import(engine, ImportParameters(str(settings), str(chosen), None, accounts=True, rules=False, contacts=False, tags=False, calendars=False))
+    bob = next(settings.account for settings in engine.config().accounts if settings.account.kind is AccountKind.POP3)
+    assert engine.config().find(bob.account_id).storage == "local"  # with its mail, not in empty folders of its own
+    assert where_mail(engine)["Message 3"] == ("bob@example.com", "Inbox")
+
+
+def test_a_folder_two_levels_inside_local_folders_below_an_address_folder_is_imported(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    write_eml_files(tmp_path / "ann@example.com", {"Local Folders/Archive/2020/001.eml": 1})
+    chosen = tmp_path / "ann@example.com" / "Local Folders" / "Archive" / "2020"
+    assert import_mail(engine, chosen, write_store_settings(tmp_path, [STORE_IMAP])).messages_imported == 1
+
+
+def test_without_local_folders_an_imap_accounts_folder_below_the_chosen_one_is_left_out(tmp_path: Path) -> None:
+    engine = make_engine(tmp_path / "profile")
+    chosen = write_eml_files(tmp_path / "export", {"Clients/001.eml": 1, "ann@example.com/Inbox/002.eml": 2})
+    import_mail(engine, chosen, write_store_settings(tmp_path, [STORE_IMAP]))
+    assert where_mail(engine) == {"Message 1": ("Clients",)}
+
+
+def test_an_address_counts_as_an_imap_store_only_where_a_store_sits(tmp_path: Path) -> None:
+    settings = write_store_settings(tmp_path, [STORE_IMAP])
+    kept = make_engine(tmp_path / "kept")
+    under = write_eml_files(tmp_path / "ann@example.com" / "backup" / "export", {"bob@example.com/Inbox/001.eml": 1})
+    assert import_mail(kept, under, settings).messages_imported == 1  # an export kept below a folder named after the address
+    own = make_engine(tmp_path / "own")
+    chosen = write_eml_files(tmp_path / "export", {"bob@example.com/Inbox/ann@example.com/002.eml": 2})
+    assert import_mail(own, chosen, settings).messages_imported == 1  # the person's own folder inside another store

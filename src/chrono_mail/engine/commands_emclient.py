@@ -23,15 +23,19 @@ from chrono_mail.engine.commands_addressbook import AddParameters, AddressesPara
 from chrono_mail.engine.emclient_source import (
     MAXIMUM_MESSAGE_BYTES,
     BackupData,
+    ExportLayout,
+    ExportStore,
     MessageFile,
     SourceCategory,
     SettingsExport,
     SourceAccount,
-    message_files,
+    export_layout,
+    layout_files,
     message_keys,
     read_backup,
     read_settings,
     standard_roles,
+    store_roots,
 )
 from chrono_mail.engine.import_common import EVERYTHING, MAXIMUM_REPORTED, PROGRESS_STEP, Journal, contents_fingerprint, fingerprint, fingerprint_of_raw, known_messages, still_here  # EVERYTHING and fingerprint: their names here stay
 from chrono_mail.engine.local import ensure_local_folders
@@ -45,9 +49,13 @@ from chrono_mail.store import clean_tags
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_emclient.py 4.2.453"
+__version__ = "commands_emclient.py 4.2.458"
 
 # --- Version history ----------------------------------------------------
+# v4.2.458: the mail export is read by where Local Folders is in it (emclient_source.export_layout): its mail goes into Local Folders with its
+#           standard folders on their roles; an IMAP account's store next to it is not imported (its mail comes from the server, D-193); a
+#           POP3 account's own store goes into that account's own folders (the account is made with them); any other store into Local Folders
+#           under its name; a folder chosen inside Local Folders lands at its place there; the scan says what was found
 # v4.2.453: the imported rules are added under engine.rules_lock (D-302)
 # v4.2.452: IMAP accounts are made (their mail comes from the server, D-193); calendar accounts become the calendar server of the mail
 #           account with their address, else an account of calendars and contacts (a CalDAV and a CardDAV account of one login are one);
@@ -111,6 +119,16 @@ class ImportParameters:
 
 
 @dataclass(frozen=True, slots=True)
+class StoreFound:
+    """A store of another account next to Local Folders in the mail export, and what the import does with it."""
+
+    name: str  # its folder's name
+    kind: str  # "imap": not imported (its mail comes from its server); "pop3": into that account's own folders; "pop3-new": the same when the
+    #            account is made (Accounts), else as other; "other": into Local Folders > name
+    messages: int
+
+
+@dataclass(frozen=True, slots=True)
 class ScanResult:
     accounts: int  # mail accounts that can be imported (POP3 and IMAP)
     accounts_existing: int
@@ -131,6 +149,13 @@ class ScanResult:
     events: int = 0  # appointments of Local Folders in the backup
     tasks: int = 0
     notes: int = 0  # notes in the backup: Chrono Mail has none, they are not imported
+    local_folders: str = ""  # where Local Folders was found in the mail export ("" the chosen folder itself; see layout)
+    layout: str = ""  # "stores": Local Folders found, with or without stores next to it; "inside": the chosen folder is inside Local Folders;
+    #                    "none": no Local Folders (every folder into Local Folders by its name); "": no mail export chosen
+    stores: tuple[StoreFound, ...] = ()  # the other accounts' stores next to Local Folders
+    top_folders: tuple[str, ...] = ()  # layout "none": the folders that go into Local Folders (at most MAXIMUM_REPORTED)
+    eml_files: int = 0  # every .eml file found, also those of IMAP accounts that are not imported
+    without_settings: bool = False  # no settings export: the stores next to Local Folders cannot be told apart from IMAP accounts
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +222,114 @@ def _same_calendar_server(engine: Engine, url: str, username: str) -> str | None
     return None
 
 
+def _store_kind(account: SourceAccount | None, server: bool = False) -> str:
+    """What the import does with a store of this account (server: its mail is an IMAP account's, ExportLayout.from_server): see StoreFound.kind."""
+    if server:
+        return "imap"
+    return account.kind if account is not None and account.kind in KINDS else "other"
+
+
+def _scan_kind(engine: Engine, layout: ExportLayout, store: ExportStore, journal: _Journal | None) -> str:
+    """StoreFound.kind of a store: a POP3 account's goes into its own folders only when its account here keeps its own (or is made so), and
+    the import of these exports did not already decide otherwise (_decided_own)."""
+    account = store.account
+    kind = _store_kind(account, layout.from_server(store.path))
+    if kind != "pop3" or account is None:
+        return kind
+    if journal is not None and OWN + account.uid in journal.values:
+        decided = journal.values[OWN + account.uid]
+        return "pop3" if decided and decided in _own_accounts(engine, layout).values() else "other"  # as _decided_own: a gone account, Local Folders
+    here = _same_account(engine, account)
+    if here is None:
+        return "other" if journal is not None and "settings" in journal.phases else "pop3-new"  # the accounts are done: none is made any more
+    return "pop3" if engine.config().find(here).storage == "own" else "other"
+
+
+def _from_server(layout: ExportLayout, item: MessageFile, asked: dict[tuple[str, ...], bool] | None = None) -> bool:
+    """A message of an IMAP account's store (next to Local Folders or anywhere outside it): never imported, its mail comes from its server (D-193).
+    asked: the answers so far, per folder (a folder outside the stores may list the folders next to it: once, not once per message)."""
+    if asked is None:
+        return layout.from_server(item.folder)
+    if item.folder not in asked:
+        asked[item.folder] = layout.from_server(item.folder)
+    return asked[item.folder]
+
+
+@dataclass(frozen=True, slots=True)
+class _Place:
+    """Where a message of the export goes."""
+
+    account: str  # the account whose mailbox takes it (LOCAL_ACCOUNT_ID: Local Folders)
+    root: tuple[str, ...] | None  # the store whose standard folders apply to its first folder (store_roots' key); None: its names as they are
+    folder: tuple[str, ...]  # its folder below that mailbox, before the standard folders are applied
+    marks: bool  # Local Folders' own mail: the backup has its read, flagged and replied marks and its tags
+
+
+def _place(layout: ExportLayout, item: MessageFile, own: dict[str, str]) -> _Place:
+    """Local Folders' mail into Local Folders, a POP3 account's own store into that account (own: uid -> its account here that keeps its own
+    folders), any other store and anything else outside Local Folders into Local Folders by its own names."""
+    store = layout.store_of(item.folder)
+    if store is not None:
+        rest = item.folder[len(store.path):]
+        account = own.get(store.account.uid) if store.account is not None and store.account.kind == "pop3" else None
+        if account is not None:
+            return _Place(account, store.path, rest, False)
+        return _Place(LOCAL_ACCOUNT_ID, None, (store.path[-1] if store.path else layout.base.name, *rest), False)
+    local = layout.local
+    if local is None:
+        return _Place(LOCAL_ACCOUNT_ID, (), item.folder, True)  # no Local Folders found: the chosen folder is taken as it, as before
+    if item.folder[: len(local)] == local:
+        return _Place(LOCAL_ACCOUNT_ID, local, layout.inside + item.folder[len(local):], True)
+    return _Place(LOCAL_ACCOUNT_ID, None, item.folder, False)  # above or beside Local Folders, in no store: by its own names
+
+
+def _own_accounts(engine: Engine, layout: ExportLayout) -> dict[str, str]:
+    """POP3 accounts of the export with a store of their own whose account here keeps its own folders: uid -> account id."""
+    found: dict[str, str] = {}
+    for store in layout.stores:
+        if store.account is None or store.account.kind != "pop3":
+            continue
+        account_id = _same_account(engine, store.account)
+        if account_id is not None and engine.config().find(account_id).storage == "own":
+            found[store.account.uid] = account_id
+    return found
+
+
+OWN: str = "own:"  # journal value per POP3 store: the account id its mail goes into, "" for Local Folders; decided once for these exports
+
+
+def _decided_own(engine: Engine, layout: ExportLayout, journal: _Journal) -> dict[str, str]:
+    """Which POP3 stores go into their own account: decided by the first batch that imports mail and kept in the journal, so a resumed
+    import (after a failed batch or a restart) never splits a store between two places."""
+    found = _own_accounts(engine, layout)
+    own: dict[str, str] = {}
+    for store in layout.stores:
+        if store.account is None or store.account.kind != "pop3":
+            continue
+        uid = store.account.uid
+        if OWN + uid in journal.values:
+            decided = journal.values[OWN + uid]
+            if decided and decided not in found.values():
+                decided = ""  # that account is gone or keeps its mail in Local Folders now: its store goes into Local Folders > name
+        else:
+            decided = found.get(uid, "")
+            journal.remember(OWN + uid, decided)
+        if decided:
+            own[uid] = decided
+    return own
+
+
+def _cached_layout(engine: Engine, settings_path: Path | None, mail_path: Path | None, backup_path: Path | None) -> ExportLayout | None:
+    """The layout of the import that runs for these exports (its next batches), if any."""
+    places = _places(engine, settings_path, mail_path, backup_path)
+    with _RUN_LOCK:
+        return _RUN[0].layout if _RUN and _RUN[0].places == places else None
+
+
+def _layout(mail_path: Path | None, export: SettingsExport) -> ExportLayout | None:
+    return export_layout(mail_path, export.accounts) if mail_path is not None else None
+
+
 def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
     """What an import of these exports would do; changes nothing."""
     settings_path = _path(parameters.settings_file, "settings export")
@@ -218,18 +351,35 @@ def scan(engine: Engine, parameters: ScanParameters) -> ScanResult:
         if _RUN and _RUN[0].places == places and _RUN[0].key[1] != source:  # newer exports in the same place: the run of the older ones is gone
             _RUN.clear()
     journal = _Journal(engine.directories.data_directory / JOURNAL_FILE, source) if _journal_matches(engine, source) else None
-    if mail_path is not None:
-        for item in message_files(mail_path):
+    layout = _layout(mail_path, export)
+    in_stores: dict[tuple[str, ...], int] = {}
+    eml_files = 0
+    if layout is not None:
+        in_stores = {store.path: 0 for store in layout.stores}
+        asked: dict[tuple[str, ...], bool] = {}
+        for item in layout_files(layout):
+            eml_files += 1
+            store = layout.store_of(item.folder)
+            if store is not None:
+                in_stores[store.path] += 1
+            if _from_server(layout, item, asked):
+                continue
             messages += 1
             folders.add(item.folder)
             if journal is not None and item.relative in journal.done:
                 done += 1
+    stores = tuple(
+        StoreFound(store.path[-1] if store.path else layout.base.name, _scan_kind(engine, layout, store, journal), in_stores[store.path]) for store in layout.stores
+    ) if layout is not None else ()
+    shape = "" if layout is None else "none" if layout.local is None else "inside" if layout.inside else "stores"
+    top = tuple(dict.fromkeys(name for name in (folder[0] for folder in sorted(folders) if folder)))[:MAXIMUM_REPORTED] if shape == "none" else ()
     backup = read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else BackupData()
     return ScanResult(
         len(mail), existing, len(export.accounts) - len(mail) - sum(len(found) for found in servers.values()), missing, len(export.rules) - len(not_imported), not_imported,
         len(folders), messages, done, sum(len(found) for found in backup.marks.values()), len(backup.contacts), len(export.categories), len(backup.tagged),
         tuple(part for part in PARTS if journal is not None and FINISHED + part in journal.phases),
         sum(1 for account in mail if account.kind == "imap"), len(servers), len(backup.events), len(backup.tasks), backup.notes,
+        "/".join(layout.local) if layout is not None and layout.local is not None else "", shape, stores, top, eml_files, settings_path is None,
     )
 
 
@@ -274,9 +424,12 @@ def _policy(account: SourceAccount) -> tuple[Policy, int]:
     return "keep", 30
 
 
-def _import_accounts(engine: Engine, export: SettingsExport, add: bool, notes: list[str]) -> tuple[dict[str, str], int, int, list[str], int]:
-    """Make the accounts that are not here yet: POP3 (their mail in Local Folders), IMAP (their mail comes from the server, D-193), then the
-    calendar servers (UR-01). Returns uid -> account id, added, existing, without password, calendar servers given to a mail account."""
+def _import_accounts(
+    engine: Engine, export: SettingsExport, add: bool, notes: list[str], own_stores: frozenset[str] = frozenset(),
+) -> tuple[dict[str, str], int, int, list[str], int]:
+    """Make the accounts that are not here yet: POP3 (their mail in Local Folders, or in folders of their own when the mail export has a store
+    of theirs: own_stores, their uids), IMAP (their mail comes from the server, D-193), then the calendar servers (UR-01). Returns uid ->
+    account id, added, existing, without password, calendar servers given to a mail account."""
     found: dict[str, str] = {}
     added = existing = 0
     without_password: list[str] = []
@@ -307,7 +460,7 @@ def _import_accounts(engine: Engine, export: SettingsExport, add: bool, notes: l
                     incoming_port=incoming.port or (110 if pop3 else 143), incoming_security=incoming.security, outgoing_port=outgoing.port or 25,
                     outgoing_security=outgoing.security, outgoing_username=outgoing.username if different_login else None,
                     outgoing_password=outgoing.password if outgoing.password != incoming.password else None,
-                    delete_policy=policy, delete_days=days, kind="pop3" if pop3 else "imap", storage="local" if pop3 else "own",
+                    delete_policy=policy, delete_days=days, kind="pop3" if pop3 else "imap", storage="local" if pop3 and source.uid not in own_stores else "own",
                 ),
             )
         except ChronoMailError as error:
@@ -535,19 +688,20 @@ def _import_contacts(engine: Engine, backup: BackupData, notes: list[str]) -> tu
 
 
 class _Folders:
-    """Where a folder of the export goes in Local Folders: the standard folders onto their roles, the rest by name."""
+    """Where a folder of the export goes in a mailbox: the standard folders of its store onto their roles, the rest by name."""
 
     def __init__(self, mailbox: Mailbox, names: Sequence[str]) -> None:
         self.mailbox = mailbox
         self.made: set[tuple[str, ...]] = set()
-        tops = list(dict.fromkeys(name.strip() for name in names))  # the export's top folders, once each, in order: one language for all
+        tops = list(dict.fromkeys(name.strip() for name in names))  # the store's top folders, once each, in order: one language for all
         self.roles: dict[str, FolderRole] = {tops[index]: role for index, role in standard_roles(tops).items()}
 
-    def target(self, folder: tuple[str, ...]) -> tuple[str, ...]:
+    def target(self, folder: tuple[str, ...], standard: bool = True) -> tuple[str, ...]:
+        """standard: the first folder may be one of the store's standard folders (else its name is kept as it is)."""
         if not folder:
             path = self.mailbox.role_folder(FolderRole.INBOX)
         else:
-            role = self.roles.get(folder[0].strip())
+            role = self.roles.get(folder[0].strip()) if standard else None
             base = (folder[0].strip(),)
             if role is not None:
                 try:
@@ -568,10 +722,12 @@ class _Run:
     fingerprints of the mail that was here before the import."""
 
     key: tuple[str, ...]
-    files: list[MessageFile]
+    files: list[MessageFile]  # not those of IMAP accounts' stores: their mail comes from the server
     backup: BackupData | None
     places: tuple[str, ...] = ()  # where the exports are (_places): the batches find this run, and its fingerprint (key[1]), by them
-    known: dict[str, str] | None = None
+    known: dict[str, dict[str, str]] = field(default_factory=dict)  # per account whose mailbox takes mail: fingerprint -> store id
+    layout: ExportLayout | None = None
+    own: dict[str, str] | None = None  # _own_accounts, decided once per import: a store never split between two places by a later batch
     with_tags: bool = True  # Tags is chosen: imported mail gets its categories as tags
     tags_given: bool = False  # the tags waiting from earlier imports were tried by this import (once per import, not per batch)
 
@@ -587,12 +743,14 @@ def _file_key(path: Path | None) -> str:
     return f"{path.resolve()}|{status.st_size}|{status.st_mtime_ns}"
 
 
-def _run_for(engine: Engine, mail_path: Path, backup_path: Path | None, journal_source: str, places: tuple[str, ...] = ()) -> _Run:
-    key = (str(engine.directories.data_directory), journal_source, str(mail_path.resolve()), _file_key(backup_path))
+def _run_for(engine: Engine, layout: ExportLayout, backup_path: Path | None, journal_source: str, places: tuple[str, ...] = ()) -> _Run:
+    key = (str(engine.directories.data_directory), journal_source, str(layout.base.resolve()), _file_key(backup_path))
     with _RUN_LOCK:
         if _RUN and _RUN[0].key == key:
             return _RUN[0]
-        run = _Run(key, list(message_files(mail_path)), read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None, places)
+        asked: dict[tuple[str, ...], bool] = {}
+        files = [item for item in layout_files(layout) if not _from_server(layout, item, asked)]
+        run = _Run(key, files, read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None, places, layout=layout)
         _RUN[:] = [run]
         return run
 
@@ -630,11 +788,14 @@ def _give_waiting_tags(engine: Engine, journal: _Journal) -> tuple[int, int]:
     return given, failed
 
 
-def _import_mail(engine: Engine, mail_path: Path, run: _Run, journal: _Journal, batch: int) -> tuple[int, int, list[str], int, int]:
+def _import_mail(engine: Engine, run: _Run, journal: _Journal, batch: int) -> tuple[int, int, list[str], int, int]:
     """Up to batch messages (0: all) that are not done yet. Returns imported, duplicates, failures, how many are left and how many messages
-    are imported whose tags could not be given (they get them with a later run). The batch is made safe on disk at once at its end, and only
-    then written in the journal as done."""
+    are imported whose tags could not be given (they get them with a later run). Each mailbox's part is made safe on disk at its end, and
+    the batch is only then written in the journal as done."""
     ensure_local_folders(engine)
+    layout = run.layout
+    if layout is None:
+        raise UsageError("The mail export folder was not read")  # a run of the mail is always made with its layout
     files = [item for item in run.files if item.relative not in journal.done]
     imported = duplicates = 0
     failed: list[str] = []
@@ -642,43 +803,55 @@ def _import_mail(engine: Engine, mail_path: Path, run: _Run, journal: _Journal, 
     untagged: list[tuple[str, str]] = []
     work = files if batch <= 0 else files[:batch]
     done_before = len(run.files) - len(files)  # by earlier batches and earlier imports: the count runs on over the whole import
-    with open_mailbox(engine, LOCAL_ACCOUNT_ID) as mailbox, mailbox.store.written_together():
-        if run.known is None:
-            run.known = known_messages(mailbox, journal.imported_ids())
-        known = run.known
-        folders = _Folders(mailbox, [item.folder[0] for item in run.files if item.folder])
-        for number, item in enumerate(work, 1):
-            if (done_before + number) % PROGRESS_STEP == 0 or number == len(work):
-                engine.progress("Importing mail", done_before + number, len(run.files))
-            try:
-                path = mail_path / item.relative
-                if path.stat().st_size > MAXIMUM_MESSAGE_BYTES:
-                    raise UsageError("the message is larger than the limit")
-                raw = path.read_bytes()
-                message_id, moment = message_keys(raw)
-                found = run.backup.take(item.folder, message_id, moment) if run.backup is not None else None
-                marks, tags = found if found is not None else (None, ())
-                key = fingerprint_of_raw(raw)
-                present = known.get(key) if key is not None else None
-                if present is not None and _still_here(mailbox, present):
-                    outcomes.append((item.relative, "duplicate"))
-                    duplicates += 1
+    if run.own is None:
+        run.own = _decided_own(engine, layout, journal)
+    own = run.own
+    places = [(item, _place(layout, item, own)) for item in work]
+    roots = store_roots(layout)
+    number = 0
+    for account in dict.fromkeys(place.account for _, place in places):  # one mailbox at a time, in the export's order within it
+        with open_mailbox(engine, account) as mailbox, mailbox.store.written_together():
+            if account not in run.known:
+                run.known[account] = known_messages(mailbox, journal.imported_ids())
+            known = run.known[account]
+            folders = {root: _Folders(mailbox, roots.get(root, [])) for root in dict.fromkeys(place.root for _, place in places if place.account == account and place.root is not None)}
+            plain = _Folders(mailbox, [])
+            for item, place in places:
+                if place.account != account:
                     continue
-                reference = mailbox.deliver(folders.target(item.folder), raw, marks if marks is not None else frozenset({MessageFlag.SEEN}))
-                if tags and run.with_tags:
-                    try:
-                        mailbox.set_tags(reference, tags)
-                    except Exception:  # noqa: BLE001 - the message is stored: it stays imported, its tags come with a later run
-                        untagged.append((UNTAGGED + item.relative, json.dumps([reference.store_id, list(tags)])))
-            except (ChronoMailError, OSError) as error:
-                outcomes.append((item.relative, "failed"))
-                if len(failed) < MAXIMUM_REPORTED:
-                    failed.append(f"{item.relative}: {error}")
-                continue
-            outcomes.append((item.relative, reference.store_id))
-            imported += 1
-    # only here, once written_together made the batch safe on disk without an error: an error there leaves the journal as it was (those
-    # messages are found again as duplicates, never recorded as done while not safe)
+                number += 1
+                if (done_before + number) % PROGRESS_STEP == 0 or number == len(work):
+                    engine.progress("Importing mail", done_before + number, len(run.files))
+                try:
+                    path = layout.base / item.relative
+                    if path.stat().st_size > MAXIMUM_MESSAGE_BYTES:
+                        raise UsageError("the message is larger than the limit")
+                    raw = path.read_bytes()
+                    message_id, moment = message_keys(raw)
+                    found = run.backup.take(place.folder, message_id, moment) if run.backup is not None and place.marks else None
+                    marks, tags = found if found is not None else (None, ())
+                    key = fingerprint_of_raw(raw)
+                    present = known.get(key) if key is not None else None
+                    if present is not None and _still_here(mailbox, present):
+                        outcomes.append((item.relative, "duplicate"))
+                        duplicates += 1
+                        continue
+                    target = folders[place.root].target(place.folder) if place.root is not None else plain.target(place.folder, standard=False)
+                    reference = mailbox.deliver(target, raw, marks if marks is not None else frozenset({MessageFlag.SEEN}))
+                    if tags and run.with_tags:
+                        try:
+                            mailbox.set_tags(reference, tags)
+                        except Exception:  # noqa: BLE001 - the message is stored: it stays imported, its tags come with a later run
+                            untagged.append((UNTAGGED + item.relative, json.dumps([reference.store_id, list(tags)])))
+                except (ChronoMailError, OSError) as error:
+                    outcomes.append((item.relative, "failed"))
+                    if len(failed) < MAXIMUM_REPORTED:
+                        failed.append(f"{item.relative}: {error}")
+                    continue
+                outcomes.append((item.relative, reference.store_id))
+                imported += 1
+    # only here, once written_together made each mailbox's part safe on disk without an error: an error there leaves the journal as it was
+    # (those messages are found again as duplicates, never recorded as done while not safe)
     journal.messages(outcomes)
     for key, value in untagged:
         journal.remember(key, value)
@@ -713,9 +886,13 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
     notes: list[str] = []
     result = ImportResult()
     export = read_settings(settings_path) if settings_path is not None else SettingsExport((), (), False)
+    layout = _cached_layout(engine, settings_path, mail_path, backup_path) or _layout(mail_path, export)  # read once per import, not per batch
     if (parameters.accounts or parameters.rules) and "settings" not in journal.phases:
         before = len(notes)
-        accounts, added, existing, without, given = _import_accounts(engine, export, parameters.accounts, notes)
+        own_stores = frozenset(  # a POP3 store whose mail an earlier batch of these exports put into Local Folders keeps it there: its account too
+            store.account.uid for store in layout.stores if store.account is not None and journal.values.get(OWN + store.account.uid) != ""
+        ) if layout is not None else frozenset()
+        accounts, added, existing, without, given = _import_accounts(engine, export, parameters.accounts, notes, own_stores)
         not_made = any("the account was not made" in note for note in notes[before:])
         result = replace(result, accounts_added=added, accounts_existing=existing, accounts_without_password=tuple(without), calendars_given=given)
         if parameters.rules:
@@ -723,7 +900,7 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
             result = replace(result, rules_added=rules_added, rules_existing=rules_existing, rules_not_imported=tuple(not_imported))
         if not not_made:  # an account that could not be made (the password store did not answer) is tried again by the next run
             journal.phase("settings")
-    run = _run_for(engine, mail_path, backup_path, source, _places(engine, settings_path, mail_path, backup_path)) if mail_path is not None else None
+    run = _run_for(engine, layout, backup_path, source, _places(engine, settings_path, mail_path, backup_path)) if layout is not None else None
     backup = run.backup if run is not None else (read_backup(backup_path, engine.directories.data_directory) if backup_path is not None else None)
     if parameters.contacts and backup is not None and "contacts" not in journal.phases:
         contacts_added, contacts_existing = _import_contacts(engine, backup, notes)
@@ -752,9 +929,9 @@ def run_import(engine: Engine, parameters: ImportParameters) -> ImportResult:
             notes.append(f"Tags: {waiting} imported messages could not get their tags yet; the next import tries again")
     if run is not None:
         run.with_tags = parameters.tags
-    if parameters.mail and mail_path is not None and run is not None:
+    if parameters.mail and run is not None:
         try:
-            imported, duplicates, failed, left, tags_later = _import_mail(engine, mail_path, run, journal, parameters.batch)
+            imported, duplicates, failed, left, tags_later = _import_mail(engine, run, journal, parameters.batch)
         except BaseException:
             _finished_run()  # a batch that failed (it may not be safe on disk): Import again finds the mail here again from the index
             raise

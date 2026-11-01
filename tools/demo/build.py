@@ -16,11 +16,13 @@ from chrono_mail.core.words import counted
 from chrono_mail.config import AppDirectories, Rule, RuleSet, ServerRole, default_directories, load_config, parse_config, profile_directories, save_rules
 from chrono_mail.config import Action, Condition, new_rule_id
 from chrono_mail.config.passwords import PasswordStore
-from chrono_mail.core import LOCAL_ACCOUNT_ID, ConfigurationError, CryptoError, FolderRole
+from chrono_mail.core import LOCAL_ACCOUNT_ID, ChronoMailError, ConfigurationError, CryptoError, FolderRole
+from chrono_mail.core.credentials import CredentialFailure
 from chrono_mail.crypto import KeyNotFoundError, KeyStore
 from chrono_mail.engine import Engine
-from chrono_mail.engine.commands_accounts import AccountAddParameters, account_add
+from chrono_mail.engine.commands_accounts import AccountAddParameters, account_add, kept_keys
 from chrono_mail.engine.commands_folders import FolderParameters, folder_create
+from chrono_mail.engine.walletlabels import move_profile_entries
 from chrono_mail.sync.imap_state import ImapState
 from chrono_mail.ui.app import WINDOW_SETTINGS_FILE, credential_stores
 from chrono_mail.ui.prefs import read_preferences, save_preferences
@@ -30,9 +32,11 @@ from tools.demo.people import make_people
 from tools.demo.pim import PimMaker
 
 # --- Version ------------------------------------------------------------
-__version__ = "build.py 3.6.370"
+__version__ = "build.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: a demo built before 4.2.459 has its wallet entries moved to its wallet name without "/" first (never built again for it);
+#           --fresh also removes what is left under that former name (D-274)
 # v3.6.370: the demo's passwords and key under its own wallet name; --fresh also removes the demo's entries left under the shared name,
 #           never the person's own; a demo built before is built again by itself
 # v2.4.333: the time it took in seconds under a minute and a half ("in 40 seconds", not "in 1 minutes"); about six minutes for 100,000
@@ -72,10 +76,14 @@ def show_progress(what: str, done: int, total: int) -> None:
     print(f"\r{what}: {done:,} of {total:,}   ", end="" if done < total else "\n", flush=True)
 
 
-def remove_demo(folder: Path, passwords: PasswordStore, keys: KeyStore, shared: tuple[PasswordStore, KeyStore] | None = None, keep: frozenset[str] = frozenset()) -> None:
+def remove_demo(
+    folder: Path, passwords: PasswordStore, keys: KeyStore, shared: tuple[PasswordStore, KeyStore] | None = None, keep: frozenset[str] = frozenset(),
+    former: tuple[PasswordStore, KeyStore] | None = None,
+) -> None:
     """Remove a demo profile with its key and passwords from the wallet, so they never pile up. Refuses a folder that is no demo.
     shared: the stores under the wallet name every profile used before 3.6.370; the demo's own entries left there go too (only its own).
-    keep: the account ids and the key id of the person's own settings, never removed (a backup of their own restored into the demo)."""
+    keep: the account ids and the key id of the person's own settings, never removed (a backup of their own restored into the demo).
+    former: the stores under the demo's wallet name before 4.2.459 (with "/"); what is left there goes too."""
     if not folder.exists():
         return
     if not (folder / MARKER).is_file():
@@ -83,7 +91,7 @@ def remove_demo(folder: Path, passwords: PasswordStore, keys: KeyStore, shared: 
     directories = profile_directories(folder)
     if directories.config_file.exists():
         config = Engine(directories, passwords, keys).config()
-        for password_store, key_store in [(passwords, keys), *([shared] if shared is not None else [])]:
+        for password_store, key_store in [(passwords, keys), *([shared] if shared is not None else []), *([former] if former is not None else [])]:
             for settings in config.accounts:
                 if settings.account.account_id in keep:
                     continue
@@ -207,14 +215,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--messages", type=int, default=TOTAL_MESSAGES, help=f"how many messages (default {TOTAL_MESSAGES:,})")
     arguments = parser.parse_args(argv)
     folder: Path = arguments.folder.expanduser().resolve()  # the same folder as --profile gives the window: one wallet name
-    passwords, keys = credential_stores(profile_directories(folder))
+    directories = profile_directories(folder)
+    passwords, keys = credential_stores(directories)
+    former = credential_stores(replace(directories, credential_service=directories.former_credential_service))
     own = default_directories()
     fresh: bool = arguments.fresh
-    if not fresh and (folder / MARKER).is_file() and built_before_own_name(folder, keys):
+    move_failed = False
+    if not fresh and (folder / MARKER).is_file() and directories.config_file.exists():
+        try:
+            engine = Engine(directories, passwords, keys)
+            move_profile_entries(engine, kept_keys(engine))  # its entries under the former name (with "/") to its own now (D-274)
+        except (ChronoMailError, CredentialFailure):
+            move_failed = True  # never built again for it: the key may still be good under the former name; the window says what is wrong
+    if not fresh and not move_failed and (folder / MARKER).is_file() and built_before_own_name(folder, keys):
         print("The demo profile was built before it had a wallet name of its own: it is built again.")
         fresh = True
     if fresh:
-        remove_demo(folder, passwords, keys, shared=credential_stores(own), keep=own_entries(own))
+        remove_demo(folder, passwords, keys, shared=credential_stores(own), keep=own_entries(own), former=former)
     if (folder / MARKER).is_file():
         print(f"The demo profile is ready in {folder}.")
         return 0

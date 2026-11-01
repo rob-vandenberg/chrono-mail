@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QFileDialog, QMenu
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, ChronoMailError
-from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, ImportResult, ScanResult
+from chrono_mail.engine.commands_emclient import IMPORT_EMCLIENT, ImportResult, ScanResult, StoreFound
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.ui import importdialog
 from chrono_mail.ui.backend import Backend, Failure, Success
@@ -20,9 +20,10 @@ from tests.test_import_emclient import Exports, make_exports
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_import.py 4.2.452"
+__version__ = "test_ui_import.py 4.2.458"
 
 # --- Version history ----------------------------------------------------
+# v4.2.458: the summary says where Local Folders was found and what each store becomes; Mail greyed with its (i) when nothing is to import
 # v4.2.452: an account the import cannot make is "of a kind Chrono Mail cannot make" (IMAP is made now, UR-01)
 # v4.2.449: nothing is checked after an import that made no account; the automatic check is check_accounts(None) (D-300)
 # v4.2.431: Import's reason is in its (i), not in a hover text
@@ -427,3 +428,35 @@ def test_the_summaries_name_imap_accounts_calendar_servers_appointments_tasks_an
     done = import_summary(ImportResult(accounts_added=26, calendars_given=1, events_added=12, tasks_added=2, tasks_existing=1), stopped=False)
     assert "Accounts made: 26; already here: 0." in done and "Calendars and contacts given to the mail account of their address: 1." in done
     assert "Appointments imported: 12; already here: 0. Tasks imported: 2; already here: 1." in done
+
+
+def test_the_summary_says_where_local_folders_was_found_and_what_each_store_becomes() -> None:
+    stores = (StoreFound("ann@example.com", "imap", 62), StoreFound("bob@example.com", "pop3", 1), StoreFound("Archive", "other", 3))
+    text = scan_summary(ScanResult(0, 0, 0, (), 0, (), 2, 5, 0, 0, 0, local_folders="Local Folders", layout="stores", stores=stores, eml_files=67))
+    assert "Local Folders: found in Local Folders; its mail goes into Local Folders." in text
+    assert "ann@example.com: an IMAP account; its mail (62 messages) comes from its server, so it is not imported." in text
+    assert "bob@example.com: a POP3 account; its mail (1 message) goes into its own folders." in text and "Archive: 3 messages into Local Folders > Archive." in text
+    plain = scan_summary(ScanResult(0, 0, 0, (), 0, (), 2, 2, 0, 0, 0, layout="none", top_folders=("Inbox", "Projects"), eml_files=2))
+    assert "Into Local Folders: Inbox; Projects." in plain
+    unknown = scan_summary(ScanResult(
+        0, 0, 0, (), 0, (), 1, 1, 0, 0, 0, layout="stores", stores=(StoreFound("x@example.com", "other", 2), StoreFound("bob@example.com", "pop3-new", 1)),
+        without_settings=True,
+    ))
+    assert "bob@example.com: a POP3 account; its mail (1 message) goes into its own folders when Accounts is ticked, else into Local Folders > bob@example.com." in unknown
+    assert "Tip: choose the settings export too, so mail that belongs to IMAP accounts is recognised and comes from their servers." in unknown
+
+
+def test_mail_is_greyed_with_its_reason_when_the_folder_holds_nothing_to_import(qtbot: QtBot, setup: Setup, tmp_path: Path) -> None:
+    dialog = setup.dialog()
+    qtbot.addWidget(dialog)
+    empty = tmp_path / "nothing"
+    (empty / "Something").mkdir(parents=True)
+    dialog.mail_folder.setText(str(empty))
+    dialog.scan()
+    wait(qtbot, lambda: dialog.import_button.isEnabled())
+    assert not dialog.mail.isEnabled() and dialog.mail_info.reason == importdialog.NO_MAIL_FOUND
+    assert "mail" not in dialog._chosen_parts()  # greyed: never sent with the import
+    dialog.mail_folder.setText(str(setup.exports.mail))
+    dialog.scan()
+    wait(qtbot, lambda: dialog.mail.isEnabled())
+    assert dialog.mail.isChecked() and not dialog.mail_info.reason

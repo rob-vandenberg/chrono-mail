@@ -7,7 +7,7 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from chrono_mail.core import CertificateError, CertificateTrouble, ChronoMailError
-from chrono_mail.engine.commands_accounts import WALLET_LABEL, AccountParameters, NoParameters, WalletLabelResult
+from chrono_mail.engine.commands_accounts import WALLET_LABEL, WALLET_MOVE, AccountParameters, NoParameters, WalletLabelResult, WalletMoveResult
 from chrono_mail.engine.commands_dav import DAV_SYNC, DavSyncSummary, SyncParameters
 from chrono_mail.engine.commands_mail import MAIL_FETCH, MAIL_FIRST_FILL, MAIL_SETTLE, BlockedFolder, FetchResult, SettleParameters
 from chrono_mail.engine.commands_outbox import MAIL_SEND_OUTBOX, SendOutboxParameters, SendOutboxResult
@@ -25,9 +25,10 @@ from chrono_mail.ui.statusreport import StatusReport
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mailchecking.py 4.2.451"
+__version__ = "mailchecking.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: move_profile_wallet: a profile's passwords and key move to its own wallet name before anything reads them (D-274)
 # v4.2.451: an account not included in Send and Receive takes part in nothing but its own refresh (refresh_account: Send and Receive,
 #           Send, Receive; a calendars-only account synchronises): not in the refresh at start, the timer, the push, the All actions, the
 #           Calendar Refresh or Send All; the per-account check timers are gone (D-059)
@@ -518,6 +519,21 @@ class MailChecking(QObject):
             self._status.report("Junk filter: learning from your mail", error)
 
         self._backend.ask(JUNK_LEARN_EXISTING, NoParameters(), done, failed, owner=self)
+
+    def move_profile_wallet(self, then: Callable[[], None]) -> None:
+        """At start, before the key is read: a profile made before 4.2.459 has its passwords and key moved to its own wallet name (D-274);
+        what could not be moved is said in the status line. Then the start goes on, also after a failure."""
+
+        def done(result: WalletMoveResult) -> None:
+            if result.left:
+                self._status.show(f"Damaged in the wallet, left under this profile's old name: {'; '.join(result.left)}.", error=True)
+            then()
+
+        def failed(error: ChronoMailError) -> None:
+            self._status.report("Could not move this profile's passwords in the wallet", error)
+            then()
+
+        self._backend.ask(WALLET_MOVE, NoParameters(), done, failed, owner=self)
 
     def label_wallet(self) -> None:
         """At start: Chrono Mail's entries in the wallet get labels a person can read (B-23). Silent: only labels change, and one that

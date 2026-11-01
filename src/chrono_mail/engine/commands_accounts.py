@@ -43,7 +43,7 @@ from chrono_mail.engine.local import SETUP_LOCK, ensure_local_folders, take_back
 from chrono_mail.engine.newkey import kept_local_key, kept_other_key, make_data_key, recovery_code_not_stored, recovery_code_stored, usable
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import STANDARD_FOLDERS, Engine, let_go_kept_indexes
-from chrono_mail.engine.walletlabels import label_account, label_key, label_wallet
+from chrono_mail.engine.walletlabels import label_account, label_key, label_wallet, move_profile_entries
 from chrono_mail.protocols.imap import ImapClient, ImapLimits
 from chrono_mail.protocols.tls import context_for, inspect_certificate, valid_fingerprint
 from chrono_mail.protocols.pop3 import Pop3Client, Pop3Limits
@@ -52,9 +52,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.2.451"
+__version__ = "commands_accounts.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: wallet.move-profile: a profile's passwords and key move to its wallet name without "/" at start (D-274)
 # v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
 # v4.2.447: account.check fresh (a test the person starts: the usual checks only); certificate.inspect tells whether the certificate is kept
 #           with an account (kept); account.forget-certificate takes one back (D-299)
@@ -884,7 +885,38 @@ def wallet_label(engine: Engine, parameters: NoParameters) -> WalletLabelResult:
 WALLET_LABEL: TypedCommand[NoParameters, WalletLabelResult] = TypedCommand("wallet.label", NoParameters, WalletLabelResult)
 
 
+@dataclass(frozen=True, slots=True)
+class WalletMoveResult:
+    moved: int  # entries moved to the profile's own wallet name now
+    left: tuple[str, ...]  # what could not be moved (garbled by the wallet): "the key that encrypts your mail", or an account's entry
+
+
+def wallet_move(engine: Engine, parameters: NoParameters) -> WalletMoveResult:
+    """At start of a profile: its wallet entries move from its former name (with "/") to its own name now (D-274); nothing otherwise."""
+    if not engine.directories.former_credential_service:
+        return WalletMoveResult(0, ())  # the person's own: nothing to read, not even Local Folders' kept mail
+    moved, left = move_profile_entries(engine, kept_keys(engine))
+    return WalletMoveResult(moved, left)
+
+
+def kept_keys(engine: Engine) -> tuple[bytes, ...]:
+    """The keys besides the one the settings name that Local Folders' kept mail may need: the one it was written with when the settings
+    name none, and an older one (read from files: an id that is no key id at all is left out)."""
+    found: list[bytes] = []
+    for key_id in (kept_local_key(engine), kept_other_key(engine)):
+        try:
+            if key_id is not None:
+                found.append(bytes.fromhex(key_id))
+        except ValueError:
+            continue
+    return tuple(dict.fromkeys(found))
+
+
+WALLET_MOVE: TypedCommand[NoParameters, WalletMoveResult] = TypedCommand("wallet.move-profile", NoParameters, WalletMoveResult)
+
+
 def register(registry: CommandRegistry) -> None:
+    registry.register(WALLET_MOVE.id, "A profile's passwords and key move to its own name in the wallet (made before 4.2.459)", NoParameters, wallet_move, doing="Moving this profile's passwords in your wallet")
     registry.register(WALLET_LABEL.id, "Give Chrono Mail's passwords and key a readable name in the wallet (only the names change)", NoParameters, wallet_label, doing="Naming Chrono Mail's passwords in your wallet")
     registry.register(CERTIFICATE_INSPECT.id, "Look at the certificate of a server (nothing is accepted by looking)", CertificateParameters, certificate_inspect, doing="Reading the server's certificate")
     registry.register(ACCOUNT_TRUST_CERTIFICATE.id, "Accept a server certificate for an account (by its fingerprint)", TrustParameters, account_trust_certificate, doing="Accepting a certificate")

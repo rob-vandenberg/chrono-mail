@@ -1,7 +1,7 @@
 import threading
 from collections.abc import Callable
 from contextlib import closing
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 import keyring
 import keyring.errors
@@ -10,9 +10,11 @@ from keyring.backends.Windows import WinVaultKeyring
 from keyring.backends.chainer import ChainerBackend
 
 # --- Version ------------------------------------------------------------
-__version__ = "credentials.py 3.6.372"
+__version__ = "credentials.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: CredentialEntries.under (the same store under another wallet name) and move_entry (an entry moved to another wallet name: written,
+#           read back, only then removed; a garbled one stays)
 # v3.6.372: Windows: the readable text is the entry's User name (Credential Manager shows it when the entry is opened; the row title is the
 #           lookup name and stays); keyring's newest entry under the bare service name is moved to its own name first (written, read back,
 #           then the old one removed); an entry is removed by its own name, whatever its User name (B-23, D-275); one call to the store at
@@ -153,15 +155,26 @@ def _within[T](call: Callable[[], T], limit: float) -> T:
 class CredentialEntries:
     """The entries of one service in the credential store. Every failure of the store is a CredentialFailure with its reason (D-127)."""
 
-    def __init__(self, service: str = SERVICE_NAME, backend: CredentialBackend | None = None, time_limit: float = STORE_TIME_LIMIT) -> None:
+    def __init__(
+        self, service: str = SERVICE_NAME, backend: CredentialBackend | None = None, time_limit: float = STORE_TIME_LIMIT, former: str = "",
+    ) -> None:
         self._service: str = service
         self._backend: CredentialBackend = backend if backend is not None else keyring.get_keyring()
         self._limit: float = time_limit
+        self._former: str = former  # the wallet name these entries had before (a profile's, D-274): read there too until moved; "" none
 
     def read(self, name: str) -> str | None:
-        """The entry, or None when the store answered that it holds none."""
+        """The entry, or None when the store answered that it holds none. An entry not moved yet from the former name is found there."""
+        def both() -> str | None:
+            value = self._backend.get_password(self._service, name)
+            if self._former and (value is None or "\x00" in value):  # missing or garbled here: a good copy under the former name is the one
+                older = self._backend.get_password(self._former, name)
+                if older is not None and "\x00" not in older:
+                    return older
+            return value
+
         try:
-            return _within(lambda: self._backend.get_password(self._service, name), self._limit)
+            return _within(both, self._limit)
         except CredentialFailure:
             raise
         except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
@@ -190,17 +203,58 @@ class CredentialEntries:
         except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
             raise CredentialFailure(_cause(error)) from None
 
+    @property
+    def service(self) -> str:
+        return self._service
+
+    def under(self, service: str) -> "CredentialEntries":
+        """The same store, under another wallet name only."""
+        return CredentialEntries(service, self._backend, self._limit)
+
     def remove(self, name: str) -> None:
-        """Remove the entry. Removing an entry that is not there is not an error."""
+        """Remove the entry, also a copy under the former name. Removing an entry that is not there is not an error."""
+        for service in (self._service, *((self._former,) if self._former else ())):
+            self._remove_under(service, name)
+
+    def _remove_under(self, service: str, name: str) -> None:
         backend = self._backend
         try:
             if isinstance(backend, WinVaultKeyring):
-                _within(lambda: _windows_remove(backend, self._service, name), self._limit)
+                _within(lambda: _windows_remove(backend, service, name), self._limit)
             else:
-                _within(lambda: backend.delete_password(self._service, name), self._limit)
+                _within(lambda: backend.delete_password(service, name), self._limit)
         except keyring.errors.PasswordDeleteError:
             return  # already gone
         except CredentialFailure:
             raise
         except Exception as error:  # the store's own errors and those of the desktop service behind it (D-127)
             raise CredentialFailure(_cause(error)) from None
+
+
+MovedEntry = Literal["moved", "absent", "garbled", "kept"]
+
+
+def move_entry(source: CredentialEntries, target: CredentialEntries, name: str) -> MovedEntry:
+    """Move one entry to another wallet name: written there, read back, and only then removed where it was, so a move stopped half-way
+    leaves it in both places, never in neither. The old copy goes only when the new place holds exactly it, or the old one is garbled (it
+    holds NUL characters, which no password or key has) and the new one is not; a garbled new copy is replaced by a good old one; a copy
+    that does not read back as written is taken away again, so it never hides the good one. absent: nothing to move; garbled: garbled and
+    nothing good at the new place, left where it is; kept: the new place holds another good value (typed again since), both left."""
+    source, target = source.under(source.service), target.under(target.service)  # each under its one name: a former-name fallback never counts
+    value = source.read(name)
+    if value is None:
+        return "absent"
+    garbled = "\x00" in value
+    present = target.read(name)
+    present_garbled = present is not None and "\x00" in present
+    if garbled and (present is None or present_garbled):
+        return "garbled"  # nothing good anywhere: left as it is, and said
+    if present is None or (present != value and present_garbled):
+        target.write(name, value)
+        if target.read(name) != value:
+            target.remove(name)  # never left to hide the good copy, which stays where it was
+            raise CredentialFailure("The password store did not give back the entry just written; it stays where it was")
+    elif present != value and not garbled:
+        return "kept"  # another good value at the new place (typed again since)
+    source.remove(name)  # the new place holds it good (a garbled old copy of it goes too)
+    return "moved"

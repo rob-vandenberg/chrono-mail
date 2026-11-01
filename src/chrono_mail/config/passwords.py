@@ -4,9 +4,10 @@ from typing import Protocol
 from chrono_mail.core import SERVICE_NAME, ConfigurationError, CredentialBackend, CredentialEntries, CredentialFailure
 
 # --- Version ------------------------------------------------------------
-__version__ = "passwords.py 3.6.371"
+__version__ = "passwords.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: KeyringPasswordStore.entries and entry_name: a profile's entries move to its wallet name without "/" (D-274)
 # v3.6.371: label: a password's entry gets a label a person can read in the wallet; a label that cannot be written never fails anything (B-23, D-275)
 # v1.8.263: R-16: the credential store is reached through core's one copy (CredentialEntries); the texts are unchanged
 # v0.5.133: Every failure of the credential store is a normal error with its reason (KDE Wallet's own errors were "unexpected")
@@ -61,12 +62,19 @@ class InMemoryPasswordStore:
 class KeyringPasswordStore:
     """Keeps passwords in the operating system's credential store."""
 
-    def __init__(self, service: str = SERVICE_NAME, backend: CredentialBackend | None = None) -> None:
-        self._entries: CredentialEntries = CredentialEntries(service, backend)
+    def __init__(self, service: str = SERVICE_NAME, backend: CredentialBackend | None = None, former: str = "") -> None:
+        self._entries: CredentialEntries = CredentialEntries(service, backend, former=former)  # former: a profile's name before 4.2.459 (D-274)
 
     @staticmethod
-    def _name(account_id: str, role: ServerRole) -> str:
+    def entry_name(account_id: str, role: ServerRole) -> str:
         return f"password-{account_id}-{role.value}"
+
+    _name = entry_name
+
+    @property
+    def entries(self) -> CredentialEntries:
+        """Its entries in the wallet (to move them to another wallet name)."""
+        return self._entries
 
     def get(self, account_id: str, role: ServerRole) -> str | None:
         try:

@@ -38,9 +38,11 @@ from chrono_mail.ui.scale import wpx
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "importdialog.py 4.2.452"
+__version__ = "importdialog.py 4.2.458"
 
 # --- Version history ----------------------------------------------------
+# v4.2.458: the summary says where Local Folders was found in the mail export and what happens with each other account's store next to it;
+#           Mail is greyed with an (i) when the chosen folder holds no messages to import
 # v4.2.452: the summary counts the IMAP accounts and the calendar and contacts servers that are imported now; Calendars and tasks
 #           (Local Folders' appointments and tasks from the backup), notes counted as not imported (UR-01)
 # v4.2.431: Accounts, Rules, Signatures and Import have no hover text while their (i) shows (D-294)
@@ -174,6 +176,7 @@ def scan_summary(scan: ScanResult) -> str:
         if scan.messages_done:
             line += f", {scan.messages_done:,} of them done by an earlier import (it continues)"
         lines.append(line + ".")
+    lines.extend(layout_lines(scan))
     if scan.marks:
         lines.append(f"Read, flagged and replied marks for {counted(scan.marks, 'message')}.")
     if scan.contacts:
@@ -185,6 +188,36 @@ def scan_summary(scan: ScanResult) -> str:
     if scan.tags or scan.tagged:
         lines.append(f"Tags: {scan.tags} categories; {scan.tagged} tagged messages.")
     return "\n".join(lines) if lines else "Nothing to import was found."
+
+
+NO_MAIL_FOUND: str = "No messages were found in this folder. Choose the folder you exported the mail to."
+ONLY_SERVER_MAIL: str = "The mail in this folder belongs to IMAP accounts. It comes from their servers, so it is not imported."
+
+
+def layout_lines(scan: ScanResult) -> list[str]:
+    """Where the mail of the export goes: Local Folders found (and where), each other account's store, or the folders taken as they are."""
+    lines: list[str] = []
+    if scan.layout == "stores":
+        lines.append(f"Local Folders: found in {scan.local_folders}; its mail goes into Local Folders." if scan.local_folders else "Local Folders: its mail goes into Local Folders.")
+    elif scan.layout == "inside":
+        lines.append("The folder chosen is inside Local Folders: its mail goes to the same place in Local Folders.")
+    elif scan.layout == "none" and scan.top_folders:
+        lines.append(f"Into Local Folders: {_listed(scan.top_folders)}.")
+    for store in scan.stores:
+        if store.kind == "imap":
+            lines.append(f"{store.name}: an IMAP account; its mail ({counted(store.messages, 'message')}) comes from its server, so it is not imported.")
+        elif store.kind == "pop3":
+            lines.append(f"{store.name}: a POP3 account; its mail ({counted(store.messages, 'message')}) goes into its own folders.")
+        elif store.kind == "pop3-new":
+            lines.append(
+                f"{store.name}: a POP3 account; its mail ({counted(store.messages, 'message')}) goes into its own folders when Accounts is ticked, "
+                f"else into Local Folders > {store.name}.",
+            )
+        elif store.messages:
+            lines.append(f"{store.name}: {counted(store.messages, 'message')} into Local Folders > {store.name}.")
+    if scan.without_settings and any(store.kind == "other" for store in scan.stores):
+        lines.append("Tip: choose the settings export too, so mail that belongs to IMAP accounts is recognised and comes from their servers.")
+    return lines
 
 
 def merge(total: ImportResult, batch: ImportResult) -> ImportResult:
@@ -378,7 +411,7 @@ class ImportDialog(QDialog):
         self._finished_parts: tuple[str, ...] = ()  # what an earlier import of the chosen exports went through to the end
         self._scanned_files: tuple[commands_outlook.FileScan, ...] = ()  # the latest reading of the chosen data files
         self._again = False  # this import starts over (sent with its first batch only)
-        form = forms.fill(self, "import", info_marks("dataFileAccountsInfo", "dataFileRulesInfo", "dataFileSignaturesInfo", "importInfo"))  # D-276
+        form = forms.fill(self, "import", info_marks("dataFileAccountsInfo", "dataFileRulesInfo", "dataFileSignaturesInfo", "importInfo", "mailInfo"))  # D-276
         self.sources: QTreeWidget = forms.part(form, QTreeWidget, "sources")
         self.sources.setHeaderHidden(True)
         self.sources.setRootIsDecorated(False)
@@ -405,6 +438,8 @@ class ImportDialog(QDialog):
         self.tags: QCheckBox = forms.part(form, QCheckBox, "tags")
         for box in (self.accounts, self.rules, self.mail, self.contacts, self.calendars, self.tags):
             box.setChecked(True)
+        self.mail_info: InfoMark = forms.part(form, InfoMark, "mailInfo")
+        self._mail_reason = ""  # why Mail is greyed: the chosen folder holds nothing to import ("": it may be chosen)
         self.settings_file: QLineEdit = forms.part(form, QLineEdit, "settingsFile")
         self.mail_folder: QLineEdit = forms.part(form, QLineEdit, "mailFolder")
         self.backup_file: QLineEdit = forms.part(form, QLineEdit, "backupFile")
@@ -563,7 +598,19 @@ class ImportDialog(QDialog):
         self._finished_parts = result.finished
         self.progress.setRange(0, max(1, self._total))
         self.summary.setText(scan_summary(result))
+        self._offer_mail(result)
         self.import_button.setEnabled(True)
+
+    def _offer_mail(self, result: ScanResult | None) -> None:
+        """Mail greyed with an (i) when the chosen folder holds no message to import (OR-15, D-294); else as chosen."""
+        reason = ""
+        if result is not None and result.layout and not result.messages:
+            reason = ONLY_SERVER_MAIL if result.eml_files else NO_MAIL_FOUND
+        if not reason and self._mail_reason and not self.mail.isEnabled():
+            self.mail.setChecked(True)  # greyed by the folder chosen before: ticked again, as at the start
+        self._mail_reason = reason
+        self.mail.setEnabled(not reason and not self._running)
+        self.mail_info.explain(self.mail.text(), reason, self.mail)
 
     def _data_files_scanned(self, number: int, result: commands_outlook.ScanResult) -> None:
         if self._running or number != self._scan_number:
@@ -597,6 +644,7 @@ class ImportDialog(QDialog):
         if self._running or number != self._scan_number:
             return
         self._read()
+        self._offer_mail(None)
         self.summary.setText(str(error))  # Import stays off: there is nothing it could import
 
     def _failed(self, error: ChronoMailError) -> None:
@@ -651,8 +699,8 @@ class ImportDialog(QDialog):
         """The parts of the exports this import goes through (as the engine names them, commands_emclient.PARTS)."""
         sources = self._sources()
         chosen = (
-            (self.accounts, sources.settings_file), (self.rules, sources.settings_file), (self.mail, sources.mail_folder), (self.contacts, sources.backup_file),
-            (self.calendars, sources.backup_file), (self.tags, "tags come from any export"),
+            (self.accounts, sources.settings_file), (self.rules, sources.settings_file), (self.mail, sources.mail_folder and not self._mail_reason),
+            (self.contacts, sources.backup_file), (self.calendars, sources.backup_file), (self.tags, "tags come from any export"),
         )
         return frozenset(part for part, (box, export) in zip(PARTS, chosen, strict=True) if box.isChecked() and export)
 
@@ -692,7 +740,7 @@ class ImportDialog(QDialog):
             return
         sources = self._sources()
         parameters = ImportParameters(
-            sources.settings_file, sources.mail_folder, sources.backup_file, accounts=self.accounts.isChecked(), rules=self.rules.isChecked(), mail=self.mail.isChecked(),
+            sources.settings_file, sources.mail_folder, sources.backup_file, accounts=self.accounts.isChecked(), rules=self.rules.isChecked(), mail=self.mail.isChecked() and not self._mail_reason,
             contacts=self.contacts.isChecked(), tags=self.tags.isChecked(), calendars=self.calendars.isChecked(), batch=BATCH, again=self._again,
         )
         self._again = False  # the first batch starts over; the next ones continue
@@ -739,6 +787,7 @@ class ImportDialog(QDialog):
             self._on_running(False)
         for widget in self._inputs():
             widget.setEnabled(True)
+        self.mail.setEnabled(not self._mail_reason)  # still greyed when the folder holds nothing to import
         self._offer_profile()  # what the profile cannot give stays greyed
         self.stop_button.setEnabled(False)
 

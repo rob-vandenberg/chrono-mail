@@ -19,10 +19,10 @@ Every changelist says how it keeps this rule. Nothing counts as obvious: what th
 
 | File | Purpose | When to read |
 |---|---|---|
-| `AGENTS.md` | Project-specific technical rules (this file) | Every session, first |
-| `PY-DEVELOPMENT-RULES.md` | How we work together: the owner's working rules for this project | Every session, second |
-| `OWNER-RULES.md` | Every rule the owner set, numbered (OR-nn); only the owner changes it; private: on this computer only, not in git | Every session, third (also loaded by itself) |
-| `STATUS.md` | Where we are now, the next task, open questions | Every session, fourth |
+| `CLAUDE.md` | Loads the owner's rules and this file at every start: `~/.claude/owner-rules/PY-RULES.md` (PY-nn), `OWNER-RULES.md` and `AGENTS.md`; the general rules (G-nn) come from `~/.claude/CLAUDE.md` | Loaded by itself |
+| `AGENTS.md` | Project-specific technical rules (this file) | Loaded by itself |
+| `OWNER-RULES.md` | Every rule the owner set for this project, numbered (OR-nn); only the owner changes it; private: on this computer only, not in git | Loaded by itself |
+| `STATUS.md` | Where we are now, the next task, open questions | Every session, first |
 | `STATUS-ARCHIVE.md` | Old text of STATUS.md (every version since 0.0.73); git-ignored | Never read whole; search when history is needed |
 | `ARCHITECTURE.md` | Module map, layers, storage design, account model | Before any code task |
 | `ARCHITECTURE-ARCHIVE.md` | Old text of ARCHITECTURE.md; git-ignored | Never read whole; search when the history of the design is needed |
@@ -41,7 +41,7 @@ Every changelist says how it keeps this rule. Nothing counts as obvious: what th
 | Project name, user-facing text (UI, window titles, About, docs prose) | **Chrono Mail** (two words, each capitalized) |
 | Project identifier, repository name, release file names | `chrono-mail` |
 | Where hyphens are not allowed (Python package, module names) | `chrono_mail` |
-| Release and delivery file names (PY-DEVELOPMENT-RULES Rule 4) | `chrono-mail_x.y.z.ext` |
+| Release and delivery file names (PY-1) | `chrono-mail_x.y.z.ext` |
 
 ## 3. Technology (fixed, see DECISIONS.md)
 
@@ -107,23 +107,20 @@ A module may only import from lower layers (ARCHITECTURE.md §3). Nothing outsid
 
 ## 5. Code conventions
 
-1. Version number and version history per file, exactly as PY-DEVELOPMENT-RULES.md Rule 4 describes for Python (directly after the imports).
-2. The project version lives in one place: `pyproject.toml`. When any code file changes, the project version changes too. A change of only documents keeps the version and is pushed with `./gitpush.sh` without a message.
+1. Versions, the project version in `pyproject.toml` and the version block of every file: PY-1 to PY-3.
+2. A change of only documents keeps the version and is pushed with `./gitpush.sh` without a message (OR-31).
 3. Small modules with a single clear responsibility. A module that grows beyond roughly 500 lines is a signal to split it (a guideline, not a hard limit).
 4. Standard library first (`email`, `poplib`, `smtplib`, `ssl`, `sqlite3`), well-maintained packages second, own code last.
 5. Names are descriptive and spelled out in full.
 
 ## 6. Workflow with AI agents
 
-`PY-DEVELOPMENT-RULES.md` applies in full. How it maps onto agent work in Claude Code:
+The owner's rules apply in full: the general rules (G-nn), the Python rules (PY-nn) and `OWNER-RULES.md` (OR-nn), all loaded by themselves. How they map onto work in this project:
 
-1. **"proceed" = plan approval.** Sessions in this project start in **plan mode**. The agent researches and proposes a plan listing every file and every change (Rule 2). Nothing is edited until the user approves the plan. Approval of a plan is the "proceed" for exactly that plan's scope, nothing more (Rule 1).
-2. **Learning path.** The user decides per task how edits are approved:
-   - Stage 2: approve the plan, then approve each edit manually.
-   - Stage 3: approve the plan with accept edits; the user reviews the result per task in git.
-   - Stage 4 (optional, later): auto mode for routine tasks.
-3. **Within an approved plan**, the agent may run tests and fix its own test failures, as long as the fixes stay inside the approved scope. Anything outside the scope needs a new plan.
-4. **Delivery.** In a chat session, files are delivered for download with versioned names (Rule 4/5). In a Claude Code session working in the repository, files are edited in place. In both cases every response that modifies files ends with the Rule 5 summary and release line. The user commits with their own `release` tooling.
+1. **Within an approved changelist** (G-3), the agent may run tests and fix its own test failures, as long as the fixes stay inside the approved scope. Anything outside the scope needs a new changelist.
+2. **Delivery.** Files are edited in place in the repository. Every reply that changed files ends with the files changed and the push line of OR-31; the owner pushes.
+3. **Checks.** Run Pyrefly also with `--python-platform win32`. Prove that a new test fails on the previous version of the code.
+4. **Cautions.** Never use `pkill -f`. Never repeat or commit a password.
 
 ## 7. Before you finish a task
 

@@ -6,9 +6,10 @@ from chrono_mail.core import SERVICE_NAME, CredentialBackend, CredentialEntries,
 from chrono_mail.crypto.keys import DataKey
 
 # --- Version ------------------------------------------------------------
-__version__ = "keystore.py 3.6.371"
+__version__ = "keystore.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: KeyringKeyStore.entries and entry_name: a profile's key moves to its wallet name without "/" (D-274)
 # v3.6.371: label: the key's entry gets a label a person can read in the wallet; a label that cannot be written never fails anything (B-23, D-275)
 # v1.8.263: R-16: the credential store is reached through core's one copy (CredentialEntries); the texts are unchanged
 # v1.1.197: KeyNotFoundError (the store answered: no such key) and CredentialStoreError (the store could not be asked), each with the store's own reason
@@ -73,12 +74,19 @@ class InMemoryKeyStore:
 class KeyringKeyStore:
     """Keeps keys in the operating system's credential store (KWallet, Secret Service, ...)."""
 
-    def __init__(self, service: str = SERVICE_NAME, backend: CredentialBackend | None = None) -> None:
-        self._entries: CredentialEntries = CredentialEntries(service, backend)
+    def __init__(self, service: str = SERVICE_NAME, backend: CredentialBackend | None = None, former: str = "") -> None:
+        self._entries: CredentialEntries = CredentialEntries(service, backend, former=former)  # former: a profile's name before 4.2.459 (D-274)
 
     @staticmethod
-    def _entry_name(key_id: bytes) -> str:
+    def entry_name(key_id: bytes) -> str:
         return f"data-key-{key_id.hex()}"
+
+    _entry_name = entry_name
+
+    @property
+    def entries(self) -> CredentialEntries:
+        """Its entries in the wallet (to move them to another wallet name)."""
+        return self._entries
 
     def save(self, key: DataKey) -> None:
         encoded = base64.b64encode(key.reveal()).decode("ascii")

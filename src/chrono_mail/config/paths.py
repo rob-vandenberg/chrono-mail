@@ -1,3 +1,4 @@
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -7,9 +8,11 @@ from chrono_mail.config.model import ACCOUNT_ID_PATTERN
 from chrono_mail.core import SERVICE_NAME, ConfigurationError
 
 # --- Version ------------------------------------------------------------
-__version__ = "paths.py 4.2.419"
+__version__ = "paths.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: a profile's wallet name holds no "/" (its folder's name and a code of its place): KDE's wallet garbles an entry of a name with
+#           "/" when its label changes; former_credential_service: the name it had, its entries move from there (D-274)
 # v4.2.419: updates_file: the day of the last check for updates and the version the person skipped (D-293)
 # v3.6.371: profile_name: a profile's folder name, shown in the labels of its wallet entries (B-23, D-275)
 # v3.6.370: credential_service: a profile keeps its passwords and key under a wallet name of its own, never mixed with the person's own
@@ -33,6 +36,7 @@ class AppDirectories:
     data_directory: Path
     credential_service: str = SERVICE_NAME  # the name its passwords and key have in the wallet: a profile's own, never the person's
     profile_name: str = ""  # a profile's folder name, shown in the labels of its wallet entries; "" for the person's own
+    former_credential_service: str = ""  # a profile's wallet name before 4.2.459: its entries are moved from there at start ("" none)
 
     @property
     def config_file(self) -> Path:
@@ -96,4 +100,12 @@ def default_directories() -> AppDirectories:
 
 def profile_directories(folder: Path) -> AppDirectories:
     """Everything of a profile in one folder of its own (its settings in config, its mail in data), apart from the person's own (D-243)."""
-    return AppDirectories(folder / "config", folder / "data", f"{SERVICE_NAME} ({folder})", folder.name)
+    return AppDirectories(folder / "config", folder / "data", profile_service(folder), folder.name, f"{SERVICE_NAME} ({folder})")
+
+
+def profile_service(folder: Path) -> str:
+    """A profile's own name in the wallet: its folder's name and a code of where it is ("chrono-mail (chrono-mail-demo, 3f9a1c22)"), so two
+    profiles of one folder name never share one. Never a "/": KDE's wallet garbles an entry of such a name when its label changes (D-274)."""
+    code = hashlib.sha256(str(folder).encode("utf-8", "surrogatepass")).hexdigest()[:8]
+    name = folder.name.replace("/", " ").replace("\\", " ").strip() or "profile"
+    return f"{SERVICE_NAME} ({name}, {code})"

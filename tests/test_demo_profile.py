@@ -19,9 +19,10 @@ from tools.demo.build import BuiltDemo, build_demo, remove_demo
 from tools.demo.cast import ACCOUNTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_demo_profile.py 3.6.370"
+__version__ = "test_demo_profile.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: a profile's wallet name holds its folder's name, never a "/" (D-274)
 # v3.6.370: a profile keeps its wallet entries under a name of its own (the window's and the builder's stores, one name per folder); --fresh
 #           also removes the demo's entries left under the shared name, never the person's own; a demo built before is built again
 # v2.3.321: Built without mail (the mail has its own tests)
@@ -118,7 +119,7 @@ def test_a_profile_keeps_its_wallet_entries_under_a_name_of_its_own(tmp_path: Pa
     """The demo's made-up passwords and key were kept under the same wallet name as the person's own, indistinguishable from them."""
     own = default_directories().credential_service
     first, second = profile_directories(tmp_path / "first").credential_service, profile_directories(tmp_path / "second").credential_service
-    assert own == "chrono-mail" and len({own, first, second}) == 3 and str(tmp_path / "first") in first
+    assert own == "chrono-mail" and len({own, first, second}) == 3 and "first" in first and "/" not in first  # no "/" (D-274)
     assert directories_and_settings(tmp_path / "first")[0].credential_service == first
 
 
@@ -197,3 +198,24 @@ def test_the_persons_own_settings_are_only_read(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError):
         build.own_entries(own)
     assert sorted(path.name for path in own.config_directory.iterdir()) == ["config.json"]
+
+
+def test_a_demo_made_before_its_wallet_name_lost_the_slash_is_moved_not_built_again(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-274: its key and passwords under the former name (with "/") move to its name now; the demo itself stays as it is."""
+    backend = MemoryBackend()
+
+    def stores_in_memory(directories: AppDirectories) -> tuple[KeyringPasswordStore, KeyringKeyStore]:
+        return credential_stores(directories, backend)
+
+    monkeypatch.setattr(build, "credential_stores", stores_in_memory)
+    monkeypatch.setattr(build, "default_directories", lambda: AppDirectories(tmp_path / "own" / "config", tmp_path / "own" / "data"))
+    folder = (tmp_path / "demo").resolve()
+    directories = profile_directories(folder)
+    build_demo(folder, *credential_stores(directories, backend), messages=0)
+    for (service, name), value in list(backend.entries.items()):
+        del backend.entries[(service, name)]
+        backend.entries[(directories.former_credential_service, name)] = value
+    built_at = (folder / build.MARKER).stat().st_mtime_ns
+    assert build.main(["--folder", str(folder), "--messages", "0"]) == 0
+    assert (folder / build.MARKER).stat().st_mtime_ns == built_at  # not built again
+    assert {service for service, _ in backend.entries} == {directories.credential_service}

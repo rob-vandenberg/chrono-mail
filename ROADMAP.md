@@ -146,6 +146,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 |---|---|---|
 | I.1 | Import from the reference client's three exports (settings .xml, mail .eml folder, backup .zip): POP3 accounts with passwords, rules, contacts, all mail into Local Folders with its read, flagged and replied marks; resumable, no duplicates. | done (0.5.132); the owner's own import and check to do |
 | I.2 | The rest of the password key (passwords longer than 12 characters), from a test export with a known long password. | open |
+| I.3 | The mail export as the reference client writes it: one folder per store, Local Folders found by its place (the chosen folder is it or holds it, its parent is it, or further down); IMAP stores left out, a POP3 store into its own account, any other into Local Folders by its name; the window says what was found. | done (4.2.459); the full import of the owner's export to check |
 
 ## Import from and export to the office suite's mail program (from 4.2.385, D-278)
 
@@ -207,6 +208,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (3.6.370) A profile (the demo) keeps its passwords and key under its own wallet name (D-274).
 - DONE (3.6.371) Readable labels for Chrono Mail's passwords and key in the wallet (Linux; B-23, D-275).
 - DONE (3.6.372) The same text as the User name of each entry in Windows Credential Manager (B-23, D-275).
+- DONE (4.2.459) A profile's wallet name holds no "/": KDE's wallet garbled an entry of such a name when its label changed; older profiles' entries moved at start (B-23, D-274).
 - DONE (3.6.373) The Settings window and its 13 pages are built from Qt Designer forms (ui/forms, D-276); other dialogs follow as their mockups come.
 - DONE (4.0.374) A closed Settings window is deleted (every opening kept one in memory).
 - DONE (4.0.375) Forms batch 1: Sync conflicts, one sync conflict, Operations (with its rows), the index rebuild window and the delayed-send notice are Qt Designer forms (D-276); the loader no longer leaves stand-ins behind (opening Settings again crashed).

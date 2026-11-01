@@ -9,9 +9,10 @@ from pathlib import Path
 import pytest
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_owner_rules.py 4.1.384"
+__version__ = "test_owner_rules.py 4.2.459"
 
 # --- Version history ----------------------------------------------------
+# v4.2.459: a rule is also read without a leading hyphen: OWNER-RULES.md writes each rule as a line of its own (the owner, 2026-11-01)
 # v4.1.384: OWNER-RULES.md is private (the owner, 2026-10-27): a copy of the project without it skips the check instead of failing
 # v3.6.355: Initial: every project check names its owner rule, and its numbers are the rule's (OR-42)
 
@@ -27,7 +28,7 @@ def owner_rules(root: Path = ROOT) -> dict[str, str] | None:
     if not path.is_file():
         return None
     text = path.read_text(encoding="utf-8")
-    return {match.group(1): line for line in text.splitlines() for match in [re.match(r"- \*\*OR-(\d+)\*\*", line)] if match}
+    return {match.group(1): line for line in text.splitlines() for match in [re.match(r"(?:- )?\*\*OR-(\d+)\b", line)] if match}
 
 
 def _numbers_in(text: str) -> set[float]:
@@ -134,3 +135,10 @@ def test_a_copy_of_the_project_without_the_rules_file_gives_no_rules(tmp_path: P
     assert owner_rules(tmp_path) is None
     (tmp_path / "OWNER-RULES.md").write_text("- **OR-8** A code file may have up to 2,000 lines\n", encoding="utf-8")
     assert owner_rules(tmp_path) == {"8": "- **OR-8** A code file may have up to 2,000 lines"}
+
+
+def test_a_rule_written_as_a_line_of_its_own_is_read(tmp_path: Path) -> None:
+    """OWNER-RULES.md writes each rule as a line starting with its bold number, without a hyphen in front."""
+    (tmp_path / "OWNER-RULES.md").write_text("**OR-8 A code file may have up to 2,000 lines** (R-18).\n\n**OR-80** no\n", encoding="utf-8")
+    rules = owner_rules(tmp_path)
+    assert rules is not None and set(rules) == {"8", "80"} and rules["8"].startswith("**OR-8 ")
