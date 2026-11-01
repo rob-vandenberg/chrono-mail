@@ -85,7 +85,7 @@ Only `ui` may import PySide6.
 - **IMAP** is an offline mirror of the server (section 6).
 - An account is one login on one server. Mail accounts (POP3, IMAP) may also have a calendar and contacts server. An account of kind **Calendars and contacts** (`dav`, D-185) has only that: no mail, no address; the engine has no place for its mail (`storage_groups` leaves it out) and the window keeps it out of everything about mail.
 - Every account may have an account name, shown only inside Chrono Mail (D-184).
-- **Security:** plain, STARTTLS and implicit TLS; certificate verification is always on, and an exception is only ever accepted by the person (D-082).
+- **Security:** plain, STARTTLS and implicit TLS; certificate verification is on by default; the person may choose to connect without it or accept an exception, never the program on its own (D-082, D-299).
 - **Authentication:** user name and password, kept in the OS credential store. OAuth2 comes with Gmail and Microsoft 365.
 
 ## 6. IMAP (the server is the truth)
@@ -123,7 +123,7 @@ IMAP accounts use the same encrypted store, index, commands and window as POP3 a
 ### 6.4 Folders (D-118, D-120)
 
 - `LIST` with the delimiter; names decoded from modified UTF-7; a folder path stays a tuple of names. SPECIAL-USE sets the role, the usual English names are the fallback. The server's list of folders to show (its subscriptions) is followed: a folder taken off it goes here after one last sync, one put on it comes (D-202); standard folders and the folders ticked here are synchronised whether or not they are on it. The ticks in Edit account > Folders are this computer's only; a folder left out (unticked) is ignored completely.
-- Create, rename, delete, Empty folder and Mark all as read are done on the server first. Rename and delete are refused offline.
+- Create, rename, delete, Empty folder and Mark all as read are done on the server first. Offline, rename and delete are done here at once and on the server at the next check (D-200).
 
 ### 6.5 The client
 

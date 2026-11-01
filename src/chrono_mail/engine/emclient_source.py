@@ -3,6 +3,7 @@
 Every file is hostile input: sizes are capped and anything that cannot be read is reported, never a crash."""
 
 import base64
+import lzma
 import os
 import re
 import shutil
@@ -11,6 +12,11 @@ import tempfile
 import xml.etree.ElementTree as ElementTree
 import zipfile
 import zlib
+try:
+    from compression.zstd import ZstdError
+    _ZSTD_ERRORS: tuple[type[Exception], ...] = (ZstdError,)
+except ImportError:  # a Python without Zstandard refuses such an entry with RuntimeError, caught as well
+    _ZSTD_ERRORS = ()
 from collections.abc import Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
@@ -26,9 +32,11 @@ from chrono_mail.core.colours import NEW_TAG
 from chrono_mail.core.folder import roles_by_name
 
 # --- Version ------------------------------------------------------------
-__version__ = "emclient_source.py 4.2.461"
+__version__ = "emclient_source.py 4.2.462"
 
 # --- Version history ----------------------------------------------------
+# v4.2.462: a Local Folders file of the backup that is damaged (also when packed with LZMA or Zstandard), encrypted, packed in an unknown
+#           way or cut short gives "The backup cannot be read" instead of an unhandled error
 # v4.2.461: the backup's store of each POP3 account (a folder named by its id, UR-09) gives that account's mail its read, flagged and
 #           replied marks and its categories, as Local Folders' does; a store that cannot be read leaves only its marks out, and says so
 # v4.2.458: export_layout: where Local Folders is in the mail export (the chosen folder is it or holds it, else its parent is it, else the
@@ -63,6 +71,10 @@ _BACKUP_FILES: tuple[str, ...] = (
     "Local Folders/folders.dat", "Local Folders/mail_index.dat", "Local Folders/contact_index.dat",
     "Local Folders/event_index.dat", "Local Folders/event_data.dat", "Local Folders/task_index.dat", "Local Folders/task_data.dat", "Local Folders/note_data.dat",
 )  # by number: 0.dat, 1.dat …; the first two must be there
+UNPACK_ERRORS: tuple[type[Exception], ...] = (  # what unpacking a damaged, encrypted, oddly packed or cut-short entry of a zip raises
+    OSError, zipfile.BadZipFile, zlib.error, lzma.LZMAError, *_ZSTD_ERRORS, NotImplementedError, RuntimeError, EOFError,
+    UnicodeDecodeError,  # an entry's name marked as UTF-8 that is not
+)
 MAXIMUM_ITEMS: int = 200_000  # events or tasks of Local Folders read from a backup
 
 # The passwords in the settings file are XOR-ed with a fixed key of the program. The key is kept here as two rows that
@@ -1032,11 +1044,11 @@ def _unpacked(backup: Path, work: Path, wanted: Mapping[str, str]) -> Generator[
                             for name, path in zip(_STORE_FILES, paths, strict=True):
                                 with archive.open(names[files[name]]) as source, open(path, "wb") as target:
                                     shutil.copyfileobj(source, target, 1024 * 1024)
-                        except (OSError, zipfile.BadZipFile, zlib.error, NotImplementedError, RuntimeError, EOFError):
+                        except UNPACK_ERRORS:
                             unreadable.add(account)
                             continue
                         stores.setdefault(account, []).append(paths)
-        except (OSError, zipfile.BadZipFile) as error:
+        except UNPACK_ERRORS as error:
             raise ImportSourceError(f"The backup cannot be read: {error}") from None
         yield _Unpacked(folder, stores, frozenset(unreadable))
     finally:

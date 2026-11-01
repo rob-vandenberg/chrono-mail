@@ -1,8 +1,8 @@
 # DECISIONS.md
 
-The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-302 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
+The design rules as they stand now, by topic, one short entry each. Every number D-001 to D-303 is here (code and tests cite them; D-030 and D-042 are split over two topics). How a rule is built, measurements, the story behind it and the full old wording are in `DECISIONS-ARCHIVE.md` (git-ignored; search by number, never read whole: the last match is the newest wording) and in `DEVLOG.md`.
 
-**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-303**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
+**Maintaining this file (D-162):** a new decision goes into its topic with the next number (next: **D-304**): the rule in one to three sentences, `Why:` in one line, `Rejected:` only when someone might propose it again. No function names, measurements, screen layouts or history: those go to DEVLOG.md. An entry stays under about 600 characters. When a decision changes, copy its old wording to the end of the archive first, then rewrite it here. A decision that no longer holds becomes "→ D-nnn".
 
 ---
 
@@ -277,7 +277,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-045** Rich text subset (bold, italic, underline, lists, links), sent as multipart/alternative; outgoing HTML cleaned; switching to plain asks first.
 - **D-085** New messages are rich text unless the setting says plain.
 - **D-105** The way of writing is a drop-down at the composer's bottom left.
-- **D-304** (the owner, 2026-10-28, 4.2.414) **An action on a selection is, in principle, one action per message**: each message goes or changes only if the person could do that to that one message by itself; otherwise that message stays and the others still go, and the status line says what stayed and why. The work is still done in batches (one per account and folder), never as thousands of single steps. Why: "There is no 'move 2 messages together'… that is 2 actions moving 1 message"; this settles every mixed selection.
+- **D-303** (the owner, 2026-10-28, 4.2.414) **An action on a selection is, in principle, one action per message**: each message goes or changes only if the person could do that to that one message by itself; otherwise that message stays and the others still go, and the status line says what stayed and why. The work is still done in batches (one per account and folder), never as thousands of single steps. Why: "There is no 'move 2 messages together'… that is 2 actions moving 1 message"; this settles every mixed selection.
 
 ## 10. Look (the reference client's look and feel, never identical)
 

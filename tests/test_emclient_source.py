@@ -14,9 +14,10 @@ from chrono_mail.engine.emclient_source import ImportSourceError, SourceRule, de
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_emclient_source.py 1.2.254"
+__version__ = "test_emclient_source.py 4.2.462"
 
 # --- Version history ----------------------------------------------------
+# v4.2.462: a backup whose Local Folders file is damaged (deflate, LZMA, Zstandard, its name), encrypted or packed in an unknown way is refused in plain words
 # v1.2.254: a rule that moves to a standard folder by its name goes to Chrono Mail's own standard folder (Junk E-mail: Move to Junk)
 # v0.5.137: categories, the categories of messages in the backup, category parts of rules
 # v0.5.132: Initial tests: reading eM Client's settings export, mail export and backup (all made-up data); every rule as it is
@@ -357,6 +358,50 @@ def test_the_backup_gives_the_contacts(tmp_path: Path) -> None:
     (ann,) = data.contacts
     assert (ann.name, ann.given, ann.family, ann.organization, ann.note, ann.birthday) == ("Ann Example", "Ann", "Example", "Example Ltd", "met 2019", "1980-04-15")
     assert (ann.emails, ann.phones) == (("ann@example.com", "ann@work.example"), ("+31 6 1234",))
+
+
+def damaged_entry(backup: Path, name: str, how: str) -> Path:
+    """The backup with one entry packed (deflated, or by LZMA or Zstandard) and then damaged in its central record or its data, as a broken
+    copy could be."""
+    packing = {"lzma": zipfile.ZIP_LZMA, "zstandard": zipfile.ZIP_ZSTANDARD}.get(how, zipfile.ZIP_DEFLATED)
+    with zipfile.ZipFile(backup) as archive:
+        contents = {item: archive.read(item) for item in archive.namelist()}
+    with zipfile.ZipFile(backup, "w") as archive:
+        for item, content in contents.items():
+            archive.writestr(item, content, packing if item == name else zipfile.ZIP_STORED)
+    data = bytearray(backup.read_bytes())
+    with zipfile.ZipFile(backup) as archive:
+        entry = archive.getinfo(name)
+    record = data.index(b"PK\x01\x02")  # the central directory: one record per entry
+    while bytes(data[record + 46:record + 46 + len(name)]) != name.encode():
+        record = data.index(b"PK\x01\x02", record + 4)
+    start = entry.header_offset + 30 + len(name.encode()) + int.from_bytes(data[entry.header_offset + 28:entry.header_offset + 30], "little")
+    if how == "zstandard":
+        data[start:start + 8] = bytes(8)  # its frame's start broken
+    elif how in ("data", "lzma"):
+        data[start + 20:start + 60] = bytes(40)  # the packed stream itself broken
+    elif how == "name":
+        data[entry.header_offset + 7] |= 0x08  # its own header says its name is UTF-8 …
+        data[entry.header_offset + 30] = 0xFF  # … and it is not
+    elif how == "encrypted":
+        data[record + 8] |= 1
+        data[entry.header_offset + 6] |= 1
+    else:  # packed in a way no program knows
+        data[record + 10:record + 12] = (99).to_bytes(2, "little")
+        data[entry.header_offset + 8:entry.header_offset + 10] = (99).to_bytes(2, "little")
+    backup.write_bytes(bytes(data))
+    return backup
+
+
+@pytest.mark.parametrize("how", ["data", "lzma", "zstandard", "name", "encrypted", "packing"])
+def test_a_backup_whose_local_folders_file_is_damaged_is_refused_in_plain_words(tmp_path: Path, how: str) -> None:
+    if how == "zstandard":
+        pytest.importorskip("compression.zstd")  # a Python without Zstandard cannot write such an entry
+    items = [FakeItem("/Inbox", f"m{number}@x", None) for number in range(200)]  # enough to pack into more than a few bytes
+    backup = damaged_entry(write_backup(tmp_path, items), "Local Folders/mail_index.dat", how)
+    with pytest.raises(ImportSourceError, match="The backup cannot be read"):
+        read_backup(backup, tmp_path / "work")
+    assert list((tmp_path / "work").iterdir()) == []
 
 
 def test_a_backup_without_its_message_list_or_not_a_zip_is_refused(tmp_path: Path) -> None:
