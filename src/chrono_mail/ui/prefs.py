@@ -10,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.2.419"
+__version__ = "prefs.py 4.2.467"
 
 # --- Version history ----------------------------------------------------
+# v4.2.467: reading_pane_fits_message: the reading pane widens to fit a message (off by default: it keeps the width the person gave it, D-304)
 # v4.2.419: update_check: look for a newer version with a Refresh that goes online, at most once a day (D-293)
 # v4.2.402: start_minimized: the window choice of the start at login, kept while the start at login is off (D-284)
 # v4.2.401: settings can be tried without being saved: Settings > Message list shows its changes at once (D-104)
@@ -92,6 +93,7 @@ DEFAULTS: dict[str, object] = {
     "remote_always": False,
     "remote_senders": "",
     "links_ask": True,
+    "reading_pane_fits_message": False,  # the reading pane widens to fit the message shown (D-304)
     # composing
     "default_account": "",
     "compose_html": True,
@@ -294,6 +296,7 @@ class Preferences:
     remote_always: bool = False
     remote_senders: tuple[str, ...] = ()  # lower case, sorted
     links_ask: bool = True
+    reading_pane_fits_message: bool = False
     default_account: str = ""
     compose_html: bool = True
     reply_quote: str = "above"
@@ -360,6 +363,7 @@ def read_preferences(settings: QSettings) -> Preferences:
         remote_always=get_bool(settings, "remote_always"),
         remote_senders=tuple(sorted(allowed_senders(settings))),
         links_ask=get_bool(settings, "links_ask"),
+        reading_pane_fits_message=get_bool(settings, "reading_pane_fits_message"),
         default_account=str(settings.value("default_account", "") or ""),
         compose_html=get_bool(settings, "compose_html"),
         reply_quote=choice("reply_quote"),

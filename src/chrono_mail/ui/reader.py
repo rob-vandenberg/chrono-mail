@@ -5,8 +5,8 @@ from functools import partial
 from email.utils import parseaddr
 from typing import override
 
-from PySide6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QObject, QPoint, QPointF, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QGuiApplication, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPalette, QResizeEvent, QTextCursor
+from PySide6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QObject, QPoint, QPointF, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QGuiApplication, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPalette, QResizeEvent, QTextCursor, QWheelEvent
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
@@ -20,12 +20,15 @@ from PySide6.QtWebEngineCore import (
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import (
     QApplication,
+    QBoxLayout,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
     QLabel,
     QMenu,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QTextBrowser,
     QVBoxLayout,
@@ -35,14 +38,18 @@ from PySide6.QtWidgets import (
 from chrono_mail.engine.commands_mail import AttachmentInfo, InlineImage, ShowResult
 from chrono_mail.core.colours import MAIL_PAGE
 from chrono_mail.mime.linkdomain import leads_elsewhere
+from chrono_mail.ui.flowlayout import FlowRow
+from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
 from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.2.464"
+__version__ = "reader.py 4.2.467"
 
 # --- Version history ----------------------------------------------------
+# v4.2.467: the message's own parts no longer set the reading pane's width (D-304): the header sits in a scroll area that scrolls sideways only
+#           when one word cannot wrap (header_follows_content); the remote content line wraps; the attachments go on in a next row
 # v4.2.464: a web view has a window of its own: in the main window's, every small change elsewhere (a busy bar step) made Qt put the
 #           whole window together again through OpenGL, in software on a computer without a graphics card; only the view and the parts it
 #           sits in get a window of their own, never their neighbours (D-266)
@@ -380,18 +387,141 @@ class PlainTextView(QTextBrowser):
             block = block.next()
 
 
+class HeaderArea(QScrollArea):
+    """The message's header, as high as its lines need at the width there is. While it follows its content (the standard), its smallest
+    width is the header's own, as before; otherwise it never sets the width around it, and only a word too long to wrap brings a
+    scrollbar to move sideways (D-304). It never scrolls up and down."""
+
+    def __init__(self, header: QWidget, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.follows_content: bool = True
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # as the header always was: a click or Tab never stops here (OR-16)
+        self.setWidgetResizable(True)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)  # following its content, it is always wide enough
+        policy = QSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)  # its lines' height when there is room, as the header always had
+        policy.setHeightForWidth(True)
+        self.setSizePolicy(policy)
+        self.setWidget(header)
+
+    @override
+    def resizeEvent(self, e: QResizeEvent, /) -> None:  # noqa: N802 - Qt's name
+        super().resizeEvent(e)
+        if e.size().width() != e.oldSize().width():
+            self.updateGeometry()  # another width: the header's lines wrap otherwise, so it needs another height
+
+    @override
+    def wheelEvent(self, e: QWheelEvent, /) -> None:  # noqa: N802 - Qt's name
+        pixels, angle = e.pixelDelta(), e.angleDelta()
+        bar = self.horizontalScrollBar()
+        if bar.isVisible() and abs(angle.x()) > abs(angle.y()):  # mostly sideways (a touchpad swipe carries a little up and down too)
+            step = pixels.x() if not pixels.isNull() else round(angle.x() / 120 * bar.singleStep() * QApplication.wheelScrollLines())
+            bar.setValue(bar.value() - step)
+            e.accept()
+        else:
+            e.ignore()  # up and down passes on, as over the header before: it never scrolls up and down
+
+    @override
+    def keyPressEvent(self, e: QKeyEvent, /) -> None:  # noqa: N802 - Qt's name
+        e.ignore()  # the arrows and page keys of a header line with the focus act as before, never scroll the header (OR-16)
+
+    def set_follows_content(self, follows: bool) -> None:
+        self.follows_content = follows
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff if follows else Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.updateGeometry()
+
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent, /) -> bool:  # noqa: N802 - Qt's name
+        if watched is self.widget() and event.type() == QEvent.Type.LayoutRequest:
+            self.updateGeometry()  # the header's lines changed: the size it asks of the reader changes with them
+        return super().eventFilter(watched, event)
+
+    def _content_height(self, width: int) -> int:
+        """The height the header needs at this width, with the sideways scrollbar when its smallest width is more."""
+        header = self.widget()
+        if header is None:
+            return 0
+        needed = header.minimumSizeHint().width()
+        height = header.heightForWidth(max(width, needed)) if header.hasHeightForWidth() else -1
+        if height < 0:
+            height = header.sizeHint().height()
+        if width < needed and not self.follows_content:
+            height += self.horizontalScrollBar().sizeHint().height()
+        return height
+
+    @override
+    def hasHeightForWidth(self) -> bool:  # noqa: N802 - Qt's name
+        return True
+
+    @override
+    def heightForWidth(self, width: int, /) -> int:  # noqa: N802 - Qt's name
+        return self._content_height(width)
+
+    @override
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        header = self.widget()
+        return QSize(header.sizeHint().width() if header is not None else 0, self._content_height(self.width()))
+
+    @override
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        header = self.widget()
+        if header is None:
+            return QSize(0, 0)
+        width = header.minimumSizeHint().width() if self.follows_content else 0
+        sideways = self.horizontalScrollBar().sizeHint().height() if not self.follows_content and self.width() < header.minimumSizeHint().width() else 0
+        return QSize(width, header.minimumSizeHint().height() + sideways)  # never taller than the header itself ever asked: a long list of addresses never makes the window grow
+
+
+class DateLabel(QLabel):
+    """The message's date: one line whenever the header has room; allowed to wrap (set_width_rule), it goes on two lines only when the
+    room runs out, never sooner (D-304)."""
+
+    @override
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        if not self.wordWrap():
+            return super().sizeHint()
+        margins = self.contentsMargins()
+        width = self.fontMetrics().horizontalAdvance(self.text()) + 2 * self.margin() + margins.left() + margins.right() + 1
+        return QSize(width, self.heightForWidth(width))  # the whole date on one line: a wrapping label would ask for less
+
+
 class AttachmentChip(QPushButton):
-    """One file of the attachment row: a click selects it, a double click opens it, a right-click offers Open attachment and Save as… (D-236)."""
+    """One file of the attachment row: a click selects it, a double click opens it, a right-click offers Open attachment and Save as… (D-236).
+    Given less room than its full text needs, it shortens the file's name in the middle; the size stays, the hover text names the file (D-304)."""
 
     open_requested = Signal()
+    HINT: str = "Double-click to open; right-click to open or save"
 
-    def __init__(self, text: str, parent: QWidget | None = None) -> None:
-        super().__init__(text, parent)
+    def __init__(self, name: str, size: str, parent: QWidget | None = None) -> None:
+        super().__init__(f"📎 {name} ({size})", parent)
+        self._name: str = name
+        self._size: str = size
         self.setFlat(True)
         self.setCheckable(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.setToolTip("Double-click to open; right-click to open or save")
+        self.setToolTip(self.HINT)
         self.setStyleSheet("QPushButton:checked { background: palette(highlight); color: palette(highlighted-text); border-radius: 4px; }")
+        self._full_hint: QSize = super().sizeHint()
+
+    @override
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        return QSize(self._full_hint)  # the full text's, also while shortened; a copy, which the row may change
+
+    @override
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        metrics = self.fontMetrics()
+        around = self._full_hint.width() - metrics.horizontalAdvance(self._name)  # the clip, the size and the button's own room
+        return QSize(min(self._full_hint.width(), max(0, around) + metrics.horizontalAdvance("…") * 3), self._full_hint.height())
+
+    @override
+    def resizeEvent(self, e: QResizeEvent, /) -> None:  # noqa: N802 - Qt's name
+        super().resizeEvent(e)
+        metrics = self.fontMetrics()
+        room = self.width() - (self._full_hint.width() - metrics.horizontalAdvance(self._name))
+        shown = self._name if room >= metrics.horizontalAdvance(self._name) else metrics.elidedText(self._name, Qt.TextElideMode.ElideMiddle, max(0, room))
+        self.setText(f"📎 {shown} ({self._size})")
+        self.setToolTip(self.HINT if shown == self._name else plain_tip(f"{self._name}\n{self.HINT}"))
 
     @override
     def mouseDoubleClickEvent(self, e: QMouseEvent, /) -> None:
@@ -435,7 +565,7 @@ class ReaderWidget(QWidget):
         self._people.setWordWrap(True)
         self._people.setTextFormat(Qt.TextFormat.RichText)  # the lines below are built with html.escape
         self._people.setTextInteractionFlags(self._people.textInteractionFlags().TextSelectableByMouse)
-        self._date = QLabel(self._header)
+        self._date = DateLabel(self._header)
         self._date.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         row = QHBoxLayout()
         row.addWidget(self._avatar)
@@ -447,24 +577,24 @@ class ReaderWidget(QWidget):
         self._tags.setTextFormat(Qt.TextFormat.RichText)
         self._tags.hide()
         header_layout.addWidget(self._tags)
-        layout.addWidget(self._header)
+        self._header_area = HeaderArea(self._header, self)
+        layout.addWidget(self._header_area)
 
-        self._attachments = QWidget(self)
-        self._attachments_layout = QHBoxLayout(self._attachments)
-        self._attachments_layout.setContentsMargins(16, 0, 16, 8)
-        self._attachments_layout.addStretch(1)
+        self._attachments = FlowRow(self, left=16, right=16, bottom=8)  # a file that no longer fits goes on in the next row (D-304)
         layout.addWidget(self._attachments)
 
         self._banner = QFrame(self)
         self._banner.setObjectName("remoteBanner")
         self._banner.setFrameShape(QFrame.Shape.StyledPanel)
-        banner_layout = QHBoxLayout(self._banner)
+        self._banner_layout = QHBoxLayout(self._banner)  # the text beside its buttons; above them while the reader keeps its width (D-304)
         self._banner_label = QLabel("Pictures and other content from the internet are not shown, to protect your privacy.", self._banner)
-        self._load_remote = QPushButton("Show remote content", self._banner)
-        self._always_remote = QPushButton("Always for this sender", self._banner)
-        banner_layout.addWidget(self._banner_label, 1)
-        banner_layout.addWidget(self._load_remote)
-        banner_layout.addWidget(self._always_remote)
+        self._banner_buttons = FlowRow(self._banner, spacing=self._banner_layout.spacing())  # a next row only when one does not fit
+        self._load_remote = QPushButton("Show remote content", self._banner_buttons)
+        self._always_remote = QPushButton("Always for this sender", self._banner_buttons)
+        self._banner_buttons.add(self._load_remote)
+        self._banner_buttons.add(self._always_remote)
+        self._banner_layout.addWidget(self._banner_label, 1)
+        self._banner_layout.addWidget(self._banner_buttons)
         self._banner.hide()
         layout.addWidget(self._banner)
 
@@ -502,6 +632,8 @@ class ReaderWidget(QWidget):
         self._hovered: str = ""  # the address of the link under the pointer
         self._zoom: int = 100
         self._always_remote.clicked.connect(self._allow_sender)
+        self._smallest_width: int = 0  # set_width_rule
+        self.set_width_rule(0)  # as before: what the message needs counts (a message window; the reading pane sets its own)
         self.clear()
 
     # --- showing --------------------------------------------------------------------------------
@@ -519,6 +651,8 @@ class ReaderWidget(QWidget):
     def clear(self) -> None:
         self._hover("")  # the link under the pointer goes with the message
         self._header.hide()
+        self._header_area.hide()
+        self.setMinimumWidth(0)  # nothing shown: no width of its own
         self._attachments.hide()
         self._banner.hide()
         self._stack.setCurrentWidget(self._placeholder)
@@ -536,6 +670,10 @@ class ReaderWidget(QWidget):
         """Display a message.show result."""
         self._hover("")  # the link under the pointer went with the message before
         self._header.show()
+        self._header_area.show()
+        self._header_area.horizontalScrollBar().setValue(0)  # every message starts at its left edge
+        self._header_area.verticalScrollBar().setValue(0)  # and at its top
+        self.setMinimumWidth(self._smallest_width)
         self._subject.setText(shown.subject or "(no subject)")
         senders: tuple[str, ...] = tuple(displayed_address(text) for text in shown.sender)  # the quotes Reply needs are left out on screen
         recipients: tuple[str, ...] = tuple(displayed_address(text) for text in shown.to)
@@ -554,6 +692,7 @@ class ReaderWidget(QWidget):
         self._avatar.setAlignment(self._avatar.alignment().AlignCenter)
         self._avatar.setStyleSheet(f"background-color: {avatar_colour(who).name()}; border-radius: {px_for(self, 40) // 2}px;")
         self._fill_attachments(shown.attachments)
+        self._header_area.updateGeometry()  # its height follows the new lines
         html_body = shown.html_body
         text_body = shown.text_body
         self._banner.hide()
@@ -582,28 +721,42 @@ class ReaderWidget(QWidget):
             self._stack.setCurrentWidget(self._text)
             self._text.show_text(text_body or "", pictures)
 
+    def set_width_rule(self, smallest: int) -> None:
+        """0: what the message needs sets the reader's smallest width (a message window, or the reading pane when it may widen to fit the
+        message); otherwise, while a message is shown, its smallest width is this fixed one, whatever the message, and a word too long
+        to wrap brings a sideways scrollbar to the header (D-304)."""
+        self._smallest_width = smallest
+        follows = smallest == 0
+        self._header_area.set_follows_content(follows)
+        self._date.setWordWrap(not follows)  # a narrow pane puts the date on two lines rather than scroll sideways
+        self._banner_label.setWordWrap(not follows)  # the remote content line wraps
+        self._banner_layout.setDirection(QBoxLayout.Direction.LeftToRight if follows else QBoxLayout.Direction.TopToBottom)  # its buttons below it
+        self._banner_buttons.set_wraps(not follows)
+        self._attachments.set_wraps(not follows)  # the files go on in a next row
+        self.setMinimumWidth(smallest if smallest and self._header_area.isVisibleTo(self) else 0)  # 0: what its parts need counts
+
+    def header_scrolls_sideways(self) -> bool:
+        return self._header_area.horizontalScrollBar().isVisible()
+
     def set_tags(self, labels: str) -> None:
         """The tags of the shown message (rich text from TagColourBook.html); empty hides the line."""
         self._tags.setText(labels)
         self._tags.setVisible(bool(labels))
+        self._header_area.updateGeometry()
 
     def _fill_attachments(self, attachments: tuple[AttachmentInfo, ...]) -> None:
-        while self._attachments_layout.count() > 1:
-            item = self._attachments_layout.takeAt(0)
-            widget = item.widget() if item is not None else None
-            if widget is not None:
-                widget.deleteLater()
+        self._attachments.clear()
         self._chips = QButtonGroup(self._attachments)  # one file selected at a time
         self._names = {position: attachment.suggested_name for position, attachment in enumerate(attachments)}
         shown = 0
         for position, attachment in enumerate(attachments):
             if attachment.inline:
                 continue
-            chip = AttachmentChip(f"📎 {attachment.suggested_name} ({file_size(attachment.size)})", self._attachments)
+            chip = AttachmentChip(attachment.suggested_name, file_size(attachment.size), self._attachments)
             self._chips.addButton(chip, position)
             chip.open_requested.connect(partial(self._open_attachment, position))
             chip.customContextMenuRequested.connect(partial(self._chip_menu, chip, position))
-            self._attachments_layout.insertWidget(self._attachments_layout.count() - 1, chip)
+            self._attachments.add(chip)
             shown += 1
         self._attachments.setVisible(shown > 0)
 

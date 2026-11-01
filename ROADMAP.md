@@ -191,6 +191,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | CR.6 | The owner's report (2026-11-01): after a Refresh an idle Chrono Mail kept using 25 % of the processor. The busy bar draws itself and stops when the work ends, 20 steps a second; the mail display has a window of its own, so a small change no longer redraws the whole window (D-266). | done (4.2.464) |
 | CR.7 | Every busy bar the same (the owner): the moving bars of Import, Export, Backup, Restore and the update download step 20 times a second (Qt's own: 60), only while on screen (D-266). | done (4.2.465) |
 | CR.8 | Every moving bar looks like Qt's own again (the owner): the framed blue bar with light stripes sliding through it, drawn by the program at 20 steps a second (D-266). | done (4.2.466) |
+| CR.9 | The reading pane keeps the width set with the separator, whatever the message (the owner); Settings > Reading "Widen the reading pane to fit the message" (off by default) brings back the old way (D-304). | done (4.2.467) |
 
 ## Documentation (B-07, from 2.3.317, D-242)
 

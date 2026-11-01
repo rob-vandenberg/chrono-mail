@@ -31,9 +31,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.2.401"
+__version__ = "readingpane.py 4.2.467"
 
 # --- Version history ----------------------------------------------------
+# v4.2.467: the pane keeps the width the person gave it, whatever the message (D-304); Settings > Reading may let it widen to fit
 # v4.2.401: the list and the pane get back the widths or heights they had at a place when the pane returns there
 #           (Settings > Message list tries a place, Cancel)
 # v3.6.349: an Outbox message that was sent already opens in a message window to be read (RV-181)
@@ -43,6 +44,7 @@ __version__ = "readingpane.py 4.2.401"
 # v1.9.264: R-17: reading mail as a part of its own (out of ui/mainwindow.py): the reading pane with the conversation bar, the message
 #           it shows and marking it as read, where the pane is, the message windows, attachments, links, Save as, View source and Print
 
+SMALLEST_WIDTH: int = 400  # the reading pane's smallest width while it shows a message and keeps its own width (D-304), at the main window's size factor
 PANE_PLACES: tuple[tuple[str, str], ...] = (("right", "At the right"), ("bottom", "At the bottom"), ("off", "Off"))
 
 
@@ -94,6 +96,7 @@ class ReadingPane(QObject):
         messages.taken_away.connect(self._taken_away)
         messages.conversations_toggled.connect(self.conversation_bar.clear)
         tags.message_tags_changed.connect(self._message_tags_changed)
+        self.apply_width_rule()
 
     # --- what is shown ---------------------------------------------------------------------------------------------
 
@@ -244,6 +247,14 @@ class ReadingPane(QObject):
     def apply_scale(self) -> None:
         for reader in self.readers():
             reader.apply_scale()
+        self.apply_width_rule()  # the smallest width follows the main window's size factor
+
+    def apply_width_rule(self) -> None:
+        """The pane keeps the width the person gave it with the separator: while a message is shown its smallest width is a fixed one,
+        and the message never sets it (D-304). With Settings > Reading's "Widen the reading pane to fit the message", what the message
+        needs sets it, as before."""
+        fits = self._prefs.read().reading_pane_fits_message
+        self.reader.set_width_rule(0 if fits else scale.px(SMALLEST_WIDTH))
 
     def try_reading_scale(self, factor: float) -> None:
         for reader in self.readers():

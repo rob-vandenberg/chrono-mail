@@ -59,9 +59,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.449"
+__version__ = "settingsdialog.py 4.2.467"
 
 # --- Version history ----------------------------------------------------
+# v4.2.467: Settings > Reading: Widen the reading pane to fit the message (D-304)
 # v4.2.449: calendars_given: Edit account linked or changed a calendar server; only then its calendars get a first fill (D-300)
 # v4.2.444: Settings > Accounts writes each row with account_line, shared with the For list of a calendar server
 # v4.2.436: Message list: the column list gets the open kind of folder's stored and fresh-install columns, its name for the hover
@@ -674,6 +675,8 @@ class SettingsDialog(QDialog):
         self.prefer_plain.setChecked(self._chosen.prefer_plain)
         self.links_ask = part(page, QCheckBox, "linksAsk")
         self.links_ask.setChecked(self._chosen.links_ask)
+        self.fits_message = part(page, QCheckBox, "fitsMessage")
+        self.fits_message.setChecked(self._chosen.reading_pane_fits_message)
         self.remote_always = part(page, QCheckBox, "remoteAlways")
         self.remote_always.setChecked(self._chosen.remote_always)
         self.remote_senders = part(page, QPlainTextEdit, "remoteSenders")
@@ -959,6 +962,7 @@ class SettingsDialog(QDialog):
             tag_text_colour=self.tag_text_colour.isChecked(), unread_leaves_on_read=self.unread_leaves_on_read.isChecked(),
             mark_read=str(self.mark_read_box.currentData()), mark_read_delay_ms=self.mark_read_delay.value(), reading_scale=scale.factor_at(self.reading_slider.value()),
             prefer_plain=self.prefer_plain.isChecked(), remote_always=self.remote_always.isChecked(), remote_senders=senders, links_ask=self.links_ask.isChecked(),
+            reading_pane_fits_message=self.fits_message.isChecked(),
             default_account=str(self.default_account.currentData() or ""), compose_html=bool(self.compose_html.currentData()),
             reply_quote=str(self.reply_quote_box.currentData()), autosave_seconds=self.autosave.value(), warn_no_subject=self.warn_no_subject.isChecked(),
             startup=StartupView.parse(str(self.startup_box.currentData() or "")),

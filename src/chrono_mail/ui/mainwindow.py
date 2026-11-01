@@ -67,9 +67,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.459"
+__version__ = "mainwindow.py 4.2.467"
 
 # --- Version history ----------------------------------------------------
+# v4.2.467: Settings OK takes in Widen the reading pane to fit the message (D-304)
 # v4.2.459: at start a profile's wallet entries move to its own wallet name first (D-274)
 # v4.2.453: the status line says what the rules did when a folder was renamed or deleted (rules_changed, D-302)
 # v4.2.451: the Refresh menu: each mail account has Send and Receive, Send and Receive in a submenu, each calendars-only account one
@@ -1177,6 +1178,8 @@ class MainWindow(QMainWindow):
             self.columns.apply_list_look(after.list_scale if self.prefs.trying is not None else None)  # tried: the size the slider shows
         if differ("reading_pane"):
             self.reading.set_place(after.reading_pane)  # only then: a width the person dragged stays
+        if differ("reading_pane_fits_message"):
+            self.reading.apply_width_rule()
         if differ("remote_always", "remote_senders", "prefer_plain", "reading_scale"):
             self.reading.take_in_reader_preferences()
             self.composing.set_text_size()

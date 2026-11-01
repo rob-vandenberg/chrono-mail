@@ -49,6 +49,13 @@
        </property>
       </widget>
      </item>
+     <item row="4" column="0" colspan="2">
+      <widget class="QCheckBox" name="fitsMessage">
+       <property name="text">
+        <string>Widen the reading pane to fit the message</string>
+       </property>
+      </widget>
+     </item>
     </layout>
    </item>
    <item>

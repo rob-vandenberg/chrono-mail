@@ -3,11 +3,12 @@ import json
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QItemSelectionModel, QSettings, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QKeySequence
+from PySide6.QtCore import QItemSelectionModel, QPoint, QPointF, QSettings, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QKeySequence, QWheelEvent
 from PySide6.QtWidgets import QApplication, QDialog, QLabel
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.commands_mail import AttachmentInfo
 from chrono_mail.engine.commands_sidebar import LocalFolderParameters
 from chrono_mail.ui import appearance, prefs, scale
 from chrono_mail.ui.messagewindow import MessageWindow
@@ -22,9 +23,10 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 4.2.436"
+__version__ = "test_ui_preferences.py 4.2.467"
 
 # --- Version history ----------------------------------------------------
+# v4.2.467: the reading pane keeps the width the person gave it, whatever the message; Widen the reading pane to fit the message (D-304)
 # v4.2.436: Apply to all, Default and Reset (were Standard columns) greyed in the card layout
 # v2.0.298: Settings > Sidebar's Favorites ticks in the owner's new order (D-061)
 # v2.0.290: Settings > Sidebar's Favorites ticks in the owner's order (D-061)
@@ -653,3 +655,207 @@ def test_a_dragged_reading_pane_width_stays_after_settings_ok(world: World, qtbo
     window.settings.setValue("mark_read", "never")
     window.apply_preferences()
     assert window.content_splitter.sizes() == dragged
+
+
+WIDE_MESSAGE = shown(
+    text="Hello", sender=("Someone <" + "x" * 80 + "@example.com>",),
+    attachments=tuple(AttachmentInfo(f"report-{n}-final-version.pdf", "application/pdf", 123_456, False, f"report-{n}-final-version.pdf") for n in range(3)),
+)
+
+
+def _window_with_dragged_pane(world: World, qtbot: QtBot) -> list[int]:
+    window = world.window
+    window.start()
+    window.resize(1600, 900)
+    window.show()
+    qtbot.waitExposed(window)
+    settle(qtbot, world)  # the start has shown what it shows: nothing it does later clears the message the test shows
+    window.content_splitter.setSizes([600, 450])
+    return window.content_splitter.sizes()
+
+
+def test_the_reading_pane_is_not_widened_by_the_message_by_default() -> None:
+    """D-304: the reading pane keeps the width the person gave it unless Settings > Reading says otherwise."""
+    assert prefs.DEFAULTS["reading_pane_fits_message"] is False and prefs.Preferences().reading_pane_fits_message is False
+
+
+def test_the_reading_pane_keeps_its_width_whatever_the_message(world: World, qtbot: QtBot) -> None:
+    """D-304: a long address, files and the remote content line never move the separator; only a word too long to wrap scrolls sideways."""
+    dragged = _window_with_dragged_pane(world, qtbot)
+    reader = world.window.reader
+    reader.show_message(WIDE_MESSAGE)
+    qtbot.waitUntil(reader.header_scrolls_sideways)  # the address is one word wider than the pane
+    assert world.window.content_splitter.sizes() == dragged
+    reader.show_message(shown(text="Hello"))
+    qtbot.waitUntil(lambda: not reader.header_scrolls_sideways())
+    assert world.window.content_splitter.sizes() == dragged
+    reader.show_message(WIDE_MESSAGE)  # going through the list: before 4.2.467 the second wide message moved the separator
+    reader._banner.show()  # noqa: SLF001 - the remote content line, as an HTML message with outside pictures shows it
+    qtbot.waitUntil(reader.header_scrolls_sideways)
+    qtbot.waitUntil(lambda: reader._banner.height() > 0)  # noqa: SLF001 - laid out
+    assert world.window.content_splitter.sizes() == dragged
+
+
+def test_the_reading_pane_widens_to_fit_the_message_when_the_setting_says_so(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    dragged = _window_with_dragged_pane(world, qtbot)
+
+    def change(dialog: SettingsDialog) -> None:
+        dialog.fits_message.setChecked(True)
+
+    edit_settings(world, qtbot, monkeypatch, change)
+    assert prefs.read_preferences(settings_of(world)).reading_pane_fits_message
+    reader = world.window.reader
+    reader.show_message(WIDE_MESSAGE)
+    qtbot.waitUntil(lambda: world.window.content_splitter.sizes()[1] > dragged[1])
+    assert not reader.header_scrolls_sideways()
+
+
+def test_the_header_keeps_every_line_when_the_pane_gets_narrower(world: World, qtbot: QtBot) -> None:
+    """D-304 (review): the header is as high as its lines need at the width it has, also after the separator was dragged."""
+    _window_with_dragged_pane(world, qtbot)
+    window = world.window
+    reader = window.reader
+    reader.show_message(shown(text="Hello", subject="A long subject " * 5, to=tuple(f"person{n}@example.com" for n in range(12))))
+    area = reader._header_area  # noqa: SLF001
+    qtbot.waitUntil(lambda: area.height() == area.heightForWidth(area.width()))
+    wide_height = area.height()
+    window.content_splitter.setSizes([sum(window.content_splitter.sizes()) - 400, 400])
+    qtbot.waitUntil(lambda: area.height() == area.heightForWidth(area.width()) and area.height() > wide_height)
+
+
+def test_ordinary_mail_needs_no_sideways_scrollbar_at_the_smallest_width(world: World, qtbot: QtBot) -> None:
+    _window_with_dragged_pane(world, qtbot)
+    window = world.window
+    reader = window.reader
+    window.content_splitter.setSizes([sum(window.content_splitter.sizes()) - 300, 300])  # below the smallest width: it stops there
+    reader.show_message(shown(text="Hello", sender=("Jan de Vries <jan.devries@gemeente-amsterdam.nl>",)))
+    area = reader._header_area  # noqa: SLF001
+    qtbot.waitUntil(lambda: window.reading_pane.width() == scale.px(400) and area.height() == area.heightForWidth(area.width()))
+    assert not reader.header_scrolls_sideways()  # the date goes on a second line instead
+
+
+def test_a_long_file_name_is_shortened_in_the_middle_never_cut_off(world: World, qtbot: QtBot) -> None:
+    _window_with_dragged_pane(world, qtbot)
+    reader = world.window.reader
+    name = "Quarterly-financial-report-of-the-municipal-housing-department-final-version-2.pdf"
+    reader.show_message(shown(text="x", attachments=(AttachmentInfo(name, "application/pdf", 123_456, False, name),)))
+    chip = reader.chips()[0]
+    row = reader._attachments  # noqa: SLF001
+    qtbot.waitUntil(lambda: "…" in chip.text())
+    assert chip.geometry().right() < row.width() and chip.text().startswith("📎 Quarterly") and chip.text().endswith("version-2.pdf (120.6 KB)")
+    assert name in chip.toolTip()
+
+
+def test_a_message_window_and_the_widening_pane_lay_the_message_out_as_before(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """The rule of a message window (and of the pane with Widen the reading pane to fit the message): the files in one row, the remote
+    content line on one line, the date on one line; they set the smallest width, as before 4.2.467."""
+    reader.resize(300, 600)
+    files = tuple(AttachmentInfo(f"report-{n}-final-version.pdf", "application/pdf", 123_456, False, f"report-{n}-final-version.pdf") for n in range(3))
+    reader.show_message(shown(text="x", attachments=files))
+    row = reader._attachments  # noqa: SLF001
+    assert not row.wraps and row.minimumSizeHint().width() == row.sizeHint().width()
+    assert len({chip.geometry().y() for chip in reader.chips()}) == 1
+    assert not reader._banner_label.wordWrap() and not reader._date.wordWrap()  # noqa: SLF001
+    assert reader.minimumSizeHint().width() >= row.sizeHint().width()
+
+
+@pytest.mark.parametrize("smallest", [0, 400], ids=["fits_message", "keeps_width"])
+def test_a_long_list_of_addresses_never_makes_the_reader_taller(reader: ReaderWidget, smallest: int) -> None:
+    """D-304 (review round 2): the header's lines never set the reader's smallest height beyond what the header itself asks, as before 4.2.467."""
+    reader.set_width_rule(smallest)
+    reader.show_message(shown(text="x", to=("bob@example.com",)))
+    few = reader.minimumSizeHint().height()
+    reader.show_message(shown(text="x", to=tuple(f"person{n}@example.com" for n in range(300))))
+    assert reader.minimumSizeHint().height() == few
+
+
+def test_the_header_takes_no_focus_and_each_message_starts_at_its_left_edge(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """D-304 (review round 3): the header never takes the keyboard (OR-16), and a header scrolled sideways starts at its left edge again."""
+    reader.set_width_rule(400)
+    reader.resize(400, 500)
+    wide = shown(text="x", sender=("Someone <" + "x" * 80 + "@example.com>",))
+    reader.show_message(wide)
+    qtbot.waitUntil(reader.header_scrolls_sideways)
+    area = reader._header_area  # noqa: SLF001
+    assert area.focusPolicy() == Qt.FocusPolicy.NoFocus
+    area.horizontalScrollBar().setValue(area.horizontalScrollBar().maximum())
+    reader.show_message(wide)
+    assert area.horizontalScrollBar().value() == 0
+
+
+def test_the_tick_widens_the_pane_while_a_message_is_shown(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    dragged = _window_with_dragged_pane(world, qtbot)
+    reader = world.window.reader
+    reader.show_message(WIDE_MESSAGE)
+    qtbot.waitUntil(reader.header_scrolls_sideways)
+
+    def change(dialog: SettingsDialog) -> None:
+        dialog.fits_message.setChecked(True)
+
+    edit_settings(world, qtbot, monkeypatch, change)
+    qtbot.waitUntil(lambda: world.window.content_splitter.sizes()[1] > dragged[1] and not reader.header_scrolls_sideways())
+
+
+def test_the_date_stays_on_one_line_while_the_header_has_room(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """D-304 (review round 4): the date may go on two lines only when the room runs out."""
+    reader.set_width_rule(400)
+    reader.resize(1000, 500)
+    reader.show_message(shown(text="x"))
+    date = reader._date  # noqa: SLF001
+    qtbot.waitUntil(lambda: date.width() >= date.sizeHint().width())
+    assert date.heightForWidth(date.width()) < 2 * date.fontMetrics().height()  # its text on one line (the label itself is as high as its row)
+
+
+@pytest.mark.parametrize("smallest", [0, 400], ids=["fits_message", "keeps_width"])
+def test_the_wheel_never_scrolls_a_cut_off_header_up_or_down(reader: ReaderWidget, qtbot: QtBot, smallest: int) -> None:
+    """D-304 (review round 5): the header never scrolls up and down; the wheel passes on, as over the header before 4.2.467."""
+    reader.set_width_rule(smallest)
+    reader.resize(700, 200)
+    reader.show_message(shown(text="x", to=tuple(f"person{n}@example.com" for n in range(200))))
+    area = reader._header_area  # noqa: SLF001
+    qtbot.waitUntil(lambda: area.verticalScrollBar().maximum() > 0)  # laid out: the header is cut off at the bottom
+    centre = QPointF(area.rect().center())
+    wheel = QWheelEvent(centre, area.mapToGlobal(centre), QPoint(), QPoint(0, -120), Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                        Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(area.viewport(), wheel)
+    assert area.verticalScrollBar().value() == 0
+
+
+@pytest.mark.parametrize("smallest", [0, 400], ids=["fits_message", "keeps_width"])
+def test_keys_in_a_header_line_never_scroll_the_header(reader: ReaderWidget, qtbot: QtBot, smallest: int) -> None:
+    """D-304 (review round 6): Down and Page Down in a header line with the focus do what they did before, never scroll the header (OR-16)."""
+    reader.set_width_rule(smallest)
+    reader.resize(700, 200)
+    reader.show_message(shown(text="x", to=tuple(f"person{n}@example.com" for n in range(200))))
+    area = reader._header_area  # noqa: SLF001
+    qtbot.waitUntil(lambda: area.verticalScrollBar().maximum() > 0)
+    people = reader._people  # noqa: SLF001
+    people.setFocus()
+    qtbot.keyClick(people, Qt.Key.Key_Down)
+    qtbot.keyClick(people, Qt.Key.Key_PageDown)
+    assert area.verticalScrollBar().value() == 0
+
+
+def test_a_sideways_swipe_scrolls_a_header_too_wide_for_the_pane(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.set_width_rule(400)
+    reader.resize(400, 500)
+    reader.show_message(shown(text="x", sender=("Someone <" + "x" * 80 + "@example.com>",)))
+    qtbot.waitUntil(reader.header_scrolls_sideways)
+    area = reader._header_area  # noqa: SLF001
+    centre = QPointF(area.rect().center())
+    swipe = QWheelEvent(centre, area.mapToGlobal(centre), QPoint(-40, 3), QPoint(-120, 8), Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                        Qt.ScrollPhase.ScrollUpdate, False)
+    QApplication.sendEvent(area.viewport(), swipe)
+    assert area.horizontalScrollBar().value() == 40
+
+
+def test_the_remote_content_line_never_squeezes_its_buttons_at_the_smallest_width(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """D-304 (review round 7): at the smallest width the line's text goes above its buttons, which keep their whole text."""
+    reader.set_width_rule(400)
+    reader.resize(400, 600)
+    reader.show_message(shown(text="x"))
+    reader._banner.show()  # noqa: SLF001 - the remote content line, as an HTML message with outside pictures shows it
+    buttons = (reader._load_remote, reader._always_remote)  # noqa: SLF001
+    qtbot.waitUntil(lambda: all(button.width() == button.sizeHint().width() for button in buttons))
+    label = reader._banner_label  # noqa: SLF001
+    assert all(button.mapTo(reader, button.rect().topLeft()).y() > label.mapTo(reader, label.rect().bottomLeft()).y() for button in buttons)
