@@ -11,13 +11,15 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.schedule import SNOOZE_GROUPS, snooze_group
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
-from chrono_mail.index import SearchFilter, SortField
+from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.index.model import DATE_GROUPS, SIZE_GROUPS, YES_NO_SORTS, GroupCount
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_combined.py 4.2.432"
+__version__ = "commands_combined.py 4.2.471"
 
 # --- Version history ----------------------------------------------------
+# v4.2.471: a Favorites view takes the first rows of all its folders of a mailbox in one order from the sort index and reads only those
+#           rows (_gather_first, D-306)
 # v4.2.432: the Contact sort of a Favorites view judges every row by the person it shows (RECIPIENT_VIEWS)
 # v4.2.430: to_shown merged by the row's own value
 # v4.2.429: the sort order to_shown (From / To for mail one sent, D-295)
@@ -217,12 +219,13 @@ def gather(engine: Engine, parameters: CombinedParameters, want: int | None, gro
     for account in _places(engine, parameters.accounts):
         with open_mailbox(engine, account) as mailbox, mailbox.reading():
             filters = _filters(view, parameters, mailbox, account)  # once per mailbox: the same for each of its folders
-            for folder in mailbox.folders():
-                if not _chosen(view, folder):
-                    continue
+            chosen = [folder for folder in mailbox.folders() if _chosen(view, folder)]
+            if want is not None and want < EVERYTHING and not contact and not timed and sort in _FROM_THE_INDEX and chosen:  # the first rows, from the sort indexes
+                _gather_first(mailbox, account, parameters.query, chosen, filters, want, sort, descending, found)
+            for folder in chosen:
                 times = mailbox.timed(folder.path)  # Snoozed, Scheduled, the Outbox: when each message leaves it; None for any other folder
                 rows = None
-                if want is not None:
+                if want is not None and (contact or timed or sort not in _FROM_THE_INDEX or want >= EVERYTHING):  # a whole view: every row is read anyway
                     rows = mailbox.index.search(parameters.query, folder.path, filters, 0, EVERYTHING if contact or timed else want, sort, descending)
                     if contact:  # the index does not know the contacts: every message is looked at
                         found.from_contact.update(((account, store_id), yes) for store_id, yes in from_contacts(rows, known, view in RECIPIENT_VIEWS).items())
@@ -242,6 +245,50 @@ def gather(engine: Engine, parameters: CombinedParameters, want: int | None, gro
                     found.total += total
                     found.unread += unread
     return found
+
+
+# The sorts whose value the index hands out as the rows hold it (_row_key, _value_key): a Favorites view merges their first rows by
+# those values. The others (folder, conversation, account, contact, the leaving time) read the first rows of each folder whole, as before.
+_FROM_THE_INDEX: frozenset[SortField] = frozenset(SortField) - {SortField.FOLDER, SortField.CONVERSATION, SortField.ACCOUNT}
+
+
+def _gather_first(
+    mailbox: Mailbox, account: str, query: str, chosen: list[Folder], filters: SearchFilter, want: int, sort: SortField, descending: bool, found: Gathered,
+) -> None:
+    """The first rows of a mailbox's chosen folders: each folder's first ones from its sort index with the value they are sorted by,
+    merged in the order in_order gives (the same keys, ties by the folder's place, then as the folder lists them), and only the first
+    of all read whole (D-306). Before, the first rows of every folder were read whole: one random read each on a spinning disk."""
+    candidates: list[tuple[str, tuple[str, ...], object, int | None]] = [
+        (store_id, folder.path, value, date)
+        for folder in chosen
+        for store_id, value, date in mailbox.index.first_rows(query, folder.path, filters, sort, descending, want)
+    ]
+    if sort in _NEWEST_WITHIN_SORTS:  # as in_order: newest first, then by the value (a stable sort keeps the rest as it was)
+        candidates.sort(key=lambda candidate: (candidate[3] is not None, candidate[3] or 0), reverse=True)
+    candidates.sort(key=lambda candidate: _indexed_key(sort, candidate[2]), reverse=descending)
+    first = candidates[:want]
+    indexed = mailbox.index.messages([store_id for store_id, _, _, _ in first])
+    by_folder: dict[tuple[str, ...], list[IndexedMessage]] = {}
+    for store_id, path, _, _ in first:
+        if store_id in indexed:
+            by_folder.setdefault(path, []).append(indexed[store_id])
+    for folder in chosen:
+        if folder.path in by_folder:
+            found.rows.extend(replace(row, account=account) for row in _rows(mailbox, by_folder[folder.path], mailbox.timed(folder.path)))
+
+
+_NEWEST_WITHIN_SORTS: frozenset[SortField] = frozenset(field for field in SortField if field.value in _NEWEST_WITHIN)
+
+
+def _indexed_key(sort: SortField, value: object) -> tuple[bool, float] | int | str:
+    """The key _row_key or _value_key gives a row, from the value the index sorted it by."""
+    if sort in (SortField.DATE, SortField.SENT):
+        return (value is not None, float(typing.cast(int, value)) if value is not None else 0.0)
+    if sort is SortField.UNREAD:
+        return 1 - typing.cast(int, value)  # the index sorts by the read bit, the rows by being unread
+    if sort in (SortField.SIZE, SortField.FLAGGED, SortField.REPLIED, SortField.ATTACHMENT):
+        return typing.cast(int, value)
+    return str(value if value is not None else "").translate(_NO_CASE)
 
 
 def in_order(found: Gathered, parameters: CombinedParameters) -> list[MessageRow]:

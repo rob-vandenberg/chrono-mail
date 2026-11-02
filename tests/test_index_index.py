@@ -17,9 +17,10 @@ from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 4.2.406"
+__version__ = "test_index_index.py 4.2.471"
 
 # --- Version history ----------------------------------------------------
+# v4.2.471: a yes/no sort with no first may be served by any covering sort index (D-306)
 # v4.2.406: a search with subfolders finds every folder inside, at any depth, and no sibling whose name starts the same (D-287)
 # v2.0.280: sent, the moment the message carries itself, kept beside Received, sorted and grouped by (the Sent column, B-16)
 # v1.9.276: Every older format (6 to 10 too) is rebuilt: format 11's date is when the server received the message (D-226); the in-place upgrade tests are gone
@@ -616,7 +617,10 @@ def test_the_new_sorts_of_a_folder_use_their_sqlite_index(tmp_path: Path, sort: 
     index = filled(tmp_path, 5)
     for descending in (True, False):
         plan = str(index._connection.execute(f"EXPLAIN QUERY PLAN SELECT m.id FROM messages m WHERE m.folder = ? ORDER BY {_order(sort, descending)} LIMIT 5", ("Inbox",)).fetchall())  # noqa: SLF001
-        assert f"messages_by_{sort.value}" in plan
+        if descending:
+            assert f"messages_by_{sort.value}" in plan
+        else:  # no first: a sort either way; with every sort index covering (D-306) any of them may serve a folder this small
+            assert "COVERING INDEX" in plan and "SCAN" not in plan, plan
     plan = str(index._connection.execute(f"EXPLAIN QUERY PLAN SELECT m.id FROM messages m WHERE m.folder = ? ORDER BY {_order(sort, True)} LIMIT 5", ("Inbox",)).fetchall())  # noqa: SLF001
     assert "TEMP B-TREE" not in plan  # yes first, newest first: read straight from the index
     index.close()

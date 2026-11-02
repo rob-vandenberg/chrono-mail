@@ -39,7 +39,7 @@ def _plans(index: Index, asked: list[str]) -> list[str]:
         " ".join(str(row[3]) for row in index._connection.execute("EXPLAIN QUERY PLAN " + statement))  # noqa: SLF001
         for statement in asked
         if statement.lstrip().upper().startswith("SELECT") and "FROM messages m" in statement
-        and not statement.startswith("SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder")  # the count of its marked mail (_few_marked)
+        and not statement.startswith(("SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder", "SELECT m.store_id FROM "))  # nor the view's unread ones (D-306)  # the count of its marked mail (_few_marked)
     ]
     index.close()
     return plans

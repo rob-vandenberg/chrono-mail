@@ -1,6 +1,7 @@
 from contextlib import AbstractContextManager, nullcontext
 import math
 import os
+import threading
 from email.utils import getaddresses
 import re
 import sqlite3
@@ -35,14 +36,16 @@ from chrono_mail.index.schema import (
     UPGRADE_FROM_11,
     UPGRADE_FROM_13,
     UPGRADE_FROM_15,
-    UNREAD_INDEXES,
+    SORT_INDEXES,
     FILL_HEADERS_KEY,
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.2.470"
+__version__ = "index.py 4.2.471"
 
 # --- Version history ----------------------------------------------------
+# v4.2.471: format 19: the sort indexes hold each message's id and read mark, remade afterwards one at a time in an upgraded index
+#           (sort_indexes_to_make, make_sort_index) (D-306)
 # v4.2.470: a Flagged view gathers its flagged mail through the folder's own index, a tag smaller than its folder leads within it,
 #           and the marks are written as their indexes are built: a Flagged or Tags view reads only its marked mail (D-305)
 # v4.2.469: format 18: the sort indexes of unread mail (D-305), made afterwards one at a time in an upgraded index (unread_indexes_to_make,
@@ -127,6 +130,13 @@ _TEXT_GROUP_COLUMN: dict[SortField, str] = {
     SortField.SENDER_FULL: "m.sender", SortField.SENDER_ADDRESS: "m.sender_address", SortField.RECIPIENT_NAMES: "m.recipient_names",
     SortField.RECIPIENT_ADDRESSES: "m.recipient_addresses", SortField.ACCOUNT: ACCOUNT_NAME, SortField.TO_SHOWN: "m.to_shown",
 }
+# Where each message's row is, by index file (its path and inode: a rebuilt file starts afresh), as the orders handed out found them (D-306):
+# the rows of a list are asked by their messages (D-218), and reading a row by its number skips the lookup of its id, one random read per
+# message on a spinning disk. Only a help: a row read by its number counts only when it still holds that message.
+_ROW_NUMBERS: dict[str, tuple[int, dict[str, int]]] = {}  # by path: the inode the numbers are of, and the numbers
+_ROW_NUMBERS_LOCK: threading.Lock = threading.Lock()
+_ROW_NUMBERS_KEPT: int = 300_000  # row numbers kept per index file at most (about 40 MB); beyond it the oldest are forgotten
+
 _FIELD_COLUMN: dict[str, str] = {"from": "sender", "to": "recipients", "subject": "subject", "body": "body"}
 _TERM: re.Pattern[str] = re.compile(r'(-?)(?:(\w+):)?("[^"]*"?|\S+)')
 _TAG_TERM: re.Pattern[str] = re.compile(r'(?i)(?<!\S)(-?)tag:("[^"]*"?|\S+)')
@@ -288,7 +298,8 @@ class Index(IndexDatabase):
             found = self._format()
             if found is None:
                 self._create_schema()
-            elif found == "17":  # 18 only adds the unread sort indexes: made afterwards (make_unread_index), nothing to fill in
+            elif found in ("17", "18"):  # 18 and 19 only change the sort indexes: made afterwards (make_sort_index), nothing to fill in
+                self._connection.execute("DROP INDEX IF EXISTS messages_by_date_unread")  # 4.2.469 made it; the Unread index serves that sort
                 self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
             elif found in ("11", "12", "13", "14", "15", "16"):
                 self._upgrade_in_place(found)
@@ -313,16 +324,20 @@ class Index(IndexDatabase):
         else:  # 14, 15 and 16: only what the headers say is new (the receiving account, D-292; the person From / To shows, D-295)
             self._connection.execute("INSERT OR REPLACE INTO meta VALUES (?, '1')", (FILL_HEADERS_KEY,))
 
-    def unread_indexes_to_make(self) -> list[str]:
-        """After an upgrade in place: the statements of the unread sort indexes this index does not have yet (D-305)."""
-        present = {str(row[0]) for row in self._connection.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
-        return [statement for statement in UNREAD_INDEXES if statement.split()[5] not in present]
+    def sort_indexes_to_make(self) -> list[str]:
+        """After an upgrade in place: the statements of the sort indexes this index does not have yet as format 19 has them (D-305, D-306):
+        missing, or without each message's id."""
+        return [
+            statement for statement in SORT_INDEXES
+            if "store_id" not in {str(row[0]) for row in self._connection.execute("SELECT name FROM pragma_index_info(?)", (statement.split()[2],))}
+        ]
 
-    def make_unread_index(self, statement: str) -> None:
-        """One of the unread sort indexes (a statement unread_indexes_to_make gave), in a step of its own."""
-        if statement not in UNREAD_INDEXES:
-            raise ValueError("Not an unread sort index")
+    def make_sort_index(self, statement: str) -> None:
+        """One of the sort indexes (a statement sort_indexes_to_make gave), the older one of its name replaced, in a step of its own."""
+        if statement not in SORT_INDEXES:
+            raise ValueError("Not a sort index")
         with self._transaction():
+            self._connection.execute(f"DROP INDEX IF EXISTS {statement.split()[2]}")
             self._connection.execute(statement)
 
     def fill_from_headers(self) -> bool:
@@ -715,20 +730,53 @@ class Index(IndexDatabase):
         limit: int | None = None,
     ) -> list[tuple[str, tuple[str, ...], bool]]:
         """Every message of a folder or a search in the order search() lists them (or the first limit of them), as (store id,
-        folder, unread) only: the order of a view without reading its rows (R-15). Each folder is one shared tuple."""
+        folder, unread) only: the order of a view without reading its rows (R-15), from the sort index alone (D-306). Each folder is one
+        shared tuple."""
         source, where, parameters = self._search_parts(query, folder, filters, None if limit is None else max(0, limit))
+        unread_values = list(parameters)
         order = _order(sort, descending)
         tail = " LIMIT ?" if limit is not None else ""
         if limit is not None:
             parameters.append(max(0, limit))
         try:
+            rows: dict[str, int] = {}
             if folder is not None and not filters.subfolders:  # one folder: its name is not read for every message
-                return [(str(store_id), folder, bool(unread)) for store_id, unread in self._connection.execute(f"SELECT m.store_id, (m.flags & 1) = 0 FROM {source}{where} ORDER BY {order}{tail}", parameters)]
-            paths: dict[str, tuple[str, ...]] = {}
-            sql = f"SELECT m.store_id, m.folder, (m.flags & 1) = 0 FROM {source}{where} ORDER BY {order}{tail}"
-            return [(str(store_id), paths.get(key) or paths.setdefault(key, _folder_path(str(key))), bool(unread)) for store_id, key, unread in self._connection.execute(sql, parameters)]
+                listed = [(str(store_id), folder, rows.setdefault(str(store_id), int(row))) for store_id, row in self._connection.execute(
+                    f"SELECT m.store_id, m.id FROM {source}{where} ORDER BY {order}{tail}", parameters)]
+            else:
+                paths: dict[str, tuple[str, ...]] = {}
+                listed = [
+                    (str(store_id), paths.get(key) or paths.setdefault(key, _folder_path(str(key))), rows.setdefault(str(store_id), int(row)))
+                    for store_id, row, key in self._connection.execute(f"SELECT m.store_id, m.id, m.folder FROM {source}{where} ORDER BY {order}{tail}", parameters)
+                ]
+            # The read mark is in no sort index (a mark change would rewrite them all): the unread ones of the view, from the Unread index.
+            joined = " AND " if where else " WHERE "
+            unread = {str(row[0]) for row in self._connection.execute(f"SELECT m.store_id FROM {source}{where}{joined}(m.flags & 1) = 0", unread_values)}
+            self._remember_rows(rows)
+            return [(store_id, path, store_id in unread) for store_id, path, _ in listed]
         except sqlite3.OperationalError as error:
             raise StorageError(f"The search could not be run: {error}") from None
+
+    def first_rows(
+        self, query: str, folder: tuple[str, ...], filters: SearchFilter, sort: SortField, descending: bool, limit: int,
+    ) -> list[tuple[str, object, int | None]]:
+        """The first messages of a folder in the order search() lists them, as (store id, the value sorted by, the date for the sorts
+        that put the newest first within a value): what a Favorites view merges, from the sort index alone (D-306)."""
+        source, where, parameters = self._search_parts(query, folder, filters, max(0, limit))
+        column = _SORT_COLUMN[sort].removesuffix(" COLLATE NOCASE")
+        newest = "m.date" if sort in _NEWEST_WITHIN else "NULL"
+        parameters.append(max(0, limit))
+        rows: dict[str, int] = {}
+        found: list[tuple[str, object, int | None]] = []
+        try:
+            sql = f"SELECT m.store_id, m.id, {column}, {newest} FROM {source}{where} ORDER BY {_order(sort, descending)} LIMIT ?"
+            for store_id, row, value, date in self._connection.execute(sql, parameters):
+                rows[str(store_id)] = int(row)
+                found.append((str(store_id), value, None if date is None else int(date)))
+        except sqlite3.OperationalError as error:
+            raise StorageError(f"The search could not be run: {error}") from None
+        self._remember_rows(rows)
+        return found
 
     def tally(self, query: str = "", folder: tuple[str, ...] | None = None, filters: SearchFilter = SearchFilter()) -> tuple[int, int]:
         """How many messages a folder or a search holds, and how many of them are unread (what ordered() would list)."""
@@ -739,10 +787,46 @@ class Index(IndexDatabase):
             raise StorageError(f"The search could not be run: {error}") from None
         return int(found[0]), int(found[1])
 
+    def _row_numbers(self) -> dict[str, int]:
+        """The row numbers remembered for this index file (a new file, a new dictionary)."""
+        try:
+            inode = os.stat(self.path).st_ino
+        except OSError:
+            return {}
+        with _ROW_NUMBERS_LOCK:
+            kept = _ROW_NUMBERS.get(str(self.path))
+            if kept is None or kept[0] != inode:  # a file put in its place (a rebuild, a restore): the old numbers are let go
+                kept = (inode, {})
+                _ROW_NUMBERS[str(self.path)] = kept
+            return kept[1]
+
+    def _remember_rows(self, rows: dict[str, int]) -> None:
+        if not rows:
+            return
+        known = self._row_numbers()
+        with _ROW_NUMBERS_LOCK:
+            known.update(rows)
+            if len(known) > _ROW_NUMBERS_KEPT:  # the oldest go, in one step (a dictionary keeps the order things came in)
+                newest = list(known.items())[-_ROW_NUMBERS_KEPT:]
+                known.clear()
+                known.update(newest)
+
     def messages(self, store_ids: Iterable[str]) -> dict[str, IndexedMessage]:
-        """The index rows of these messages (one question per 500); a message the index does not have is left out."""
+        """The index rows of these messages (one question per 500); a message the index does not have is left out. A row whose number an
+        order gave is read by it, and counts only when it still holds that message; the others by their ids (D-306)."""
         wanted = list(dict.fromkeys(store_ids))
         found: dict[str, IndexedMessage] = {}
+        asked = set(wanted)
+        known = self._row_numbers()
+        with _ROW_NUMBERS_LOCK:
+            numbers = [known[store_id] for store_id in wanted if store_id in known]
+        for start in range(0, len(numbers), 500):
+            chunk = numbers[start:start + 500]
+            for values in self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.id IN ({', '.join('?' * len(chunk))})", chunk):
+                message = _row(values)
+                if message.store_id in asked:  # a row that holds another message now (removed and added again) does not count
+                    found[message.store_id] = message
+        wanted = [store_id for store_id in wanted if store_id not in found]
         for start in range(0, len(wanted), 500):
             chunk = wanted[start:start + 500]
             for values in self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.store_id IN ({', '.join('?' * len(chunk))})", chunk):
@@ -885,7 +969,7 @@ class Index(IndexDatabase):
         unread_alone = selective == ["(m.flags & 1) = 0"] and not filters.stay
         gathering = (
             bool(selective) and not unread_alone and not expression
-            and (folder is not None or "(m.flags & 1) = 0" in selective)  # across folders only the unread sort indexes find marked mail
+            and (folder is not None or "(m.flags & 1) = 0" in selective)  # across all folders only the unread sort indexes find marked mail
             and (rows is None or not one_folder or self._few_marked(folder, selective, rows))
         )
         place = ""  # the folder condition with {0} for the steer, asked again with the marks of a view that gathers
@@ -910,6 +994,16 @@ class Index(IndexDatabase):
             stay = sorted(filters.stay)
             conditions.append(f"(({' AND '.join(marks)}) OR m.store_id IN ({', '.join('?' * len(stay))}))")
             parameters.extend((*mark_values, *stay))
+        elif place and not expression and not tag_leads:
+            # The folder walked in a sort index that does not hold the marks: each mark of flags is looked up once through its own index,
+            # never on every message's row (Favorites > Unreplied: 11 s the first time on a spinning disk, D-306).
+            for mark in marks:
+                if mark.startswith(("(m.flags", "((m.flags")) and mark != "(m.flags & 1) = 0":
+                    conditions.append(f"m.id IN (SELECT k.id FROM messages k WHERE {place.format('').replace('m.', 'k.')} AND {mark.replace('m.', 'k.')})")
+                    parameters.extend(place_values)
+                else:
+                    conditions.append(mark)
+            parameters.extend(mark_values)  # only the tags' values: they come last
         else:
             conditions.extend(marks)
             parameters.extend(mark_values)
