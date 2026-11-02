@@ -3702,3 +3702,6 @@ The form had no stretch, so a window made taller put the room above the table. A
 
 ## 2026-11-02, 4.2.485: the header's circles in line (the owner)
 The fields' circles sit inside their outline (2 px border, 4 px inner space); the header's Chrono Mail and Server had neither, so their circles were 6 px further left. They get margin-left 6 px in the same stylesheet, scaled alike. No review round (the owner).
+
+## 2026-11-02, 4.2.486: a long sync conflict scrolls (the owner)
+The table of one conflict is in a scroll area (no frame, up and down only): as tall as it needs when there is room, at least the header and about three rows; the window opens no taller than the screen's free height. Retry sync and Keep here only share the bottom row with Apply and Cancel. No review round (the owner).

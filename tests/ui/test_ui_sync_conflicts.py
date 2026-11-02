@@ -1,6 +1,6 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel, QRadioButton, QStyle, QStyleOptionButton, QWidget
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel, QRadioButton, QScrollArea, QStyle, QStyleOptionButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.485"
+__version__ = "test_ui_sync_conflicts.py 4.2.486"
 
 # --- Version history ----------------------------------------------------
+# v4.2.486: a long conflict scrolls, never taller than the screen; one bottom row of buttons (the owner)
 # v4.2.485: the header's circles in line with those below (the owner)
 # v4.2.484: room below the table, and extra height goes there (the owner)
 # v4.2.483: every difference is a choice, nothing chosen beforehand (the owner)
@@ -499,3 +500,34 @@ def test_the_header_circles_are_in_line_with_the_circles_below_them(qtbot: QtBot
 
     ours, theirs = dialog.groups["SUMMARY"]
     assert (circle_x(dialog.all_local), circle_x(dialog.all_server)) == (circle_x(ours), circle_x(theirs))  # (the owner)
+
+
+def long_conflict(rows: int) -> ConflictSummary:
+    ours = calendar_text("SUMMARY:Ours", "CATEGORIES:" + ",".join(f"Ours {number}" for number in range(rows)))
+    theirs = calendar_text("SUMMARY:Theirs", "CATEGORIES:" + ",".join(f"Theirs {number}" for number in range(rows)))
+    return ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", "events", "clash", "Changed here and on the server", "Ours", "", False, True,
+                           0.0, (ConflictField("SUMMARY", "Title", "Ours", "Theirs"),), base_text=calendar_text("SUMMARY:Meeting"), local_text=ours,
+                           server_text=theirs)
+
+
+def test_a_long_conflict_scrolls_and_its_four_buttons_share_the_bottom_row_in_view(qtbot: QtBot) -> None:
+    dialog = ConflictDialog(long_conflict(3))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert dialog.retry.mapTo(dialog, dialog.retry.rect().topLeft()).y() == dialog.apply_button.mapTo(dialog, dialog.apply_button.rect().topLeft()).y()
+    area = dialog.findChild(QScrollArea)
+    assert area is not None and area.verticalScrollBar().maximum() == 0  # room enough: nothing scrolls
+    dialog.resize(dialog.width(), dialog.minimumSizeHint().height())
+    qtbot.waitUntil(lambda: area.verticalScrollBar().maximum() > 0)  # smaller than the table: it scrolls (the owner)
+    bottom = dialog.apply_button.mapTo(dialog, dialog.apply_button.rect().bottomLeft()).y()
+    assert bottom <= dialog.height() and dialog.minimumSizeHint().height() < dialog.sizeHint().height()
+
+
+def test_a_conflict_taller_than_the_screen_opens_at_the_screen_s_height(qtbot: QtBot) -> None:
+    dialog = ConflictDialog(long_conflict(80))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    free = dialog.screen().availableGeometry().height()
+    assert dialog.sizeHint().height() > free and dialog.height() <= free  # (the owner)

@@ -96,7 +96,7 @@
     </spacer>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="sides" stretch="0,0,1">
+    <layout class="QHBoxLayout" name="sides" stretch="0,0,1,0">
      <item>
       <widget class="QPushButton" name="retrySync">
        <property name="text">
@@ -127,14 +127,14 @@
        </property>
       </spacer>
      </item>
+     <item>
+      <widget class="QDialogButtonBox" name="buttons">
+       <property name="standardButtons">
+        <set>QDialogButtonBox::Cancel</set>
+       </property>
+      </widget>
+     </item>
     </layout>
-   </item>
-   <item>
-    <widget class="QDialogButtonBox" name="buttons">
-     <property name="standardButtons">
-      <set>QDialogButtonBox::Cancel</set>
-     </property>
-    </widget>
    </item>
   </layout>
  </widget>

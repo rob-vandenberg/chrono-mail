@@ -7,7 +7,7 @@ import time
 from datetime import date, datetime
 from typing import Literal, override
 
-from PySide6.QtCore import QDate, QEvent, QLocale, QModelIndex, QObject, QPersistentModelIndex, QRect, QRectF, QSettings, Qt, QTime, Signal
+from PySide6.QtCore import QDate, QEvent, QLocale, QModelIndex, QObject, QPersistentModelIndex, QRect, QRectF, QSettings, QSize, Qt, QTime, Signal
 from PySide6.QtGui import QCloseEvent, QHideEvent, QPainter, QPalette
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QRadioButton,
+    QScrollArea,
+    QSizePolicy,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -45,9 +47,11 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.485"
+__version__ = "syncconflicts.py 4.2.486"
 
 # --- Version history ----------------------------------------------------
+# v4.2.486: the table of one conflict scrolls when the window is small, never taller than the screen; Retry sync and Keep here only
+#           share the bottom row with Apply and Cancel (the owner)
 # v4.2.485: the header's circles in line with the fields' circles (the owner)
 # v4.2.483: every field that differs is a choice, nothing chosen beforehand (the owner)
 # v4.2.481: the window of one conflict shows every field of the item in words, outlines what differs with its choices in the second accent,
@@ -133,6 +137,35 @@ def _difference_look() -> str:
     )
 
 
+class _FieldsArea(QScrollArea):
+    """The table of one conflict: as tall as it needs when there is room, scrolling up and down when the window is smaller; at least about
+    three rows in view."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+
+    @override
+    def sizeHint(self) -> QSize:
+        inner = self.widget()
+        if inner is None:
+            return super().sizeHint()
+        hint = inner.sizeHint()
+        return QSize(hint.width() + self.verticalScrollBar().sizeHint().width(), hint.height())
+
+    @override
+    def minimumSizeHint(self) -> QSize:
+        inner = self.widget()
+        layout = inner.layout() if inner is not None else None
+        if inner is None or not isinstance(layout, QGridLayout) or layout.rowCount() == 0:
+            return super().minimumSizeHint()
+        row = inner.sizeHint().height() // layout.rowCount()
+        return QSize(self.sizeHint().width(), min(inner.sizeHint().height(), row * 4))  # the header and about three rows
+
+
 def _outlined(text: str, parent: QWidget, grid: QGridLayout, row: int, column: int) -> QRadioButton:
     """A value that differs: outlined, with its choice in front of it inside the outline."""
     frame = QFrame(parent)
@@ -213,13 +246,17 @@ class ConflictDialog(QDialog):
         self.apply_button.clicked.connect(self._apply)
         box.rejected.connect(self.reject)
         forms.smallest(self, 560)  # its texts are never cut off, also at the largest size
+        free = self.screen().availableGeometry().height()
+        if self.sizeHint().height() > free:  # never taller than the screen: the table scrolls instead (the owner)
+            self.resize(self.sizeHint().width(), free)
         self._ready()
 
     def _field_choices(self, parent: QWidget) -> QWidget:
         """Every field of the item with Chrono Mail's and the server's value in words; a field that differs is outlined, with a choice per side
         where it clashes (made at its place in the form, so Tab reaches the choices before the buttons below them, D-308)."""
         conflict = self.conflict
-        choices = QWidget(parent)
+        area = _FieldsArea(parent)  # a long item scrolls; what is above and below it stays in view (the owner)
+        choices = QWidget(area)
         choices.setStyleSheet(_difference_look())
         grid = QGridLayout(choices)
         grid.setContentsMargins(0, 0, 0, 0)
@@ -266,7 +303,8 @@ class ConflictDialog(QDialog):
             grid.addWidget(_plain(conflict.reason_text, choices), 1, 0, 1, 3)
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(2, 1)
-        return choices
+        area.setWidget(choices)
+        return area
 
     def _toggled(self, button: QAbstractButton, checked: bool) -> None:
         self._ready()
