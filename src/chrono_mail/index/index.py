@@ -1,4 +1,5 @@
 from contextlib import AbstractContextManager, nullcontext
+import math
 import os
 from email.utils import getaddresses
 import re
@@ -39,9 +40,11 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.2.469"
+__version__ = "index.py 4.2.470"
 
 # --- Version history ----------------------------------------------------
+# v4.2.470: a Flagged view gathers its flagged mail through the folder's own index, a tag smaller than its folder leads within it,
+#           and the marks are written as their indexes are built: a Flagged or Tags view reads only its marked mail (D-305)
 # v4.2.469: format 18: the sort indexes of unread mail (D-305), made afterwards one at a time in an upgraded index (unread_indexes_to_make,
 #           make_unread_index); 17 is upgraded without a filling in; a message kept in an unread view while read (D-149) no longer keeps
 #           the view from them: the marks are asked through them and the kept messages by their ids
@@ -801,13 +804,32 @@ class Index(IndexDatabase):
             raise StorageError(f"The search could not be run: {error}") from None
         return [GroupCount(names[int(position)][0], names[int(position)][1], int(count)) for position, count in found]
 
-    def _few_unread(self, folder: tuple[str, ...] | None, rows: int) -> bool:
-        """Whether the unread mail of one folder is few enough to gather it all, rather than walk the folder in the sorted order until the
-        rows asked are found: that walk reads about the rows asked per share of unread mail, the gathering every unread message once (the
-        numbers the index keeps, D-208)."""
-        found = self._connection.execute("SELECT messages, unread FROM folder_numbers WHERE folder = ?", (_folder_key(folder or ()),)).fetchone() or (0, 0)
-        messages, unread = max(0, int(found[0])), max(0, int(found[1]))
-        return unread * unread <= rows * messages
+    def _few_marked(self, folder: tuple[str, ...] | None, selective: list[str], rows: int) -> bool:
+        """Whether the marked mail of one folder is few enough to gather it all, rather than walk the folder in the sorted order until the
+        rows asked are found: that walk reads about the rows asked per share of marked mail, the gathering every marked message once
+        (counted through the marks' own indexes, no further than the decision needs)."""
+        enough = math.isqrt(rows * self._folder_size(folder, False))
+        marks = " AND ".join(selective)
+        marked = int(self._connection.execute(f"SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder = ? AND {marks} LIMIT ?)", (_folder_key(folder or ()), enough + 1)).fetchone()[0])
+        return marked <= enough
+
+    def _tagged(self, tag: str, at_most: int) -> int:
+        """How many messages carry this tag (folded), from the tag index only, counted no further than at_most."""
+        return int(self._connection.execute("SELECT count(*) FROM (SELECT 1 FROM message_tags WHERE tag = ? LIMIT ?)", (tag, at_most)).fetchone()[0])
+
+    def _folder_size(self, folder: tuple[str, ...] | None, subfolders: bool) -> int:
+        """How many messages a folder holds (with those inside it, or every folder): the numbers the index keeps (D-208)."""
+        if folder is None:
+            found = self._connection.execute("SELECT coalesce(sum(messages), 0) FROM folder_numbers").fetchone()
+        elif subfolders:
+            key = _folder_key(folder)
+            found = self._connection.execute(
+                "SELECT coalesce(sum(messages), 0) FROM folder_numbers WHERE folder = ? OR (folder > ? AND folder < ?)",
+                (key, key + FOLDER_SEPARATOR, key + chr(ord(FOLDER_SEPARATOR) + 1)),
+            ).fetchone()
+        else:
+            found = self._connection.execute("SELECT messages FROM folder_numbers WHERE folder = ?", (_folder_key(folder),)).fetchone()
+        return max(0, int(found[0])) if found is not None else 0
 
     def _search_parts(self, query: str, folder: tuple[str, ...] | None, filters: SearchFilter, rows: int | None = None) -> tuple[str, str, list[object]]:
         """The FROM and WHERE of a search, and the values for its question marks; rows: how many of the first rows are asked (None: every
@@ -829,14 +851,44 @@ class Index(IndexDatabase):
         if parsed.negative:
             conditions.append("m.id NOT IN (SELECT rowid FROM text WHERE text MATCH ?)")
             parameters.append(parsed.negative)
-        # An unread view that keeps messages read while shown (D-149) finds them by their ids and its unread mail through the unread sort
-        # indexes (below): the folder must then not lead, or SQLite walks every message of the folder in the sorted order (D-305). Only
-        # unread has such indexes: any other view keeps the plain condition, whose sort index stops at the rows asked for; so do the first
-        # rows of one folder mostly unread, where that walk reaches them at once and gathering all its unread mail first would not (no sort
-        # index orders several folders: there the walk reads them all).
+        # A view of a few marked messages (unread, flagged, a tag) finds them through the marks' own indexes and sorts only those; the
+        # folder must then not lead, or SQLite walks every message of the folder in the sorted order to test each (D-305). Unread alone
+        # needs no gathering: its sort indexes hold only unread mail; once it keeps messages read while shown (D-149) it gathers too. The
+        # first rows of one folder whose marked mail is most of it are found sooner by that walk (no sort index orders several folders:
+        # there the walk reads them all). With typed words the words lead (steer): the marks are tested only on what they found.
+        mark_values: list[object] = []
+        selective: list[str] = []  # the marks few messages carry that the folder's own indexes find
+        marks: list[str] = []  # the conditions on what a person changes while a view shows the message, written as their indexes are
+        if filters.unread is not None:
+            marks.append("(m.flags & 1) = 0" if filters.unread else "(m.flags & 1) = 1")
+            if filters.unread:
+                selective.append(marks[-1])
+        if filters.flagged is not None:
+            marks.append(f"((m.flags & 4) <> 0) = {int(filters.flagged)}")
+            if filters.flagged:
+                selective.append(marks[-1])
+        if filters.replied is not None:
+            marks.append(f"((m.flags & 2) <> 0) = {int(filters.replied)}")
+        tag_values = [" ".join(tag.split()).casefold() for tag in (filters.tag, filters.also_tag) if tag]
+        for _ in tag_values:
+            marks.append("m.store_id IN (SELECT store_id FROM message_tags WHERE tag = ?)")
+        mark_values.extend(tag_values)
         one_folder = folder is not None and not filters.subfolders
-        keeping = filters.unread is True and bool(filters.stay) and not expression and (rows is None or not one_folder or self._few_unread(folder, rows))
-        place = ""  # the folder condition with {0} for the steer, asked again with the marks of a view that keeps messages
+        # Within one folder a tag smaller than it leads: its messages are found by their ids and the folder does not lead. Not with a mark
+        # of the folder's own indexes or typed words, which lead then; across several folders the tag leads already (review).
+        tag_leads = False
+        if tag_values and one_folder and not selective and not expression:
+            size = self._folder_size(folder, False)
+            enough = size if rows is None else min(size, math.isqrt(rows * size))  # no further than the decision needs
+            tagged = min(self._tagged(tag, enough + 1) for tag in tag_values)
+            tag_leads = tagged <= enough
+        unread_alone = selective == ["(m.flags & 1) = 0"] and not filters.stay
+        gathering = (
+            bool(selective) and not unread_alone and not expression
+            and (folder is not None or "(m.flags & 1) = 0" in selective)  # across folders only the unread sort indexes find marked mail
+            and (rows is None or not one_folder or self._few_marked(folder, selective, rows))
+        )
+        place = ""  # the folder condition with {0} for the steer, asked again with the marks of a view that gathers
         place_values: list[object] = []
         if folder is not None and filters.subfolders:  # the folder and those inside it: one range of the folder index ("\x1f" + 1 is "\x20")
             key = _folder_key(folder)
@@ -846,30 +898,15 @@ class Index(IndexDatabase):
             place = "{0}m.folder = ?"
             place_values = [_folder_key(folder)]
         if place:
-            conditions.append(place.format("+" if keeping else steer))
+            conditions.append(place.format("+" if gathering or tag_leads else steer))
             parameters.extend(place_values)
-        marks: list[str] = []  # the conditions on what a person changes while a view shows the message
-        if filters.unread is not None:
-            marks.append("(m.flags & 1) = 0" if filters.unread else "(m.flags & 1) != 0")
-        if filters.flagged is not None:
-            marks.append("(m.flags & 4) != 0" if filters.flagged else "(m.flags & 4) = 0")
-        if filters.replied is not None:
-            marks.append("(m.flags & 2) != 0" if filters.replied else "(m.flags & 2) = 0")
-        mark_values: list[object] = []
-        for tag in (filters.tag, filters.also_tag):
-            if tag:
-                marks.append("m.store_id IN (SELECT store_id FROM message_tags WHERE tag = ?)")
-                mark_values.append(" ".join(tag.split()).casefold())
-        if keeping:  # read, unflagged or untagged while shown: it stays until the view is left
-            # The marks asked by themselves, with the folder, and the kept messages by their ids: "marks OR kept" in one condition would
-            # keep SQLite from the unread sort indexes, and every message of the folder would be read to find the unread ones (D-305).
-            stay = sorted(filters.stay)
+        if gathering:
             within = " AND ".join([place.format(""), *marks] if place else marks)
-            conditions.append(
-                f"m.id IN (SELECT m.id FROM messages m WHERE {within} UNION SELECT k.id FROM messages k WHERE k.store_id IN ({', '.join('?' * len(stay))}))"
-            )
+            stay = sorted(filters.stay)  # read, unflagged or untagged while shown: it stays until the view is left
+            kept = f" UNION SELECT k.id FROM messages k WHERE k.store_id IN ({', '.join('?' * len(stay))})" if stay else ""
+            conditions.append(f"m.id IN (SELECT m.id FROM messages m WHERE {within}{kept})")
             parameters.extend((*place_values, *mark_values, *stay))
-        elif marks and filters.stay:  # read, unflagged or untagged while shown: it stays until the view is left
+        elif marks and filters.stay:
             stay = sorted(filters.stay)
             conditions.append(f"(({' AND '.join(marks)}) OR m.store_id IN ({', '.join('?' * len(stay))}))")
             parameters.extend((*mark_values, *stay))

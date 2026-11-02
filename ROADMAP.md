@@ -193,6 +193,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | CR.8 | Every moving bar looks like Qt's own again (the owner): the framed blue bar with light stripes sliding through it, drawn by the program at 20 steps a second (D-266). | done (4.2.466) |
 | CR.9 | The reading pane keeps the width set with the separator, whatever the message (the owner); Settings > Reading "Widen the reading pane to fit the message" (off by default) brings back the old way (D-304). | done (4.2.467) |
 | CR.10 | The owner's report (2026-11-02): Favorites > Unread sorted by another column took 6 to 8 seconds the first time. Every sort index has a copy holding only unread mail, so an unread view reads only its unread mail, also while it keeps a message read in it (D-305); 21.4 s before, 1 s after, measured cold on the owner's indexes. | done (4.2.469) |
+| CR.11 | The same for Flagged and Tags views (the owner): their marked mail found through the folder's own flagged index or the tag's own messages, never by opening every message of the folder; Flagged 31 s before, 1.0 s after, a tag 30 s before, 0.3 s after, measured cold on the owner's indexes (D-305). | done (4.2.470) |
 
 ## Documentation (B-07, from 2.3.317, D-242)
 

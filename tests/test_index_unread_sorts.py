@@ -15,9 +15,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_unread_sorts.py 4.2.469"
+__version__ = "test_index_unread_sorts.py 4.2.470"
 
 # --- Version history ----------------------------------------------------
+# v4.2.470: the count of a folder's marked mail is no list question; Flagged gathers now (D-305)
 # v4.2.469: Initial: an unread view reads only its unread mail through the unread sort indexes, whatever the sort, also while it keeps
 #           messages read in it (D-305, D-149); format 17 is upgraded without a filling in and gets them afterwards (D-229)
 
@@ -51,7 +52,8 @@ def _plans(index: Index, ask: list[str]) -> list[str]:
     plans = [
         " ".join(str(row[3]) for row in index._connection.execute("EXPLAIN QUERY PLAN " + statement))  # noqa: SLF001
         for statement in ask
-        if statement.lstrip().upper().startswith("SELECT") and "FROM messages m" in statement  # not the folder's numbers looked up first
+        if statement.lstrip().upper().startswith("SELECT") and "FROM messages m" in statement  # not the folder's numbers looked up first,
+        and not statement.startswith("SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder")  # nor the count of its marked mail (_few_marked)
     ]
     index.close()
     return plans
@@ -88,7 +90,7 @@ def test_an_unread_view_lists_its_unread_mail_and_the_kept_messages_in_order(tmp
     index.close()
 
 
-@pytest.mark.parametrize("marks", [SearchFilter(replied=False), SearchFilter(unread=False), SearchFilter(flagged=True)], ids=["unreplied", "read", "flagged"])
+@pytest.mark.parametrize("marks", [SearchFilter(replied=False), SearchFilter(unread=False)], ids=["unreplied", "read"])  # flagged gathers (D-305)
 def test_another_view_that_keeps_messages_still_walks_its_sort_index_only_as_far_as_asked(tmp_path: Path, marks: SearchFilter) -> None:
     # Only unread has sort indexes of its own: gathering every unreplied message of the Inbox first took 320 ms instead of 0.5 (review).
     index = _index(tmp_path / "index.sqlite")
