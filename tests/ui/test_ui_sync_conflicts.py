@@ -14,9 +14,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.492"
+__version__ = "test_ui_sync_conflicts.py 4.2.493"
 
 # --- Version history ----------------------------------------------------
+# v4.2.493: the table has the gap between its columns on its left and right (the owner)
 # v4.2.492: a pair of list entries is one choice: Chrono Mail keeps its entry and leaves out the server's; the taller window keeps
 #           25 fields, its tags now pair up (the owner, D-308)
 # v4.2.489: exactly 11 fields when it opens; a taller window shows more fields until all show (the owner)
@@ -607,3 +608,19 @@ def test_chrono_mail_on_a_pair_keeps_its_entry_and_leaves_out_the_servers(qtbot:
     assert dialog.choices == {"NICKNAME\x1fannie": "local", "NICKNAME\x1fans": "local", "NOTE": "server"}
     merged = merge(card(), ours, theirs, dialog.choices)
     assert merged.text is not None and "NICKNAME:Annie" in merged.text and "Ans" not in merged.text and "NOTE:Called" in merged.text
+
+
+def test_the_table_has_the_gap_between_its_columns_on_its_left_and_right(qtbot: QtBot) -> None:
+    dialog = ConflictDialog(long_conflict(24))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    area = dialog.findChild(QScrollArea)
+    inner = area.widget() if area is not None else None
+    assert area is not None and inner is not None and area.verticalScrollBar().isVisible()
+    ours, theirs = (frame.geometry() for frame in (dialog.all_local, dialog.all_server))
+    title_ours, title_theirs = (button.parentWidget().geometry() for button in dialog.groups["SUMMARY"])  # type: ignore[union-attr]
+    between = title_theirs.left() - title_ours.right() - 1
+    assert between > 0 and inner.width() - title_theirs.right() - 1 == between  # never touching the scrollbar (the owner)
+    field = next(label for label in inner.findChildren(QLabel) if label.text() == "<b>Field</b>")
+    assert field.geometry().left() == between and ours.left() < theirs.left()

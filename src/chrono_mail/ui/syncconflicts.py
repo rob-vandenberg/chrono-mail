@@ -48,9 +48,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.492"
+__version__ = "syncconflicts.py 4.2.493"
 
 # --- Version history ----------------------------------------------------
+# v4.2.493: the table has the gap between its columns on its left and right, so the outlines never touch the scrollbar (the owner)
 # v4.2.492: a pair of list entries is one row with one choice; Apply gives that side to both entries (the owner, D-308)
 # v4.2.491: a value the same on both sides starts in line with the text beside the circles (the owner)
 # v4.2.489: the table grows with the window until every field shows; it opens at exactly 11 fields, by the rows' real heights (the owner)
@@ -295,7 +296,8 @@ class ConflictDialog(QDialog):
         choices = QWidget(area)
         choices.setStyleSheet(_difference_look())
         grid = QGridLayout(choices)
-        grid.setContentsMargins(0, 0, 0, 0)
+        gap = max(grid.horizontalSpacing(), 0)  # the style's gap between the columns, also at its left and right (the owner)
+        grid.setContentsMargins(gap, 0, gap, 0)
         grid.addWidget(QLabel("<b>Field</b>", choices), 0, 0)
         self.all_local = QRadioButton("Chrono Mail", choices)  # every field from Chrono Mail; on while all are (the owner)
         self.all_server = QRadioButton("Server", choices)
