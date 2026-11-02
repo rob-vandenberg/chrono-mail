@@ -3,9 +3,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.2.473"
+__version__ = "colours.py 4.2.475"
 
 # --- Version history ----------------------------------------------------
+# v4.2.475: The hover shade is 8 points of lightness from the accent (was 12; the owner)
 # v4.2.473: The owner's values: menus #272c30, the message list and other lists #181e1f (dark theme)
 # v4.2.472: The shades of the blue are worked out from it (D-164): the hover of the Menu and Send buttons, the links (readable on
 #            the theme) and the drag badge, so a picked accent leaves nothing in the old blue
@@ -73,7 +74,7 @@ class Theme:
 # The person picks one colour (the accent, below); every shade of it is worked out from that one colour, here, never
 # written as a second blue. The themes below are given these shades from their own blue, and a picked accent again (D-164).
 
-HOVER_LIGHTNESS_STEP: float = 0.12  # the hover is this much lighter (dark theme) or darker (light theme), on a scale of 0 to 1
+HOVER_LIGHTNESS_STEP: float = 0.08  # the hover is this much lighter (dark theme) or darker (light theme), on a scale of 0 to 1
 LINK_LEAST_CONTRAST: float = 4.5  # a link stands at least this contrast to the lists and windows (4.5:1: normal text)
 LINK_LIGHTNESS_STEP: float = 0.01  # the link is made lighter or darker in steps this small until it reads well
 DRAG_BADGE_OPACITY: str = "e6"  # the drag badge is the blue at 90 % (e6 of ff)

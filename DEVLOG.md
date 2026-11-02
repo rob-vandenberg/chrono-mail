@@ -3668,3 +3668,6 @@ Dark theme: menus #272c30 (was the window's #202326), the Base role of the messa
 
 ## 2026-11-02, 4.2.474: the menu test expects the menus' own colour
 test_dropdown_menus_have_the_colour_of_the_menu_bar_and_not_that_of_the_lists compares with menu_background instead of the window's colour.
+
+## 2026-11-02, 4.2.475: the hover shade 8 points from the accent (the owner)
+HOVER_LIGHTNESS_STEP 0.12 to 0.08 (HSL lightness); the owner's orange #c86400 gets #9e5000 (was #8b4500).
