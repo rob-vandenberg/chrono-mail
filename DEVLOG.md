@@ -3711,3 +3711,6 @@ The owner measured 780 px on his screen as right: 11 fields. Built as rows, so e
 
 ## 2026-11-02, 4.2.488: an outdated window test (tests only)
 4.2.487 was pushed with test_a_conflict_taller_than_the_screen_opens_at_the_screen_s_height failing: since a conflict opens at 11 fields it is never taller than the test screen. Now test_a_very_long_conflict_fits_the_screen_and_scrolls. The run that showed the failure was chained to the push; from now on the push waits for the test result.
+
+## 2026-11-02, 4.2.489: the table grows with the window (the owner)
+The extra height of a taller window went to the room below the table; now the table takes it (stretch, Expanding, at most every field's height), then the room below. The opening height was the table's average row times 12, too low because the header row is lower (the owner saw 10 and a half fields): now the real heights of the header and 11 rows with their spacing; the smallest height the same for 3 rows. No review round (the owner).

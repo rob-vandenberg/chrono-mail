@@ -2,7 +2,7 @@
 <ui version="4.0">
  <class>SyncConflict</class>
  <widget class="QWidget" name="SyncConflict">
-  <layout class="QVBoxLayout" name="layout">
+  <layout class="QVBoxLayout" name="layout" stretch="0,1,0,0">
    <item>
     <layout class="QFormLayout" name="details">
      <item row="0" column="0">

@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.488"
+__version__ = "test_ui_sync_conflicts.py 4.2.489"
 
 # --- Version history ----------------------------------------------------
+# v4.2.489: exactly 11 fields when it opens; a taller window shows more fields until all show (the owner)
 # v4.2.488: a very long conflict fits the screen and scrolls (it opens at 11 fields since 4.2.487)
 # v4.2.487: a long conflict opens showing 11 fields (the owner)
 # v4.2.486: a long conflict scrolls, never taller than the screen; one bottom row of buttons (the owner)
@@ -546,4 +547,20 @@ def test_a_long_conflict_opens_showing_eleven_fields(qtbot: QtBot) -> None:
     layout = inner.layout() if inner is not None else None
     assert area is not None and isinstance(layout, QGridLayout) and layout.rowCount() > 13
     shown = area.viewport().height()
-    assert layout.cellRect(11, 0).bottom() < shown < layout.cellRect(13, 0).bottom()  # the header and 11 fields (the owner)
+    assert shown == layout.cellRect(11, 1).bottom() + 1  # the header and exactly 11 whole fields, nothing of the 12th (the owner)
+
+
+def test_a_taller_window_shows_more_fields_until_all_show(qtbot: QtBot) -> None:
+    dialog = ConflictDialog(long_conflict(12))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    area = dialog.findChild(QScrollArea)
+    assert area is not None
+    before = area.height()
+    dialog.resize(dialog.width(), dialog.height() + 100)
+    qtbot.waitUntil(lambda: area.height() == before + 100)  # the table takes the height (the owner)
+    dialog.resize(dialog.width(), dialog.height() + 2000)
+    inner = area.widget()
+    assert inner is not None
+    qtbot.waitUntil(lambda: area.height() == inner.sizeHint().height() and area.verticalScrollBar().maximum() == 0)  # every field shows

@@ -47,9 +47,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.487"
+__version__ = "syncconflicts.py 4.2.489"
 
 # --- Version history ----------------------------------------------------
+# v4.2.489: the table grows with the window until every field shows; it opens at exactly 11 fields, by the rows' real heights (the owner)
 # v4.2.487: the table of one conflict opens showing at most 11 fields (the owner)
 # v4.2.486: the table of one conflict scrolls when the window is small, never taller than the screen; Retry sync and Keep here only
 #           share the bottom row with Apply and Cancel (the owner)
@@ -150,7 +151,7 @@ class _FieldsArea(QScrollArea):
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)  # a taller window shows more fields (the owner)
 
     @override
     def sizeHint(self) -> QSize:
@@ -158,19 +159,25 @@ class _FieldsArea(QScrollArea):
         if inner is None:
             return super().sizeHint()
         hint = inner.sizeHint()
-        layout = inner.layout()
-        rows = layout.rowCount() if isinstance(layout, QGridLayout) else 0
-        tallest = hint.height() // rows * (OPEN_ROWS + 1) if rows else hint.height()  # the header and at most 11 rows (the owner)
-        return QSize(hint.width() + self.verticalScrollBar().sizeHint().width(), min(hint.height(), tallest))
+        return QSize(hint.width() + self.verticalScrollBar().sizeHint().width(), min(hint.height(), self._rows_height(OPEN_ROWS + 1)))
 
     @override
     def minimumSizeHint(self) -> QSize:
         inner = self.widget()
-        layout = inner.layout() if inner is not None else None
-        if inner is None or not isinstance(layout, QGridLayout) or layout.rowCount() == 0:
+        if inner is None:
             return super().minimumSizeHint()
-        row = inner.sizeHint().height() // layout.rowCount()
-        return QSize(self.sizeHint().width(), min(inner.sizeHint().height(), row * 4))  # the header and about three rows
+        return QSize(self.sizeHint().width(), min(inner.sizeHint().height(), self._rows_height(4)))  # the header and three rows
+
+    def _rows_height(self, count: int) -> int:
+        """The height of the first rows of the table as they are laid out: each row as tall as its tallest part, with the spacing between."""
+        inner = self.widget()
+        layout = inner.layout() if inner is not None else None
+        if inner is None or not isinstance(layout, QGridLayout):
+            return 0
+        rows = min(count, layout.rowCount())
+        heights = [max((item.sizeHint().height() for column in range(layout.columnCount()) if (item := layout.itemAtPosition(row, column)) is not None),
+                       default=0) for row in range(rows)]
+        return sum(heights) + layout.verticalSpacing() * max(rows - 1, 0)
 
 
 def _outlined(text: str, parent: QWidget, grid: QGridLayout, row: int, column: int) -> QRadioButton:
@@ -311,6 +318,7 @@ class ConflictDialog(QDialog):
         grid.setColumnStretch(1, 1)
         grid.setColumnStretch(2, 1)
         area.setWidget(choices)
+        area.setMaximumHeight(choices.sizeHint().height())  # every field in view: more height goes below the table
         return area
 
     def _toggled(self, button: QAbstractButton, checked: bool) -> None:
