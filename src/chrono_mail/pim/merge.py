@@ -11,9 +11,11 @@ from dataclasses import dataclass, field
 from chrono_mail.pim.vcard import fold, unfold
 
 # --- Version ------------------------------------------------------------
-__version__ = "merge.py 1.10.277"
+__version__ = "merge.py 4.2.481"
 
 # --- Version history ----------------------------------------------------
+# v4.2.481: Only what a person enters or sees can clash (D-308): any other field, and reminders that differ only in what is not shown, take
+#           the server's version; a changed occurrence's fields are chosen apart from the main event's; the occurrence in a label in words
 # v1.10.277: A group's members and kind have labels for Sync conflicts (R-39)
 # v1.1.225: Initial: the three-way comparison field by field of an iCalendar item or a vCard (R-23, R-24, D-194)
 
@@ -36,6 +38,17 @@ LABELS: dict[str, str] = {
     "NOTE": "Note", "NICKNAME": "Nickname", "PHOTO": "Photo", "ROLE": "Role", "MEMBER": "Group member", "X-ADDRESSBOOKSERVER-MEMBER": "Group member",
     "KIND": "Group", "X-ADDRESSBOOKSERVER-KIND": "Group", "item": "The whole item",
 }
+VISIBLE: dict[str, frozenset[str]] = {  # what Chrono Mail's own windows let a person enter or see: only these can clash (D-308)
+    "VEVENT": frozenset({
+        "SUMMARY", "X-CHRONO-MAIL-COLOR-ID", "LOCATION", "DTSTART", "DTEND", "DURATION", "RRULE", "EXDATE", "RDATE", ALARMS, "TRANSP", "ATTENDEE",
+        "CATEGORIES", "DESCRIPTION",
+    }),
+    "VTODO": frozenset({"SUMMARY", "PRIORITY", "STATUS", "PERCENT-COMPLETE", "DTSTART", "DUE", "RRULE", ALARMS, "LOCATION", "CATEGORIES", "DESCRIPTION"}),
+    "VCARD": frozenset({
+        "N", "FN", "NICKNAME", "ORG", "TITLE", "EMAIL", "TEL", "URL", "ADR", "BDAY", "NOTE", "CATEGORIES", "PHOTO", "MEMBER", "X-ADDRESSBOOKSERVER-MEMBER",
+    }),
+}
+MONTHS: tuple[str, ...] = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December")
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,11 +174,68 @@ def _fields(unit: _Component) -> dict[str, str]:
     return found
 
 
+def occurrence_words(value: str) -> str:
+    """The original start of a changed occurrence as a person reads it ("12 August 2026", "12 August 2026, 09:00"); as written when unreadable."""
+    digits = value.strip()
+    if len(digits) < 8 or not digits[:8].isdigit() or not 1 <= int(digits[4:6]) <= 12:
+        return value
+    words = f"{int(digits[6:8])} {MONTHS[int(digits[4:6]) - 1]} {digits[:4]}"
+    if len(digits) >= 13 and digits[8] == "T" and digits[9:13].isdigit():
+        words += f", {digits[9:11]}:{digits[11:13]}"
+    return words
+
+
 def _label(key: str, unit_key: str) -> str:
     name = key.split(SEPARATOR, 1)[0]
     words = LABELS.get(name, name.title() if not name.startswith("X-") else name)
     recurrence = unit_key.split(SEPARATOR, 1)[1] if SEPARATOR in unit_key else ""
-    return f"{words} (the occurrence of {recurrence})" if recurrence else words
+    return f"{words} (the occurrence of {occurrence_words(recurrence)})" if recurrence else words
+
+
+def choice_key(key: str, unit_key: str) -> str:
+    """What a choice names: the field's key, of a changed occurrence with its original start, so it is chosen apart from the main event's."""
+    recurrence = unit_key.split(SEPARATOR, 1)[1] if SEPARATOR in unit_key else ""
+    return f"{key}{SEPARATOR}@{recurrence}" if recurrence else key
+
+
+def visible(unit_name: str, key: str) -> bool:
+    """Whether a field is something a person enters or sees in Chrono Mail's own windows (D-308)."""
+    return key.split(SEPARATOR, 1)[0] in VISIBLE.get(unit_name, frozenset[str]())
+
+
+def reminders_seen(text: str | None) -> tuple[tuple[str, str], ...]:
+    """An item's reminders as a person sees them: when each goes off and how; their ids and other programs' markers left out."""
+    found: list[tuple[str, str]] = []
+    trigger, action = "", ""
+    for line in (text or "").split("\n"):
+        name = _name(line)
+        head, value = _head_and_value(line)
+        if name == "BEGIN":
+            trigger, action = "", ""
+        elif name == "TRIGGER":
+            parameters = sorted(part.strip().upper() for part in head.split(";")[1:] if part.strip().upper() not in ("VALUE=DURATION", "RELATED=START"))
+            trigger = ";".join([*parameters, value.strip().upper()])
+        elif name == "ACTION":
+            action = value.strip().upper()
+        elif name == "END":
+            found.append((trigger, action))
+    return tuple(sorted(found))
+
+
+def _unseen(unit_name: str, key: str, local: str | None, server: str | None) -> bool:
+    """A difference a person never sees: a field not shown, or reminders that differ only in what is not shown."""
+    if not visible(unit_name, key):
+        return True
+    return key == ALARMS and reminders_seen(local) == reminders_seen(server)
+
+
+def _quietly(before: str | None, local: str | None, server: str | None, known: bool) -> str | None:
+    """A field not seen: the side that changed it, and where both did, the server's (D-193, D-308)."""
+    if known and local == before:
+        return server
+    if known and server == before:
+        return local
+    return server
 
 
 def _shown(text: str | None) -> str:
@@ -247,18 +317,30 @@ def _merge_unit(unit_key: str, base: _Component | None, local: _Component | None
         before = base_fields.get(key) if base_fields is not None else None
         if base_fields is None and key not in local_fields and key not in server_fields:
             continue
+        if local_fields.get(key) != server_fields.get(key) and _unseen(local.name, key, local_fields.get(key), server_fields.get(key)):
+            merged[key] = _quietly(before, local_fields.get(key), server_fields.get(key), base_fields is not None)
+            continue
+        named = choice_key(key, unit_key)
         if base_fields is None and local_fields.get(key) != server_fields.get(key):  # no agreed version: every difference is a clash
-            choice = choices.get(key)
+            choice = choices.get(named)
             if choice in (LOCAL, SERVER):
                 merged[key] = local_fields.get(key) if choice == LOCAL else server_fields.get(key)
             else:
-                clashes.append(Clash(key, _label(key, unit_key), _shown(local_fields.get(key)), _shown(server_fields.get(key))))
+                clashes.append(Clash(named, _label(key, unit_key), _shown(local_fields.get(key)), _shown(server_fields.get(key))))
                 merged[key] = local_fields.get(key)
             continue
-        merged[key] = _choose(key, before, local_fields.get(key), server_fields.get(key), choices, clashes, _label(key, unit_key))
+        merged[key] = _choose(named, before, local_fields.get(key), server_fields.get(key), choices, clashes, _label(key, unit_key))
     order = [*local_fields, *(key for key in server_fields if key not in local_fields)]
     stamps = [line for name, line in local.lines if name in STAMPS]
     return _rebuild(local.name, merged, order, stamps, [])
+
+
+def units_of(text: str | None) -> dict[str, tuple[str, dict[str, str]]]:
+    """An item's units by key (the main one, each changed occurrence): its name and its fields, as compared here; empty when unreadable."""
+    root = _parse(text) if text else None
+    if root is None:
+        return {}
+    return {key: (unit.name, _fields(unit)) for key, unit in _units(root)[1].items()}
 
 
 def _units(root: _Component) -> tuple[list[str], dict[str, _Component], list[_Component]]:

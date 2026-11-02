@@ -10,9 +10,10 @@ from tests.test_engine_commands import call
 from tests.test_engine_dav import linked, shown
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_conflicts.py 2.0.286"
+__version__ = "test_engine_conflicts.py 4.2.481"
 
 # --- Version history ----------------------------------------------------
+# v4.2.481: conflict.recheck at start settles a conflict without a difference a person sees, a real one stays (D-308)
 # v2.0.286: a calendar's name or colour changed on two computers, or a name the server refused, is a sync conflict settled as a whole or per field;
 #           afterwards both computers and the server show the same (the Windows computer's F3)
 # v1.10.279: Deleted here offline and changed on the server before the next sync: a sync conflict (changed on the server), as online; unchanged
@@ -727,3 +728,25 @@ def test_use_server_data_gives_a_refused_name_up(tmp_path: Path) -> None:
         assert shown(engine, account).name == "Calendar"
         call(engine, "dav.sync", account=account)
         assert call(engine, "conflict.list").conflicts == () and engine.config().find(account).collection_looks == ()
+
+
+def test_at_start_a_conflict_without_a_difference_a_person_sees_is_settled_and_a_real_one_stays(tmp_path: Path) -> None:
+    from dataclasses import replace
+
+    from chrono_mail.engine.pimaccess import open_pim
+    from chrono_mail.sync.davconflicts import load_conflicts, record
+
+    with FakeDav() as server:
+        engine, account, _ = linked(tmp_path, server)
+        item, uid = add_event(engine, account)
+        change_on_server(server, uid, "SUMMARY:Meeting", "SUMMARY:Theirs")
+        call(engine, "event.edit", item=item, summary="Ours")
+        assert call(engine, "conflict.recheck").settled == 0 and len(call(engine, "conflict.list").conflicts) == 1  # a real one stays
+        with open_pim(engine, account) as store:  # as kept before D-308: the server's version differs only in what is not shown
+            (conflict,) = load_conflicts(store)
+            hidden = conflict.server_text.replace("SUMMARY:Theirs", "SUMMARY:Ours").replace("SUMMARY:Ours", "SUMMARY:Ours\r\nURL:https://example.com/x", 1)
+            record(store, replace(conflict, server_text=hidden))
+        assert call(engine, "conflict.recheck").settled == 1 and call(engine, "conflict.list").conflicts == ()
+        with open_pim(engine, account) as store:
+            text = store.get(conflict.collection, item)
+        assert "URL:https://example.com/x" in text and "SUMMARY:Ours" in text  # the server's for what is not seen, Chrono Mail's own kept

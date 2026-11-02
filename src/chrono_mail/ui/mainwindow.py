@@ -67,9 +67,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.467"
+__version__ = "mainwindow.py 4.2.481"
 
 # --- Version history ----------------------------------------------------
+# v4.2.481: the status line says how many sync conflicts the check at start settled (D-308)
 # v4.2.467: Settings OK takes in Widen the reading pane to fit the message (D-304)
 # v4.2.459: at start a profile's wallet entries move to its own wallet name first (D-274)
 # v4.2.453: the status line says what the rules did when a folder was renamed or deleted (rules_changed, D-302)
@@ -834,6 +835,7 @@ class MainWindow(QMainWindow):
         self.backend.changed.connect(self._rules_followed)  # ... and what the rules did when a folder was renamed or deleted (D-302)
         self.checking.new_mail.connect(self._notify_new_mail)
         self.sync_marks = SyncMarks(self.backend, self)  # the sync conflicts and what waits for the servers (D-194)
+        self.sync_marks.settled_at_start.connect(self._conflicts_settled_at_start)
         self.waiting_label = QLabel("", self)
         self.waiting_label.setObjectName("waitingLabel")
         self.waiting_label.hide()
@@ -848,6 +850,9 @@ class MainWindow(QMainWindow):
             page.conflict_requested.connect(self._open_conflict)
         for page in self.pages.values():
             self.backend.changed.connect(page.apply_fact)  # ... and to the calendars, task lists and address books
+
+    def _conflicts_settled_at_start(self, count: int) -> None:
+        self.report.show(f"{counted(count, 'sync conflict')} without a difference you can see settled with the server's version")
 
     def _rules_followed(self, change: Change) -> None:
         """Rules followed a folder that was renamed or deleted (also by the server, during a check): the status line says what they did (D-302)."""

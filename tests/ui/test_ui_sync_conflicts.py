@@ -1,6 +1,6 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 3.6.350"
+__version__ = "test_ui_sync_conflicts.py 4.2.481"
 
 # --- Version history ----------------------------------------------------
+# v4.2.481: the window of one conflict: every field in words, outlines, the header's choices, Apply before Cancel (the owner, D-308)
 # v3.6.350: a name with markup is shown as text in its hover text and in the details window (D-259)
 # v2.4.334: the counts in the texts are written one way (F1b)
 # v1.1.233: the table fills the width (fixed columns, Name and Where shared); no triangle in the rows; the Why icons drawn in the text colour
@@ -427,16 +428,34 @@ def test_a_name_with_markup_is_shown_as_text_in_its_hover_text(world: World, qtb
         assert len(shown) >= 3 and all(label.textFormat() == Qt.TextFormat.PlainText for label in shown)
 
 
-def test_the_window_of_one_conflict_names_its_sides_as_the_list_does_and_puts_cancel_last(qtbot: QtBot) -> None:
-    field = ConflictField("SUMMARY", "Title", "My title", "Their title")
-    conflict = ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", "events", "clash", "Changed here and on the server", "Dentist appointment",
-                               "", False, True, 0.0, (field,))
+def calendar_text(*body: str) -> str:
+    return "\r\n".join(["BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT", "UID:u1", *body, "END:VEVENT", "END:VCALENDAR"]) + "\r\n"
+
+
+def test_the_window_of_one_conflict_shows_every_field_outlines_what_differs_and_its_header_chooses_a_side(qtbot: QtBot) -> None:
+    base = calendar_text("SUMMARY:Meeting", "LOCATION:Room 1", "DESCRIPTION:Agenda", "DTSTART:20261021T090000Z")
+    ours = calendar_text("SUMMARY:Ours", "LOCATION:Room A", "DESCRIPTION:Agenda", "DTSTART:20261021T090000Z")
+    theirs = calendar_text("SUMMARY:Theirs", "LOCATION:Room B", "DESCRIPTION:New agenda", "DTSTART:20261021T090000Z")
+    fields = (ConflictField("SUMMARY", "Title", "Ours", "Theirs"), ConflictField("LOCATION", "Location", "Room A", "Room B"))
+    conflict = ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", "events", "clash", "Changed here and on the server", "Ours", "", False,
+                               True, 0.0, fields, base_text=base, local_text=ours, server_text=theirs)
     dialog = ConflictDialog(conflict)
     qtbot.addWidget(dialog)
-    assert (dialog.all_local.text(), dialog.all_server.text()) == ("Use Chrono Mail", "Use Server data")  # the same words as the list (the owner)
+    texts = [label.text() for label in dialog.findChildren(QLabel)]
+    assert "Starts" in texts and not any("20261021T" in text for text in texts)  # every field, in words (D-308)
+    outlined = [frame for frame in dialog.findChildren(QFrame) if frame.property("accent") == "alternative"]
+    assert len(outlined) == 6  # Title, Location and Description differ: both values outlined
+    assert set(dialog.groups) == {"SUMMARY", "LOCATION"}  # only the clashes are chosen; the Description is the server's by itself
+    assert (dialog.all_local.text(), dialog.all_server.text()) == ("Chrono Mail", "Server") and not dialog.apply_button.isEnabled()
+    dialog.all_server.click()
+    assert dialog.all_server.isChecked() and not dialog.all_local.isChecked() and dialog.apply_button.isEnabled()
+    dialog.groups["SUMMARY"][0].click()  # a mix: both header choices off, Apply still possible
+    assert not dialog.all_server.isChecked() and not dialog.all_local.isChecked() and dialog.apply_button.isEnabled()
+    dialog.groups["LOCATION"][0].click()
+    assert dialog.all_local.isChecked()  # every field from Chrono Mail
     box = dialog.findChild(QDialogButtonBox)
     assert box is not None
     cancel = box.button(QDialogButtonBox.StandardButton.Cancel)
     dialog.show()
     qtbot.waitExposed(dialog)
-    assert dialog.apply_button.text() == "Apply" and dialog.apply_button.x() < cancel.x()  # Cancel comes last (the owner)
+    assert dialog.apply_button.x() < cancel.x()  # Cancel comes last (the owner)

@@ -8,14 +8,15 @@ from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPainter, QPalette, QP
 from chrono_mail.engine.changes import Change
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_conflicts import CONFLICT_LIST, SYNC_WAITING, ConflictList, ConflictSummary, WaitingList
+from chrono_mail.engine.commands_conflicts import CONFLICT_LIST, CONFLICT_RECHECK, SYNC_WAITING, ConflictList, ConflictSummary, RecheckResult, WaitingList
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import theme_icon
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncmarks.py 2.0.286"
+__version__ = "syncmarks.py 4.2.481"
 
 # --- Version history ----------------------------------------------------
+# v4.2.481: at start the conflicts are checked again once: those without a difference a person sees are settled (settled_at_start, D-308)
 # v2.0.286: the icons of a collection's name or colour conflict: changed on both sides, or refused by the server (F3)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
 # v1.1.240: Folders renamed or deleted offline: refused, or changed on the server (R-31)
@@ -130,6 +131,7 @@ class SyncMarks(QObject):
     """The open sync conflicts and the changes that wait for the servers, as the engine tells them."""
 
     changed = Signal()
+    settled_at_start = Signal(int)  # how many conflicts the check at start settled (only when it settled some)
 
     def __init__(self, backend: Backend, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -142,6 +144,11 @@ class SyncMarks(QObject):
         self._again: bool = False
         backend.changed.connect(self._fact)
         self.refresh()
+        backend.ask(CONFLICT_RECHECK, NoParameters(), self._rechecked, lambda error: None, owner=self)  # once, at start (D-308)
+
+    def _rechecked(self, result: RecheckResult) -> None:
+        if result.settled:
+            self.settled_at_start.emit(result.settled)  # the list follows by itself: the engine tells the change
 
     def state(self, item: str) -> str:
         """An item's mark: CONFLICT, WAITING or ""."""

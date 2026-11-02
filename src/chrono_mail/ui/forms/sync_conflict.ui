@@ -80,21 +80,7 @@
     <widget class="QWidget" name="fields" />
    </item>
    <item>
-    <layout class="QHBoxLayout" name="sides" stretch="0,0,0,0,1">
-     <item>
-      <widget class="QPushButton" name="allLocal">
-       <property name="text">
-        <string>Use Chrono Mail</string>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="allServer">
-       <property name="text">
-        <string>Use Server data</string>
-       </property>
-      </widget>
-     </item>
+    <layout class="QHBoxLayout" name="sides" stretch="0,0,1">
      <item>
       <widget class="QPushButton" name="retrySync">
        <property name="text">

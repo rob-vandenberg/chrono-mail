@@ -10,13 +10,14 @@ from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_dav import _client, _lock_for, _state_path, keep_looks
 from chrono_mail.engine.imap_online import is_imap, waiting_marker
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
-from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_pim, pim_account_ids
+from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_pim, palette_for, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
-from chrono_mail.pim.merge import LOCAL, SERVER
+from chrono_mail.pim.merge import LOCAL, SERVER, merge
 from chrono_mail.pimstore import PimStore
 from chrono_mail.protocols.dav import DavClient, DavConflict, canonical_href, passing_failure
 from chrono_mail.sync.davconflicts import (
+    CLASH,
     COLLECTION_CHANGED_ON_SERVER,
     COLLECTION_CREATE_REFUSED,
     COLLECTION_DELETE_REFUSED,
@@ -28,7 +29,9 @@ from chrono_mail.sync.davconflicts import (
     LOOK_REASONS,
     REFUSED,
     SyncConflict,
+    base_of,
     load_conflicts,
+    record,
 )
 from chrono_mail.sync.davcreates import forget as forget_create
 from chrono_mail.sync.davcreates import waiting_ids as creates_waiting
@@ -56,9 +59,11 @@ from chrono_mail.sync.mailconflicts import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_conflicts.py 4.2.453"
+__version__ = "commands_conflicts.py 4.2.481"
 
 # --- Version history ----------------------------------------------------
+# v4.2.481: A conflict about an item carries both versions, the agreed one and its calendar's colour names, for the window of one conflict;
+#           conflict.recheck at start settles here a conflict without a difference a person sees (D-308)
 # v4.2.453: Use Server data for a folder deleted on the server switches off the rules that move mail to it (D-302)
 # v2.1.311: every command says what it is doing (doing=): the busy bar names what runs
 # v2.0.286: A collection's name or colour changed here and on the server (Use Chrono Mail, Use Server data, per field) or a name the server
@@ -133,6 +138,10 @@ class ConflictSummary:
     server_allowed: bool = True  # "Use Server data" can work (not where it would delete mail that exists only here)
     keep_allowed: bool = False  # "Keep here only" is the way (mail made here that the server will not take)
     retry_allowed: bool = False  # "Retry sync": a refusal, which the server may take now (a clash needs the person's choice)
+    base_text: str = ""  # an item's conflict: the version both sides last agreed on ("" when not known), Chrono Mail's and the server's (D-308)
+    local_text: str = ""
+    server_text: str = ""
+    colour_names: tuple[tuple[str, str], ...] = ()  # its calendar's colours: (id, name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,15 +169,26 @@ def _summary(engine: Engine, account: str, store: PimStore, conflict: SyncConfli
             conflict.conflict_id, account, account_name(engine, account), conflict.collection, "", "", COLLECTION_KINDS.get(conflict.kind, conflict.kind),
             conflict.reason, REASON_WORDS[conflict.reason], conflict.name, conflict.detail, True, not refused, conflict.when, (), retry_allowed=refused,
         )
+    collection_name = ""
+    colour_names: tuple[tuple[str, str], ...] = ()
     try:
-        collection_name = store.get_collection(conflict.collection).name
-    except StorageError:
-        collection_name = ""
+        info = store.get_collection(conflict.collection)
+        collection_name = info.name
+        colour_names = tuple((entry.colour_id, entry.name) for entry in palette_for(engine.config().find(account), info))
+    except ChronoMailError:
+        pass
+    local_text = ""
+    if conflict.item:
+        try:
+            local_text = store.get(conflict.collection, conflict.item)
+        except ChronoMailError:
+            local_text = ""
     return ConflictSummary(
         conflict.conflict_id, account, account_name(engine, account), conflict.collection, collection_name, conflict.item, conflict.kind, conflict.reason,
         REASON_WORDS.get(conflict.reason, conflict.reason), conflict.name, conflict.detail, conflict.whole, conflict.reason not in (REFUSED, DELETE_REFUSED),
         conflict.when, tuple(ConflictField(c.key, c.label, c.local, c.server) for c in conflict.clashes),
-        retry_allowed=conflict.reason in (REFUSED, DELETE_REFUSED),
+        retry_allowed=conflict.reason in (REFUSED, DELETE_REFUSED), base_text=(base_of(store, conflict.collection, conflict.item) or "") if conflict.item else "",
+        local_text=local_text, server_text=conflict.server_text, colour_names=colour_names,
     )
 
 
@@ -220,6 +240,45 @@ def conflict_list(engine: Engine, parameters: NoParameters) -> ConflictList:
 
 
 CONFLICT_LIST: TypedCommand[NoParameters, ConflictList] = TypedCommand("conflict.list", NoParameters, ConflictList)
+
+
+@dataclass(frozen=True, slots=True)
+class RecheckResult:
+    settled: int  # conflicts that had no difference a person sees
+
+
+def conflict_recheck(engine: Engine, parameters: NoParameters) -> RecheckResult:
+    """At start (D-308): every open conflict about a changed item is compared again by what a person enters or sees. One without such a
+    difference is settled here: the item takes the server's version of what is not seen (and keeps what is Chrono Mail's own, which the next
+    synchronisation sends); a conflict whose clashes changed is kept with the new ones. Nothing reaches a server now."""
+    settled = 0
+    for account in pim_account_ids(engine):
+        with open_pim(engine, account) as store, _lock_for(account):
+            changed = False
+            for conflict in load_conflicts(store):
+                if conflict.reason != CLASH or not conflict.item or not conflict.server_text:
+                    continue
+                try:
+                    ours = store.get(conflict.collection, conflict.item)
+                except ChronoMailError:
+                    continue
+                merged = merge(base_of(store, conflict.collection, conflict.item), ours, conflict.server_text)
+                if merged.text is None or merged.clashes:
+                    if merged.clashes != conflict.clashes:
+                        record(store, replace(conflict, clashes=merged.clashes))
+                        changed = True
+                    continue
+                if merged.text != ours:
+                    store.put(conflict.collection, merged.text, conflict.item)
+                forget_conflict(store, conflict.conflict_id)
+                settled += 1
+                changed = True
+            if changed:
+                engine.report(Change("conflicts_changed", account))
+    return RecheckResult(settled)
+
+
+CONFLICT_RECHECK: TypedCommand[NoParameters, RecheckResult] = TypedCommand("conflict.recheck", NoParameters, RecheckResult)
 
 
 @dataclass(frozen=True, slots=True)
@@ -609,6 +668,8 @@ SYNC_WAITING: TypedCommand[NoParameters, WaitingList] = TypedCommand("sync.waiti
 
 
 def register(registry: CommandRegistry) -> None:
+    registry.register(CONFLICT_RECHECK.id, "Settle the sync conflicts without a difference a person sees (at start)", NoParameters, conflict_recheck,
+                      doing="Checking the sync conflicts again")
     registry.register(CONFLICT_LIST.id, "List the sync conflicts of the calendars, task lists and address books", NoParameters, conflict_list, doing="Reading the sync conflicts")
     registry.register(CONFLICT_SETTLE.id, "Settle sync conflicts: Chrono Mail's version, the server's, or per field", SettleParameters, conflict_settle, doing="Settling sync conflicts")
     registry.register(SYNC_WAITING.id, "List the changes made here that wait for the calendar servers", NoParameters, sync_waiting, doing="Reading what waits for the servers")

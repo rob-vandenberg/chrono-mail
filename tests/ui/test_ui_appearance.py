@@ -18,9 +18,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 4.2.476"
+__version__ = "test_ui_appearance.py 4.2.480"
 
 # --- Version history ----------------------------------------------------
+# v4.2.480: each theme has its own second accent, accent_alternative (the owner)
 # v4.2.476: The dark theme's list colour is the owner's #151c1c
 # v4.2.474: Menus have the theme's menu colour, no longer the window's (4.2.473)
 # v4.2.472: Every shade of the blue (hover, links, drag badge) is worked out from the accent; a link too light to read is darkened (D-164)

@@ -4,9 +4,10 @@ questions during the work: a conflict waits on this page until the person settle
 
 import html
 import time
+from datetime import date, datetime
 from typing import Literal, override
 
-from PySide6.QtCore import QEvent, QModelIndex, QObject, QPersistentModelIndex, QRect, QRectF, QSettings, Qt, Signal
+from PySide6.QtCore import QDate, QEvent, QLocale, QModelIndex, QObject, QPersistentModelIndex, QRect, QRectF, QSettings, Qt, QTime, Signal
 from PySide6.QtGui import QCloseEvent, QHideEvent, QPainter, QPalette
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -16,7 +17,9 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QGridLayout,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QPushButton,
@@ -30,20 +33,23 @@ from PySide6.QtWidgets import (
 )
 
 from chrono_mail.core import ChronoMailError
+from chrono_mail.pim.conflictwords import Words, rows
 from chrono_mail.engine.commands_conflicts import CONFLICT_SETTLE, ConflictSummary, SettleParameters, SettleResult
 from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
-from chrono_mail.ui.colours import red
+from chrono_mail.ui.colours import css, red, theme
 from chrono_mail.ui.forms import part
 from chrono_mail.ui.plainboxes import plain_tip
-from chrono_mail.ui.scale import wpx
+from chrono_mail.ui.scale import scale_css, wpx
 from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_WORDS, SyncMarks, paint_why, why_kind, why_pixmap
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.480"
+__version__ = "syncconflicts.py 4.2.481"
 
 # --- Version history ----------------------------------------------------
+# v4.2.481: the window of one conflict shows every field of the item in words, outlines what differs with its choices in the second accent,
+#           and the header's Chrono Mail and Server choose every field (replacing Use Chrono Mail and Use Server data, the owner, D-308)
 # v4.2.480: the window of one conflict: Use Chrono Mail and Use Server data (were All from …), Apply before Cancel (the owner)
 # v4.0.375: the window, its panel and the window of one conflict are built from their Qt Designer forms (ui/forms/sync_conflicts.ui,
 #           sync_conflicts_panel.ui, sync_conflict.ui, D-276); the columns, the field choices and the legend's icons stay the program's
@@ -110,6 +116,57 @@ def _fields(conflict: ConflictSummary) -> str:
     return ", ".join(dict.fromkeys(field.label for field in conflict.fields)) or "—"
 
 
+def _difference_look() -> str:
+    """The outline of a field that differs and its choices, in the theme's second accent (the owner, D-308)."""
+    colour = css(theme().accent_alternative)
+    return scale_css(
+        f'QFrame[accent="alternative"] {{ border: 2px solid {colour}; border-radius: 4px; padding: 2px 4px; }}'
+        f'QRadioButton[accent="alternative"]::indicator {{ width: 10px; height: 10px; border: 2px solid {colour}; border-radius: 7px; }}'
+        f'QRadioButton[accent="alternative"]::indicator:checked {{ background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,'
+        f' stop: 0 {colour}, stop: 0.55 {colour}, stop: 0.65 transparent, stop: 1 transparent); }}'
+        'QRadioButton[accent="alternative"]::indicator:disabled { border-color: palette(mid); }'
+        'QRadioButton[accent="alternative"]::indicator:checked:disabled { background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5,'
+        ' fy: 0.5, stop: 0 palette(mid), stop: 0.55 palette(mid), stop: 0.65 transparent, stop: 1 transparent); }'
+    )
+
+
+def _outlined(text: str, parent: QWidget, grid: QGridLayout, row: int, column: int) -> QRadioButton:
+    """A value that differs: outlined, with its choice in front of it inside the outline."""
+    frame = QFrame(parent)
+    frame.setProperty("accent", "alternative")
+    layout = QHBoxLayout(frame)
+    layout.setContentsMargins(0, 0, 0, 0)
+    choice = QRadioButton(text, frame)  # its text is plain: QRadioButton never reads markup
+    choice.setProperty("accent", "alternative")
+    layout.addWidget(choice)
+    grid.addWidget(frame, row, column)
+    return choice
+
+
+def _when(moment: date | datetime) -> str:
+    """A date, or a date and time, in the computer's language: "12 August 2026", "12 August 2026, 09:00"."""
+    locale = QLocale.system()
+    day = locale.toString(QDate(moment.year, moment.month, moment.day), "d MMMM yyyy")
+    if isinstance(moment, datetime):
+        return f"{day}, {locale.toString(QTime(moment.hour, moment.minute), QLocale.FormatType.ShortFormat)}"
+    return day
+
+
+def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, str]]:
+    """The item's fields in words (key, label, Chrono Mail's, the server's, differs, taken by itself); none for a conflict without both
+    versions (mail, a whole collection, an item deleted on a side)."""
+    if not conflict.local_text or not conflict.server_text:
+        return []
+    names = dict(conflict.colour_names)
+    own = conflict.colour_names[0][1] if conflict.colour_names else "Calendar colour"
+
+    def colour(colour_id: str) -> str:
+        return names.get(colour_id, own if not colour_id else "A colour no longer in this calendar")
+
+    found = rows(conflict.base_text or None, conflict.local_text, conflict.server_text, Words(_when, colour))
+    return [(row.key, row.label, row.local, row.server, row.differs, row.taken) for row in found]
+
+
 def _plain(text: str, parent: QWidget) -> QLabel:
     """A label that shows its text as it is: names and the server's words are never markup (D-259)."""
     label = QLabel(text, parent)
@@ -138,15 +195,13 @@ class ConflictDialog(QDialog):
             value.setTextFormat(Qt.TextFormat.PlainText)  # names and the server's own words: an HTML error page stays text (D-259)
             value.setText(text)
         details.setRowVisible(part(form, QLabel, "serverSaidValue"), bool(conflict.detail))  # only when the server said something
-        self.all_local: QPushButton = part(form, QPushButton, "allLocal")
-        self.all_server: QPushButton = part(form, QPushButton, "allServer")
         self.all_local.setEnabled(conflict.local_allowed)  # greyed, never hidden: the server does not take Chrono Mail's version
         self.all_server.setEnabled(conflict.server_allowed)  # greyed: the server's version would delete mail that exists only here
         self.retry: QPushButton = part(form, QPushButton, "retrySync")  # a refusal: ask the server once more (the owner)
         self.retry.setEnabled(conflict.retry_allowed)
         self.keep: QPushButton = part(form, QPushButton, "keepHereOnly")
         self.keep.setEnabled(conflict.keep_allowed)
-        self.all_local.clicked.connect(lambda: self._all(LOCAL))
+        self.all_local.clicked.connect(lambda: self._all(LOCAL))  # the header's choices: every field to that side (the owner)
         self.all_server.clicked.connect(lambda: self._all(SERVER))
         self.keep.clicked.connect(lambda: self._all(KEEP))
         self.retry.clicked.connect(lambda: self._all(RETRY))
@@ -158,30 +213,61 @@ class ConflictDialog(QDialog):
         self._ready()
 
     def _field_choices(self, parent: QWidget) -> QWidget:
-        """Each clashing field with Chrono Mail's and the server's value to choose from, made at its place in the form (so Tab reaches
-        the choices before the buttons below them)."""
+        """Every field of the item with Chrono Mail's and the server's value in words; a field that differs is outlined, with a choice per side
+        where it clashes (made at its place in the form, so Tab reaches the choices before the buttons below them, D-308)."""
         conflict = self.conflict
         choices = QWidget(parent)
+        choices.setStyleSheet(_difference_look())
         grid = QGridLayout(choices)
         grid.setContentsMargins(0, 0, 0, 0)
-        for column, title in enumerate(("Field", "Chrono Mail", "Server")):
-            grid.addWidget(QLabel(f"<b>{title}</b>", choices), 0, column)
+        grid.addWidget(QLabel("<b>Field</b>", choices), 0, 0)
+        self.all_local = QRadioButton("Chrono Mail", choices)  # every field from Chrono Mail; on while all are (the owner)
+        self.all_server = QRadioButton("Server", choices)
+        for column, header in ((1, self.all_local), (2, self.all_server)):
+            header.setAutoExclusive(False)  # both are off for a mix: set by what the fields hold, never by each other
+            header.setProperty("accent", "alternative")
+            header.setStyleSheet("font-weight: bold;")
+            grid.addWidget(header, 0, column)
         per_field = not conflict.whole and bool(conflict.fields) and conflict.local_allowed and conflict.server_allowed  # else a whole side
-        for row, field in enumerate(conflict.fields, start=1):
+        clashing = {field.key: field for field in conflict.fields}
+        shown = _rows(conflict)
+        row = 0
+        for row, (key, label, ours_text, theirs_text, differs, taken) in enumerate(shown, start=1):
+            grid.addWidget(_plain(label, choices), row, 0)
+            if not differs:
+                grid.addWidget(_plain(ours_text, choices), row, 1)
+                grid.addWidget(_plain(theirs_text, choices), row, 2)
+                continue
+            ours, theirs = _outlined(ours_text, choices, grid, row, 1), _outlined(theirs_text, choices, grid, row, 2)
+            group = QButtonGroup(self)
+            group.addButton(ours)
+            group.addButton(theirs)
+            if key in clashing:
+                group.buttonToggled.connect(self._toggled)
+                ours.setEnabled(per_field)
+                theirs.setEnabled(per_field)
+                self.groups[key] = (ours, theirs)
+            else:  # only one side changed it: taken from that side by itself, shown chosen and greyed
+                (ours if taken == LOCAL else theirs).setChecked(bool(taken))
+                ours.setEnabled(False)
+                theirs.setEnabled(False)
+        for field in conflict.fields:  # a clash without a field of its own above (the whole item kept or removed, mail, a collection)
+            if field.key in self.groups:
+                continue
+            row += 1
             grid.addWidget(_plain(field.label, choices), row, 0)
-            ours = QRadioButton(field.local or "(empty)", choices)
-            theirs = QRadioButton(field.server or "(empty)", choices)
+            ours, theirs = _outlined(field.local or "(empty)", choices, grid, row, 1), _outlined(field.server or "(empty)", choices, grid, row, 2)
             group = QButtonGroup(self)
             group.addButton(ours)
             group.addButton(theirs)
             group.buttonToggled.connect(self._toggled)
             ours.setEnabled(per_field)
             theirs.setEnabled(per_field)
-            grid.addWidget(ours, row, 1)
-            grid.addWidget(theirs, row, 2)
             self.groups[field.key] = (ours, theirs)
-        if not conflict.fields:
+        if not conflict.fields and not shown:
             grid.addWidget(_plain(conflict.reason_text, choices), 1, 0, 1, 3)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
         return choices
 
     def _toggled(self, button: QAbstractButton, checked: bool) -> None:
@@ -200,6 +286,10 @@ class ConflictDialog(QDialog):
         if mixed:
             self.side = ""
         self.apply_button.setEnabled(chosen and (bool(self.side) or mixed))
+        whole = self.side in (LOCAL, SERVER) and not self.groups
+        every = self.side not in (KEEP, RETRY) and bool(self.groups)
+        self.all_local.setChecked((whole and self.side == LOCAL) or (every and all(ours.isChecked() for ours, _ in self.groups.values())))
+        self.all_server.setChecked((whole and self.side == SERVER) or (every and all(theirs.isChecked() for _, theirs in self.groups.values())))
 
     def _apply(self) -> None:
         if not self.side:

@@ -1,9 +1,10 @@
 from chrono_mail.pim.merge import LOCAL, SERVER, merge
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_merge.py 1.1.225"
+__version__ = "test_pim_merge.py 4.2.481"
 
 # --- Version history ----------------------------------------------------
+# v4.2.481: only what a person enters or sees clashes; reminders by when and how; an occurrence is chosen apart (D-308)
 # v1.1.225: Initial: the three-way comparison field by field, every rule the owner chose (F1 to F5, D-194)
 
 
@@ -104,3 +105,27 @@ def test_a_removed_occurrence_against_a_changed_one_is_a_clash() -> None:
     merged = merge(base, ours, theirs)
     assert len(merged.clashes) == 1 and merged.clashes[0].key.startswith("unit")
     assert merge(base, ours, base).text is not None and "RECURRENCE-ID" not in (merge(base, ours, base).text or "")
+
+
+def test_a_field_a_person_never_sees_never_clashes_and_takes_the_server_s() -> None:
+    ours = calendar("SUMMARY:Meeting", "LOCATION:Room 1", "DTSTART:20261021T090000Z", "DESCRIPTION:Agenda", "STATUS:TENTATIVE")
+    theirs = calendar("SUMMARY:Meeting", "LOCATION:Room 1", "DTSTART:20261021T090000Z", "DESCRIPTION:Agenda", "STATUS:CANCELLED")
+    merged = merge(BASE, ours, theirs)
+    assert merged.clashes == () and "STATUS:CANCELLED" in (merged.text or "")  # D-308
+
+
+def test_reminders_that_differ_only_in_what_is_not_shown_never_clash() -> None:
+    alarm = ("BEGIN:VALARM", "TRIGGER:-PT1H", "ACTION:DISPLAY")
+    ours = calendar("SUMMARY:Meeting", *alarm, "UID:ours", "END:VALARM")
+    theirs = calendar("SUMMARY:Meeting", *alarm, "UID:theirs", "X-APPLE-DEFAULT-ALARM:TRUE", "END:VALARM")
+    merged = merge(calendar("SUMMARY:Meeting"), ours, theirs)
+    assert merged.clashes == () and "UID:theirs" in (merged.text or "")
+
+
+def test_reminders_at_another_time_clash_and_an_occurrence_is_chosen_apart() -> None:
+    occurrence = ("END:VEVENT", "BEGIN:VEVENT", "UID:u1", "RECURRENCE-ID:20261028T090000Z", "SUMMARY:Meeting")
+    ours = calendar("SUMMARY:Meeting", "BEGIN:VALARM", "TRIGGER:-PT1H", "ACTION:DISPLAY", "END:VALARM", *occurrence, "LOCATION:Room 1")
+    theirs = calendar("SUMMARY:Meeting", "BEGIN:VALARM", "TRIGGER:-PT2H", "ACTION:DISPLAY", "END:VALARM", *occurrence, "LOCATION:Room 2")
+    merged = merge(calendar("SUMMARY:Meeting", *occurrence), ours, theirs)
+    assert [clash.label for clash in merged.clashes] == ["Reminder", "Location (the occurrence of 28 October 2026, 09:00)"]
+    assert merged.clashes[0].key != merged.clashes[1].key and merged.clashes[1].key.endswith("@20261028T090000Z")
