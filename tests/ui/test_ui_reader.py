@@ -1,4 +1,5 @@
 import base64
+import re
 import threading
 from collections.abc import Generator
 from datetime import UTC, datetime
@@ -7,22 +8,27 @@ from pathlib import Path
 from typing import override
 
 import pytest
-from PySide6.QtCore import QPoint, Qt, QUrl
-from PySide6.QtGui import QContextMenuEvent
-from PySide6.QtWidgets import QApplication, QMenu
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
+from PySide6.QtCore import QEvent, QPoint, Qt, QUrl
+from PySide6.QtGui import QColor, QContextMenuEvent
+from PySide6.QtWidgets import QApplication, QLabel, QMenu
+from PySide6.QtTest import QTest
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_mail import AttachmentInfo, InlineImage, ShowResult
-from chrono_mail.ui.reader import ReaderWidget, embed_inline_images, linkify, pictures_below
+from chrono_mail.ui.reader import DateLabel, ReaderWidget, embed_inline_images, linkify, pictures_below
 
 PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==")
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_reader.py 4.2.478"
+__version__ = "test_ui_reader.py 4.2.479"
 
 # --- Version history ----------------------------------------------------
+# v4.2.479: Every message opens with a folded header of one height; "+N more" unfolds it, "less" folds it; the remote content line lies over the message;
+#            the tags are squares under the date; a right-click on "+N more" or "less" shows no menu; folded, a long sender or a narrow
+#            pane never widens the header nor makes it higher; the page keeps room under the remote content line; Tab, Enter, Space on the links
+#            the room is the page's own top padding, whatever the mail's elements; CJK and emoji fit the folded lines; a Tab stop only with a link
 # v4.2.478: An emptied reader shows no remote content banner, also once its empty page has loaded
 # v4.2.477: Every message and its pictures have one address host, so the web engine swaps messages without an empty page between
 # v4.2.396: a right-click on a link offers Copy link address, which puts the link on the clipboard; on a linked picture after Open attachment and Save as… (D-281)
@@ -529,3 +535,301 @@ def test_a_right_click_on_a_link_offers_copy_link_address(reader: ReaderWidget, 
     html_menu.close()
     text_end = view.cursorRect(view.document().find("today")).center()
     assert view.anchorAt(text_end) == ""  # plain text: Qt's own menu (Copy, Select All), not ours
+
+
+# --- the folded header (4.2.479) ------------------------------------------------------------------------------------------------
+
+MANY = tuple(f"Person Number {n} <person{n}@example.com>" for n in range(30))
+FILES = tuple(AttachmentInfo(f"report-{n}-final.pdf", "application/pdf", 123_456, False, f"report-{n}-final.pdf") for n in range(8))
+LONG_SUBJECT = "A subject that goes on and on about the plans for the summer " * 4
+
+
+def message_top(qtbot: QtBot, reader: ReaderWidget) -> int:
+    """Where the message area starts, once the header's lines are laid out: below it, the text that must not move."""
+    area = reader._header_area  # noqa: SLF001
+    qtbot.waitUntil(lambda: area.height() == area.heightForWidth(area.width()))
+    QApplication.sendPostedEvents(None, QEvent.Type.LayoutRequest)  # every layout that is still due, done now
+    return reader._stack.mapTo(reader, QPoint(0, 0)).y()  # noqa: SLF001
+
+
+def names_behind_more(text: str) -> int:
+    found = re.search(r"\+(\d+) more", text)
+    return int(found.group(1)) if found else 0
+
+
+@pytest.mark.parametrize("smallest", [0, 400], ids=["fits_message", "keeps_width"])
+def test_every_message_opens_with_a_header_of_one_height(reader: ReaderWidget, qtbot: QtBot, smallest: int) -> None:
+    """Few or many people, a short or a long subject, no file or eight, plain text or HTML: the message starts at the same place."""
+    reader.set_width_rule(smallest)
+    reader.show_message(shown(text="x"))
+    tops = [message_top(qtbot, reader)]
+    all_fit = names_behind_more(reader._people.text())  # noqa: SLF001
+    reader.show_message(shown(text="x", to=MANY, subject=LONG_SUBJECT, attachments=FILES))
+    tops.append(message_top(qtbot, reader))
+    more, subject, hover = names_behind_more(reader._people.text()), reader._subject.text(), reader._subject.toolTip()  # noqa: SLF001
+    reader.show_message(shown(text="x", attachments=FILES[:1]))
+    tops.append(message_top(qtbot, reader))
+    load(qtbot, reader, shown(html="<p>Hello</p>", to=MANY, attachments=FILES))
+    tops.append(message_top(qtbot, reader))
+    load(qtbot, reader, shown(html="<p>Hello</p>"))
+    tops.append(message_top(qtbot, reader))
+    assert reader.showing_html() and len(set(tops)) == 1, tops
+    assert all_fit == 0 and more > 0  # "+N more" only when not every name fits
+    assert subject.endswith("…") and LONG_SUBJECT.strip() in hover  # the subject on one line, the whole of it as hover text
+
+
+def test_more_unfolds_the_header_and_less_folds_it_again(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.set_width_rule(400)  # the reading pane keeps its width (D-304)
+    reader.resize(700, 1000)  # room for the unfolded header
+    reader.show_message(shown(text="x", to=MANY, attachments=FILES))
+    folded = message_top(qtbot, reader)
+    people = reader._people  # noqa: SLF001
+    hidden = names_behind_more(people.text())
+    assert hidden > 0 and people.text().count("@example.com") - 1 == len(MANY) + 1 - hidden  # the sender's line and the names that fit; cc carol too
+    people.linkActivated.emit("more")  # the "+N more" after the names
+    assert not reader.header_folded()
+    assert message_top(qtbot, reader) > folded and all(f"person{n}@example.com" in people.text() for n in range(len(MANY)))
+    assert all(not chip.isHidden() for chip in reader.chips()) and "less" in people.text()
+    people.linkActivated.emit("less")
+    assert reader.header_folded() and message_top(qtbot, reader) == folded
+    link = reader._attachments.link  # noqa: SLF001
+    qtbot.waitUntil(lambda: link.isVisible() and link.width() > 0)
+    assert names_behind_more(link.text()) == sum(chip.isHidden() for chip in reader.chips()) > 0
+    QTest.mouseClick(link, Qt.MouseButton.LeftButton, pos=link.rect().center())  # the "+N more" after the files
+    assert not reader.header_folded() and message_top(qtbot, reader) > folded
+    assert all(not chip.isHidden() for chip in reader.chips()) and "less" in link.text()
+    link.linkActivated.emit("less")
+    assert reader.header_folded() and message_top(qtbot, reader) == folded
+    people.linkActivated.emit("more")
+    reader.show_message(shown(text="x", to=MANY))  # a new message always opens folded
+    assert reader.header_folded() and message_top(qtbot, reader) == folded
+    before = names_behind_more(people.text())
+    reader.resize(450, 1000)  # a narrower pane: fewer names fit
+    qtbot.waitUntil(lambda: names_behind_more(people.text()) > before)
+    assert message_top(qtbot, reader) == folded
+
+
+def test_the_remote_content_line_lies_over_the_message(reader: ReaderWidget, qtbot: QtBot, probe: Probe) -> None:
+    """Its coming never changes the header's height nor where the message starts; it covers the top of the message, as wide as it."""
+    document = f"<html><body><p>Text</p><img src='{probe.url()}'></body></html>"
+    reader.set_width_rule(400)  # the reading pane keeps its width (D-304)
+    reader.show_message(shown(text="Text"))
+    top, header = message_top(qtbot, reader), reader._header_area.height()  # noqa: SLF001
+    load(qtbot, reader, shown(html=document))
+    qtbot.waitUntil(reader.banner_visible, timeout=5000)
+    banner = reader._banner  # noqa: SLF001
+    qtbot.waitUntil(lambda: banner.height() > 0 and banner.width() == reader.width())
+    assert message_top(qtbot, reader) == top and reader._header_area.height() == header  # noqa: SLF001
+    assert banner.mapTo(reader, QPoint(0, 0)).y() == top  # over the top of the message
+    reader.resize(600, 500)
+    qtbot.waitUntil(lambda: banner.width() == reader.width() == 600)
+    assert message_top(qtbot, reader) == top
+
+
+TAG_COLOURS = {"Work": QColor(200, 30, 30), "Family": QColor(30, 150, 60), "Travel": QColor(40, 60, 200)}
+
+
+def test_a_tagged_message_has_the_same_header_height_and_shows_its_tags_as_squares(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.set_width_rule(400)
+    reader.show_message(shown(text="x"))
+    reader.set_tags((), TAG_COLOURS.__getitem__)
+    untagged = message_top(qtbot, reader)
+    reader.show_message(shown(text="x"))
+    reader.set_tags(tuple(TAG_COLOURS), TAG_COLOURS.__getitem__)
+    assert message_top(qtbot, reader) == untagged  # under the date, within the sender's circle: no line of its own
+    squares = reader._tags  # noqa: SLF001
+    assert all(name in squares.toolTip() for name in TAG_COLOURS)  # the names as hover text
+    image = squares.grab().toImage()
+    ratio = image.devicePixelRatio()
+    placed, rest = squares.squares()
+    assert rest == "" and len(placed) == len(TAG_COLOURS)
+    painted = [image.pixelColor(round(rect.center().x() * ratio), round(rect.center().y() * ratio)) for rect, _ in placed]
+    assert painted == list(TAG_COLOURS.values())  # each in its tag's own colour, in order
+    circle = reader._avatar  # noqa: SLF001
+    top, bottom = circle.mapTo(reader, QPoint(0, 0)).y(), circle.mapTo(reader, QPoint(0, circle.height())).y()
+    assert top <= squares.mapTo(reader, QPoint(0, 0)).y() and squares.mapTo(reader, QPoint(0, squares.height())).y() <= bottom  # within the circle's height
+    many = tuple(f"Tag {n}" for n in range(40))
+    reader.set_tags(many, lambda name: QColor(10, 10, 10))
+    placed, rest = squares.squares()
+    assert rest == f"+{len(many) - len(placed)}" and 0 < len(placed) < len(many)  # the first squares, then +N
+
+
+def link_spot(qtbot: QtBot, label: QLabel, link: str) -> QPoint:
+    """Where the pointer is on the link: the label says so itself when the pointer moves over it."""
+    hovered: list[str] = []
+    label.linkHovered.connect(hovered.append)
+    for y in range(label.height() - 2, 1, -4):
+        for x in range(label.width() - 2, 1, -4):
+            QTest.mouseMove(label, QPoint(x, y))
+            if hovered and hovered[-1] == link:
+                return QPoint(x, y)
+    raise AssertionError(f"no {link} link in {label.text()}")
+
+
+def menu_after_right_click(label: QLabel, spot: QPoint) -> bool:
+    QApplication.sendEvent(label, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, spot, label.mapToGlobal(spot)))
+    menus = [widget for widget in QApplication.topLevelWidgets() if isinstance(widget, QMenu) and widget.isVisible()]
+    for menu in menus:
+        menu.close()
+    return bool(menus)
+
+
+def test_a_right_click_on_more_or_less_shows_no_menu(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.set_width_rule(400)
+    reader.resize(700, 1000)
+    reader.show_message(shown(text="x", to=MANY, attachments=FILES))
+    message_top(qtbot, reader)
+    people, files = reader._people, reader._attachments.link  # noqa: SLF001
+    assert not menu_after_right_click(people, link_spot(qtbot, people, "more"))
+    qtbot.waitUntil(files.isVisible)
+    assert not menu_after_right_click(files, files.rect().center())
+    reader.set_header_folded(False)
+    message_top(qtbot, reader)
+    assert not menu_after_right_click(people, link_spot(qtbot, people, "less"))
+    qtbot.waitUntil(files.isVisible)
+    assert not menu_after_right_click(files, files.rect().center())
+    QTest.mouseMove(people, QPoint(4, 4))  # off the link, on the sender's name
+    assert menu_after_right_click(people, QPoint(4, 4))  # on the text itself Qt's own menu stays (Copy, Select All)
+
+
+LONG_SENDER = ("Someone <" + "x" * 110 + "@example.com>",)
+
+
+@pytest.mark.parametrize("smallest", [0, 400], ids=["fits_message", "keeps_width"])
+def test_a_long_sender_never_widens_the_folded_header(reader: ReaderWidget, qtbot: QtBot, smallest: int) -> None:
+    reader.set_width_rule(smallest)
+    reader.show_message(shown(text="x"))
+    top, narrowest = message_top(qtbot, reader), reader.minimumSizeHint().width()
+    reader.show_message(shown(text="x", sender=LONG_SENDER))
+    assert message_top(qtbot, reader) == top and not reader.header_scrolls_sideways()
+    assert reader.minimumSizeHint().width() == narrowest  # a message window keeps its width
+    assert "x" * 110 in reader._people.toolTip() and "x" * 110 not in reader._people.text()  # noqa: SLF001 - shortened with "…", whole as hover text
+
+
+def test_the_folded_date_stays_on_one_line_in_a_narrow_pane(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.set_width_rule(300)
+    reader.show_message(shown(text="x"))
+    reader.set_tags(("Work",), lambda name: QColor(200, 30, 30))
+    top = message_top(qtbot, reader)
+    reader.resize(330, 500)
+    qtbot.waitUntil(lambda: reader.width() == 330)
+    assert message_top(qtbot, reader) == top
+    date = reader._date  # noqa: SLF001
+    assert not date.wordWrap() and date.height() <= date.fontMetrics().height() + 1  # one line
+    reader.set_header_folded(False)
+    assert date.wordWrap()  # unfolded, it may wrap as before (D-304)
+    narrow = DateLabel()
+    qtbot.addWidget(narrow)
+    narrow.set_date("Thursday 8 October 2026 10:30")
+    narrow.show()
+    narrow.resize(60, 20)
+    qtbot.waitUntil(lambda: narrow.text().endswith("…"))  # folded: shortened, never on a second line
+    assert "2026" in narrow.toolTip() and not narrow.wordWrap()
+
+
+def page_value(qtbot: QtBot, reader: ReaderWidget, script: str) -> object:
+    """What a question to the shown page answers (asked in Chrono Mail's own script world; the mail's scripts never run)."""
+    answers: list[object] = []
+    reader.web_page.runJavaScript(script, QWebEngineScript.ScriptWorldId.ApplicationWorld, answers.append)
+    qtbot.waitUntil(lambda: bool(answers), timeout=5000)
+    return answers[0]
+
+
+ROOM = "parseFloat(getComputedStyle(document.documentElement).paddingTop)"
+FIRST_LINE = "document.getElementById('first').getBoundingClientRect().top"
+
+
+def test_the_page_keeps_room_under_the_remote_content_line(reader: ReaderWidget, qtbot: QtBot, probe: Probe) -> None:
+    """Nothing of the message lies under the remote content line: the page's top gets room exactly as tall as it."""
+    reader.set_width_rule(400)
+    load(qtbot, reader, shown(html=f"<html><body><p id='first'>Text</p><img src='{probe.url()}'></body></html>"))
+    qtbot.waitUntil(reader.banner_visible, timeout=5000)
+    banner = reader._banner  # noqa: SLF001
+
+    def room_matches() -> bool:
+        room = page_value(qtbot, reader, ROOM)
+        return isinstance(room, float | int) and abs(room - banner.height()) < 1
+
+    qtbot.waitUntil(room_matches, timeout=8000)
+    first = page_value(qtbot, reader, FIRST_LINE)
+    assert isinstance(first, float | int) and first >= banner.height()  # the first line lies below the remote content line
+    reader.resize(420, 500)  # narrower: the line wraps, and gets taller
+    qtbot.waitUntil(lambda: banner.width() == 420)
+    qtbot.waitUntil(room_matches, timeout=8000)
+    with qtbot.waitSignal(reader.web_page.loadFinished, timeout=10000):
+        reader._load_remote.click()  # noqa: SLF001
+    assert page_value(qtbot, reader, ROOM) == 0 and not reader.banner_visible()  # allowed: no line, no room
+
+
+def test_tab_reaches_more_and_less_and_enter_or_space_follows_them(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.set_width_rule(400)
+    reader.resize(700, 1000)
+    reader.show_message(shown(text="x", to=MANY, attachments=FILES))
+    message_top(qtbot, reader)
+    people, link = reader._people, reader._attachments.link  # noqa: SLF001
+    assert people.focusPolicy() & Qt.FocusPolicy.TabFocus and link.focusPolicy() & Qt.FocusPolicy.TabFocus
+    reader.activateWindow()
+    qtbot.waitUntil(reader.isActiveWindow)
+    shown_chips = [chip for chip in reader.chips() if not chip.isHidden()]
+    shown_chips[-1].setFocus(Qt.FocusReason.TabFocusReason)
+    QTest.keyClick(shown_chips[-1], Qt.Key.Key_Tab)
+    qtbot.waitUntil(link.hasFocus)  # after the files that are shown, "+N more"
+    QTest.keyClick(link, Qt.Key.Key_Return)
+    assert not reader.header_folded()
+    QTest.keyClick(link, Qt.Key.Key_Space)  # now "less"
+    assert reader.header_folded()
+    people.setFocus(Qt.FocusReason.TabFocusReason)
+    QTest.keyClick(people, Qt.Key.Key_Space)
+    assert not reader.header_folded()
+    QTest.keyClick(people, Qt.Key.Key_Enter)
+    assert reader.header_folded()
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "<body><p id='first'>Text</p><div id='chrono-mail-banner-room'></div>",
+        "<body style='display:flex'><p id='first'>Text</p>",
+        "<body style='display:grid; grid-template-columns:1fr 1fr'><p id='first'>Text</p>",
+    ],
+    ids=["same_id", "flex", "grid"],
+)
+def test_the_room_under_the_remote_content_line_holds_whatever_the_mail(reader: ReaderWidget, qtbot: QtBot, probe: Probe, body: str) -> None:
+    """A mail's own element with the room's name, or a body laid out as flex or grid, never moves its first line under the line."""
+    reader.set_width_rule(400)
+    page = f"<html>{body}<img src='{probe.url()}'></body></html>"
+    load(qtbot, reader, shown(html=page))
+    qtbot.waitUntil(reader.banner_visible, timeout=5000)
+    banner = reader._banner  # noqa: SLF001
+
+    def first_line_below() -> bool:
+        first = page_value(qtbot, reader, FIRST_LINE)
+        return isinstance(first, float | int) and first * reader.zoom / 100 >= banner.height() > 0
+
+    qtbot.waitUntil(first_line_below, timeout=8000)
+
+
+def test_chinese_names_and_emoji_fit_the_folded_lines(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.set_width_rule(400)
+    reader.show_message(shown(text="x"))
+    top = message_top(qtbot, reader)
+    reader.show_message(shown(text="x", sender=("李明 gjpqy 😀 <li@example.com>",), to=("王芳 gjpqy 😀 <wang@example.com>",), subject="会议 gjpqy 😀"))
+    assert message_top(qtbot, reader) == top  # still one height for every message
+    for line in (reader._people, reader._subject):  # noqa: SLF001
+        natural = QLabel()
+        natural.setFont(line.font())
+        natural.setTextFormat(line.textFormat())
+        natural.setText(line.text())
+        assert natural.sizeHint().height() <= line.height(), line.text()  # nothing reaching below the line is cut off
+        natural.deleteLater()
+
+
+def test_the_people_line_is_a_tab_stop_only_with_a_link(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.set_width_rule(400)
+    reader.show_message(shown(text="x"))
+    message_top(qtbot, reader)
+    people = reader._people  # noqa: SLF001
+    assert not people.focusPolicy() & Qt.FocusPolicy.TabFocus  # every name fits: nothing to reach
+    reader.show_message(shown(text="x", to=MANY))
+    message_top(qtbot, reader)
+    assert people.focusPolicy() & Qt.FocusPolicy.TabFocus  # "+N more"

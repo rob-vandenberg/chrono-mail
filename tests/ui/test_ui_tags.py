@@ -19,9 +19,10 @@ from tests.ui.test_ui_window import started, subjects
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_tags.py 1.9.274"
+__version__ = "test_ui_tags.py 4.2.479"
 
 # --- Version history ----------------------------------------------------
+# v4.2.479: the reading pane shows the tags as squares under the date: the test asks their names
 # v1.9.274: A coming message is a real Change with a MessageRow (R-19)
 # v1.9.271: The Tags page's changes are typed steps (R-19)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
@@ -107,7 +108,7 @@ def test_the_reading_pane_shows_the_tags_of_the_message(world: World, qtbot: QtB
     tag_rows(world, qtbot, 0)
     world.window.list_view.setCurrentIndex(world.window.list_model.index(1, 0))
     world.window.list_view.setCurrentIndex(world.window.list_model.index(0, 0))
-    wait(qtbot, lambda: "Work" in world.window.reader._tags.text() and world.window.reader._tags.isVisibleTo(world.window.reader))
+    wait(qtbot, lambda: world.window.reader._tags.names() == ("Work",) and world.window.reader._tags.isVisibleTo(world.window.reader))  # noqa: SLF001 - a square under the date (4.2.479)
 
 
 def test_the_tag_colour_can_be_the_text_colour(world: World, qtbot: QtBot) -> None:

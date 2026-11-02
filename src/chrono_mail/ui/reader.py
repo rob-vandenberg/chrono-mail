@@ -1,15 +1,18 @@
 import base64
 import html
+import math
 import re
+from collections.abc import Callable
 from functools import partial
 from email.utils import parseaddr
 from typing import override
 
-from PySide6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QObject, QPoint, QPointF, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QGuiApplication, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPalette, QResizeEvent, QTextCursor, QWheelEvent
+from PySide6.QtCore import QBuffer, QByteArray, QEvent, QIODevice, QObject, QPoint, QPointF, QRect, QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QContextMenuEvent, QFont, QFontMetrics, QGuiApplication, QHideEvent, QImage, QKeyEvent, QKeySequence, QMouseEvent, QPainter, QPaintEvent, QPalette, QResizeEvent, QShowEvent, QTextCursor, QTextDocument, QWheelEvent
 from PySide6.QtWebEngineCore import (
     QWebEnginePage,
     QWebEngineProfile,
+    QWebEngineScript,
     QWebEngineSettings,
     QWebEngineUrlRequestInfo,
     QWebEngineUrlRequestInterceptor,
@@ -45,9 +48,17 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.2.478"
+__version__ = "reader.py 4.2.479"
 
 # --- Version history ----------------------------------------------------
+# v4.2.479: Every message opens with a folded header of one height: the sender and the people it went to on one line each, "+N more"
+#            for the names that do not fit, the subject on one line, one row of files with "+N more"; "+N more" unfolds it all, "less"
+#            folds it again; the remote content line lies over the top of the message: a new message never moves the text below; the
+#            tags are small squares in their colours under the date (no line of their own); a right-click on "+N more" or "less" shows no menu;
+#            folded, the sender and the date never ask for more width than there is (shortened with "…", whole as hover text); the page
+#            gets empty room at its top as tall as the remote content line, so it hides nothing; Tab reaches "+N more" and "less", and
+#            Enter or Space follows them (a Tab stop only with one); the room is the page's own top padding; the folded lines are as
+#            high as Chinese names and emoji need
 # v4.2.478: The remote content banner stays away from an empty reader: emptying it forgets the blocked pictures, and the banner shows only while
 #            an HTML message is on screen (it came back when the empty page had loaded, after a switch of folder)
 # v4.2.477: Every message has the same address host (chrono-message://message/...): the web engine keeps one page process and swaps the old
@@ -480,16 +491,75 @@ class HeaderArea(QScrollArea):
 
 
 class DateLabel(QLabel):
-    """The message's date: one line whenever the header has room; allowed to wrap (set_width_rule), it goes on two lines only when the
-    room runs out, never sooner (D-304)."""
+    """The message's date. Folded (as every message opens): always one line, shortened with "…" when the room runs out, the whole date
+    as hover text; so line 1 is as high whatever the room. Unfolded and allowed to wrap (set_width_rule), it goes on two lines only when
+    the room runs out, never sooner (D-304)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full: str = ""
+        self.folded: bool = True
+        self.wraps: bool = False  # set_width_rule: allowed to wrap while unfolded
+
+    def set_date(self, text: str) -> None:
+        self._full = text
+        self._apply()
+        self.updateGeometry()
+
+    def set_folded(self, folded: bool) -> None:
+        self.folded = folded
+        self._apply()
+        self.updateGeometry()
+
+    def set_wraps(self, wraps: bool) -> None:
+        self.wraps = wraps
+        self._apply()
+        self.updateGeometry()
+
+    def _apply(self) -> None:
+        wrap = self.wraps and not self.folded
+        if self.wordWrap() != wrap:
+            self.setWordWrap(wrap)
+        text, tip = self._full, ""
+        metrics = self.fontMetrics()
+        room = self.contentsRect().width()
+        if self.folded and self.isVisible() and metrics.horizontalAdvance(self._full) > room:
+            text, tip = metrics.elidedText(self._full, Qt.TextElideMode.ElideRight, room), plain_tip(self._full)
+        if text != self.text():
+            self.setText(text)
+        if tip != self.toolTip():
+            self.setToolTip(tip)
+
+    def _one_line(self) -> int:
+        margins = self.contentsMargins()
+        return self.fontMetrics().horizontalAdvance(self._full) + 2 * self.margin() + margins.left() + margins.right() + 1
+
+    @override
+    def resizeEvent(self, e: QResizeEvent, /) -> None:  # noqa: N802 - Qt's name
+        super().resizeEvent(e)
+        if self.folded:
+            self._apply()
+
+    @override
+    def showEvent(self, e: QShowEvent, /) -> None:  # noqa: N802 - Qt's name
+        super().showEvent(e)
+        if self.folded:
+            self._apply()
 
     @override
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        if self.folded:
+            return QSize(self._one_line(), self.fontMetrics().height())  # the whole date, on one line
         if not self.wordWrap():
             return super().sizeHint()
-        margins = self.contentsMargins()
-        width = self.fontMetrics().horizontalAdvance(self.text()) + 2 * self.margin() + margins.left() + margins.right() + 1
+        width = self._one_line()
         return QSize(width, self.heightForWidth(width))  # the whole date on one line: a wrapping label would ask for less
+
+    @override
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        if self.folded:
+            return QSize(min(self._one_line(), self.fontMetrics().horizontalAdvance("…") * 4), self.fontMetrics().height())
+        return super().minimumSizeHint()
 
 
 class AttachmentChip(QPushButton):
@@ -538,6 +608,378 @@ class AttachmentChip(QPushButton):
             super().mouseDoubleClickEvent(e)
 
 
+_NO_LIMIT: int = 16777215  # Qt's largest size of a widget (QWIDGETSIZE_MAX)
+_LINK_KEYS: tuple[Qt.Key, ...] = (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space)
+_LINK_PATTERN: re.Pattern[str] = re.compile(r'<a href="(more|less)">')
+_KEYBOARD_LINKS: Qt.TextInteractionFlag = Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.LinksAccessibleByKeyboard
+
+
+def follow_link_key(label: QLabel, e: QKeyEvent) -> bool:
+    """Enter or Space on a header line with "+N more" or "less" (its only link) follows it, as a click does; True when it did."""
+    found = _LINK_PATTERN.search(label.text())
+    if found is None or e.key() not in _LINK_KEYS or e.modifiers() not in (Qt.KeyboardModifier.NoModifier, Qt.KeyboardModifier.KeypadModifier):
+        return False
+    e.accept()
+    label.linkActivated.emit(found.group(1))
+    return True
+
+
+_BANNER_ROOM_SCRIPT: str = """document.documentElement.style.setProperty("padding-top", "%.3fpx", "important");"""  # run in Chrono Mail's own script world: the mail's own scripts never run (JavascriptEnabled is off for them)
+
+
+def _all_fits(width: int) -> tuple[str, str]:
+    return "", ""
+
+
+def fold_names(names: list[tuple[str, str]], metrics: QFontMetrics, width: int) -> tuple[str, int]:
+    """The names (each with what goes before it: "to ", ", ") that fit on one line of this width, with room left for "+N more"; and N,
+    the names not shown. The first name, when even it does not fit, is shortened with "…" and counted as not shown. -1: all of them."""
+    if width < 0:
+        return "".join(lead + name for lead, name in names), 0
+    room = width - metrics.horizontalAdvance("  ")  # what the markup around the names may add (a space, rounding)
+
+    def more(count: int) -> int:
+        return metrics.horizontalAdvance(f" +{count} more") if count else 0
+
+    shown, used = "", 0
+    for place, (lead, name) in enumerate(names):
+        needed = metrics.horizontalAdvance(lead + name)
+        if used + needed + more(len(names) - place - 1) > room:
+            if place > 0:
+                return shown, len(names) - place
+            left = room - metrics.horizontalAdvance(lead) - more(len(names))
+            part = metrics.elidedText(name, Qt.TextElideMode.ElideRight, left) if left > metrics.horizontalAdvance("…") else ""
+            return lead + part, len(names)
+        shown, used = shown + lead + name, used + needed
+    return shown, 0
+
+
+_TALL_SAMPLE: str = "Xgjpqy 李明 😀 ญี่ปุ่น مرحبا नमस्ते"  # the scripts that reach highest and lowest, from their fallback fonts
+_FOLDED_HEIGHTS: dict[tuple[str, int, bool], int] = {}  # FoldedLine.folded_height, measured once per font
+
+
+class FoldedLine(QLabel):
+    """A part of the header that, folded (as every message opens), shows what fits on its lines, and is always as high as those lines
+    whatever the message: a new message never moves the text below it. Unfolded it shows all of it, wrapped. What fits is asked of the
+    function given with the content, at the width there is (-1: all of it, while the line is not on screen); it gives the text and the
+    hover text."""
+
+    def __init__(self, lines: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._lines: int = lines
+        self._fit: Callable[[int], tuple[str, str]] = _all_fits
+        self._full: str = ""
+        self._smallest: int = 0
+        self.folded: bool = True
+        self._on_link: str = ""  # the link under the pointer ("+N more", "less"): a right-click there shows no menu
+        self.linkHovered.connect(self._link_hovered)
+
+    def _link_hovered(self, link: str) -> None:
+        self._on_link = link
+
+    @override
+    def keyPressEvent(self, ev: QKeyEvent, /) -> None:  # noqa: N802 - Qt's name
+        if not follow_link_key(self, ev):
+            super().keyPressEvent(ev)
+
+    @override
+    def contextMenuEvent(self, ev: QContextMenuEvent, /) -> None:  # noqa: N802 - Qt's name
+        if self._on_link and ev.reason() == QContextMenuEvent.Reason.Mouse:
+            ev.accept()  # "+N more" and "less" are no address: nothing to copy
+            return
+        super().contextMenuEvent(ev)
+
+    def set_content(self, fit: Callable[[int], tuple[str, str]], full: str, smallest: int) -> None:
+        """A new message: folded, as every message opens. smallest: the width it never goes below while folded."""
+        self._fit, self._full, self._smallest = fit, full, smallest
+        self.folded = True
+        self._apply()
+
+    def set_folded(self, folded: bool, full: str | None = None) -> None:
+        if full is not None:
+            self._full = full
+        self.folded = folded
+        self._apply()
+        self.updateGeometry()
+
+    def folded_height(self) -> int:
+        """One height for every message: that of the tallest lines a name or subject is likely to have at this font (Latin letters that
+        reach below the line, Chinese, an emoji, Thai with its tone marks, Arabic, Devanagari, all on one line, which come from other fonts and
+        need more room than the font's own height), and a little."""
+        key = (self.font().key(), self._lines, self.textFormat() == Qt.TextFormat.RichText)
+        if key not in _FOLDED_HEIGHTS:
+            sample = QTextDocument()
+            sample.setDocumentMargin(0)
+            sample.setDefaultFont(self.font())
+            if key[2]:
+                sample.setHtml("<br>".join([f"<b>{_TALL_SAMPLE}</b>"] + [_TALL_SAMPLE] * (self._lines - 1)))
+            else:
+                sample.setPlainText("\n".join([_TALL_SAMPLE] * self._lines))
+            _FOLDED_HEIGHTS[key] = math.ceil(sample.size().height() * 1.06) + 2  # fonts mixed on one line can each add a little
+        return _FOLDED_HEIGHTS[key]
+
+    def _apply(self) -> None:
+        if self.folded:
+            if self.wordWrap():
+                self.setWordWrap(False)
+            self.setFixedHeight(self.folded_height())
+            text, tip = self._fit(self.contentsRect().width() if self.isVisible() else -1)
+        else:
+            if not self.wordWrap():
+                self.setWordWrap(True)
+            self.setMinimumHeight(0)
+            self.setMaximumHeight(_NO_LIMIT)
+            text, tip = self._full, ""
+        if text != self.text():
+            self.setText(text)
+        if tip != self.toolTip():
+            self.setToolTip(tip)
+        if self.textInteractionFlags() & Qt.TextInteractionFlag.LinksAccessibleByKeyboard:
+            wanted = Qt.FocusPolicy.StrongFocus if _LINK_PATTERN.search(text) else Qt.FocusPolicy.ClickFocus  # a Tab stop only with "+N more" or "less"
+            if self.focusPolicy() != wanted:
+                self.setFocusPolicy(wanted)
+
+    @override
+    def resizeEvent(self, e: QResizeEvent, /) -> None:  # noqa: N802 - Qt's name
+        super().resizeEvent(e)
+        if self.folded and e.size().width() != e.oldSize().width():
+            self._apply()  # another width: what fits is asked again
+
+    @override
+    def showEvent(self, e: QShowEvent, /) -> None:  # noqa: N802 - Qt's name
+        super().showEvent(e)
+        if self.folded:
+            self._apply()
+
+    @override
+    def changeEvent(self, e: QEvent, /) -> None:  # noqa: N802 - Qt's name
+        super().changeEvent(e)
+        if e.type() == QEvent.Type.FontChange:
+            self._apply()
+
+    @override
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        return QSize(self._smallest, self.folded_height()) if self.folded else super().sizeHint()
+
+    @override
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        return QSize(self._smallest, self.folded_height()) if self.folded else super().minimumSizeHint()
+
+
+class LinkLabel(QLabel):
+    """"+N more" or "less" after the files: Enter or Space follows it, as a click does."""
+
+    @override
+    def keyPressEvent(self, ev: QKeyEvent, /) -> None:  # noqa: N802 - Qt's name
+        if not follow_link_key(self, ev):
+            super().keyPressEvent(ev)
+
+
+class AttachmentRow(FlowRow):
+    """The files of the message. Folded (as every message opens): one row, always as high, with the files that fit and "+N more" for
+    the others (the first file is shortened when even it does not fit). Unfolded: every file, in as many rows as they need, and "less"
+    at the end when there were more."""
+
+    def __init__(self, parent: QWidget | None = None, left: int = 0, right: int = 0, bottom: int = 0) -> None:
+        super().__init__(parent, left=left, right=right, bottom=bottom)
+        self.folded: bool = True
+        self.less: bool = False  # unfolded: "less" after the last file
+        self.hidden_count: int = 0  # folded: the files behind "+N more"
+        self.line_height: int = 0  # the height of the folded row (the reader measures a file's button)
+        self.link: LinkLabel = LinkLabel(self)  # "+N more" or "less"
+        self.link.setTextFormat(Qt.TextFormat.RichText)
+        self.link.setTextInteractionFlags(_KEYBOARD_LINKS)  # Tab reaches it
+        self.link.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)  # "+N more" and "less" are no address: no menu, also not the window's
+        self.link.hide()
+
+    def set_folded(self, folded: bool, less: bool = False) -> None:
+        self.folded, self.less = folded, less and not folded
+        self._place()
+        self.updateGeometry()
+
+    def _link_width(self, text: str) -> int:
+        return self.link.fontMetrics().horizontalAdvance(text) + 4
+
+    def _show_link(self, href: str, text: str, x: int, y: int, height: int) -> None:
+        """The link at x, in the middle of a row of this height."""
+        self.link.setText(f'<a href="{href}">{html.escape(text)}</a>')
+        link_height = self.link.sizeHint().height()
+        self.link.setGeometry(QRect(x, y + max(0, height - link_height) // 2, self._link_width(text), link_height))
+        self.link.show()
+
+    @override
+    def _lay_out(self, width: int, place: bool) -> int:
+        left, top, right, bottom = self._margins
+        end = width - right
+        parts = self._parts
+        if not self.folded:
+            x, y, row_height = left, top, 0
+            for part in parts:
+                size = part.sizeHint()
+                if self.wraps:
+                    size.setWidth(max(1, min(size.width(), end - left)))
+                if self.wraps and x > left and x + size.width() > end:
+                    x, y, row_height = left, y + row_height + self._spacing, 0
+                if place:
+                    part.setGeometry(QRect(x, y, size.width(), size.height()))
+                    part.show()
+                x += size.width() + self._spacing
+                row_height = max(row_height, size.height())
+            if self.less:
+                if x > left and x + self._link_width("less") > end:
+                    x, y, row_height = left, y + row_height + self._spacing, 0
+                row_height = max(row_height, self.line_height)
+                if place:
+                    self._show_link("less", "less", x, y, row_height)
+            elif place:
+                self.link.hide()
+            return y + row_height + bottom
+        line = self.line_height or max((part.sizeHint().height() for part in parts), default=0)
+        x, shown = left, 0
+        for place_in_row, part in enumerate(parts):
+            size = part.sizeHint()
+            others = len(parts) - place_in_row - 1
+            reserve = self._spacing + self._link_width(f"+{others} more") if others else 0
+            if place_in_row == 0 and self.wraps:
+                size.setWidth(max(1, min(size.width(), end - left - reserve)))  # the first file always shows, shortened if need be
+            elif place_in_row > 0 and x + size.width() + reserve > end:
+                break
+            if place:
+                part.setGeometry(QRect(x, top + max(0, line - size.height()) // 2, size.width(), size.height()))
+                part.show()
+            x += size.width() + self._spacing
+            shown += 1
+        if place:
+            self.hidden_count = len(parts) - shown
+            for part in parts[shown:]:
+                part.hide()
+            if self.hidden_count:
+                self._show_link("more", f"+{self.hidden_count} more", x, top, line)
+            else:
+                self.link.hide()
+        return top + line + bottom
+
+    def folded_height(self) -> int:
+        _, top, _, bottom = self._margins
+        return top + self.line_height + bottom
+
+
+class TagSquares(QWidget):
+    """The message's tags under the date: a small square in each tag's own colour, right-aligned, as many as fit, then "+N"; the tag
+    names as hover text. Always as high as one line, with or without tags, so the header is as high for a tagged message."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._tags: tuple[tuple[str, QColor], ...] = ()
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+    def set_tags(self, tags: tuple[tuple[str, QColor], ...]) -> None:
+        self._tags = tags
+        self.setToolTip(plain_tip(", ".join(name for name, _ in tags)) if tags else "")
+        self.update()
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(name for name, _ in self._tags)
+
+    def _side(self) -> int:
+        return max(4, round(self.fontMetrics().height() * 0.6))
+
+    def squares(self) -> tuple[list[tuple[QRect, QColor]], str]:
+        """Where each shown square goes with its colour, and the "+N" after them ("" when all fit)."""
+        side, gap = self._side(), max(2, self._side() // 3)
+        count = len(self._tags)
+
+        def width_of(shown: int, rest: str) -> int:
+            return shown * side + max(0, shown - 1) * gap + (gap + self.fontMetrics().horizontalAdvance(rest) if rest else 0)
+
+        shown, rest = count, ""
+        while shown > 0 and width_of(shown, rest) > self.width():
+            shown -= 1
+            rest = f"+{count - shown}"
+        x = self.width() - width_of(shown, rest)
+        y = (self.height() - side) // 2
+        placed = [(QRect(x + place * (side + gap), y, side, side), colour) for place, (_, colour) in enumerate(self._tags[:shown])]
+        return placed, rest
+
+    @override
+    def paintEvent(self, event: QPaintEvent, /) -> None:  # noqa: N802 - Qt's name
+        painter = QPainter(self)
+        placed, rest = self.squares()
+        for rect, colour in placed:
+            painter.fillRect(rect, colour)
+        if rest:
+            painter.setPen(self.palette().color(QPalette.ColorRole.PlaceholderText))
+            painter.drawText(self.rect(), int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter), rest)
+        painter.end()
+
+    @override
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        return QSize(0, self.fontMetrics().height())  # never widens the header: the date's width is its room
+
+    @override
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        return self.sizeHint()
+
+
+class OverlayBanner(QFrame):
+    """The remote content line. It lies over the top of the message area, never in the layout: its coming and going moves neither the
+    header nor the message. As wide as the message area, as high as its lines need at that width. While the message may set the reader's
+    width (sets_width, set_width_rule 0), its one line sets the message area's smallest width, as it did in the layout."""
+
+    placed = Signal(int)  # its height where it lies now: the page keeps room as tall at its top
+
+    def __init__(self, area: QWidget) -> None:
+        super().__init__(area)
+        self.sets_width: bool = True
+        self.setAutoFillBackground(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)  # the HTML message's view has a window of its own (4.2.464): only one of its own lies above it
+        area.installEventFilter(self)
+
+    def set_sets_width(self, sets: bool) -> None:
+        self.sets_width = sets
+        self._follow_width()
+
+    def _follow_width(self) -> None:
+        area = self.parentWidget()
+        if area is not None:
+            area.setMinimumWidth(self.minimumSizeHint().width() if self.sets_width and not self.isHidden() else 0)
+
+    def place(self) -> None:
+        """At the top of the message area, over its full width."""
+        area = self.parentWidget()
+        if area is None:
+            return
+        width = area.width()
+        height = self.heightForWidth(width) if self.hasHeightForWidth() else -1
+        self.setGeometry(0, 0, width, height if height >= 0 else self.sizeHint().height())
+        self.raise_()
+        self.placed.emit(self.height())
+
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent, /) -> bool:  # noqa: N802 - Qt's name
+        if watched is self.parentWidget() and event.type() == QEvent.Type.Resize and not self.isHidden():
+            self.place()
+        return super().eventFilter(watched, event)
+
+    @override
+    def event(self, e: QEvent, /) -> bool:
+        handled = super().event(e)
+        if e.type() == QEvent.Type.LayoutRequest and not self.isHidden():
+            self.place()  # its lines changed (a button shown or hidden, another direction)
+        return handled
+
+    @override
+    def showEvent(self, e: QShowEvent, /) -> None:  # noqa: N802 - Qt's name
+        super().showEvent(e)
+        self.place()
+        self._follow_width()
+
+    @override
+    def hideEvent(self, e: QHideEvent, /) -> None:  # noqa: N802 - Qt's name
+        super().hideEvent(e)
+        self._follow_width()
+
+
 class ReaderWidget(QWidget):
     """Shows one message: the header, its attachments, and the text or HTML."""
 
@@ -555,54 +997,54 @@ class ReaderWidget(QWidget):
 
         self._header = QFrame(self)
         self._header.setObjectName("readerHeader")
-        header_layout = QVBoxLayout(self._header)
+        self._header_layout = QVBoxLayout(self._header)
+        header_layout = self._header_layout
         header_layout.setContentsMargins(16, 12, 16, 8)
-        self._subject = QLabel(self._header)
+        self._subject = FoldedLine(1, self._header)  # folded: one line, shortened with "…"; the whole subject as hover text
         subject_font = QFont(self.font())
         subject_font.setPointSizeF(subject_font.pointSizeF() * 1.35)
         subject_font.setBold(True)
         self._subject.setFont(subject_font)
-        self._subject.setWordWrap(True)
         self._subject.setTextFormat(Qt.TextFormat.PlainText)  # a subject is hostile input: never markup
         self._subject.setTextInteractionFlags(self._subject.textInteractionFlags().TextSelectableByMouse)
         self._avatar = QLabel(self._header)
         self._avatar.setFixedSize(px_for(self, 40), px_for(self, 40))
-        self._people = QLabel(self._header)
-        self._people.setWordWrap(True)
+        self._people = FoldedLine(2, self._header)  # folded: the sender, and the people it went to that fit on one line, "+N more"
         self._people.setTextFormat(Qt.TextFormat.RichText)  # the lines below are built with html.escape
-        self._people.setTextInteractionFlags(self._people.textInteractionFlags().TextSelectableByMouse)
+        self._people.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | _KEYBOARD_LINKS)  # Tab reaches "+N more" and "less"
+        self._people.linkActivated.connect(self._fold_link)
         self._date = DateLabel(self._header)
         self._date.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         row = QHBoxLayout()
+        self._header_row = row
         row.addWidget(self._avatar)
         row.addWidget(self._people, 1)
-        row.addWidget(self._date, 0)
-        header_layout.addWidget(self._subject)
+        self._tags = TagSquares(self._header)  # under the date, beside the "to" line: a tagged message's header is as high
+        dated = QVBoxLayout()  # the date, and the tags beside the second line of the people
+        self._dated = dated
+        dated.setSpacing(0)
+        dated.addStretch(1)
+        dated.addWidget(self._date)
+        dated.addWidget(self._tags)
+        dated.addStretch(1)
+        row.addLayout(dated, 0)
         header_layout.addLayout(row)
-        self._tags = QLabel(self._header)  # the message's tags as small coloured labels; hidden without tags
-        self._tags.setTextFormat(Qt.TextFormat.RichText)
-        self._tags.hide()
-        header_layout.addWidget(self._tags)
+        header_layout.addWidget(self._subject)
         self._header_area = HeaderArea(self._header, self)
         layout.addWidget(self._header_area)
 
-        self._attachments = FlowRow(self, left=16, right=16, bottom=8)  # a file that no longer fits goes on in the next row (D-304)
-        layout.addWidget(self._attachments)
-
-        self._banner = QFrame(self)
-        self._banner.setObjectName("remoteBanner")
-        self._banner.setFrameShape(QFrame.Shape.StyledPanel)
-        self._banner_layout = QHBoxLayout(self._banner)  # the text beside its buttons; above them while the reader keeps its width (D-304)
-        self._banner_label = QLabel("Pictures and other content from the internet are not shown, to protect your privacy.", self._banner)
-        self._banner_buttons = FlowRow(self._banner, spacing=self._banner_layout.spacing())  # a next row only when one does not fit
-        self._load_remote = QPushButton("Show remote content", self._banner_buttons)
-        self._always_remote = QPushButton("Always for this sender", self._banner_buttons)
-        self._banner_buttons.add(self._load_remote)
-        self._banner_buttons.add(self._always_remote)
-        self._banner_layout.addWidget(self._banner_label, 1)
-        self._banner_layout.addWidget(self._banner_buttons)
-        self._banner.hide()
-        layout.addWidget(self._banner)
+        self._attachment_line = QWidget(self)  # the row of files, or its empty room: folded, every message's header is as high
+        attachment_layout = QVBoxLayout(self._attachment_line)
+        self._attachment_layout = attachment_layout
+        attachment_layout.setContentsMargins(0, 0, 0, 0)
+        self._attachments = AttachmentRow(self._attachment_line, left=16, right=16, bottom=8)  # unfolded, a file that no longer fits goes on in the next row (D-304)
+        self._attachments.link.linkActivated.connect(self._fold_link)
+        attachment_layout.addWidget(self._attachments)
+        self._chip_probe = AttachmentChip("x", "1 B", self._attachment_line)  # never shown: the height of a file's button
+        self._chip_probe.hide()
+        layout.addWidget(self._attachment_line)
+        self._people_shown: tuple[str, tuple[str, ...], tuple[str, ...]] = ("", (), ())  # the sender, to, cc
+        self._people_hidden: int = 0  # the names behind "+N more" in the folded header
 
         self._stack = QStackedWidget(self)
         self._placeholder = QLabel("Select a message to read it", self._stack)
@@ -626,6 +1068,23 @@ class ReaderWidget(QWidget):
         self._stack.addWidget(self._text)
         self._stack.addWidget(self._web)
         layout.addWidget(self._stack, 1)
+
+        # Over the top of the message: its coming and going never moves the header or the message. Made after the web view, whose rule
+        # keeps every other part without a window of its own (4.2.464).
+        self._banner = OverlayBanner(self._stack)
+        self._banner.setObjectName("remoteBanner")
+        self._banner.setFrameShape(QFrame.Shape.StyledPanel)
+        self._banner_layout = QHBoxLayout(self._banner)  # the text beside its buttons; above them while the reader keeps its width (D-304)
+        self._banner_label = QLabel("Pictures and other content from the internet are not shown, to protect your privacy.", self._banner)
+        self._banner_buttons = FlowRow(self._banner, spacing=self._banner_layout.spacing())  # a next row only when one does not fit
+        self._load_remote = QPushButton("Show remote content", self._banner_buttons)
+        self._always_remote = QPushButton("Always for this sender", self._banner_buttons)
+        self._banner_buttons.add(self._load_remote)
+        self._banner_buttons.add(self._always_remote)
+        self._banner_layout.addWidget(self._banner_label, 1)
+        self._banner_layout.addWidget(self._banner_buttons)
+        self._banner.hide()
+        self._banner.placed.connect(self._reserve_banner_room)
 
         self._load_remote.clicked.connect(self._show_remote_content)
         self._page.loadFinished.connect(self._after_load)
@@ -660,6 +1119,7 @@ class ReaderWidget(QWidget):
         self._header_area.hide()
         self.setMinimumWidth(0)  # nothing shown: no width of its own
         self._attachments.hide()
+        self._attachment_line.hide()
         self._banner.hide()
         self._blocker.blocked = 0  # the blocked pictures belonged to the message that goes
         self._stack.setCurrentWidget(self._placeholder)
@@ -681,25 +1141,26 @@ class ReaderWidget(QWidget):
         self._header_area.horizontalScrollBar().setValue(0)  # every message starts at its left edge
         self._header_area.verticalScrollBar().setValue(0)  # and at its top
         self.setMinimumWidth(self._smallest_width)
-        self._subject.setText(shown.subject or "(no subject)")
+        subject = shown.subject or "(no subject)"
+        self._subject.set_content(partial(self._subject_fit, subject), subject, 0)  # every message opens folded
         senders: tuple[str, ...] = tuple(displayed_address(text) for text in shown.sender)  # the quotes Reply needs are left out on screen
         recipients: tuple[str, ...] = tuple(displayed_address(text) for text in shown.to)
         copies: tuple[str, ...] = tuple(displayed_address(text) for text in shown.cc)
         who = senders[0] if senders else "(unknown sender)"
-        lines = [f"<b>{html.escape(who)}</b>"]
-        muted = self.palette().color(QPalette.ColorRole.PlaceholderText).name()
-        if recipients:
-            lines.append(f'<span style="color:{muted}">to {html.escape(", ".join(recipients))}</span>')
-        if copies:
-            lines.append(f'<span style="color:{muted}">cc {html.escape(", ".join(copies))}</span>')
-        self._people.setText("<br>".join(lines))
-        self._date.setText(long_date(shown.date))
+        self._people_shown = (who, recipients, copies)
+        bold = QFont(self._people.font())
+        bold.setBold(True)
+        smallest = QFontMetrics(bold).horizontalAdvance("…") * 4  # folded, the sender is shortened: it never asks for its whole width
+        self._people.set_content(partial(self._people_fit, who, recipients, copies), self._people_full(less=False), smallest)
+        self._date.folded = True  # every message opens folded
+        self._date.set_date(long_date(shown.date))
         name = display_name(who)
         self._avatar.setText(f'<div style="color:white; font-weight:bold">{html.escape(initials(name))}</div>')
         self._avatar.setAlignment(self._avatar.alignment().AlignCenter)
         self._avatar.setStyleSheet(f"background-color: {avatar_colour(who).name()}; border-radius: {px_for(self, 40) // 2}px;")
         self._fill_attachments(shown.attachments)
-        self._header_area.updateGeometry()  # its height follows the new lines
+        self._attachment_line.show()
+        self._lay_out_header()
         html_body = shown.html_body
         text_body = shown.text_body
         self._banner.hide()
@@ -735,24 +1196,97 @@ class ReaderWidget(QWidget):
         self._smallest_width = smallest
         follows = smallest == 0
         self._header_area.set_follows_content(follows)
-        self._date.setWordWrap(not follows)  # a narrow pane puts the date on two lines rather than scroll sideways
+        self._date.set_wraps(not follows)  # unfolded, a narrow pane puts the date on two lines rather than scroll sideways
         self._banner_label.setWordWrap(not follows)  # the remote content line wraps
         self._banner_layout.setDirection(QBoxLayout.Direction.LeftToRight if follows else QBoxLayout.Direction.TopToBottom)  # its buttons below it
         self._banner_buttons.set_wraps(not follows)
+        self._banner.set_sets_width(follows)  # its one line sets the smallest width of the message, as it did in the layout
         self._attachments.set_wraps(not follows)  # the files go on in a next row
         self.setMinimumWidth(smallest if smallest and self._header_area.isVisibleTo(self) else 0)  # 0: what its parts need counts
 
     def header_scrolls_sideways(self) -> bool:
         return self._header_area.horizontalScrollBar().isVisible()
 
-    def set_tags(self, labels: str) -> None:
-        """The tags of the shown message (rich text from TagColourBook.html); empty hides the line."""
-        self._tags.setText(labels)
-        self._tags.setVisible(bool(labels))
+    def set_tags(self, names: tuple[str, ...], colour_of: Callable[[str], QColor]) -> None:
+        """The tags of the shown message, each with its own colour: small squares under the date."""
+        self._tags.set_tags(tuple((name, colour_of(name)) for name in names))
+
+    def _subject_fit(self, subject: str, width: int) -> tuple[str, str]:
+        """The folded subject: on one line, shortened with "…" when too long; then the whole subject is its hover text."""
+        line = subject.replace("\r", " ").replace("\n", " ")
+        metrics = self._subject.fontMetrics()
+        if width < 0 or metrics.horizontalAdvance(line) <= width:
+            return line, ""
+        return metrics.elidedText(line, Qt.TextElideMode.ElideRight, width), plain_tip(subject)
+
+    def _people_fit(self, who: str, recipients: tuple[str, ...], copies: tuple[str, ...], width: int) -> tuple[str, str]:
+        """The folded sender and people: the sender on one line (shortened with "…", the whole sender as hover text), and the names it
+        went to that fit on the next line, then "+N more" for the others."""
+        bold = QFont(self._people.font())
+        bold.setBold(True)
+        bold_metrics = QFontMetrics(bold)
+        sender = who if width < 0 or bold_metrics.horizontalAdvance(who) <= width else bold_metrics.elidedText(who, Qt.TextElideMode.ElideRight, width)
+        names = [("to " if place == 0 else ", ", name) for place, name in enumerate(recipients)]
+        names += [(("; cc " if recipients else "cc ") if place == 0 else ", ", name) for place, name in enumerate(copies)]
+        shown, hidden = fold_names(names, self._people.fontMetrics(), width)
+        self._people_hidden = hidden
+        muted = self.palette().color(QPalette.ColorRole.PlaceholderText).name()
+        line = f'<span style="color:{muted}">{html.escape(shown)}</span>' if shown else ""
+        if hidden:
+            line += f' <a href="more">+{hidden} more</a>'
+        return f"<b>{html.escape(sender)}</b><br>{line}", plain_tip(who) if sender != who else ""
+
+    def _people_full(self, less: bool) -> str:
+        """The unfolded sender and people: every name, wrapped; "less" at the end when the folded line had more."""
+        who, recipients, copies = self._people_shown
+        lines = [f"<b>{html.escape(who)}</b>"]
+        muted = self.palette().color(QPalette.ColorRole.PlaceholderText).name()
+        if recipients:
+            lines.append(f'<span style="color:{muted}">to {html.escape(", ".join(recipients))}</span>')
+        if copies:
+            lines.append(f'<span style="color:{muted}">cc {html.escape(", ".join(copies))}</span>')
+        if less:
+            lines[-1] += ' <a href="less">less</a>'
+        return "<br>".join(lines)
+
+    def _fold_link(self, link: str) -> None:
+        self.set_header_folded(link != "more")
+
+    def set_header_folded(self, folded: bool) -> None:
+        """Unfolded ("+N more"), the header shows every name, the whole subject and every file, and grows with them; folded ("less") it
+        is as high as for every message again. Only this changes the header's height; a new message always opens folded."""
+        people_less = not folded and self._people.folded and self._people_hidden > 0
+        files_less = not folded and self._attachments.folded and self._attachments.hidden_count > 0
+        if folded == self._people.folded:
+            return
+        self._people.set_folded(folded, self._people_full(less=people_less))
+        self._subject.set_folded(folded)
+        self._date.set_folded(folded)
+        self._attachments.set_folded(folded, less=files_less)
+        self._lay_out_header()
+
+    def _lay_out_header(self) -> None:
+        """The header's lines changed: its height follows them at once, and its lines get their width now, so what fits on them is
+        known before the message is painted."""
+        self._dated.invalidate()  # Qt keeps the height of the sender's row until the header is laid out again
+        self._header_row.invalidate()
+        self._header_layout.invalidate()
         self._header_area.updateGeometry()
+        self._attachment_layout.invalidate()
+        self._attachment_line.updateGeometry()
+        layout = self.layout()
+        if layout is not None:
+            layout.activate()
+        self._header_layout.activate()
+
+    def header_folded(self) -> bool:
+        return self._people.folded
 
     def _fill_attachments(self, attachments: tuple[AttachmentInfo, ...]) -> None:
         self._attachments.clear()
+        self._attachments.set_folded(True)
+        self._attachments.line_height = max(QPushButton.sizeHint(self._chip_probe).height(), self._attachments.link.fontMetrics().height())
+        self._attachment_line.setMinimumHeight(self._attachments.folded_height())
         self._chips = QButtonGroup(self._attachments)  # one file selected at a time
         self._names = {position: attachment.suggested_name for position, attachment in enumerate(attachments)}
         shown = 0
@@ -764,6 +1298,7 @@ class ReaderWidget(QWidget):
             chip.open_requested.connect(partial(self._open_attachment, position))
             chip.customContextMenuRequested.connect(partial(self._chip_menu, chip, position))
             self._attachments.add(chip)
+            QWidget.setTabOrder(chip, self._attachments.link)  # Tab: the files, then "+N more"
             shown += 1
         self._attachments.setVisible(shown > 0)
 
@@ -828,10 +1363,19 @@ class ReaderWidget(QWidget):
         if ok and self._blocker.blocked and not self._blocker.allow_remote and self._stack.currentWidget() is self._web:  # only with a message on screen
             self._banner.show()
 
+    def _reserve_banner_room(self, height: int) -> None:
+        """The page's own top gets empty room as tall as the remote content line lying over it: nothing of the message is under it.
+        The room is set in the page by Chrono Mail's own script (its own world; the mail's scripts never run), so no reload is needed."""
+        if self._stack.currentWidget() is self._web:
+            css_pixels = height / max(0.01, self._web.zoomFactor())
+            self._page.runJavaScript(_BANNER_ROOM_SCRIPT % css_pixels, QWebEngineScript.ScriptWorldId.ApplicationWorld)
+
     def set_zoom(self, percent: int) -> None:
         """The size of the text of the message, in percent (50 to 300)."""
         self._zoom = max(50, min(300, percent))
         self._web.setZoomFactor(self._zoom / 100)
+        if self.banner_visible():
+            self._reserve_banner_room(self._banner.height())
         font = QFont(self.font())
         font.setPointSizeF(max(6.0, font.pointSizeF() * self._zoom / 100) if font.pointSizeF() > 0 else 10.0 * self._zoom / 100)
         self._text.setFont(font)

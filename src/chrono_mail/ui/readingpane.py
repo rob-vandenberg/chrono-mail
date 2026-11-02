@@ -31,9 +31,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.2.467"
+__version__ = "readingpane.py 4.2.479"
 
 # --- Version history ----------------------------------------------------
+# v4.2.479: the reader is given the message's tag names and their colours (small squares under the date)
 # v4.2.467: the pane keeps the width the person gave it, whatever the message (D-304); Settings > Reading may let it widen to fit
 # v4.2.401: the list and the pane get back the widths or heights they had at a place when the pane returns there
 #           (Settings > Message list tries a place, Cancel)
@@ -114,7 +115,7 @@ class ReadingPane(QObject):
 
     def _message_tags_changed(self, message_id: str, tags: tuple[str, ...]) -> None:
         if self.shown is not None and self.shown[2] == message_id and isinstance(tags, tuple):
-            self.reader.set_tags(self._tags.book.html(tuple(tag for tag in tags)))
+            self.reader.set_tags(tuple(tag for tag in tags), self._tags.book.colour)
 
     def row_changed(self, current: QModelIndex, previous: QModelIndex) -> None:
         self.mark_read_timer.stop()
@@ -139,7 +140,7 @@ class ReadingPane(QObject):
                 return
             self.shown = (account, folder, message_id)
             self.reader.show_message(result)
-            self.reader.set_tags(self._tags.book.html(self._tags.tags_of_message(message_id)))
+            self.reader.set_tags(self._tags.tags_of_message(message_id), self._tags.book.colour)
             if row.thread_size > 1:
                 self._load_conversation(account, folder, message_id, request)
             else:
@@ -172,7 +173,7 @@ class ReadingPane(QObject):
                 return
             self.shown = (account, folder, message_id)
             self.reader.show_message(result)
-            self.reader.set_tags(self._tags.book.html(self._tags.tags_of_message(message_id)))
+            self.reader.set_tags(self._tags.tags_of_message(message_id), self._tags.book.colour)
             if not seen and self._prefs.read().mark_read == "delay":
                 self.mark_read_timer.start(self._prefs.read().mark_read_delay_ms)
 

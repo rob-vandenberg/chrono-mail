@@ -23,9 +23,11 @@ from tests.ui.world import World, row_of, settle, wait
 __all__ = ["probe", "reader"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_preferences.py 4.2.467"
+__version__ = "test_ui_preferences.py 4.2.479"
 
 # --- Version history ----------------------------------------------------
+# v4.2.479: the header tests of long lists of names, of a narrower pane and of a sender too wide to wrap unfold the header first (folded,
+#            it is as high for every message and shortens the sender)
 # v4.2.467: the reading pane keeps the width the person gave it, whatever the message; Widen the reading pane to fit the message (D-304)
 # v4.2.436: Apply to all, Default and Reset (were Standard columns) greyed in the card layout
 # v2.0.298: Settings > Sidebar's Favorites ticks in the owner's new order (D-061)
@@ -684,12 +686,14 @@ def test_the_reading_pane_keeps_its_width_whatever_the_message(world: World, qtb
     dragged = _window_with_dragged_pane(world, qtbot)
     reader = world.window.reader
     reader.show_message(WIDE_MESSAGE)
+    reader.set_header_folded(False)  # 4.2.479: folded, the sender is shortened; unfolded, a word too long to wrap scrolls sideways
     qtbot.waitUntil(reader.header_scrolls_sideways)  # the address is one word wider than the pane
     assert world.window.content_splitter.sizes() == dragged
     reader.show_message(shown(text="Hello"))
     qtbot.waitUntil(lambda: not reader.header_scrolls_sideways())
     assert world.window.content_splitter.sizes() == dragged
     reader.show_message(WIDE_MESSAGE)  # going through the list: before 4.2.467 the second wide message moved the separator
+    reader.set_header_folded(False)
     reader._banner.show()  # noqa: SLF001 - the remote content line, as an HTML message with outside pictures shows it
     qtbot.waitUntil(reader.header_scrolls_sideways)
     qtbot.waitUntil(lambda: reader._banner.height() > 0)  # noqa: SLF001 - laid out
@@ -716,6 +720,7 @@ def test_the_header_keeps_every_line_when_the_pane_gets_narrower(world: World, q
     window = world.window
     reader = window.reader
     reader.show_message(shown(text="Hello", subject="A long subject " * 5, to=tuple(f"person{n}@example.com" for n in range(12))))
+    reader.set_header_folded(False)  # 4.2.479: folded, the header is as high for every message; "+N more" unfolds every line
     area = reader._header_area  # noqa: SLF001
     qtbot.waitUntil(lambda: area.height() == area.heightForWidth(area.width()))
     wide_height = area.height()
@@ -775,11 +780,13 @@ def test_the_header_takes_no_focus_and_each_message_starts_at_its_left_edge(read
     reader.resize(400, 500)
     wide = shown(text="x", sender=("Someone <" + "x" * 80 + "@example.com>",))
     reader.show_message(wide)
+    reader.set_header_folded(False)  # 4.2.479: folded, the sender is shortened; unfolded, a word too long to wrap scrolls sideways
     qtbot.waitUntil(reader.header_scrolls_sideways)
     area = reader._header_area  # noqa: SLF001
     assert area.focusPolicy() == Qt.FocusPolicy.NoFocus
     area.horizontalScrollBar().setValue(area.horizontalScrollBar().maximum())
     reader.show_message(wide)
+    reader.set_header_folded(False)
     assert area.horizontalScrollBar().value() == 0
 
 
@@ -787,6 +794,7 @@ def test_the_tick_widens_the_pane_while_a_message_is_shown(world: World, qtbot: 
     dragged = _window_with_dragged_pane(world, qtbot)
     reader = world.window.reader
     reader.show_message(WIDE_MESSAGE)
+    reader.set_header_folded(False)  # 4.2.479: folded, the sender is shortened; unfolded, a word too long to wrap scrolls sideways
     qtbot.waitUntil(reader.header_scrolls_sideways)
 
     def change(dialog: SettingsDialog) -> None:
@@ -812,6 +820,7 @@ def test_the_wheel_never_scrolls_a_cut_off_header_up_or_down(reader: ReaderWidge
     reader.set_width_rule(smallest)
     reader.resize(700, 200)
     reader.show_message(shown(text="x", to=tuple(f"person{n}@example.com" for n in range(200))))
+    reader.set_header_folded(False)  # 4.2.479: unfolded ("+N more"), the long list of names is shown
     area = reader._header_area  # noqa: SLF001
     qtbot.waitUntil(lambda: area.verticalScrollBar().maximum() > 0)  # laid out: the header is cut off at the bottom
     centre = QPointF(area.rect().center())
@@ -827,6 +836,7 @@ def test_keys_in_a_header_line_never_scroll_the_header(reader: ReaderWidget, qtb
     reader.set_width_rule(smallest)
     reader.resize(700, 200)
     reader.show_message(shown(text="x", to=tuple(f"person{n}@example.com" for n in range(200))))
+    reader.set_header_folded(False)  # 4.2.479: unfolded ("+N more"), the long list of names is shown
     area = reader._header_area  # noqa: SLF001
     qtbot.waitUntil(lambda: area.verticalScrollBar().maximum() > 0)
     people = reader._people  # noqa: SLF001
@@ -840,6 +850,7 @@ def test_a_sideways_swipe_scrolls_a_header_too_wide_for_the_pane(reader: ReaderW
     reader.set_width_rule(400)
     reader.resize(400, 500)
     reader.show_message(shown(text="x", sender=("Someone <" + "x" * 80 + "@example.com>",)))
+    reader.set_header_folded(False)  # 4.2.479: folded, the sender is shortened; unfolded, a word too long to wrap scrolls sideways
     qtbot.waitUntil(reader.header_scrolls_sideways)
     area = reader._header_area  # noqa: SLF001
     centre = QPointF(area.rect().center())
