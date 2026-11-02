@@ -3674,3 +3674,6 @@ HOVER_LIGHTNESS_STEP 0.12 to 0.08 (HSL lightness); the owner's orange #c86400 ge
 
 ## 2026-11-02, 4.2.476: the list colour #151c1c (the owner)
 Dark theme Base #181e1f to #151c1c; test_ui_appearance's measured dark colours follow (it still expected #141618 since 4.2.473).
+
+## 2026-11-02, 4.2.477: HTML messages swap at once (the owner, chat 84's flicker)
+Cause: every message had its own address (chrono-message:/N/page, Syntax.Path), each a new origin, so the web engine started a new page process per message and showed a white, then a grey page before the message. Built: Syntax.Host with one host, chrono-message://message/N/page and .../part/n; a request for another host is refused. Measured (research, bare page): final picture 68 ms instead of 130 ms, the body changes once. Left: the header is filled in before the body (one step remains; Qt has no public "painted" signal). Tests: test_ui_reader's new address test (fails on 4.2.476), reader and reading pane tests passed (81); Pyrefly 0 on the program (Linux, win32); layer check kept. Review: one fresh reviewer, nothing real (JavaScript off, private profile, no cache, the origin header no wider than before).

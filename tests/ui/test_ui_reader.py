@@ -20,9 +20,10 @@ PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_reader.py 4.2.396"
+__version__ = "test_ui_reader.py 4.2.477"
 
 # --- Version history ----------------------------------------------------
+# v4.2.477: Every message and its pictures have one address host, so the web engine swaps messages without an empty page between
 # v4.2.396: a right-click on a link offers Copy link address, which puts the link on the clipboard; on a linked picture after Open attachment and Save as… (D-281)
 # v3.6.357: a link in <...> or quotes stops at its closing character; an apostrophe inside an address stays (CR-19)
 # v3.5.346: HTML mail and its pictures come through chrono-message: addresses; an HTML message over 2 MB is shown (RV-158)
@@ -118,6 +119,17 @@ def load(qtbot: QtBot, reader: ReaderWidget, message: ShowResult) -> None:
 
 
 # --- plain text ---------------------------------------------------------------------------------------------------
+
+
+def test_every_message_has_the_same_address_host(reader: ReaderWidget) -> None:
+    from chrono_mail.ui.reader import MESSAGE_HOST, MESSAGE_SCHEME, MessageContent
+
+    content = MessageContent()
+    first, (picture,) = content.set_page("<p>One</p>"), content.show([("image/png", b"x")])
+    second = content.set_page("<p>Two</p>")
+    assert {first.host(), second.host(), QUrl(picture).host()} == {MESSAGE_HOST} and first.scheme() == second.scheme() == MESSAGE_SCHEME
+    assert first.path() != second.path() and second.path().endswith("/page")  # each message its own number, under the one host
+    content.deleteLater()
 
 
 def test_plain_text_is_shown_with_its_header(reader: ReaderWidget) -> None:

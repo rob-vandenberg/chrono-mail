@@ -45,9 +45,11 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.2.467"
+__version__ = "reader.py 4.2.477"
 
 # --- Version history ----------------------------------------------------
+# v4.2.477: Every message has the same address host (chrono-message://message/...): the web engine keeps one page process and swaps the old
+#            message for the new one at once, without the white and grey page in between (about twice as fast)
 # v4.2.467: the message's own parts no longer set the reading pane's width (D-304): the header sits in a scroll area that scrolls sideways only
 #           when one word cannot wrap (header_follows_content); the remote content line wraps; the attachments go on in a next row
 # v4.2.464: a web view has a window of its own: in the main window's, every small change elsewhere (a busy bar step) made Qt put the
@@ -78,6 +80,7 @@ __version__ = "reader.py 4.2.467"
 # that message (AGENTS.md section 4.6).
 
 MESSAGE_SCHEME: str = "chrono-message"  # the shown message and its pictures, served from memory by the page's own MessageContent
+MESSAGE_HOST: str = "message"  # one host for every message: one origin, so the web engine keeps its page process and the old picture until the new one
 _LOCAL_SCHEMES: tuple[str, ...] = ("data", "about", "blob", MESSAGE_SCHEME)
 
 
@@ -94,7 +97,7 @@ def _register_message_scheme() -> None:
     """The web engine must know the scheme before it starts (before the application object): done when this module is imported."""
     if QWebEngineUrlScheme.schemeByName(QByteArray(MESSAGE_SCHEME.encode())).name().isEmpty():
         scheme = QWebEngineUrlScheme(QByteArray(MESSAGE_SCHEME.encode()))
-        scheme.setSyntax(QWebEngineUrlScheme.Syntax.Path)  # no flags: not a local scheme, so allowed remote content still loads (D-030)
+        scheme.setSyntax(QWebEngineUrlScheme.Syntax.Host)  # no flags: not a local scheme, so allowed remote content still loads (D-030)
         QWebEngineUrlScheme.registerScheme(scheme)
 
 
@@ -117,19 +120,20 @@ class MessageContent(QWebEngineUrlSchemeHandler):
         self._number += 1
         self._page = b""
         self._parts = [(_safe_type(content_type), data) for content_type, data in parts]
-        return [f"{MESSAGE_SCHEME}:/{self._number}/part/{place}" for place in range(len(parts))]
+        return [f"{MESSAGE_SCHEME}://{MESSAGE_HOST}/{self._number}/part/{place}" for place in range(len(parts))]
 
     def set_page(self, document: str) -> QUrl:
         self._page = document.encode("utf-8", "replace")
-        return QUrl(f"{MESSAGE_SCHEME}:/{self._number}/page")
+        return QUrl(f"{MESSAGE_SCHEME}://{MESSAGE_HOST}/{self._number}/page")
 
     def clear(self) -> None:
         self.show([])
 
     @override
     def requestStarted(self, job: QWebEngineUrlRequestJob, /) -> None:
-        pieces = job.requestUrl().path().strip("/").split("/")
-        if not pieces or pieces[0] != str(self._number):
+        address = job.requestUrl()
+        pieces = address.path().strip("/").split("/")
+        if address.host() != MESSAGE_HOST or not pieces or pieces[0] != str(self._number):
             job.fail(QWebEngineUrlRequestJob.Error.UrlNotFound)
         elif pieces[1:] == ["page"]:
             self._reply(job, b"text/html;charset=utf-8", self._page)
