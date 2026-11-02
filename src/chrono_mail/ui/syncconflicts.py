@@ -48,9 +48,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.493"
+__version__ = "syncconflicts.py 4.2.494"
 
 # --- Version history ----------------------------------------------------
+# v4.2.494: the side is what the circles show: every field chosen by hand for one side is that side, and Apply works then (the owner)
 # v4.2.493: the table has the gap between its columns on its left and right, so the outlines never touch the scrollbar (the owner)
 # v4.2.492: a pair of list entries is one row with one choice; Apply gives that side to both entries (the owner, D-308)
 # v4.2.491: a value the same on both sides starts in line with the text beside the circles (the owner)
@@ -362,6 +363,8 @@ class ConflictDialog(QDialog):
         mixed = any(ours.isChecked() for ours, _ in self.groups.values()) and any(theirs.isChecked() for _, theirs in self.groups.values())
         if mixed:
             self.side = ""
+        elif chosen and self.groups and self.side not in (KEEP, RETRY):  # the side is what the circles show, never held apart from them (the owner)
+            self.side = LOCAL if all(ours.isChecked() for ours, _ in self.groups.values()) else SERVER
         self.apply_button.setEnabled(chosen and (bool(self.side) or mixed))
         whole = self.side in (LOCAL, SERVER) and not self.groups
         every = self.side not in (KEEP, RETRY) and bool(self.groups)

@@ -14,9 +14,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.493"
+__version__ = "test_ui_sync_conflicts.py 4.2.494"
 
 # --- Version history ----------------------------------------------------
+# v4.2.494: every field chosen by hand for one side is that side: Apply works and settles it (the owner)
 # v4.2.493: the table has the gap between its columns on its left and right (the owner)
 # v4.2.492: a pair of list entries is one choice: Chrono Mail keeps its entry and leaves out the server's; the taller window keeps
 #           25 fields, its tags now pair up (the owner, D-308)
@@ -624,3 +625,30 @@ def test_the_table_has_the_gap_between_its_columns_on_its_left_and_right(qtbot: 
     assert between > 0 and inner.width() - title_theirs.right() - 1 == between  # never touching the scrollbar (the owner)
     field = next(label for label in inner.findChildren(QLabel) if label.text() == "<b>Field</b>")
     assert field.geometry().left() == between and ours.left() < theirs.left()
+
+
+def one_field_conflict() -> ConflictSummary:
+    return ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", "events", "clash", "Changed here and on the server", "Ours", "", False, True,
+                           0.0, (ConflictField("SUMMARY", "Title", "Ours", "Theirs"),), base_text=calendar_text("SUMMARY:Meeting"),
+                           local_text=calendar_text("SUMMARY:Ours", "LOCATION:Room A"), server_text=calendar_text("SUMMARY:Theirs", "LOCATION:Room B"))
+
+
+def test_every_field_chosen_by_hand_for_chrono_mail_applies_chrono_mail(qtbot: QtBot) -> None:
+    dialog = ConflictDialog(one_field_conflict())
+    qtbot.addWidget(dialog)
+    for ours, _ in dialog.groups.values():
+        ours.click()
+    assert dialog.all_local.isChecked() and dialog.apply_button.isEnabled()  # it was greyed (the owner)
+    dialog.apply_button.click()
+    assert dialog.result() == QDialog.DialogCode.Accepted.value and dialog.side == "local"
+
+
+def test_the_header_s_server_then_chrono_mail_by_hand_applies_chrono_mail(qtbot: QtBot) -> None:
+    dialog = ConflictDialog(one_field_conflict())
+    qtbot.addWidget(dialog)
+    dialog.all_server.click()
+    for ours, _ in dialog.groups.values():
+        ours.click()
+    assert dialog.all_local.isChecked() and not dialog.all_server.isChecked()
+    dialog.apply_button.click()
+    assert dialog.side == "local" and dialog.choices == {}  # what the screen shows, never the server's version clicked before
