@@ -1,10 +1,13 @@
+import colorsys
 import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 2.3.317"
+__version__ = "colours.py 4.2.472"
 
 # --- Version history ----------------------------------------------------
+# v4.2.472: The shades of the blue are worked out from it (D-164): the hover of the Menu and Send buttons, the links (readable on
+#            the theme) and the drag badge, so a picked accent leaves nothing in the old blue
 # v2.3.317: notice_border: the outline of the notice of a delayed send (the owner's mockup)
 # v1.1.219: The colours a new calendar suggests (Google Calendar's eleven event colours) and the CSS colour names of RFC 7986 COLOR (D-191)
 # v1.1.215: pane_separator and pane_separator_dots: the one separator between the panes (D-188)
@@ -40,6 +43,7 @@ class Theme:
     roles: dict[str, tuple[str, str, str]]  # role: (active, inactive, disabled)
     blue: str  # the program's own blue: the selection with the focus, the Menu button, the unread dot, bars, links
     on_blue: str  # text and marks on the blue
+    blue_hover: str  # the blue under the pointer (Menu, Send): worked out from the blue (_shaded)
     selection_grey: str  # a selection in the folder list or the message list without the focus
     group_header: str  # the bar of a group heading in the message list ("Today", "Yesterday")
     group_header_line: str  # the thin line under a group heading
@@ -57,16 +61,90 @@ class Theme:
     now_line: str  # the line of the present moment in the calendar
     on_colour: str  # marks and initials on a coloured circle (avatars, tasks, calendar swatches)
     swatch_selected: str  # the ring around a calendar colour swatch while it is selected
-    drag_badge: str  # the "N messages" badge while messages are dragged
+    drag_badge: str  # the "N messages" badge while messages are dragged: the blue, slightly see-through (_shaded)
     chip_text_light: str  # text on a dark tag colour
     chip_text_dark: str  # text on a light tag colour
     notice_border: str  # the outline of the notice of a delayed send, at the bottom left of the main window
 
 
+# --- Shades of the blue ---------------------------------------------------------------------------------------------------
+# The person picks one colour (the accent, below); every shade of it is worked out from that one colour, here, never
+# written as a second blue. The themes below are given these shades from their own blue, and a picked accent again (D-164).
+
+HOVER_LIGHTNESS_STEP: float = 0.12  # the hover is this much lighter (dark theme) or darker (light theme), on a scale of 0 to 1
+LINK_LEAST_CONTRAST: float = 4.5  # a link stands at least this contrast to the lists and windows (4.5:1: normal text)
+LINK_LIGHTNESS_STEP: float = 0.01  # the link is made lighter or darker in steps this small until it reads well
+DRAG_BADGE_OPACITY: str = "e6"  # the drag badge is the blue at 90 % (e6 of ff)
+
+
+def _channel(value: int) -> float:
+    part = value / 255
+    return part / 12.92 if part <= 0.03928 else ((part + 0.055) / 1.055) ** 2.4
+
+
+def _luminance(colour: str) -> float:
+    red, green, blue = (int(colour[index:index + 2], 16) for index in (1, 3, 5))
+    return 0.2126 * _channel(red) + 0.7152 * _channel(green) + 0.0722 * _channel(blue)
+
+
+def _contrast(first: str, second: str) -> float:
+    """The contrast of two #rrggbb colours, 1 to 21 (the measure of the accessibility guidelines)."""
+    lighter, darker = sorted((_luminance(first), _luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _with_lightness(colour: str, change: float) -> tuple[str, float]:
+    """The colour made lighter (change above 0) or darker, its hue and saturation kept; with how much its lightness really
+    changed (less than asked near white or black)."""
+    red, green, blue = (int(colour[index:index + 2], 16) / 255 for index in (1, 3, 5))
+    hue, lightness, saturation = colorsys.rgb_to_hls(red, green, blue)
+    new = min(1.0, max(0.0, lightness + change))
+    shade = "#" + "".join(f"{round(part * 255):02x}" for part in colorsys.hls_to_rgb(hue, new, saturation))
+    return shade, abs(new - lightness)
+
+
+def blue_hover_of(blue: str, on_blue: str, dark: bool) -> str:
+    """The blue under the pointer: lighter in the dark theme, darker in the light one; the other way when that way the text
+    on it would no longer read (below 3:1) or the blue cannot go further (near white or black)."""
+    toward = HOVER_LIGHTNESS_STEP if dark else -HOVER_LIGHTNESS_STEP
+    for change in (toward, -toward):
+        shade, moved = _with_lightness(blue, change)
+        if moved >= HOVER_LIGHTNESS_STEP / 2 and _contrast(shade, on_blue) >= WHITE_TEXT_LEAST_CONTRAST:
+            return shade
+    shade, moved = _with_lightness(blue, toward)
+    return shade if moved >= HOVER_LIGHTNESS_STEP / 2 else _with_lightness(blue, -toward)[0]
+
+
+def link_of(blue: str, backgrounds: tuple[str, ...], dark: bool) -> str:
+    """The colour of a link: the blue itself when it reads well on every background given, else made lighter (dark theme)
+    or darker (light theme) only as much as it needs to."""
+    shade = blue
+    step = LINK_LIGHTNESS_STEP if dark else -LINK_LIGHTNESS_STEP
+    for _ in range(round(1 / LINK_LIGHTNESS_STEP) + 1):
+        if all(_contrast(shade, background) >= LINK_LEAST_CONTRAST for background in backgrounds):
+            break
+        shade = _with_lightness(shade, step)[0]
+    return shade
+
+
+def _shaded(theme: Theme) -> Theme:
+    """The theme with every shade of its blue worked out from it: the hover, the links and the drag badge. A dark theme's
+    visited links keep their own colour; a light theme's look as its links."""
+    link = link_of(theme.blue, (theme.roles["Base"][0], theme.roles["Window"][0]), theme.dark)
+    roles = dict(theme.roles)
+    roles["Link"] = (link, link, link)
+    if not theme.dark:
+        roles["LinkVisited"] = (link, link, link)
+    return replace(theme, roles=roles, blue_hover=blue_hover_of(theme.blue, theme.on_blue, theme.dark), drag_badge=f"#{DRAG_BADGE_OPACITY}{theme.blue[1:]}")
+
+
+WHITE_TEXT_LEAST_CONTRAST: float = 3.0  # below this contrast of white on the accent, the text on it is black (3:1: large text and marks)
+
+
 # --- The dark theme -------------------------------------------------------------------------------------------------------
 # The colours the program showed on Linux (KDE Breeze Dark) up to 1.0.171, with the program's own blue.
 
-DARK: Theme = Theme(
+DARK: Theme = _shaded(Theme(
     name="dark",
     dark=True,
     roles={
@@ -85,7 +163,7 @@ DARK: Theme = Theme(
         "Shadow": ("#191919", "#191919", "#252525"),
         "Highlight": ("#2a6fc4", "#2a6fc4", "#2a6fc4"),  # the program's blue
         "HighlightedText": ("#ffffff", "#ffffff", "#ffffff"),
-        "Link": ("#1d99f3", "#1d99f3", "#1d99f3"),
+        "Link": ("", "", ""),  # worked out from the blue (_shaded)
         "LinkVisited": ("#9b59b6", "#9b59b6", "#9b59b6"),
         "ToolTipBase": ("#292c30", "#292c30", "#292c30"),
         "ToolTipText": ("#fcfcfc", "#fcfcfc", "#fcfcfc"),
@@ -95,6 +173,7 @@ DARK: Theme = Theme(
     },
     blue="#2a6fc4",
     on_blue="#ffffff",
+    blue_hover="",  # worked out from the blue (_shaded)
     selection_grey="#4a4a4a",
     group_header="#2a2a2a",
     group_header_line="#3a3d42",
@@ -112,17 +191,17 @@ DARK: Theme = Theme(
     now_line="#d93025",
     on_colour="#ffffff",
     swatch_selected="#000000",
-    drag_badge="#e6285aa0",
+    drag_badge="",  # worked out from the blue (_shaded)
     chip_text_light="#ffffff",
     chip_text_dark="#000000",
     notice_border="#9a9da1",
-)
+))
 
 
 # --- The light theme ------------------------------------------------------------------------------------------------------
 # White, as in the owner's reference screenshot of 2026-10-17, with the program's own blue.
 
-LIGHT: Theme = Theme(
+LIGHT: Theme = _shaded(Theme(
     name="light",
     dark=False,
     roles={
@@ -141,8 +220,8 @@ LIGHT: Theme = Theme(
         "Shadow": ("#787878", "#787878", "#787878"),
         "Highlight": ("#2a6fc4", "#2a6fc4", "#2a6fc4"),  # the program's blue
         "HighlightedText": ("#ffffff", "#ffffff", "#ffffff"),
-        "Link": ("#2a6fc4", "#2a6fc4", "#2a6fc4"),
-        "LinkVisited": ("#2a6fc4", "#2a6fc4", "#2a6fc4"),
+        "Link": ("", "", ""),  # worked out from the blue (_shaded)
+        "LinkVisited": ("", "", ""),  # the same as Link (_shaded)
         "ToolTipBase": ("#ffffff", "#ffffff", "#ffffff"),
         "ToolTipText": ("#1e1e1e", "#1e1e1e", "#1e1e1e"),
         "PlaceholderText": ("#8e8e8e", "#8e8e8e", "#8e8e8e"),
@@ -151,6 +230,7 @@ LIGHT: Theme = Theme(
     },
     blue="#2a6fc4",  # the same blue as the dark theme's: the owner's choice (2026-10-20), not a rule
     on_blue="#ffffff",
+    blue_hover="",  # worked out from the blue (_shaded)
     selection_grey="#ebebeb",
     group_header="#e6e6e6",
     group_header_line="#d0d0d0",
@@ -168,11 +248,11 @@ LIGHT: Theme = Theme(
     now_line="#d93025",
     on_colour="#ffffff",
     swatch_selected="#000000",
-    drag_badge="#e6285aa0",
+    drag_badge="",  # worked out from the blue (_shaded)
     chip_text_light="#ffffff",
     chip_text_dark="#000000",
     notice_border="#8c8c8c",
-)
+))
 
 
 THEMES: dict[str, Theme] = {DARK.name: DARK, LIGHT.name: LIGHT}
@@ -194,19 +274,6 @@ def accent_value(text: str) -> str | None:
     return value.lower() if _ACCENT_FORM.fullmatch(value) else None
 
 
-def _channel(value: int) -> float:
-    part = value / 255
-    return part / 12.92 if part <= 0.03928 else ((part + 0.055) / 1.055) ** 2.4
-
-
-def _luminance(colour: str) -> float:
-    red, green, blue = (int(colour[index:index + 2], 16) for index in (1, 3, 5))
-    return 0.2126 * _channel(red) + 0.7152 * _channel(green) + 0.0722 * _channel(blue)
-
-
-WHITE_TEXT_LEAST_CONTRAST: float = 3.0  # below this contrast of white on the accent, the text on it is black (3:1: large text and marks)
-
-
 def text_on_accent(accent: str) -> str:
     """White, as on the program's blue; black only when white is hard to read on the accent (a very light colour)."""
     on_white = 1.05 / (_luminance(accent) + 0.05)
@@ -215,7 +282,8 @@ def text_on_accent(accent: str) -> str:
 
 def with_accent(theme: Theme, accent: str) -> Theme:
     """The theme with the accent in place of its blue: the blue itself, every role that has the blue, the Accent role
-    (greyed out it stays grey) and the text on the blue. An accent that is not #rrggbb leaves the theme as it is."""
+    (greyed out it stays grey), the text on the blue, and every shade worked out from it (the hover, the links, the drag
+    badge). An accent that is not #rrggbb leaves the theme as it is."""
     value = accent_value(accent)
     if value is None or value == theme.blue:
         return theme
@@ -223,7 +291,7 @@ def with_accent(theme: Theme, accent: str) -> Theme:
     roles = {name: tuple(value if colour == theme.blue else colour for colour in colours) for name, colours in theme.roles.items()}
     roles["Accent"] = (value, value, theme.roles["Accent"][2])
     roles["HighlightedText"] = (on, on, on)
-    return replace(theme, roles={name: (colours[0], colours[1], colours[2]) for name, colours in roles.items()}, blue=value, on_blue=on)
+    return _shaded(replace(theme, roles={name: (colours[0], colours[1], colours[2]) for name, colours in roles.items()}, blue=value, on_blue=on))
 
 
 # --- Colours that are not part of a theme ---------------------------------------------------------------------------------

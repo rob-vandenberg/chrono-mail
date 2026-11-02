@@ -304,7 +304,7 @@ The design rules as they stand now, by topic, one short entry each. Every number
 - **D-155** The sections' search field is Mail's minus This folder; the month calendar's minimum is 240 px.
 - **D-156** One toolbar for the window, one row per section.
 - **D-159** The main window is never narrower than 768 px. Rejected: 768 × factor.
-- **D-164** Each theme has its own accent colour (default its blue), set on Settings > Appearance; text on it is white unless contrast is below 3:1.
+- **D-164** Each theme has its own accent colour (default its blue), set on Settings > Appearance; text on it is white unless contrast is below 3:1. **Every shade of the accent is worked out from the one colour picked** (4.2.472): the hover of the Menu and Send buttons (lighter in the dark theme, darker in the light one), the links (only as much lighter or darker as they need to read, 4.5:1) and the drag badge. Why: the person picks one colour; a second fixed blue stayed blue.
 
 ## 11. Calendars, contacts, tasks
 

@@ -4,9 +4,10 @@ from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 3.6.373"
+__version__ = "theme.py 4.2.472"
 
 # --- Version history ----------------------------------------------------
+# v4.2.472: The Menu and Send buttons under the pointer take the hover shade of the blue (worked out from the accent), not the link colour (D-164)
 # v3.6.373: form_role_look: the look of a part of a dialog form by its role (heading: bold), never written in the form itself (D-276)
 # v1.1.215: No 1 px black lines between the panes: every separator is the program's own (ui/splitter.py, D-188)
 # v1.1.172: Every colour comes from the theme in use (core/colours.py): the hover, the separators, the search field's orange (D-158)
@@ -54,7 +55,7 @@ def stylesheet(factor: float | None = None) -> str:
     given (the main window's when none is)."""
     colours = theme()  # the theme in use: every colour below is its, or a palette role it filled
     grey, HOVER, SEPARATOR = css(colours.selection_grey), css(colours.hover), css(colours.separator)
-    SEARCH_ACTIVE, HOVER_STRONG = css(colours.search_active), css(colours.hover_strong)
+    SEARCH_ACTIVE, HOVER_STRONG, BLUE_HOVER = css(colours.search_active), css(colours.hover_strong), css(colours.blue_hover)
     return scale_css(f"""
 QMenuBar {{ background: palette(window); border: 0; padding: 2px 6px; }}
 QMenuBar::item {{ padding: 5px 12px; background: transparent; border-radius: 4px; }}
@@ -71,7 +72,7 @@ QToolBar[folding="true"] QToolButton[popupMode="1"] {{ padding-right: 24px; }}
 QToolBar[folding="true"] QToolButton::menu-button {{ border: 0; width: 18px; }}
 QToolBar[folding="true"] QToolButton::menu-indicator {{ subcontrol-origin: padding; subcontrol-position: right center; right: 7px; }}
 QToolButton#menuButton, QToolBar[folding="true"] QToolButton#menuButton {{ background: palette(highlight); color: palette(highlighted-text); font-weight: 600; border: 0; border-radius: 4px; padding: 6px 14px; margin-right: 6px; }}
-QToolButton#menuButton:hover, QToolBar[folding="true"] QToolButton#menuButton:hover {{ background: palette(link); }}
+QToolButton#menuButton:hover, QToolBar[folding="true"] QToolButton#menuButton:hover {{ background: {BLUE_HOVER}; }}
 QToolButton#menuButton::menu-indicator {{ image: none; width: 0; }}
 QToolBar[folding="true"] QToolButton#viewButton {{ border-radius: 0; border-bottom: 2px solid transparent; }}
 QToolBar[folding="true"] QToolButton#viewButton:checked {{ background: transparent; border-bottom: 2px solid palette(highlight); }}
@@ -108,7 +109,7 @@ QMainWindow#composeWindow QLineEdit:focus {{ border: 1px solid palette(highlight
 QMainWindow#composeWindow QFormLayout QLabel {{ color: palette(placeholder-text); }}
 QMainWindow#composeWindow QTextEdit, QMainWindow#composeWindow QPlainTextEdit {{ border: 0; }}
 QPushButton#sendButton {{ background: palette(highlight); color: palette(highlighted-text); border: 0; border-radius: 4px; padding: 7px 20px; font-weight: 600; }}
-QPushButton#sendButton:hover {{ background: palette(link); }}
+QPushButton#sendButton:hover {{ background: {BLUE_HOVER}; }}
 QPushButton#sendButton:disabled {{ background: {HOVER}; color: palette(placeholder-text); }}
 QPushButton#flatButton {{ background: transparent; border: 0; border-radius: 4px; padding: 7px 12px; }}
 QPushButton#flatButton:hover, QPushButton#flatButton:checked {{ background: {HOVER}; }}

@@ -9,8 +9,8 @@ from PySide6.QtWidgets import QApplication, QListWidget, QMenu
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import appearance, icons, prefs, scale
-from chrono_mail.core.colours import DARK, LIGHT, ON_ACCENT_DARK, ON_ACCENT_LIGHT, ROLES, THEMES, Theme, accent_value, text_on_accent, with_accent
-from chrono_mail.ui.colours import contrast, green, is_dark, red, theme
+from chrono_mail.core.colours import DARK, LIGHT, ON_ACCENT_DARK, ON_ACCENT_LIGHT, ROLES, THEMES, Theme, accent_value, link_of, text_on_accent, with_accent
+from chrono_mail.ui.colours import contrast, css, green, is_dark, red, theme
 from chrono_mail.ui.formatting import AVATAR_HUES, avatar_colour
 from chrono_mail.ui.icons import FOLDER_ICONS, RESOURCES, bundled_icon, folder_icon, theme_icon
 from chrono_mail.ui.settingsdialog import SettingsContext
@@ -18,9 +18,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 3.6.355"
+__version__ = "test_ui_appearance.py 4.2.472"
 
 # --- Version history ----------------------------------------------------
+# v4.2.472: Every shade of the blue (hover, links, drag badge) is worked out from the accent; a link too light to read is darkened (D-164)
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
 # v1.2.253: the Settings window hands back the typed settings (chosen(), R-12)
@@ -593,13 +594,35 @@ def test_a_menu_follows_the_window_it_opens_from(world: World, qtbot: QtBot, app
 def test_an_accent_replaces_the_blue_and_gets_readable_text() -> None:
     assert accent_value(" #A0b1C2 ") == "#a0b1c2" and accent_value("#12345") is None and accent_value("blue") is None
     yellow = with_accent(LIGHT, "#ffd400")
-    assert yellow.blue == yellow.roles["Highlight"][0] == yellow.roles["Link"][0] == yellow.roles["Accent"][0] == "#ffd400"
+    assert yellow.blue == yellow.roles["Highlight"][0] == yellow.roles["Accent"][0] == "#ffd400"
     assert yellow.on_blue == yellow.roles["HighlightedText"][0] == ON_ACCENT_DARK  # black reads better on yellow
     assert yellow.roles["Accent"][2] == LIGHT.roles["Accent"][2] and yellow.roles["Window"] == LIGHT.roles["Window"]
     assert with_accent(DARK, "#4a0080").on_blue == ON_ACCENT_LIGHT
     assert text_on_accent("#2f7fcf") == ON_ACCENT_LIGHT  # white stays on a middle blue (white's contrast is above 3:1)
     assert text_on_accent("#ffd400") == ON_ACCENT_DARK and text_on_accent("#9be89b") == ON_ACCENT_DARK  # black only on very light colours
     assert with_accent(DARK, "") is DARK and with_accent(DARK, "nonsense") is DARK
+
+
+def test_every_shade_of_the_blue_is_worked_out_from_the_accent(app: QApplication) -> None:
+    from chrono_mail.core.colours import LINK_LEAST_CONTRAST, WHITE_TEXT_LEAST_CONTRAST
+    from chrono_mail.ui import theme as look
+
+    for base in (DARK, LIGHT):
+        orange = with_accent(base, "#ffa500")
+        backgrounds = (QColor(orange.roles["Base"][0]), QColor(orange.roles["Window"][0]))
+        link, hover = QColor(orange.roles["Link"][0]), QColor(orange.blue_hover)
+        assert all(contrast(link, background) >= LINK_LEAST_CONTRAST for background in backgrounds)  # a link reads on every list and window
+        assert abs(link.hueF() - QColor("#ffa500").hueF()) < 0.02 and abs(hover.hueF() - QColor("#ffa500").hueF()) < 0.02  # orange shades, no blue left
+        assert orange.blue_hover != orange.blue and contrast(hover, QColor(orange.on_blue)) >= WHITE_TEXT_LEAST_CONTRAST
+        assert (hover.lightnessF() > QColor(orange.blue).lightnessF()) == base.dark  # lighter in the dark theme, darker in the light one
+        assert orange.drag_badge == "#e6ffa500"
+        assert base.drag_badge == "#e6" + base.blue[1:] and base.roles["Link"][0] == link_of(base.blue, (base.roles["Base"][0], base.roles["Window"][0]), base.dark)
+    assert with_accent(LIGHT, "#ffa500").roles["LinkVisited"] == with_accent(LIGHT, "#ffa500").roles["Link"]
+    assert with_accent(LIGHT, "#2a6fc4").roles["Link"][0] == "#2a6fc4"  # the light theme's blue reads on white as it is
+    for edge, base in (("#ffffff", DARK), ("#000000", LIGHT)):  # a blue that cannot go further gets its hover the other way
+        assert with_accent(base, edge).blue_hover != edge
+    appearance_sheet = look.stylesheet()
+    assert "palette(link)" not in appearance_sheet and css(theme().blue_hover) in appearance_sheet
 
 
 def test_each_theme_keeps_its_own_accent(app: QApplication, tmp_path: Path) -> None:
