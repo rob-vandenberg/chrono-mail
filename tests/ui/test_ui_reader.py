@@ -20,9 +20,10 @@ PIXEL = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQV
 SHOTS = Path("/tmp/claude-1000/-home-rob-python-chrono-mail/adc1942e-ac5d-4bdf-8d93-df2e9ee54dc9/scratchpad/shots")
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_reader.py 4.2.477"
+__version__ = "test_ui_reader.py 4.2.478"
 
 # --- Version history ----------------------------------------------------
+# v4.2.478: An emptied reader shows no remote content banner, also once its empty page has loaded
 # v4.2.477: Every message and its pictures have one address host, so the web engine swaps messages without an empty page between
 # v4.2.396: a right-click on a link offers Copy link address, which puts the link on the clipboard; on a linked picture after Open attachment and Save as… (D-281)
 # v3.6.357: a link in <...> or quotes stops at its closing character; an apostrophe inside an address stays (CR-19)
@@ -246,6 +247,15 @@ def test_remote_content_is_blocked_until_the_person_allows_it(reader: ReaderWidg
     qtbot.waitUntil(lambda: len(probe.requests) >= 2, timeout=8000)
     assert not reader.banner_visible()
     assert sorted(set(probe.requests)) == ["/tracker.png", "/two.png"]
+
+
+def test_an_emptied_reader_shows_no_remote_content_banner(reader: ReaderWidget, qtbot: QtBot, probe: Probe) -> None:
+    load(qtbot, reader, shown(html=f"<html><body><img src='{probe.url('/a.png')}'></body></html>"))
+    qtbot.waitUntil(reader.banner_visible, timeout=5000)
+    with qtbot.waitSignal(reader.web_page.loadFinished, timeout=10000):
+        reader.clear()  # another folder: no message selected
+    qtbot.wait(100)
+    assert not reader.banner_visible() and reader.blocker.blocked == 0
 
 
 def test_the_next_message_is_blocked_again(reader: ReaderWidget, qtbot: QtBot, probe: Probe) -> None:

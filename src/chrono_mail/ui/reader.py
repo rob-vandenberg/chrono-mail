@@ -45,9 +45,11 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.2.477"
+__version__ = "reader.py 4.2.478"
 
 # --- Version history ----------------------------------------------------
+# v4.2.478: The remote content banner stays away from an empty reader: emptying it forgets the blocked pictures, and the banner shows only while
+#            an HTML message is on screen (it came back when the empty page had loaded, after a switch of folder)
 # v4.2.477: Every message has the same address host (chrono-message://message/...): the web engine keeps one page process and swaps the old
 #            message for the new one at once, without the white and grey page in between (about twice as fast)
 # v4.2.467: the message's own parts no longer set the reading pane's width (D-304): the header sits in a scroll area that scrolls sideways only
@@ -659,6 +661,7 @@ class ReaderWidget(QWidget):
         self.setMinimumWidth(0)  # nothing shown: no width of its own
         self._attachments.hide()
         self._banner.hide()
+        self._blocker.blocked = 0  # the blocked pictures belonged to the message that goes
         self._stack.setCurrentWidget(self._placeholder)
         self._content.clear()
         self._page.setHtml("")
@@ -822,7 +825,7 @@ class ReaderWidget(QWidget):
             self._message_menu(position, link, self._web.mapToGlobal(point))
 
     def _after_load(self, ok: bool) -> None:
-        if ok and self._blocker.blocked and not self._blocker.allow_remote:
+        if ok and self._blocker.blocked and not self._blocker.allow_remote and self._stack.currentWidget() is self._web:  # only with a message on screen
             self._banner.show()
 
     def set_zoom(self, percent: int) -> None:
