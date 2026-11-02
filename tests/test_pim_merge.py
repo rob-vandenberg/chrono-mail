@@ -1,9 +1,10 @@
 from chrono_mail.pim.merge import LOCAL, SERVER, merge
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_merge.py 4.2.483"
+__version__ = "test_pim_merge.py 4.2.490"
 
 # --- Version history ----------------------------------------------------
+# v4.2.490: the same text written another valid way (\\,) is no difference (the owner)
 # v4.2.483: an item changed on both sides is the person's to settle, every visible difference a choice, lists too (the owner)
 # v4.2.481: only what a person enters or sees clashes; reminders by when and how; an occurrence is chosen apart (D-308)
 # v1.1.225: Initial: the three-way comparison field by field, every rule the owner chose (F1 to F5, D-194)
@@ -132,3 +133,10 @@ def test_reminders_at_another_time_clash_and_an_occurrence_is_chosen_apart() -> 
     merged = merge(calendar("SUMMARY:Meeting", *occurrence), ours, theirs)
     assert [clash.label for clash in merged.clashes] == ["Reminder", "Location (the occurrence of 28 October 2026, 09:00)"]
     assert merged.clashes[0].key != merged.clashes[1].key and merged.clashes[1].key.endswith("@20261028T090000Z")
+
+
+def test_the_same_text_written_another_valid_way_is_no_difference() -> None:
+    ours = calendar("SUMMARY:Meeting", "LOCATION:Practice Smit, room 2", "DTSTART:20261021T090000Z", "DESCRIPTION:Agenda")
+    theirs = calendar("SUMMARY:Meeting", "LOCATION:Practice Smit\\, room 2", "DTSTART:20261021T090000Z", "DESCRIPTION:New agenda")
+    merged = merge(BASE, ours, theirs)
+    assert [clash.label for clash in merged.clashes] == ["Description"]  # the location reads the same: no choice (the owner, 4.2.490)

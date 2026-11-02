@@ -11,9 +11,10 @@ from dataclasses import dataclass, field
 from chrono_mail.pim.vcard import fold, unfold
 
 # --- Version ------------------------------------------------------------
-__version__ = "merge.py 4.2.481"
+__version__ = "merge.py 4.2.490"
 
 # --- Version history ----------------------------------------------------
+# v4.2.490: fields are compared as they read: the format's backslashes (\\,) taken out first (the owner)
 # v4.2.481: Only what a person enters or sees can clash (D-308): any other field, and reminders that differ only in what is not shown, take
 #           the server's version; changed on both sides, every visible difference is a choice; a changed occurrence's fields are chosen apart from the main event's; the occurrence in a label in words
 # v1.10.277: A group's members and kind have labels for Sync conflicts (R-39)
@@ -222,6 +223,29 @@ def reminders_seen(text: str | None) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(found))
 
 
+def _said(text: str | None) -> str | None:
+    """A field as it reads: its value with the format's backslashes taken out (\\, is a comma), so another valid way of writing the same is no
+    difference (the owner, 4.2.490). All reminders together stay as they are (they are compared by reminders_seen)."""
+    if text is None or "\n" in text or ":" not in text:  # all reminders together, or a text that is no line: as it is
+        return text
+    head, value = _head_and_value(text)
+    plain, escaped = "", False
+    for character in value:
+        if escaped:
+            plain += "\n" if character in "nN" else character
+            escaped = False
+        elif character == "\\":
+            escaped = True
+        else:
+            plain += character
+    value = plain
+    return f"{head.upper()}:{value}"
+
+
+def _same(first: str | None, second: str | None) -> bool:
+    return _said(first) == _said(second)
+
+
 def _unseen(unit_name: str, key: str, local: str | None, server: str | None) -> bool:
     """A difference a person never sees: a field not shown, or reminders that differ only in what is not shown."""
     if not visible(unit_name, key):
@@ -231,14 +255,14 @@ def _unseen(unit_name: str, key: str, local: str | None, server: str | None) -> 
 
 def _seen(unit_name: str, fields: Mapping[str, str]) -> dict[str, object]:
     """A unit's fields as a person sees them: only those Chrono Mail's windows show, the reminders by when and how."""
-    return {key: (reminders_seen(value) if key == ALARMS else value) for key, value in fields.items() if visible(unit_name, key)}
+    return {key: (reminders_seen(value) if key == ALARMS else _said(value)) for key, value in fields.items() if visible(unit_name, key)}
 
 
 def _quietly(before: str | None, local: str | None, server: str | None, known: bool) -> str | None:
     """A field not seen: the side that changed it, and where both did, the server's (D-193, D-308)."""
-    if known and local == before:
+    if known and _same(local, before):
         return server
-    if known and server == before:
+    if known and _same(server, before):
         return local
     return server
 
@@ -253,13 +277,13 @@ def _shown(text: str | None) -> str:
 
 
 def _choose(key: str, base: str | None, local: str | None, server: str | None, choices: Mapping[str, str], clashes: list[Clash], label: str) -> str | None:
-    if local == server:
+    if _same(local, server):
         return local
     if choices.get(key) in (LOCAL, SERVER):  # the person's choice in the window counts for every field that differs (D-308)
         return local if choices.get(key) == LOCAL else server
-    if local == base:
+    if _same(local, base):
         return server
-    if server == base:
+    if _same(server, base):
         return local
     choice = choices.get(key)
     if choice == LOCAL:
@@ -326,11 +350,11 @@ def _merge_unit(unit_key: str, base: _Component | None, local: _Component | None
         before = base_fields.get(key) if base_fields is not None else None
         if base_fields is None and key not in local_fields and key not in server_fields:
             continue
-        if local_fields.get(key) != server_fields.get(key) and _unseen(local.name, key, local_fields.get(key), server_fields.get(key)):
+        if not _same(local_fields.get(key), server_fields.get(key)) and _unseen(local.name, key, local_fields.get(key), server_fields.get(key)):
             merged[key] = _quietly(before, local_fields.get(key), server_fields.get(key), base_fields is not None)
             continue
         named = choice_key(key, unit_key)
-        if (base_fields is None or both) and local_fields.get(key) != server_fields.get(key):  # every difference is the person's choice
+        if (base_fields is None or both) and not _same(local_fields.get(key), server_fields.get(key)):  # every difference is the person's choice
             choice = choices.get(named)
             if choice in (LOCAL, SERVER):
                 merged[key] = local_fields.get(key) if choice == LOCAL else server_fields.get(key)

@@ -3714,3 +3714,6 @@ The owner measured 780 px on his screen as right: 11 fields. Built as rows, so e
 
 ## 2026-11-02, 4.2.489: the table grows with the window (the owner)
 The extra height of a taller window went to the room below the table; now the table takes it (stretch, Expanding, at most every field's height), then the room below. The opening height was the table's average row times 12, too low because the header row is lower (the owner saw 10 and a half fields): now the real heights of the header and 11 rows with their spacing; the smallest height the same for 3 rows. No review round (the owner).
+
+## 2026-11-02, 4.2.490: text compared as it reads (the owner's test)
+The owner's server wrote LOCATION:Practice Smit\, room 2 (as RFC 5545 asks), the test script without the backslash: a clash with two identical choices. merge compares every line by its value with the format's backslashes read (_said, character by character; a text that is no line as it is), also for "changed on both sides". The test script writes \, now. No review round (the owner).
