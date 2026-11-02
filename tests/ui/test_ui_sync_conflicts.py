@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.487"
+__version__ = "test_ui_sync_conflicts.py 4.2.488"
 
 # --- Version history ----------------------------------------------------
+# v4.2.488: a very long conflict fits the screen and scrolls (it opens at 11 fields since 4.2.487)
 # v4.2.487: a long conflict opens showing 11 fields (the owner)
 # v4.2.486: a long conflict scrolls, never taller than the screen; one bottom row of buttons (the owner)
 # v4.2.485: the header's circles in line with those below (the owner)
@@ -525,13 +526,14 @@ def test_a_long_conflict_scrolls_and_its_four_buttons_share_the_bottom_row_in_vi
     assert bottom <= dialog.height() and dialog.minimumSizeHint().height() < dialog.sizeHint().height()
 
 
-def test_a_conflict_taller_than_the_screen_opens_at_the_screen_s_height(qtbot: QtBot) -> None:
+def test_a_very_long_conflict_fits_the_screen_and_scrolls(qtbot: QtBot) -> None:
     dialog = ConflictDialog(long_conflict(80))
     qtbot.addWidget(dialog)
     dialog.show()
     qtbot.waitExposed(dialog)
     free = dialog.screen().availableGeometry().height()
-    assert dialog.sizeHint().height() > free and dialog.height() <= free  # (the owner)
+    area = dialog.findChild(QScrollArea)
+    assert area is not None and dialog.height() <= free and area.verticalScrollBar().maximum() > 0  # (the owner)
 
 
 def test_a_long_conflict_opens_showing_eleven_fields(qtbot: QtBot) -> None:

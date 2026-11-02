@@ -3708,3 +3708,6 @@ The table of one conflict is in a scroll area (no frame, up and down only): as t
 
 ## 2026-11-02, 4.2.487: a sync conflict opens showing 11 fields (the owner)
 The owner measured 780 px on his screen as right: 11 fields. Built as rows, so every screen and size slider shows 11: the table's size hint is at most the header and 11 rows; fewer fields, as tall as needed; never taller than the screen. No review round (the owner).
+
+## 2026-11-02, 4.2.488: an outdated window test (tests only)
+4.2.487 was pushed with test_a_conflict_taller_than_the_screen_opens_at_the_screen_s_height failing: since a conflict opens at 11 fields it is never taller than the test screen. Now test_a_very_long_conflict_fits_the_screen_and_scrolls. The run that showed the failure was chained to the push; from now on the push waits for the test result.
