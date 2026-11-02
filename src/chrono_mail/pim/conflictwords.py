@@ -11,9 +11,10 @@ from chrono_mail.pim.merge import ALARMS, LOCAL, MONTHS, SEPARATOR, SERVER, choi
 from chrono_mail.pim.times import in_local_zone, zone_named
 
 # --- Version ------------------------------------------------------------
-__version__ = "conflictwords.py 4.2.481"
+__version__ = "conflictwords.py 4.2.492"
 
 # --- Version history ----------------------------------------------------
+# v4.2.492: an entry of a list only here and one only on the server, of the same kind, are one row (the owner, D-308)
 # v4.2.481: Initial: the rows of the window of one sync conflict, every field in words (the owner, D-308)
 
 ABSENT: str = "(empty)"
@@ -40,6 +41,7 @@ ACTIONS: dict[str, str] = {"DISPLAY": "message on screen", "EMAIL": "e-mail", "A
 TASK_STATES: dict[str, str] = {"NEEDS-ACTION": "To do", "IN-PROCESS": "In progress", "COMPLETED": "Done", "CANCELLED": "Cancelled"}
 EVENT_STATES: dict[str, str] = {"CONFIRMED": "Confirmed", "TENTATIVE": "Tentative", "CANCELLED": "Cancelled"}
 TYPES_LEFT_OUT: frozenset[str] = frozenset({"PREF", "INTERNET", "VOICE", "X400"})
+PAIRED: frozenset[str] = frozenset({"NICKNAME", "EMAIL", "TEL", "URL", "ADR", "CATEGORIES", "ATTENDEE"})  # lists whose entries pair up (D-308)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,8 +54,8 @@ class Words:
 
 @dataclass(frozen=True, slots=True)
 class Row:
-    """One field of the item: what a choice names, its label, both values in words, whether they differ, and for a difference that is no clash
-    the side that is taken by itself (LOCAL or SERVER; "" when it clashes or is the same)."""
+    """One field of the item: what a choice names, its label, both values in words, whether they differ, for a difference that is no clash
+    the side that is taken by itself (LOCAL or SERVER; "" when it clashes or is the same), and every entry its choice settles (two for a pair)."""
 
     key: str
     label: str
@@ -61,6 +63,7 @@ class Row:
     server: str
     differs: bool
     taken: str
+    keys: tuple[str, ...]
 
 
 def _unescaped(value: str) -> str:
@@ -203,8 +206,12 @@ def _trigger_words(trigger: str, parameters: dict[str, str], task: bool, words: 
     return f"{span} {'before' if negative else 'after'} {anchor}"
 
 
+def _kinds(parameters: dict[str, str]) -> list[str]:
+    return [kind.lower() for kind in parameters.get("TYPE", "").split(",") if kind and kind.upper() not in TYPES_LEFT_OUT]
+
+
 def _entry(value: str, parameters: dict[str, str]) -> str:
-    kinds = [kind.lower() for kind in parameters.get("TYPE", "").split(",") if kind and kind.upper() not in TYPES_LEFT_OUT]
+    kinds = _kinds(parameters)
     text = _unescaped(value.removeprefix("mailto:").removeprefix("MAILTO:").removeprefix("tel:"))
     return f"{text} ({', '.join(kinds)})" if kinds else text
 
@@ -270,9 +277,32 @@ def value_words(name: str, field: str, key: str, task: bool, words: Words) -> st
     return _unescaped(value) or ABSENT
 
 
+def _kind(name: str, field: str) -> tuple[str, ...]:
+    """The kinds an entry shows (work, cell), the same however written; none for a tag."""
+    return () if name == "CATEGORIES" else tuple(sorted(set(_kinds(_parameters(_head_and_value(field)[0])))))
+
+
+def _paired(entries: list[tuple[Row, str, str, tuple[str, ...]]]) -> list[Row]:
+    """An entry only here and one only on the server, of the same field and kind, in their order, are one row: its choice keeps that side's
+    entry and leaves out the other's. An entry without a partner keeps its own row (the owner, D-308)."""
+    out: list[Row | None] = [row for row, _, _, _ in entries]
+    waiting: dict[tuple[str, tuple[str, ...]], list[int]] = {}
+    for position, (_, side, name, kind) in enumerate(entries):
+        if side == LOCAL:
+            waiting.setdefault((name, kind), []).append(position)
+    for position, (theirs, side, name, kind) in enumerate(entries):
+        if side == SERVER and waiting.get((name, kind)):
+            partner = waiting[(name, kind)].pop(0)
+            ours = entries[partner][0]
+            out[partner] = Row(ours.key, ours.label, ours.local, theirs.server, True, "", ours.keys + theirs.keys)
+            out[position] = None
+    return [row for row in out if row is not None]
+
+
 def rows(base: str | None, local: str, server: str, words: Words) -> list[Row]:
     """Every field a person enters or sees, of the main item and each changed occurrence, with both versions in words. A field that differs
-    where only one side changed it is taken from that side by itself (`taken`); where both did, it is a clash, chosen by the person."""
+    where only one side changed it is taken from that side by itself (`taken`); where both did, it is a clash, chosen by the person. The
+    entries of a list that differ are paired (_paired)."""
     base_units, local_units, server_units = units_of(base), units_of(local), units_of(server)
     found: list[Row] = []
     for unit_key in dict.fromkeys([*local_units, *server_units]):
@@ -285,6 +315,7 @@ def rows(base: str | None, local: str, server: str, words: Words) -> list[Row]:
         keys.sort(key=lambda key: ORDER.index(key.split(SEPARATOR, 1)[0]) if key.split(SEPARATOR, 1)[0] in ORDER else len(ORDER))
         recurrence = unit_key.split(SEPARATOR, 1)[1] if SEPARATOR in unit_key else ""
         suffix = f" (the occurrence of {_when(recurrence, {}, words)})" if recurrence else ""
+        entries: list[tuple[Row, str, str, tuple[str, ...]]] = []  # each row with, for an entry of a list on one side only, that side and its kind
         for key in keys:
             name = key.split(SEPARATOR, 1)[0]
             mine = value_words(name, ours[key], key, task, words) if key in ours else ABSENT
@@ -297,5 +328,8 @@ def rows(base: str | None, local: str, server: str, words: Words) -> list[Row]:
                 elif before.get(key) == theirs.get(key):
                     taken = LOCAL
             label = (TASK_LABELS.get(name) if task else None) or LABELS.get(name, name.title())
-            found.append(Row(choice_key(key, unit_key), label + suffix, mine, yours, differs, taken))
+            chosen = choice_key(key, unit_key)
+            side = "" if name not in PAIRED or (key in ours) == (key in theirs) else LOCAL if key in ours else SERVER
+            entries.append((Row(chosen, label + suffix, mine, yours, differs, taken, (chosen,)), side, name, _kind(name, ours.get(key) or theirs[key])))
+        found.extend(_paired(entries))
     return found

@@ -3720,3 +3720,7 @@ The owner's server wrote LOCATION:Practice Smit\, room 2 (as RFC 5545 asks), the
 
 ## 2026-11-02, 4.2.491: equal values in line (the owner)
 A value the same on both sides sits in an outline that cannot be seen, its text indented by the circle and its gap as the style measures them (SE_RadioButtonContents). No review round (the owner).
+
+
+## 2026-11-03, 4.2.492: list entries pair up in a sync conflict (the owner, D-308)
+In the window of one sync conflict an entry of a list (Nickname, E-mail, Phone, Web address, Address, Tag, Attendee) only here and one only on the server, of the same field and the same kind as the window shows it (TYPE without pref, internet, voice, x400; both without a kind pair too), in their order, are one row ("Nickname | Annie | Ans"); an entry without a partner keeps its own row against (empty). conflictwords.Row carries the entries its choice settles; the window gives that one side to both at Apply (Chrono Mail: Annie kept, Ans left out); merge.py unchanged. test_a_taller_window_shows_more_fields_until_all_show takes long_conflict(24): its 12 tags of each side now pair up, so it holds 25 fields again. Four new tests, each failing on 4.2.491. Found, not changed: choosing every field by hand for one side leaves Apply greyed (seen in 4.2.491 too; since when not checked; the header's choice works). No review round yet (handover step 2).

@@ -48,9 +48,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.491"
+__version__ = "syncconflicts.py 4.2.492"
 
 # --- Version history ----------------------------------------------------
+# v4.2.492: a pair of list entries is one row with one choice; Apply gives that side to both entries (the owner, D-308)
 # v4.2.491: a value the same on both sides starts in line with the text beside the circles (the owner)
 # v4.2.489: the table grows with the window until every field shows; it opens at exactly 11 fields, by the rows' real heights (the owner)
 # v4.2.487: the table of one conflict opens showing at most 11 fields (the owner)
@@ -222,8 +223,8 @@ def _when(moment: date | datetime) -> str:
     return day
 
 
-def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, str]]:
-    """The item's fields in words (key, label, Chrono Mail's, the server's, differs, taken by itself); none for a conflict without both
+def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tuple[str, ...]]]:
+    """The item's fields in words (key, label, Chrono Mail's, the server's, differs, the entries its choice settles); none for a conflict without both
     versions (mail, a whole collection, an item deleted on a side)."""
     if not conflict.local_text or not conflict.server_text:
         return []
@@ -234,7 +235,7 @@ def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, str
         return names.get(colour_id, own if not colour_id else "A colour no longer in this calendar")
 
     found = rows(conflict.base_text or None, conflict.local_text, conflict.server_text, Words(_when, colour))
-    return [(row.key, row.label, row.local, row.server, row.differs, row.taken) for row in found]
+    return [(row.key, row.label, row.local, row.server, row.differs, row.keys) for row in found]
 
 
 def _plain(text: str, parent: QWidget) -> QLabel:
@@ -255,6 +256,7 @@ class ConflictDialog(QDialog):
         self.side: str = ""
         self.setWindowTitle(f"Sync conflict: {conflict.name}")
         self.groups: dict[str, tuple[QRadioButton, QRadioButton]] = {}
+        self.settles: dict[str, tuple[str, ...]] = {}  # a row's choice -> every entry it settles: both entries of a pair (D-308)
         form = forms.fill(self, "sync_conflict", {"fields": self._field_choices})  # the details, the fields, the sides, Apply and Cancel (D-276)
         details = part(form, QFormLayout, "details")
         for name, text in (
@@ -306,7 +308,7 @@ class ConflictDialog(QDialog):
         per_field = not conflict.whole and bool(conflict.fields) and conflict.local_allowed and conflict.server_allowed  # else a whole side
         shown = _rows(conflict)
         row = 0
-        for row, (key, label, ours_text, theirs_text, differs, _) in enumerate(shown, start=1):
+        for row, (key, label, ours_text, theirs_text, differs, keys) in enumerate(shown, start=1):
             grid.addWidget(_plain(label, choices), row, 0)
             if not differs:  # the same on both sides: its text in line with the text beside the circles (the owner)
                 grid.addWidget(_aligned(ours_text, choices), row, 1)
@@ -320,8 +322,10 @@ class ConflictDialog(QDialog):
             ours.setEnabled(per_field)
             theirs.setEnabled(per_field)
             self.groups[key] = (ours, theirs)
+            self.settles[key] = keys
+        covered = {each for keys in self.settles.values() for each in keys}
         for field in conflict.fields:  # a clash without a field of its own above (the whole item kept or removed, mail, a collection)
-            if field.key in self.groups:
+            if field.key in covered:
                 continue
             row += 1
             grid.addWidget(_plain(field.label, choices), row, 0)
@@ -364,7 +368,8 @@ class ConflictDialog(QDialog):
 
     def _apply(self) -> None:
         if not self.side:
-            self.choices = {key: (LOCAL if ours.isChecked() else SERVER) for key, (ours, _) in self.groups.items()}
+            self.choices = {each: (LOCAL if ours.isChecked() else SERVER) for key, (ours, _) in self.groups.items()
+                            for each in self.settles.get(key, (key,))}  # a pair: its side's entry kept, the other's left out
         self.accept()
 
 

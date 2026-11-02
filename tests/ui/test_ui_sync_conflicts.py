@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QGridLayout, QL
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
+from chrono_mail.pim.merge import merge
 from chrono_mail.ui.sections import CALENDAR
 from chrono_mail.ui.syncconflicts import ConflictDialog, SyncConflictsPanel
 from chrono_mail.ui.syncmarks import CONFLICT, WAITING
@@ -13,9 +14,11 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.489"
+__version__ = "test_ui_sync_conflicts.py 4.2.492"
 
 # --- Version history ----------------------------------------------------
+# v4.2.492: a pair of list entries is one choice: Chrono Mail keeps its entry and leaves out the server's; the taller window keeps
+#           25 fields, its tags now pair up (the owner, D-308)
 # v4.2.489: exactly 11 fields when it opens; a taller window shows more fields until all show (the owner)
 # v4.2.488: a very long conflict fits the screen and scrolls (it opens at 11 fields since 4.2.487)
 # v4.2.487: a long conflict opens showing 11 fields (the owner)
@@ -551,7 +554,7 @@ def test_a_long_conflict_opens_showing_eleven_fields(qtbot: QtBot) -> None:
 
 
 def test_a_taller_window_shows_more_fields_until_all_show(qtbot: QtBot) -> None:
-    dialog = ConflictDialog(long_conflict(12))
+    dialog = ConflictDialog(long_conflict(24))  # 25 fields: its 24 tags of each side pair up (D-308)
     qtbot.addWidget(dialog)
     dialog.show()
     qtbot.waitExposed(dialog)
@@ -581,3 +584,26 @@ def test_an_equal_value_starts_in_line_with_the_text_of_the_choices(qtbot: QtBot
     text_x = ours.mapTo(dialog, ours.style().subElementRect(QStyle.SubElement.SE_RadioButtonContents, option, ours).topLeft()).x()
     (same,) = [label for label in dialog.findChildren(QLabel) if label.text() == "Room 1" and label.mapTo(dialog, label.rect().topLeft()).x() < 300]
     assert abs(same.mapTo(dialog, same.rect().topLeft()).x() - text_x) <= 1  # (the owner)
+
+
+def test_chrono_mail_on_a_pair_keeps_its_entry_and_leaves_out_the_servers(qtbot: QtBot) -> None:
+    def card(*body: str) -> str:
+        return "\r\n".join(["BEGIN:VCARD", "VERSION:3.0", "UID:c1", "FN:Anna", *body, "END:VCARD"]) + "\r\n"
+
+    ours, theirs = card("NICKNAME:Annie", "NOTE:Call back"), card("NICKNAME:Ans", "NOTE:Called")
+    fields = (ConflictField("NICKNAME\x1fannie", "Nickname", "Annie", ""), ConflictField("NICKNAME\x1fans", "Nickname", "", "Ans"),
+              ConflictField("NOTE", "Note", "Call back", "Called"))
+    conflict = ConflictSummary("c1", "a1", "Work", "k1", "Contacts", "i1", "contacts", "clash", "Changed here and on the server", "Anna", "", False,
+                               True, 0.0, fields, base_text=card(), local_text=ours, server_text=theirs)
+    dialog = ConflictDialog(conflict)
+    qtbot.addWidget(dialog)
+    assert set(dialog.groups) == {"NICKNAME\x1fannie", "NOTE"}  # the pair is one row with one choice (the owner, D-308)
+    assert [label.text() for label in dialog.findChildren(QLabel)].count("Nickname") == 1
+    annie, _ = dialog.groups["NICKNAME\x1fannie"]
+    assert annie.text() == "Annie"
+    annie.click()
+    dialog.groups["NOTE"][1].click()
+    dialog.apply_button.click()
+    assert dialog.choices == {"NICKNAME\x1fannie": "local", "NICKNAME\x1fans": "local", "NOTE": "server"}
+    merged = merge(card(), ours, theirs, dialog.choices)
+    assert merged.text is not None and "NICKNAME:Annie" in merged.text and "Ans" not in merged.text and "NOTE:Called" in merged.text
