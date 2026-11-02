@@ -1,9 +1,10 @@
 from chrono_mail.pim.merge import LOCAL, SERVER, merge
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_merge.py 4.2.481"
+__version__ = "test_pim_merge.py 4.2.483"
 
 # --- Version history ----------------------------------------------------
+# v4.2.483: an item changed on both sides is the person's to settle, every visible difference a choice, lists too (the owner)
 # v4.2.481: only what a person enters or sees clashes; reminders by when and how; an occurrence is chosen apart (D-308)
 # v1.1.225: Initial: the three-way comparison field by field, every rule the owner chose (F1 to F5, D-194)
 
@@ -16,12 +17,14 @@ def calendar(*body: str, component: str = "VEVENT", extra: tuple[str, ...] = ())
 BASE = calendar("SUMMARY:Meeting", "LOCATION:Room 1", "DTSTART:20261021T090000Z", "DESCRIPTION:Agenda")
 
 
-def test_changes_to_different_fields_are_both_kept() -> None:
+def test_an_item_changed_on_both_sides_is_the_person_s_to_settle_field_by_field() -> None:  # the owner, 4.2.483: also different fields
     ours = calendar("SUMMARY:Team meeting", "LOCATION:Room 1", "DTSTART:20261021T090000Z", "DESCRIPTION:Agenda")
     theirs = calendar("SUMMARY:Meeting", "LOCATION:Room 2", "DTSTART:20261021T090000Z", "DESCRIPTION:Agenda")
     merged = merge(BASE, ours, theirs)
-    assert merged.clashes == () and merged.text is not None
-    assert "SUMMARY:Team meeting" in merged.text and "LOCATION:Room 2" in merged.text and merged.text.endswith("\r\n")
+    assert merged.text is None and [clash.label for clash in merged.clashes] == ["Title", "Location"]
+    chosen = merge(BASE, ours, theirs, {"SUMMARY": LOCAL, "LOCATION": SERVER}).text or ""
+    assert "SUMMARY:Team meeting" in chosen and "LOCATION:Room 2" in chosen and chosen.endswith("\r\n")
+    assert "LOCATION:Room 2" in (merge(BASE, BASE, theirs).text or "")  # changed on the server only: followed by itself
 
 
 def test_the_same_field_changed_to_the_same_value_is_no_clash() -> None:
@@ -49,18 +52,18 @@ def test_each_changed_occurrence_is_an_item_of_its_own() -> None:  # F1
     assert merged.clashes == () and merged.text is not None and "LOCATION:Here" in merged.text and "LOCATION:There" in merged.text
 
 
-def test_lists_are_merged_entry_by_entry() -> None:  # F2
+def test_lists_are_compared_entry_by_entry() -> None:  # F2
     base = calendar("SUMMARY:x", "CATEGORIES:Work", "EXDATE:20261028T090000Z", "ATTENDEE:mailto:ann@example.com")
     ours = calendar("SUMMARY:x", "CATEGORIES:Work,Home", "EXDATE:20261028T090000Z,20261104T090000Z", "ATTENDEE:mailto:ann@example.com", "ATTENDEE:mailto:bob@example.com")
     theirs = calendar("SUMMARY:x", "CATEGORIES:Club", "EXDATE:20261028T090000Z", "ATTENDEE:mailto:ann@example.com", "ATTENDEE:mailto:cee@example.com")
+    assert merge(base, base, theirs).clashes == ()  # changed on the server only: followed by itself
     merged = merge(base, ours, theirs)
-    assert merged.clashes == () and merged.text is not None
-    assert "CATEGORIES:Home,Club" in merged.text  # added on both sides; Work removed on the server
-    assert "EXDATE:20261028T090000Z,20261104T090000Z" in merged.text
-    assert "bob@example.com" in merged.text and "cee@example.com" in merged.text and "ann@example.com" in merged.text
+    assert merged.text is None and {"Tag", "Attendee", "Skipped date"} <= {clash.label for clash in merged.clashes}  # each entry a choice
+    kept = merge(base, ours, theirs, {clash.key: LOCAL for clash in merged.clashes}).text or ""
+    assert "CATEGORIES:Work,Home" in kept and "bob@example.com" in kept and "cee@example.com" not in kept
     card = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c1\r\nFN:Ann\r\n{}END:VCARD\r\n"
-    merged_card = merge(card.format("TEL:111\r\n"), card.format("TEL:111\r\nTEL:222\r\n"), card.format("TEL:111\r\nTEL:333\r\n"))
-    assert merged_card.clashes == () and all(number in (merged_card.text or "") for number in ("111", "222", "333"))
+    merged_card = merge(card.format("TEL:111\r\n"), card.format("TEL:111\r\n"), card.format("TEL:111\r\nTEL:333\r\n"))
+    assert merged_card.clashes == () and all(number in (merged_card.text or "") for number in ("111", "333"))
 
 
 def test_the_alarms_of_an_item_are_one_field() -> None:  # F3

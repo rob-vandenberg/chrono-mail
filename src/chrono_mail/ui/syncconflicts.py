@@ -45,9 +45,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.481"
+__version__ = "syncconflicts.py 4.2.483"
 
 # --- Version history ----------------------------------------------------
+# v4.2.483: every field that differs is a choice, nothing chosen beforehand (the owner)
 # v4.2.481: the window of one conflict shows every field of the item in words, outlines what differs with its choices in the second accent,
 #           and the header's Chrono Mail and Server choose every field (replacing Use Chrono Mail and Use Server data, the owner, D-308)
 # v4.2.480: the window of one conflict: Use Chrono Mail and Use Server data (were All from …), Apply before Cancel (the owner)
@@ -229,28 +230,22 @@ class ConflictDialog(QDialog):
             header.setStyleSheet("font-weight: bold;")
             grid.addWidget(header, 0, column)
         per_field = not conflict.whole and bool(conflict.fields) and conflict.local_allowed and conflict.server_allowed  # else a whole side
-        clashing = {field.key: field for field in conflict.fields}
         shown = _rows(conflict)
         row = 0
-        for row, (key, label, ours_text, theirs_text, differs, taken) in enumerate(shown, start=1):
+        for row, (key, label, ours_text, theirs_text, differs, _) in enumerate(shown, start=1):
             grid.addWidget(_plain(label, choices), row, 0)
             if not differs:
                 grid.addWidget(_plain(ours_text, choices), row, 1)
                 grid.addWidget(_plain(theirs_text, choices), row, 2)
                 continue
             ours, theirs = _outlined(ours_text, choices, grid, row, 1), _outlined(theirs_text, choices, grid, row, 2)
-            group = QButtonGroup(self)
+            group = QButtonGroup(self)  # every difference is the person's choice, nothing chosen beforehand (the owner, 4.2.483)
             group.addButton(ours)
             group.addButton(theirs)
-            if key in clashing:
-                group.buttonToggled.connect(self._toggled)
-                ours.setEnabled(per_field)
-                theirs.setEnabled(per_field)
-                self.groups[key] = (ours, theirs)
-            else:  # only one side changed it: taken from that side by itself, shown chosen and greyed
-                (ours if taken == LOCAL else theirs).setChecked(bool(taken))
-                ours.setEnabled(False)
-                theirs.setEnabled(False)
+            group.buttonToggled.connect(self._toggled)
+            ours.setEnabled(per_field)
+            theirs.setEnabled(per_field)
+            self.groups[key] = (ours, theirs)
         for field in conflict.fields:  # a clash without a field of its own above (the whole item kept or removed, mail, a collection)
             if field.key in self.groups:
                 continue

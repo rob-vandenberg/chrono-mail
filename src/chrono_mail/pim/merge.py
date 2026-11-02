@@ -15,7 +15,7 @@ __version__ = "merge.py 4.2.481"
 
 # --- Version history ----------------------------------------------------
 # v4.2.481: Only what a person enters or sees can clash (D-308): any other field, and reminders that differ only in what is not shown, take
-#           the server's version; a changed occurrence's fields are chosen apart from the main event's; the occurrence in a label in words
+#           the server's version; changed on both sides, every visible difference is a choice; a changed occurrence's fields are chosen apart from the main event's; the occurrence in a label in words
 # v1.10.277: A group's members and kind have labels for Sync conflicts (R-39)
 # v1.1.225: Initial: the three-way comparison field by field of an iCalendar item or a vCard (R-23, R-24, D-194)
 
@@ -229,6 +229,11 @@ def _unseen(unit_name: str, key: str, local: str | None, server: str | None) -> 
     return key == ALARMS and reminders_seen(local) == reminders_seen(server)
 
 
+def _seen(unit_name: str, fields: Mapping[str, str]) -> dict[str, object]:
+    """A unit's fields as a person sees them: only those Chrono Mail's windows show, the reminders by when and how."""
+    return {key: (reminders_seen(value) if key == ALARMS else value) for key, value in fields.items() if visible(unit_name, key)}
+
+
 def _quietly(before: str | None, local: str | None, server: str | None, known: bool) -> str | None:
     """A field not seen: the side that changed it, and where both did, the server's (D-193, D-308)."""
     if known and local == before:
@@ -250,6 +255,8 @@ def _shown(text: str | None) -> str:
 def _choose(key: str, base: str | None, local: str | None, server: str | None, choices: Mapping[str, str], clashes: list[Clash], label: str) -> str | None:
     if local == server:
         return local
+    if choices.get(key) in (LOCAL, SERVER):  # the person's choice in the window counts for every field that differs (D-308)
+        return local if choices.get(key) == LOCAL else server
     if local == base:
         return server
     if server == base:
@@ -312,6 +319,8 @@ def _merge_unit(unit_key: str, base: _Component | None, local: _Component | None
         return _serialise(local) if local is not None else None
     base_fields = _fields(base) if base is not None else None
     local_fields, server_fields = _fields(local), _fields(server)
+    agreed = _seen(local.name, base_fields) if base_fields is not None else None
+    both = agreed is not None and _seen(local.name, local_fields) != agreed and _seen(local.name, server_fields) != agreed  # the person settles it
     merged: dict[str, str | None] = {}
     for key in dict.fromkeys([*local_fields, *server_fields, *(base_fields or {})]):
         before = base_fields.get(key) if base_fields is not None else None
@@ -321,7 +330,7 @@ def _merge_unit(unit_key: str, base: _Component | None, local: _Component | None
             merged[key] = _quietly(before, local_fields.get(key), server_fields.get(key), base_fields is not None)
             continue
         named = choice_key(key, unit_key)
-        if base_fields is None and local_fields.get(key) != server_fields.get(key):  # no agreed version: every difference is a clash
+        if (base_fields is None or both) and local_fields.get(key) != server_fields.get(key):  # every difference is the person's choice
             choice = choices.get(named)
             if choice in (LOCAL, SERVER):
                 merged[key] = local_fields.get(key) if choice == LOCAL else server_fields.get(key)

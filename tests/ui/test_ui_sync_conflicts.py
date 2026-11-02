@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.481"
+__version__ = "test_ui_sync_conflicts.py 4.2.483"
 
 # --- Version history ----------------------------------------------------
+# v4.2.483: every difference is a choice, nothing chosen beforehand (the owner)
 # v4.2.481: the window of one conflict: every field in words, outlines, the header's choices, Apply before Cancel (the owner, D-308)
 # v3.6.350: a name with markup is shown as text in its hover text and in the details window (D-259)
 # v2.4.334: the counts in the texts are written one way (F1b)
@@ -445,13 +446,15 @@ def test_the_window_of_one_conflict_shows_every_field_outlines_what_differs_and_
     assert "Starts" in texts and not any("20261021T" in text for text in texts)  # every field, in words (D-308)
     outlined = [frame for frame in dialog.findChildren(QFrame) if frame.property("accent") == "alternative"]
     assert len(outlined) == 6  # Title, Location and Description differ: both values outlined
-    assert set(dialog.groups) == {"SUMMARY", "LOCATION"}  # only the clashes are chosen; the Description is the server's by itself
+    assert set(dialog.groups) == {"SUMMARY", "LOCATION", "DESCRIPTION"}  # every difference a choice, also one-sided (the owner, 4.2.483)
+    assert not any(ours.isChecked() or theirs.isChecked() for ours, theirs in dialog.groups.values())  # nothing chosen beforehand
     assert (dialog.all_local.text(), dialog.all_server.text()) == ("Chrono Mail", "Server") and not dialog.apply_button.isEnabled()
     dialog.all_server.click()
     assert dialog.all_server.isChecked() and not dialog.all_local.isChecked() and dialog.apply_button.isEnabled()
     dialog.groups["SUMMARY"][0].click()  # a mix: both header choices off, Apply still possible
     assert not dialog.all_server.isChecked() and not dialog.all_local.isChecked() and dialog.apply_button.isEnabled()
     dialog.groups["LOCATION"][0].click()
+    dialog.groups["DESCRIPTION"][0].click()
     assert dialog.all_local.isChecked()  # every field from Chrono Mail
     box = dialog.findChild(QDialogButtonBox)
     assert box is not None

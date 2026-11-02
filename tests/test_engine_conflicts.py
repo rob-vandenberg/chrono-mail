@@ -10,9 +10,10 @@ from tests.test_engine_commands import call
 from tests.test_engine_dav import linked, shown
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_conflicts.py 4.2.481"
+__version__ = "test_engine_conflicts.py 4.2.483"
 
 # --- Version history ----------------------------------------------------
+# v4.2.483: changes on both sides, also to different fields, are a conflict the person settles (the owner)
 # v4.2.481: conflict.recheck at start settles a conflict without a difference a person sees, a real one stays (D-308)
 # v2.0.286: a calendar's name or colour changed on two computers, or a name the server refused, is a sync conflict settled as a whole or per field;
 #           afterwards both computers and the server show the same (the Windows computer's F3)
@@ -94,16 +95,18 @@ def test_a_lasting_no_of_the_server_changes_nothing_here(tmp_path: Path) -> None
         assert call(engine, "event.show", item=item).summary == "Meeting"
 
 
-def test_changes_to_different_fields_meanwhile_are_merged_without_a_word(tmp_path: Path) -> None:
+def test_changes_to_different_fields_meanwhile_are_a_conflict_the_person_settles_field_by_field(tmp_path: Path) -> None:  # the owner, 4.2.483
     with FakeDav() as server:
         engine, account, told = linked(tmp_path, server)
         item, uid = add_event(engine, account)
         change_on_server(server, uid, "LOCATION:Room 1", "LOCATION:Room 2")  # on the phone
         call(engine, "event.edit", item=item, summary="Team meeting")
+        (conflict,) = call(engine, "conflict.list").conflicts
+        assert [field.label for field in conflict.fields] == ["Title", "Location"]  # changed on both sides: every difference is a choice
+        keys = {field.label: field.key for field in conflict.fields}
+        call(engine, "conflict.settle", choices=(f"{conflict.conflict}\t{keys['Title']}\tlocal", f"{conflict.conflict}\t{keys['Location']}\tserver"))
         text = (on_server(server, "events", uid) or ("", ""))[1]
-        assert "SUMMARY:Team meeting" in text and "LOCATION:Room 2" in text
-        shown_here = call(engine, "event.show", item=item)
-        assert (shown_here.summary, shown_here.location) == ("Team meeting", "Room 2") and told == [] and call(engine, "conflict.list").conflicts == ()
+        assert "SUMMARY:Team meeting" in text and "LOCATION:Room 2" in text and call(engine, "conflict.list").conflicts == ()
 
 
 def test_the_same_change_on_both_sides_is_no_conflict(tmp_path: Path) -> None:
@@ -518,8 +521,8 @@ def test_a_contact_changed_on_both_sides_on_kerio_is_merged_and_never_called_del
     with FakeDav() as server:
         engine, _, item, uid = kerio_contact(tmp_path, server)
         call(engine, "contact.edit", item=item, title="Boss")  # here, on the server first: it says "changed meanwhile"
-        text = (on_server(server, "contacts", uid) or ("", ""))[1]
-        assert "TITLE:Boss" in text and "ORG:Acme Two" in text and call(engine, "conflict.list").conflicts == ()  # was: deleted on the server
+        (conflict,) = call(engine, "conflict.list").conflicts
+        assert conflict.reason == "clash"  # changed on both sides (the owner, 4.2.483); was: deleted on the server
 
 
 def test_a_contact_changed_offline_and_on_kerio_is_merged_by_the_sync(tmp_path: Path) -> None:
@@ -532,8 +535,8 @@ def test_a_contact_changed_offline_and_on_kerio_is_merged_by_the_sync(tmp_path: 
         call(engine, "contact.edit", item=item, title="Boss")
         server.writes_failing = False
         call(engine, "dav.sync", account=account)
-        text = (on_server(server, "contacts", uid) or ("", ""))[1]
-        assert "TITLE:Boss" in text and "ORG:Acme Two" in text and call(engine, "conflict.list").conflicts == ()
+        (conflict,) = call(engine, "conflict.list").conflicts
+        assert conflict.reason == "clash" and found[1] in (on_server(server, "contacts", uid) or ("", ""))[1]  # nothing sent before the choice
 
 
 def test_a_contact_deleted_offline_and_changed_on_kerio_just_before_the_sync_deletes_it_is_a_conflict(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
