@@ -14,9 +14,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.494"
+__version__ = "test_ui_sync_conflicts.py 4.2.495"
 
 # --- Version history ----------------------------------------------------
+# v4.2.495: the triangle test opens the Month view on its appointment's month: it failed in every month but October 2026
 # v4.2.494: every field chosen by hand for one side is that side: Apply works and settles it (the owner)
 # v4.2.493: the table has the gap between its columns on its left and right (the owner)
 # v4.2.492: a pair of list entries is one choice: Chrono Mail keeps its entry and leaves out the server's; the taller window keeps
@@ -298,17 +299,22 @@ def test_the_window_of_its_own_with_its_legend_and_columns_that_can_be_dragged(w
 
 
 def test_a_click_on_the_triangle_opens_its_conflict_and_the_entry_is_at_the_top(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import date
+
     from PySide6.QtCore import QPointF
     from PySide6.QtTest import QTest
 
     from chrono_mail.ui import calendarlayout as layout
+    from chrono_mail.ui.calendarview import CalendarPage
 
     with FakeDav() as server:
         account = linked(world, qtbot, server)
         window = world.window
         window.switch_section(CALENDAR)
         page = window.pages[CALENDAR]
+        assert isinstance(page, CalendarPage)
         page.set_view(layout.MONTH)
+        page.goto(date(2026, 10, 14))  # the month of its appointment, whatever today is (AGENTS.md 4.5.5)
         page.month.resize(900, 600)
         page.month.show()
         item, _ = clash(world, server, account)
