@@ -564,3 +564,20 @@ def test_a_taller_window_shows_more_fields_until_all_show(qtbot: QtBot) -> None:
     inner = area.widget()
     assert inner is not None
     qtbot.waitUntil(lambda: area.height() == inner.sizeHint().height() and area.verticalScrollBar().maximum() == 0)  # every field shows
+
+
+def test_an_equal_value_starts_in_line_with_the_text_of_the_choices(qtbot: QtBot) -> None:
+    base = calendar_text("SUMMARY:Meeting", "LOCATION:Room 1")
+    conflict = ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", "events", "clash", "Changed here and on the server", "Ours", "", False,
+                               True, 0.0, (ConflictField("SUMMARY", "Title", "Ours", "Theirs"),), base_text=base,
+                               local_text=calendar_text("SUMMARY:Ours", "LOCATION:Room 1"), server_text=calendar_text("SUMMARY:Theirs", "LOCATION:Room 1"))
+    dialog = ConflictDialog(conflict)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    ours = dialog.groups["SUMMARY"][0]
+    option = QStyleOptionButton()
+    ours.initStyleOption(option)
+    text_x = ours.mapTo(dialog, ours.style().subElementRect(QStyle.SubElement.SE_RadioButtonContents, option, ours).topLeft()).x()
+    (same,) = [label for label in dialog.findChildren(QLabel) if label.text() == "Room 1" and label.mapTo(dialog, label.rect().topLeft()).x() < 300]
+    assert abs(same.mapTo(dialog, same.rect().topLeft()).x() - text_x) <= 1  # (the owner)

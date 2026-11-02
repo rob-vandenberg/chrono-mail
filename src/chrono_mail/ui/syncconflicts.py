@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QStyle,
+    QStyleOptionButton,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTreeWidget,
@@ -47,9 +48,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.489"
+__version__ = "syncconflicts.py 4.2.491"
 
 # --- Version history ----------------------------------------------------
+# v4.2.491: a value the same on both sides starts in line with the text beside the circles (the owner)
 # v4.2.489: the table grows with the window until every field shows; it opens at exactly 11 fields, by the rows' real heights (the owner)
 # v4.2.487: the table of one conflict opens showing at most 11 fields (the owner)
 # v4.2.486: the table of one conflict scrolls when the window is small, never taller than the screen; Retry sync and Keep here only
@@ -132,7 +134,8 @@ def _difference_look() -> str:
         f'QRadioButton[accent="alternative"]::indicator {{ width: 10px; height: 10px; border: 2px solid {colour}; border-radius: 7px; }}'
         f'QRadioButton[accent="alternative"]::indicator:checked {{ background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,'
         f' stop: 0 {colour}, stop: 0.55 {colour}, stop: 0.65 transparent, stop: 1 transparent); }}'
-        'QRadioButton[header="true"] { margin-left: 6px; }'  # the outline's border (2) and inner space (4) of the fields below
+        'QRadioButton[header="true"] { margin-left: 6px; }'
+        'QFrame[accent="same"] { border: 2px solid transparent; border-radius: 4px; padding: 2px 4px; }'  # the outline's border (2) and inner space (4) of the fields below
         'QRadioButton[accent="alternative"]::indicator:disabled { border-color: palette(mid); }'
         'QRadioButton[accent="alternative"]::indicator:checked:disabled { background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5,'
         ' fy: 0.5, stop: 0 palette(mid), stop: 0.55 palette(mid), stop: 0.65 transparent, stop: 1 transparent); }'
@@ -178,6 +181,23 @@ class _FieldsArea(QScrollArea):
         heights = [max((item.sizeHint().height() for column in range(layout.columnCount()) if (item := layout.itemAtPosition(row, column)) is not None),
                        default=0) for row in range(rows)]
         return sum(heights) + layout.verticalSpacing() * max(rows - 1, 0)
+
+
+def _aligned(text: str, parent: QWidget) -> QFrame:
+    """A value the same on both sides: an outline that cannot be seen, its text indented by a circle and its gap, measured in the style."""
+    frame = QFrame(parent)
+    frame.setProperty("accent", "same")
+    layout = QHBoxLayout(frame)
+    probe = QRadioButton(frame)
+    probe.setProperty("accent", "alternative")
+    probe.ensurePolished()
+    option = QStyleOptionButton()
+    probe.initStyleOption(option)
+    indent = probe.style().subElementRect(QStyle.SubElement.SE_RadioButtonContents, option, probe).left()
+    probe.setParent(None)
+    layout.setContentsMargins(indent, 0, 0, 0)
+    layout.addWidget(_plain(text, frame))
+    return frame
 
 
 def _outlined(text: str, parent: QWidget, grid: QGridLayout, row: int, column: int) -> QRadioButton:
@@ -288,9 +308,9 @@ class ConflictDialog(QDialog):
         row = 0
         for row, (key, label, ours_text, theirs_text, differs, _) in enumerate(shown, start=1):
             grid.addWidget(_plain(label, choices), row, 0)
-            if not differs:
-                grid.addWidget(_plain(ours_text, choices), row, 1)
-                grid.addWidget(_plain(theirs_text, choices), row, 2)
+            if not differs:  # the same on both sides: its text in line with the text beside the circles (the owner)
+                grid.addWidget(_aligned(ours_text, choices), row, 1)
+                grid.addWidget(_aligned(theirs_text, choices), row, 2)
                 continue
             ours, theirs = _outlined(ours_text, choices, grid, row, 1), _outlined(theirs_text, choices, grid, row, 2)
             group = QButtonGroup(self)  # every difference is the person's choice, nothing chosen beforehand (the owner, 4.2.483)

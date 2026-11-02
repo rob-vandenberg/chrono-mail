@@ -3717,3 +3717,6 @@ The extra height of a taller window went to the room below the table; now the ta
 
 ## 2026-11-02, 4.2.490: text compared as it reads (the owner's test)
 The owner's server wrote LOCATION:Practice Smit\, room 2 (as RFC 5545 asks), the test script without the backslash: a clash with two identical choices. merge compares every line by its value with the format's backslashes read (_said, character by character; a text that is no line as it is), also for "changed on both sides". The test script writes \, now. No review round (the owner).
+
+## 2026-11-02, 4.2.491: equal values in line (the owner)
+A value the same on both sides sits in an outline that cannot be seen, its text indented by the circle and its gap as the style measures them (SE_RadioButtonContents). No review round (the owner).
