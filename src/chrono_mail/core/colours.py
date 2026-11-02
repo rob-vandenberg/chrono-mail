@@ -3,9 +3,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.2.472"
+__version__ = "colours.py 4.2.473"
 
 # --- Version history ----------------------------------------------------
+# v4.2.473: The owner's values: menus #272c30, the message list and other lists #181e1f (dark theme)
 # v4.2.472: The shades of the blue are worked out from it (D-164): the hover of the Menu and Send buttons, the links (readable on
 #            the theme) and the drag badge, so a picked accent leaves nothing in the old blue
 # v2.3.317: notice_border: the outline of the notice of a delayed send (the owner's mockup)
@@ -52,7 +53,8 @@ class Theme:
     pane_separator_dots: str  # the dots in the middle of that bar
     hover: str  # the veil under the pointer on toolbar buttons, folders and rows
     hover_strong: str  # the same on the banner's buttons
-    menu_base: str  # what menus are given as their list colour: Fusion draws a menu 8% lighter, so this is the window colour 8% darker
+    menu_base: str  # what menus are given as their list colour: Fusion draws a menu 8% lighter, so this is menu_background 8% darker
+    menu_background: str  # the background of the menus of the main window
     search_active: str  # the border of the search field while a search is active
     red: str  # errors and warnings in text
     green: str  # "it worked" marks
@@ -150,7 +152,7 @@ DARK: Theme = _shaded(Theme(
     roles={
         "Window": ("#202326", "#202326", "#292c30"),
         "WindowText": ("#fcfcfc", "#fcfcfc", "#525860"),
-        "Base": ("#141618", "#141618", "#292c30"),  # the message list, the other lists, text fields
+        "Base": ("#181e1f", "#181e1f", "#292c30"),  # the message list, the other lists, text fields
         "AlternateBase": ("#1d1f22", "#1d1f22", "#1d1f22"),
         "Text": ("#fcfcfc", "#fcfcfc", "#525860"),
         "Button": ("#292c30", "#292c30", "#292c30"),
@@ -182,7 +184,8 @@ DARK: Theme = _shaded(Theme(
     pane_separator_dots="#6f7173",
     hover="#38808080",
     hover_strong="#66808080",
-    menu_base="#1e2023",
+    menu_base="#24292c",  # Fusion draws it 8% lighter: #272c30, the menu_background below
+    menu_background="#272c30",  # the owner's value
     search_active="#f0a030",
     red="#ff8077",
     green="#4cc26b",
@@ -240,6 +243,7 @@ LIGHT: Theme = _shaded(Theme(
     hover="#38808080",
     hover_strong="#66808080",
     menu_base="#ececec",
+    menu_background="#ffffff",
     search_active="#f0a030",
     red="#c0392b",
     green="#17703c",

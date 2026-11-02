@@ -4,9 +4,10 @@ from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.scale import scale_css
 
 # --- Version ------------------------------------------------------------
-__version__ = "theme.py 4.2.472"
+__version__ = "theme.py 4.2.473"
 
 # --- Version history ----------------------------------------------------
+# v4.2.473: Menus take the theme's menu colour instead of the window's
 # v4.2.472: The Menu and Send buttons under the pointer take the hover shade of the blue (worked out from the accent), not the link colour (D-164)
 # v3.6.373: form_role_look: the look of a part of a dialog form by its role (heading: bold), never written in the form itself (D-276)
 # v1.1.215: No 1 px black lines between the panes: every separator is the program's own (ui/splitter.py, D-188)
@@ -60,7 +61,7 @@ def stylesheet(factor: float | None = None) -> str:
 QMenuBar {{ background: palette(window); border: 0; padding: 2px 6px; }}
 QMenuBar::item {{ padding: 5px 12px; background: transparent; border-radius: 4px; }}
 QMenuBar::item:selected {{ background: {HOVER}; }}
-QMenu {{ background: palette(window); border: 1px solid palette(mid); padding: 4px; }}
+QMenu {{ background: {css(colours.menu_background)}; border: 1px solid palette(mid); padding: 4px; }}
 QMenu::item {{ padding: 6px 28px 6px 22px; border-radius: 3px; }}
 QMenu::item:selected {{ background: palette(highlight); color: palette(highlighted-text); }}
 QMenu::separator {{ height: 1px; background: palette(mid); margin: 4px 8px; }}
