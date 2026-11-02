@@ -21,9 +21,11 @@ from chrono_mail.ui.serverfields import account_line
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 4.2.447"
+__version__ = "calendaraccount.py 4.2.482"
 
 # --- Version history ----------------------------------------------------
+# v4.2.482: For is Link to: a mail account fills in its server and login, greyed (the password as dots, never read from the wallet);
+#           its first entry is No mail account (a separate account) (the owner, D-298)
 # v4.2.447: Find always checks the certificate itself; the Find after Connect uses the answer; the tick starts as kept, and Connect without it
 #           takes the certificate back (D-299)
 # v4.2.444: For lists each mail account as Settings > Accounts does: name, address, server and kind (account_line)
@@ -43,7 +45,8 @@ __version__ = "calendaraccount.py 4.2.447"
 # v1.1.212: Initial window: Add account… in the Calendar, Contacts and Tasks sections, for a mail account or calendars and contacts only (D-185)
 
 NEW_ACCOUNT: str = ""  # the For choice of a new account of calendars, contacts and tasks only
-NEW_ACCOUNT_TEXT: str = "A new account (calendars, contacts and tasks only)"
+NEW_ACCOUNT_TEXT: str = "No mail account (a separate account)"
+STORED_PASSWORD: str = "storedpw"  # only dots on screen: a linked account's stored password, which never leaves the wallet
 CALDAV_KINDS: frozenset[str] = frozenset({"events", "tasks"})  # what CalDAV starts with ticked in Additional folders found
 CARDDAV_KINDS: frozenset[str] = frozenset({"contacts"})  # what CardDAV starts with ticked
 
@@ -74,7 +77,7 @@ class CalendarFields(QWidget):
         self.url: QLineEdit = part(form, QLineEdit, "url")
         self.username: QLineEdit = part(form, QLineEdit, "username")
         self.password: QLineEdit = part(form, QLineEdit, "password")
-        make_password_field(self.password)
+        self._eye = make_password_field(self.password)
         self.find_button: QPushButton = part(form, QPushButton, "find")
         self.result_label: QLabel = part(form, QLabel, "result")
         self.result_label.setTextFormat(Qt.TextFormat.RichText)
@@ -93,12 +96,23 @@ class CalendarFields(QWidget):
         return str(self.target.currentData()) == NEW_ACCOUNT
 
     def _target_changed(self) -> None:
-        """A mail account has its own name and, by default, its mail login: Account name is greyed and the login may stay empty."""
+        """Link to a mail account: the same server and the same login, filled in from it and greyed (the password only as dots, without the
+        eye); a separate account: all typed by the person (the owner, D-298)."""
         new = self._new()
-        self.account_name.setEnabled(new)
-        self.username.setPlaceholderText("" if new else "(the same as for mail)")
-        self.password.setPlaceholderText("" if new else "(the same as for mail)")
+        linked = next((account for account in self._mail_accounts if account.account_id == str(self.target.currentData())), None)
+        for field in (self.account_name, self.url, self.username, self.password):
+            field.setEnabled(new)
+        self._eye.setVisible(new)
+        self.url.setText(f"https://{linked.incoming_host}/" if linked is not None and linked.incoming_host else "")
+        self.username.setText(linked.incoming_username if linked is not None else "")
+        self.password.setText(STORED_PASSWORD if linked is not None else "")
         self._forget_found()
+
+    def _login(self) -> tuple[str, str]:
+        """The typed login of a separate account; a linked one's is its mail login ("": the engine takes it and the stored password)."""
+        if self._new():
+            return self.username.text().strip(), self.password.text()
+        return "", ""
 
     def _forget_found(self) -> None:
         self._found = None
@@ -119,7 +133,7 @@ class CalendarFields(QWidget):
         if self._adding or self._finding:  # never during an add, nor a second Find (a Connect ends in one)
             return
         url = self.url.text().strip()
-        username, password = self.username.text().strip(), self.password.text()
+        username, password = self._login()
         if self._new() and (not url or not username or not password):
             self._show_problem("Type the server address, the user name and the password.")
             return
@@ -133,6 +147,8 @@ class CalendarFields(QWidget):
             if not result.folders:
                 self._show_problem(result.problem or "No calendars, contacts or tasks were found")
                 return
+            if not self._new():
+                self.url.setText(result.url)  # where the calendars were found (this forgets an older find first)
             self._found = result
             self.changed()  # the window's Add, never while an add runs (RV-209)
             self.result_label.setText(f"<span style='color:{green()}'><b>✓</b> {counted(len(result.folders), 'folder')} found on {result.url.replace('<', '&lt;')}.</span>")
@@ -209,7 +225,7 @@ class CalendarFields(QWidget):
             return
         adding(True)
         self.result_label.setText("Adding…")
-        username, password = self.username.text().strip(), self.password.text()
+        username, password = self._login()
 
         def failed(error: ChronoMailError) -> None:
             adding(False)

@@ -15,9 +15,10 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 4.2.451"
+__version__ = "test_ui_dav.py 4.2.482"
 
 # --- Version history ----------------------------------------------------
+# v4.2.482: Link to a mail account fills its server and login in, greyed; the first entry is No mail account (the owner, D-298)
 # v4.2.451: a calendars-only account has one item in the Refresh menu, which synchronises it (D-059)
 # v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
 # v4.2.439: the calendar window is a part of the Add window (D-298): the sidebars open it on CalDAV or CardDAV
@@ -214,7 +215,7 @@ def test_the_sidebar_menu_starts_with_add_account_and_it_opens_the_window(world:
     assert len(opened) == 3  # the one Add window (D-298), on CalDAV from Calendar and Tasks, on CardDAV from Contacts
     kinds = {name: dialog.kind.currentData() for name, dialog in zip(world.window.pages, opened, strict=True)}
     assert kinds == {"calendar": CALDAV, "tasks": CALDAV, "contacts": CARDDAV}, kinds
-    assert opened[0].calendar.target.itemText(0) == "A new account (calendars, contacts and tasks only)" and opened[0].calendar.isVisibleTo(opened[0])
+    assert opened[0].calendar.target.itemText(0) == "No mail account (a separate account)" and opened[0].calendar.isVisibleTo(opened[0])
 
 
 def test_a_new_account_of_calendars_only_is_added_in_the_window(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -247,7 +248,13 @@ def test_the_window_can_give_a_mail_account_its_calendar_server(world: World, qt
         qtbot.addWidget(dialog)
         fields = dialog.calendar
         fields.target.setCurrentIndex(1)
-        assert not fields.account_name.isEnabled() and fields.username.placeholderText() == "(the same as for mail)"
+        mail = world.call("account.list")[0]
+        assert not any(field.isEnabled() for field in (fields.account_name, fields.url, fields.username, fields.password))  # Link to: greyed (D-298)
+        assert fields.url.text() == f"https://{mail.incoming_host}/" and fields.username.text() == mail.incoming_username
+        assert fields.password.text() and not fields._eye.isVisible()  # dots only, never the stored password  # noqa: SLF001
+        fields.target.setCurrentIndex(0)
+        assert all(field.isEnabled() and not field.text() for field in (fields.url, fields.username, fields.password)) and fields._eye.isVisible()  # noqa: SLF001
+        fields.target.setCurrentIndex(1)
         fields.url.setText(server.url)
         fields.find_button.click()
         wait(qtbot, lambda: " found" in fields.result_label.text() or "span" in fields.result_label.text())

@@ -20,7 +20,7 @@
      <item row="0" column="0">
       <widget class="QLabel" name="forLabel">
        <property name="text">
-        <string>For</string>
+        <string>Link to</string>
        </property>
        <property name="buddy">
         <cstring>target</cstring>
