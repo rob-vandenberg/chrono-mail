@@ -3,10 +3,11 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.2.476"
+__version__ = "colours.py 4.2.480"
 
 # --- Version history ----------------------------------------------------
 # v4.2.476: The message list and other lists #151c1c (dark theme, the owner; was #181e1f)
+# v4.2.480: The second accent, accent_alternative: orange in the dark theme, red in the light one (the owner)
 # v4.2.475: The hover shade is 8 points of lightness from the accent (was 12; the owner)
 # v4.2.473: The owner's values: menus #272c30, the message list and other lists #181e1f (dark theme)
 # v4.2.472: The shades of the blue are worked out from it (D-164): the hover of the Menu and Send buttons, the links (readable on
@@ -69,6 +70,7 @@ class Theme:
     chip_text_light: str  # text on a dark tag colour
     chip_text_dark: str  # text on a light tag colour
     notice_border: str  # the outline of the notice of a delayed send, at the bottom left of the main window
+    accent_alternative: str  # the second accent: the outline of what differs in a sync conflict (the owner; picked in Settings later, B-29)
 
 
 # --- Shades of the blue ---------------------------------------------------------------------------------------------------
@@ -200,6 +202,7 @@ DARK: Theme = _shaded(Theme(
     chip_text_light="#ffffff",
     chip_text_dark="#000000",
     notice_border="#9a9da1",
+    accent_alternative="#c86400",
 ))
 
 
@@ -258,6 +261,7 @@ LIGHT: Theme = _shaded(Theme(
     chip_text_light="#ffffff",
     chip_text_dark="#000000",
     notice_border="#8c8c8c",
+    accent_alternative="#c62828",
 ))
 
 

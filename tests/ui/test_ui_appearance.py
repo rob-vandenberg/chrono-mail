@@ -664,3 +664,7 @@ def test_the_accent_swatch_changes_only_the_theme_in_use(world: World, qtbot: Qt
     assert app.palette().color(QPalette.ColorRole.Highlight).name() == "#336699"
     edit_settings(world, qtbot, monkeypatch, lambda dialog: dialog.accent_reset.click())  # Reset: the theme's own blue again
     assert settings_of(world).value("accent_light") == "" and palette_is(app.palette(), LIGHT)
+
+
+def test_each_theme_has_its_own_second_accent() -> None:
+    assert (DARK.accent_alternative, LIGHT.accent_alternative) == ("#c86400", "#c62828")  # orange on dark grey, red on white (the owner)

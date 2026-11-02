@@ -84,14 +84,14 @@
      <item>
       <widget class="QPushButton" name="allLocal">
        <property name="text">
-        <string>All from Chrono Mail</string>
+        <string>Use Chrono Mail</string>
        </property>
       </widget>
      </item>
      <item>
       <widget class="QPushButton" name="allServer">
        <property name="text">
-        <string>All from Server</string>
+        <string>Use Server data</string>
        </property>
       </widget>
      </item>
@@ -130,7 +130,7 @@
    <item>
     <widget class="QDialogButtonBox" name="buttons">
      <property name="standardButtons">
-      <set>QDialogButtonBox::Apply|QDialogButtonBox::Cancel</set>
+      <set>QDialogButtonBox::Cancel</set>
      </property>
     </widget>
    </item>

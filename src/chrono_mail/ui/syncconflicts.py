@@ -41,9 +41,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.0.375"
+__version__ = "syncconflicts.py 4.2.480"
 
 # --- Version history ----------------------------------------------------
+# v4.2.480: the window of one conflict: Use Chrono Mail and Use Server data (were All from …), Apply before Cancel (the owner)
 # v4.0.375: the window, its panel and the window of one conflict are built from their Qt Designer forms (ui/forms/sync_conflicts.ui,
 #           sync_conflicts_panel.ui, sync_conflict.ui, D-276); the columns, the field choices and the legend's icons stay the program's
 # v3.6.350: an error text inside markup is escaped, the hover texts and the details of a conflict are plain: a server's or a file's words are
@@ -150,7 +151,7 @@ class ConflictDialog(QDialog):
         self.keep.clicked.connect(lambda: self._all(KEEP))
         self.retry.clicked.connect(lambda: self._all(RETRY))
         box = part(form, QDialogButtonBox, "buttons")
-        self.apply_button = box.button(QDialogButtonBox.StandardButton.Apply)
+        self.apply_button = box.addButton("Apply", QDialogButtonBox.ButtonRole.AcceptRole)  # an accepting button: Apply first, Cancel last (the owner)
         self.apply_button.clicked.connect(self._apply)
         box.rejected.connect(self.reject)
         forms.smallest(self, 560)  # its texts are never cut off, also at the largest size

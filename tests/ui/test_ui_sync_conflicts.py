@@ -1,8 +1,9 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QLabel
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel
 from pytestqt.qtbot import QtBot
 
+from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
 from chrono_mail.ui.sections import CALENDAR
 from chrono_mail.ui.syncconflicts import ConflictDialog, SyncConflictsPanel
 from chrono_mail.ui.syncmarks import CONFLICT, WAITING
@@ -424,3 +425,18 @@ def test_a_name_with_markup_is_shown_as_text_in_its_hover_text(world: World, qtb
         details = {conflict.reason_text, f"{shown_name(world)} — Calendar", *(field.label for field in conflict.fields)}
         shown = [label for label in dialog.findChildren(QLabel) if label.text() in details]  # the conflict's own words, not the headings
         assert len(shown) >= 3 and all(label.textFormat() == Qt.TextFormat.PlainText for label in shown)
+
+
+def test_the_window_of_one_conflict_names_its_sides_as_the_list_does_and_puts_cancel_last(qtbot: QtBot) -> None:
+    field = ConflictField("SUMMARY", "Title", "My title", "Their title")
+    conflict = ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", "events", "clash", "Changed here and on the server", "Dentist appointment",
+                               "", False, True, 0.0, (field,))
+    dialog = ConflictDialog(conflict)
+    qtbot.addWidget(dialog)
+    assert (dialog.all_local.text(), dialog.all_server.text()) == ("Use Chrono Mail", "Use Server data")  # the same words as the list (the owner)
+    box = dialog.findChild(QDialogButtonBox)
+    assert box is not None
+    cancel = box.button(QDialogButtonBox.StandardButton.Cancel)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    assert dialog.apply_button.text() == "Apply" and dialog.apply_button.x() < cancel.x()  # Cancel comes last (the owner)
