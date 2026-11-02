@@ -3665,3 +3665,6 @@ Tests: test_ui_appearance's new shade test (fails on 4.2.471); the yellow accent
 
 ## 2026-11-02, 4.2.473: menu and list colours (the owner's values)
 Dark theme: menus #272c30 (was the window's #202326), the Base role of the message list, the other lists and text fields #181e1f (was #141618). Values only; no tests run (the owner).
+
+## 2026-11-02, 4.2.474: the menu test expects the menus' own colour
+test_dropdown_menus_have_the_colour_of_the_menu_bar_and_not_that_of_the_lists compares with menu_background instead of the window's colour.

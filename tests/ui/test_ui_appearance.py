@@ -18,9 +18,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 4.2.472"
+__version__ = "test_ui_appearance.py 4.2.474"
 
 # --- Version history ----------------------------------------------------
+# v4.2.474: Menus have the theme's menu colour, no longer the window's (4.2.473)
 # v4.2.472: Every shade of the blue (hover, links, drag badge) is worked out from the accent; a link too light to read is darkened (D-164)
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42)
 # v1.9.264: The window's parts (R-17): what the tests reach is asked of the part that holds it
@@ -194,7 +195,7 @@ def test_dropdown_menus_have_the_colour_of_the_menu_bar_and_not_that_of_the_list
     shown = menu.grab().toImage().pixelColor(3, 3)
     bar = world.window.grab().toImage().pixelColor(400, 5)
     window = palette.color(QPalette.ColorRole.Window)
-    assert all(abs(a - b) <= 2 for a, b in ((shown.red(), window.red()), (shown.green(), window.green()), (shown.blue(), window.blue())))  # the colour of the menu bar
+    assert shown.name() == theme().menu_background  # the menus' own colour (4.2.473, the owner)
     assert bar == window and (shown != palette.color(QPalette.ColorRole.Base) or window == palette.color(QPalette.ColorRole.Base))  # the light theme's lists are as white as its window
     menu.hide()
 
