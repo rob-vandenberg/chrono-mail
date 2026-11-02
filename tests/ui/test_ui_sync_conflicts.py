@@ -1,6 +1,6 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.483"
+__version__ = "test_ui_sync_conflicts.py 4.2.484"
 
 # --- Version history ----------------------------------------------------
+# v4.2.484: room below the table, and extra height goes there (the owner)
 # v4.2.483: every difference is a choice, nothing chosen beforehand (the owner)
 # v4.2.481: the window of one conflict: every field in words, outlines, the header's choices, Apply before Cancel (the owner, D-308)
 # v3.6.350: a name with markup is shown as text in its hover text and in the details window (D-259)
@@ -462,3 +463,20 @@ def test_the_window_of_one_conflict_shows_every_field_outlines_what_differs_and_
     dialog.show()
     qtbot.waitExposed(dialog)
     assert dialog.apply_button.x() < cancel.x()  # Cancel comes last (the owner)
+
+
+def test_room_below_the_table_and_extra_height_goes_there_with_the_buttons_at_the_bottom(qtbot: QtBot) -> None:
+    conflict = ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", "events", "clash", "Changed here and on the server", "Ours", "", False,
+                               True, 0.0, (ConflictField("SUMMARY", "Title", "Ours", "Theirs"),), base_text=calendar_text("SUMMARY:Meeting"),
+                               local_text=calendar_text("SUMMARY:Ours"), server_text=calendar_text("SUMMARY:Theirs"))
+    dialog = ConflictDialog(conflict)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    table = dialog.findChild(QWidget, "fields")
+    assert table is not None
+    top, room = table.y(), dialog.keep.y() - (table.y() + table.height())
+    assert room >= 14  # about half a row below the table (the owner)
+    dialog.resize(dialog.width(), dialog.height() + 300)
+    qtbot.waitUntil(lambda: dialog.keep.y() - (table.y() + table.height()) >= room + 300)
+    assert table.y() == top  # the table stays under Found; the button rows stay at the bottom

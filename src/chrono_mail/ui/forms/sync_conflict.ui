@@ -80,6 +80,22 @@
     <widget class="QWidget" name="fields" />
    </item>
    <item>
+    <spacer name="belowFields">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeType">
+      <enum>QSizePolicy::MinimumExpanding</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>0</width>
+       <height>14</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
     <layout class="QHBoxLayout" name="sides" stretch="0,0,1">
      <item>
       <widget class="QPushButton" name="retrySync">

@@ -3696,3 +3696,6 @@ Add an account > CalDAV or CardDAV: For is "Link to". A mail account chosen ther
 
 ## 2026-11-02, 4.2.483: changed on both sides is the person's to settle (the owner, D-194)
 merge: a unit whose visible fields (as seen: reminders by when and how) differ from the agreed version on both sides makes every visible difference a clash, list entries too; a choice in the window counts for every differing field (_choose reads it first); a unit changed on one side only is followed by itself as before. The window of one conflict: every differing field is a choice, none chosen beforehand. Tests of the old silent merge of different fields (two merge, three engine, of which two Kerio ones keep their guard: never called deleted) follow the new rule. scratchpad/make_test_conflicts.py: both sides change the times, in UTC (the first run had no VTIMEZONE; the server turned the zone into UTC). No review round (the owner).
+
+## 2026-11-02, 4.2.484: room below the table of a sync conflict (the owner)
+The form had no stretch, so a window made taller put the room above the table. A spacer below the table (at least 14 px at the size slider, MinimumExpanding) takes it; both button rows stay at the bottom. No review round (the owner).
