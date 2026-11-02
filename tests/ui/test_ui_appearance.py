@@ -18,9 +18,10 @@ from tests.ui.test_ui_preferences import edit_settings, settings_of
 from tests.ui.world import World, menu_named, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_appearance.py 4.2.474"
+__version__ = "test_ui_appearance.py 4.2.476"
 
 # --- Version history ----------------------------------------------------
+# v4.2.476: The dark theme's list colour is the owner's #151c1c
 # v4.2.474: Menus have the theme's menu colour, no longer the window's (4.2.473)
 # v4.2.472: Every shade of the blue (hover, links, drag badge) is worked out from the accent; a link too light to read is darkened (D-164)
 # v3.6.355: The owner rule each check of the project enforces is named (OR-42)
@@ -89,7 +90,7 @@ def test_a_group_heading_stands_out_from_the_list_and_has_its_line(theme: Theme)
 
 
 def test_the_dark_theme_is_what_linux_showed_up_to_1_0_171() -> None:
-    measured = {"Window": "#202326", "Base": "#141618", "AlternateBase": "#1d1f22", "Text": "#fcfcfc", "Button": "#292c30", "Mid": "#373b40", "PlaceholderText": "#a1a9b1", "Accent": "#308cc6"}
+    measured = {"Window": "#202326", "Base": "#151c1c", "AlternateBase": "#1d1f22", "Text": "#fcfcfc", "Button": "#292c30", "Mid": "#373b40", "PlaceholderText": "#a1a9b1", "Accent": "#308cc6"}
     assert {role: DARK.roles[role][0] for role in measured} == measured and DARK.group_header == "#2a2a2a" and DARK.blue == DARK.roles["Highlight"][0] == "#2a6fc4"
 
 

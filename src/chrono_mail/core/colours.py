@@ -3,9 +3,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.2.475"
+__version__ = "colours.py 4.2.476"
 
 # --- Version history ----------------------------------------------------
+# v4.2.476: The message list and other lists #151c1c (dark theme, the owner; was #181e1f)
 # v4.2.475: The hover shade is 8 points of lightness from the accent (was 12; the owner)
 # v4.2.473: The owner's values: menus #272c30, the message list and other lists #181e1f (dark theme)
 # v4.2.472: The shades of the blue are worked out from it (D-164): the hover of the Menu and Send buttons, the links (readable on
@@ -153,7 +154,7 @@ DARK: Theme = _shaded(Theme(
     roles={
         "Window": ("#202326", "#202326", "#292c30"),
         "WindowText": ("#fcfcfc", "#fcfcfc", "#525860"),
-        "Base": ("#181e1f", "#181e1f", "#292c30"),  # the message list, the other lists, text fields
+        "Base": ("#151c1c", "#151c1c", "#292c30"),  # the message list, the other lists, text fields
         "AlternateBase": ("#1d1f22", "#1d1f22", "#1d1f22"),
         "Text": ("#fcfcfc", "#fcfcfc", "#525860"),
         "Button": ("#292c30", "#292c30", "#292c30"),

@@ -285,15 +285,9 @@ Treat length or tool-heaviness as a specific trigger to double-check, never as a
 
 ---
 
-## RULE 19: EVERY LIST HAS UNIQUE MARKERS
+## RULE 19: EVERY LIST ITEM HAS A UNIQUE MARKER
 
-Every list in a reply has uniquely identifiable markers: 1, 2, 3 or 3a, 3b, 3c. Markers that are not unique (hyphens, asterisks, dots, bullets, anything that repeats) are forbidden in every list. A bullet with a label in it ("- 3a. …") is still a bullet and is also forbidden. This applies to questions, changelists, findings, sources and file lists alike.
-
-The markers are unique within one reply: the next reply may start at 1 again. When one reply has several lists, each list has its own markers (1, 2, 3 and A, B, C, or 1a, 1b and 2a, 2b), so no marker appears twice in that reply. When a reply refers to an item of an earlier reply, it keeps the marker that item had there.
-
-The project's documents (STATUS.md, DEVLOG.md, DECISIONS.md and the others) are mainly for the agent and may keep their hyphen lists.
-
-Reason: without a unique marker the user cannot reply to a specific item.
+Every list item in your reply MUST start with a unique marker. The marker is 1. 2. 3., or A. B. C., or a combination such as 1.A or 2.F.3. It is the first thing on the line: NEVER a hyphen, asterisk or dot (-, *, •) in front of it or instead of it. No two list items in one reply may EVER have the same marker: a second list in the same reply continues the numbers or uses letters, and never starts at 1 again. This holds for every list, file lists and sub-items included. The user must be able to refer to a list item when replying, and cannot do that when two list items share a marker or an item has no marker.
 
 ---
 

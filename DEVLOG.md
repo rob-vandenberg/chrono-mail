@@ -3671,3 +3671,6 @@ test_dropdown_menus_have_the_colour_of_the_menu_bar_and_not_that_of_the_lists co
 
 ## 2026-11-02, 4.2.475: the hover shade 8 points from the accent (the owner)
 HOVER_LIGHTNESS_STEP 0.12 to 0.08 (HSL lightness); the owner's orange #c86400 gets #9e5000 (was #8b4500).
+
+## 2026-11-02, 4.2.476: the list colour #151c1c (the owner)
+Dark theme Base #181e1f to #151c1c; test_ui_appearance's measured dark colours follow (it still expected #141618 since 4.2.473).
