@@ -3705,3 +3705,6 @@ The fields' circles sit inside their outline (2 px border, 4 px inner space); th
 
 ## 2026-11-02, 4.2.486: a long sync conflict scrolls (the owner)
 The table of one conflict is in a scroll area (no frame, up and down only): as tall as it needs when there is room, at least the header and about three rows; the window opens no taller than the screen's free height. Retry sync and Keep here only share the bottom row with Apply and Cancel. No review round (the owner).
+
+## 2026-11-02, 4.2.487: a sync conflict opens showing 11 fields (the owner)
+The owner measured 780 px on his screen as right: 11 fields. Built as rows, so every screen and size slider shows 11: the table's size hint is at most the header and 11 rows; fewer fields, as tall as needed; never taller than the screen. No review round (the owner).

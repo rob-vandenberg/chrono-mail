@@ -1,6 +1,6 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel, QRadioButton, QScrollArea, QStyle, QStyleOptionButton, QWidget
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QGridLayout, QLabel, QRadioButton, QScrollArea, QStyle, QStyleOptionButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.486"
+__version__ = "test_ui_sync_conflicts.py 4.2.487"
 
 # --- Version history ----------------------------------------------------
+# v4.2.487: a long conflict opens showing 11 fields (the owner)
 # v4.2.486: a long conflict scrolls, never taller than the screen; one bottom row of buttons (the owner)
 # v4.2.485: the header's circles in line with those below (the owner)
 # v4.2.484: room below the table, and extra height goes there (the owner)
@@ -531,3 +532,16 @@ def test_a_conflict_taller_than_the_screen_opens_at_the_screen_s_height(qtbot: Q
     qtbot.waitExposed(dialog)
     free = dialog.screen().availableGeometry().height()
     assert dialog.sizeHint().height() > free and dialog.height() <= free  # (the owner)
+
+
+def test_a_long_conflict_opens_showing_eleven_fields(qtbot: QtBot) -> None:
+    dialog = ConflictDialog(long_conflict(12))
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    area = dialog.findChild(QScrollArea)
+    inner = area.widget() if area is not None else None
+    layout = inner.layout() if inner is not None else None
+    assert area is not None and isinstance(layout, QGridLayout) and layout.rowCount() > 13
+    shown = area.viewport().height()
+    assert layout.cellRect(11, 0).bottom() < shown < layout.cellRect(13, 0).bottom()  # the header and 11 fields (the owner)

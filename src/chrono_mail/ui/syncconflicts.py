@@ -47,9 +47,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.486"
+__version__ = "syncconflicts.py 4.2.487"
 
 # --- Version history ----------------------------------------------------
+# v4.2.487: the table of one conflict opens showing at most 11 fields (the owner)
 # v4.2.486: the table of one conflict scrolls when the window is small, never taller than the screen; Retry sync and Keep here only
 #           share the bottom row with Apply and Cancel (the owner)
 # v4.2.485: the header's circles in line with the fields' circles (the owner)
@@ -137,6 +138,9 @@ def _difference_look() -> str:
     )
 
 
+OPEN_ROWS: int = 11  # the table of one conflict opens showing at most this many fields (the owner: 780 pixels on his screen)
+
+
 class _FieldsArea(QScrollArea):
     """The table of one conflict: as tall as it needs when there is room, scrolling up and down when the window is smaller; at least about
     three rows in view."""
@@ -154,7 +158,10 @@ class _FieldsArea(QScrollArea):
         if inner is None:
             return super().sizeHint()
         hint = inner.sizeHint()
-        return QSize(hint.width() + self.verticalScrollBar().sizeHint().width(), hint.height())
+        layout = inner.layout()
+        rows = layout.rowCount() if isinstance(layout, QGridLayout) else 0
+        tallest = hint.height() // rows * (OPEN_ROWS + 1) if rows else hint.height()  # the header and at most 11 rows (the owner)
+        return QSize(hint.width() + self.verticalScrollBar().sizeHint().width(), min(hint.height(), tallest))
 
     @override
     def minimumSizeHint(self) -> QSize:
