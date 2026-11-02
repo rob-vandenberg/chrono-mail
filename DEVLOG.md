@@ -3699,3 +3699,6 @@ merge: a unit whose visible fields (as seen: reminders by when and how) differ f
 
 ## 2026-11-02, 4.2.484: room below the table of a sync conflict (the owner)
 The form had no stretch, so a window made taller put the room above the table. A spacer below the table (at least 14 px at the size slider, MinimumExpanding) takes it; both button rows stay at the bottom. No review round (the owner).
+
+## 2026-11-02, 4.2.485: the header's circles in line (the owner)
+The fields' circles sit inside their outline (2 px border, 4 px inner space); the header's Chrono Mail and Server had neither, so their circles were 6 px further left. They get margin-left 6 px in the same stylesheet, scaled alike. No review round (the owner).

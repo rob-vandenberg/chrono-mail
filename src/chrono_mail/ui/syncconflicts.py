@@ -45,9 +45,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.483"
+__version__ = "syncconflicts.py 4.2.485"
 
 # --- Version history ----------------------------------------------------
+# v4.2.485: the header's circles in line with the fields' circles (the owner)
 # v4.2.483: every field that differs is a choice, nothing chosen beforehand (the owner)
 # v4.2.481: the window of one conflict shows every field of the item in words, outlines what differs with its choices in the second accent,
 #           and the header's Chrono Mail and Server choose every field (replacing Use Chrono Mail and Use Server data, the owner, D-308)
@@ -125,6 +126,7 @@ def _difference_look() -> str:
         f'QRadioButton[accent="alternative"]::indicator {{ width: 10px; height: 10px; border: 2px solid {colour}; border-radius: 7px; }}'
         f'QRadioButton[accent="alternative"]::indicator:checked {{ background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5, fy: 0.5,'
         f' stop: 0 {colour}, stop: 0.55 {colour}, stop: 0.65 transparent, stop: 1 transparent); }}'
+        'QRadioButton[header="true"] { margin-left: 6px; }'  # the outline's border (2) and inner space (4) of the fields below
         'QRadioButton[accent="alternative"]::indicator:disabled { border-color: palette(mid); }'
         'QRadioButton[accent="alternative"]::indicator:checked:disabled { background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5,'
         ' fy: 0.5, stop: 0 palette(mid), stop: 0.55 palette(mid), stop: 0.65 transparent, stop: 1 transparent); }'
@@ -227,6 +229,7 @@ class ConflictDialog(QDialog):
         for column, header in ((1, self.all_local), (2, self.all_server)):
             header.setAutoExclusive(False)  # both are off for a mix: set by what the fields hold, never by each other
             header.setProperty("accent", "alternative")
+            header.setProperty("header", "true")  # its circle in line with the circles inside the outlines below it (the owner)
             header.setStyleSheet("font-weight: bold;")
             grid.addWidget(header, 0, column)
         per_field = not conflict.whole and bool(conflict.fields) and conflict.local_allowed and conflict.server_allowed  # else a whole side

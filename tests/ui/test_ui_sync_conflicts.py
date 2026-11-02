@@ -1,6 +1,6 @@
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel, QWidget
+from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QLabel, QRadioButton, QStyle, QStyleOptionButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
@@ -13,9 +13,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.484"
+__version__ = "test_ui_sync_conflicts.py 4.2.485"
 
 # --- Version history ----------------------------------------------------
+# v4.2.485: the header's circles in line with those below (the owner)
 # v4.2.484: room below the table, and extra height goes there (the owner)
 # v4.2.483: every difference is a choice, nothing chosen beforehand (the owner)
 # v4.2.481: the window of one conflict: every field in words, outlines, the header's choices, Apply before Cancel (the owner, D-308)
@@ -480,3 +481,21 @@ def test_room_below_the_table_and_extra_height_goes_there_with_the_buttons_at_th
     dialog.resize(dialog.width(), dialog.height() + 300)
     qtbot.waitUntil(lambda: dialog.keep.y() - (table.y() + table.height()) >= room + 300)
     assert table.y() == top  # the table stays under Found; the button rows stay at the bottom
+
+
+def test_the_header_circles_are_in_line_with_the_circles_below_them(qtbot: QtBot) -> None:
+    conflict = ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", "events", "clash", "Changed here and on the server", "Ours", "", False,
+                               True, 0.0, (ConflictField("SUMMARY", "Title", "Ours", "Theirs"),), base_text=calendar_text("SUMMARY:Meeting"),
+                               local_text=calendar_text("SUMMARY:Ours"), server_text=calendar_text("SUMMARY:Theirs"))
+    dialog = ConflictDialog(conflict)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+
+    def circle_x(choice: QRadioButton) -> int:
+        option = QStyleOptionButton()
+        choice.initStyleOption(option)
+        return choice.mapTo(dialog, choice.style().subElementRect(QStyle.SubElement.SE_RadioButtonIndicator, option, choice).topLeft()).x()
+
+    ours, theirs = dialog.groups["SUMMARY"]
+    assert (circle_x(dialog.all_local), circle_x(dialog.all_server)) == (circle_x(ours), circle_x(theirs))  # (the owner)
