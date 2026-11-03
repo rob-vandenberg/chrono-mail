@@ -269,7 +269,7 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 | 4.1 | `protocols.dav`: discovery, collections, items, sync tokens, writing, certificate pinning; fake server and live tests. | done (0.0.65) |
 | 4.2 | `sync`: state per account, pull and push, conflicts, commands (`dav.discover`, `account.set-dav`, `dav.sync`). | done (0.0.66) |
 | 4.3 | Account settings and interface: the tab "Calendars and contacts", sync on Refresh and on a timer. | done (0.0.66) |
-| 4.4 | Invitations and replies (iTIP); more live tests. | open |
+| 4.4 | Invitations and replies (iTIP), D-310: step 1, the card and the file names (D-311), done in 4.4.504; step 2 answering (C, D, the Kerio live tests), step 3 as organizer (E), step 4 tasks, free/busy and .ics files (F); more live tests. | in progress |
 | 4.5 | The server found by itself (the mail server and the address's domain, RFC 6764 well-known), the public folders, a tick per folder, the mail certificate accepted for it (D-180 to D-183). | done (1.1.210) |
 | 4.6 | "Add account" in the Calendar, Contacts and Tasks sections: a calendar server for a mail account, or an account of calendars, contacts and tasks only (D-185). | done (1.1.212) |
 | 4.7 | Contact groups (vCard 4 and Apple's form, Kerio checked live), kept in step like every card (R-39, D-227). | done (1.10.277) |

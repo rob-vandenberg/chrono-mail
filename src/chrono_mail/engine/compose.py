@@ -1,4 +1,3 @@
-import mimetypes
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,9 +8,11 @@ from chrono_mail.mime import Address, ParsedMessage
 from chrono_mail.core import written_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "compose.py 4.2.430"
+__version__ = "compose.py 4.4.504"
 
 # --- Version history ----------------------------------------------------
+# v4.4.504: a part without a name gets its extension only from Chrono Mail's own list of types it knows for certain, never from the
+#           computer's (text/calendar was .bin on a computer without one); an unknown type gets none (D-311)
 # v4.2.430: a reply's and a forward's addresses written so they can be read back (a name with a comma or an @ in quotes)
 # v3.4.344: a long name is cut before its extension and never ends in a space or a dot after the cut ("x.exe " opened x.exe on Windows
 #           without the question for programs, RV-110)
@@ -38,10 +39,27 @@ def suggest_filename(filename: str | None, content_type: str, position: int) -> 
         cleaned = f"_{cleaned}"
     if cleaned:
         return cleaned
-    extension = mimetypes.guess_extension(content_type) or ".bin"
-    return f"attachment-{position + 1}{extension}"
+    return f"attachment-{position + 1}{KNOWN_EXTENSIONS.get(content_type.split(';', 1)[0].strip().lower(), '')}"
 
 
+# The extension of a part that has no name of its own: only for a type whose extension its standard or registration names, the same on every
+# computer (D-311). Chrono Mail never makes one up: an unknown type gets none.
+KNOWN_EXTENSIONS: dict[str, str] = {
+    "text/plain": ".txt", "text/html": ".html", "text/csv": ".csv", "text/calendar": ".ics", "application/ics": ".ics", "text/vcard": ".vcf",
+    "text/x-vcard": ".vcf", "message/rfc822": ".eml", "message/global": ".u8msg", "application/pdf": ".pdf",
+    "application/zip": ".zip", "application/gzip": ".gz", "application/json": ".json", "application/xml": ".xml", "text/xml": ".xml",
+    "application/rtf": ".rtf", "text/rtf": ".rtf", "application/pgp-signature": ".asc", "application/pgp-keys": ".asc",
+    "application/pkcs7-signature": ".p7s", "application/pkcs7-mime": ".p7m",
+    "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif", "image/webp": ".webp", "image/bmp": ".bmp", "image/tiff": ".tif",
+    "image/svg+xml": ".svg", "image/heic": ".heic", "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/ogg": ".ogg", "video/mp4": ".mp4",
+    "video/mpeg": ".mpeg", "video/quicktime": ".mov",
+    "application/msword": ".doc", "application/vnd.ms-excel": ".xls", "application/vnd.ms-powerpoint": ".ppt",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+    "application/vnd.oasis.opendocument.text": ".odt", "application/vnd.oasis.opendocument.spreadsheet": ".ods",
+    "application/vnd.oasis.opendocument.presentation": ".odp",
+}
 MAXIMUM_NAME_CHARACTERS: int = 150
 
 

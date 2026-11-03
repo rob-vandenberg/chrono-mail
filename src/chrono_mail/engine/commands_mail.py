@@ -22,6 +22,7 @@ from chrono_mail.engine.recurring import Repeat, repeat_from_text, repeat_text
 from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER, SNOOZE_GROUPS, TOLERANCE_SECONDS, TIMED_FOLDERS, describe_when, parse_when, snooze_group
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.imap_online import waiting_marker
+from chrono_mail.engine.invitations import InvitationInfo, invitation_of, shows_text
 from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
 from chrono_mail.engine.mailbox import Mailbox, SentAlready, open_mailbox
 from chrono_mail.engine.receiving import own_place, receiving_account
@@ -36,9 +37,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.2.449"
+__version__ = "commands_mail.py 4.4.504"
 
 # --- Version history ----------------------------------------------------
+# v4.4.504: message.show carries the invitation card of a calendar message (invitation) and marks its part (card), D-310
 # v4.2.449: mail.first-fill, the first fill of a new account (D-300): only receives; POP3 deletes nothing on the server, IMAP sends
 #           nothing to it and runs no junk filter or rules there (they move mail on the server)
 # v4.2.441: mail.send names the outgoing server when its certificate could not be verified (certificate), so the window asks (D-299)
@@ -835,6 +837,7 @@ class AttachmentInfo:
     size: int
     inline: bool
     suggested_name: str
+    card: bool = False  # the calendar message shown as the card above the text: not offered as a file (D-310)
 
 
 @dataclass(frozen=True, slots=True)
@@ -863,6 +866,7 @@ class ShowResult:
     inline_images: tuple[InlineImage, ...]
     reply_to: tuple[str, ...]
     pictures: tuple[InlineImage, ...] = ()  # attached pictures the text does not show, in the message's order: shown below it (B-11)
+    invitation: InvitationInfo | None = None  # the card of a calendar message (an invitation, an answer, a cancellation…), D-310
 
 
 def _check_id(message_id: str) -> str:
@@ -903,6 +907,16 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
         raw = mailbox.store.read(reference, hint=mailbox.hint(reference.store_id))
         parsed = parse_message(raw)
         referenced, below = _inline_images(parsed)
+        invitation = invitation_of(engine, parsed.attachments)
+        html_body = parsed.html_body
+        if invitation is not None:
+            html_shows, plain_shows = shows_text(parsed.html_body, parsed.text_body)
+            html_shows = html_shows or any(part.inline for part in parsed.attachments)  # a part the HTML shows by cid:, also as a background
+            if not html_shows and not plain_shows and not below:  # a picture the HTML shows counts in html_shows
+                invitation = replace(invitation, text_shows_nothing=True)  # the white page of an empty HTML text gives way to the card
+            elif not html_shows and plain_shows:
+                html_body = None  # the HTML text shows nothing but the plain text does: the plain text below the card, no empty page
+        card = invitation.position if invitation is not None else -1
         return ShowResult(
             reference.store_id,
             "/".join(folder),
@@ -914,12 +928,14 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
             parsed.date,
             parsed.message_id,
             parsed.text_body,
-            parsed.html_body,
-            tuple(AttachmentInfo(a.filename, a.content_type, len(a.data), a.inline, suggest_filename(a.filename, a.content_type, position)) for position, a in enumerate(parsed.attachments)),
+            html_body,
+            tuple(AttachmentInfo(a.filename, a.content_type, len(a.data), a.inline, suggest_filename(a.filename, a.content_type, position), position == card)
+                  for position, a in enumerate(parsed.attachments)),
             parsed.defects,
             referenced,
             _shown(parsed.reply_to_addresses),
             below,
+            invitation,
         )
 
 

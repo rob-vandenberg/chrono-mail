@@ -42,15 +42,18 @@ from chrono_mail.engine.commands_mail import AttachmentInfo, InlineImage, ShowRe
 from chrono_mail.core.colours import MAIL_PAGE
 from chrono_mail.mime.linkdomain import leads_elsewhere
 from chrono_mail.ui.flowlayout import FlowRow
+from chrono_mail.ui.invitationcard import InvitationCard
 from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
 from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.3.503"
+__version__ = "reader.py 4.4.504"
 
 # --- Version history ----------------------------------------------------
+# v4.4.504: a mail that holds a calendar message shows its card above the text, and the card alone when the text shows nothing (no
+#           white page); the card's part is not offered as a file (D-310)
 # v4.3.503: a mailto link to the address of one of the person's accounts has no warning (D-215)
 # v4.3.501: Only the web view and the remote content bar have a window of their own, never the parts they sit in (on Windows those stayed black
 #            after a restore); the view's window is made at once, before any page loads (a message shown before its window was on screen stayed blank)
@@ -986,6 +989,46 @@ class OverlayBanner(QFrame):
         self._follow_width()
 
 
+class CardArea(QScrollArea):
+    """The invitation card's scroll area: it asks for the card's whole height (a scroll area otherwise asks for a few lines), and has no
+    smallest height of its own, so a low reader gives it less and the card scrolls; it never makes the reader higher."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.wanted_height: int = 0  # 0: no wish (the card alone takes the room the layout gives)
+
+    @override
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        hint = super().sizeHint()
+        return QSize(hint.width(), self.wanted_height) if self.wanted_height > 0 else hint
+
+    @override
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        return QSize(super().minimumSizeHint().width(), 0)
+
+
+class CardHolder(QWidget):
+    """What the card's scroll area holds: as high as the card needs at the width it is given, never the height every line would need wrapped at
+    its narrowest (which a scroll area takes from its widget, so the card scrolled while there was room)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.fitted_height: int = 0
+
+    def fit(self, width: int) -> None:
+        layout = self.layout()
+        smallest = super().minimumSizeHint().width()
+        height = layout.totalHeightForWidth(max(width, smallest)) if layout is not None and layout.hasHeightForWidth() else -1
+        fitted = height if height >= 0 else self.sizeHint().height()
+        if fitted != self.fitted_height:
+            self.fitted_height = fitted
+            self.updateGeometry()
+
+    @override
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt's name
+        return QSize(super().minimumSizeHint().width(), self.fitted_height)
+
+
 class ReaderWidget(QWidget):
     """Shows one message: the header, its attachments, and the text or HTML."""
 
@@ -1049,6 +1092,30 @@ class ReaderWidget(QWidget):
         self._chip_probe = AttachmentChip("x", "1 B", self._attachment_line)  # never shown: the height of a file's button
         self._chip_probe.hide()
         layout.addWidget(self._attachment_line)
+
+        self._card_area = CardArea(self)  # the invitation card (D-310): above the text, scrolled on its own when the reader is low
+        self._card_area.setFrameShape(QFrame.Shape.NoFrame)
+        self._card_area.setWidgetResizable(True)
+        # its lines wrap; a word longer than the card is wide (a meeting's link as its place) scrolls sideways, never cut off
+        self._card_area.viewport().setBackgroundRole(QPalette.ColorRole.Base)
+        card_holder = CardHolder(self._card_area)
+        card_holder.setBackgroundRole(QPalette.ColorRole.Base)
+        card_rows = QVBoxLayout(card_holder)
+        card_row = QHBoxLayout()
+        self._card = InvitationCard(card_holder)
+        self._card.link_activated.connect(self.link_activated)
+        self._card.link_hovered.connect(self._hover)  # the status line and the warning of D-215, as every link
+        self._card_area.viewport().installEventFilter(self)  # its height follows its width (_fit_card)
+        card_row.addWidget(self._card, 1)
+        card_row.addStretch(0)
+        card_rows.addLayout(card_row)
+        card_rows.addStretch(1)
+        self._card_holder = card_holder
+        self._card_rows = card_rows
+        self._card_sizes()
+        self._card_area.setWidget(card_holder)
+        self._card_area.hide()
+        layout.addWidget(self._card_area)
         self._people_shown: tuple[str, tuple[str, ...], tuple[str, ...]] = ("", (), ())  # the sender, to, cc
         self._people_hidden: int = 0  # the names behind "+N more" in the folded header
 
@@ -1127,14 +1194,27 @@ class ReaderWidget(QWidget):
         self.setMinimumWidth(0)  # nothing shown: no width of its own
         self._attachments.hide()
         self._attachment_line.hide()
+        self._stack.show()  # first: the keyboard focus can go back to it before the card area goes (OR-16)
+        self._card_area.hide()
+        self._card.clear()  # nothing of the message before stays
         self._banner.hide()
         self._blocker.blocked = 0  # the blocked pictures belonged to the message that goes
         self._stack.setCurrentWidget(self._placeholder)
         self._content.clear()
         self._page.setHtml("")
 
+    @override
+    def eventFilter(self, watched: QObject, event: QEvent, /) -> bool:  # noqa: N802 - Qt's name
+        if watched is self._card_area.viewport() and event.type() == QEvent.Type.Resize:
+            self._fit_card()  # another width: the card's lines wrap anew
+        return super().eventFilter(watched, event)
+
     def apply_scale(self) -> None:
         """The sender's circle at the size factor of the window the reader is in (the subject and the lines follow the text)."""
+        self._card_sizes()
+        if self._card.info is not None:
+            self._card.show_invitation(self._card.info)  # the card's sizes follow the size factor too
+            self._fit_card()
         self._avatar.setFixedSize(px_for(self, 40), px_for(self, 40))
         sheet = self._avatar.styleSheet()
         if "border-radius" in sheet:  # a circle: half its size
@@ -1167,6 +1247,7 @@ class ReaderWidget(QWidget):
         self._avatar.setStyleSheet(f"background-color: {avatar_colour(who).name()}; border-radius: {px_for(self, 40) // 2}px;")
         self._fill_attachments(shown.attachments)
         self._attachment_line.show()
+        self._show_card(shown)
         self._lay_out_header()
         html_body = shown.html_body
         text_body = shown.text_body
@@ -1195,6 +1276,51 @@ class ReaderWidget(QWidget):
             self._content.clear()
             self._stack.setCurrentWidget(self._text)
             self._text.show_text(text_body or "", pictures)
+
+    def _show_card(self, shown: ShowResult) -> None:
+        """The invitation card above the text; alone, taking the reader's room, when the mail's own text shows nothing (D-310)."""
+        invitation = shown.invitation
+        layout = self.layout()
+        if invitation is None:
+            self._stack.show()  # first: the keyboard focus can go back to it before the card area goes (OR-16)
+            self._card_area.hide()
+            self._card.clear()
+            return
+        self._card.show_invitation(invitation)
+        self._card_area.verticalScrollBar().setValue(0)
+        self._card_area.horizontalScrollBar().setValue(0)  # every card opens at its top left
+        alone = invitation.text_shows_nothing
+        self._card_area.show()  # first: a hidden part cannot take the keyboard focus
+        focus = QApplication.focusWidget()
+        if alone and focus is not None and self._stack.isAncestorOf(focus):
+            self._card_area.setFocus()  # the text area goes: the keyboard focus stays in the reader (OR-16)
+        self._stack.setVisible(not alone)
+        if isinstance(layout, QVBoxLayout):
+            layout.setStretchFactor(self._card_area, 1 if alone else 0)
+        self._fit_card()
+
+    def _card_sizes(self) -> None:
+        """The room around the card and its widest, at the size factor of now."""
+        self._card_rows.setContentsMargins(px_for(self, 16), px_for(self, 12), px_for(self, 16), px_for(self, 12))
+        self._card.setMaximumWidth(px_for(self, 760))
+
+    def _fit_card(self) -> None:
+        """With text below, the card area is as high as the card at the width it has now (its lines wrap), never higher; alone it takes the
+        reader's room. Worked out again whenever its width changes."""
+        info = self._card.info
+        if not self._card_area.isVisible() or info is None or info.text_shows_nothing:
+            self._card_area.setMaximumHeight(16777215)
+            self._card_area.wanted_height = 0
+            self._card_holder.fit(self._card_area.viewport().width())
+            return
+        holder = self._card_holder
+        holder.fit(self._card_area.viewport().width())
+        sideways = self._card_area.horizontalScrollBar()
+        extra = sideways.sizeHint().height() if holder.minimumSizeHint().width() > self._card_area.viewport().width() else 0
+        needed = holder.fitted_height + extra + 2 * self._card_area.frameWidth()
+        self._card_area.wanted_height = needed  # what it asks for; a low reader gives it less, and the card scrolls
+        self._card_area.setMaximumHeight(needed)
+        self._card_area.updateGeometry()
 
     def set_width_rule(self, smallest: int) -> None:
         """0: what the message needs sets the reader's smallest width (a message window, or the reading pane when it may widen to fit the
@@ -1298,7 +1424,7 @@ class ReaderWidget(QWidget):
         self._names = {position: attachment.suggested_name for position, attachment in enumerate(attachments)}
         shown = 0
         for position, attachment in enumerate(attachments):
-            if attachment.inline:
+            if attachment.inline or attachment.card:  # shown in the text, or as the invitation card
                 continue
             chip = AttachmentChip(attachment.suggested_name, file_size(attachment.size), self._attachments)
             self._chips.addButton(chip, position)

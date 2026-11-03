@@ -107,3 +107,5 @@ See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
 - [[D-105]] Way of writing drop-down
 - [[D-303]] One action per message
 - [[D-104]] Sizes and list choices shown live
+- [[D-310]] Calendar messages in mail (iTIP)
+- [[D-311]] A file's extension is never made up

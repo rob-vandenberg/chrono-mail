@@ -24,9 +24,10 @@ from tests.fakesmtp import FakeSmtpServer
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_commands.py 2.0.281"
+__version__ = "test_engine_commands.py 4.4.504"
 
 # --- Version history ----------------------------------------------------
+# v4.4.504: a part without a name of an unknown type gets no extension, never .bin (D-311)
 # v2.0.281: the index is opened inside its gate (a rebuild replaces it only when no command has it open, D-229)
 # v1.1.243: account.check of an account that exists uses its stored passwords for the ones not typed (R-05)
 # v1.1.213: the outgoing login follows the incoming one while outgoing_same_login is on
@@ -579,7 +580,7 @@ def test_show_gives_inline_images_and_safe_names(rich: Setup) -> None:
     assert getattr(shown, "reply_to") == ()
 
 
-@pytest.mark.parametrize(("name", "content_type", "expected"), [("", "application/pdf", "attachment-3.pdf"), (None, "image/png", "attachment-3.png"), ("a/b\\c.txt", "text/plain", "c.txt"), ("..", "x/y", "attachment-3.bin"), ("x" * 400, "text/plain", "x" * 150), ("CON:.txt\x00", "text/plain", "CON_.txt_"), ("  .hidden", "text/plain", "hidden")])
+@pytest.mark.parametrize(("name", "content_type", "expected"), [("", "application/pdf", "attachment-3.pdf"), (None, "image/png", "attachment-3.png"), ("a/b\\c.txt", "text/plain", "c.txt"), ("..", "x/y", "attachment-3"), ("x" * 400, "text/plain", "x" * 150), ("CON:.txt\x00", "text/plain", "CON_.txt_"), ("  .hidden", "text/plain", "hidden")])
 def test_suggested_file_names(name: str | None, content_type: str, expected: str) -> None:
     from chrono_mail.engine.compose import suggest_filename
 

@@ -5,13 +5,14 @@ from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QBrush, QColor, QGuiApplication, QIcon, QIconEngine, QPainter, QPalette, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import QBrush, QColor, QGuiApplication, QIcon, QIconEngine, QPainter, QPainterPath, QPalette, QPen, QPixmap, QPolygonF
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 4.3.498"
+__version__ = "icons.py 4.4.504"
 
 # --- Version history ----------------------------------------------------
+# v4.4.504: place_icon: a pin, the place of a meeting on the invitation card (D-310), drawn in the colour of text
 # v4.3.498: split_icon: the owner's split of a row (an arrow, and a dotted line from under it to a second arrow), drawn in the colour of text;
 #           keep_both_icon: the owner's one square above two (Keep both of a sync conflict, B-30, B-31), drawn the same way
 # v4.2.424: accent_icon: an icon always in the accent colour (the (i) after a greyed option, D-294)
@@ -171,6 +172,29 @@ class KeepBothEngine(DrawnEngine):
     @override
     def clone(self) -> "KeepBothEngine":
         return KeepBothEngine()
+
+
+class PlaceEngine(DrawnEngine):
+    """A pin: the place of a meeting (the invitation card, D-310). A drop-shaped outline, its point down, with a hole in the middle."""
+
+    @override
+    def draw(self, painter: QPainter, at: Callable[[float, float], QPointF], size: float) -> None:
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        outline = QPainterPath(at(0.5, 0.9))
+        outline.cubicTo(at(0.38, 0.72), at(0.23, 0.52), at(0.23, 0.36))
+        outline.arcTo(QRectF(at(0.23, 0.09), at(0.77, 0.63)), 180, -180)
+        outline.cubicTo(at(0.77, 0.52), at(0.62, 0.72), at(0.5, 0.9))
+        painter.drawPath(outline)
+        painter.drawEllipse(QRectF(at(0.41, 0.27), at(0.59, 0.45)))
+
+    @override
+    def clone(self) -> "PlaceEngine":
+        return PlaceEngine()
+
+
+def place_icon() -> QIcon:
+    """The place of a meeting: a pin."""
+    return QIcon(PlaceEngine())
 
 
 def split_icon() -> QIcon:

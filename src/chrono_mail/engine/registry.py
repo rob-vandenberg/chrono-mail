@@ -3,7 +3,7 @@ import types
 import typing
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -15,9 +15,10 @@ if TYPE_CHECKING:
     from chrono_mail.engine.session import Engine
 
 # --- Version ------------------------------------------------------------
-__version__ = "registry.py 4.2.429"
+__version__ = "registry.py 4.4.504"
 
 # --- Version history ----------------------------------------------------
+# v4.4.504: to_data writes a date (a whole day: an all-day invitation, D-310) as YYYY-MM-DD; it stopped the JSON output
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v4.2.429: behind: a command that runs behind the person's work (filling in an index, waiting for new mail) never counts as it; every
 #           other command does while it runs (Engine.person_work), so work behind can step aside
@@ -242,7 +243,7 @@ def to_data(value: object) -> JsonValue:
         return value
     if isinstance(value, Enum):
         return str(value.value)
-    if isinstance(value, datetime):
+    if isinstance(value, (datetime, date)):  # a datetime is a date too: either is written in ISO form
         return value.isoformat()
     if isinstance(value, Path):
         return str(value)

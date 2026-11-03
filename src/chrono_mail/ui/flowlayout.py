@@ -5,9 +5,10 @@ from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 # --- Version ------------------------------------------------------------
-__version__ = "flowlayout.py 4.2.467"
+__version__ = "flowlayout.py 4.4.504"
 
 # --- Version history ----------------------------------------------------
+# v4.4.504: set_spacing: the gap between the parts follows the size factor (the invitation card's attendees, D-310)
 # v4.2.467: Initial: parts side by side that go on in a next row when the width runs out, as words in a text (D-304); a part wider than
 #           the row gets the row's width; wraps=False: one row, as wide as its parts, as a row of buttons always was
 
@@ -37,6 +38,11 @@ class FlowRow(QWidget):
 
     def set_wraps(self, wraps: bool) -> None:
         self.wraps = wraps
+        self._place()
+        self.updateGeometry()
+
+    def set_spacing(self, spacing: int) -> None:
+        self._spacing = spacing
         self._place()
         self.updateGeometry()
 
