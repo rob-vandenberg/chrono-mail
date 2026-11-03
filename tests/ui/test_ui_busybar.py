@@ -12,9 +12,11 @@ from chrono_mail.ui.reader import make_safe_view
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_busybar.py 4.2.466"
+__version__ = "test_ui_busybar.py 4.3.501"
 
 # --- Version history ----------------------------------------------------
+# v4.3.501: only the mail display and its remote content bar have a window of their own, never the parts they sit in; the display has it
+#           before its window is on screen
 # v4.2.466: a moving bar is Qt's framed bar with stripes sliding through it: each step a new picture, a whole round the first again
 # v4.2.465: a window's moving progress bar steps at most 20 times a second, only while on screen; Import, Backup, Restore and the update
 #           download use it (D-266)
@@ -135,6 +137,23 @@ def test_only_the_mail_display_and_the_parts_it_sits_in_have_a_window_of_their_o
             part = part.parentWidget()
     natives = [type(part).__name__ for part in window.findChildren(QWidget) if part.internalWinId() and not part.isWindow() and id(part) not in allowed]
     assert natives == []  # their neighbours are never made windows of their own: splitters, toolbars and the status bar stay as they were
+
+
+def test_only_the_mail_display_and_its_remote_content_bar_have_a_window_of_their_own_never_the_parts_they_sit_in(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.show()
+    qtbot.waitExposed(window)
+    natives = {type(part).__name__ for part in window.findChildren(QWidget) if part.internalWinId() and not part.isWindow()}
+    assert "QWebEngineView" in natives
+    assert natives <= {"QWebEngineView", "OverlayBanner"}  # on Windows the parts they sat in stayed black after a restore (4.3.501)
+
+
+def test_the_mail_display_has_its_window_before_its_window_is_on_screen(qtbot: QtBot) -> None:
+    holder = QWidget()
+    qtbot.addWidget(holder)
+    view = make_safe_view(holder)[0]
+    assert not holder.isVisible()
+    assert view.internalWinId()  # made at once: a page loaded before the window was on screen was drawn for no window and stayed blank (4.3.501)
 
 
 def test_a_windows_moving_progress_bar_steps_at_most_20_times_a_second_and_only_while_it_moves_on_screen(qtbot: QtBot) -> None:

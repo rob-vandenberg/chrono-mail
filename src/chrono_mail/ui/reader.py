@@ -48,9 +48,11 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.2.479"
+__version__ = "reader.py 4.3.501"
 
 # --- Version history ----------------------------------------------------
+# v4.3.501: Only the web view and the remote content bar have a window of their own, never the parts they sit in (on Windows those stayed black
+#            after a restore); the view's window is made at once, before any page loads (a message shown before its window was on screen stayed blank)
 # v4.2.479: Every message opens with a folded header of one height: the sender and the people it went to on one line each, "+N more"
 #            for the names that do not fit, the subject on one line, one row of files with "+N more"; "+N more" unfolds it all, "less"
 #            folds it again; the remote content line lies over the top of the message: a new message never moves the text below; the
@@ -248,10 +250,12 @@ def make_safe_view(parent: QWidget | None = None) -> tuple[QWebEngineView, SafeP
         settings.setAttribute(attribute, value)
     page.setBackgroundColor(QColor(MAIL_PAGE))  # mail is written for a white page, whatever the theme
     view = QWebEngineView(parent)
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)  # only the view and the parts it sits in get a window
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontCreateNativeWidgetSiblings)  # only the view gets a window, never its neighbours
+    view.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors)  # nor the parts it sits in: on Windows those stayed black after a restore (4.3.501)
     view.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)  # its own window: a change elsewhere never makes Qt put the whole window together again (4.2.464)
     view.setPage(page)
     view.setContextMenuPolicy(view.contextMenuPolicy().NoContextMenu)
+    view.winId()  # the window made now, before any page loads: a page loaded before the window is on screen was drawn for no window and stayed blank (4.3.501)
     return view, page, blocker, content
 
 
@@ -932,6 +936,7 @@ class OverlayBanner(QFrame):
         super().__init__(area)
         self.sets_width: bool = True
         self.setAutoFillBackground(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DontCreateNativeAncestors)  # never the parts it sits in (4.3.501)
         self.setAttribute(Qt.WidgetAttribute.WA_NativeWindow)  # the HTML message's view has a window of its own (4.2.464): only one of its own lies above it
         area.installEventFilter(self)
 
