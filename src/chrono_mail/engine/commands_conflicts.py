@@ -59,9 +59,10 @@ from chrono_mail.sync.mailconflicts import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_conflicts.py 4.2.481"
+__version__ = "commands_conflicts.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: a choice is read as conflict, field key, side: a key that holds a tab works
 # v4.2.481: A conflict about an item carries both versions, the agreed one and its calendar's colour names, for the window of one conflict;
 #           conflict.recheck at start settles here a conflict without a difference a person sees (D-308)
 # v4.2.453: Use Server data for a folder deleted on the server switches off the rules that move mail to it (D-302)
@@ -306,8 +307,10 @@ def conflict_settle(engine: Engine, parameters: SettleParameters) -> SettleResul
     written here. A conflict whose item the server changed again is weighed again and stays open."""
     wanted: dict[str, dict[str, str]] = {conflict: {} for conflict in parameters.conflicts}
     for text in parameters.choices:
-        parts = text.split("\t")
-        if len(parts) != 3 or parts[2] not in (LOCAL, SERVER):
+        conflict, _, rest = text.partition("\t")
+        key, _, side = rest.rpartition("\t")  # the conflict has no tab and the side none: the key between them may (a list entry's value)
+        parts = [conflict, key, side]
+        if not conflict or not key or side not in (LOCAL, SERVER):
             raise UsageError("A choice is conflict<TAB>field key<TAB>local or server")
         wanted.setdefault(parts[0], {})[parts[1]] = parts[2]
     if not wanted:

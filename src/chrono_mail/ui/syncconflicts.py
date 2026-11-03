@@ -48,9 +48,10 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.494"
+__version__ = "syncconflicts.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: a difference that is no choice (a jar's entry, a field of an occurrence on one side only) is shown without circles
 # v4.2.494: the side is what the circles show: every field chosen by hand for one side is that side, and Apply works then (the owner)
 # v4.2.493: the table has the gap between its columns on its left and right, so the outlines never touch the scrollbar (the owner)
 # v4.2.492: a pair of list entries is one row with one choice; Apply gives that side to both entries (the owner, D-308)
@@ -225,7 +226,7 @@ def _when(moment: date | datetime) -> str:
     return day
 
 
-def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tuple[str, ...]]]:
+def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tuple[str, ...]]]:  # differs: the person chooses it
     """The item's fields in words (key, label, Chrono Mail's, the server's, differs, the entries its choice settles); none for a conflict without both
     versions (mail, a whole collection, an item deleted on a side)."""
     if not conflict.local_text or not conflict.server_text:
@@ -237,7 +238,7 @@ def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tup
         return names.get(colour_id, own if not colour_id else "A colour no longer in this calendar")
 
     found = rows(conflict.base_text or None, conflict.local_text, conflict.server_text, Words(_when, colour))
-    return [(row.key, row.label, row.local, row.server, row.differs, row.keys) for row in found]
+    return [(row.key, row.label, row.local, row.server, row.choice, row.keys) for row in found]
 
 
 def _plain(text: str, parent: QWidget) -> QLabel:
@@ -313,7 +314,7 @@ class ConflictDialog(QDialog):
         row = 0
         for row, (key, label, ours_text, theirs_text, differs, keys) in enumerate(shown, start=1):
             grid.addWidget(_plain(label, choices), row, 0)
-            if not differs:  # the same on both sides: its text in line with the text beside the circles (the owner)
+            if not differs:  # the same on both sides, or taken by itself: its text in line with the text beside the circles (the owner)
                 grid.addWidget(_aligned(ours_text, choices), row, 1)
                 grid.addWidget(_aligned(theirs_text, choices), row, 2)
                 continue

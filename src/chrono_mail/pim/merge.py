@@ -8,12 +8,15 @@ stamps a program sets itself are not compared. Works on the text lines themselve
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from chrono_mail.core.words import digits as plain_digits
 from chrono_mail.pim.vcard import fold, unfold
 
 # --- Version ------------------------------------------------------------
-__version__ = "merge.py 4.2.490"
+__version__ = "merge.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: group members and tags are a jar: what each side put in or took out stays, never a conflict (the owner); a strange digit in a
+#           changed occurrence's date never raises (core.words.digits)
 # v4.2.490: fields are compared as they read: the format's backslashes (\\,) taken out first (the owner)
 # v4.2.481: Only what a person enters or sees can clash (D-308): any other field, and reminders that differ only in what is not shown, take
 #           the server's version; changed on both sides, every visible difference is a choice; a changed occurrence's fields are chosen apart from the main event's; the occurrence in a label in words
@@ -28,6 +31,7 @@ LISTS: frozenset[str] = frozenset({
     "ATTENDEE", "TEL", "EMAIL", "ADR", "URL", "IMPP", "RELATED", "MEMBER", "X-ADDRESSBOOKSERVER-MEMBER", "ATTACH", "COMMENT", "CONTACT", "NICKNAME",
 })  # several lines of one name, merged line by line (an entry is known by its value)
 UNITS: frozenset[str] = frozenset({"VEVENT", "VTODO", "VJOURNAL", "VCARD"})
+JARS: frozenset[str] = frozenset({"MEMBER", "X-ADDRESSBOOKSERVER-MEMBER", "CATEGORIES"})  # a group's members, tags: each entry by itself (the owner)
 ALARMS: str = "VALARM"
 SEPARATOR: str = "\x1f"
 LABELS: dict[str, str] = {
@@ -178,10 +182,10 @@ def _fields(unit: _Component) -> dict[str, str]:
 def occurrence_words(value: str) -> str:
     """The original start of a changed occurrence as a person reads it ("12 August 2026", "12 August 2026, 09:00"); as written when unreadable."""
     digits = value.strip()
-    if len(digits) < 8 or not digits[:8].isdigit() or not 1 <= int(digits[4:6]) <= 12:
+    if len(digits) < 8 or not plain_digits(digits[:8]) or not 1 <= int(digits[4:6]) <= 12:  # only 0 to 9: "²" is no digit here (OR-3)
         return value
     words = f"{int(digits[6:8])} {MONTHS[int(digits[4:6]) - 1]} {digits[:4]}"
-    if len(digits) >= 13 and digits[8] == "T" and digits[9:13].isdigit():
+    if len(digits) >= 13 and digits[8] == "T" and plain_digits(digits[9:13]):
         words += f", {digits[9:11]}:{digits[11:13]}"
     return words
 
@@ -253,9 +257,26 @@ def _unseen(unit_name: str, key: str, local: str | None, server: str | None) -> 
     return key == ALARMS and reminders_seen(local) == reminders_seen(server)
 
 
+def jar(key: str) -> bool:
+    """Whether a field is an entry of a jar (a group's member, a tag): put in or taken out by itself, never compared with the others (the owner)."""
+    return key.split(SEPARATOR, 1)[0] in JARS
+
+
 def _seen(unit_name: str, fields: Mapping[str, str]) -> dict[str, object]:
-    """A unit's fields as a person sees them: only those Chrono Mail's windows show, the reminders by when and how."""
-    return {key: (reminders_seen(value) if key == ALARMS else _said(value)) for key, value in fields.items() if visible(unit_name, key)}
+    """A unit's fields as a person sees them: only those Chrono Mail's windows show, the reminders by when and how; the entries of a jar left out
+    (what each side put in or took out is no change that clashes)."""
+    return {key: (reminders_seen(value) if key == ALARMS else _said(value)) for key, value in fields.items() if visible(unit_name, key) and not jar(key)}
+
+
+def _jarred(before: str | None, local: str | None, server: str | None, known: bool) -> str | None:
+    """An entry of a jar: what the side that changed it did; not known since when, it stays where either side has it (nothing is lost)."""
+    if _same(local, server):
+        return local
+    if not known:
+        return local if local is not None else server
+    if _same(local, before):
+        return server
+    return local
 
 
 def _quietly(before: str | None, local: str | None, server: str | None, known: bool) -> str | None:
@@ -353,6 +374,9 @@ def _merge_unit(unit_key: str, base: _Component | None, local: _Component | None
         if not _same(local_fields.get(key), server_fields.get(key)) and _unseen(local.name, key, local_fields.get(key), server_fields.get(key)):
             merged[key] = _quietly(before, local_fields.get(key), server_fields.get(key), base_fields is not None)
             continue
+        if jar(key):  # put in or taken out on one side: so it is (the owner)
+            merged[key] = _jarred(before, local_fields.get(key), server_fields.get(key), base_fields is not None)
+            continue
         named = choice_key(key, unit_key)
         if (base_fields is None or both) and not _same(local_fields.get(key), server_fields.get(key)):  # every difference is the person's choice
             choice = choices.get(named)
@@ -393,7 +417,9 @@ def merge(base: str | None, local: str, server: str, choices: Mapping[str, str] 
     clashes: list[Clash] = []
     local_root, server_root = _parse(local), _parse(server)
     base_root = _parse(base) if base is not None else None
-    if local_root is None or server_root is None or (base is not None and base_root is None):  # not readable: the whole item is one field
+    if base is not None and base_root is None and local_root is not None and server_root is not None:
+        base = None  # an agreed version that cannot be read, of two that can: none, every difference the person's choice
+    if local_root is None or server_root is None:  # not readable: the whole item is one field
         if local == server:
             return Merged(local)
         chosen = _choose("item", base, local, server, wanted, clashes, LABELS["item"])

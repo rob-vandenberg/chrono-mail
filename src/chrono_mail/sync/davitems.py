@@ -13,6 +13,7 @@ from chrono_mail.pimstore.extract import extract
 from chrono_mail.protocols.dav import DavClient, DavConflict, RemoteCollection, canonical_href, passing_failure
 from chrono_mail.sync.davconflicts import (
     CHANGED_ON_SERVER,
+    CLASH,
     DELETED_ON_SERVER,
     REFUSED,
     SyncConflict,
@@ -27,9 +28,11 @@ from chrono_mail.sync.davconflicts import (
 from chrono_mail.sync.davsync import CollectionState, DavState, ItemLink, address_for, digest_of, title_of, weigh
 
 # --- Version ------------------------------------------------------------
-__version__ = "davitems.py 1.10.278"
+__version__ = "davitems.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: Use Chrono Mail on a conflict changed on both sides settles every difference field by field: what is not shown keeps the
+#           server's changes (D-308), never a whole side's text sent over them
 # v1.10.278: The server's item is read with DavClient.read (the multiget first): Kerio answers a GET of an existing contact with 404, which made a
 #            contact changed on both sides a false "deleted on the server" conflict
 # v1.1.225: Initial: save, delete and move an item on the server first; the server's change meanwhile merged or a conflict; conflicts settled (D-194)
@@ -232,6 +235,13 @@ class ItemGateway:
         item = conflict.item
         ours = self.store.get(info.collection_id, item) if item else None
         collection_state = self.state.get(info.collection_id)
+        if side == LOCAL and conflict.reason == CLASH and ours is not None and conflict.server_text:  # changed on both sides: Chrono Mail's every
+            # difference, field by field, so what is not shown keeps the server's changes (D-308); Use Server data stays the server's whole version,
+            # the way out that always works (no network, a server that refuses); a refusal or a delete stays one side's whole version
+            open_clashes = merge(base_of(self.store, info.collection_id, item), ours, conflict.server_text).clashes
+            merged = merge(base_of(self.store, info.collection_id, item), ours, conflict.server_text, {clash.key: LOCAL for clash in open_clashes})
+            if merged.text is not None:
+                side, choices, ours = "", None, merged.text  # sent as merged
         if side == SERVER:
             if conflict.server_text:
                 item = self.store.put(info.collection_id, conflict.server_text, item or None)

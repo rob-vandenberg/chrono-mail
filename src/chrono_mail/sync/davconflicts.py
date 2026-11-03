@@ -13,9 +13,11 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davconflicts.py 3.6.350"
+__version__ = "davconflicts.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: a damaged agreed version is no agreed version (every difference the person's choice), never an error that stops the sync or the
+#           Sync conflicts list
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
 # v2.0.286: The name or colour of a collection changed here and on the server, or a name the server refused for good (D-192, the Windows
 #           computer's F3)
@@ -77,7 +79,14 @@ def keep_base(store: PimStore, collection: str, item: str, agreed: str) -> None:
 
 
 def base_of(store: PimStore, collection: str, item: str) -> str | None:
-    return store.read_private(base_name(collection, item)) if item else None
+    """The version both sides last agreed on; None when there is none, or when its file is damaged: then nothing is known since when, so every
+    difference is the person's choice (it is never taken for empty)."""
+    if not item:
+        return None
+    try:
+        return store.read_private(base_name(collection, item))
+    except StorageError:
+        return None
 
 
 def drop_base(store: PimStore, collection: str, item: str) -> None:

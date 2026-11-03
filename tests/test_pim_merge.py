@@ -1,9 +1,11 @@
 from chrono_mail.pim.merge import LOCAL, SERVER, merge
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_merge.py 4.2.490"
+__version__ = "test_pim_merge.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: tags are a jar: put in or taken out on one side stays so, never a choice; a strange digit never raises; a damaged agreed
+#           version is none (the owner)
 # v4.2.490: the same text written another valid way (\\,) is no difference (the owner)
 # v4.2.483: an item changed on both sides is the person's to settle, every visible difference a choice, lists too (the owner)
 # v4.2.481: only what a person enters or sees clashes; reminders by when and how; an occurrence is chosen apart (D-308)
@@ -59,9 +61,10 @@ def test_lists_are_compared_entry_by_entry() -> None:  # F2
     theirs = calendar("SUMMARY:x", "CATEGORIES:Club", "EXDATE:20261028T090000Z", "ATTENDEE:mailto:ann@example.com", "ATTENDEE:mailto:cee@example.com")
     assert merge(base, base, theirs).clashes == ()  # changed on the server only: followed by itself
     merged = merge(base, ours, theirs)
-    assert merged.text is None and {"Tag", "Attendee", "Skipped date"} <= {clash.label for clash in merged.clashes}  # each entry a choice
+    assert merged.text is None and {clash.label for clash in merged.clashes} == {"Attendee", "Skipped date"}  # each entry a choice; tags no
     kept = merge(base, ours, theirs, {clash.key: LOCAL for clash in merged.clashes}).text or ""
-    assert "CATEGORIES:Work,Home" in kept and "bob@example.com" in kept and "cee@example.com" not in kept
+    assert "bob@example.com" in kept and "cee@example.com" not in kept
+    assert "CATEGORIES:Home,Club" in kept  # tags are a jar: Home put in here, Club put in and Work taken out there, all as done (the owner)
     card = "BEGIN:VCARD\r\nVERSION:3.0\r\nUID:c1\r\nFN:Ann\r\n{}END:VCARD\r\n"
     merged_card = merge(card.format("TEL:111\r\n"), card.format("TEL:111\r\n"), card.format("TEL:111\r\nTEL:333\r\n"))
     assert merged_card.clashes == () and all(number in (merged_card.text or "") for number in ("111", "333"))
@@ -140,3 +143,23 @@ def test_the_same_text_written_another_valid_way_is_no_difference() -> None:
     theirs = calendar("SUMMARY:Meeting", "LOCATION:Practice Smit\\, room 2", "DTSTART:20261021T090000Z", "DESCRIPTION:New agenda")
     merged = merge(BASE, ours, theirs)
     assert [clash.label for clash in merged.clashes] == ["Description"]  # the location reads the same: no choice (the owner, 4.2.490)
+
+
+def test_a_strange_digit_in_an_occurrence_never_raises() -> None:
+    from chrono_mail.pim.merge import occurrence_words
+
+    assert occurrence_words("2026\u00b2812T090000Z") == "2026\u00b2812T090000Z"  # shown as written (OR-3)
+    occurrence = ["END:VEVENT", "BEGIN:VEVENT", "UID:u1", "RECURRENCE-ID:2026\u00b2812T090000Z", "SUMMARY:Moved"]
+    base = calendar("SUMMARY:x", "RRULE:FREQ=DAILY", *occurrence)
+    assert merge(base, calendar("SUMMARY:y", "RRULE:FREQ=DAILY", *occurrence), calendar("SUMMARY:z", "RRULE:FREQ=DAILY", *occurrence)).clashes
+
+
+def test_a_damaged_agreed_version_is_no_agreed_version() -> None:
+    from chrono_mail.core import StorageError
+    from chrono_mail.sync.davconflicts import base_of
+
+    class Damaged:
+        def read_private(self, name: str) -> str | None:
+            raise StorageError("A file of the synchronisation could not be read")
+
+    assert base_of(Damaged(), "c", "i") is None  # type: ignore[arg-type]  # every difference the person's choice, never a stopped sync

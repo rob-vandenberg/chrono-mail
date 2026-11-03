@@ -4,9 +4,10 @@ from chrono_mail.pim.conflictwords import Words, duration_words, reminder_words,
 from chrono_mail.pim.merge import SERVER
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_conflictwords.py 4.2.492"
+__version__ = "test_pim_conflictwords.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: a strange digit never raises; a jar's entry and an occurrence on one side only are no field choice (the owner)
 # v4.2.492: list entries of the same kind pair up in one row; one without a partner keeps its own (the owner, D-308)
 # v4.2.481: Initial: every field of a sync conflict in words, never a raw calendar value (the owner, D-308)
 
@@ -66,3 +67,25 @@ def test_work_and_home_are_not_paired() -> None:
     found = rows(card(), card("EMAIL;TYPE=WORK:anna@example.com"), card("EMAIL;TYPE=HOME:anna@example.org"), WORDS)
     mails = [(row.local, row.server, len(row.keys)) for row in found if row.label == "E-mail"]
     assert mails == [("anna@example.com (work)", "(empty)", 1), ("(empty)", "anna@example.org (home)", 1)]  # two rows, each its own choice
+
+
+def test_a_strange_digit_in_a_repeat_is_shown_as_written() -> None:
+    for rule in ("FREQ=MONTHLY;BYDAY=\u00b2MO", "FREQ=MONTHLY;BYDAY=+-1MO", "FREQ=MONTHLY;BYDAY=" + "1" * 5000 + "MO"):
+        assert "Every month on" in rule_words(rule, WORDS)  # never a ValueError (OR-3)
+
+
+def test_tags_and_members_are_a_jar_and_no_choice() -> None:
+    found = rows(event("SUMMARY:x", "CATEGORIES:Work"), event("SUMMARY:x", "CATEGORIES:Work,Home"), event("SUMMARY:x", "CATEGORIES:Work,Club"), WORDS)
+    tags = [(row.local, row.server, row.choice) for row in found if row.label == "Tag" and row.differs]
+    assert tags == [("Home", "(empty)", False), ("(empty)", "Club", False)]  # both stay: no pair, no choice (the owner)
+
+
+def test_an_occurrence_on_one_side_only_has_one_choice_keep_or_leave_out() -> None:
+    occurrence = ["END:VEVENT", "BEGIN:VEVENT", "UID:u1", "RECURRENCE-ID:20260105T100000", "SUMMARY:Moved", "DTSTART:20260105T120000Z"]
+    base = event("SUMMARY:Weekly", "DTSTART:20260101T100000Z", "RRULE:FREQ=WEEKLY", *occurrence)
+    ours = event("SUMMARY:Weekly", "DTSTART:20260101T100000Z", "RRULE:FREQ=WEEKLY", *occurrence[:-1], "DTSTART:20260105T130000Z")
+    theirs = event("SUMMARY:Weekly", "DTSTART:20260101T100000Z", "RRULE:FREQ=WEEKLY")
+    found = rows(base, ours, theirs, WORDS)
+    chosen = [(row.label, row.local, row.server) for row in found if row.choice]
+    assert chosen == [("The occurrence of 05-01-2026 10:00", "Kept", "Left out")]  # floating: the same in every zone  # what merge reads: the occurrence as a whole
+    assert not any(row.choice for row in found if "(the occurrence of" in row.label)

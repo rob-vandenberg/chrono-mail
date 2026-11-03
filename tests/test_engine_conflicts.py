@@ -10,9 +10,11 @@ from tests.test_engine_commands import call
 from tests.test_engine_dav import linked, shown
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_conflicts.py 4.2.483"
+__version__ = "test_engine_conflicts.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: Use Chrono Mail keeps what the server changed that is not shown, Use Server data sends nothing then; a field key with a
+#           tab is read whole (the owner)
 # v4.2.483: changes on both sides, also to different fields, are a conflict the person settles (the owner)
 # v4.2.481: conflict.recheck at start settles a conflict without a difference a person sees, a real one stays (D-308)
 # v2.0.286: a calendar's name or colour changed on two computers, or a name the server refused, is a sync conflict settled as a whole or per field;
@@ -753,3 +755,38 @@ def test_at_start_a_conflict_without_a_difference_a_person_sees_is_settled_and_a
         with open_pim(engine, account) as store:
             text = store.get(conflict.collection, item)
         assert "URL:https://example.com/x" in text and "SUMMARY:Ours" in text  # the server's for what is not seen, Chrono Mail's own kept
+
+
+def test_use_chrono_mail_keeps_what_the_server_changed_that_is_not_shown(tmp_path: Path) -> None:  # D-308
+    with FakeDav() as server:
+        engine, account, _ = linked(tmp_path, server)
+        item, uid = add_event(engine, account)
+        change_on_server(server, uid, "SUMMARY:Meeting", "SUMMARY:Theirs\r\nX-OTHER-PROGRAM:2")
+        call(engine, "event.edit", item=item, summary="Ours")
+        (conflict,) = call(engine, "conflict.list").conflicts
+        call(engine, "conflict.settle", conflicts=(conflict.conflict,), side="local")
+        text = (on_server(server, "events", uid) or ("", ""))[1]
+        assert "SUMMARY:Ours" in text and "X-OTHER-PROGRAM:2" in text  # never Chrono Mail's whole text over it
+
+
+def test_a_field_key_with_a_tab_is_read_whole(tmp_path: Path) -> None:
+    with FakeDav() as server:
+        engine, account, _ = linked(tmp_path, server)
+        item, uid = add_event(engine, account)
+        change_on_server(server, uid, "SUMMARY:Meeting", "SUMMARY:Theirs")
+        call(engine, "event.edit", item=item, summary="Ours")
+        (conflict,) = call(engine, "conflict.list").conflicts
+        result = call(engine, "conflict.settle", choices=(f"{conflict.conflict}\tNICKNAME\x1fan\tnie\tlocal",))  # a list entry's value with a tab
+        assert result.open == (conflict.conflict,)  # no such field here: still open, never "A choice is conflict<TAB>…"
+
+
+def test_use_server_data_sends_nothing_when_the_server_s_version_is_what_comes_out(tmp_path: Path) -> None:
+    with FakeDav() as server:
+        engine, account, _ = linked(tmp_path, server)
+        item, uid = add_event(engine, account)
+        change_on_server(server, uid, "SUMMARY:Meeting", "SUMMARY:Theirs\r\nSEQUENCE:3")
+        before = on_server(server, "events", uid)
+        call(engine, "event.edit", item=item, summary="Ours")
+        (conflict,) = call(engine, "conflict.list").conflicts
+        call(engine, "conflict.settle", conflicts=(conflict.conflict,), side="server")
+        assert on_server(server, "events", uid) == before and call(engine, "event.show", item=item).summary == "Theirs"  # nothing sent back

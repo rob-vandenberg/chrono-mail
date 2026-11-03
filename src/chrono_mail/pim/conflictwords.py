@@ -7,13 +7,15 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 from chrono_mail.core.words import counted, digits
-from chrono_mail.pim.merge import ALARMS, LOCAL, MONTHS, SEPARATOR, SERVER, choice_key, units_of, visible
+from chrono_mail.pim.merge import ALARMS, LOCAL, MONTHS, SEPARATOR, SERVER, choice_key, jar, units_of, visible
 from chrono_mail.pim.times import in_local_zone, zone_named
 
 # --- Version ------------------------------------------------------------
-__version__ = "conflictwords.py 4.2.492"
+__version__ = "conflictwords.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: an entry of a jar (members, tags) and the fields of an occurrence on one side only are shown without a choice; such an
+#           occurrence has one choice, keep or leave out, where it clashes; a strange digit in a repeat never raises (the owner)
 # v4.2.492: an entry of a list only here and one only on the server, of the same kind, are one row (the owner, D-308)
 # v4.2.481: Initial: the rows of the window of one sync conflict, every field in words (the owner, D-308)
 
@@ -41,7 +43,7 @@ ACTIONS: dict[str, str] = {"DISPLAY": "message on screen", "EMAIL": "e-mail", "A
 TASK_STATES: dict[str, str] = {"NEEDS-ACTION": "To do", "IN-PROCESS": "In progress", "COMPLETED": "Done", "CANCELLED": "Cancelled"}
 EVENT_STATES: dict[str, str] = {"CONFIRMED": "Confirmed", "TENTATIVE": "Tentative", "CANCELLED": "Cancelled"}
 TYPES_LEFT_OUT: frozenset[str] = frozenset({"PREF", "INTERNET", "VOICE", "X400"})
-PAIRED: frozenset[str] = frozenset({"NICKNAME", "EMAIL", "TEL", "URL", "ADR", "CATEGORIES", "ATTENDEE"})  # lists whose entries pair up (D-308)
+PAIRED: frozenset[str] = frozenset({"NICKNAME", "EMAIL", "TEL", "URL", "ADR", "ATTENDEE"})  # lists whose entries pair up (D-308)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,7 +57,8 @@ class Words:
 @dataclass(frozen=True, slots=True)
 class Row:
     """One field of the item: what a choice names, its label, both values in words, whether they differ, for a difference that is no clash
-    the side that is taken by itself (LOCAL or SERVER; "" when it clashes or is the same), and every entry its choice settles (two for a pair)."""
+    the side that is taken by itself (LOCAL or SERVER; "" when it clashes or is the same), every entry its choice settles (two for a pair), and
+    whether the person chooses it (a difference that is no choice is taken by itself: a jar's entry, a field of an occurrence on one side only)."""
 
     key: str
     label: str
@@ -64,6 +67,7 @@ class Row:
     differs: bool
     taken: str
     keys: tuple[str, ...]
+    choice: bool
 
 
 def _unescaped(value: str) -> str:
@@ -143,7 +147,7 @@ def _day_words(day: str) -> str:
     code = day[-2:].upper()
     name = DAYS.get(code, day)
     number = day[:-2]
-    if number.lstrip("+-").isdigit() and number:
+    if len(number) <= 4 and digits(number[1:] if number[:1] in ("+", "-") else number):  # only 0 to 9, one sign at most: "²" or "+-1" is shown as written (OR-3)
         return f"the {ORDINALS.get(int(number), number)} {name}"
     return name
 
@@ -294,7 +298,7 @@ def _paired(entries: list[tuple[Row, str, str, tuple[str, ...]]]) -> list[Row]:
         if side == SERVER and waiting.get((name, kind)):
             partner = waiting[(name, kind)].pop(0)
             ours = entries[partner][0]
-            out[partner] = Row(ours.key, ours.label, ours.local, theirs.server, True, "", ours.keys + theirs.keys)
+            out[partner] = Row(ours.key, ours.label, ours.local, theirs.server, True, "", ours.keys + theirs.keys, True)
             out[position] = None
     return [row for row in out if row is not None]
 
@@ -315,6 +319,11 @@ def rows(base: str | None, local: str, server: str, words: Words) -> list[Row]:
         keys.sort(key=lambda key: ORDER.index(key.split(SEPARATOR, 1)[0]) if key.split(SEPARATOR, 1)[0] in ORDER else len(ORDER))
         recurrence = unit_key.split(SEPARATOR, 1)[1] if SEPARATOR in unit_key else ""
         suffix = f" (the occurrence of {_when(recurrence, {}, words)})" if recurrence else ""
+        alone = (unit_key in local_units) != (unit_key in server_units)  # an occurrence on one side only: kept or left out as a whole
+        if alone and before is not None and (ours or theirs) != before:  # changed on its side, removed on the other: the person chooses
+            whole = f"unit{SEPARATOR}{unit_key}"
+            mine, yours = ("Kept", "Left out") if unit_key in local_units else ("Left out", "Kept")
+            found.append(Row(whole, f"The occurrence of {_when(recurrence, {}, words)}", mine, yours, True, "", (whole,), True))
         entries: list[tuple[Row, str, str, tuple[str, ...]]] = []  # each row with, for an entry of a list on one side only, that side and its kind
         for key in keys:
             name = key.split(SEPARATOR, 1)[0]
@@ -327,9 +336,13 @@ def rows(base: str | None, local: str, server: str, words: Words) -> list[Row]:
                     taken = SERVER
                 elif before.get(key) == theirs.get(key):
                     taken = LOCAL
+            elif differs and jar(key):  # not known since when: it stays where either side has it
+                taken = LOCAL if key in ours else SERVER
             label = (TASK_LABELS.get(name) if task else None) or LABELS.get(name, name.title())
             chosen = choice_key(key, unit_key)
             side = "" if name not in PAIRED or (key in ours) == (key in theirs) else LOCAL if key in ours else SERVER
-            entries.append((Row(chosen, label + suffix, mine, yours, differs, taken, (chosen,)), side, name, _kind(name, ours.get(key) or theirs[key])))
+            choice = differs and not alone and not jar(key)
+            entries.append((Row(chosen, label + suffix, mine, yours, differs, taken, (chosen,), choice), side if choice else "", name,
+                            _kind(name, ours.get(key) or theirs[key])))
         found.extend(_paired(entries))
     return found

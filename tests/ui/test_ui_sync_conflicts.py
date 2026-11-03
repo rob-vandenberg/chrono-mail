@@ -14,9 +14,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.495"
+__version__ = "test_ui_sync_conflicts.py 4.2.496"
 
 # --- Version history ----------------------------------------------------
+# v4.2.496: a tag put in on each side is shown without circles: both stay (the owner)
 # v4.2.495: the triangle test opens the Month view on its appointment's month: it failed in every month but October 2026
 # v4.2.494: every field chosen by hand for one side is that side: Apply works and settles it (the owner)
 # v4.2.493: the table has the gap between its columns on its left and right (the owner)
@@ -658,3 +659,14 @@ def test_the_header_s_server_then_chrono_mail_by_hand_applies_chrono_mail(qtbot:
     assert dialog.all_local.isChecked() and not dialog.all_server.isChecked()
     dialog.apply_button.click()
     assert dialog.side == "local" and dialog.choices == {}  # what the screen shows, never the server's version clicked before
+
+
+def test_a_tag_put_in_on_each_side_is_shown_without_a_choice(qtbot: QtBot) -> None:
+    base = calendar_text("SUMMARY:Meeting", "CATEGORIES:Work")
+    conflict = ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", "events", "clash", "Changed here and on the server", "Ours", "", False,
+                               True, 0.0, (ConflictField("SUMMARY", "Title", "Ours", "Theirs"),), base_text=base,
+                               local_text=calendar_text("SUMMARY:Ours", "CATEGORIES:Work,Home"), server_text=calendar_text("SUMMARY:Theirs", "CATEGORIES:Work,Club"))
+    dialog = ConflictDialog(conflict)
+    qtbot.addWidget(dialog)
+    assert set(dialog.groups) == {"SUMMARY"}  # Home and Club both stay: no circles for them (the owner)
+    assert {"Home", "Club"} <= {label.text() for label in dialog.findChildren(QLabel)}
