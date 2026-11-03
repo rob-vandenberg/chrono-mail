@@ -1,16 +1,19 @@
 import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import override
 
-from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt
-from PySide6.QtGui import QGuiApplication, QIcon, QIconEngine, QPainter, QPalette, QPixmap
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt
+from PySide6.QtGui import QBrush, QColor, QGuiApplication, QIcon, QIconEngine, QPainter, QPalette, QPen, QPixmap, QPolygonF
 from PySide6.QtSvg import QSvgRenderer
 
 # --- Version ------------------------------------------------------------
-__version__ = "icons.py 4.2.424"
+__version__ = "icons.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: split_icon: the owner's split of a row (an arrow, and a dotted line from under it to a second arrow), drawn in the colour of text;
+#           keep_both_icon: the owner's one square above two (Keep both of a sync conflict, B-30, B-31), drawn the same way
 # v4.2.424: accent_icon: an icon always in the accent colour (the (i) after a greyed option, D-294)
 # v1.1.200: An icon for the Scheduled folder
 # v1.1.191: Icons for the Favorites Snoozed and Unreplied
@@ -94,6 +97,90 @@ class TintedSvgEngine(QIconEngine):
     @override
     def clone(self) -> "TintedSvgEngine":
         return TintedSvgEngine(self._path, self._accent_when_on, self._grey, self._accent)
+
+
+class DrawnEngine(QIconEngine):
+    """An icon drawn in code in the colour of text, as the bundled icons are (TintedSvgEngine.colour_for): `draw` paints it in a square of
+    side 1 placed in the middle of the rect, its places 0 to 1 each way."""
+
+    def draw(self, painter: QPainter, at: Callable[[float, float], QPointF], size: float) -> None:
+        raise NotImplementedError
+
+    @override
+    def paint(self, painter: QPainter, rect: QRect, mode: QIcon.Mode, state: QIcon.State) -> None:
+        colour = QColor(TintedSvgEngine.colour_for(mode, QGuiApplication.palette()))
+        size = min(rect.width(), rect.height())
+        left, top = rect.left() + (rect.width() - size) / 2, rect.top() + (rect.height() - size) / 2
+
+        def at(x: float, y: float) -> QPointF:  # a place in the owner's drawing, 0 to 1 each way
+            return QPointF(left + x * size, top + y * size)
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(QBrush(colour), max(size * 0.06, 1.0), Qt.PenStyle.SolidLine, Qt.PenCapStyle.FlatCap))
+        painter.setBrush(QBrush(colour))
+        self.draw(painter, at, size)
+        painter.restore()
+
+    @override
+    def pixmap(self, size: QSize, mode: QIcon.Mode, state: QIcon.State) -> QPixmap:
+        image = QPixmap(size)
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        self.paint(painter, QRect(QPoint(0, 0), size), mode, state)
+        painter.end()
+        return image
+
+
+class SplitEngine(DrawnEngine):
+    """The owner's icon for splitting a row into two (B-31): a solid arrow to the right at the top, and from under it a dotted line going down,
+    then right into a second arrow below."""
+
+    @override
+    def draw(self, painter: QPainter, at: Callable[[float, float], QPointF], size: float) -> None:
+        painter.drawLine(at(0.13, 0.26), at(0.72, 0.26))
+        dotted = QPen(painter.pen())
+        dotted.setStyle(Qt.PenStyle.CustomDashLine)
+        dotted.setDashPattern([1.0, 1.0])  # squares with a square's gap between them
+        painter.setPen(dotted)
+        painter.drawPolyline(QPolygonF([at(0.39, 0.29), at(0.39, 0.71), at(0.72, 0.71)]))
+        painter.setPen(Qt.PenStyle.NoPen)
+        for y in (0.26, 0.71):
+            painter.drawPolygon(QPolygonF([at(0.69, y - 0.085), at(0.87, y), at(0.69, y + 0.085)]))
+
+    @override
+    def clone(self) -> "SplitEngine":
+        return SplitEngine()
+
+
+class KeepBothEngine(DrawnEngine):
+    """The owner's icon for Keep both (B-30): a square at the top, a line down from it to a bar, and from the bar's ends two squares below."""
+
+    @override
+    def draw(self, painter: QPainter, at: Callable[[float, float], QPointF], size: float) -> None:
+        painter.setPen(Qt.PenStyle.NoPen)
+        for x0, y0, x1, y1 in (
+            (0.405, 0.117, 0.592, 0.305),  # the square at the top
+            (0.476, 0.300, 0.522, 0.505),  # the line down to the bar
+            (0.225, 0.500, 0.773, 0.546),  # the bar
+            (0.225, 0.540, 0.272, 0.700), (0.726, 0.540, 0.773, 0.700),  # its ends down
+            (0.155, 0.695, 0.342, 0.882), (0.656, 0.695, 0.843, 0.882),  # the two squares below
+        ):
+            painter.drawRect(QRectF(at(x0, y0), at(x1, y1)))
+
+    @override
+    def clone(self) -> "KeepBothEngine":
+        return KeepBothEngine()
+
+
+def split_icon() -> QIcon:
+    """Split a row of a sync conflict into two, both kept (B-31)."""
+    return QIcon(SplitEngine())
+
+
+def keep_both_icon() -> QIcon:
+    """Keep both versions of an item in a sync conflict as two (B-30): one square that becomes two."""
+    return QIcon(KeepBothEngine())
 
 
 def grey_icon(name: str) -> QIcon:

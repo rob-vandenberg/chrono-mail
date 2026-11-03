@@ -8,15 +8,20 @@ import pytest
 from chrono_mail.pim.contact import Contact, Labeled, contact_to_text, parse_contacts
 from chrono_mail.pim.ical import Event, EventSeries, Task, events_to_text, new_uid, parse_events, parse_tasks, tasks_to_text
 from chrono_mail.protocols.dav import DavClient, RemoteCollection
-from tests.live.account import KERIO_FILE, SETTINGS_DIRECTORY, load_live_account
+from tests.live.account import KERIO_FILE, SETTINGS_DIRECTORY, LiveAccount, load_live_account
 from tests.live.test_live_imap import connect
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_dav.py 4.2.497"
+__version__ = "test_live_dav.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: a contact changed on the server and then here keeps the server's change (Kerio ignores If-Match on contacts); Keep both sends
+#           no invitation for the copy, or records that it did (an invitee at another server, Kerio's Sent Items watched; all mails
+#           removed again; Kerio sends one, which the owner accepts); the older Keep both test invites that real mailbox too;
+#           Keep both on the server (B-30, B-31, the owner): a contact and an appointment with an attendee kept as two, each with its own uid,
+#           the contact's copy in the original's group; a contact's two e-mail addresses kept both; everything made is removed again
 # v4.2.497: Deleted Items is searched from the day before today: Kerio dates by UTC, so between 00:00 and 01:00 CET nothing was found;
 #           the UID check keeps it exact
 # v2.0.283: dav.local.toml is read from outside the project folder (D-230)
@@ -69,6 +74,27 @@ def remove_from_deleted_items(uid: str, expected: int) -> None:
             numbers = ",".join(str(number) for number in ours)
             imap.uid_store(numbers, ["\\Deleted"], "add")
             imap.uid_expunge(numbers)  # these UIDs only; inside Deleted Items this is final
+
+
+def remove_mails(account: LiveAccount, folder: str, mark: str, wait: float = 0) -> int:
+    """The mails in a folder that carry a test's mark (its subject or its calendar), removed (on Kerio they go to Deleted Items); `wait`: up
+    to so many seconds for the first to arrive. Returns how many."""
+    since = date.today() - timedelta(days=1)
+    deadline = time.monotonic() + wait
+    with connect(account, secure=True) as imap:
+        while True:
+            imap.select(folder)
+            recent = imap.uid_search(f"SINCE {since.day}-{MONTHS[since.month - 1]}-{since.year}")
+            fetched = imap.uid_fetch(",".join(str(number) for number in recent), "(UID BODY.PEEK[])") if recent else ()
+            ours = [item.uid for item in fetched if mark.encode() in (item.data or b"")]
+            if ours or time.monotonic() >= deadline:
+                break
+            time.sleep(1)
+        if ours:
+            numbers = ",".join(str(number) for number in ours)
+            imap.uid_store(numbers, ["\\Deleted"], "add")
+            imap.uid_expunge(numbers)
+        return len(ours)
 
 
 def collection(dav: DavClient, kind: str) -> RemoteCollection:
@@ -342,3 +368,269 @@ def test_one_contact_is_read_from_the_server_although_its_get_is_404_on_kerio(da
         dav.delete(href)
     assert dav.read(target, href) is None  # gone: not there
     remove_from_deleted_items(uid, 1)
+
+
+def test_keep_both_makes_two_items_on_the_server_and_a_split_row_keeps_both_addresses(dav: DavClient, tmp_path: Path) -> None:
+    """B-30, B-31 (the owner): the copy is made on the server first with a uid of its own, the original keeps the server's version, a
+    contact's copy joins the original's group, and two e-mail addresses kept both are both on the server. The appointment's attendee is the
+    invitee's real mailbox (invitee.local.toml), so what the server sent can be checked there; the mails this test causes are removed again
+    (the invitee's, Kerio's sent ones and the organizer's returned ones, then Deleted Items)."""
+    from chrono_mail.core import CollectionKind
+    from chrono_mail.engine.commands_conflicts import _keep_both  # noqa: PLC2701: the engine's own Keep both, groups included
+    from chrono_mail.pim.contact import GroupForm
+    from chrono_mail.pim.ical import Attendee
+    from chrono_mail.pim.merge import BOTH
+    from chrono_mail.pim.vcard import unfold
+    from chrono_mail.pimstore import PimStore
+    from chrono_mail.protocols.dav import canonical_href
+    from chrono_mail.sync.davconflicts import SyncConflict, keep_base, open_conflict
+    from chrono_mail.sync.davitems import ItemGateway
+    from chrono_mail.sync.davsync import sync_dav
+    from tests.live.account import INVITEE_FILE
+
+    if not INVITEE_FILE.exists():
+        pytest.skip(f"{INVITEE_FILE} is missing")
+    invitee = load_live_account(INVITEE_FILE)
+    store = PimStore.create(tmp_path / "pim", None, durable=False)
+    state = tmp_path / "pim" / "dav-state.json"
+    sync_dav(dav, store, state, durable=False)
+    remotes = {kind: collection(dav, kind) for kind in ("contacts", "events")}
+    infos = {kind: next(info for info in store.collections(CollectionKind(kind)) if canonical_href(info.server_value("href")) == canonical_href(remotes[kind].href))
+             for kind in remotes}
+    gateway = ItemGateway(dav, store, state, durable=False)
+    mark = new_uid()[:8]  # every item of this test carries it in its name: found on the server, and removed, by it
+
+    def on_server(kind: str) -> dict[str, str]:
+        """The test's items on the server: href -> text, one line per property (unfolded, CRLF)."""
+        remote = remotes[kind]
+        fetched = dav.fetch(remote, [item.href for item in dav.items(remote)]).items()
+        return {href: "\r\n".join(unfold(text)) for href, (_, text) in fetched if mark in "".join(unfold(text))}
+
+    def clash(kind: str, text: str, theirs: tuple[str, str], ours: tuple[str, str]) -> SyncConflict:
+        """An item made here and on the server, then changed on the server and here while offline: the synchronisation finds the sync conflict.
+        (Kerio takes a contact's change sent with an old version without a word (no If-Match check), so a change sent at once cannot clash.)"""
+        info = infos[kind]
+        item = gateway.save(info, text).item
+        href = next(href for href, body in on_server(kind).items() if f"UID:{uid_of(text)}" in body)
+        etag, body = dav.read(remotes[kind], href) or ("", "")
+        dav.put(href, body.replace(*theirs), kind, etag=etag)  # on the phone
+        current = store.get(info.collection_id, item)
+        keep_base(store, info.collection_id, item, current)  # changed here offline: the agreed version kept, as ItemGateway does
+        store.put(info.collection_id, current.replace(*ours), item)
+        sync_dav(dav, store, state, durable=False)
+        found = open_conflict(store, info.collection_id, item=item)
+        assert found is not None and found.reason == "clash", found
+        return found
+
+    def uid_of(text: str) -> str:
+        return next(line.partition(":")[2].strip() for line in unfold(text) if line.split(":", 1)[0].split(";", 1)[0].strip().upper() == "UID")
+
+    try:
+        anna, group = new_uid(), new_uid()
+        card = contact_to_text(Contact(uid=anna, given_name="Live", family_name=f"Keep both {mark}", emails=(Labeled("live.old@example.com", ("work",)),)))
+        gateway.save(infos["contacts"], contact_to_text(Contact(uid=group, display_name=f"Live group {mark}", group_form=GroupForm.VCARD4, members=(f"urn:uuid:{anna}",))))
+        conflict = clash("contacts", card, ("live.old@example.com", "live.there@example.com"), ("live.old@example.com", "live.here@example.com"))
+        assert _keep_both(store, gateway, conflict) == ("", False)
+        cards = on_server("contacts")
+        (original,) = [text for text in cards.values() if f"UID:{anna}" in text]
+        (copy,) = [text for text in cards.values() if "live.here@example.com" in text]
+        copy_uid = uid_of(copy)
+        print(f"\ncontact: original {anna}, copy {copy_uid}")
+        assert "live.there@example.com" in original and "live.here@example.com" not in original and copy_uid != anna
+        (members,) = [parse_contacts(text)[0].members for text in cards.values() if f"UID:{group}" in text]
+        print(f"group members on the server: {members}")
+        assert {member.removeprefix("urn:uuid:") for member in members} == {anna, copy_uid}  # the copy is in the original's group
+
+        bob = new_uid()
+        second = contact_to_text(Contact(uid=bob, given_name="Live", family_name=f"Split {mark}", emails=(Labeled("split.old@example.com", ("work",)),)))
+        split = clash("contacts", second, ("split.old@example.com", "split.there@example.com"), ("split.old@example.com", "split.here@example.com"))
+        choices = {each.key: BOTH for each in split.clashes}
+        assert choices and all(key.startswith("EMAIL") for key in choices)
+        assert gateway.settle(infos["contacts"], split, "", choices).status == "done"
+        (both,) = [text for text in on_server("contacts").values() if f"UID:{bob}" in text]
+        print(f"split row: {[line for line in both.split(chr(13) + chr(10)) if line.startswith('EMAIL')]}")
+        assert "split.here@example.com" in both and "split.there@example.com" in both
+
+        meeting = new_uid()
+        ams = ZoneInfo("Europe/Amsterdam")
+        event = events_to_text(EventSeries(Event(
+            uid=meeting, summary=f"Live keep both {mark}", start=datetime(2030, 2, 4, 10, tzinfo=ams), end=datetime(2030, 2, 4, 11, tzinfo=ams),
+            rrule="FREQ=WEEKLY;COUNT=3", organizer=Attendee("live.organizer@example.com", "Organizer"), attendees=(Attendee(invitee.user, "Attendee"),),
+        )))
+        conflict = clash("events", event, (f"SUMMARY:Live keep both {mark}", f"SUMMARY:Live keep both {mark} there"),
+                         (f"SUMMARY:Live keep both {mark}", f"SUMMARY:Live keep both {mark} here"))
+        assert _keep_both(store, gateway, conflict) == ("", False)
+        events = on_server("events")
+        (theirs,) = [text for text in events.values() if f"UID:{meeting}" in text]
+        (copied,) = [text for text in events.values() if f"{mark} here" in text]
+        print(f"appointment: original {meeting}, copy {uid_of(copied)}; the copy's people on the server: "
+              f"{[line for line in copied.split(chr(13) + chr(10)) if line.startswith(('ATTENDEE', 'ORGANIZER'))]}")
+        assert f"{mark} there" in theirs and uid_of(copied) != meeting and "RRULE:FREQ=WEEKLY;COUNT=3" in copied and invitee.user in copied
+    finally:
+        deleted = 0
+        for kind in ("contacts", "events"):
+            for href in on_server(kind):
+                dav.delete(href)  # always remove everything this test made, also from Deleted Items
+                deleted += 1
+        kerio = load_live_account(KERIO_FILE)
+        received = remove_mails(invitee, "INBOX", mark, wait=3)  # what the server sent to the attendee: removed for good
+        print(f"\nthe attendee received {received} mails of this test")
+        moved = remove_mails(kerio, kerio.sent_folder, mark) + remove_mails(kerio, "INBOX", mark, wait=2)  # sent, and the organizer's returned
+        remove_from_deleted_items(mark, deleted + moved)  # every item and mail has the mark: one search (the limit of 20 s per test)
+    assert on_server("contacts") == {} and on_server("events") == {}
+
+
+def test_a_contact_changed_on_the_server_and_then_here_keeps_the_server_s_change(dav: DavClient, tmp_path: Path) -> None:
+    """D-193, D-194: a contact changed on the server (a phone), then here while online without a synchronisation in between, and sent. Kerio
+    takes a contact's PUT with an old version without a word (no If-Match check, measured 2026-11-03): the server's change must survive,
+    merged or a sync conflict, never written over."""
+    from chrono_mail.core import CollectionKind
+    from chrono_mail.pimstore import PimStore
+    from chrono_mail.protocols.dav import canonical_href
+    from chrono_mail.sync.davconflicts import open_conflict
+    from chrono_mail.sync.davitems import ItemGateway
+    from chrono_mail.sync.davsync import sync_dav
+
+    store = PimStore.create(tmp_path / "pim", None, durable=False)
+    state = tmp_path / "pim" / "dav-state.json"
+    sync_dav(dav, store, state, durable=False)
+    remote = collection(dav, "contacts")
+    info = next(info for info in store.collections(CollectionKind.CONTACTS) if canonical_href(info.server_value("href")) == canonical_href(remote.href))
+    gateway = ItemGateway(dav, store, state, durable=False)
+    uid = new_uid()
+    card = contact_to_text(Contact(uid=uid, given_name="Live", family_name="If-Match", note="Written here"))
+    item = gateway.save(info, card).item
+    href = next(href for href, link in gateway.state.get(info.collection_id).links.items() if link.item_id == item)
+    try:
+        etag, body = dav.read(remote, href) or ("", "")
+        accepted = dav.put(href, body.replace("FN:Live If-Match", "FN:Live If-Match there"), "contacts", etag=etag)  # on the phone
+        print(f"\nthe server's change took the version {accepted!r} (was {etag!r})")
+        outcome = gateway.save(info, store.get(info.collection_id, item).replace("Written here", "Changed here"), item)
+        now = dav.read(remote, href)
+        print(f"Chrono Mail's change: {outcome.status}; on the server now: {[line for line in (now[1] if now else '').splitlines() if line.startswith(('FN', 'NOTE'))]}")
+        assert now is not None
+        kept = "Live If-Match there" in now[1]
+        assert kept or open_conflict(store, info.collection_id, item=item) is not None, "the server's change was written over"
+        assert kept, "the server's change was written over (a conflict was recorded, but the server lost it)"
+    finally:
+        dav.delete(href)
+        remove_from_deleted_items(uid, 1)  # also when the test fails: nothing of it stays on the server
+
+
+def test_keep_both_sends_no_invitation_for_the_copy(dav: DavClient, tmp_path: Path) -> None:
+    """B-30 (the owner): an appointment of the Kerio account with an attendee at another server, changed here and on the server, kept as two:
+    an invitation for the original may be sent; whether one carries the copy's uid (its people are SCHEDULE-AGENT=CLIENT) is printed: Kerio
+    sends one anyway, which the owner accepts. What Kerio sent (its
+    Sent Items) and the invitee's Inbox are watched within the 20 s limit of every test (conftest.py; only -m perf is exempt). Everything
+    made is removed again: the items, Deleted Items, Kerio's sent invitations, the mails the invitee received; before the original is
+    deleted its attendee is set to SCHEDULE-AGENT=CLIENT, so no cancellation is sent. A server's own lines in the copy (an attendee line for
+    the organizer) are no change of the copy (merge.reading)."""
+    import email
+    import email.policy
+
+    from chrono_mail.core import CollectionKind
+    from chrono_mail.engine.commands_conflicts import _keep_both  # noqa: PLC2701: the engine's own Keep both
+    from chrono_mail.pim.ical import Attendee
+    from chrono_mail.pim.merge import SEPARATOR, VALUE_MARK, reading
+    from chrono_mail.pim.vcard import unfold
+    from chrono_mail.pimstore import PimStore
+    from chrono_mail.protocols.dav import canonical_href
+    from chrono_mail.sync.davconflicts import keep_base, open_conflict
+    from chrono_mail.sync.davitems import ItemGateway, written_digest
+    from chrono_mail.sync.davsync import sync_dav
+    from tests.live.account import INVITEE_FILE
+
+    if not INVITEE_FILE.exists():
+        pytest.skip(f"{INVITEE_FILE} is missing")
+    started = time.monotonic()
+    invitee = load_live_account(INVITEE_FILE)
+    with SETTINGS.open("rb") as handle:
+        organizer = str(tomllib.load(handle)["user"])
+    store = PimStore.create(tmp_path / "pim", None, durable=False)
+    state = tmp_path / "pim" / "dav-state.json"
+    sync_dav(dav, store, state, durable=False)
+    remote = collection(dav, "events")
+    info = next(info for info in store.collections(CollectionKind.EVENTS) if canonical_href(info.server_value("href")) == canonical_href(remote.href))
+    gateway = ItemGateway(dav, store, state, durable=False)
+    mark = new_uid()[:8]
+    meeting = new_uid()
+
+    def on_server() -> dict[str, tuple[str, str]]:
+        fetched = dav.fetch(remote, [item.href for item in dav.items(remote)]).items()
+        return {href: (etag, "\r\n".join(unfold(text))) for href, (etag, text) in fetched if mark in "".join(unfold(text))}
+
+    kerio = load_live_account(KERIO_FILE)
+
+    def mails(account: LiveAccount, folder: str, remove: bool = False) -> dict[int, str]:
+        """The mails of this test in a folder (its mark in them): number -> its subject, To and calendar's METHOD and UID lines. `remove`:
+        removed for good."""
+        since = date.today() - timedelta(days=1)
+        with connect(account, secure=True) as imap:
+            imap.select(folder)
+            recent = imap.uid_search(f"SINCE {since.day}-{MONTHS[since.month - 1]}-{since.year}")
+            fetched = imap.uid_fetch(",".join(str(number) for number in recent), "(UID BODY.PEEK[])") if recent else ()
+            ours: dict[int, str] = {}
+            for item in fetched:
+                message = email.message_from_bytes(item.data or b"", policy=email.policy.default)
+                calendar = "".join(str(part.get_content()) for part in message.walk() if part.get_content_type() == "text/calendar")
+                if mark in str(message["Subject"]) or mark in calendar:
+                    lines = [line.strip() for line in calendar.replace("\r", "").split("\n") if line.startswith(("METHOD:", "UID:"))]
+                    ours[item.uid] = f"{message['Subject']!r} to {message['To']}: {lines}"
+            if remove and ours:
+                numbers = ",".join(str(number) for number in ours)
+                imap.uid_store(numbers, ["\\Deleted"], "add")
+                imap.uid_expunge(numbers)
+            return ours
+
+    copy_uid = ""
+    try:
+        event = events_to_text(EventSeries(Event(
+            uid=meeting, summary=f"Live invitation {mark}", start=datetime(2030, 3, 4, 10, tzinfo=ZoneInfo("Europe/Amsterdam")),
+            end=datetime(2030, 3, 4, 11, tzinfo=ZoneInfo("Europe/Amsterdam")), organizer=Attendee(organizer, "Chrono Mail"),
+            attendees=(Attendee(invitee.user, "Invitee"),),
+        )))
+        item = gateway.save(info, event).item
+        href, (etag, body) = next((href, value) for href, value in on_server().items() if f"UID:{meeting}" in value[1])
+        dav.put(href, body.replace(f"SUMMARY:Live invitation {mark}", f"SUMMARY:Live invitation {mark} there"), "events", etag=etag)  # the phone
+        current = store.get(info.collection_id, item)
+        keep_base(store, info.collection_id, item, current)  # changed here offline: the agreed version kept, as ItemGateway does
+        store.put(info.collection_id, current.replace(f"SUMMARY:Live invitation {mark}", f"SUMMARY:Live invitation {mark} here"), item)
+        sync_dav(dav, store, state, durable=False)
+        conflict = open_conflict(store, info.collection_id, item=item)
+        assert conflict is not None and conflict.reason == "clash", conflict
+        assert _keep_both(store, gateway, conflict) == ("", False)
+        (copied,) = [text for _, text in on_server().values() if f"{mark} here" in text]
+        copy_uid = next(line.partition(":")[2].strip() for line in copied.split("\r\n") if line.startswith("UID:"))
+        here = next(found for found in [store.index.find_uid(info.collection_id, copy_uid)] if found is not None)
+        print(f"\noriginal {meeting}, copy {copy_uid}; the copy's people on the server: "
+              f"{[line for line in copied.split(chr(13) + chr(10)) if line.startswith(('ATTENDEE', 'ORGANIZER'))]}")
+        ours, theirs = reading(store.get(info.collection_id, here.item_id)) or "", reading(copied) or ""
+        differing = [part for part in theirs.split(VALUE_MARK) if part not in ours]  # what reads otherwise in the copy as the server keeps it
+        print(f"the copy reads otherwise on the server in: {differing}")
+        assert not any(f"ATTENDEE{SEPARATOR}mailto:{organizer.lower()}" in part for part in differing)  # never the organizer's line (Kerio's)
+        sent: dict[int, str] = {}
+        arrived: dict[int, str] = {}
+        while time.monotonic() - started < 12:  # the whole window within the limit of 20 s, with the clean-up still to come
+            sent, arrived = mails(kerio, kerio.sent_folder), mails(invitee, "INBOX")
+            if any(f"UID:{copy_uid}" in text for text in (*sent.values(), *arrived.values())):
+                break
+            time.sleep(1)
+        for where, found in (("Kerio sent", sent), ("the invitee received", arrived)):
+            for number, text in found.items():
+                print(f"{where} {number}: {text}")
+        print(f"after {time.monotonic() - started:.0f} s: {len(sent)} sent, {len(arrived)} received")
+        invited = any(f"UID:{copy_uid}" in text for text in (*sent.values(), *arrived.values()))
+        print(f"the server sent an invitation for the copy: {invited}")  # Kerio does, despite SCHEDULE-AGENT=CLIENT (2026-11-03, also with
+        # X-SENT=TRUE): recorded, not a failure (the owner accepts it)
+    finally:
+        made = on_server()
+        for place, (etag, text) in made.items():
+            if f"UID:{meeting}" in text:  # its attendee no longer the server's to invite: no cancellation is sent when it goes
+                quiet = "\r\n".join(line.replace("ATTENDEE;", "ATTENDEE;SCHEDULE-AGENT=CLIENT;", 1) if line.startswith("ATTENDEE;") and "SCHEDULE-AGENT" not in line else line
+                                    for line in text.split("\r\n"))
+                etag = dav.put(place, quiet, "events", etag=etag) or ""
+            dav.delete(place)
+        mails(invitee, "INBOX", remove=True)  # the mails the invitee received: removed for good (they are this test's alone)
+        expected = len(made) + len(mails(kerio, kerio.sent_folder, remove=True))  # Kerio's sent invitations go to Deleted Items too
+        remove_from_deleted_items(mark, expected)
+    assert on_server() == {}

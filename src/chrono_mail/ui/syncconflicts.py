@@ -8,7 +8,7 @@ from datetime import date, datetime
 from typing import Literal, override
 
 from PySide6.QtCore import QDate, QEvent, QLocale, QModelIndex, QObject, QPersistentModelIndex, QRect, QRectF, QSettings, QSize, Qt, QTime, Signal
-from PySide6.QtGui import QCloseEvent, QHideEvent, QPainter, QPalette
+from PySide6.QtGui import QCloseEvent, QHideEvent, QKeySequence, QPainter, QPalette, QShortcut, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -30,8 +30,10 @@ from PySide6.QtWidgets import (
     QStyleOptionButton,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QToolButton,
     QTreeWidget,
     QTreeWidgetItem,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -42,15 +44,21 @@ from chrono_mail.ui import forms
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.colours import css, red, theme
 from chrono_mail.ui.forms import part
+from chrono_mail.ui.icons import keep_both_icon, split_icon
+from chrono_mail.ui.prefs import shortcuts
 from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import scale_css, wpx
 from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_WORDS, SyncMarks, paint_why, why_kind, why_pixmap
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.497"
+__version__ = "syncconflicts.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: Keep both (B-30, B-31, the owner): the split icon at the end of a row of a field that holds several values turns it into two rows,
+#           the server's and Chrono Mail's, both kept, without outline or circles; the person's Undo key joins the last split again; the Keep
+#           both button keeps the whole item as two, every circle and split set aside; the split icon almost as tall as a row's outline, the
+#           window of a conflict opens at the size the person gave it last, What as wide as its widest text (the owner)
 # v4.2.497: a field that has a row never gets a second, raw row (a photo is "A photo" with its choice); Retry sync and Keep here only clear
 #           the field circles, and a circle chosen after them lets the fields decide again (the owner)
 # v4.2.496: a difference that is no choice (a jar's entry, a field of an occurrence on one side only) is shown without circles
@@ -95,12 +103,17 @@ SHARE_KEY: str = "sync_conflicts_name_share"  # how much of the free width Name 
 FIRST_SHARE: float = 0.6  # names run longer than places (the owner agreed 60/40)
 FIXED_COLUMNS: tuple[int, ...] = (0, 1, 2, 5)  # the tick box, Fields, What and Why keep their width; Name and Where share the rest
 NAME_COLUMN: int = 3
+WHAT_COLUMN: int = 2
+CONFLICT_SIZE_KEY: str = "sync_conflict_size"  # the size the person gave the window of a conflict last: every conflict opens at it (the owner)
 WHERE_COLUMN: int = 4
 ROLE_KIND: int = Qt.ItemDataRole.UserRole + 2  # the Why cell: the kind of conflict it draws
 LOCAL: str = "local"
 SERVER: str = "server"
 KEEP: str = "keep"
 RETRY: str = "retry"
+KEEP_BOTH: str = "both"  # the whole item kept as two (B-30); a field's choice of this keeps the entry of each side (B-31)
+WHOLE_WAYS: tuple[str, ...] = (KEEP, RETRY, KEEP_BOTH)  # ways that settle the item as a whole: they set every circle and split aside
+UNDO_KEY: str = "Ctrl+Z"  # the main window's Undo key when the person chose none of their own
 
 
 class WhyDelegate(QStyledItemDelegate):
@@ -142,6 +155,7 @@ def _difference_look() -> str:
         f' stop: 0 {colour}, stop: 0.55 {colour}, stop: 0.65 transparent, stop: 1 transparent); }}'
         'QRadioButton[header="true"] { margin-left: 6px; }'
         'QFrame[accent="same"] { border: 2px solid transparent; border-radius: 4px; padding: 2px 4px; }'  # the outline's border (2) and inner space (4) of the fields below
+        'QFrame[accent="line"] { border: 2px solid transparent; border-left: none; border-right: none; padding: 2px 0px; }'  # a split row's label: as tall, not indented
         'QRadioButton[accent="alternative"]::indicator:disabled { border-color: palette(mid); }'
         'QRadioButton[accent="alternative"]::indicator:checked:disabled { background: qradialgradient(cx: 0.5, cy: 0.5, radius: 0.5, fx: 0.5,'
         ' fy: 0.5, stop: 0 palette(mid), stop: 0.55 palette(mid), stop: 0.65 transparent, stop: 1 transparent); }'
@@ -228,9 +242,9 @@ def _when(moment: date | datetime) -> str:
     return day
 
 
-def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tuple[str, ...]]]:  # differs: the person chooses it
-    """The item's fields in words (key, label, Chrono Mail's, the server's, differs, the entries its choice settles); none for a conflict without both
-    versions (mail, a whole collection, an item deleted on a side)."""
+def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tuple[str, ...], bool]]:  # differs: the person chooses it
+    """The item's fields in words (key, label, Chrono Mail's, the server's, differs, the entries its choice settles, whether it can be split into
+    both); none for a conflict without both versions (mail, a whole collection, an item deleted on a side)."""
     if not conflict.local_text or not conflict.server_text:
         return []
     names = dict(conflict.colour_names)
@@ -240,7 +254,30 @@ def _rows(conflict: ConflictSummary) -> list[tuple[str, str, str, str, bool, tup
         return names.get(colour_id, own if not colour_id else "A colour no longer in this calendar")
 
     found = rows(conflict.base_text or None, conflict.local_text, conflict.server_text, Words(_when, colour))
-    return [(row.key, row.label, row.local, row.server, row.choice, row.keys) for row in found]
+    return [(row.key, row.label, row.local, row.server, row.choice, row.keys, row.split) for row in found]
+
+
+def _line(text: str, parent: QWidget) -> QFrame:
+    """A label in a split row: as tall as the values beside it (the outline's border and inner space, unseen)."""
+    frame = QFrame(parent)
+    frame.setProperty("accent", "line")
+    layout = QHBoxLayout(frame)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.addWidget(_plain(text, frame))
+    return frame
+
+
+def _two(first: QWidget, second: QWidget, parent: QWidget, spacing: int) -> QWidget:
+    """Two lines of a split row, one below the other."""
+    both = QWidget(parent)
+    layout = QVBoxLayout(both)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(spacing)
+    for line in (first, second):
+        line.setParent(both)  # which hides it: shown with its new parent
+        layout.addWidget(line)
+        line.show()
+    return both
 
 
 def _plain(text: str, parent: QWidget) -> QLabel:
@@ -252,16 +289,23 @@ def _plain(text: str, parent: QWidget) -> QLabel:
 
 class ConflictDialog(QDialog):
     """Every detail of one conflict, and a choice per clashing field (or of a whole side: an item changed before the agreed version was kept, or
-    one deleted on a side). After Apply: `choices` (field key -> local or server), or `side` for a whole side."""
+    one deleted on a side). After Apply: `choices` (field key -> local, server or both), or `side` for a whole side (also Keep both). A row of a
+    field that holds several values can be split: both kept (B-31); `undo_key` (the person's Undo key) joins the last split again."""
 
-    def __init__(self, conflict: ConflictSummary, parent: QWidget | None = None) -> None:
+    def __init__(self, conflict: ConflictSummary, parent: QWidget | None = None, undo_key: str = UNDO_KEY, settings: QSettings | None = None) -> None:
         super().__init__(parent)
+        self._settings: QSettings | None = settings
+        self._opened: QSize | None = None  # the size it had when it was shown: another size at closing is the person's
         self.conflict: ConflictSummary = conflict
         self.choices: dict[str, str] = {}
         self.side: str = ""
         self.setWindowTitle(f"Sync conflict: {conflict.name}")
         self.groups: dict[str, tuple[QRadioButton, QRadioButton]] = {}
         self.settles: dict[str, tuple[str, ...]] = {}  # a row's choice -> every entry it settles: both entries of a pair (D-308)
+        self.splitters: dict[str, QToolButton] = {}  # a row that can be split -> its split icon (B-31)
+        self.split: list[str] = []  # the rows split, in the order they were split: Undo joins the last (the owner)
+        self._places: dict[str, tuple[int, QLabel, str, str, QRadioButton | None]] = {}  # a row: its grid row, label, both texts, circle before
+        self._joined: dict[str, tuple[QWidget, ...]] = {}  # a split row: what shows it as two lines
         form = forms.fill(self, "sync_conflict", {"fields": self._field_choices})  # the details, the fields, the sides, Apply and Cancel (D-276)
         details = part(form, QFormLayout, "details")
         for name, text in (
@@ -280,8 +324,14 @@ class ConflictDialog(QDialog):
         self.keep.setEnabled(conflict.keep_allowed)
         self.all_local.clicked.connect(lambda: self._all(LOCAL))  # the header's choices: every field to that side (the owner)
         self.all_server.clicked.connect(lambda: self._all(SERVER))
+        self.keep_both: QPushButton = part(form, QPushButton, "keepBoth")  # the whole item as two (B-30, the owner)
+        self.keep_both.setIcon(keep_both_icon())
+        self.keep_both.setEnabled(conflict.both_allowed)
         self.keep.clicked.connect(lambda: self._all(KEEP))
         self.retry.clicked.connect(lambda: self._all(RETRY))
+        self.keep_both.clicked.connect(lambda: self._all(KEEP_BOTH))
+        self.undo_split: QShortcut = QShortcut(QKeySequence(undo_key), self)  # the person's Undo key: the last split joined again (the owner)
+        self.undo_split.activated.connect(self._join_last)
         box = part(form, QDialogButtonBox, "buttons")
         self.apply_button = box.addButton("Apply", QDialogButtonBox.ButtonRole.AcceptRole)  # an accepting button: Apply first, Cancel last (the owner)
         self.apply_button.clicked.connect(self._apply)
@@ -290,7 +340,22 @@ class ConflictDialog(QDialog):
         free = self.screen().availableGeometry().height()
         if self.sizeHint().height() > free:  # never taller than the screen: the table scrolls instead (the owner)
             self.resize(self.sizeHint().width(), free)
+        saved = settings.value(CONFLICT_SIZE_KEY) if settings is not None else None
+        if isinstance(saved, QSize) and saved.isValid():  # the size the person gave it last, within the screen (the owner)
+            screen = self.screen().availableGeometry()
+            self.resize(min(saved.width(), screen.width()), min(saved.height(), free))
         self._ready()
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self._opened = self.size()
+
+    @override
+    def hideEvent(self, event: QHideEvent) -> None:
+        if self._settings is not None and self._opened is not None and self.size() != self._opened:  # the person gave it another size
+            self._settings.setValue(CONFLICT_SIZE_KEY, self.size())
+        super().hideEvent(event)
 
     def _field_choices(self, parent: QWidget) -> QWidget:
         """Every field of the item with Chrono Mail's and the server's value in words; a field that differs is outlined, with a choice per side
@@ -314,8 +379,11 @@ class ConflictDialog(QDialog):
         per_field = not conflict.whole and bool(conflict.fields) and conflict.local_allowed and conflict.server_allowed  # else a whole side
         shown = _rows(conflict)
         row = 0
-        for row, (key, label, ours_text, theirs_text, differs, keys) in enumerate(shown, start=1):
-            grid.addWidget(_plain(label, choices), row, 0)
+        self._grid: QGridLayout = grid
+        self._inner: QWidget = choices
+        for row, (key, label, ours_text, theirs_text, differs, keys, splits) in enumerate(shown, start=1):
+            title = _plain(label, choices)
+            grid.addWidget(title, row, 0)
             if not differs:  # the same on both sides, or taken by itself: its text in line with the text beside the circles (the owner)
                 grid.addWidget(_aligned(ours_text, choices), row, 1)
                 grid.addWidget(_aligned(theirs_text, choices), row, 2)
@@ -329,7 +397,22 @@ class ConflictDialog(QDialog):
             theirs.setEnabled(per_field)
             self.groups[key] = (ours, theirs)
             self.settles[key] = keys
-        covered = {each for *_, keys in shown for each in keys}  # a field with a row never gets a second, raw one (D-308)
+            if splits:  # a field that holds several values: both can be kept (B-31, the owner)
+                splitter = QToolButton(choices)
+                splitter.setIcon(split_icon())
+                frame = theirs.parentWidget()
+                outline = frame.sizeHint().height() if frame is not None else splitter.sizeHint().height()
+                splitter.setFixedSize(outline, outline)  # almost as tall as the row's outline (the owner)
+                splitter.setIconSize(QSize(outline - 2, outline - 2))
+                splitter.setAutoRaise(True)
+                splitter.setToolTip("Keep both")
+                splitter.setAccessibleName("Keep both")
+                splitter.setEnabled(per_field)
+                splitter.clicked.connect(lambda _=False, key=key: self._split(key))
+                grid.addWidget(splitter, row, 3)
+                self.splitters[key] = splitter
+                self._places[key] = (row, title, ours_text, theirs_text, None)
+        covered = {each for *_, keys, _ in shown for each in keys}  # a field with a row never gets a second, raw one (D-308)
         for field in conflict.fields:  # a clash without a field of its own above (mail, a collection, an item that cannot be read)
             if field.key in covered:
                 continue
@@ -349,45 +432,120 @@ class ConflictDialog(QDialog):
         grid.setColumnStretch(2, 1)
         area.setWidget(choices)
         area.setMaximumHeight(choices.sizeHint().height())  # every field in view: more height goes below the table
+        self._area: _FieldsArea = area
         return area
 
+    def _fit_area(self) -> None:
+        """After a split or a join: the table as tall as its rows again, where the window has room (as when it opened)."""
+        layout = self._inner.layout()
+        if layout is not None:
+            layout.activate()
+        self._area.setMaximumHeight(self._inner.sizeHint().height())
+        self._area.updateGeometry()
+
     def _toggled(self, button: QAbstractButton, checked: bool) -> None:
-        if checked and self.side in (KEEP, RETRY):  # a circle chosen after Retry sync or Keep here only: the fields decide again (the owner)
+        if checked and self.side in WHOLE_WAYS:  # a circle chosen after Retry sync, Keep here only or Keep both: the fields decide again (the owner)
             self.side = ""
         self._ready()
 
+    @staticmethod
+    def _clear(ours: QRadioButton, theirs: QRadioButton) -> None:
+        """Neither circle of a row on."""
+        group = ours.group()
+        if group is not None:
+            group.setExclusive(False)
+        ours.setChecked(False)
+        theirs.setChecked(False)
+        if group is not None:
+            group.setExclusive(True)
+
     def _all(self, side: str) -> None:
-        for ours, theirs in self.groups.values():
-            if side in (KEEP, RETRY):  # a whole way that chooses no field: no circle shows a side (the owner)
-                group = ours.group()
-                if group is not None:
-                    group.setExclusive(False)
-                ours.setChecked(False)
-                theirs.setChecked(False)
-                if group is not None:
-                    group.setExclusive(True)
-            else:
+        if side in WHOLE_WAYS:  # a whole way that chooses no field: every split joined again, no circle shows a side (the owner)
+            while self.split:
+                self._join(self.split[-1])
+        for key, (ours, theirs) in self.groups.items():
+            if side in WHOLE_WAYS:
+                self._clear(ours, theirs)
+            elif key not in self.split:  # a split row keeps both: the header chooses the rows that have circles
                 (ours if side == LOCAL else theirs).setChecked(True)
         self.side = side
         self._ready()
 
+    def _split(self, key: str) -> None:
+        """A row turned into two: the server's value and Chrono Mail's, each kept, without outline or circles (B-31, the owner)."""
+        if key in self.split or key not in self._places:
+            return
+        ours, theirs = self.groups[key]
+        row, title, ours_text, theirs_text, _ = self._places[key]
+        self._places[key] = (row, title, ours_text, theirs_text, ours if ours.isChecked() else theirs if theirs.isChecked() else None)
+        self._clear(ours, theirs)
+        grid, inner, spacing = self._grid, self._inner, max(self._grid.verticalSpacing(), 0)
+        frames = [circle.parentWidget() for circle in (ours, theirs)]
+        for widget in (title, *frames):
+            if widget is not None:
+                grid.removeWidget(widget)
+                widget.hide()
+        lines = (
+            _two(_line(title.text(), inner), _line(title.text(), inner), inner, spacing),
+            _two(_aligned(theirs_text, inner), _aligned(ours_text, inner), inner, spacing),  # the server's first, then Chrono Mail's
+            _two(_aligned(theirs_text, inner), _aligned(ours_text, inner), inner, spacing),
+        )
+        for column, widget in enumerate(lines):
+            grid.addWidget(widget, row, column)
+            widget.show()
+        self._joined[key] = lines
+        self.splitters[key].setEnabled(False)  # greyed: it is split (Undo joins it again)
+        self.split.append(key)
+        self._fit_area()
+        if self.side in WHOLE_WAYS:  # a split after Retry sync, Keep here only or Keep both: the fields decide again
+            self.side = ""
+        self._ready()
+
+    def _join(self, key: str) -> None:
+        """A split row back as one, with its outline and the circle it had."""
+        if key not in self.split:
+            return
+        self.split.remove(key)
+        grid = self._grid
+        for widget in self._joined.pop(key):
+            grid.removeWidget(widget)
+            widget.hide()
+            widget.deleteLater()
+        row, title, _, _, before = self._places[key]
+        ours, theirs = self.groups[key]
+        for column, widget in ((0, title), (1, ours.parentWidget()), (2, theirs.parentWidget())):
+            if widget is not None:
+                grid.addWidget(widget, row, column)
+                widget.show()
+        if before is not None:
+            before.setChecked(True)
+        self.splitters[key].setEnabled(True)
+        self._fit_area()
+        self._ready()
+
+    def _join_last(self) -> None:
+        if self.split:
+            self._join(self.split[-1])
+
     def _ready(self) -> None:
-        chosen = self.side in (KEEP, RETRY) or (all(ours.isChecked() or theirs.isChecked() for ours, theirs in self.groups.values()) if self.groups else bool(self.side))
-        mixed = any(ours.isChecked() for ours, _ in self.groups.values()) and any(theirs.isChecked() for _, theirs in self.groups.values())
+        open_rows = {key: pair for key, pair in self.groups.items() if key not in self.split}  # a split row is decided: both kept
+        whole_way = self.side in WHOLE_WAYS
+        chosen = whole_way or (all(ours.isChecked() or theirs.isChecked() for ours, theirs in open_rows.values()) if self.groups else bool(self.side))
+        mixed = bool(self.split) or (any(ours.isChecked() for ours, _ in open_rows.values()) and any(theirs.isChecked() for _, theirs in open_rows.values()))
         if mixed:
             self.side = ""
-        elif chosen and self.groups and self.side not in (KEEP, RETRY):  # the side is what the circles show, never held apart from them (the owner)
-            self.side = LOCAL if all(ours.isChecked() for ours, _ in self.groups.values()) else SERVER
+        elif chosen and open_rows and not whole_way:  # the side is what the circles show, never held apart from them (the owner)
+            self.side = LOCAL if all(ours.isChecked() for ours, _ in open_rows.values()) else SERVER
         self.apply_button.setEnabled(chosen and (bool(self.side) or mixed))
         whole = self.side in (LOCAL, SERVER) and not self.groups
-        every = self.side not in (KEEP, RETRY) and bool(self.groups)
-        self.all_local.setChecked((whole and self.side == LOCAL) or (every and all(ours.isChecked() for ours, _ in self.groups.values())))
-        self.all_server.setChecked((whole and self.side == SERVER) or (every and all(theirs.isChecked() for _, theirs in self.groups.values())))
+        every = not whole_way and bool(open_rows)
+        self.all_local.setChecked((whole and self.side == LOCAL) or (every and all(ours.isChecked() for ours, _ in open_rows.values())))
+        self.all_server.setChecked((whole and self.side == SERVER) or (every and all(theirs.isChecked() for _, theirs in open_rows.values())))
 
     def _apply(self) -> None:
         if not self.side:
-            self.choices = {each: (LOCAL if ours.isChecked() else SERVER) for key, (ours, _) in self.groups.items()
-                            for each in self.settles.get(key, (key,))}  # a pair: its side's entry kept, the other's left out
+            self.choices = {each: (KEEP_BOTH if key in self.split else LOCAL if ours.isChecked() else SERVER) for key, (ours, _) in self.groups.items()
+                            for each in self.settles.get(key, (key,))}  # a pair: its side's entry kept, the other's left out; split: both
         self.accept()
 
 
@@ -418,7 +576,7 @@ class SyncConflictsPanel(QWidget):
         for column in range(len(COLUMNS)):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive if column == NAME_COLUMN else QHeaderView.ResizeMode.Fixed)
         metrics = self.table.fontMetrics()
-        widths = {0: 28, 1: metrics.horizontalAdvance("Location, Starts") + 16, 2: metrics.horizontalAdvance("Message") + 16, 5: metrics.horizontalAdvance("Why") + 28}
+        widths = {0: 28, 1: metrics.horizontalAdvance("Location, Starts") + 16, 5: metrics.horizontalAdvance("Why") + 28}
         for column, width in widths.items():
             header.resizeSection(column, width)
         header.sectionResized.connect(self._name_dragged)
@@ -480,7 +638,15 @@ class SyncConflictsPanel(QWidget):
             item.setData(WHY_COLUMN, ROLE_KIND, kind)
             item.setToolTip(WHY_COLUMN, plain_tip(f"{WHY_WORDS[kind]}: {conflict.reason_text}"))  # the server's words: never markup
         self.table.blockSignals(False)
+        self._fit_what()
         self._buttons()
+
+    def _fit_what(self) -> None:
+        """What exactly as wide as its widest text, the header's included (the owner); Name and Where take what is left."""
+        items = (self.table.topLevelItem(number) for number in range(self.table.topLevelItemCount()))
+        texts = [item.text(WHAT_COLUMN) for item in items if item is not None]
+        widest = max([self.table.fontMetrics().horizontalAdvance(text) for text in texts] + [self.table.header().fontMetrics().horizontalAdvance(COLUMNS[WHAT_COLUMN])])
+        self.table.header().resizeSection(WHAT_COLUMN, widest + 16)
 
     def _saved_share(self) -> float:
         value = self._settings.value(SHARE_KEY, FIRST_SHARE) if self._settings is not None else FIRST_SHARE
@@ -584,7 +750,8 @@ class SyncConflictsPanel(QWidget):
         return True
 
     def _open_conflict(self, conflict: ConflictSummary) -> None:
-        dialog = ConflictDialog(conflict, self)
+        undo_key = shortcuts(self._settings).get("undo", UNDO_KEY) if self._settings is not None else UNDO_KEY  # the person's own Undo key
+        dialog = ConflictDialog(conflict, self, undo_key, self._settings)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if dialog.side:
                 self._settle([conflict.conflict], dialog.side)
@@ -594,7 +761,9 @@ class SyncConflictsPanel(QWidget):
 
     def _settle(self, conflicts: list[str], side: str) -> None:
         if conflicts:
-            sides: dict[str, Literal["local", "server", "keep", "retry"]] = {LOCAL: "local", SERVER: "server", KEEP: "keep", RETRY: "retry"}
+            sides: dict[str, Literal["local", "server", "keep", "retry", "both"]] = {
+                LOCAL: "local", SERVER: "server", KEEP: "keep", RETRY: "retry", KEEP_BOTH: "both",
+            }
             self._ask(SettleParameters(conflicts=tuple(conflicts), side=sides[side]))
 
     def _ask(self, parameters: SettleParameters) -> None:

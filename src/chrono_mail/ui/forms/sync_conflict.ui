@@ -96,7 +96,7 @@
     </spacer>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="sides" stretch="0,0,1,0">
+    <layout class="QHBoxLayout" name="sides" stretch="0,0,0,1,0">
      <item>
       <widget class="QPushButton" name="retrySync">
        <property name="text">
@@ -108,6 +108,13 @@
       <widget class="QPushButton" name="keepHereOnly">
        <property name="text">
         <string>Keep here only</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QPushButton" name="keepBoth">
+       <property name="text">
+        <string>Keep both</string>
        </property>
       </widget>
      </item>

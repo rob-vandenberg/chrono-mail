@@ -1,12 +1,16 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 from chrono_mail.pim.conflictwords import Words, duration_words, reminder_words, rows, rule_words, value_words
 from chrono_mail.pim.merge import SERVER, merge
+from chrono_mail.pim.times import in_local_zone
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_conflictwords.py 4.2.497"
+__version__ = "test_pim_conflictwords.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: a grouped line (item1.EMAIL) is shown and chosen as its field; reminders read the same in every time zone;
+#           a row that pairs two entries of a field that holds several values can be split into both (B-31, the owner); one entry written
+#           two ways on both sides cannot, nor a skipped date in another zone
 # v4.2.497: an occurrence's fields follow the person's keep or leave out; a member taken out on a side shows as going; a row has its choice exactly where merge finds a clash: an occurrence on one side only without an agreed version, never
 #           reminders in another order or a hidden reminder detail; Role and Anniversary are shown; one number of two kinds is two rows (the owner)
 #           a number too long to read is shown as written; every kind of an entry shown and paired; a skipped date the same on both sides
@@ -44,7 +48,8 @@ def test_a_duration_and_a_repeat_read_as_words() -> None:
 def test_reminders_read_as_when_and_how() -> None:
     text = "BEGIN:VALARM\nTRIGGER:-PT1H\nACTION:DISPLAY\nEND:VALARM\nBEGIN:VALARM\nTRIGGER;VALUE=DATE-TIME:19760401T005545Z\nACTION:NONE\nEND:VALARM"
     words = reminder_words(text, False, WORDS)
-    assert words.startswith("1 hour before the start, message on screen; On 01-04-1976") and words.endswith("no alert")
+    shown = when(in_local_zone(datetime(1976, 4, 1, 0, 55, 45, tzinfo=UTC)))  # the moment in this computer's zone: the same test in every zone
+    assert words.startswith(f"1 hour before the start, message on screen; On {shown}") and words.endswith("no alert")
     assert "PT1H" not in words and "19760401T" not in words
 
 
@@ -218,3 +223,41 @@ def test_the_fields_of_an_occurrence_the_person_keeps_or_leaves_out_are_taken_by
     theirs = event("SUMMARY:Weekly all", "DTSTART:20260101T100000", "RRULE:FREQ=WEEKLY", *occurrence[:-1], "SUMMARY:Moved again")
     found = rows(base, ours, theirs, WORDS)
     assert [row.taken for row in found if "(the occurrence of" in row.label and row.differs] == [""]  # its fate is the person's choice
+
+
+def test_a_row_of_a_field_with_several_values_and_a_value_on_each_side_can_be_split() -> None:  # B-31, the owner
+    base = card("EMAIL;TYPE=work:anna@old.example", "BDAY:19800412", "NICKNAME:Anna")
+    ours = card("EMAIL;TYPE=work:anna@here.example", "BDAY:19800413", "NICKNAME:Annie", "TEL;TYPE=cell:+31 6 1")
+    theirs = card("EMAIL;TYPE=work:anna@there.example", "BDAY:19810513", "NICKNAME:Ans")
+    found = {row.label: row for row in rows(base, ours, theirs, WORDS)}
+    assert found["E-mail"].split and found["Nickname"].split  # a pair: Chrono Mail's and the server's, both can stay
+    assert not found["Birthday"].split and found["Birthday"].choice  # one value only
+    assert not found["Phone"].split and found["Phone"].choice  # on one side only: nothing to keep twice
+    assert not found["Display name"].split  # the same on both sides
+
+
+def test_a_row_of_skipped_dates_on_both_sides_can_be_split() -> None:  # the owner: every visible field that holds several values
+    base = event("SUMMARY:Weekly", "RRULE:FREQ=WEEKLY", "DTSTART:20261102T100000Z")
+    (row,) = [row for row in rows(base, base.replace("END:VEVENT", "EXDATE:20261109T100000Z\r\nEND:VEVENT"),
+                                  base.replace("END:VEVENT", "EXDATE:20261116T100000Z\r\nEND:VEVENT"), WORDS) if row.differs]
+    assert row.label == "Skipped date" and row.split and len(row.keys) == 2  # a pair, both can stay
+
+
+def test_one_entry_written_two_ways_on_both_sides_is_no_split() -> None:  # one entry: nothing to keep twice (review)
+    base = card("EMAIL:ann@example.com", "BDAY:19800412")
+    found = {row.label: row for row in rows(base, card("EMAIL:Ann@Example.com", "BDAY:19800413"), card("EMAIL;PREF=1:ann@example.com", "BDAY:19800414"), WORDS)}
+    assert found["E-mail"].choice and not found["E-mail"].split
+
+
+def test_a_skipped_date_in_another_zone_is_no_split() -> None:  # D-308: the same moment written another valid way
+    base = event("SUMMARY:Weekly", "DTSTART;TZID=Europe/Amsterdam:20261102T110000", "RRULE:FREQ=WEEKLY")
+    found = rows(base, base.replace("SUMMARY:Weekly", "SUMMARY:Ours").replace("END:VEVENT", "EXDATE;TZID=Europe/Amsterdam:20261109T110000\r\nEND:VEVENT"),
+                 base.replace("SUMMARY:Weekly", "SUMMARY:Theirs").replace("END:VEVENT", "EXDATE:20261109T100000Z\r\nEND:VEVENT"), WORDS)
+    assert [row.label for row in found if row.split] == [] and [row.label for row in found if row.differs] == ["Title"]
+
+
+def test_a_grouped_line_is_shown_and_chosen_as_its_field() -> None:  # Apple writes item1.EMAIL
+    base, ours, theirs = (card(f"item1.EMAIL;type=INTERNET;type=WORK:{address}", "item1.X-ABLabel:Office")
+                          for address in ("anna@old.example", "anna@here.example", "anna@there.example"))
+    found = [row for row in rows(base, ours, theirs, WORDS) if row.label == "E-mail"]
+    assert len(found) == 1 and found[0].choice and found[0].local == "anna@here.example (work)" and found[0].server == "anna@there.example (work)"

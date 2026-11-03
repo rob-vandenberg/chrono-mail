@@ -1,9 +1,16 @@
-from chrono_mail.pim.merge import LOCAL, SERVER, merge
+from chrono_mail.pim.merge import BOTH, LOCAL, SERVER, copied, merge, reading
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_pim_merge.py 4.2.497"
+__version__ = "test_pim_merge.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: a grouped line (item1.EMAIL) is its field: changed on both sides it clashes, chosen here it keeps its group, reading sees it;
+#           reading leaves out an attendee line for the organizer, which a server adds (Kerio); a grouped label stays tied to its entry,
+#           also through Use Chrono Mail, Keep both and a server renumbering the groups; grouped lines not changed stay as written;
+#           an entry the server moved into a group that grew here stays there;
+#           Keep both: an entry of a field that holds several values chosen both keeps each side's entry, a field of one value never, one
+#           entry written two ways on both sides never twice; a skipped date in another zone is the same date, also in a series; a
+#           copy has a uid of its own in every part and its attendees and organizer are scheduled by the client (B-30, B-31, the owner)
 # v4.2.497: a group member taken out on one side stays out when the other only rewrote it; changed on both sides counts for the whole item with its occurrences; an occurrence on one side only is a choice without an
 #           agreed version, and when both sides changed; an attendee's answer, a hidden reminder detail and another way of writing the same
 #           never clash; capitals in a value and "\;" in a company count; Role and Anniversary clash; one number of two kinds stays twice;
@@ -372,3 +379,176 @@ def test_a_member_taken_out_on_one_side_stays_out_when_the_other_only_rewrote_it
     for local, server in ((rewritten, card.format("")), (card.format(""), rewritten)):
         merged = merge(base, local, server)
         assert merged.clashes == () and "urn:uuid:a1" not in (merged.text or "").lower()  # out, in both directions
+
+
+def contact(*body: str) -> str:
+    return "\r\n".join(["BEGIN:VCARD", "VERSION:3.0", "UID:c1", "FN:Anna", *body, "END:VCARD"]) + "\r\n"
+
+
+def test_both_keeps_the_entry_of_each_side_of_a_field_that_holds_several_values() -> None:  # B-31, the owner
+    base = contact("EMAIL;TYPE=work:anna@old.example", "BDAY:19800412")
+    ours = contact("EMAIL;TYPE=work:anna@here.example", "BDAY:19800412")
+    theirs = contact("EMAIL;TYPE=work:anna@there.example", "BDAY:19800412")
+    keys = [clash.key for clash in merge(base, ours, theirs).clashes]
+    assert len(keys) == 2 and all(key.startswith("EMAIL") for key in keys)
+    merged = merge(base, ours, theirs, {key: BOTH for key in keys})
+    assert merged.text is not None and "anna@here.example" in merged.text and "anna@there.example" in merged.text and "anna@old" not in merged.text
+
+
+def test_both_chooses_nothing_of_a_field_of_one_value() -> None:  # a person has one birthday (the owner)
+    base, ours, theirs = contact("BDAY:19800412"), contact("BDAY:19800413"), contact("BDAY:19810513")
+    merged = merge(base, ours, theirs, {"BDAY": BOTH})
+    assert merged.text is None and [clash.key for clash in merged.clashes] == ["BDAY"]
+
+
+def test_a_copy_has_a_uid_of_its_own_and_sends_no_invitations() -> None:  # B-30, the owner: the attendees were invited with the original
+    series = calendar(
+        "SUMMARY:Weekly", "RRULE:FREQ=WEEKLY", "ORGANIZER;CN=Ann:mailto:ann@example.com",
+        "ATTENDEE;CN=Bob;SCHEDULE-AGENT=SERVER;PARTSTAT=ACCEPTED:mailto:bob@example.com", "BEGIN:VALARM", "ACTION:EMAIL",
+        "ATTENDEE:mailto:ann@example.com", "END:VALARM",
+        extra=("BEGIN:VEVENT", "UID:u1", "RECURRENCE-ID:20261028T090000Z", "SUMMARY:Moved", "END:VEVENT"),
+    )
+    written = copied(series, "copy@chrono-mail")
+    text = (written or "").replace("\r\n ", "")  # long lines unfolded
+    assert written is not None and "UID:u1" not in text and text.count("UID:copy@chrono-mail") == 2  # the series and its changed occurrence
+    assert "ORGANIZER;CN=Ann;SCHEDULE-AGENT=CLIENT:mailto:ann@example.com" in text
+    assert "ATTENDEE;CN=Bob;PARTSTAT=ACCEPTED;SCHEDULE-AGENT=CLIENT:mailto:bob@example.com" in text and "SCHEDULE-AGENT=SERVER" not in text
+    assert "ATTENDEE:mailto:ann@example.com" in text  # a reminder's e-mail address is no invitation: as written
+    assert "RRULE:FREQ=WEEKLY" in text and "SUMMARY:Moved" in text and "DTSTAMP:20261020T100000Z" in text
+    card = copied(contact("NOTE:Call back"), "urn:uuid:5f0c")
+    assert card is not None and "UID:urn:uuid:5f0c" in card and "UID:c1" not in card and "NOTE:Call back" in card
+    assert copied("not a calendar", "x") is None
+
+
+def test_both_keeps_the_skipped_dates_of_each_side() -> None:  # the owner: every visible field that holds several values
+    base = calendar("SUMMARY:Weekly", "RRULE:FREQ=WEEKLY", "DTSTART:20261102T100000Z")
+    ours = calendar("SUMMARY:Weekly", "RRULE:FREQ=WEEKLY", "DTSTART:20261102T100000Z", "EXDATE:20261109T100000Z")
+    theirs = calendar("SUMMARY:Weekly", "RRULE:FREQ=WEEKLY", "DTSTART:20261102T100000Z", "EXDATE:20261116T100000Z")
+    keys = [clash.key for clash in merge(base, ours, theirs).clashes]
+    assert len(keys) == 2 and all(key.startswith("EXDATE") for key in keys)
+    merged = merge(base, ours, theirs, {key: BOTH for key in keys})
+    assert merged.text is not None and "EXDATE:20261109T100000Z,20261116T100000Z" in merged.text  # both skipped, on one line
+
+
+def test_both_on_one_entry_written_two_ways_keeps_it_once_and_stays_a_choice() -> None:  # one entry: nothing to keep twice (review)
+    for before, ours, theirs in (
+        ("ATTENDEE:mailto:bob@example.com", "ATTENDEE;ROLE=OPT-PARTICIPANT:mailto:bob@example.com", "ATTENDEE;ROLE=CHAIR:mailto:bob@example.com"),
+        ("ATTENDEE:mailto:ann@example.com", "ATTENDEE:mailto:Ann@Example.com", "ATTENDEE;RSVP=TRUE:mailto:ann@Example.com"),
+    ):
+        base = calendar("SUMMARY:Meeting", before)
+        keys = [clash.key for clash in merge(base, calendar("SUMMARY:Ours", ours), calendar("SUMMARY:Theirs", theirs)).clashes if clash.key.startswith("ATTENDEE")]
+        assert len(keys) == 1  # the same entry on both sides: one choice
+        again = merge(base, calendar("SUMMARY:Ours", ours), calendar("SUMMARY:Theirs", theirs), {keys[0]: BOTH, "SUMMARY": LOCAL})
+        assert again.text is None and [clash.key for clash in again.clashes] == keys  # never written twice: still the person's choice
+
+
+def test_a_skipped_date_in_another_zone_is_the_same_date_also_in_a_series() -> None:  # D-308: written another valid way reads the same
+    def weekly(*body: str) -> str:
+        return calendar("DTSTART;TZID=Europe/Amsterdam:20261102T110000", "RRULE:FREQ=WEEKLY", *body)
+
+    base = weekly("SUMMARY:Weekly")
+    ours, theirs = weekly("SUMMARY:Ours", "EXDATE;TZID=Europe/Amsterdam:20261109T110000"), weekly("SUMMARY:Theirs", "EXDATE:20261109T100000Z")
+    assert [clash.key for clash in merge(base, ours, theirs).clashes] == ["SUMMARY"]  # one date, the same on both sides: nothing to choose
+    merged = merge(base, ours, theirs, {"SUMMARY": LOCAL})
+    assert merged.text is not None and merged.text.count("EXDATE") == 1 and "EXDATE:20261109T100000Z" in merged.text  # once, as the server wrote it
+
+
+def test_a_grouped_line_is_its_field_and_keeps_its_group() -> None:  # Apple writes item1.EMAIL with item1.X-ABLabel
+    def grouped(address: str) -> str:
+        return contact(f"item1.EMAIL;type=INTERNET:{address}", "item1.X-ABLabel:_$!<Other>!$_")
+
+    base, ours, theirs = grouped("anna@old.example"), grouped("anna@here.example"), grouped("anna@there.example")
+    keys = [clash.key for clash in merge(base, ours, theirs).clashes]
+    assert keys and all(key.startswith("EMAIL") for key in keys)  # never silently the server's
+    merged = merge(base, ours, theirs, {key: LOCAL for key in keys})
+    assert merged.text is not None and "item1.EMAIL;type=INTERNET:anna@here.example" in merged.text and "anna@there" not in merged.text
+    assert "item1.X-ABLabel:_$!<Other>!$_" in merged.text
+    assert reading(ours) != reading(base) and reading(base) == reading(grouped("anna@old.example"))
+
+
+def test_reading_leaves_out_an_attendee_line_for_the_organizer() -> None:  # Kerio adds one to a copied appointment (ROLE=CHAIR)
+    def meeting(*people: str) -> str:
+        return calendar("SUMMARY:Meeting", "ORGANIZER;CN=Ann;SCHEDULE-AGENT=CLIENT:mailto:ann@example.com", *people)
+
+    bob = "ATTENDEE;CN=Bob;SCHEDULE-AGENT=CLIENT:mailto:bob@example.com"
+    written = meeting(bob)
+    assert reading(meeting(bob, "ATTENDEE;CN=Ann;ROLE=CHAIR;PARTSTAT=ACCEPTED:MAILTO:Ann@Example.com")) == reading(written)
+    assert reading(meeting(bob, "ATTENDEE;CN=Cas:mailto:cas@example.com")) != reading(written)  # another attendee is a change
+    assert reading(meeting()) != reading(written)  # and one taken out too
+
+
+def test_a_grouped_label_stays_tied_to_its_entry() -> None:  # Apple's item1.X-ABLabel belongs to item1.EMAIL (review)
+    base = contact("item1.EMAIL:a@x.example", "item1.X-ABLabel:Work")
+    ours = contact("item1.EMAIL:a@x.example", "item1.X-ABLabel:Work", "item2.EMAIL:b@x.example", "item2.X-ABLabel:Home")
+    theirs = contact("item1.EMAIL:a@x.example", "item1.X-ABLabel:Private")
+    merged = merge(base, ours, theirs, {clash.key: LOCAL for clash in merge(base, ours, theirs).clashes if clash.key.startswith("EMAIL")})
+    text = merged.text or ""
+    assert "item1.X-ABLabel:Private" in text and "item1.X-ABLabel:Work" not in text and "item2.X-ABLabel:Home" in text  # one label each
+    both = contact("item1.EMAIL:a@x.example", "item1.X-ABLabel:Work", "item2.EMAIL:c@x.example", "item2.X-ABLabel:Home")
+    assert any(clash.key.startswith("EMAIL") for clash in merge(base, ours, both).clashes)  # a different address added on each side
+
+
+def groups_of(text: str) -> dict[str, tuple[str, str]]:
+    """A card's grouped e-mail addresses: address -> (its group, its label)."""
+    lines = text.replace("\r\n ", "").split("\r\n")
+    labels = {line.split(".", 1)[0].lower(): line.split(":", 1)[1] for line in lines if ".X-ABLabel:" in line}
+    return {line.split(":", 1)[1]: (line.split(".", 1)[0].lower(), labels.get(line.split(".", 1)[0].lower(), "")) for line in lines if ".EMAIL" in line}
+
+
+def test_a_label_goes_with_its_address_whatever_group_each_side_gives_it() -> None:  # Apple's item2.X-ABLabel (review)
+    def card(*entries: tuple[str, str, str]) -> str:
+        return contact(*(line for group, address, label in entries for line in (f"{group}.EMAIL:{address}", f"{group}.X-ABLabel:{label}")))
+
+    base = card(("item1", "a@x.example", "Home"), ("item2", "b@x.example", "Work"))
+    ours = card(("item1", "a@x.example", "Home"), ("item2", "b2@x.example", "Work"))  # here: b changed
+    theirs = card(("item1", "a@x.example", "Home"), ("item2", "c@x.example", "Other"))  # there: b taken out, c put in, in item2 too
+    keys = [clash.key for clash in merge(base, ours, theirs).clashes]
+    kept = groups_of(merge(base, ours, theirs, {key: LOCAL for key in keys}).text or "")
+    assert kept == {"a@x.example": ("item1", "Home"), "b2@x.example": ("item2", "Work")}  # never Work lost, never Other on b2
+    both = groups_of(merge(base, ours, theirs, {key: BOTH for key in keys}).text or "")
+    assert both["b2@x.example"][1] == "Work" and both["c@x.example"][1] == "Other" and both["b2@x.example"][0] != both["c@x.example"][0]
+    new_here = card(("item1", "a@x.example", "Home"), ("item2", "b@x.example", "Work"), ("item3", "d@x.example", "Mobile"))
+    new_there = card(("item1", "a@x.example", "Home"), ("item2", "b@x.example", "Work"), ("item3", "e@x.example", "School"))
+    added = groups_of(merge(base, new_here, new_there, {key: BOTH for key in (c.key for c in merge(base, new_here, new_there).clashes)}).text or "")
+    assert added["d@x.example"][1] == "Mobile" and added["e@x.example"][1] == "School" and added["d@x.example"][0] != added["e@x.example"][0]
+
+
+def test_a_label_changed_here_survives_the_server_renumbering_its_group() -> None:  # the server took out item1, b became item1
+    base = contact("item1.EMAIL:a@x.example", "item1.X-ABLabel:Home", "item2.EMAIL:b@x.example", "item2.X-ABLabel:Work")
+    ours = contact("item1.EMAIL:a@x.example", "item1.X-ABLabel:Home", "item2.EMAIL:b@x.example", "item2.X-ABLabel:Office")
+    theirs = contact("item1.EMAIL:b@x.example", "item1.X-ABLabel:Work")
+    merged = merge(base, ours, theirs, {clash.key: SERVER for clash in merge(base, ours, theirs).clashes})
+    assert merged.text is not None and groups_of(merged.text) == {"b@x.example": ("item1", "Office")}  # the change here kept, in b's group
+
+
+def test_grouped_lines_that_did_not_change_stay_exactly_as_written() -> None:  # a group may hold several entries; its capitals stay (review)
+    grouped = ("ITEM1.EMAIL:a@x.example", "item1.TEL:123", "ITEM1.X-ABLabel:Work", "item2.EMAIL:b@x.example", "item2.X-ABLabel:Home",
+               "Item3.URL:https://x.example", "Item3.X-ABLabel:Site", "item4.X-ABDATE:2020-01-01", "item4.X-ABLabel:_$!<Anniversary>!$_")
+    base = theirs = contact(*grouped)
+    ours = contact(*grouped, "NOTE:hi")
+    merged = merge(base, ours, theirs)
+    assert merged.text is not None and "NOTE:hi" in merged.text
+    assert all(line in merged.text.split("\r\n") for line in grouped)  # byte for byte: no item2.TEL, no item1.X-ABLabel
+    assert not any(line.lower().startswith("item5") for line in merged.text.split("\r\n"))
+
+
+def test_a_group_with_two_entries_of_one_side_keeps_them_together() -> None:  # review: never item2.TEL
+    lines = ("item1.EMAIL:a@x.example", "item1.TEL:123", "item1.X-ABLabel:Work")
+    merged = merge(contact(*lines), contact(*lines, "NOTE:hi"), contact(*lines))
+    assert merged.text is not None and all(line in merged.text.split("\r\n") for line in lines)
+
+
+def test_a_label_keeps_the_capitals_of_its_group() -> None:  # review: ITEM1.X-ABLabel never becomes item1.X-ABLabel
+    lines = ("ITEM1.EMAIL:a@x.example", "ITEM1.X-ABLabel:Work")
+    merged = merge(contact(*lines), contact(*lines, "NOTE:hi"), contact(*lines))
+    assert merged.text is not None and "ITEM1.X-ABLabel:Work" in merged.text.split("\r\n")
+
+
+def test_an_entry_the_server_moved_into_a_group_that_grew_here_stays_there() -> None:  # review: never item3 without its label
+    base = contact("item1.EMAIL:a@x.example", "item1.X-ABLabel:Work", "item2.EMAIL:b@x.example", "item2.X-ABLabel:Home")
+    ours = contact("item1.EMAIL:a@x.example", "item1.X-ABLabel:Work", "item1.TEL:9", "item2.EMAIL:b@x.example", "item2.X-ABLabel:Home")
+    theirs = contact("item1.EMAIL:a@x.example", "item1.X-ABLabel:Work", "item1.EMAIL:b@x.example")  # b moved into a's group
+    merged = merge(base, ours, theirs)
+    lines = (merged.text or "").split("\r\n")
+    assert merged.text is not None and {"item1.EMAIL:a@x.example", "item1.EMAIL:b@x.example", "item1.TEL:9", "item1.X-ABLabel:Work"} <= set(lines)
+    assert not any(line.lower().startswith(("item2", "item3")) for line in lines)  # the server's move kept, b in a's group

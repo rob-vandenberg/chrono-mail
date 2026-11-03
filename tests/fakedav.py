@@ -8,6 +8,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import TracebackType
+from collections.abc import Callable
 from typing import Self, override
 from xml.sax.saxutils import escape
 
@@ -17,9 +18,11 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakedav.py 1.10.278"
+__version__ = "fakedav.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: like Kerio, a contact's PUT may ignore If-Match (no_contact_match); a new item may be stored the server's own way, after
+#           answering with the version of what was sent (rewrite)
 # v1.10.278: like Kerio, a GET of an existing contact answers 404 (the multiget gives it); GET that fails for now (503)
 # v1.1.236: a server that keeps no colour keeps none of a new calendar either
 # v1.1.235: DELETE of a whole collection; like Kerio, a MKCOL that says yes and makes nothing, and an empty answer for an unknown address
@@ -76,6 +79,9 @@ class FakeDav:
         self.empty_for_unknown: bool = False  # a PROPFIND of an unknown address answers an empty 207 (Kerio) instead of 404
         self.no_contact_by_get: bool = False  # a GET of an existing contact answers 404, the multiget gives it (Kerio, checked 2026-10-22)
         self.gets_failing: bool = False  # GET answers 503 (busy for now)
+        self.rewrite: Callable[[str], str] | None = None  # a new item (If-None-Match: *) stored as this gives it, under a newer version than
+        # the one the PUT answers (Kerio adds its own parameters, lines and reminders, and X-SENT once it sent an invitation)
+        self.no_contact_match: bool = False  # a contact's PUT ignores If-Match: an old version is written over (Kerio, measured 2026-11-03)
         self.collections: dict[str, Collection] = {
             "events": Collection("Calendar", "calendar", "VEVENT", "#336699FF"), "tasks": Collection("Tasks", "calendar", "VTODO"),
             "contacts": Collection("Contacts", "addressbook"), "inbox": Collection("INBOX", "folder", "VEVENT"),
@@ -449,10 +455,13 @@ class FakeDav:
                     self.respond(handler, 412)
                     return
                 match = handler.headers.get("If-Match")
-                if match is not None and (existing is None or f'"{existing[0]}"' != match):
+                ignored = self.no_contact_match and collection.kind == "addressbook"
+                if match is not None and not ignored and (existing is None or f'"{existing[0]}"' != match):
                     self.respond(handler, 412)
                     return
                 etag = self.add(key, name, body)
+                if self.rewrite is not None and existing is None:
+                    self.add(key, name, self.rewrite(body))  # stored its own way: the answer below still names what was sent
                 self.respond(handler, 201 if existing is None else 204, "", {"ETag": f'"{etag}"'} if self.etag_on_put else {})
                 return
         self.respond(handler, 404)

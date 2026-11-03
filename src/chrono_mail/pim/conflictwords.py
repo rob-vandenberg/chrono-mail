@@ -3,17 +3,35 @@
 enters or sees (merge.VISIBLE). Never raises: a value that cannot be read is shown as it is written."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 
 from chrono_mail.core.words import counted, digits
-from chrono_mail.pim.merge import ALARMS, LOCAL, MONTHS, SEPARATOR, SERVER, choice_key, copy_of, jar, merge, number, repeats, same, units_together, visible
+from chrono_mail.pim.merge import (
+    ALARMS,
+    LOCAL,
+    MONTHS,
+    MULTIPLE,
+    SEPARATOR,
+    SERVER,
+    choice_key,
+    copy_of,
+    jar,
+    merge,
+    number,
+    repeats,
+    same,
+    units_together,
+    visible,
+)
 from chrono_mail.pim.times import in_local_zone, zone_named
 
 # --- Version ------------------------------------------------------------
-__version__ = "conflictwords.py 4.2.497"
+__version__ = "conflictwords.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: a row that pairs two entries of a field that holds several values can be split: both kept (Row.split, B-31, the owner);
+#           the fields whose entries pair up are merge.MULTIPLE, the one list of them
 # v4.2.497: a field of an occurrence the person keeps or leaves out is taken by nothing; a jar's entry taken out on a side shows as going, as merge does; a row differs and has its choice exactly as merge reads the item (one notion of a difference): a photo, an attendee's answer,
 #           reminders in another order, the same moment in another zone; an occurrence on one side only without an agreed version is a
 #           choice; Role and Anniversary are shown; a comma list's value is a line of its own (the owner); another zone differs in an item
@@ -52,7 +70,7 @@ TASK_STATES: dict[str, str] = {"NEEDS-ACTION": "To do", "IN-PROCESS": "In progre
 EVENT_STATES: dict[str, str] = {"CONFIRMED": "Confirmed", "TENTATIVE": "Tentative", "CANCELLED": "Cancelled"}
 TYPES_LEFT_OUT: frozenset[str] = frozenset({"PREF", "INTERNET", "VOICE", "X400"})
 MOMENTS: frozenset[str] = frozenset({"DTSTART", "DTEND", "DUE", "EXDATE", "RDATE"})  # a moment, whose zone tells it apart
-PAIRED: frozenset[str] = frozenset({"NICKNAME", "EMAIL", "TEL", "URL", "ADR", "ATTENDEE"})  # lists whose entries pair up (D-308)
+PAIRED: frozenset[str] = MULTIPLE  # lists whose entries pair up (D-308), and whose rows can be split (B-31)
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +85,8 @@ class Words:
 class Row:
     """One field of the item: what a choice names, its label, both values in words, whether they differ, for a difference that is no clash
     the side that is taken by itself (LOCAL or SERVER; "" when it clashes or is the same), every entry its choice settles (two for a pair), and
-    whether the person chooses it (a difference that is no choice is taken by itself: a jar's entry, a field of an occurrence on one side only)."""
+    whether the person chooses it (a difference that is no choice is taken by itself: a jar's entry, a field of an occurrence on one side only),
+    and whether its choice can keep both (a field that holds several values, with a value on each side: Keep both, B-31)."""
 
     key: str
     label: str
@@ -77,6 +96,7 @@ class Row:
     taken: str
     keys: tuple[str, ...]
     choice: bool
+    split: bool = False
 
 
 def _structured(value: str) -> list[str]:
@@ -345,7 +365,7 @@ def _told_apart(name: str, local: str | None, server: str | None, row: Row) -> R
             mine, yours = f"{row.local} ({local_value.strip()})", f"{row.server} ({server_value.strip()})"
         elif mine == yours:  # only spaces differ: the values in quotes, so the person sees them
             mine, yours = f'{row.local} ("{local_value}")', f'{row.server} ("{server_value}")'
-    return Row(row.key, row.label, mine, yours, row.differs, row.taken, row.keys, row.choice) if mine != yours else row
+    return replace(row, local=mine, server=yours) if mine != yours else row
 
 
 def _zone_words(value: str, parameters: dict[str, str]) -> str:
@@ -425,6 +445,8 @@ def rows(base: str | None, local: str, server: str, words: Words) -> list[Row]:
             entries.append((Row(chosen, label + suffix, mine, yours, differs, taken, (chosen,), choice), side if choice else "", name,
                             _kind(name, ours.get(key) or theirs[key])))
         for row in _paired(entries):  # a choice that reads the same on both sides gets what differs (D-308)
+            name = written[row.keys[0]][0] if row.keys[0] in written else ""
+            row = replace(row, split=row.choice and name in MULTIPLE and len(row.keys) > 1)  # a pair: two entries to keep (B-31); one entry never
             same_words = row.choice and row.local == row.server and row.keys[0] in written and row.keys[-1] in written
             found.append(_told_apart(written[row.keys[0]][0], written[row.keys[0]][1], written[row.keys[-1]][2], row) if same_words else row)
     return found

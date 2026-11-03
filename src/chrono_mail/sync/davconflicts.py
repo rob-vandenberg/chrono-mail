@@ -13,9 +13,12 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "davconflicts.py 4.2.496"
+__version__ = "davconflicts.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: a conflict kept as two (Keep both, B-30) keeps where its Keep both is (the copy's id here and uid, whether the original is being
+#           given the server's version, and from which text) from the first try on, also when it is recorded again; a Keep both not finished is
+#           never forgotten by itself (AGENTS.md 4.1.4); whether its copy was made and told (copy_made), else it goes with another choice
 # v4.2.496: a damaged agreed version is no agreed version (every difference the person's choice), never an error that stops the sync or the
 #           Sync conflicts list
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
@@ -44,6 +47,9 @@ COLLECTION_REASONS: frozenset[str] = frozenset({COLLECTION_DELETED_ON_SERVER, CO
 COLLECTION_LOOK_CLASH: str = "collection_look_clash"  # a collection's name or colour changed here and on the server (D-192)
 COLLECTION_LOOK_REFUSED: str = "collection_look_refused"  # a collection's name changed here that the server refused for good (D-192)
 LOOK_REASONS: frozenset[str] = frozenset({COLLECTION_LOOK_CLASH, COLLECTION_LOOK_REFUSED})
+COPY_FIELDS: tuple[str, ...] = ("copy", "copy_uid", "copy_stage", "copy_source", "copy_written", "copy_taken", "copy_pending", "copy_made")  # where a Keep both is
+MADE: str = "made"  # SyncConflict.copy_made: the copy of Keep both is done and the person was told
+TAKING: str = "taking"  # SyncConflict.copy_stage: the copy of Keep both is done, the original takes the server's version
 REASONS: frozenset[str] = frozenset({CLASH, REFUSED, DELETED_ON_SERVER, CHANGED_ON_SERVER, DELETE_REFUSED}) | COLLECTION_REASONS | LOOK_REASONS
 
 
@@ -66,6 +72,16 @@ class SyncConflict:
     whole: bool  # no agreed version was known: only a whole side can be chosen
     when: float
     tie: tuple[tuple[str, str], ...] = ()  # a collection's conflict: the tie to the server it had (its server values), for making it there again
+    copy: str = ""  # Keep both under way (B-30): the id here of Chrono Mail's version as an item of its own, and its uid
+    copy_uid: str = ""
+    copy_stage: str = ""  # TAKING: the copy and its groups are done, the original is being given the server's version
+    copy_source: str = ""  # the digest of the original's text the copy was last written from
+    copy_written: str = ""  # the digest of the copy as Keep both last wrote it (two, comma between, while a write is under way): changed since,
+    # the copy is the person's and never overwritten
+    copy_taken: str = ""  # with TAKING: the digest of the server's version the original is given
+    copy_pending: str = ""  # while the copy is being written: the digest of the original's text it is written from
+    copy_made: str = ""  # MADE: Keep both made the copy and told the person so (the original changed meanwhile and stays open): the copy is
+    # theirs; else a Keep both that was interrupted, whose copy goes when the conflict is settled another way
 
 
 def base_name(collection: str, item: str) -> str:
@@ -106,6 +122,7 @@ def load_conflicts(store: PimStore) -> list[SyncConflict]:
                 str(entry["id"]), str(entry["collection"]), str(entry["href"]), str(entry["item"]), str(entry["kind"]), str(entry["reason"]),
                 str(entry["name"]), str(entry["detail"]), str(entry["server_etag"]), str(entry["server_text"]), clashes, bool(entry["whole"]),
                 float(entry["when"]), tuple((str(pair[0]), str(pair[1])) for pair in entry.get("tie", [])),
+                **{name: str(entry.get(name, "")) for name in COPY_FIELDS},  # by name: never one read into another
             ))
         return found
     except (ValueError, KeyError, TypeError, IndexError) as error:
@@ -122,7 +139,9 @@ def save_conflicts(store: PimStore, conflicts: list[SyncConflict]) -> None:
                 "id": item.conflict_id, "collection": item.collection, "href": item.href, "item": item.item, "kind": item.kind, "reason": item.reason,
                 "name": item.name, "detail": item.detail, "server_etag": item.server_etag, "server_text": item.server_text,
                 "clashes": [[c.key, c.label, c.local, c.server] for c in item.clashes], "whole": item.whole, "when": item.when,
-                "tie": [list(pair) for pair in item.tie],
+                "tie": [list(pair) for pair in item.tie], "copy": item.copy, "copy_uid": item.copy_uid, "copy_stage": item.copy_stage,
+                "copy_source": item.copy_source, "copy_taken": item.copy_taken, "copy_written": item.copy_written, "copy_pending": item.copy_pending,
+                "copy_made": item.copy_made,
             }
             for item in conflicts[-MAXIMUM_CONFLICTS:]
         ]
@@ -137,18 +156,29 @@ def open_conflict(store: PimStore, collection: str, href: str = "", item: str = 
     )
 
 
-def record(store: PimStore, conflict: SyncConflict) -> SyncConflict:
-    """Keep a conflict: one that is already open for the same item is updated (it keeps its id), never doubled. Returns what was kept."""
+def record(store: PimStore, conflict: SyncConflict, carried: bool = True) -> SyncConflict:
+    """Keep a conflict: one that is already open for the same item is updated (it keeps its id, and a Keep both under way), never doubled.
+    Returns what was kept."""
     conflicts = load_conflicts(store)
     for number, known in enumerate(conflicts):
         if known.collection == conflict.collection and known.href == conflict.href:
             kept = replace(conflict, conflict_id=known.conflict_id)
+            if carried and known.copy_uid and not conflict.copy_uid:  # recorded again (a synchronisation, a change here): its Keep both goes on
+                kept = replace(kept, copy=known.copy, copy_uid=known.copy_uid, copy_stage=known.copy_stage, copy_source=known.copy_source,
+                               copy_taken=known.copy_taken, copy_written=known.copy_written, copy_pending=known.copy_pending,
+                               copy_made=known.copy_made)
             conflicts[number] = kept
             save_conflicts(store, conflicts)
             return kept
     conflicts.append(conflict)
     save_conflicts(store, conflicts)
     return conflict
+
+
+def unfinished(conflict: SyncConflict) -> bool:
+    """Whether a Keep both of this conflict began and its copy or groups may not be done: never forgotten by itself, only the person's next
+    choice settles it (AGENTS.md 4.1.4)."""
+    return bool(conflict.copy_uid) and conflict.copy_stage != TAKING
 
 
 def forget(store: PimStore, conflict_id: str) -> None:

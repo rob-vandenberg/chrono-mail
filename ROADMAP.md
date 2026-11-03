@@ -304,3 +304,5 @@ The inventory, the order and the progress are in `REFACTOR.md` (not repeated her
 - DONE (1.1.204) Settings > Sidebar: a tick for each standard folder of Local Folders that exists, Snoozed, Archive and Scheduled included (D-173).
 - DONE (4.2.453) A rule follows the folder it moves mail to: renamed or moved, the rule takes the new name; deleted, the rule is switched off; a rule another account shares the folder with is split into "<name> (Copy n)"; the status line says what each rule did (D-302).
 - DONE (4.2.454) Rename folder opens 360 pixels wide on the owner's screen (the owner).
+- DONE (4.3.498) Sync conflicts: Keep both keeps an item changed on both sides as two, and a row's split keeps both entries of a field of several values (B-30, B-31, D-309).
+- OPEN The Sync conflicts list window: columns What, Name, Fields, Where, Why; four can be dragged, the checkbox and Why fixed; checkboxes centred; dragged widths remembered (the owner, 2026-11-03).

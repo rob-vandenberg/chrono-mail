@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Any  # tomllib returns untyped dictionaries
 
 # --- Version ------------------------------------------------------------
-__version__ = "account.py 2.0.283"
+__version__ = "account.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: a file may name another for its password (password_from): the invitee of the invitation test (INVITEE_FILE)
 # v2.0.283: the login files are read from outside the project folder (SETTINGS_DIRECTORY, D-230)
 # v0.5.123: A second account file (the Kerio server); an accepted certificate; the server names of Sent, Drafts and Trash
 # v0.0.28: IMAP ports
@@ -18,6 +19,7 @@ SETTINGS_DIRECTORY: Path = Path(os.environ.get("CHRONO_MAIL_LIVE_SETTINGS") or P
 ACCOUNT_FILE: Path = SETTINGS_DIRECTORY / "account.local.toml"
 EXAMPLE_FILE: Path = Path(__file__).resolve().parent / "account.example.toml"
 KERIO_FILE: Path = ACCOUNT_FILE.with_name("kerio.local.toml")  # the same kind of file, for the account on the Kerio server
+INVITEE_FILE: Path = ACCOUNT_FILE.with_name("invitee.local.toml")  # a mailbox that receives invitations sent by the Kerio account
 
 
 @dataclass(frozen=True)
@@ -61,6 +63,10 @@ def load_live_account(file: Path = ACCOUNT_FILE) -> LiveAccount:
     if file.exists():
         with file.open("rb") as handle:
             settings = tomllib.load(handle)
+    source = settings.get("password_from")
+    if isinstance(source, str) and source and "password" not in settings:  # the password of another file of this folder, never copied
+        with (file.parent / Path(source).name).open("rb") as handle:
+            settings["password"] = tomllib.load(handle).get("password")
     return LiveAccount(
         host=_text(settings, "host", "CHRONOMAIL_LIVE_HOST"),
         user=_text(settings, "user", "CHRONOMAIL_LIVE_USER"),

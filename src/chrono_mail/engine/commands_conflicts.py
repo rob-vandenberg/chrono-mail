@@ -4,16 +4,17 @@
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
-from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_WAITING, ChronoMailError, CollectionInfo, CollectionLook, MessageRef, ProtocolError, StorageError
+from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind, LOOK_FOLLOWS, LOOK_WAITING, ChronoMailError, CollectionInfo, CollectionLook, MessageRef, ProtocolError, StorageError
 from chrono_mail.engine.changes import Change
 from chrono_mail.engine.commands_accounts import NoParameters
 from chrono_mail.engine.commands_dav import _client, _lock_for, _state_path, keep_looks
+from chrono_mail.engine.groups import REFUSED_GROUP, join_groups, leave_groups
 from chrono_mail.engine.imap_online import is_imap, waiting_marker
 from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.engine.pimaccess import account_name, ensure_local_pim, open_pim, palette_for, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
-from chrono_mail.pim.merge import LOCAL, SERVER, merge
+from chrono_mail.pim.merge import BOTH, LOCAL, SERVER, merge
 from chrono_mail.pimstore import PimStore
 from chrono_mail.protocols.dav import DavClient, DavConflict, canonical_href, passing_failure
 from chrono_mail.sync.davconflicts import (
@@ -38,7 +39,7 @@ from chrono_mail.sync.davcreates import waiting_ids as creates_waiting
 from chrono_mail.sync.davdeletes import forget as forget_delete
 from chrono_mail.sync.davdeletes import load_waiting
 from chrono_mail.sync.davconflicts import forget as forget_conflict
-from chrono_mail.sync.davitems import DONE, ItemGateway
+from chrono_mail.sync.davitems import DONE, WAITING, ItemGateway, ServerRefused
 from chrono_mail.sync.davsync import PUBLIC_SUFFIX, DavState, digest_of, forget_collection
 from chrono_mail.sync.imap_sync import message_flags
 from chrono_mail.sync.mailconflicts import (
@@ -59,9 +60,12 @@ from chrono_mail.sync.mailconflicts import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_conflicts.py 4.2.496"
+__version__ = "commands_conflicts.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: Keep both (B-30, B-31, the owner): side both makes Chrono Mail's version an item of its own (on the server first) in every group
+#           of the original, the original takes the server's; a field's choice both keeps the entry of each side; settled another way after
+#           an interrupted Keep both, its copy goes (on the server first, out of its groups) unless the person changed it
 # v4.2.496: a choice is read as conflict, field key, side: a key that holds a tab works
 # v4.2.481: A conflict about an item carries both versions, the agreed one and its calendar's colour names, for the window of one conflict;
 #           conflict.recheck at start settles here a conflict without a difference a person sees (D-308)
@@ -139,6 +143,7 @@ class ConflictSummary:
     server_allowed: bool = True  # "Use Server data" can work (not where it would delete mail that exists only here)
     keep_allowed: bool = False  # "Keep here only" is the way (mail made here that the server will not take)
     retry_allowed: bool = False  # "Retry sync": a refusal, which the server may take now (a clash needs the person's choice)
+    both_allowed: bool = False  # "Keep both": an item changed here and on the server, kept as two (B-30)
     base_text: str = ""  # an item's conflict: the version both sides last agreed on ("" when not known), Chrono Mail's and the server's (D-308)
     local_text: str = ""
     server_text: str = ""
@@ -189,8 +194,13 @@ def _summary(engine: Engine, account: str, store: PimStore, conflict: SyncConfli
         REASON_WORDS.get(conflict.reason, conflict.reason), conflict.name, conflict.detail, conflict.whole, conflict.reason not in (REFUSED, DELETE_REFUSED),
         conflict.when, tuple(ConflictField(c.key, c.label, c.local, c.server) for c in conflict.clashes),
         retry_allowed=conflict.reason in (REFUSED, DELETE_REFUSED), base_text=(base_of(store, conflict.collection, conflict.item) or "") if conflict.item else "",
-        local_text=local_text, server_text=conflict.server_text, colour_names=colour_names,
+        local_text=local_text, server_text=conflict.server_text, colour_names=colour_names, both_allowed=_both_allowed(conflict),
     )
+
+
+def _both_allowed(conflict: SyncConflict) -> bool:
+    """Whether Keep both can settle a conflict: an item changed here and on the server, both versions there (B-30)."""
+    return conflict.reason == CLASH and bool(conflict.item) and bool(conflict.server_text)
 
 
 def _mail_summary(engine: Engine, account: str, conflict: MailConflict) -> ConflictSummary:
@@ -264,6 +274,8 @@ def conflict_recheck(engine: Engine, parameters: NoParameters) -> RecheckResult:
                 except ChronoMailError:
                     continue
                 merged = merge(base_of(store, conflict.collection, conflict.item), ours, conflict.server_text)
+                if conflict.copy_uid:  # a Keep both under way, at any step: only the person's next choice settles it (AGENTS.md 4.1.4)
+                    continue
                 if merged.text is None or merged.clashes:
                     if merged.clashes != conflict.clashes:
                         record(store, replace(conflict, clashes=merged.clashes))
@@ -285,13 +297,16 @@ CONFLICT_RECHECK: TypedCommand[NoParameters, RecheckResult] = TypedCommand("conf
 @dataclass(frozen=True, slots=True)
 class SettleParameters:
     conflicts: tuple[str, ...] = field(default=(), metadata=option("The conflicts to settle, all with one side (repeat)"))
-    side: Literal["local", "server", "keep", "retry", ""] = field(
+    side: Literal["local", "server", "keep", "retry", "both", ""] = field(
         default="", metadata=option(
             "local: Chrono Mail's version goes to the server; server: the server's version here; keep: mail made here stays here only; "
-            "retry: a refusal is sent again at the next synchronisation"
+            "retry: a refusal is sent again at the next synchronisation; both: an item changed on both sides kept as two, Chrono Mail's a copy"
         ),
     )
-    choices: tuple[str, ...] = field(default=(), metadata=option("Per field instead: conflict<TAB>field key<TAB>local or server (repeat); every field of a conflict"))
+    choices: tuple[str, ...] = field(default=(), metadata=option(
+        "Per field instead: conflict<TAB>field key<TAB>local, server or both (repeat; both keeps each side's entry of a field that holds several "
+        "values); every field of a conflict"
+    ))
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,20 +325,21 @@ def conflict_settle(engine: Engine, parameters: SettleParameters) -> SettleResul
         conflict, _, rest = text.partition("\t")
         key, _, side = rest.rpartition("\t")  # the conflict has no tab and the side none: the key between them may (a list entry's value)
         parts = [conflict, key, side]
-        if not conflict or not key or side not in (LOCAL, SERVER):
-            raise UsageError("A choice is conflict<TAB>field key<TAB>local or server")
+        if not conflict or not key or side not in (LOCAL, SERVER, BOTH):
+            raise UsageError("A choice is conflict<TAB>field key<TAB>local, server or both")
         wanted.setdefault(parts[0], {})[parts[1]] = parts[2]
     if not wanted:
         raise UsageError("Name the conflicts to settle")
     if parameters.choices and parameters.side:
         raise UsageError("Choose one side for all, or per field, not both")
-    if not parameters.choices and parameters.side not in (LOCAL, SERVER, "keep", "retry"):
-        raise UsageError("Choose a side: local, server, keep or retry")
+    if not parameters.choices and parameters.side not in (LOCAL, SERVER, "keep", "retry", BOTH):
+        raise UsageError("Choose a side: local, server, keep, retry or both")
     retried: set[str] = set()
     settled: list[str] = []
     still_open: list[str] = []
     problems: list[str] = []
     touched: set[str] = set()
+    waiting_accounts: set[str] = set()  # Keep both offline: a copy or a group waits for the server
     for account in pim_account_ids(engine):
         with open_pim(engine, account) as store:
             mine = [c for c in load_conflicts(store) if c.conflict_id in wanted]
@@ -339,6 +355,21 @@ def conflict_settle(engine: Engine, parameters: SettleParameters) -> SettleResul
                 for conflict in mine:
                     touched.add(account)
                     side = parameters.side
+                    if (side == BOTH or BOTH in wanted[conflict.conflict_id].values()) and not _both_allowed(conflict):
+                        problems.append(f"{conflict.name}: only an item changed here and on the server can be kept as both")
+                        still_open.append(conflict.conflict_id)
+                        continue
+                    if side == BOTH:
+                        problem, waits = _keep_both(store, gateway, conflict)
+                        if waits:
+                            waiting_accounts.add(account)
+                        if problem:
+                            problems.append(f"{conflict.name}: {problem}")
+                            if problem != JOINED_NOT_ALL:
+                                still_open.append(conflict.conflict_id)
+                                continue
+                        settled.append(conflict.conflict_id)
+                        continue
                     if conflict.reason in LOOK_REASONS:
                         problem = _settle_look(engine, account, store, conflict, side, wanted[conflict.conflict_id])
                         if problem:
@@ -385,6 +416,11 @@ def conflict_settle(engine: Engine, parameters: SettleParameters) -> SettleResul
                         continue
                     if outcome.status == DONE:
                         settled.append(conflict.conflict_id)
+                        problem, waits = _drop_copy(store, gateway, info, conflict)
+                        if waits:
+                            waiting_accounts.add(account)
+                        if problem:
+                            problems.append(f"{conflict.name}: {problem}")
                     else:
                         still_open.append(conflict.conflict_id)
                         problems.append(f"{conflict.name}: changed on the server again, or a field was not chosen; it stays open")
@@ -392,7 +428,7 @@ def conflict_settle(engine: Engine, parameters: SettleParameters) -> SettleResul
         with open_mailbox(engine, account) as mailbox:
             for conflict in [c for c in mailbox.sync_conflicts() if c.conflict_id in wanted]:
                 touched.add(account)
-                problem = _settle_mail(mailbox, conflict, parameters.side)
+                problem = _settle_mail(mailbox, conflict, parameters.side) if parameters.side != BOTH else "only an item changed here and on the server can be kept as both"
                 if not problem and (parameters.side in ("retry", LOCAL) or conflict.reason in FOLDER_PENDING):
                     retried.add(account)
                 if problem:
@@ -402,9 +438,72 @@ def conflict_settle(engine: Engine, parameters: SettleParameters) -> SettleResul
                     settled.append(conflict.conflict_id)
     for account in touched:
         engine.report(Change("conflicts_changed", account))
+    for account in waiting_accounts:
+        engine.report(Change("waiting_changed", account))
     unknown = [conflict for conflict in wanted if conflict not in settled and conflict not in still_open]
     problems.extend(f"No open conflict {conflict}" for conflict in unknown)
     return SettleResult(tuple(settled), tuple(still_open), tuple(problems), tuple(sorted(retried)))
+
+
+class _CardWriter:
+    """Writes a group's card for Sync conflicts on the server first (offline: here, sent later), as engine.pim_server.ItemWriter does."""
+
+    def __init__(self, gateway: ItemGateway) -> None:
+        self.gateway: ItemGateway = gateway
+        self.statuses: list[str] = []
+
+    def put(self, info: CollectionInfo, text: str, item: str | None = None) -> str:
+        outcome = self.gateway.save(info, text, item)
+        self.statuses.append(outcome.status)
+        return outcome.item
+
+
+def _drop_copy(store: PimStore, gateway: ItemGateway, info: CollectionInfo, conflict: SyncConflict) -> tuple[str, bool]:
+    """A conflict settled another way than Keep both after a Keep both was interrupted: its copy goes, on the server first, and out of every
+    group (davitems.ItemGateway.drop_copy; a copy the person changed stays). Returns what went wrong ("" when nothing) and whether something
+    waits for the server."""
+    writer = _CardWriter(gateway)
+    try:
+        uid, status = gateway.drop_copy(info, conflict)
+        if uid and info.kind == CollectionKind.CONTACTS:
+            leave_groups(writer, store, info, uid)  # no group names it any more (R-39)
+    except ChronoMailError as error:  # the server's lasting "no" (ServerRefused), or a card that cannot be stored: it stays as it was
+        return f"the copy Keep both had made could not be removed ({error})", WAITING in writer.statuses
+    return "", WAITING in (status, *writer.statuses)
+
+
+ORIGINAL_CHANGED: str = "the copy with Chrono Mail's version is made; the original was changed meanwhile, so it stays open to choose again"
+JOINED_NOT_ALL: str = "both are kept, but the copy could not be put into every group of the original; add it there by hand"
+
+
+def _keep_both(store: PimStore, gateway: ItemGateway, conflict: SyncConflict) -> tuple[str, bool]:
+    """Keep both (B-30, the owner); returns what went wrong ("" when settled; JOINED_NOT_ALL when settled but not every group took the copy) and
+    whether something waits for the server (offline).
+    Chrono Mail's version becomes a copy of its own, on the server first; the original takes the server's version; a contact's copy joins every
+    group of the address book the original is in, each group changed on the server first (offline: here, sent later)."""
+    statuses: list[str] = []
+
+    def joined(original_item: str, copy_item: str) -> None:  # before the conflict is forgotten: done again by a try after an interruption
+        original, copy = store.index.get(original_item), store.index.get(copy_item)
+        if info.kind == CollectionKind.CONTACTS and original is not None and copy is not None:
+            statuses.extend(join_groups(lambda group, text, item: gateway.save(group, text, item).status, store, info, original.uid, copy.uid))
+
+    try:
+        info: CollectionInfo = store.get_collection(conflict.collection)
+        outcome = gateway.keep_both(info, conflict, joined)
+    except ServerRefused as error:  # a lasting "no": nothing changed here
+        return f"the server did not take the copy ({error}); it stays open", False
+    except ProtocolError as error:
+        return ("the server could not be reached" if passing_failure(error) else f"the server did not take the copy ({error})") + "; it stays open", False
+    except ChronoMailError as error:
+        return f"{error}; it stays open", False
+    if outcome.status != DONE and outcome.copy:  # the copy is made; the original changed meanwhile and is never overwritten
+        statuses.append(outcome.copied)
+        return ORIGINAL_CHANGED, WAITING in statuses
+    if outcome.status != DONE:
+        return "it cannot be read as two versions; choose a side instead", False
+    statuses.append(outcome.copied)
+    return JOINED_NOT_ALL if REFUSED_GROUP in statuses else "", WAITING in statuses
 
 
 def _settle_collection(engine: Engine, account: str, store: PimStore, client: DavClient, conflict: SyncConflict, side: str) -> str:

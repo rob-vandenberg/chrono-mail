@@ -1,18 +1,20 @@
 """Contact groups (R-39): what the commands of contacts and of groups share. A group is a card of its address book (vCard 4's KIND:group or Apple's
 form) that names its members by their uid (urn:uuid:<uid>) or by an address (mailto:); it is kept, sent and followed like every card (D-193)."""
 
+from collections.abc import Callable
 from dataclasses import replace
 from email.utils import formataddr
+from typing import Protocol
 
-from chrono_mail.core import CollectionInfo, CollectionKind, StorageError
-from chrono_mail.engine.pim_server import ItemWriter
-from chrono_mail.pim.contact import Contact, bare_uid, contact_to_text, member_uid, parse_contacts
+from chrono_mail.core import CollectionInfo, CollectionKind, ProtocolError, StorageError
+from chrono_mail.pim.contact import Contact, bare_uid, contact_to_text, member_reference, member_uid, parse_contacts
 from chrono_mail.pimstore import IndexedItem, ItemQuery, PimStore
 
 # --- Version ------------------------------------------------------------
-__version__ = "groups.py 1.10.277"
+__version__ = "groups.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: leave_groups writes through any CardWriter (also the copy of an interrupted Keep both that goes); join_groups: a contact's copy (Keep both, B-30) put in every group of its address book the original is in (the owner)
 # v1.10.277: Initial: the groups of an address book, their members, a contact taken out of its groups, a group's addresses (R-39)
 
 EVERY: int = 10**6
@@ -50,7 +52,13 @@ def read_card(store: PimStore, collection: str, item: str) -> Contact | None:
     return contacts[0] if contacts else None
 
 
-def leave_groups(writer: ItemWriter, store: PimStore, info: CollectionInfo, uid: str) -> int:
+class CardWriter(Protocol):
+    """What writes a group's card: on its server first like any card (engine.pim_server.ItemWriter, or Sync conflicts' own writer)."""
+
+    def put(self, info: CollectionInfo, text: str, item: str | None = None) -> str: ...
+
+
+def leave_groups(writer: CardWriter, store: PimStore, info: CollectionInfo, uid: str) -> int:
     """A contact that leaves an address book (deleted, moved away) is taken out of every group of it, each group changed on its server first like
     any card. Returns how many groups were changed."""
     key = uid_key(uid)
@@ -68,6 +76,30 @@ def leave_groups(writer: ItemWriter, store: PimStore, info: CollectionInfo, uid:
             writer.put(info, contact_to_text(replace(card, members=kept)), group.item_id)
             changed += 1
     return changed
+
+
+REFUSED_GROUP: str = "refused"  # join_groups: a group whose server said a lasting "no"
+
+
+def join_groups(save: Callable[[CollectionInfo, str, str], str], store: PimStore, info: CollectionInfo, uid: str, new_uid: str) -> list[str]:
+    """A contact's copy (Keep both, B-30) put in every group of its address book that has the contact of `uid`, each group saved through `save`
+    (on its server first, like any card; it returns how it went: done, waiting). Returns that for each group changed, REFUSED_GROUP for one
+    the server would not take or that could not be stored (that group stays as it was)."""
+    key, new_key = uid_key(uid), uid_key(new_uid)
+    if not key or not new_key:
+        return []
+    statuses: list[str] = []
+    for group in groups_of_book(store, info.collection_id):
+        if key not in group.members or new_key in group.members:
+            continue
+        card = read_card(store, info.collection_id, group.item_id)
+        if card is None:
+            continue
+        try:
+            statuses.append(save(info, contact_to_text(replace(card, members=(*card.members, member_reference(new_uid)))), group.item_id))
+        except (ProtocolError, StorageError):  # the server's lasting "no", or the group could not be stored here: it stays as it was
+            statuses.append(REFUSED_GROUP)
+    return statuses
 
 
 def preferred_address(contact: Contact) -> str:

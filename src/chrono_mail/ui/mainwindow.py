@@ -67,9 +67,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.2.481"
+__version__ = "mainwindow.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: the Sync conflicts window is closed when the program closes, so its size is remembered then too (the owner)
 # v4.2.481: the status line says how many sync conflicts the check at start settled (D-308)
 # v4.2.467: Settings OK takes in Widen the reading pane to fit the message (D-304)
 # v4.2.459: at start a profile's wallet entries move to its own wallet name first (D-274)
@@ -894,6 +895,8 @@ class MainWindow(QMainWindow):
         elif not self.composing.close_all() or not self.notices.before_quit(self.quit_program) or not may_quit(self, self.backups.running, self.restores.running):  # the backup question last: what it promises then happens (W3)
             event.ignore()
             return
+        if self._conflicts_window is not None:  # still open: closed now, so it remembers its size (the owner)
+            self._conflicts_window.close()
         save_geometry(self, self.settings, "geometry")
         self.memory.remember_sizes("splitter2", self.splitter.sizes())
         if self.reading.place != "off":

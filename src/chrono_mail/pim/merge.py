@@ -14,9 +14,17 @@ from chrono_mail.pim.times import zone_named
 from chrono_mail.pim.vcard import fold, unfold
 
 # --- Version ------------------------------------------------------------
-__version__ = "merge.py 4.2.497"
+__version__ = "merge.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: a grouped line (item1.EMAIL) is its field, its group label kept on the line; a grouped line no person sees (item1.X-ABLabel)
+#           is tied to its group's entry, goes or stays with it and takes its group; two entries that share a group name in no
+#           version get groups of their own, grouped lines not changed stay as written;
+#           reading leaves out an attendee line for the organizer (a server adds it to a copy);
+#           Keep both (B-30, B-31, the owner): an entry of a field that holds several values (MULTIPLE, skipped and extra dates too) chosen
+#           BOTH keeps each side's entry (one entry on both sides, written two ways, stays a choice); a skipped or extra date in another
+#           zone is the same moment, also in a series (it moves nothing else, D-308); reading: an item as a person sees it;
+#           copied: an item's text as a separate copy with a uid of its own, its attendees and organizer marked SCHEDULE-AGENT=CLIENT
 # v4.2.497: a jar's entry taken out on one side stays out, also when the other side only rewrote it;
 #           changed on both sides is judged for the whole item, its occurrences together; without an agreed version an occurrence on one
 #           side only is a choice; an attendee's answer is not compared; reminders by when and how everywhere; the same value written another
@@ -40,6 +48,10 @@ __version__ = "merge.py 4.2.497"
 
 LOCAL: str = "local"
 SERVER: str = "server"
+BOTH: str = "both"  # a choice that keeps the entry of each side (B-31, the owner)
+MULTIPLE: frozenset[str] = frozenset({"NICKNAME", "EMAIL", "TEL", "URL", "ADR", "ATTENDEE", "EXDATE", "RDATE"})  # the visible fields that hold several values: their
+# entries pair up in the window and can be kept both (D-308, the owner); a field added here gets the split of its rows by itself
+SCHEDULING: frozenset[str] = frozenset({"SCHEDULE-AGENT", "SCHEDULE-FORCE-SEND"})  # how a server sends invitations (RFC 6638): set anew on a copy
 STAMPS: frozenset[str] = frozenset({"DTSTAMP", "LAST-MODIFIED", "SEQUENCE", "REV", "PRODID", "X-MOZ-GENERATION"})  # set by programs: never compared
 COMMA_LISTS: frozenset[str] = frozenset({"CATEGORIES", "EXDATE", "RDATE", "RESOURCES"})  # several values on one line, merged value by value
 LISTS: frozenset[str] = frozenset({
@@ -69,9 +81,12 @@ VISIBLE: dict[str, frozenset[str]] = {  # what Chrono Mail's own windows let a p
         "X-ADDRESSBOOKSERVER-MEMBER",
     }),
 }
+SEEN: frozenset[str] = frozenset().union(*VISIBLE.values())  # every field a person sees, in any unit
+TIE: str = SEPARATOR + "~"  # in a key: a grouped line tied to its group's entry (its label), before that entry's key; no value carries it
 # a moment: the same one in another zone is the same, only in a unit that does not repeat (there a zone moves later occurrences at summer time)
 ZONED: frozenset[str] = frozenset({"DTSTART", "DTEND", "DUE", "RECURRENCE-ID", "EXDATE", "RDATE"})
 REPEATS: frozenset[str] = frozenset({"RRULE", "RDATE"})  # a unit with one of these repeats
+MOMENTS_ALONE: frozenset[str] = frozenset({"EXDATE", "RDATE"})  # moments that each stand for themselves: in another zone the same, also in a series
 COPY_MARK: str = SEPARATOR + "#"  # after a unit's key: its second copy (#2), a mark no value read into a key can carry (OR-2)
 LONGEST_NUMBER: int = 9  # digits of a number read from a calendar or a card: a longer one is shown as written (OR-3)
 DURATION_UNITS: dict[str, int] = {"W": 604800, "D": 86400, "H": 3600, "M": 60, "S": 1}  # seconds in each part of a duration
@@ -135,8 +150,33 @@ def _parse(text: str) -> _Component | None:
 
 
 def _name(line: str) -> str:
+    """A line's field: its name in capitals, without a group label (item1.EMAIL is EMAIL); the label stays on the line as written."""
     head = line.split(":", 1)[0]
-    return head.split(";", 1)[0].strip().upper()
+    return _ungrouped(head.split(";", 1)[0])
+
+
+def _group(line: str) -> str:
+    """A line's group (item1 of item1.EMAIL), in small letters; "" when it has none."""
+    head = line.split(":", 1)[0].split(";", 1)[0]
+    return head.rpartition(".")[0].strip().lower()
+
+
+def _written_group(line: str) -> str:
+    """A line's group as it is written (ITEM1 of ITEM1.EMAIL)."""
+    return line.split(":", 1)[0].split(";", 1)[0].rpartition(".")[0].strip()
+
+
+def _regrouped(line: str, group: str) -> str:
+    """A line in another group (item3.X-ABLabel:Work), the rest as written."""
+    piece = line.split(":", 1)[0].split(";", 1)[0]
+    return f"{group}.{piece.rpartition('.')[2]}{line[len(piece):]}"
+
+
+def _ungrouped(name: str) -> str:
+    """A property's name in capitals, without its group (Apple's item1.EMAIL, RFC 6350 3.3) when it is a field a person sees: a grouped line
+    that is not (item1.X-ABLabel) keeps its group, so it stays tied to its entry."""
+    field = name.rpartition(".")[2].strip().upper()
+    return field if field in SEEN else name.strip().upper()
 
 
 def _head_and_value(line: str) -> tuple[str, str]:
@@ -230,7 +270,7 @@ def _reading(line: str, repeating: bool = False) -> tuple[str, str]:
     is of a unit that repeats, where a moment in another zone is another moment."""
     head, value = _head_and_value(line)
     name, *pieces = _pieces(head)
-    name = name.strip().upper()
+    name = name.rpartition(".")[2].strip().upper()  # its group is no part of what it says (a label is tied to its entry by its key)
     parameters: list[tuple[str, str]] = []
     kinds: set[str] = set()
     for piece in pieces:
@@ -246,7 +286,7 @@ def _reading(line: str, repeating: bool = False) -> tuple[str, str]:
     if name in DATED:  # 1980-01-01 is 19800101, 2026-10-28T10:00:00 is 20261028T100000 (a text such as "circa 1980" as written)
         value = ",".join(part.replace("-", "").replace(":", "") if part.strip() and set(part.strip()) <= set("0123456789-:TZtz+") else part
                          for part in value.split(","))
-    if name in ZONED and not repeating:
+    if name in ZONED and (not repeating or name in MOMENTS_ALONE):
         zone = next((setting for key, setting in parameters if key == "TZID"), "")
         moments = [_moment(part, zone) for part in value.split(",")]
         if moments and all(moment is not None for moment in moments) and (zone or value.strip()[-1:] in ("Z", "z")):
@@ -291,21 +331,26 @@ def _fields(unit: _Component, repeating: bool | None = None) -> dict[str, str]:
     """A unit's fields: key -> the text that stands for it (a whole line, a value of a comma list, or all alarms together). `repeating`: whether
     the unit repeats in any of its versions (decided once for all three, so their keys agree); None: by its own lines. Two lines of one list
     with the same key are told apart by how their parameters read, then their value as written, then their place: no line is ever lost."""
+    entry_groups = {_group(line) for name, line in unit.lines if name in SEEN and _group(line)}  # groups with an entry a person sees
+    companions = [(name, line) for name, line in unit.lines if _group(line) in entry_groups and name not in SEEN]  # its label and the like
+    lines = [(name, line) for name, line in unit.lines if not (_group(line) in entry_groups and name not in SEEN)]
     counts: dict[str, int] = {}
-    for name, _ in unit.lines:
+    for name, _ in lines:
         counts[name] = counts.get(name, 0) + 1
     found: dict[str, str] = {}
     if repeating is None:
         repeating = _repeats(unit)
+    tied: dict[str, str] = {}  # a group -> the key of its entry a person sees
     entries: dict[str, list[str]] = {}
-    for name, line in unit.lines:
+    for name, line in lines:
         if name not in STAMPS and name not in COMMA_LISTS and (name in LISTS or counts[name] > 1):
             entries.setdefault(_entry_key(name, *_head_and_value(line)), []).append(line)
     seen_keys: dict[str, int] = {}
-    for name, line in unit.lines:
+    for name, line in lines:
         if name in STAMPS:
             continue
         head, value = _head_and_value(line)
+        before = len(found)
         if name in COMMA_LISTS:  # each value a line of its own: known by how it reads, so a head written another way is the same entry
             for part in _split_commas(value):
                 entry = f"{head}:{part.strip()}"
@@ -321,6 +366,13 @@ def _fields(unit: _Component, repeating: bool | None = None) -> dict[str, str]:
             found[key] = line
         else:
             found[name] = line
+        if _group(line) in entry_groups and len(found) > before:
+            tied.setdefault(_group(line), list(found)[-1])
+    for name, line in companions:  # tied to its entry, never to the group's name: it goes, stays or moves with it (Apple's item1.X-ABLabel)
+        field, count = name.rpartition(".")[2], 1
+        while (f"{field}{SEPARATOR}{count}" if count > 1 else field) + TIE + tied[_group(line)] in found:  # two of one kind: both stay
+            count += 1
+        found[(f"{field}{SEPARATOR}{count}" if count > 1 else field) + TIE + tied[_group(line)]] = line
     alarms = [child for child in unit.children if child.name == ALARMS]
     if alarms:
         found[ALARMS] = "\n".join("\n".join(_serialise(alarm)) for alarm in alarms)
@@ -455,6 +507,11 @@ def repeats(*fields: Mapping[str, str] | None) -> bool:
     return any(key.split(SEPARATOR, 1)[0] in REPEATS for version in fields if version is not None for key in version)
 
 
+def splits(key: str) -> bool:
+    """Whether a field's entry can be kept from both sides (MULTIPLE): a field of one value cannot (a birthday)."""
+    return key.split(SEPARATOR, 1)[0] in MULTIPLE
+
+
 def jar(key: str) -> bool:
     """Whether a field is an entry of a jar (a group's member, a tag): put in or taken out by itself, never compared with the others (the owner)."""
     return key.split(SEPARATOR, 1)[0] in JARS
@@ -560,6 +617,44 @@ def _rebuild(name: str, fields: dict[str, str | None], order: list[str], stamps:
     return out
 
 
+def _keep_groups(merged: dict[str, str | None], order: list[str], versions: tuple[Mapping[str, str], ...]) -> None:
+    """The grouped lines of a merged unit kept together: a tied line (TIE) goes with its entry and is in the entry's group; an entry keeps its
+    group when the group is new or the entry shared it, in some version, with an entry that stays there; else (both sides put a different
+    entry into one new group) it gets a group of its own, so no label is shared or lost. Grouped lines that did not change stay exactly as written (a group may hold several entries; its name keeps its capitals)."""
+    lines = {key: value for key, value in merged.items() if value is not None and "\n" not in value}
+    used = {_group(value) for value in lines.values()} - {""}
+    labelled = {key.partition(TIE)[2] for key in lines if TIE in key}  # entries with a tied line
+
+    def together(first: str, second: str, group: str) -> bool:
+        return any(first in version and second in version and _group(version[first]) == group == _group(version[second]) for version in versions)
+
+    owners: dict[str, list[str]] = {}
+    number = 0
+    for key in order:  # in the order of the merged text: the later of two entries that never shared a group with what stays there moves
+        value = lines.get(key)
+        if value is None or TIE in key or _name(value) not in SEEN or not (_group(value) or key in labelled):
+            continue
+        group = _group(value)
+        kept = owners.setdefault(group, []) if group else list[str]()
+        if group and (not kept or any(together(other, key, group) for other in kept)):  # it shares the group, in its version, with
+            # one that stays there: it stays too (a group may grow on one side, an entry move into it on the other)
+            owners[group].append(key)
+            continue
+        number += 1
+        while f"item{number}" in used:
+            number += 1
+        used.add(f"item{number}")
+        owners[f"item{number}"] = [key]
+        merged[key] = _regrouped(value, f"item{number}")
+    for key in lines:
+        if TIE in key:
+            entry = merged.get(key.partition(TIE)[2])
+            if entry is None:
+                merged[key] = None  # its entry left out: it goes too
+            elif _group(entry) != _group(lines[key]):
+                merged[key] = _regrouped(lines[key], _written_group(entry))  # into its entry's group, as that is written
+
+
 def _merge_unit(unit_key: str, base: _Component | None, local: _Component | None, server: _Component | None, known: bool, both: bool,
                 choices: Mapping[str, str], clashes: list[Clash]) -> list[str] | None:
     """One unit (an event, a changed occurrence, a task, a contact) merged: its lines, or None when it is gone. `known`: the agreed version of the
@@ -609,6 +704,9 @@ def _merge_unit(unit_key: str, base: _Component | None, local: _Component | None
             merged[key] = _jarred(before, local_fields.get(key), server_fields.get(key), base_fields is not None, repeating)
             continue
         named = choice_key(key, unit_key)
+        if choices.get(named) == BOTH and splits(key) and (key in local_fields) != (key in server_fields):  # Keep both: each side's entry
+            merged[key] = local_fields.get(key) if key in local_fields else server_fields.get(key)  # stays (B-31); one entry on both sides
+            continue  # written two ways is one entry: nothing to keep twice, it stays the person's choice
         if (base_fields is None or both) and not same(local_fields.get(key), server_fields.get(key), repeating):  # every difference is the person's choice
             choice = choices.get(named)
             if choice in (LOCAL, SERVER):
@@ -623,6 +721,7 @@ def _merge_unit(unit_key: str, base: _Component | None, local: _Component | None
         if key.split(SEPARATOR, 1)[0] == "ATTENDEE" and value is not None and theirs is not None and value == local_fields.get(key):
             merged[key] = _answered(value, theirs)
     order = [*local_fields, *(key for key in server_fields if key not in local_fields)]
+    _keep_groups(merged, order, (local_fields, server_fields))
     stamps = [line for name, line in local.lines if name in STAMPS]
     return _rebuild(local.name, merged, order, stamps, [])
 
@@ -673,9 +772,66 @@ def _units(root: _Component) -> tuple[list[str], dict[str, _Component], list[_Co
     return [line for _, line in wrapper.lines], units, zones
 
 
+def _scheduled_by_client(line: str) -> str:
+    """An attendee's or the organizer's line marked SCHEDULE-AGENT=CLIENT: a server that sends invitations leaves it alone (RFC 6638)."""
+    head, value = _head_and_value(line)
+    name, *pieces = _pieces(head)
+    kept = [piece for piece in pieces if piece.partition("=")[0].strip().upper() not in SCHEDULING]
+    return ";".join([name, *kept, "SCHEDULE-AGENT=CLIENT"]) + ":" + value
+
+
+def _copied(component: _Component, uid: str) -> None:
+    if component.name in UNITS:
+        lines = [(name, f"UID:{uid}" if name == "UID" else _scheduled_by_client(line) if name in ("ATTENDEE", "ORGANIZER") else line)
+                 for name, line in component.lines]
+        component.lines = lines if any(name == "UID" for name, _ in lines) else [("UID", f"UID:{uid}"), *lines]
+        return  # its reminders stay as they are (an e-mail reminder's attendee is no invitation)
+    for child in component.children:
+        _copied(child, uid)
+
+
+def copied(text: str, uid: str) -> str | None:
+    """Keep both (B-30, the owner): an item's text as a copy of its own, every part of it (the event and each changed occurrence) with this uid,
+    its attendees and organizer marked SCHEDULE-AGENT=CLIENT, so a server sends no invitations for a copy (the owner: the attendees were invited
+    with the original). Everything else as it is written. None when the text cannot be read."""
+    root = _parse(text)
+    if root is None:
+        return None
+    for child in root.children:
+        _copied(child, uid)
+    return "\r\n".join(fold(line) for child in root.children for line in _serialise(child)) + "\r\n"
+
+
+def _address(line: str) -> str:
+    """The address of an organizer's or an attendee's line, as it reads (mailto: and capitals left out)."""
+    value = _head_and_value(line)[1].strip().lower()
+    return value.removeprefix("mailto:").strip()
+
+
+def reading(text: str) -> str | None:
+    """An item as a person sees it: every unit's visible fields as they read (same), group members and tags too; what a program or a server
+    writes by itself (PRODID, REV, its own way of folding or writing a value, an attendee line for the organizer) left out. None when it
+    cannot be read."""
+    root = _parse(text)
+    if root is None:
+        return None
+    parts: list[str] = []
+    units = _units(root)[1]
+    for key in sorted(units):
+        unit = units[key]
+        repeating = _repeats(unit)
+        organizer = next((_address(line) for name, line in unit.lines if name == "ORGANIZER"), "")
+        said = sorted((name, _said(value, repeating)) for name, value in _fields(unit, repeating).items() if visible(unit.name, name)
+                      and not (organizer and name.split(SEPARATOR, 1)[0] == "ATTENDEE" and _address(value) == organizer))  # a server lists
+        # the organizer among the attendees by itself (Kerio, ROLE=CHAIR): no change a person made
+        parts.append(key + PART_MARK + VALUE_MARK.join(f"{name}={value}" for name, value in said if value is not None))
+    return "\n".join(parts)
+
+
 def merge(base: str | None, local: str, server: str, choices: Mapping[str, str] | None = None) -> Merged:
     """Merge Chrono Mail's and the server's version of one item against the version both last agreed on (None: not known, so every difference is a
-    clash). `choices` settle clashes by their key: LOCAL or SERVER. The merged text, or the clashes still open."""
+    clash). `choices` settle clashes by their key: LOCAL or SERVER, or BOTH, which keeps the entry of each side of a field that holds several
+    values (MULTIPLE) and chooses nothing of any other field. The merged text, or the clashes still open."""
     wanted = choices or {}
     clashes: list[Clash] = []
     local_root, server_root = _parse(local), _parse(server)

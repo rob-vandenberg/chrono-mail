@@ -1,15 +1,17 @@
 import dataclasses
+from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QRect, Qt
-from PySide6.QtGui import QScreen
+from PySide6.QtCore import QRect, QSettings, QSize, Qt
+from PySide6.QtGui import QKeySequence, QScreen
+from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QGridLayout, QLabel, QRadioButton, QScrollArea, QStyle, QStyleOptionButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
 from chrono_mail.pim.merge import merge
 from chrono_mail.ui.sections import CALENDAR
-from chrono_mail.ui.syncconflicts import KEEP, RETRY, ConflictDialog, SyncConflictsPanel
+from chrono_mail.ui.syncconflicts import CONFLICT_SIZE_KEY, KEEP, RETRY, WHAT_COLUMN, ConflictDialog, SyncConflictsPanel
 from chrono_mail.ui.syncmarks import CONFLICT, WAITING
 from tests.fakedav import FakeDav
 from tests.test_engine_conflicts import change_on_server, on_server
@@ -17,9 +19,13 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.497"
+__version__ = "test_ui_sync_conflicts.py 4.3.498"
 
 # --- Version history ----------------------------------------------------
+# v4.3.498: Keep both (B-30, B-31, the owner): the split icon only on a row of a field that holds several values, with both; a split row is
+#           two rows without circles, the person's Undo key joins it again; Keep both sets every circle and split aside and settles the item
+#           as two on the server; the split icon almost as tall as a row's outline, Keep both's own icon, the remembered sizes of both
+#           windows and What as wide as its widest text (the owner)
 # v4.2.497: a field with a row never gets a second, raw row (another zone, an attendee's answer, a photo as "A photo"); Retry sync and Keep
 #           here only clear the field circles, and a circle chosen after them is what Apply settles (the owner)
 # v4.2.496: a tag put in on each side is shown without circles: both stay (the owner)
@@ -720,3 +726,175 @@ def test_a_circle_chosen_after_retry_sync_is_what_apply_settles(qtbot: QtBot) ->
         ours.click()
     dialog.apply_button.click()
     assert dialog.side == "local"  # what the circles show, never the Retry sync clicked before (the owner)
+
+
+def anna(*body: str) -> str:
+    return "\r\n".join(["BEGIN:VCARD", "VERSION:3.0", "UID:c1", "FN:Anna", *body, "END:VCARD"]) + "\r\n"
+
+
+def anna_conflict() -> ConflictSummary:
+    """Anna's card changed here and on the server: her e-mail address (a pair), her birthday, and a phone only here."""
+    base = anna("EMAIL;TYPE=work:anna@old.example", "BDAY:19800412")
+    ours = anna("EMAIL;TYPE=work:anna@here.example", "BDAY:19800413", "TEL;TYPE=cell:+31 6 1")
+    theirs = anna("EMAIL;TYPE=work:anna@there.example", "BDAY:19810513")
+    fields = tuple(ConflictField(clash.key, clash.label, clash.local, clash.server) for clash in merge(base, ours, theirs).clashes)
+    return ConflictSummary("c1", "a1", "Work", "k1", "Contacts", "i1", "contacts", "clash", "Changed here and on the server", "Anna", "", False,
+                           True, 0.0, fields, base_text=base, local_text=ours, server_text=theirs, both_allowed=True)
+
+
+def email_key(dialog: ConflictDialog) -> str:
+    return next(key for key in dialog.groups if key.startswith("EMAIL"))
+
+
+def shown_texts(dialog: ConflictDialog) -> list[str]:
+    return [label.text() for label in dialog.findChildren(QLabel) if label.isVisibleTo(dialog)]
+
+
+def test_only_a_row_of_a_field_with_several_values_and_two_values_gets_the_split_icon(qtbot: QtBot) -> None:  # B-31, the owner
+    dialog = ConflictDialog(anna_conflict())
+    qtbot.addWidget(dialog)
+    assert set(dialog.splitters) == {email_key(dialog)}  # not the birthday (one value), not the phone (on one side only)
+    splitter = dialog.splitters[email_key(dialog)]
+    assert splitter.toolTip() == "Keep both" and not splitter.icon().isNull()
+    assert dialog.keep_both.text() == "Keep both" and dialog.keep_both.isEnabled() and not dialog.keep_both.icon().isNull()
+    assert not ConflictDialog(one_field_conflict()).keep_both.isEnabled()  # greyed where it cannot settle, never hidden (OR-15)
+
+
+def test_the_split_icon_turns_the_row_into_two_and_the_undo_key_joins_it(qtbot: QtBot) -> None:  # B-31, the owner
+    dialog = ConflictDialog(anna_conflict(), undo_key="Ctrl+U")  # the person's own Undo key
+    qtbot.addWidget(dialog)
+    dialog.resize(dialog.sizeHint().width(), dialog.sizeHint().height() + 200)  # room below the table
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    key = email_key(dialog)
+    ours, theirs = dialog.groups[key]
+    theirs.click()
+    dialog.splitters[key].click()
+    assert not ours.isVisibleTo(dialog) and not theirs.isVisibleTo(dialog) and not dialog.splitters[key].isEnabled()  # no circles, no outline
+    texts = shown_texts(dialog)
+    assert texts.count("E-mail") == 2 and texts.count("anna@there.example (work)") == 2 and texts.count("anna@here.example (work)") == 2
+    there, here = (next(label for label in dialog.findChildren(QLabel) if label.isVisibleTo(dialog) and label.text() == text)
+                   for text in ("anna@there.example (work)", "anna@here.example (work)"))
+    assert there.mapTo(dialog, there.rect().topLeft()).y() < here.mapTo(dialog, here.rect().topLeft()).y()  # the server's first
+    labels = [label for label in dialog.findChildren(QLabel) if label.isVisibleTo(dialog) and label.text() in ("E-mail", "Display name")]
+    assert len({label.mapTo(dialog, label.rect().topLeft()).x() for label in labels}) == 1  # its labels in line with the others
+    qtbot.wait(20)
+    area = dialog.findChild(QScrollArea)
+    assert area is not None and not area.verticalScrollBar().isVisible()  # with room below, the table grows: every field in view
+    for pair_ours, _ in dialog.groups.values():
+        if pair_ours.isVisibleTo(dialog):
+            pair_ours.click()
+    assert dialog.apply_button.isEnabled()  # a split row is decided: both kept
+    dialog.activateWindow()
+    qtbot.waitActive(dialog)
+    dialog.groups["BDAY"][0].setFocus()  # a key goes to the part that has the focus (D-217)
+    qtbot.wait(20)
+    QTest.keySequence(dialog.focusWidget() or dialog, QKeySequence("Ctrl+U"))
+    assert ours.isVisibleTo(dialog) and theirs.isChecked() and dialog.splitters[key].isEnabled()  # as it was
+    assert shown_texts(dialog).count("E-mail") == 1
+    dialog.splitters[key].click()
+    dialog.apply_button.click()
+    assert dialog.side == "" and all(dialog.choices[each] == "both" for each in dialog.settles[key]) and dialog.choices["BDAY"] == "local"
+
+
+def test_keep_both_sets_every_circle_and_split_aside(qtbot: QtBot) -> None:  # B-30, the owner
+    dialog = ConflictDialog(anna_conflict())
+    qtbot.addWidget(dialog)
+    key = email_key(dialog)
+    dialog.splitters[key].click()
+    dialog.groups["BDAY"][0].click()
+    dialog.keep_both.click()
+    assert dialog.side == "both" and dialog.split == [] and not any(circle.isChecked() for pair in dialog.groups.values() for circle in pair)
+    assert dialog.apply_button.isEnabled() and not dialog.all_local.isChecked() and not dialog.all_server.isChecked()
+    dialog.groups["BDAY"][1].click()
+    assert dialog.side != "both"  # a circle chosen after Keep both: the fields decide again (the owner)
+
+
+def test_keep_both_in_the_window_keeps_the_item_as_two_on_the_server(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    with FakeDav() as server:
+        account = linked(world, qtbot, server)
+        made = world.call("event.add", calendar=calendar_of(world, account), summary="Meeting", start="2026-10-14T16:00", end="2026-10-14T17:00")
+        change_on_server(server, str(made.uid), "SUMMARY:Meeting", "SUMMARY:Theirs")
+        world.call("event.edit", item=made.item, summary="Ours")
+        panel = panel_of(world, qtbot)
+        wait(qtbot, lambda: panel.table.topLevelItemCount() == 1)
+
+        def kept_both(self: ConflictDialog) -> int:  # the person clicks Keep both, then Apply
+            self.keep_both.click()
+            self.apply_button.click()
+            return QDialog.DialogCode.Accepted.value
+
+        monkeypatch.setattr(ConflictDialog, "exec", kept_both)
+        row = panel.table.topLevelItem(0)
+        assert row is not None
+        panel.table.itemDoubleClicked.emit(row, 2)
+        wait(qtbot, lambda: panel.table.topLevelItemCount() == 0)
+        titles = sorted(line for _, (_, text) in server.collections["events"].items.items() for line in text.split("\r\n") if line.startswith("SUMMARY"))
+        assert titles == ["SUMMARY:Ours", "SUMMARY:Theirs"]
+
+
+def test_the_split_icon_is_almost_as_tall_as_the_row_s_outline(qtbot: QtBot) -> None:  # the owner
+    dialog = ConflictDialog(anna_conflict())
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.waitExposed(dialog)
+    key = email_key(dialog)
+    outline = dialog.groups[key][1].parentWidget()
+    assert outline is not None and dialog.splitters[key].iconSize().height() >= 0.8 * outline.height()
+
+
+def test_keep_both_shows_one_square_above_two(qtbot: QtBot) -> None:  # the owner's icon, drawn in the colour of text
+    dialog = ConflictDialog(anna_conflict())
+    qtbot.addWidget(dialog)
+    image = dialog.keep_both.icon().pixmap(48, 48).toImage()
+    filled = {place: image.pixelColor(round(place[0] * 47), round(place[1] * 47)).alpha() > 128
+              for place in ((0.5, 0.21), (0.25, 0.79), (0.75, 0.79), (0.5, 0.79), (0.5, 0.62))}
+    assert filled == {(0.5, 0.21): True, (0.25, 0.79): True, (0.75, 0.79): True, (0.5, 0.79): False, (0.5, 0.62): False}
+
+
+def test_the_window_of_a_conflict_opens_at_the_size_the_person_gave_it_last(qtbot: QtBot, tmp_path: Path) -> None:  # the owner
+    settings = QSettings(str(tmp_path / "ui.ini"), QSettings.Format.IniFormat)
+    first = ConflictDialog(anna_conflict(), settings=settings)
+    qtbot.addWidget(first)
+    first.show()
+    qtbot.waitExposed(first)
+    first.reject()
+    assert settings.value(CONFLICT_SIZE_KEY) is None  # a size the person did not change is not remembered
+    second = ConflictDialog(anna_conflict(), settings=settings)
+    qtbot.addWidget(second)
+    second.show()
+    qtbot.waitExposed(second)
+    wanted = QSize(second.width() + 30, second.height() + 20)
+    second.resize(wanted)
+    wait(qtbot, lambda: second.size() == wanted)
+    second.reject()
+    third = ConflictDialog(one_field_conflict(), settings=settings)  # every conflict opens at it
+    qtbot.addWidget(third)
+    assert third.size() == wanted
+
+
+def test_the_sync_conflicts_window_remembers_its_size_also_when_the_program_closes(world: World, qtbot: QtBot) -> None:  # the owner
+    from chrono_mail.ui.syncconflicts import SyncConflictsWindow
+
+    started(qtbot, world)
+    window = world.window
+    window.open_sync_conflicts()
+    conflicts = window._conflicts_window  # noqa: SLF001
+    assert conflicts is not None
+    qtbot.waitExposed(conflicts)
+    conflicts.resize(700, 480)
+    wait(qtbot, lambda: conflicts.size() == QSize(700, 480))
+    window.close()  # the program closes while the window is open
+    again = SyncConflictsWindow(world.backend, window.sync_marks, window.settings, window)
+    qtbot.addWidget(again)
+    assert again.size() == QSize(700, 480)
+
+
+def test_what_is_as_wide_as_its_widest_text(world: World, qtbot: QtBot) -> None:  # the owner
+    started(qtbot, world)
+    marks = world.window.sync_marks
+    marks.conflicts = (dataclasses.replace(anna_conflict(), kind="addressbook"), dataclasses.replace(anna_conflict(), conflict="c2", kind="events"))
+    panel = SyncConflictsPanel(world.backend, marks)
+    qtbot.addWidget(panel)
+    widest = panel.table.fontMetrics().horizontalAdvance("Address book")
+    assert panel.table.header().sectionSize(WHAT_COLUMN) == max(widest, panel.table.header().fontMetrics().horizontalAdvance("What")) + 16
