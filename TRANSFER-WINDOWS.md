@@ -124,7 +124,7 @@ second start, also of the other copy, shows the window that runs already.
 | `STATUS.md` | where the project is now, the next tasks, the backlog, known problems, how to run the checks | every session |
 | `packaging/PACKAGING.md` | how the installers are made on both machines, what was learned the hard way, how to test and attach them | before any build or release |
 | `ARCHITECTURE.md` | the module map, the layers, the storage design (encrypted Maildir and a rebuildable index), the account model, the IMAP design | before any code change |
-| `DECISIONS.md` | every design decision D-001 to D-123 with its reason (the recent ones about IMAP: D-117, D-118, D-120; about the installers: D-123) | before proposing to change a design choice |
+| `DECISIONS.md` | the entry point to every design decision, one short file each in `decisions/` (about IMAP: D-117, D-118, D-120; about the installers: D-123) | before proposing to change a design choice |
 | `ROADMAP.md` | milestones and tasks with their status (Windows: task 1.14) | when picking or finishing a task |
 | `DEVLOG.md` | an append-only log, one entry per finished task, with the tests that ran | when you need history |
 | `README.md` | the description for people who use the program: what it is, install, uninstall, the first start | for orientation |

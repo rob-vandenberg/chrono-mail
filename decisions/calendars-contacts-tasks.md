@@ -1,0 +1,41 @@
+# Calendars, contacts, tasks
+Read before work on appointments, tasks, contacts, reminders.
+See also: [[sync-conflicts]]
+
+- [[D-193]] An account is a faithful copy
+- [[D-201]] Unsupported data stays local
+- [[D-180]] Never accept an unaccepted certificate
+- [[D-298]] One window to add any account
+- [[D-059]] Include in Send and Receive
+- [[D-155]] Sections' search field
+- [[D-071]] Items kept as iCalendar and vCard
+- [[D-072]] The calendar and contact store
+- [[D-073]] Commands for calendars and contacts
+- [[D-074]] Four sections
+- [[D-075]] The Contacts section
+- [[D-076]] The Tasks section
+- [[D-077]] The Calendar section
+- [[D-078]] Own generic DAV client
+- [[D-079]] DAV sync both ways
+- [[D-181]] New account finds its calendars itself
+- [[D-185]] Calendars and contacts account
+- [[D-187]] Ticking the server's folders
+- [[D-182]] Public folders kept in step
+- [[D-183]] Remember the folders left out
+- [[D-194]] Items go to the server first
+- [[D-308]] Only what a person sees conflicts
+- [[D-309]] Keep both
+- [[D-196]] Server deletes need confirmation
+- [[D-197]] Delete deletes on the server
+- [[D-198]] New collections made on the server
+- [[D-192]] Collection name and colour from the server
+- [[D-263]] Series exceptions follow a new time
+- [[D-297]] Timed events in colour in Month
+- [[D-191]] One colour per appointment
+- [[D-190]] Refresh synchronises
+- [[D-189]] Mouse wheel in the calendar
+- [[D-174]] Lists never cut without a word
+- [[D-227]] Contact groups are cards
+- [[D-254]] Edits never lose hidden data
+- [[D-257]] An edit changes only what changed
+- [[D-301]] Imported calendar accounts

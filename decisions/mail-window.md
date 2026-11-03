@@ -1,0 +1,109 @@
+# Mail window
+Read before work on the message list, search, rules, settings.
+See also: [[changes-reach-the-screen]] · [[look]] · [[tags]]
+
+- [[D-305]] Marked-mail views read only marked mail
+- [[D-306]] Sorting reads only the index
+- [[D-260]] Recovery code shown until stored
+- [[D-235]] Attachments: left out only when shown
+- [[D-236]] Message files work like a file manager
+- [[D-255]] Local Folders can only be hidden
+- [[D-030]] Safe HTML, engine answers, three panes
+- [[D-281]] Copy link address on right-click
+- [[D-215]] Show where a link leads
+- [[D-042]] Notifications and the tray icon
+- [[D-146]] An action changes only what it changes
+- [[D-209]] The folder list is built once
+- [[D-098]] Selection after messages leave
+- [[D-218]] One way to hold every view
+- [[D-266]] Paint what Qt asks, act instantly
+- [[D-282]] Remove from Unread when marked read
+- [[D-276]] Dialogs from Qt Designer forms
+- [[D-221]] Main window parts with one job
+- [[D-222]] Ask only for what changed
+- [[D-032]] Mail text is always valid Unicode
+- [[D-033]] Preview, avatars and icon
+- [[D-039]] What a conversation is
+- [[D-040]] Search language
+- [[D-287]] Three places to search
+- [[D-288]] Advanced search: most used first
+- [[D-289]] Advanced search is a search builder
+- [[D-044]] Address completion
+- [[D-053]] Rules without regular expressions
+- [[D-064]] Rules without conditions
+- [[D-130]] Tag rules
+- [[D-157]] Moving rule actions and Stop
+- [[D-160]] Actions below Stop
+- [[D-302]] A rule follows its folder
+- [[D-054]] Junk folder and Next unread
+- [[D-238]] Junk filter before the rules
+- [[D-056]] Columns, cards and reading pane
+- [[D-091]] Columns fill the width
+- [[D-179]] One record of column order
+- [[D-228]] Every folder keeps its own columns
+- [[D-226]] Received is the server's moment
+- [[D-259]] Hostile input is never fatal
+- [[D-291]] From and To shown three ways
+- [[D-295]] A column sorts by what it shows
+- [[D-292]] Account column and fixed account
+- [[D-106]] Every column sorts
+- [[D-095]] Group headings
+- [[D-153]] From sorts by shown name
+- [[D-099]] Snoozed until and Send at column
+- [[D-101]] Archive and Unarchive
+- [[D-249]] Delete asks for mail in Trash
+- [[D-061]] Favorites order
+- [[D-062]] Pinned folders and account groups
+- [[D-234]] Favorites right-click ticks
+- [[D-119]] Clicking an account row
+- [[D-121]] Show on startup
+- [[D-063]] Replaced by a later decision
+- [[D-102]] Drop target highlight
+- [[D-103]] Drag badge position
+- [[D-092]] One Filter button
+- [[D-203]] Filters narrow Favorites and Tags
+- [[D-214]] What the list shows is one value
+- [[D-217]] A key acts on the focus
+- [[D-093]] Search help
+- [[D-094]] Search field looks and history
+- [[D-216]] Search history never takes focus
+- [[D-096]] Choosing columns
+- [[D-097]] Row height and round search field
+- [[D-284]] Start at login
+- [[D-286]] Tray click on Wayland
+- [[D-296]] Eye in every password field
+- [[D-304]] Reading pane keeps its width
+- [[D-307]] Reading pane header has one height
+- [[D-041]] Password fields and signature
+- [[D-057]] One Settings window
+- [[D-213]] Settings OK applies only changes
+- [[D-211]] Every setting in one place
+- [[D-065]] No Tools menu
+- [[D-172]] Scheduled folder
+- [[D-171]] Buttons name the one action
+- [[D-294]] An (i) explains a greyed option
+- [[D-224]] Scheduled messages page updates
+- [[D-177]] Editing a scheduled message
+- [[D-178]] Scheduled page actions
+- [[D-110]] Settings page list font
+- [[D-112]] Settings page list row height
+- [[D-067]] Ctrl+Q marks as read
+- [[D-068]] Standard keys
+- [[D-114]] Alt+M opens the Menu
+- [[D-239]] Busy bar says what runs
+- [[D-240]] Undo and Redo on mail
+- [[D-138]] Operations window
+- [[D-139]] When the Operations window opens
+- [[D-166]] Settings page order
+- [[D-167]] What the sidebar shows
+- [[D-173]] Sidebar ticks for Local Folders
+- [[D-283]] New and Rename folder ask a name
+- [[D-285]] Every folder is a normal folder
+- [[D-232]] Standard folders come first
+- [[D-168]] Replaced by a later decision
+- [[D-141]] Own Operations bars
+- [[D-045]] Rich text subset
+- [[D-085]] New messages are rich text
+- [[D-105]] Way of writing drop-down
+- [[D-303]] One action per message
+- [[D-104]] Sizes and list choices shown live

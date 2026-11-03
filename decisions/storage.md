@@ -1,0 +1,53 @@
+# Storage, index, keys
+Read before work on the message store, the index, keys, backup and restore.
+See also: [[security]]
+
+- [[D-004]] Messages are an encrypted Maildir
+- [[D-005]] The index is never the truth
+- [[D-006]] The model is IMAP-shaped
+- [[D-021]] Flags, folder paths and message refs
+- [[D-022]] Parsing a message never fails
+- [[D-023]] Encryption and the data key
+- [[D-024]] Store layout and safe delivery
+- [[D-025]] One SQLite index per account
+- [[D-031]] Index formats and upgrades
+- [[D-305]] Marked-mail views read only marked mail
+- [[D-306]] Sorting reads only the index
+- [[D-229]] Index rebuilds at start
+- [[D-026]] Settings file and passwords
+- [[D-170]] Missing key versus unreachable wallet
+- [[D-176]] At most two files per message
+- [[D-136]] One lock for config.json
+- [[D-220]] Shared code in the lowest layer
+- [[D-127]] Credential store failures are errors
+- [[D-260]] Recovery code shown until stored
+- [[D-035]] Missing key at start
+- [[D-043]] Export, source view and printing
+- [[D-235]] Attachments: left out only when shown
+- [[D-236]] Message files work like a file manager
+- [[D-100]] Folders made under a lock
+- [[D-107]] Index changes start immediate
+- [[D-108]] Maintenance once per mail place
+- [[D-109]] A message whose file is gone
+- [[D-115]] Replaced by D-145
+- [[D-145]] One index rebuild at a time
+- [[D-248]] Never search for a known message
+- [[D-247]] Index format read again under lock
+- [[D-251]] Local Folders is never remade
+- [[D-265]] A new key never cuts off Local Folders
+- [[D-255]] Local Folders can only be hidden
+- [[D-125]] Bulk import syncs per batch
+- [[D-244]] Backup and Restore use .cmz
+- [[D-261]] A restore touches only what it set aside
+- [[D-252]] A restore waits for server work
+- [[D-253]] A restore stays in its folder
+- [[D-245]] Nothing sent the person did not send
+- [[D-258]] A restore never deletes POP3 mail
+- [[D-060]] Where POP3 mail is kept
+- [[D-048]] IMAP is an offline mirror
+- [[D-268]] One open connection per index
+- [[D-292]] Account column and fixed account
+- [[D-285]] Every folder is a normal folder
+- [[D-071]] Items kept as iCalendar and vCard
+- [[D-072]] The calendar and contact store
+- [[D-128]] Tags live in the properties file

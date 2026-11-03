@@ -17,12 +17,12 @@ backups/
 TRANSFER.md
 PROMPT-NEW-SESSION.md
 
-# old text of STATUS.md, ARCHITECTURE.md and DECISIONS.md (private, search only)
+# old text of STATUS.md and ARCHITECTURE.md (private, search only); the full wording of every decision (private)
 STATUS-ARCHIVE.md
 STARTUP-TIMES.md
 IMPORT-TIMES.md
 ARCHITECTURE-ARCHIVE.md
-DECISIONS-ARCHIVE.md
+decision-details/
 
 # built program folders and installers (packaging/)
 build/

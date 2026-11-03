@@ -30,8 +30,8 @@ Every changelist says how it keeps this rule. Nothing counts as obvious: what th
 | `USER-REQUESTS.md` | The backlog of requests and problems from people who use Chrono Mail (UR-numbers) | When picking a task |
 | `REFACTOR.md` | The senior refactor: the inventory (R-numbers), the agreed order, the progress | Every session during the refactor, after STATUS.md |
 | `CODE-REVIEW.md` | The whole-program code review: its areas, the register of every finding, the steps; private, git-ignored | Every session while the review runs, after STATUS.md; keep its "Now" line, register and log current |
-| `DECISIONS.md` | Every design decision as it stands now, by topic, short (D-162); D-193 (the basic rule) first. Kept near 40 KB: detail goes to DEVLOG.md, and an entry's old wording is copied to the archive before it is rewritten; when the file is tidied is the owner's decision | Every session, after STATUS.md; before proposing to change a design choice |
-| `DECISIONS-ARCHIVE.md` | The full original text of D-001 to D-161 (measurements, cause chains, rejected options) | Never read whole; search by number when the history of a decision is needed |
+| `DECISIONS.md` | The entry point to every design decision (D-162): how they are kept, the core decisions that bind all work (D-193, the basic rule, first) and the topics. Every decision is one short file, `decisions/D-nnn.md`: "D-nnn" anywhere means that file. Read only what your task needs | Every session, after STATUS.md, in full; then only the topics and decisions your task needs; before proposing to change a design choice |
+| `decision-details/` | Per decision `D-nnn-details.md`: its full wording, reasons, measurements and every older wording (git-ignored, this computer only) | Only the one file of a decision whose short version is not enough |
 | `DEVLOG.md` | Append-only log, one entry per completed task | When you need history |
 | `TRANSFER-WINDOWS.md` | Hand-over for the Windows machine (the Windows computer): its role (Windows runs, the setup.exe), the rules, the file map | On the Windows machine, first |
 
@@ -130,6 +130,6 @@ The owner's rules apply in full: the general rules (G-nn), the Python rules (PY-
 2. `ROADMAP.md`: update the task's status.
 3. `STATUS.md`: rewrite it (current state, next task, open questions).
 4. `DEVLOG.md`: append a short entry (what landed, numbers, what is still open).
-5. `DECISIONS.md`: add an entry for every design decision made during the task.
+5. `DECISIONS.md`: for every design decision made during the task, a new or changed decision file, as the start of `DECISIONS.md` says.
 
 Sessions can end abruptly (context limits, crashes). The documents plus a working tree are how the next session picks up. Keep them current after every task, not at the end of a session.
