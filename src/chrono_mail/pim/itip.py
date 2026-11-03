@@ -1,21 +1,26 @@
 """Calendar messages sent by mail (iTIP, RFC 5546; iMIP, RFC 6047): what a text/calendar part asks or tells. No I/O."""
 import copy
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
+from itertools import groupby
 from typing import Any, Literal  # icalendar hands out untyped property objects
 
 import icalendar
 from dateutil.rrule import rrulestr
 
 from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: one reading of iCalendar
-    MAXIMUM_COMPONENTS, Attendee, Event, Moment, Task, _attendees, _event_from, _moment, _moments, _parse, _person, _stamp, _task_from, _text, occurrences,
+    MAXIMUM_COMPONENTS, MAXIMUM_DATES, Attendee, Event, Moment, Occurrence, Task, _as_aware, _attendees, _event_from, _moment, _moments, _parse, _person, _stamp, _task_from, _text, new_uid,
+    occurrences,
 )
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.506"
+__version__ = "itip.py 4.4.507"
 
 # --- Version history ----------------------------------------------------
+# v4.4.507: busy times (VFREEBUSY): read from a message (BusyPeriod), made from your calendars (busy_periods) and written as an answer
+#           (busy_reply); item_count: how many items a calendar text holds (D-310 step 4)
 # v4.4.506: you are the organizer: an attendee's answer into your meeting, a proposal accepted (new time, SEQUENCE + 1, attendees
 #           asked again), your meeting as a REQUEST to send, DECLINECOUNTER (D-310 step 3)
 # v4.4.505: answering (your copy with your answer, the REPLY), following the organizer (updates keeping your answers, cancellations,
@@ -34,6 +39,16 @@ _RULE_SECONDS: dict[str, int] = {"SECONDLY": 1, "MINUTELY": 60, "HOURLY": 3600, 
 _PARTSTATS: frozenset[str] = frozenset({"NEEDS-ACTION", "ACCEPTED", "DECLINED", "TENTATIVE", "DELEGATED", "COMPLETED", "IN-PROCESS"})  # RFC 5545 section 3.2.12
 _RULE_TIMES: frozenset[str] = frozenset({"BYHOUR", "BYMINUTE", "BYSECOND"})  # a rule with these sets the times itself
 _RULE_DAYS: frozenset[str] = frozenset({"BYDAY", "BYMONTHDAY", "BYYEARDAY", "BYWEEKNO", "BYMONTH", "BYSETPOS"})  # a rule with these sets the days itself
+_BUSY_KINDS: frozenset[str] = frozenset({"BUSY", "BUSY-TENTATIVE", "BUSY-UNAVAILABLE"})  # RFC 5545 section 3.2.9
+
+
+@dataclass(frozen=True, slots=True)
+class BusyPeriod:
+    """A time someone is busy (a FREEBUSY period, RFC 5545 section 3.8.2.6)."""
+
+    start: datetime
+    end: datetime
+    kind: str = "BUSY"  # BUSY, BUSY-TENTATIVE or BUSY-UNAVAILABLE
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +67,9 @@ class CalendarMessage:
     attendees: tuple[Attendee, ...] = ()
     event: Event | None = None  # the event, when it has a start (an answer or a request for the latest version may have none)
     task: Task | None = None
+    busy: tuple[BusyPeriod, ...] = ()  # busy times: what is busy in the period below
+    period_start: Moment | None = None  # busy times: the period they are about (a request: the period asked for)
+    period_end: Moment | None = None
 
 
 def read_calendar_message(text: str | bytes, occurrence: Moment | None | Literal["main"] = "main") -> CalendarMessage | None:
@@ -119,7 +137,27 @@ def _message_of(component: icalendar.Component, method: str, kind: MessageKind) 
         return replace(found, event=event)  # None: no start written, as an answer or a request for the latest version may leave it out
     if kind == "task":
         return replace(found, task=replace(_task_from(component), uid=uid))
+    if kind == "freebusy":
+        return replace(found, busy=_busy_of(component), period_start=_moment(component, "DTSTART"), period_end=_moment(component, "DTEND"))
     return found
+
+
+def _busy_of(component: icalendar.Component) -> tuple[BusyPeriod, ...]:
+    """The busy periods of a VFREEBUSY, in order of time, at most MAXIMUM_DATES; free ones and ones that cannot be read are left out."""
+    props: Any = component.get("FREEBUSY")
+    found: list[BusyPeriod] = []
+    for prop in props if isinstance(props, list) else ([props] if props is not None else []):
+        for period in prop if isinstance(prop, list) else [prop]:
+            start, end = getattr(period, "start", None), getattr(period, "end", None)
+            kind = str(getattr(period, "params", {}).get("FBTYPE", "BUSY")).upper()
+            if not isinstance(start, datetime) or not isinstance(end, datetime) or kind == "FREE":
+                continue
+            try:
+                if end > start and len(found) < MAXIMUM_DATES:
+                    found.append(BusyPeriod(start, end, kind if kind in _BUSY_KINDS else "BUSY"))  # another kind counts as busy (RFC 5545 3.2.9)
+            except TypeError:  # one with a zone, one without
+                continue
+    return tuple(sorted(found, key=lambda each: _moment_key(each.start)))
 
 
 def is_newer(message: CalendarMessage, sequence: int, stamp: datetime | None) -> bool | None:
@@ -871,6 +909,17 @@ def _sound_values(item: icalendar.Component) -> bool:
         return False
 
 
+def _due_after_start(item: icalendar.Component) -> bool:
+    """Whether a task's due moment is not before its start (RFC 5545 section 3.8.2.3); an item with only one of them has nothing to compare."""
+    start, due = _moment(item, "DTSTART"), _moment(item, "DUE")
+    if start is None or due is None:
+        return True
+    try:
+        return isinstance(start, datetime) == isinstance(due, datetime) and due >= start  # type: ignore[operator]
+    except TypeError:  # one with a zone, one without
+        return False
+
+
 def proposal_usable(stored: str, counter: str) -> bool:
     """Whether Accept proposal has something to do: the proposal changes the time or the place of what it is about, its times can be used (an end after
     its start, of the same kind), and it does not move a series off the days its rule sets. Never raises: a time at the edge of the years cannot be used."""
@@ -912,6 +961,8 @@ def _proposal_changes(stored: str, counter: str) -> bool:
         moved = copy.deepcopy(target)
         _take_time(moved, item)
         if (length := _length_of(moved)) is not None and not timedelta(0) <= length <= _LONGEST_PROPOSAL:
+            return False
+        if not _due_after_start(moved):
             return False
         changes = changes or _when(moved) != _when(target) or _length_of(moved) != _length_of(target) or _first(moved, "LOCATION") != _first(target, "LOCATION")
         changes = changes or (moment is None and bool(_rule_text(item)) and not _same_rule(_rule_text(item), rule))
@@ -1018,3 +1069,78 @@ def declinecounter_text(counter: str, now: datetime) -> str | None:
         answer.add("DTSTAMP", now)
         message.add_component(answer)
     return message.to_ical().decode("utf-8")
+
+
+def item_count(text: str | bytes) -> int:
+    """How many items a calendar text holds, of the kind written first (the changed dates of a series are that series; an item without a UID counts by itself)."""
+    calendar = _parse(text)
+    if calendar is None:
+        return 0
+    kind_name = next((each.name for each in calendar.subcomponents if each.name in _KINDS), None)
+    items = [each for each in calendar.subcomponents if each.name == kind_name][:MAXIMUM_COMPONENTS]
+    uids = {uid for each in items if (uid := _first(each, "UID"))}
+    return len(uids) + sum(1 for each in items if not _first(each, "UID"))
+
+
+# --- busy times (D-310 step 4) -----------------------------------------------------------------------------------------------------------
+
+
+def busy_periods(found: Iterable[Occurrence], first: datetime, last: datetime, addresses: frozenset[str], zone: tzinfo) -> tuple[BusyPeriod, ...]:
+    """The times between two moments that these occurrences keep you busy, merged, in UTC, in order: only times, never what the item is. An
+    occurrence that does not block the time (TRANSPARENT), a cancelled one and one you declined are left out; a tentative one (its own status,
+    or your answer) is BUSY-TENTATIVE unless something else makes the same time BUSY."""
+    marks: list[tuple[datetime, int, int]] = []  # a moment, and how many busy and tentative items begin (1) or end (-1) there
+    for occurrence in found:
+        event = occurrence.event
+        yours = next((person.status.upper() for person in event.attendees if person.address.strip().lower() in addresses), "")
+        if event.transparency.upper() == "TRANSPARENT" or event.status.upper() == "CANCELLED" or yours == "DECLINED":
+            continue
+        start, end = max(first, _as_aware(occurrence.start, zone)), min(last, _as_aware(occurrence.end, zone))
+        if end <= start:
+            continue
+        tentative = event.status.upper() == "TENTATIVE" or yours == "TENTATIVE"
+        marks.append((start.astimezone(UTC), 0 if tentative else 1, 1 if tentative else 0))
+        marks.append((end.astimezone(UTC), 0 if tentative else -1, -1 if tentative else 0))
+    periods: list[BusyPeriod] = []
+    busy = tentative_now = 0
+    since: datetime | None = None
+    shown = ""
+    for moment, changes in groupby(sorted(marks, key=lambda mark: mark[0]), key=lambda mark: mark[0]):
+        for _, busy_change, tentative_change in changes:
+            busy += busy_change
+            tentative_now += tentative_change
+        kind = "BUSY" if busy else ("BUSY-TENTATIVE" if tentative_now else "")
+        if kind != shown:
+            if since is not None and shown:
+                periods.append(BusyPeriod(since, moment, shown))
+            since, shown = moment, kind
+    return tuple(periods)
+
+
+def busy_reply(request: CalendarMessage, address: str, name: str, first: datetime, last: datetime, periods: Iterable[BusyPeriod], now: datetime) -> str:
+    """Your answer to a request for your busy times (METHOD:REPLY, RFC 5546 section 3.3.3): the UID and the organizer of the request, you as
+    attendee, the period answered and its busy times, all in UTC."""
+    reply = icalendar.Calendar()
+    reply.add("PRODID", "-//Chrono Mail//Chrono Mail//EN")
+    reply.add("VERSION", "2.0")
+    reply.add("METHOD", "REPLY")
+    item = icalendar.FreeBusy()
+    item.add("UID", request.uid or new_uid())
+    item.add("DTSTAMP", now)
+    item.add("DTSTART", first.astimezone(UTC))
+    item.add("DTEND", last.astimezone(UTC))
+    if request.organizer is not None:
+        organizer = icalendar.vCalAddress(f"mailto:{request.organizer.address}")
+        if request.organizer.name:
+            organizer.params["CN"] = request.organizer.name
+        item.add("ORGANIZER", organizer)
+    attendee = icalendar.vCalAddress(f"mailto:{address}")
+    if name:
+        attendee.params["CN"] = name
+    item.add("ATTENDEE", attendee)
+    for period in periods:
+        line = icalendar.vPeriod((period.start, period.end))
+        line.params["FBTYPE"] = period.kind
+        item.add("FREEBUSY", line, encode=False)
+    reply.add_component(item)
+    return reply.to_ical().decode("utf-8")

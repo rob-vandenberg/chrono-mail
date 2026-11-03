@@ -20,9 +20,11 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.506"
+__version__ = "invitationcard.py 4.4.507"
 
 # --- Version history ----------------------------------------------------
+# v4.4.507: a task says task and task list, with a due moment and the answers COMPLETED and IN-PROCESS; busy times with Send my busy times…;
+#           a file that asks nothing or holds several items says so (D-310 step 4)
 # v4.4.506: your own meeting: Take their answer, Accept proposal and Decline proposal, Send the latest version (D-310 step 3)
 # v4.4.505: Accept (green), Tentative and Decline below an invitation, Add to calendar below a shared item; greyed with an (i) when a
 #           newer version is in your calendar (D-310)
@@ -41,7 +43,9 @@ _INTRO: dict[str, str] = {
     "REFRESH": "{who} asks for the latest version of this {item}.",
 }
 _ANSWERED: dict[str, str] = {"ACCEPTED": "accepted", "DECLINED": "declined", "TENTATIVE": "tentatively accepted", "DELEGATED": "delegated"}
-_YOU: dict[str, str] = {"ACCEPTED": "You accepted.", "DECLINED": "You declined.", "TENTATIVE": "You accepted tentatively.", "DELEGATED": "You delegated it."}
+_PROGRESS: dict[str, str] = {"COMPLETED": "{who} has completed this task.", "IN-PROCESS": "{who} is working on this task."}  # an answer about a task's progress
+_YOU: dict[str, str] = {"ACCEPTED": "You accepted.", "DECLINED": "You declined.", "TENTATIVE": "You accepted tentatively.", "DELEGATED": "You delegated it.",
+                        "COMPLETED": "You completed it.", "IN-PROCESS": "You are working on it."}
 # An attendee's answer as a mark in front of the name, with its hover text (OR-17); the colour is the theme's.
 _MARKS: dict[str, tuple[str, Callable[[Theme], str], str]] = {
     "ACCEPTED": ("✓", lambda colours: colours.green, "Accepted"),
@@ -49,7 +53,11 @@ _MARKS: dict[str, tuple[str, Callable[[Theme], str], str]] = {
     "TENTATIVE": ("~", lambda colours: colours.amber, "Accepted tentatively"),
     "DELEGATED": ("→", lambda colours: colours.amber, "Delegated"),
     "NEEDS-ACTION": ("?", lambda colours: colours.amber, "Not answered yet"),
+    "COMPLETED": ("✓", lambda colours: colours.green, "Completed"),
+    "IN-PROCESS": ("…", lambda colours: colours.amber, "Working on it"),
 }
+_BUSY_SHOWN: int = 20  # busy times listed on the card; the others are counted
+_BUSY_WORD: dict[str, str] = {"BUSY-TENTATIVE": " (tentative)", "BUSY-UNAVAILABLE": " (unavailable)"}
 
 
 def when_text(start: date | datetime | None, end: date | datetime | None, all_day: bool) -> str:
@@ -76,12 +84,47 @@ def _person_text(person: InvitationPerson) -> str:
     return f"{person.name} ({person.address})" if person.name and person.name.lower() != person.address.lower() else person.address
 
 
+def item_word(info: InvitationInfo) -> str:
+    """What the person calls the item."""
+    return "task" if info.kind == "task" else "meeting"
+
+
+def home_word(info: InvitationInfo) -> str:
+    """What the person calls the place it is kept."""
+    return "task list" if info.kind == "task" else "calendar"
+
+
+def _busy_intro(info: InvitationInfo) -> str:
+    """Whose busy times these are: the organizer asks for them or publishes their own; an answer holds the attendee's."""
+    person = info.organizer if info.method != "REPLY" else next((each for each in info.attendees if not each.you), None)
+    who = (person.name or person.address) if person is not None else "Someone"
+    return f"{who} asks when you are busy." if info.method == "REQUEST" else f"The busy times of {who}."
+
+
 def intro_text(info: InvitationInfo) -> str:
-    item = "task" if info.kind == "task" else "meeting"
+    if info.kind == "freebusy":
+        return _busy_intro(info)
+    if info.items > 1:
+        return f"This file holds {info.items} items. The first is shown here."
+    if info.plain:
+        return "This file holds one item."
+    item = item_word(info)
     writer = next((person for person in info.attendees if not person.you), info.attendees[0] if info.attendees else None)
     who = (writer.name or writer.address) if writer is not None else "Someone"
+    if info.method == "REPLY" and writer is not None and writer.answer in _PROGRESS:
+        return _PROGRESS[writer.answer].format(who=who)
     answered = _ANSWERED.get(writer.answer, "answered") if writer is not None else "answered"
     return _INTRO.get(info.method, "This {item} was sent to you.").format(item=item, who=who, answered=answered)
+
+
+def busy_text(info: InvitationInfo) -> str:
+    """The busy times on the card, each on a line, in local time; a request holds none, and shows none."""
+    if info.method == "REQUEST":
+        return ""
+    lines = [when_text(period.start, period.end, False) + _BUSY_WORD.get(period.kind, "") for period in info.busy[:_BUSY_SHOWN]]
+    if len(info.busy) > _BUSY_SHOWN:
+        lines.append(f"and {len(info.busy) - _BUSY_SHOWN} more")
+    return "\n".join(lines) or "No busy times in this period."
 
 
 def status_text(info: InvitationInfo) -> str:
@@ -96,7 +139,7 @@ def status_text(info: InvitationInfo) -> str:
 
 def organize_choices(info: InvitationInfo) -> list[tuple[str, str]]:
     """The buttons of a message about your own meeting (you are its organizer, D-310 step 3): its label and what it does."""
-    if info.organizer is None or not info.organizer.you:
+    if info.organizer is None or not info.organizer.you or info.kind == "freebusy":
         return []
     if info.method == "REPLY":
         return [("Take their answer", "take")]
@@ -109,25 +152,29 @@ def organize_choices(info: InvitationInfo) -> list[tuple[str, str]]:
 
 def organize_reason(info: InvitationInfo) -> str:
     """Why the buttons of a message about your own meeting are greyed (OR-15); "": they work."""
+    item, home = item_word(info), home_word(info)
     if not info.stored_in:
-        return "This meeting is not in your calendar any more."
+        return f"This {item} is not in your {home} any more."
     if not info.organized_by_you:
-        return "The meeting in your calendar has another organizer."
+        return f"The {item} in your {home} has another organizer."
     if info.method != "REFRESH" and not info.occurrence_kept:
-        return "This date is not in your meeting any more."
+        return f"This date is not in your {item} any more."
     if info.method == "COUNTER" and info.version == "newer":
-        return "This proposal is about a version of the meeting you do not have."
+        return f"This proposal is about a version of the {item} you do not have."
     return ""
 
 
 def apply_text(info: InvitationInfo) -> str:
     """The button that takes the organizer's change into your calendar, for this message; "" when there is none (D-310)."""
+    home = home_word(info)
+    if info.kind == "freebusy":
+        return ""
     if info.method == "CANCEL" and info.stored_in and info.occurrence_kept:
-        return "Remove from calendar"
+        return f"Remove from {home}"
     if info.method == "ADD":  # occurrence_kept: dates still to add (none: added already, nothing to offer)
-        return ("Add to calendar" if info.occurrence_kept else "") if info.stored_in else "Ask for the latest version"
+        return (f"Add to {home}" if info.occurrence_kept else "") if info.stored_in else "Ask for the latest version"
     if info.method in ("REQUEST", "PUBLISH") and info.stored_in and info.version == "newer":
-        return "Update calendar"
+        return f"Update {home}"
     return ""
 
 
@@ -163,6 +210,7 @@ class InvitationCard(QFrame):
     apply_requested = Signal()  # the organizer's change into your calendar: Update calendar, Remove from calendar, Add to calendar, Ask…
     delegate_requested = Signal()  # Delegate…: someone else goes in your place
     organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest
+    busy_requested = Signal()  # Send my busy times…
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -174,6 +222,7 @@ class InvitationCard(QFrame):
         self.intro = self._plain()
         self.title = self._plain()
         self.when = self._plain()
+        self.busy_times = self._plain()
         self.organizer = QLabel(self)
         self.organizer.setTextFormat(Qt.TextFormat.RichText)  # built with html.escape
         self.organizer.setWordWrap(True)
@@ -194,6 +243,7 @@ class InvitationCard(QFrame):
         middle = self._section(outer)
         middle.addWidget(self.title)
         middle.addWidget(self.when)
+        middle.addWidget(self.busy_times)
         outer.addWidget(self._line())
         bottom = self._section(outer)
         bottom.addWidget(self._organizer_row)
@@ -220,6 +270,9 @@ class InvitationCard(QFrame):
         self.apply_button = QPushButton("Update calendar", answers)
         self.apply_button.clicked.connect(self.apply_requested)
         row.addWidget(self.apply_button)
+        self.busy_button = QPushButton("Send my busy times…", answers)
+        self.busy_button.clicked.connect(self.busy_requested)
+        row.addWidget(self.busy_button)
         self.organize_buttons: list[QPushButton] = []
         for _ in range(2):  # your own meeting: at most two choices (accept or decline a proposal)
             button = QPushButton(answers)
@@ -316,7 +369,7 @@ class InvitationCard(QFrame):
         """Nothing of the message before stays: its card and its attendees go."""
         self.info = None
         self.people.clear()
-        for label in (self.intro, self.title, self.when, self.organizer, self.place, self.status):
+        for label in (self.intro, self.title, self.when, self.busy_times, self.organizer, self.place, self.status):
             label.clear()
 
     def show_invitation(self, info: InvitationInfo) -> None:
@@ -324,9 +377,13 @@ class InvitationCard(QFrame):
         self.restyle()
         colours = self._theme()
         self.intro.setText(intro_text(info))
-        self.title.setText(info.title or "(no title)")
-        self.when.setText(when_text(info.start, info.end, info.all_day) + (" (repeats)" if info.repeats else ""))
+        busy = info.kind == "freebusy"
+        self.title.setText("Busy times" if busy else info.title or "(no title)")
+        when = when_text(info.start, info.end, info.all_day) + (" (repeats)" if info.repeats else "")
+        self.when.setText(f"Due {when}" if when and info.kind == "task" else when)
         self.when.setVisible(bool(self.when.text()))
+        self.busy_times.setText(busy_text(info) if busy else "")
+        self.busy_times.setVisible(bool(self.busy_times.text()))
         organizer = info.organizer
         name = html.escape(organizer.name.strip()) if organizer is not None else ""
         address = html.escape(organizer.address.strip()) if organizer is not None else ""
@@ -356,10 +413,14 @@ class InvitationCard(QFrame):
         """The buttons a message asks for: Accept, Tentative and Decline for an invitation, Add to calendar for a shared item; greyed with an (i)
         when a newer version is in a calendar already (OR-15)."""
         yours = info.organizer is not None and info.organizer.you  # your own meeting: nothing to answer
-        asks = info.method == "REQUEST" and not yours  # an added occurrence is added first (its own button)
-        shared = info.method == "PUBLISH"
+        busy = info.kind == "freebusy"
+        asks = info.method == "REQUEST" and not yours and not busy  # an added occurrence is added first (its own button)
+        shared = info.method == "PUBLISH" and not busy
+        wants_busy = info.method == "REQUEST" and not yours and busy
+        self.busy_button.setVisible(wants_busy)
         for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button):
             button.setVisible(asks)
+        self.add_button.setText(f"Add to {home_word(info)}")
         self.add_button.setVisible(shared and not info.stored_in)
         apply = apply_text(info) if not yours else ""
         self.apply_button.setText(apply)
@@ -369,15 +430,15 @@ class InvitationCard(QFrame):
         for button, (label, _) in zip(self.organize_buttons, [*choices, ("", ""), ("", "")], strict=False):
             button.setText(label)
             button.setVisible(bool(label))
-        shown = asks or (shared and not info.stored_in) or bool(apply) or bool(choices)
+        shown = asks or (shared and not info.stored_in) or bool(apply) or bool(choices) or wants_busy
         self._answers.setVisible(shown)
         self._answer_line.setVisible(shown)
         outdated = info.version == "older"
-        reason = "A newer version of this meeting is in your calendar: this message is out of date." if outdated else (organize_reason(info) if choices else "")
+        reason = f"A newer version of this {item_word(info)} is in your {home_word(info)}: this message is out of date." if outdated else (organize_reason(info) if choices else "")
         buttons = (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.add_button, self.apply_button, *self.organize_buttons)
         for button in buttons:
             button.setEnabled(not reason)
         if not reason and "accept_proposal" in self._organize_actions and not info.proposal_usable:
-            reason = "This proposal changes nothing in your meeting, or its times cannot be used."
+            reason = f"This proposal changes nothing in your {item_word(info)}, or its times cannot be used."
             self.organize_buttons[self._organize_actions.index("accept_proposal")].setEnabled(False)  # Decline proposal still answers it
         self.answers_mark.explain("Answer", reason, *buttons)

@@ -3,7 +3,7 @@ from pathlib import Path
 
 from typing import override
 
-from PySide6.QtCore import QSettings, QUrl
+from PySide6.QtCore import QSettings, QUrl, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import QFileDialog, QLabel, QMainWindow, QToolBar, QWidget
 
@@ -15,14 +15,16 @@ from chrono_mail.ui.attachmentopening import open_attachment
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.heldkey import HeldKey
 from chrono_mail.ui.icons import application_icon, theme_icon
+from chrono_mail.ui.invitationwindow import is_calendar_file
 from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.reader import ReaderWidget
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "messagewindow.py 4.2.394"
+__version__ = "messagewindow.py 4.4.507"
 
 # --- Version history ----------------------------------------------------
+# v4.4.507: Open attachment on an .ics file asks for its card in a window of its own (calendar_open_requested), D-310 step 4
 # v4.2.394: Reply, Reply all and Forward act once per press: holding the key opens no more windows (D-266)
 # v2.0.302: Open attachment from the attachment row and the pictures (D-236)
 # v1.9.275: R-19 round 5: the engine's answers kept as their real types and read by their fields (Pyrefly checks them); a getattr stays only with its reason (# getattr:)
@@ -40,6 +42,8 @@ Compose = Callable[[str, str, str, str], None]  # kind, account, folder, message
 
 class MessageWindow(QMainWindow):
     """One message in a window of its own, with Reply, Reply all and Forward."""
+
+    calendar_open_requested = Signal(int, str)  # an .ics attachment to show as a card: its position and name
 
     def __init__(
         self, backend: Backend, account: str, folder: str, message_id: str, shown: ShowResult, compose: Compose, open_link: Callable[[QUrl], None], prepare: Callable[[ReaderWidget], None], settings: QSettings | None = None, parent: QWidget | None = None
@@ -85,6 +89,9 @@ class MessageWindow(QMainWindow):
         super().closeEvent(event)
 
     def _open_attachment(self, position: int, name: str) -> None:
+        if is_calendar_file(name):
+            self.calendar_open_requested.emit(position, name)
+            return
         open_attachment(self, self._backend, self._where, position, name, self._open_failed, self)
 
     def _open_failed(self, text: str, error: ChronoMailError | None) -> None:

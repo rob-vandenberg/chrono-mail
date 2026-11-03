@@ -50,9 +50,10 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.4.506"
+__version__ = "reader.py 4.4.507"
 
 # --- Version history ----------------------------------------------------
+# v4.4.507: Send my busy times… on the card reaches the reading pane (invitation_busy_requested), D-310 step 4
 # v4.4.506: the card's buttons for your own meeting reach the reading pane (invitation_organize_requested)
 # v4.4.505: the card's Accept, Tentative, Decline, Delegate and apply buttons reach the reading pane (invitation_*_requested); the
 #           card on screen (invitation), D-310
@@ -1045,6 +1046,7 @@ class ReaderWidget(QWidget):
     invitation_apply_requested = Signal()  # Update calendar, Remove from calendar, Add to calendar, Ask for the latest version (D-310)
     invitation_delegate_requested = Signal()  # Delegate… on the invitation card
     invitation_organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest (D-310 step 3)
+    invitation_busy_requested = Signal()  # Send my busy times… on the card (D-310 step 4)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1117,6 +1119,7 @@ class ReaderWidget(QWidget):
         self._card.apply_requested.connect(self.invitation_apply_requested)
         self._card.delegate_requested.connect(self.invitation_delegate_requested)
         self._card.organize_requested.connect(self.invitation_organize_requested)
+        self._card.busy_requested.connect(self.invitation_busy_requested)
         self._card_area.viewport().installEventFilter(self)  # its height follows its width (_fit_card)
         card_row.addWidget(self._card, 1)
         card_row.addStretch(0)

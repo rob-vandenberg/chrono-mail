@@ -1,6 +1,7 @@
 ; --- Version ------------------------------------------------------------
-; chrono-mail.iss 4.2.435
+; chrono-mail.iss 4.4.507
 ; --- Version history ----------------------------------------------------
+; v4.4.507: Chrono Mail is offered under Open with for .ics files, never made their default (D-310 step 4)
 ; v4.2.435: the setup is named chrono-mail_<version>_x64_setup.exe
 ; v4.2.419: an update from Chrono Mail runs this setup silently; it starts Chrono Mail again when done, as the person (D-293)
 ; v4.2.402: the uninstaller removes the start at login of the person who uninstalls (D-284)
@@ -40,6 +41,7 @@ WizardStyle=modern
 ; Installs for all users (asks for administrator rights); the person may choose to install for themselves only.
 PrivilegesRequiredOverridesAllowed=dialog
 CloseApplications=yes
+ChangesAssociations=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -50,6 +52,13 @@ Source: "{#Source}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs 
 [Icons]
 Name: "{autoprograms}\Chrono Mail"; Filename: "{app}\chrono-mail.exe"; AppUserModelID: "chrono-mail.ChronoMail"
 Name: "{autodesktop}\Chrono Mail"; Filename: "{app}\chrono-mail.exe"; Tasks: desktopicon; AppUserModelID: "chrono-mail.ChronoMail"
+
+[Registry]
+; Open with for .ics files: the person's default program stays theirs. HKA: the machine, or the person when installed for themselves only.
+Root: HKA; Subkey: "Software\Classes\.ics\OpenWithProgids"; ValueType: string; ValueName: "ChronoMail.ics"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\ChronoMail.ics"; ValueType: string; ValueName: ""; ValueData: "Calendar file"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\ChronoMail.ics\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\chrono-mail.exe,0"
+Root: HKA; Subkey: "Software\Classes\ChronoMail.ics\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\chrono-mail.exe"" ""%1"""
 
 [Run]
 Filename: "{app}\chrono-mail.exe"; Description: "{cm:LaunchProgram,Chrono Mail}"; Flags: nowait postinstall skipifsilent

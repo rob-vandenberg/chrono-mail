@@ -67,9 +67,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.3.498"
+__version__ = "mainwindow.py 4.4.507"
 
 # --- Version history ----------------------------------------------------
+# v4.4.507: open_calendar_file: a calendar file given at the start or by a second start, once the window has started (D-310 step 4)
 # v4.3.498: the Sync conflicts window is closed when the program closes, so its size is remembered then too (the owner)
 # v4.2.481: the status line says how many sync conflicts the check at start settled (D-308)
 # v4.2.467: Settings OK takes in Widen the reading pane to fit the message (D-304)
@@ -429,6 +430,8 @@ class MainWindow(QMainWindow):
         self.columns = MessageColumns(self.messages, state, self.prefs, memory, self)
         self.splitter = PaneSplitter(Qt.Orientation.Horizontal, self)
         self.content_splitter = PaneSplitter(Qt.Orientation.Horizontal, self)  # the list and the reading pane, side by side or one above the other
+        self._started = False  # the key and the accounts are there: a calendar file can be shown
+        self._files_waiting: list[str] = []  # calendar files given before that
         self.reading = ReadingPane(
             backend, state, self.report, self.prefs, self.messages, self.tags, self.mail_actions, self.composing, self.content_splitter,
             lambda: self.columns.layout == "columns", self,
@@ -944,6 +947,14 @@ class MainWindow(QMainWindow):
         else:
             self.open_window()
 
+    def open_calendar_file(self, path: str) -> None:
+        """A calendar file given at the start or by a second start, as a card in a window of its own; it waits for the key and the accounts. When
+        it cannot be shown the window comes forward, since its status line says why."""
+        if self._started:
+            self.reading.open_calendar_file(path, self.bring_forward)
+        else:
+            self._files_waiting.append(path)
+
     def bring_forward(self) -> None:
         """A second start of the program asked for the window: show it (also when it was hidden in the tray), raise it and give it the focus."""
         self.open_window()
@@ -1331,6 +1342,10 @@ class MainWindow(QMainWindow):
             self.reload_accounts(select_saved=True, then=check)
             self.checking.learn_existing_junk()  # once per place where mail is kept (D-238)
             self.checking.label_wallet()  # readable labels for the wallet's entries (B-23)
+            self._started = True
+            for path in self._files_waiting:
+                self.open_calendar_file(path)
+            self._files_waiting.clear()
 
         self.checking.move_profile_wallet(moved)
 

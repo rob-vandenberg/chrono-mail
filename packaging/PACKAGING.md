@@ -1,6 +1,6 @@
 # PACKAGING.md: making the installers
 
-*Version 0.5.131. Read this file completely before building. It is written for the agent (and the person) that builds
+*Version 4.4.507. Read this file completely before building. It is written for the agent (and the person) that builds
 the installers on one of the two machines. The project rules (AGENTS.md, PY-DEVELOPMENT-RULES.md) apply: change no code and
 release nothing without the owner's "Proceed"; report every problem instead of working around it.*
 
@@ -174,6 +174,21 @@ fingerprint of each file (the `digest` of the release asset) is checked after th
    (`runasoriginaluser`). **To try on the Windows computer**: an install for all users (Windows' own question still comes) and one
    for the person only; that the program comes back after the update.
 
-## 7. Sizes
+## 7. Calendar files (.ics, D-310, since 4.4.507)
+
+Chrono Mail is offered as a program to open `.ics` files with; it never takes the person's default.
+
+1. Linux: `packaging/chrono-mail.desktop` has `Exec=/usr/bin/chrono-mail %f` and `MimeType=text/calendar;`. Check it with
+   `desktop-file-validate packaging/chrono-mail.desktop`.
+2. Windows: `packaging/chrono-mail.iss` has `ChangesAssociations=yes` and a `[Registry]` section under `HKA` (the machine, or the person when
+   installed for themselves only): `Software\Classes\.ics\OpenWithProgids` gets the value `ChronoMail.ics` (removed by the uninstaller), and
+   `Software\Classes\ChronoMail.ics` holds the name, the icon and `shell\open\command`, `"{app}\chrono-mail.exe" "%1"` (removed by the uninstaller).
+3. The program takes a first argument ending in `.ics` (any case) and shows it as a card in a window of its own, once the key and the accounts are
+   there. While it runs already, the second start hands the file over (`ui/singleinstance.py`) and quits.
+
+**To try on the Windows computer**: after the setup, right-click an `.ics` file > Open with shows Chrono Mail; the card opens, with the program closed
+and with it running; the program that was the default for `.ics` stays the default; after the uninstall Chrono Mail is gone from Open with.
+
+## 8. Sizes
 
 The program folder is about 480 MB on disk (the HTML viewer is the largest part); the .deb and .rpm are about 190 MB.

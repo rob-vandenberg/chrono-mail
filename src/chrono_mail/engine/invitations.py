@@ -10,12 +10,14 @@ from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import Attachment
 from chrono_mail.pim.ical import Attendee
-from chrono_mail.pim.itip import CalendarMessage, added_already, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message
+from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, holds_occurrence, in_meeting, is_newer, item_count, occurrences_of, proposal_usable, read_calendar_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.506"
+__version__ = "invitations.py 4.4.507"
 
 # --- Version history ----------------------------------------------------
+# v4.4.507: busy times have a card (kind freebusy, busy); card_of: the card of any calendar text, also of a file that asks nothing (plain,
+#           items), D-310 step 4
 # v4.4.506: a request for the latest version is never out of date (it has no SEQUENCE), D-310 step 3
 # v4.4.505: occurrence_kept for Remove and Add; read-only calendars never searched, your own calendars before public ones; a copy of single
 #           occurrences only offers no Add to calendar (D-310)
@@ -35,14 +37,14 @@ class InvitationPerson:
 
 @dataclass(frozen=True, slots=True)
 class InvitationInfo:
-    position: int  # the calendar part's place among the message's attachments (message.show)
+    position: int  # the calendar part's place among the message's attachments (message.show); -1: a file on this computer
     method: str  # REQUEST, REPLY, CANCEL, ADD, REFRESH, COUNTER, DECLINECOUNTER, PUBLISH
-    kind: str  # event or task
+    kind: str  # event, task or freebusy
     uid: str
     title: str
     location: str
-    start: date | datetime | None  # an event's start, a task's due moment; a date for a whole day
-    end: date | datetime | None  # an event's end (a whole day: the day after the last, as in iCalendar)
+    start: date | datetime | None  # an event's start, a task's due moment, the start of the period of busy times; a date for a whole day
+    end: date | datetime | None  # an event's end (a whole day: the day after the last, as in iCalendar), the end of the period of busy times
     all_day: bool
     repeats: bool
     organizer: InvitationPerson | None
@@ -54,6 +56,9 @@ class InvitationInfo:
     occurrence_kept: bool = False  # the item, or for one occurrence that occurrence, is in the copy (Remove from calendar can remove it)
     organized_by_you: bool = True  # the copy in your calendar names one of your addresses as organizer (a message to you as organizer)
     proposal_usable: bool = True  # a proposal changes something and its times can be used (Accept proposal)
+    busy: tuple[BusyPeriod, ...] = ()  # busy times: the periods someone is busy
+    plain: bool = False  # a calendar file that asks nothing (no METHOD): it is offered as PUBLISH
+    items: int = 1  # how many items it holds; several: the first one is shown, and all of them are added
 
 
 class _VisibleText(HTMLParser):
@@ -111,7 +116,7 @@ def calendar_part(attachments: tuple[Attachment, ...] | list[Attachment]) -> tup
         if attachment.content_type.lower() not in CALENDAR_TYPES:
             continue
         message = read_calendar_message(attachment.data)
-        if message is not None and message.method and message.kind in ("event", "task"):
+        if message is not None and message.method and message.kind in ("event", "task", "freebusy"):
             return position, message
     return None
 
@@ -182,16 +187,28 @@ def invitation_of(engine: Engine, attachments: tuple[Attachment, ...] | list[Att
     if found is None:
         return None
     position, message = found
+    return card_of(engine, position, message, attachments[position].data.decode("utf-8", "replace"))
+
+
+def several_items(message: CalendarMessage, message_text: str) -> int:
+    """How many items a calendar text offers to keep: a shared text may hold many, every other message is about one (RFC 5546 section 1.4)."""
+    return max(1, item_count(message_text)) if message.method in ("", "PUBLISH") else 1
+
+
+def card_of(engine: Engine, position: int, message: CalendarMessage, message_text: str, plain: bool = False) -> InvitationInfo:
+    """The card of a calendar message. plain: a file that asks nothing, offered as a shared item. Of several items the first is shown, and your
+    calendars are not searched: what they hold of one says nothing of the others."""
     addresses = your_addresses(engine)
-    message_text = attachments[position].data.decode("utf-8", "replace")
-    kept = _stored(engine, message, message_text, addresses) if message.uid else _Kept()
+    items = several_items(message, message_text)
+    kept = _stored(engine, message, message_text, addresses) if message.uid and items == 1 and message.kind != "freebusy" else _Kept()
     event, task = message.event, message.task
-    start = event.start if event is not None else (task.due if task is not None else None)
-    end = event.end if event is not None else None
+    start = event.start if event is not None else (task.due if task is not None else message.period_start)
+    end = event.end if event is not None else message.period_end
     all_day = start is not None and not isinstance(start, datetime)
     repeats = event.repeats if event is not None else bool(task is not None and task.rrule)
     return InvitationInfo(
         position, message.method, message.kind, message.uid, message.title, message.location, start, end, all_day, repeats,
         _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_person(each, addresses) for each in message.attendees),
         kept.stored_in, kept.version, kept.answer, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
+        busy=message.busy, plain=plain, items=items,
     )

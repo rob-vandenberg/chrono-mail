@@ -19,12 +19,14 @@ from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.icons import application_icon
 from chrono_mail.ui.mainwindow import MainWindow
 from chrono_mail.ui.plainboxes import plain_message_boxes
-from chrono_mail.ui.singleinstance import ShowRequests, ask_to_show
+from chrono_mail.ui.invitationwindow import is_calendar_file
+from chrono_mail.ui.singleinstance import ShowRequests, ask_to_open, ask_to_show
 
 # --- Version ------------------------------------------------------------
-__version__ = "app.py 4.2.459"
+__version__ = "app.py 4.4.507"
 
 # --- Version history ----------------------------------------------------
+# v4.4.507: an .ics file as first argument opens as a card; a second start hands it to the running program (D-310 step 4)
 # v4.2.459: credential_stores: a profile's entries not moved yet are found under its former wallet name (D-274)
 # v4.2.434: a copy run from the project folder tells the desktop it belongs to chrono-mail-project, the built program to chrono-mail (desktop_file_name)
 # v4.2.402: --minimized (the start at login with the window minimized, D-284): the window starts minimized (MainWindow.start_minimized), a
@@ -96,6 +98,14 @@ def take_minimized(arguments: list[str]) -> bool:
     return True
 
 
+def take_calendar_file(arguments: list[str]) -> str:
+    """The .ics file the program is started with (the first argument, as the desktop gives it), as a whole path, since a running copy may
+    stand in another folder; taken out of the arguments so Qt never sees it; "": none."""
+    if len(arguments) < 2 or not is_calendar_file(arguments[1]):
+        return ""
+    return str(Path(arguments.pop(1)).resolve())
+
+
 def directories_and_settings(profile: Path | None) -> tuple[AppDirectories, QSettings]:
     """Where the mail and settings are, and the window's own settings: the person's own, or all of them inside the profile's folder."""
     if profile is None:
@@ -111,9 +121,10 @@ def credential_stores(directories: AppDirectories, backend: CredentialBackend | 
     return KeyringPasswordStore(directories.credential_service, backend, former), KeyringKeyStore(directories.credential_service, backend, former)
 
 
-def second_start() -> int:
-    """The program is running already: ask it to show its window; when it does not answer, say so. Returns the exit code."""
-    if ask_to_show():
+def second_start(calendar_file: str = "") -> int:
+    """The program is running already: ask it to show its window, or hand it the calendar file; when it does not answer, say so. Returns the
+    exit code."""
+    if ask_to_open(calendar_file) if calendar_file else ask_to_show():
         return 0
     QMessageBox.information(None, APPLICATION_NAME, "Chrono Mail is already running.")
     return 1
@@ -125,6 +136,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     arguments = list(argv) if argv is not None else list(sys.argv)
     profile = take_profile(arguments)
     minimized = take_minimized(arguments)
+    calendar_file = take_calendar_file(arguments)
     set_process_name()  # Linux: another start recognises this process by its name
     appearance.keep_web_pages_light()
     set_application_id()
@@ -136,7 +148,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     app.setWindowIcon(application_icon())
     plain_message_boxes()  # text from mail and servers in a message box is never markup (RV-167); nothing watches every event
     if program_is_running():  # two copies would change the same mail at once
-        return 0 if minimized else second_start()  # a start at login while it runs already: it is there, nothing to show
+        return 0 if minimized and not calendar_file else second_start(calendar_file)  # a start at login while it runs already: it is there, nothing to show
     directories, settings = directories_and_settings(profile)
     engine = Engine(directories, *credential_stores(directories))
     backend = Backend(engine)
@@ -145,9 +157,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     window.closed_for_good.connect(app.quit)
     requests = ShowRequests()
     requests.show_requested.connect(window.bring_forward)
+    requests.file_requested.connect(window.open_calendar_file)
     requests.listen()  # without it a second start only says that the program is running
     if minimized:
         window.start_minimized()
     window.show()
     QTimer.singleShot(0, window.start)
+    if calendar_file:
+        window.open_calendar_file(calendar_file)  # waits until the window has started
     return app.exec()

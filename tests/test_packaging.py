@@ -8,9 +8,10 @@ from chrono_mail.ui.app import DESKTOP_FILE_NAME, PROJECT_DESKTOP_FILE_NAME, des
 from chrono_mail.ui.icons import RESOURCES
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_packaging.py 4.2.434"
+__version__ = "test_packaging.py 4.4.507"
 
 # --- Version history ----------------------------------------------------
+# v4.4.507: the menu entry also takes the calendar file it opens (D-310 step 4)
 # v4.2.434: the installed menu entry starts /usr/bin/chrono-mail by its exact place; the built program and a copy from the project folder
 #           tell the desktop different entries
 # v0.0.14: Initial launcher file test
@@ -42,7 +43,7 @@ def test_the_installed_menu_entry_starts_the_installed_program_by_its_exact_plac
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(DESKTOP_FILE, encoding="utf-8")
     entry = parser["Desktop Entry"]
-    assert entry["exec"] == "/usr/bin/chrono-mail" and entry["tryexec"] == "/usr/bin/chrono-mail"
+    assert entry["exec"] == "/usr/bin/chrono-mail %f" and entry["tryexec"] == "/usr/bin/chrono-mail"  # %f: the calendar file it opens (D-310)
 
 
 def test_the_built_program_and_a_project_copy_belong_to_different_menu_entries(monkeypatch: pytest.MonkeyPatch) -> None:

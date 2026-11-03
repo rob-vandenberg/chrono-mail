@@ -23,6 +23,7 @@ Every changelist says how it keeps this rule. Nothing counts as obvious: what th
 | `AGENTS.md` | Project-specific technical rules (this file) | Loaded by itself |
 | `OWNER-RULES.md` | Every rule the owner set for this project, numbered (OR-nn); only the owner changes it; private: on this computer only, not in git | Loaded by itself |
 | `STATUS.md` | Where we are now, the next task, open questions | Every session, first |
+| `TODO.md` | The short-term to-do list: what the owner still has to test and the requests not finished yet; private, git-ignored | Every session, after STATUS.md |
 | `STATUS-ARCHIVE.md` | Old text of STATUS.md (every version since 0.0.73); git-ignored | Never read whole; search when history is needed |
 | `ARCHITECTURE.md` | Module map, layers, storage design, account model | Before any code task |
 | `ARCHITECTURE-ARCHIVE.md` | Old text of ARCHITECTURE.md; git-ignored | Never read whole; search when the history of the design is needed |
