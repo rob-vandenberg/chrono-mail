@@ -31,9 +31,10 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import px_for, wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 4.3.502"
+__version__ = "paletteeditor.py 4.3.503"
 
 # --- Version history ----------------------------------------------------
+# v4.3.503: opens at 550 pixels on the owner's screen until the person gives it another width; never below 500 (the owner)
 # v4.3.502: the Calendar field is read-only text in the normal colour, with its full name as hover text: a long name no longer keeps the
 #           window from being made narrower (a drop-down asks for its whole text's width); it opens at the width last given it (the owner)
 # v4.2.445: its 500 pixels are the owner's screen's, in Qt's units at the size slider (forms.owner_width), so it follows every screen's scale
@@ -138,7 +139,8 @@ class ColourRow(QWidget):
             self._show_colour()
 
 
-WIDTH: int = forms.owner_width(500)  # the owner: Event colours opens at, and never goes below, 500 pixels on his screen
+WIDTH: int = forms.owner_width(500)  # the owner: Event colours never goes below 500 pixels on his screen
+OPENING_WIDTH: int = forms.owner_width(550)  # and opens at 550, until the person gives it another width
 WIDTH_KEY: str = "event_colours_width"  # the width the person gave the window last: it opens at it (the owner)
 
 
@@ -173,7 +175,7 @@ class PaletteEditor(QDialog):
         self.save_button = box.button(QDialogButtonBox.StandardButton.Save)
         box.accepted.connect(self._save)
         box.rejected.connect(self.reject)
-        forms.open_at(self, WIDTH, WIDTH)  # its texts are never cut off, also at the largest size
+        forms.open_at(self, WIDTH, OPENING_WIDTH)  # its texts are never cut off, also at the largest size
         saved = settings.value(WIDTH_KEY) if settings is not None else None
         if isinstance(saved, (int, str)) and digits(str(saved)):  # the width the person gave it last, within the screen (the owner); a strange value is passed by
             screen = self.screen()

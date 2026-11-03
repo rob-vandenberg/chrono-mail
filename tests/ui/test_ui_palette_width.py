@@ -5,17 +5,18 @@ from PySide6.QtWidgets import QLineEdit
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import forms
-from chrono_mail.ui.paletteeditor import WIDTH, PaletteEditor
+from chrono_mail.ui.paletteeditor import OPENING_WIDTH, WIDTH, PaletteEditor
 from chrono_mail.ui.scale import wpx
 from tests.ui.test_ui_timed_background import calendar_id, info_of, layout, open_calendar
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_palette_width.py 4.3.502"
+__version__ = "test_ui_palette_width.py 4.3.503"
 
 # --- Version history ----------------------------------------------------
+# v4.3.503: Event colours opens at 550 pixels on the owner's screen, never below 500 (the owner)
 # v4.3.502: a long calendar name never makes Event colours wider; the Calendar field is read-only text in the normal colour with its whole
-#           name as hover text; the window opens at the width last given it, and at 500 when what was kept is no plain number (the owner)
+#           name as hover text; the window opens at the width last given it, and as the first time when what was kept is no plain number (the owner)
 # v4.2.445: the 500 pixels are the owner's screen's (125 %, slider 0.95), in Qt's units at the size slider
 # v4.2.442: Initial version: Event colours opens at, and never goes below, 500 pixels on the screen (the owner)
 
@@ -26,13 +27,14 @@ def test_a_width_the_owner_gives_is_exactly_that_on_his_screen() -> None:
         assert round(round(forms.owner_width(pixels) * forms.OWNER_WINDOWS_FACTOR) * forms.OWNER_SCREEN_SCALE) == pixels
 
 
-def test_event_colours_opens_at_its_smallest_width(world: World, qtbot: QtBot) -> None:
+def test_event_colours_opens_at_550_and_never_goes_below_500(world: World, qtbot: QtBot) -> None:
     page = open_calendar(world, qtbot, layout.MONTH)
     editor = PaletteEditor(world.backend, info_of(page, calendar_id(world)))
     qtbot.addWidget(editor)
     editor.show()
     qtbot.waitExposed(editor)
-    assert WIDTH == forms.owner_width(500) and editor.width() == editor.minimumWidth() == max(wpx(WIDTH), editor.minimumSizeHint().width())
+    assert WIDTH == forms.owner_width(500) and editor.minimumWidth() == max(wpx(WIDTH), editor.minimumSizeHint().width())
+    assert OPENING_WIDTH == forms.owner_width(550) and editor.width() == wpx(OPENING_WIDTH)
 
 
 LONG_NAME: str = "a calendar with a name far longer than any window of 500 pixels can show on one line"
@@ -77,7 +79,7 @@ def test_event_colours_opens_at_the_width_last_given_it(world: World, qtbot: QtB
     assert second.width() == given
 
 
-def test_event_colours_opens_at_500_when_the_kept_width_is_no_plain_number(world: World, qtbot: QtBot) -> None:
+def test_event_colours_opens_at_550_when_the_kept_width_is_no_plain_number(world: World, qtbot: QtBot) -> None:
     page = open_calendar(world, qtbot, layout.MONTH)
     settings = QSettings(str(world.settings_path), QSettings.Format.IniFormat)
     settings.setValue("event_colours_width", "\u00b2")  # a digit int() refuses: the window opened not at all
@@ -85,4 +87,4 @@ def test_event_colours_opens_at_500_when_the_kept_width_is_no_plain_number(world
     qtbot.addWidget(editor)
     editor.show()
     qtbot.waitExposed(editor)
-    assert editor.width() == editor.minimumWidth() == wpx(WIDTH)
+    assert editor.width() == wpx(OPENING_WIDTH) and editor.minimumWidth() == wpx(WIDTH)

@@ -31,9 +31,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.2.479"
+__version__ = "readingpane.py 4.3.503"
 
 # --- Version history ----------------------------------------------------
+# v4.3.503: every reader knows the addresses of the person's accounts, so a mailto link to one has no warning (D-215)
 # v4.2.479: the reader is given the message's tag names and their colours (small squares under the date)
 # v4.2.467: the pane keeps the width the person gave it, whatever the message (D-304); Settings > Reading may let it widen to fit
 # v4.2.401: the list and the pane get back the widths or heights they had at a place when the pane returns there
@@ -266,7 +267,12 @@ class ReadingPane(QObject):
         reader.always_remote = chosen.remote_always
         reader.allowed_senders = set(chosen.remote_senders)
         reader.prefer_plain = chosen.prefer_plain
+        reader.account_addresses = self._account_addresses
         reader.set_zoom(round(prefs.saved_reading(self._prefs.settings) * 100))
+
+    def _account_addresses(self) -> frozenset[str]:
+        """The addresses of the person's accounts, in lower case, as they are now (an account added later counts at once)."""
+        return frozenset(address for account in self._state.all_accounts if (address := account.email_address.strip().lower()))
 
     def prepare_message_reader(self, reader: ReaderWidget) -> None:
         """A message window: the settings first, and its Always for this sender saves like the one in the reading pane."""

@@ -7,9 +7,10 @@ from tests.ui.test_ui_reader import load, reader, shown  # noqa: F401 - fixture
 from tests.ui.world import World, settle, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_linkhint.py 1.5.257"
+__version__ = "test_ui_linkhint.py 4.3.503"
 
 # --- Version history ----------------------------------------------------
+# v4.3.503: a mailto link to an account's address has no triangle; to the address in the To line or anyone else it has (D-215)
 # v1.5.257: Initial: the address of the link under the pointer in the bar at the bottom, with the warning triangle for another main domain (D-215)
 
 
@@ -59,3 +60,22 @@ def test_the_reading_pane_shows_the_link_and_the_status_text_comes_back(world: W
     window.reader.web_page.linkHovered.emit("")
     wait(qtbot, lambda: line.currentWidget() is line.normal)
     assert window.status_label.text() == "Moved 3 messages"
+
+
+def test_a_mailto_link_to_an_accounts_address_has_no_triangle_and_one_to_the_to_line_has(reader: ReaderWidget, qtbot: QtBot) -> None:  # noqa: F811
+    seen = hovered(reader)
+    reader.account_addresses = lambda: frozenset({"mattie@example.nl"})
+    load(qtbot, reader, shown(html='<a href="mailto:mattie@example.nl">me</a>', sender=("Nick <nick@example.be>",), to=("Billing <billing@lookalike.test>",)))
+    reader.web_page.linkHovered.emit("mailto:Mattie@example.nl")  # the person's own signature, quoted in a reply (the owner)
+    reader.web_page.linkHovered.emit("mailto:billing@lookalike.test")  # the sender writes the To line: it never counts as one's own
+    assert seen == [("mailto:Mattie@example.nl", False), ("mailto:billing@lookalike.test", True)]
+
+
+def test_the_reading_pane_knows_the_accounts_addresses_so_a_mailto_link_to_one_has_no_triangle(world: World, qtbot: QtBot) -> None:
+    window = world.window
+    window.start()
+    settle(qtbot, world, 3)
+    assert "me@example.com" in window.reader.account_addresses()
+    window.reader.web_page.linkHovered.emit("mailto:Me@example.com")
+    assert window.status_line.currentWidget() is window.status_line.link and window.status_line.warning.isHidden()
+    window.reader.web_page.linkHovered.emit("")

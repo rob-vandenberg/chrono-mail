@@ -48,9 +48,10 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.3.501"
+__version__ = "reader.py 4.3.503"
 
 # --- Version history ----------------------------------------------------
+# v4.3.503: a mailto link to the address of one of the person's accounts has no warning (D-215)
 # v4.3.501: Only the web view and the remote content bar have a window of their own, never the parts they sit in (on Windows those stayed black
 #            after a restore); the view's window is made at once, before any page loads (a message shown before its window was on screen stayed blank)
 # v4.2.479: Every message opens with a folded header of one height: the sender and the people it went to on one line each, "+N more"
@@ -1099,6 +1100,7 @@ class ReaderWidget(QWidget):
         self.allowed_senders: set[str] = set()  # addresses (lower case) whose remote content is shown without asking
         self.prefer_plain: bool = False  # show the text part of a message that has both
         self._sender: str = ""
+        self.account_addresses: Callable[[], frozenset[str]] = frozenset  # the addresses (lower case) of the person's accounts, as they are now
         self._hovered: str = ""  # the address of the link under the pointer
         self._zoom: int = 100
         self._always_remote.clicked.connect(self._allow_sender)
@@ -1116,7 +1118,7 @@ class ReaderWidget(QWidget):
         if address == self._hovered:
             return
         self._hovered = address
-        self.link_hovered.emit(address, bool(address) and leads_elsewhere(address, self._sender))
+        self.link_hovered.emit(address, bool(address) and leads_elsewhere(address, self._sender, self.account_addresses()))  # never the To line: the sender writes it
 
     def clear(self) -> None:
         self._hover("")  # the link under the pointer goes with the message

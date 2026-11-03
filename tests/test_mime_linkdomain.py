@@ -1,11 +1,12 @@
 import pytest
 
-from chrono_mail.mime.linkdomain import MAXIMUM_LINK_LENGTH, leads_elsewhere, link_domain, main_domain
+from chrono_mail.mime.linkdomain import MAXIMUM_LINK_LENGTH, leads_elsewhere, link_domain, mailto_addresses, main_domain
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_mime_linkdomain.py 1.5.257"
+__version__ = "test_mime_linkdomain.py 4.3.503"
 
 # --- Version history ----------------------------------------------------
+# v4.3.503: a mailto link to one of the person's own addresses never gets the warning; to anyone else it does, also an address after its ? (D-215)
 # v1.5.257: Initial: the main domain of a link and of the sender, and when a link gets the warning (D-215)
 
 
@@ -50,3 +51,51 @@ def test_a_link_without_a_domain_never_gets_the_warning(link: str) -> None:
 
 def test_a_hostile_link_is_capped() -> None:
     assert link_domain("https://example.com/" + "a" * (MAXIMUM_LINK_LENGTH * 2)) == "example.com"
+
+
+OWN: frozenset[str] = frozenset({"me@example.nl", "work@example.org"})
+
+
+def test_a_mailto_link_to_ones_own_address_never_gets_the_warning() -> None:
+    sender = "nick@example.be"
+    assert not leads_elsewhere("mailto:me@example.nl", sender, OWN)  # a quoted signature in a reply (the owner)
+    assert not leads_elsewhere("mailto:Me@Example.NL?subject=Hello", sender, OWN)  # capitals and a subject count the same
+    assert leads_elsewhere("mailto:me@example.nl", sender)  # without the person's addresses: the rule of before
+
+
+def test_a_mailto_link_to_someone_else_and_a_web_link_keep_the_warning() -> None:
+    sender = "nick@example.be"
+    assert leads_elsewhere("mailto:stranger@example.nl", sender, OWN)  # the same domain as one's own, another person
+    assert leads_elsewhere("https://example.nl/me@example.nl", sender, OWN)  # a web link is judged by its domain only
+    assert not leads_elsewhere("mailto:office@example.be", sender, OWN)  # the sender's own domain, as before
+
+
+def test_a_mailto_link_to_ones_own_address_and_anyone_else_keeps_the_warning() -> None:
+    sender = "nick@example.be"
+    for link in ("mailto:me@example.nl,stranger@evil.test", "mailto:me@example.nl?cc=stranger@evil.test", "mailto:me@example.nl?BCC=stranger@evil.test"):
+        assert leads_elsewhere(link, sender, OWN), link  # the new message would also go to someone else
+    assert not leads_elsewhere("mailto:me@example.nl?cc=work@example.org&subject=Hi", sender, OWN)  # only one's own addresses
+
+
+def test_every_address_a_mailto_link_writes_to() -> None:
+    assert mailto_addresses("MAILTO:Me@Example.NL?subject=x") == {"me@example.nl"}
+    assert mailto_addresses("mailto:a@example.nl,%20b@example.nl?cc=c@example.nl,d@example.nl&bcc=e@example.nl") == {f"{c}@example.nl" for c in "abcde"}
+    assert mailto_addresses("https://example.nl/") == frozenset() and mailto_addresses("mailto:") == frozenset()
+    assert len(mailto_addresses("mailto:" + "a," * MAXIMUM_LINK_LENGTH)) == 1  # a hostile link is capped
+
+
+def test_a_mailto_link_with_its_addresses_after_the_question_mark_is_judged_by_them() -> None:
+    sender = "nick@example.be"
+    assert leads_elsewhere("mailto:?to=billing@lookalike.test", sender)  # it never warned (the owner: it should)
+    assert leads_elsewhere("mailto:?cc=billing@lookalike.test", sender, OWN)
+    assert leads_elsewhere("mailto:office@example.be?cc=billing@lookalike.test", sender)  # the sender's own domain, and one more
+    assert not leads_elsewhere("mailto:?to=office@example.be", sender)  # the sender's own domain
+    assert not leads_elsewhere("mailto:?to=me@example.nl", sender, OWN)
+    assert not leads_elsewhere("mailto:?subject=Hello", sender)  # writes to no one: nowhere to lead
+    assert leads_elsewhere("mailto:billing@lookalike.test;office@example.be", sender)  # a ; between the addresses
+    assert leads_elsewhere("mailto://billing@lookalike.test", sender)  # written as a web address
+    assert leads_elsewhere("mailto:office@example.be" + "," * MAXIMUM_LINK_LENGTH + "billing@lookalike.test", sender)  # hidden past the cap
+    assert leads_elsewhere("mailto:billing@lookalike.test%20office@example.be", sender)  # no single address
+    assert leads_elsewhere("mailto:billing@lookalike.test%3F@example.be", sender)
+    assert leads_elsewhere("mailto://[/billing@lookalike.test", sender)  # damaged: it cannot be read, so it cannot be trusted
+    assert not leads_elsewhere("mailto:office@example.be?to=office+tag@example.be&cc=Office%2Bx@example.be", sender)  # a + stays a +
