@@ -13,6 +13,7 @@ from chrono_mail.engine.commands_export import MESSAGE_EXPORT, MESSAGE_SOURCE, M
 from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, MESSAGE_SHOW, MESSAGE_THREAD, AttachmentSaveParameters, MessageParameters, ShowResult
 from chrono_mail.ui import prefs, scale, theme
 from chrono_mail.engine.commands_accounts import NoParameters
+from chrono_mail.engine.commands_invitations import INVITATION_ANSWER, INVITATION_APPLY, INVITATION_CHOICES, INVITATION_DELEGATE, Answer, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, ChoicesResult
 from chrono_mail.engine.commands_attachments import MESSAGE_ATTACHMENT_CLEAN_OPENED, CleanResult
 from chrono_mail.ui.attachmentopening import open_attachment
 from chrono_mail.ui.backend import Backend
@@ -26,14 +27,17 @@ from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.prefs import READING_PANES, InUse
 from chrono_mail.ui.printing import print_message
 from chrono_mail.ui.reader import ReaderWidget
+from chrono_mail.ui.invitationcalendar import InvitationCalendarDialog, InvitationDelegateDialog
 from chrono_mail.ui.sourcedialog import SourceDialog
 from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.3.503"
+__version__ = "readingpane.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: Accept, Tentative and Decline on an invitation card, in the reading pane and in every message window: the calendar window when the
+#           item is not kept yet, the answer through the engine, the answer mail opened in the composer (D-310)
 # v4.3.503: every reader knows the addresses of the person's accounts, so a mailto link to one has no warning (D-215)
 # v4.2.479: the reader is given the message's tag names and their colours (small squares under the date)
 # v4.2.467: the pane keeps the width the person gave it, whatever the message (D-304); Settings > Reading may let it widen to fit
@@ -94,6 +98,9 @@ class ReadingPane(QObject):
         self.reader.attachment_open_requested.connect(self._open_attachment)
         self.reader.link_activated.connect(self.open_link)
         self.reader.link_hovered.connect(status.line.show_link)
+        self.reader.invitation_answer_requested.connect(self._answer_in_pane)
+        self.reader.invitation_apply_requested.connect(self._apply_in_pane)
+        self.reader.invitation_delegate_requested.connect(self._delegate_in_pane)
         messages.view.selectionModel().currentChanged.connect(self.row_changed)
         messages.taken_away.connect(self._taken_away)
         messages.conversations_toggled.connect(self.conversation_bar.clear)
@@ -303,6 +310,25 @@ class ReadingPane(QObject):
 
         def shown(result: ShowResult) -> None:
             window = MessageWindow(self._backend, account, folder, message_id, result, self._composing.compose_in_window, self.open_link, self.prepare_message_reader, self._prefs.settings)
+            reader = window.findChild(ReaderWidget)
+            if reader is not None:
+                found: ReaderWidget = reader
+                place = (account, folder, message_id)
+
+                def answer_in_window(answer: str) -> None:
+                    self.answer_invitation(found, place, answer)
+
+                reader.invitation_answer_requested.connect(answer_in_window)
+
+                def apply_in_window() -> None:
+                    self.apply_invitation(found, place)
+
+                reader.invitation_apply_requested.connect(apply_in_window)
+
+                def delegate_in_window() -> None:
+                    self.delegate_invitation(found, place)
+
+                reader.invitation_delegate_requested.connect(delegate_in_window)
             self.message_windows.append(window)
             window.destroyed.connect(lambda: self.message_windows.remove(window) if window in self.message_windows else None)
             window.show()
@@ -311,6 +337,106 @@ class ReadingPane(QObject):
             self.apply_reader_preferences()
 
         self._backend.ask(MESSAGE_SHOW, MessageParameters(account, folder, message_id), shown, lambda error: self._status.report("Could not open the message", error), owner=self)
+
+    # --- invitations (D-310) ------------------------------------------------------------------------------------------
+
+    def _delegate_in_pane(self) -> None:
+        self.delegate_invitation(self.reader, self.shown)
+
+    def delegate_invitation(self, reader: ReaderWidget, place: tuple[str, str, str] | None) -> None:
+        """Delegate…: the address of who goes in your place, then the invitation for them and your answer to the organizer in the composer."""
+        if place is None:
+            return
+        dialog = InvitationDelegateDialog(reader.window())
+        if dialog.exec() != InvitationDelegateDialog.DialogCode.Accepted:
+            return
+        account, folder, message_id = place
+
+        def delegated(result: DelegateResult) -> None:
+            self._status.show("The invitation for them and your answer to the organizer are ready to send.")
+            self._composing.open_draft(result.account, result.folder, result.request_message)
+            if result.answer_message:  # "": the calendar's server mails your answer
+                self._composing.open_draft(result.account, result.folder, result.answer_message)
+            self._show_again(reader, place)
+
+        self._backend.ask(INVITATION_DELEGATE, DelegateParameters(account, folder, message_id, to=dialog.address), delegated,
+                          lambda error: self._status.report("Could not pass the invitation on", error), owner=self)
+
+    def _apply_in_pane(self) -> None:
+        self.apply_invitation(self.reader, self.shown)
+
+    def apply_invitation(self, reader: ReaderWidget, place: tuple[str, str, str] | None) -> None:
+        """The organizer's change into your calendar (D-310); a request for the latest version opens in the composer."""
+        if place is None:
+            return
+        account, folder, message_id = place
+
+        def applied(result: ApplyResult) -> None:
+            words = {"updated": "Your calendar has the new version.", "removed": "Removed from your calendar.", "added": "Added to your calendar.",
+                     "asked": "Your request for the latest version is ready to send."}
+            self._status.show(words.get(result.done, "Done."))
+            if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
+                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message)
+            self._show_again(reader, place)
+
+        self._backend.ask(INVITATION_APPLY, MessageParameters(account, folder, message_id), applied,
+                          lambda error: self._status.report("Could not change your calendar", error), owner=self)
+
+    def _show_again(self, reader: ReaderWidget, place: tuple[str, str, str]) -> None:
+        """The message shown again in its reader, when it still shows it: the card says what your calendar holds now."""
+        account, folder, message_id = place
+        uid = reader.invitation.uid if reader.invitation is not None else ""
+
+        def again(shown: ShowResult) -> None:
+            if reader is self.reader and self.shown != place:
+                return  # another message was chosen meanwhile: it stays on screen
+            if reader.invitation is not None and reader.invitation.uid == uid and shown.invitation is not None and shown.invitation.uid == uid:
+                reader.show_message(shown)
+
+        self._backend.ask(MESSAGE_SHOW, MessageParameters(account, folder, message_id), again, lambda error: None, owner=self)
+
+    def _answer_in_pane(self, answer: str) -> None:
+        self.answer_invitation(self.reader, self.shown, answer)
+
+    def answer_invitation(self, reader: ReaderWidget, place: tuple[str, str, str] | None, answer: str) -> None:
+        """Accept, Tentative, Decline (or Add to calendar) on the card of the message in this reader: an item not kept yet asks for its calendar
+        first; the answer mail, when Chrono Mail makes it, opens in the composer and goes only with Send."""
+        info = reader.invitation
+        if place is None or info is None:
+            return
+        account, folder, message_id = place
+        if answer == "DECLINED":
+            self._send_answer(reader, place, answer, "")
+            return
+
+        def listed(choices: ChoicesResult) -> None:
+            if choices.stored:  # your calendar holds it now (asked afresh: it may have gone since the card was shown)
+                self._send_answer(reader, place, answer, "")
+                return
+            dialog = InvitationCalendarDialog(choices, task=info.kind == "task", parent=reader.window())
+            if dialog.exec() == InvitationCalendarDialog.DialogCode.Accepted and dialog.chosen:
+                self._send_answer(reader, place, answer, dialog.chosen)
+
+        self._backend.ask(INVITATION_CHOICES, MessageParameters(account, folder, message_id), listed,
+                          lambda error: self._status.report("Could not read the invitation", error), owner=self)
+
+    def _send_answer(self, reader: ReaderWidget, place: tuple[str, str, str], answer: str, calendar: str) -> None:
+        account, folder, message_id = place
+        chosen: Answer = "DECLINED" if answer == "DECLINED" else ("TENTATIVE" if answer == "TENTATIVE" else "ACCEPTED")
+        parameters = AnswerParameters(account, folder, message_id, answer=chosen, calendar=calendar, mail=self._prefs.read().send_invitation_answers)
+
+        shared = reader.invitation is not None and reader.invitation.method == "PUBLISH"
+
+        def answered(result: AnswerResult) -> None:
+            words = {"ACCEPTED": "accepted", "TENTATIVE": "accepted tentatively", "DECLINED": "declined"}[result.answer]
+            where = f" It is in {result.stored_in}." if result.stored_in else ""
+            mailer = " The calendar server sends your answer." if result.server_answers else ""
+            self._status.show(f"Added to your calendar.{where}" if shared else f"You {words} the invitation.{where}{mailer}")
+            if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
+                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message)
+            self._show_again(reader, place)  # the card says what your calendar holds now
+
+        self._backend.ask(INVITATION_ANSWER, parameters, answered, lambda error: self._status.report("Could not answer the invitation", error), owner=self)
 
     def _save_attachment(self, position: int, suggested: str) -> None:
         if self.shown is None:

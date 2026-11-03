@@ -3,9 +3,10 @@ import re
 from dataclasses import dataclass, replace
 
 # --- Version ------------------------------------------------------------
-__version__ = "colours.py 4.2.480"
+__version__ = "colours.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: accept_button and decline_button: Accept green and Decline red on the invitation card, with on_answer_button for their text (D-310)
 # v4.2.476: The message list and other lists #151c1c (dark theme, the owner; was #181e1f)
 # v4.2.480: The second accent, accent_alternative: orange in the dark theme, red in the light one (the owner)
 # v4.2.475: The hover shade is 8 points of lightness from the accent (was 12; the owner)
@@ -71,6 +72,9 @@ class Theme:
     chip_text_dark: str  # text on a light tag colour
     notice_border: str  # the outline of the notice of a delayed send, at the bottom left of the main window
     accent_alternative: str  # the second accent: the outline of what differs in a sync conflict (the owner; picked in Settings later, B-29)
+    accept_button: str = "#0f9d58"  # Accept on the invitation card (D-310), as the reference client's green
+    decline_button: str = "#c62828"  # Decline on the invitation card
+    on_answer_button: str = "#ffffff"  # the text on those two
 
 
 # --- Shades of the blue ---------------------------------------------------------------------------------------------------

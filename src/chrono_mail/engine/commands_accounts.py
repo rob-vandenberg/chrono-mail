@@ -53,9 +53,11 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.2.463"
+__version__ = "commands_accounts.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: who mails the answers to invitations (invitation_answers) in the summary and account.edit; the summary tells what the server
+#           announced (dav_auto_schedule), D-310
 # v4.2.463: key.code-pending: whether the recovery code of this computer's key was never confirmed as stored, without asking the wallet;
 #           the Import window shows the code after an import with it (UR-08, D-260)
 # v4.2.460: account.remove tells a collection_changed fact for an account with calendars: they leave the sections at once (D-146)
@@ -377,6 +379,8 @@ class AccountSummary:
     account_name: str = ""  # how Chrono Mail names the account (empty: the address); display_name is "Your name"
     outgoing_same_login: bool = True  # the outgoing server uses the login of the incoming one
     junk_filter: bool = True  # new mail goes through the junk filter (D-238)
+    invitation_answers: str = ""  # who mails the answers to invitations: "server", "chrono"; "": as the server announces (D-310)
+    dav_auto_schedule: bool = False  # the calendar server announced that it mails those answers itself
 
 
 def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> AccountSummary:
@@ -410,6 +414,8 @@ def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) 
         item.account_name,
         item.outgoing_same_login,
         item.junk_filter,
+        item.invitation_answers,
+        item.dav_auto_schedule,
     )
 
 
@@ -494,6 +500,7 @@ class AccountEditParameters:
     in_send_receive: bool | None = field(default=None, metadata=option("Include this account in Send and Receive (off: only its own refresh reaches it)"))
     outgoing_same_login: bool | None = field(default=None, metadata=option("The outgoing server uses the user name and password of the incoming one"))
     junk_filter: bool | None = field(default=None, metadata=option("New mail goes through the junk filter: junk to the Junk folder before the rules run"))
+    invitation_answers: str | None = field(default=None, metadata=option("Who mails the answers to invitations: server, chrono, or empty (as the server announces)"))
 
 
 def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSummary:
@@ -534,6 +541,9 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
     in_send_receive = settings.in_send_receive if parameters.in_send_receive is None else parameters.in_send_receive
     account_name = settings.account_name if parameters.account_name is None else parameters.account_name.strip()
     junk_filter = settings.junk_filter if parameters.junk_filter is None else parameters.junk_filter
+    answers = settings.invitation_answers if parameters.invitation_answers is None else parameters.invitation_answers
+    if answers not in ("", "server", "chrono"):
+        raise UsageError("Who mails the answers to invitations is server, chrono or empty")
 
     def edit(fresh: AppConfig) -> AppConfig:  # the edited parts on the account as it is now: what other commands changed meanwhile stays
         _refuse_same_account(fresh.accounts, account.kind, incoming.username, incoming.host, account.account_id)
@@ -547,6 +557,7 @@ def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSu
             account_name=account_name,
             outgoing_same_login=same_login,
             junk_filter=junk_filter,
+            invitation_answers=answers,
         ))
     # Passwords first: a new password that cannot be stored must not leave settings behind that expect it
     if parameters.password:

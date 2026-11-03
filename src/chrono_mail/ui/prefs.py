@@ -10,9 +10,10 @@ from chrono_mail.ui.scale import STANDARD, clamp
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "prefs.py 4.2.467"
+__version__ = "prefs.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: send_invitation_answers: Settings > Calendar's tick: Chrono Mail makes the answer to an invitation for the composer (D-310)
 # v4.2.467: reading_pane_fits_message: the reading pane widens to fit a message (off by default: it keeps the width the person gave it, D-304)
 # v4.2.419: update_check: look for a newer version with a Refresh that goes online, at most once a day (D-293)
 # v4.2.402: start_minimized: the window choice of the start at login, kept while the start at login is off (D-284)
@@ -59,6 +60,7 @@ DEFAULTS: dict[str, object] = {
     "send_delay_seconds": 10,
     "send_on_refresh": False,  # Send leaves the message in the Outbox until the next refresh (B-21)
     "warn_outbox_on_quit": True,  # quitting with messages in the Outbox asks first (B-20)
+    "send_invitation_answers": True,  # Accept, Tentative and Decline open the answer to the organizer in the composer (D-310)
     "notifications": True,
     "tray": True,
     "close_to_tray": False,
@@ -265,6 +267,7 @@ class Preferences:
     send_delay_seconds: int = 10
     send_on_refresh: bool = False
     warn_outbox_on_quit: bool = True
+    send_invitation_answers: bool = True
     notifications: bool = True
     tray: bool = True
     close_to_tray: bool = False
@@ -332,6 +335,7 @@ def read_preferences(settings: QSettings) -> Preferences:
         send_delay_seconds=number("send_delay_seconds"),
         send_on_refresh=get_bool(settings, "send_on_refresh"),
         warn_outbox_on_quit=get_bool(settings, "warn_outbox_on_quit"),
+        send_invitation_answers=get_bool(settings, "send_invitation_answers"),
         notifications=get_bool(settings, "notifications"),
         tray=get_bool(settings, "tray"),
         close_to_tray=get_bool(settings, "close_to_tray"),

@@ -15,9 +15,11 @@ from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.2.441"
+__version__ = "dav.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: a header written on several lines (DAV: on three lines) is joined, as RFC 9110 reads a list header: a server's
+#           calendar-auto-schedule on its second DAV line is seen (D-310)
 # v4.2.441: DavCertificateError is a CertificateError that names the server, so the window can ask (D-299); a renewed certificate that passes
 #           the usual checks is taken where one was accepted
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
@@ -53,6 +55,15 @@ MAXIMUM_CHANGE_ROUNDS: int = 1_000  # a change report cut short (507) is asked o
 USER_AGENT: str = "Chrono Mail"
 READS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS", "PROPFIND", "REPORT"})  # change nothing: safe to send once more
 IDLE_BEFORE_WRITE: float = 4.0  # seconds: a connection idle longer than this may have been closed by the server, so a write gets a new one
+
+
+def _joined_headers(headers: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """The answer's headers by lower-case name; one written on several lines is joined with commas (a list header, RFC 9110 section 5.3)."""
+    joined: dict[str, str] = {}
+    for name, value in headers:
+        key = name.lower()
+        joined[key] = f"{joined[key]}, {value}" if key in joined else value
+    return joined
 
 
 class DavError(ProtocolError):
@@ -323,7 +334,7 @@ class DavClient:
             self._last_used = time.monotonic()
             if response.will_close or len(data) > MAXIMUM_BODY_BYTES:
                 self._drop()  # the server closes it (or the answer was not read to its end): the next request opens a new one
-            return DavResponse(response.status, {name.lower(): value for name, value in response.getheaders()}, data)
+            return DavResponse(response.status, _joined_headers(response.getheaders()), data)
         raise ProtocolError("The server closed the connection")  # never reached: the second try is on a new connection
 
     def absolute_path(self, path: str) -> str:

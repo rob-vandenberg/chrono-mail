@@ -1,12 +1,13 @@
 """The card above the text of a mail that holds a calendar message: an invitation, an answer, a cancellation (D-310)."""
 import html
+from functools import partial
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from typing import override
 
 from PySide6.QtCore import QEvent, QObject, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from chrono_mail.core.colours import Theme
 from chrono_mail.engine.invitations import InvitationInfo, InvitationPerson
@@ -14,13 +15,16 @@ from chrono_mail.pim.times import local_time
 from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.flowlayout import FlowRow
 from chrono_mail.ui.icons import bundled_icon, place_icon
+from chrono_mail.ui.infomark import InfoMark
 from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.504"
+__version__ = "invitationcard.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: Accept (green), Tentative and Decline below an invitation, Add to calendar below a shared item; greyed with an (i) when a
+#           newer version is in your calendar (D-310)
 # v4.4.504: Initial card: what the message asks or tells, the title, when, the organizer, the place, the attendees with their answers, and
 #           what your calendar holds of it (D-310)
 
@@ -89,6 +93,17 @@ def status_text(info: InvitationInfo) -> str:
     return f"{answer} In {info.stored_in}.".strip() if info.version != "newer" else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
 
 
+def apply_text(info: InvitationInfo) -> str:
+    """The button that takes the organizer's change into your calendar, for this message; "" when there is none (D-310)."""
+    if info.method == "CANCEL" and info.stored_in and info.occurrence_kept:
+        return "Remove from calendar"
+    if info.method == "ADD":  # occurrence_kept: dates still to add (none: added already, nothing to offer)
+        return ("Add to calendar" if info.occurrence_kept else "") if info.stored_in else "Ask for the latest version"
+    if info.method in ("REQUEST", "PUBLISH") and info.stored_in and info.version == "newer":
+        return "Update calendar"
+    return ""
+
+
 class _IconRow(QWidget):
     """An icon at the left of a part, as the rows of the card have."""
 
@@ -117,6 +132,9 @@ class InvitationCard(QFrame):
 
     link_activated = Signal(QUrl)  # the organizer's address was clicked
     link_hovered = Signal(str)  # the pointer came on the organizer's address (its link), or left it ("")
+    answer_requested = Signal(str)  # ACCEPTED, TENTATIVE or DECLINED (Add to calendar: ACCEPTED of a shared item)
+    apply_requested = Signal()  # the organizer's change into your calendar: Update calendar, Remove from calendar, Add to calendar, Ask…
+    delegate_requested = Signal()  # Delegate…: someone else goes in your place
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -154,6 +172,31 @@ class InvitationCard(QFrame):
         bottom.addWidget(self._place_row)
         bottom.addWidget(self._people_row)
         bottom.addWidget(self.status)
+        self._answer_line = self._line()
+        outer.addWidget(self._answer_line)
+        answers = QWidget(self)
+        row = QHBoxLayout(answers)
+        self._answer_row = row
+        self.accept_button = QPushButton("Accept", answers)
+        self.accept_button.setObjectName("invitationAccept")
+        self.tentative_button = QPushButton("Tentative", answers)
+        self.decline_button = QPushButton("Decline", answers)
+        self.decline_button.setObjectName("invitationDecline")
+        self.add_button = QPushButton("Add to calendar", answers)
+        for button, answer in ((self.accept_button, "ACCEPTED"), (self.tentative_button, "TENTATIVE"), (self.decline_button, "DECLINED"), (self.add_button, "ACCEPTED")):
+            button.clicked.connect(partial(self.answer_requested.emit, answer))
+            row.addWidget(button)
+        self.delegate_button = QPushButton("Delegate…", answers)  # made after the answers: Tab goes along the row as it reads
+        self.delegate_button.clicked.connect(self.delegate_requested)
+        row.addWidget(self.delegate_button)
+        self.apply_button = QPushButton("Update calendar", answers)
+        self.apply_button.clicked.connect(self.apply_requested)
+        row.addWidget(self.apply_button)
+        self.answers_mark = InfoMark(answers)
+        row.addWidget(self.answers_mark)
+        row.addStretch(1)
+        self._answers = answers
+        outer.addWidget(answers)
         self.info: InvitationInfo | None = None
         self._theme_shown: str = ""
         if parent is not None:
@@ -208,7 +251,16 @@ class InvitationCard(QFrame):
             f" QFrame#invitationLine {{ background: {css(border)}; border: none; }}"
             f" QLabel#invitationPerson {{ background: {css(colours.roles['Button'][0])}; border-radius: {px_for(self, 10)}px;"
             f" padding: {px_for(self, 2)}px {px_for(self, 8)}px; }}"
+            f" QPushButton#invitationAccept {{ background: {css(colours.accept_button)}; color: {css(colours.on_answer_button)}; }}"
+            f" QPushButton#invitationDecline {{ background: {css(colours.decline_button)}; color: {css(colours.on_answer_button)}; }}"
+            f" QPushButton#invitationAccept:disabled, QPushButton#invitationDecline:disabled {{ background: {css(colours.roles['Button'][2])};"
+            f" color: {css(colours.roles['ButtonText'][2])}; }}"
         )
+        margin = px_for(self, 24)
+        self._answer_row.setContentsMargins(margin, px_for(self, 16), margin, px_for(self, 16))
+        self._answer_row.setSpacing(px_for(self, 12))
+        for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.add_button, self.apply_button):
+            button.setMinimumWidth(px_for(self, 120))
         margin = px_for(self, 24)
         for layout in self._sections:
             layout.setContentsMargins(margin, px_for(self, 16), margin, px_for(self, 16))
@@ -259,3 +311,25 @@ class InvitationCard(QFrame):
         self._people_row.setVisible(bool(info.attendees))
         self.status.setText(status_text(info))
         self.status.setVisible(bool(self.status.text()))
+        self._show_answers(info)
+
+    def _show_answers(self, info: InvitationInfo) -> None:
+        """The buttons a message asks for: Accept, Tentative and Decline for an invitation, Add to calendar for a shared item; greyed with an (i)
+        when a newer version is in a calendar already (OR-15)."""
+        yours = info.organizer is not None and info.organizer.you  # your own meeting: nothing to answer
+        asks = info.method == "REQUEST" and not yours  # an added occurrence is added first (its own button)
+        shared = info.method == "PUBLISH"
+        for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button):
+            button.setVisible(asks)
+        self.add_button.setVisible(shared and not info.stored_in)
+        apply = apply_text(info)
+        self.apply_button.setText(apply)
+        self.apply_button.setVisible(bool(apply))
+        shown = asks or (shared and not info.stored_in) or bool(apply)
+        self._answers.setVisible(shown)
+        self._answer_line.setVisible(shown)
+        outdated = info.version == "older"
+        for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.add_button, self.apply_button):
+            button.setEnabled(not outdated)
+        self.answers_mark.explain("Answer", "A newer version of this meeting is in your calendar: this message is out of date." if outdated else "",
+                                  self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.add_button, self.apply_button)

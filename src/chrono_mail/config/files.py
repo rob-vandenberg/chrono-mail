@@ -18,9 +18,10 @@ from chrono_mail.core import (
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 4.2.451"
+__version__ = "files.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: invitation_answers and dav_auto_schedule read and saved with the account (D-310)
 # v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
 # v4.2.438: calendar_timed_background read and saved with the account (UR-02, D-297)
 # v3.6.350: JSON is read with core.jsontext.load_json: nested without end it is damaged, never a crash
@@ -128,12 +129,19 @@ def _account(data: object, position: int) -> AccountSettings:
         timed_background = data.get("calendar_timed_background", False)
         if not isinstance(timed_background, bool):
             raise ConfigurationError(f"Setting '{where}.calendar_timed_background' is not true or false")
+        answers = data.get("invitation_answers", "")
+        if answers not in ("", "server", "chrono"):
+            raise ConfigurationError(f"Setting '{where}.invitation_answers' is not server, chrono or empty")
+        auto_schedule = data.get("dav_auto_schedule", False)
+        if not isinstance(auto_schedule, bool):
+            raise ConfigurationError(f"Setting '{where}.dav_auto_schedule' is not true or false")
         return AccountSettings(
             account, Pop3Options(policy, days), encrypted, signature, tuple(pins), storage=storage, dav_url=dav_url, dav_username=dav_username,
             dav_left_out=tuple(left_out), outgoing_same_login=same_login, account_name=account_name, skip_known_mail=skip_known,
             calendar_palette=_palette(data.get("calendar_palette"), where), calendar_own_colour_name=own_colour_name,
             calendar_timed_background=timed_background,
             collection_looks=_looks(data.get("collection_looks", []), where), junk_filter=junk_filter, in_send_receive=in_send_receive,
+            invitation_answers=answers, dav_auto_schedule=auto_schedule,
         )
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
@@ -210,6 +218,8 @@ def config_to_text(config: AppConfig) -> str:
                     "calendar_timed_background": settings.calendar_timed_background,
                     "collection_looks": [{name: getattr(look, name) for name in LOOK_FIELDS} for look in settings.collection_looks],
                     "junk_filter": settings.junk_filter,
+                    "invitation_answers": settings.invitation_answers,
+                    "dav_auto_schedule": settings.dav_auto_schedule,
                 }
                 for settings in config.accounts
             ],

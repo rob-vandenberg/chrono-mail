@@ -20,9 +20,11 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 4.2.452"
+__version__ = "commands_dav.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: each synchronisation records whether the server announces that it mails the answers to invitations itself
+#           (calendar-auto-schedule, RFC 6638): the account's default of who answers (D-310)
 # v4.2.452: account.add-dav unchecked: an account taken over from another program is added without asking its server first (an import
 #           makes no connection; the first fill reaches it, D-300) (UR-01)
 # v4.2.449: dav.sync receive_only, the first fill of a new account (D-300): only downloads; nothing sent, nothing removed here
@@ -195,6 +197,7 @@ def _sync_account(engine: Engine, settings: AccountSettings, receive_only: bool 
                 client, store, _state_path(engine, account_id), engine.durable, push=not receive_only, left_out=frozenset(settings.dav_left_out), looks=looks,
             )
             keep_looks(engine, account_id, {key: looks.get(key) for key in report.looks}, report.looks)
+            _record_auto_schedule(engine, account_id, client)
     if report.conflicts:
         engine.report(Change("conflicts_changed", account_id))
     if report.pushed or report.deleted_on_server or report.made_on_server or report.conflicts or report.errors:
@@ -203,6 +206,25 @@ def _sync_account(engine: Engine, settings: AccountSettings, receive_only: bool 
         account_id, report.collections, report.created, report.pulled, report.pushed, report.deleted_here, report.deleted_on_server, report.conflicts, tuple(report.errors),
         report.removed, report.made_on_server,
     )
+
+
+def _record_auto_schedule(engine: Engine, account_id: str, client: DavClient) -> None:
+    """Whether the server says it mails the answers to invitations itself (RFC 6638), kept with the account when it changed (D-310). A server
+    that does not answer the question keeps what was kept."""
+    try:
+        announces = "calendar-auto-schedule" in client.options()
+    except ProtocolError:
+        return
+    try:
+        if engine.config().find(account_id).dav_auto_schedule == announces:
+            return
+
+        def change(fresh: AppConfig) -> AppConfig:
+            return fresh.with_account(replace(fresh.find(account_id), dav_auto_schedule=announces))
+
+        engine.change_config(change)
+    except ConfigurationError:  # the account was removed meanwhile: nothing to keep
+        return
 
 
 def _sync_or_name(engine: Engine, settings: AccountSettings, receive_only: bool = False) -> DavSyncSummary:

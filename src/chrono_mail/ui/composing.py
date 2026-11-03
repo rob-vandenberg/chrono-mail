@@ -23,9 +23,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 4.2.442"
+__version__ = "composing.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: open_draft: a draft made by the engine (the answer to an invitation) opens in the composer (D-310)
 # v4.2.442: a message window's Send stopped by a certificate is passed on (certificate_stopped, D-299)
 # v4.2.429: save_all_and_close: after an update every message window saves to Drafts without a question and closes
 # v4.2.414: Edit draft goes by the message's own folder in a search of several folders (D-287)
@@ -173,6 +174,14 @@ class Composing(QObject):
             MESSAGE_COMPOSE, ComposeParameters(account, folder, message_id, how, QUOTES.get(self._prefs.read().reply_quote, "above")),
             drafted, lambda error: self._status.report("Could not start the message", error), owner=self,
         )
+
+    def open_draft(self, account: str, folder: str, message_id: str) -> None:
+        """A draft the engine made (the answer to an invitation, D-310) opens in the composer, to be sent with Send."""
+
+        def opened(result: DraftOpenResult) -> None:
+            self.open_composer(account, result, None, resume=(result.folder, result.message_id))
+
+        self._backend.ask(DRAFT_OPEN, DraftOpenParameters(account, message_id, folder), opened, lambda error: self._status.report("Could not open the answer", error), owner=self)
 
     def edit_draft(self) -> None:
         """Open the selected message of Drafts (or Outbox) in the composer, to continue writing or to send it."""

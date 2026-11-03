@@ -9,9 +9,10 @@ from chrono_mail.core import MessageFormatError
 from chrono_mail.mime.model import Address, Attachment, OutgoingMessage
 
 # --- Version ------------------------------------------------------------
-__version__ = "builder.py 4.2.428"
+__version__ = "builder.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: a calendar part is written with its method parameter (RFC 6047): an answer to an invitation keeps it (D-310)
 # v4.2.428: as_it_goes_out: the stored message as it goes to the server, without its Bcc and without the program's own X-Chrono-Mail notes; also
 #           for a message with plain LF line ends
 # v1.1.206: with_extra_headers: set or remove X-Chrono-Mail headers of a stored message, every other byte kept (a repeating message records its progress in itself, D-176)
@@ -67,6 +68,7 @@ def _add_attachment(message: EmailMessage, attachment: Attachment) -> None:
             subtype=subtype,
             filename=attachment.filename,
             cid=attachment.content_id,
+            params={"method": attachment.method} if attachment.method else {},
         )
 
 

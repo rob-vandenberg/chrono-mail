@@ -59,9 +59,10 @@ from chrono_mail.ui.colours import is_dark, red
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "settingsdialog.py 4.2.467"
+__version__ = "settingsdialog.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: the Calendar page: "Send my answer to an invitation", on by default (D-310)
 # v4.2.467: Settings > Reading: Widen the reading pane to fit the message (D-304)
 # v4.2.449: calendars_given: Edit account linked or changed a calendar server; only then its calendars get a first fill (D-300)
 # v4.2.444: Settings > Accounts writes each row with account_line, shared with the For list of a calendar server
@@ -338,6 +339,7 @@ class SettingsDialog(QDialog):
         self._add_page("Message list", self._list_page())
         self._add_page("Reading", self._reading_page())
         self._add_page("Writing", self._writing_page())
+        self._add_page("Calendar", self._calendar_page())
         self._add_page("Accounts", self._accounts_page())
         self.rules_panel = RulesPanel(backend, list(known.accounts), known.folders, known.current_folder, self)
         self._add_page("Rules", self.rules_panel)
@@ -690,6 +692,12 @@ class SettingsDialog(QDialog):
     def _mark_read_changed(self) -> None:
         self.mark_read_delay.setEnabled(str(self.mark_read_box.currentData()) == "delay")
 
+    def _calendar_page(self) -> QWidget:
+        page = forms.load("settings_calendar", self)
+        self.send_invitation_answers = part(page, QCheckBox, "sendInvitationAnswers")
+        self.send_invitation_answers.setChecked(self._chosen.send_invitation_answers)
+        return page
+
     def _writing_page(self) -> QWidget:
         page = forms.load("settings_writing", self)
         self.default_account = part(page, QComboBox, "defaultAccount")
@@ -950,6 +958,7 @@ class SettingsDialog(QDialog):
             check_on_start=self.check_on_start.isChecked(), auto_check=self.auto_check.isChecked(), auto_check_minutes=self.interval.value(),
             start_refresh=str(self.start_refresh.currentData()), scheduled_refresh=str(self.scheduled_refresh.currentData()), send_delay=self.send_delay.isChecked(), send_delay_seconds=self.send_delay_seconds.value(),
             send_on_refresh=self.send_on_refresh.isChecked(), warn_outbox_on_quit=self.warn_outbox_on_quit.isChecked(),
+            send_invitation_answers=self.send_invitation_answers.isChecked(),
             notifications=self.notifications.isChecked(), tray=self.tray.isChecked(), close_to_tray=self.close_to_tray.isChecked(),
             start_minimized=bool(self.start_window.currentData()), update_check=self.update_check.isChecked(),
             operations_show_on_send_receive=self.operations_show.isChecked(), operations_hide_when_done=self.operations_hide.isChecked(),

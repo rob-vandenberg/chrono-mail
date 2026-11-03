@@ -9,11 +9,13 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import OUTBOX, Engine
 from chrono_mail.index import html_to_text
 from chrono_mail.mime import Address, Attachment, OutgoingMessage, build_message, parse_message
+from chrono_mail.pim.itip import read_calendar_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_drafts.py 3.6.358"
+__version__ = "commands_drafts.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: draft.save takes a calendar answer to attach (calendar): its METHOD kept on the part (RFC 6047), the answer to an invitation (D-310)
 # v3.6.358: draft.save tells where each attachment it was given is in the stored draft (attachment_positions), so the window keeps its list in place (CR-03)
 # v3.6.350: a message the server took is never replaced by a draft (D-262), also from the command line; one of the Outbox goes in one
 #           locked step after the draft is stored, and when a send took it meanwhile the draft goes again (told when it cannot); a message
@@ -47,6 +49,7 @@ class DraftSaveParameters:
     source_message: str | None = field(default=None, metadata=option("The id of the message this answers or forwards"))
     replace_folder: str | None = field(default=None, metadata=option("The folder of the earlier version of this draft"))
     replace_message: str | None = field(default=None, metadata=option("The id of the earlier version of this draft; it is removed once the new one is stored"))
+    calendar: str = field(default="", metadata=option("A calendar message to attach (iCalendar text with its METHOD, such as an answer to an invitation)"))
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +57,16 @@ class DraftSaveResult:
     message_id: str
     folder: str
     attachment_positions: tuple[int, ...] = ()  # where each attachment given is in the stored draft: the kept ones in the order given, then the files; -1 when not stored or not read back
+
+
+def _calendar_part(text: str) -> tuple[Attachment, ...]:
+    """A calendar message as the part RFC 6047 asks for: text/calendar with the METHOD of its text; none for an empty text."""
+    if not text:
+        return ()
+    message = read_calendar_message(text)
+    if message is None or not message.method:
+        raise UsageError("calendar: not a calendar message with a method")
+    return (Attachment(f"{message.method.lower()}.ics", "text/calendar", None, False, text.encode("utf-8"), message.method),)
 
 
 def draft_save(engine: Engine, parameters: DraftSaveParameters) -> DraftSaveResult:
@@ -87,7 +100,7 @@ def draft_save(engine: Engine, parameters: DraftSaveParameters) -> DraftSaveResu
             subject=parameters.subject,
             text_body=parameters.body,
             html_body=parameters.html,
-            attachments=(*(attachment for attachment in kept if attachment is not None), *files),
+            attachments=(*(attachment for attachment in kept if attachment is not None), *files, *_calendar_part(parameters.calendar)),
             in_reply_to=parameters.in_reply_to,
             references=parameters.references,
             extra_headers=tuple(notes),

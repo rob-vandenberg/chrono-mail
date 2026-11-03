@@ -42,6 +42,7 @@ from chrono_mail.engine.commands_mail import AttachmentInfo, InlineImage, ShowRe
 from chrono_mail.core.colours import MAIL_PAGE
 from chrono_mail.mime.linkdomain import leads_elsewhere
 from chrono_mail.ui.flowlayout import FlowRow
+from chrono_mail.engine.invitations import InvitationInfo
 from chrono_mail.ui.invitationcard import InvitationCard
 from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
@@ -49,9 +50,11 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.4.504"
+__version__ = "reader.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: the card's Accept, Tentative, Decline, Delegate and apply buttons reach the reading pane (invitation_*_requested); the
+#           card on screen (invitation), D-310
 # v4.4.504: a mail that holds a calendar message shows its card above the text, and the card alone when the text shows nothing (no
 #           white page); the card's part is not offered as a file (D-310)
 # v4.3.503: a mailto link to the address of one of the person's accounts has no warning (D-215)
@@ -1037,6 +1040,9 @@ class ReaderWidget(QWidget):
     link_activated = Signal(QUrl)
     link_hovered = Signal(str, bool)  # the address of the link under the pointer ("" when it leaves one), and whether it leads elsewhere (D-215)
     sender_allowed = Signal(str)  # the person chose to always show remote content from this address
+    invitation_answer_requested = Signal(str)  # Accept, Tentative, Decline or Add to calendar on the invitation card (D-310)
+    invitation_apply_requested = Signal()  # Update calendar, Remove from calendar, Add to calendar, Ask for the latest version (D-310)
+    invitation_delegate_requested = Signal()  # Delegate… on the invitation card
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1105,6 +1111,9 @@ class ReaderWidget(QWidget):
         self._card = InvitationCard(card_holder)
         self._card.link_activated.connect(self.link_activated)
         self._card.link_hovered.connect(self._hover)  # the status line and the warning of D-215, as every link
+        self._card.answer_requested.connect(self.invitation_answer_requested)
+        self._card.apply_requested.connect(self.invitation_apply_requested)
+        self._card.delegate_requested.connect(self.invitation_delegate_requested)
         self._card_area.viewport().installEventFilter(self)  # its height follows its width (_fit_card)
         card_row.addWidget(self._card, 1)
         card_row.addStretch(0)
@@ -1298,6 +1307,11 @@ class ReaderWidget(QWidget):
         if isinstance(layout, QVBoxLayout):
             layout.setStretchFactor(self._card_area, 1 if alone else 0)
         self._fit_card()
+
+    @property
+    def invitation(self) -> InvitationInfo | None:
+        """The card on screen, if any."""
+        return self._card.info
 
     def _card_sizes(self) -> None:
         """The room around the card and its widest, at the size factor of now."""

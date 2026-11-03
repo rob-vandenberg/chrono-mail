@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -42,10 +43,13 @@ from chrono_mail.ui.passwordfield import make_password_field
 from chrono_mail.ui.serverfields import ServerFields, kind_of, policy_of, security_of, start_values_of, test_result_text
 from chrono_mail.core.words import counted
 
+from chrono_mail.ui.infomark import InfoMark, info_marks
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.2.451"
+__version__ = "accountedit.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: Calendars and contacts: "Answers to invitations are sent by: the server / Chrono Mail", starting on what the server announces;
+#           an (i) when Chrono Mail is chosen for a server that sends them itself (D-310)
 # v4.2.451: General has the tick "Include this account in Send and Receive", for every kind of account, instead of "Check this account every" (D-059)
 # v4.2.447: Test connection and the calendar server's check always check the certificates themselves; the test after Connect uses the
 #           answer; Connect without the tick takes back the account's kept certificate (D-299)
@@ -97,7 +101,7 @@ class AccountEditDialog(QDialog):
         kind = kind_of(account)
         calendars_only = kind is AccountKind.DAV  # no mail: only its name and its calendar server can be changed
         self.setWindowTitle(f"Account: {account.email_address or account.shown_name}")
-        form = forms.fill(self, "account_edit", {"servers": self._server_fields, "davFolders": FolderTicks})  # D-276
+        form = forms.fill(self, "account_edit", {"servers": self._server_fields, "davFolders": FolderTicks, **info_marks("answersInfo")})  # D-276
         self.tabs: QTabWidget = part(form, QTabWidget, "tabs")
 
         general = part(form, QFormLayout, "generalForm")
@@ -149,6 +153,15 @@ class AccountEditDialog(QDialog):
         self.dav_result.setTextFormat(Qt.TextFormat.RichText)
         self.dav_check_button: QPushButton = part(form, QPushButton, "findDav")
         self.dav_folders: FolderTicks = part(form, FolderTicks, "davFolders")
+        self.answers_server: QRadioButton = part(form, QRadioButton, "answersServer")
+        self.answers_chrono: QRadioButton = part(form, QRadioButton, "answersChrono")
+        self.answers_info: InfoMark = part(form, InfoMark, "answersInfo")
+        by_server = account.invitation_answers == "server" or (not account.invitation_answers and account.dav_auto_schedule)
+        (self.answers_server if by_server else self.answers_chrono).setChecked(True)
+        self.answers_chrono.toggled.connect(self._answers_warning)
+        self.answers_server.toggled.connect(self._answers_warning)
+        self.dav_url.textChanged.connect(self._answers_warning)
+        self._answers_warning()
         self._dav_found: FoundServer | None = None  # the folders shown, as the server gave them
         self.dav_check_button.clicked.connect(self._check_dav)
 
@@ -275,6 +288,30 @@ class AccountEditDialog(QDialog):
 
     # --- commands -------------------------------------------------------------------------------------------
 
+    def _answers_warning(self) -> None:
+        """Why "the server" is greyed (no calendar server), or what the choice may cause: two answers, or none (D-310)."""
+        account = self._account
+        has_server = bool(self.dav_url.text().strip())  # as typed in this window: a server linked just now counts
+        self.answers_server.setEnabled(has_server)  # the choice itself is left alone: without a server it has no effect anyway
+        if not has_server:
+            reason = "This account has no calendar server: Chrono Mail sends the answers."
+        elif self.answers_chrono.isChecked() and account.dav_auto_schedule:
+            reason = "This server also sends the answers itself: the organizer may get two."
+        elif self.answers_server.isChecked() and not account.dav_auto_schedule:
+            reason = "This server did not say that it sends the answers itself: the organizer may get none."
+        else:
+            reason = ""
+        self.answers_info.explain("Answers to invitations", reason, self.answers_server)
+
+    def _answers_value(self) -> str | None:
+        """Who mails the answers, when the person changed it from what the account has now (empty: as the server announces)."""
+        account = self._account
+        if not self.dav_url.text().strip():
+            return None  # no calendar server: nothing to choose, the stored choice stays
+        chosen = "server" if self.answers_server.isChecked() else "chrono"
+        now = account.invitation_answers or ("server" if account.dav_auto_schedule else "chrono")
+        return None if chosen == now else chosen
+
     def _values(self) -> AccountEditParameters | None:
         """Only what differs from the stored account (and the passwords that were typed); None: nothing changed."""
         account = self._account
@@ -299,6 +336,7 @@ class AccountEditDialog(QDialog):
             in_send_receive=differing(self.in_send_receive.isChecked(), account.in_send_receive),
             outgoing_same_login=differing(self.same_login.isChecked(), account.outgoing_same_login),
             junk_filter=differing(self.junk_filter.isChecked(), account.junk_filter),
+            invitation_answers=self._answers_value(),
         )
         return None if parameters == AccountEditParameters(account.account_id) else parameters
 

@@ -3,9 +3,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 3.4.344"
+__version__ = "model.py 4.4.505"
 
 # --- Version history ----------------------------------------------------
+# v4.4.505: Attachment.method: the METHOD of a calendar part (RFC 6047), kept through a draft and the send (D-310)
 # v3.4.344: send_time takes only the digits 0 to 9, up to the end of 9998 ("²" passed isdigit and stopped the check, RV-35)
 # v1.9.276: received: when the mail server received the message (D-226)
 # v1.1.206: REPEAT_HEADER: a repeating message carries its timetable in itself (D-176)
@@ -28,6 +29,7 @@ class Attachment:
     content_id: str | None
     inline: bool
     data: bytes
+    method: str = ""  # a text/calendar part's method parameter (REQUEST, REPLY…; RFC 6047): written back when the part is sent again
 
 
 @dataclass(frozen=True, slots=True)
