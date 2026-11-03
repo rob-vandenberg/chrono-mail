@@ -39,9 +39,10 @@ from chrono_mail.ui.syncmarks import CONFLICT, mark_icon
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "collectionpanel.py 4.2.438"
+__version__ = "collectionpanel.py 4.3.502"
 
 # --- Version history ----------------------------------------------------
+# v4.3.502: Event colours gets the settings, so it opens at the width last given it (the owner)
 # v4.2.438: a calendar fact brings its timed_background (UR-02, D-297)
 # v2.4.334: the last "(s)" texts counted one way (F1b)
 # v2.4.333: every count is written one way, "1 message", "2 messages", "1,041" (core/words.py counted)
@@ -483,7 +484,7 @@ class CollectionPanel(QWidget):
 
         info = self.info(collection_id)
         if info is not None:
-            PaletteEditor(self._backend, info, self).exec()
+            PaletteEditor(self._backend, info, self, self._settings).exec()
 
     def _menu(self, position: QPoint) -> None:
         self.menu_at(position).exec(self.tree.viewport().mapToGlobal(position))

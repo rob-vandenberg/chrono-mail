@@ -1,7 +1,7 @@
 import html
 from datetime import date, datetime, timedelta
 
-from PySide6.QtCore import QDate, QDateTime, Qt, QTime, Signal
+from PySide6.QtCore import QDate, QDateTime, QSettings, Qt, QTime, Signal
 from PySide6.QtWidgets import QCheckBox, QComboBox, QCompleter, QDateTimeEdit, QDialog, QDialogButtonBox, QLabel, QLineEdit, QMenu, QPlainTextEdit, QToolButton, QWidget
 
 from chrono_mail.pim.times import in_local_zone
@@ -20,9 +20,10 @@ from chrono_mail.core.words import digits
 from chrono_mail.ui.scale import wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "eventeditor.py 4.0.378"
+__version__ = "eventeditor.py 4.3.502"
 
 # --- Version history ----------------------------------------------------
+# v4.3.502: Event colours gets the settings, so it opens at the width last given it (the owner)
 # v4.0.378: built from its Qt Designer form (ui/forms/event_editor.ui, D-276); its sizes follow the size factor
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError; a first reminder at a set time shows as "At a set time" (it showed "No reminder", and choosing that
 #           kept it)
@@ -62,10 +63,11 @@ class EventEditor(QDialog):
 
     def __init__(
         self, backend: Backend, calendars: list[CollectionSummary], known_tags: list[str], event: EventInfo | None = None, collection: str = "", occurrence: str = "",
-        start: str = "", end: str = "", parent: QWidget | None = None,
+        start: str = "", end: str = "", parent: QWidget | None = None, settings: QSettings | None = None,
     ) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
+        self._settings: QSettings | None = settings  # handed to Event colours
         self._original: EventInfo | None = event
         self._reminder_before: str = ""  # the reminder choice as the event had it: the reminders are sent only when it changed (RV-18)
         self._item: str | None = None if event is None else event.item
@@ -213,7 +215,7 @@ class EventEditor(QDialog):
         calendar = self._current_calendar()
         if calendar is None:
             return
-        editor = PaletteEditor(self._backend, calendar, self)
+        editor = PaletteEditor(self._backend, calendar, self, self._settings)
         if editor.exec() == PaletteEditor.DialogCode.Accepted and editor.result_summary is not None:
             fresh = editor.result_summary
             self._calendars = [fresh if info.collection == fresh.collection else info for info in self._calendars]

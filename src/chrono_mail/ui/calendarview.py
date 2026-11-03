@@ -44,9 +44,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.2.438"
+__version__ = "calendarview.py 4.3.502"
 
 # --- Version history ----------------------------------------------------
+# v4.3.502: the event editor gets the settings, for the width of Event colours (the owner)
 # v4.2.438: an entry is filled when its calendar's account says so (UR-02, D-297)
 # v3.6.351: numbers are read only from the digits 0 to 9 (core.words.digits): "²" passed isdigit() and stopped the work with a ValueError
 # v3.5.348: The question "this occurrence or all" shows plain text (RV-167, without a filter on the whole program)
@@ -455,7 +456,7 @@ class CalendarPage(PimPage):
         return visible[0] if visible else ((self._calendars()[0].collection) if self._calendars() else "")
 
     def _editor(self, event: EventInfo | None, collection: str, occurrence: str = "", start: str = "", end: str = "") -> None:
-        editor = EventEditor(self._backend, self._calendars(), self._tags_known, event, collection, occurrence, start, end, self.content)
+        editor = EventEditor(self._backend, self._calendars(), self._tags_known, event, collection, occurrence, start, end, self.content, self._settings)
         editor.saved.connect(self._saved)
         editor.exec()
 

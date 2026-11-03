@@ -18,9 +18,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.2.438"
+__version__ = "test_ui_calendar.py 4.3.502"
 
 # --- Version history ----------------------------------------------------
+# v4.3.502: Event colours shows its calendar as read-only text, no longer as a greyed drop-down
 # v4.2.438: a calendar's own colour is named "Default calendar colour"
 # v3.6.351: a reminder at a set time shows as that, never as "No reminder"
 # v3.5.346: a click on an event gives its view the keyboard (RV-22); events past a daylight-saving change keep their hour (RV-15)
@@ -430,14 +431,18 @@ def test_the_calendars_of_an_account_share_its_palette_and_a_read_only_one_is_gr
     wait(qtbot, lambda: any(entry.summary == "Review" and entry.colour == "#039be5" for entry in page.entries))
     world.call("collection.set-palette", collection=cal, colours=("g7\tPeacock\t#00ffff",))  # from the other calendar of the account
     wait(qtbot, lambda: any(entry.summary == "Review" and entry.colour == "#00ffff" for entry in page.entries))
-    editor = PaletteEditor(world.backend, page.panel.info(work))
+    info = page.panel.info(work)
+    assert info is not None
+    editor = PaletteEditor(world.backend, info)
     qtbot.addWidget(editor)
     assert editor.windowTitle() == "Event colours"
-    assert editor.calendar.currentText() == f"{getattr(page.panel.info(work), 'account_name')} — Work" and not editor.calendar.isEnabled()  # as in the event editor
+    assert editor.calendar.text() == f"{info.account_name} — Work" and editor.calendar.isReadOnly()  # shown, never chosen here (4.3.502)
     with open_pim(world.engine, LOCAL_ACCOUNT_ID) as store:
         store.update_collection(work, read_only=True)
     wait(qtbot, lambda: bool(getattr(page.panel.info(work), "read_only", False)))
-    menu = page.panel.menu_at(page.panel.tree.visualItemRect(page.panel._entry(work)).center())  # noqa: SLF001
+    entry = page.panel._entry(work)  # noqa: SLF001
+    assert entry is not None
+    menu = page.panel.menu_at(page.panel.tree.visualItemRect(entry).center())
     enabled = {action.text(): action.isEnabled() for action in menu.actions() if action.text()}
     assert (enabled["Rename…"], enabled["Colour…"], enabled["Edit colours…"], enabled["Delete…"]) == (False, False, False, False)
     delete = next(action for action in menu.actions() if action.text() == "Delete…")

@@ -1,12 +1,11 @@
 import html
 from typing import override
 
-from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtGui import QColor, QIcon, QMouseEvent, QPainter, QPixmap
+from PySide6.QtCore import QEvent, QObject, QSettings, Qt
+from PySide6.QtGui import QColor, QHideEvent, QIcon, QMouseEvent, QPainter, QPixmap, QShowEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QLabel,
@@ -21,6 +20,7 @@ from PySide6.QtWidgets import (
 from chrono_mail.engine.commands_pim import CollectionSummary
 from chrono_mail.core import OWN_COLOUR_ID, ChronoMailError, PaletteColour
 from chrono_mail.core.colours import COLLECTION_WITHOUT_COLOUR
+from chrono_mail.core.words import digits
 from chrono_mail.engine.commands_pim import COLLECTION_SET_PALETTE, CollectionSummary, PaletteParameters
 from chrono_mail.ui.infomark import InfoMark, info_marks
 from chrono_mail.ui import forms
@@ -31,9 +31,11 @@ from chrono_mail.ui.icons import theme_icon
 from chrono_mail.ui.scale import px_for, wpx
 
 # --- Version ------------------------------------------------------------
-__version__ = "paletteeditor.py 4.2.445"
+__version__ = "paletteeditor.py 4.3.502"
 
 # --- Version history ----------------------------------------------------
+# v4.3.502: the Calendar field is read-only text in the normal colour, with its full name as hover text: a long name no longer keeps the
+#           window from being made narrower (a drop-down asks for its whole text's width); it opens at the width last given it (the owner)
 # v4.2.445: its 500 pixels are the owner's screen's, in Qt's units at the size slider (forms.owner_width), so it follows every screen's scale
 # v4.2.442: opens at, and never goes below, 500 pixels on the screen (the owner); it was 440 at the size factor
 # v4.2.438: the tick "Show background colour for timed events in Month view", kept with the account's colours; its text wraps and a click on it
@@ -137,22 +139,27 @@ class ColourRow(QWidget):
 
 
 WIDTH: int = forms.owner_width(500)  # the owner: Event colours opens at, and never goes below, 500 pixels on his screen
+WIDTH_KEY: str = "event_colours_width"  # the width the person gave the window last: it opens at it (the owner)
 
 
 class PaletteEditor(QDialog):
     """The appointment colours of a calendar's account: a row per colour (the calendar's own first, then the account's, shared by all its calendars),
     + to add one, Cancel and Save (D-191). Save keeps them with the account; the summary that comes back is in `result_summary`."""
 
-    def __init__(self, backend: Backend, calendar: CollectionSummary, parent: QWidget | None = None) -> None:
+    def __init__(self, backend: Backend, calendar: CollectionSummary, parent: QWidget | None = None, settings: QSettings | None = None) -> None:
         super().__init__(parent)
         self._backend: Backend = backend
+        self._settings: QSettings | None = settings
+        self._opened_width: int | None = None
         self._calendar: CollectionSummary = calendar
         self.result_summary: CollectionSummary | None = None
         self.rows: list[ColourRow] = []
         form = forms.fill(self, "palette_editor", {"rows": self._holder, **info_marks("addInfo")})  # D-276
-        self.calendar: QComboBox = part(form, QComboBox, "calendar")  # the event editor's Calendar row: which calendar's own colour comes first, and whose account's colours follow
-        self.calendar.addItem(f"{calendar.account_name} — {calendar.name}")
-        self.calendar.setEnabled(False)
+        self.calendar: QLineEdit = part(form, QLineEdit, "calendar")  # the event editor's Calendar row: which calendar's own colour comes first, and whose account's colours follow
+        self.calendar.setText(f"{calendar.account_name} — {calendar.name}")  # read-only, in the normal colour: shown, never chosen here (the owner)
+        self.calendar.setToolTip(self.calendar.text())  # the whole name, also when the field cuts it off
+        self.calendar.setCursorPosition(0)  # its start in view
+        self.calendar.setFocusPolicy(Qt.FocusPolicy.ClickFocus)  # Tab passes it, as it passed the greyed drop-down; a click can select its text
         part(form, QScrollArea, "scroll").setMinimumHeight(wpx(320))
         self.timed_background: QCheckBox = part(form, QCheckBox, "timedBackground")  # the account's choice, with its colours (D-297)
         self.timed_background.setChecked(calendar.timed_background)
@@ -167,6 +174,11 @@ class PaletteEditor(QDialog):
         box.accepted.connect(self._save)
         box.rejected.connect(self.reject)
         forms.open_at(self, WIDTH, WIDTH)  # its texts are never cut off, also at the largest size
+        saved = settings.value(WIDTH_KEY) if settings is not None else None
+        if isinstance(saved, (int, str)) and digits(str(saved)):  # the width the person gave it last, within the screen (the owner); a strange value is passed by
+            screen = self.screen()
+            room = screen.availableGeometry().width() if screen is not None else wpx(WIDTH)
+            self.resize(max(self.minimumWidth(), min(int(saved), room)), self.height())
         if self.rows:
             self.rows[0].colour_button.setFocus()  # it opens on the first colour, as before (the list's scroll area comes first in the Tab order)
         if calendar.read_only:  # a read-only calendar's colours are shown, not changed; the (i) of a row stays usable (D-294)
@@ -174,6 +186,17 @@ class PaletteEditor(QDialog):
                            *(control for row in self.rows for control in (row.colour_button, row.name, row.delete_button))):
                 widget.setEnabled(False)
             part(form, InfoMark, "addInfo").explain("Event colours", READ_ONLY_COLOURS, self.add_button)  # D-294: no hover text beside the (i)
+
+    @override
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self._opened_width = self.width()
+
+    @override
+    def hideEvent(self, event: QHideEvent) -> None:
+        if self._settings is not None and self._opened_width is not None and self.width() != self._opened_width and not self.isMaximized():  # the person gave it another width
+            self._settings.setValue(WIDTH_KEY, self.width())
+        super().hideEvent(event)
 
     def _holder(self, parent: QWidget) -> QWidget:
         """The list of colours with a row each, made at its place in the form (so Tab reaches the rows before the buttons below them)."""
