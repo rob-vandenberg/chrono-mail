@@ -19,9 +19,12 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.3.498"
+__version__ = "test_ui_sync_conflicts.py 4.3.499"
 
 # --- Version history ----------------------------------------------------
+# v4.3.499: the list's columns What, Name, Fields, Where, together always the table's width with no scrollbar: a dragged border as a
+#           splitter, a new width in proportion, the widths back when the window opens again; What fitted until dragged; the tick boxes in
+#           the middle of their column (the owner); the older tests read the new order, the What test of 4.3.498 is shown at 1000 pixels
 # v4.3.498: Keep both (B-30, B-31, the owner): the split icon only on a row of a field that holds several values, with both; a split row is
 #           two rows without circles, the person's Undo key joins it again; Keep both sets every circle and split aside and settles the item
 #           as two on the server; the split icon almost as tall as a row's outline, Keep both's own icon, the remembered sizes of both
@@ -99,7 +102,7 @@ def test_the_page_lists_a_conflict_and_use_chrono_mail_settles_it(world: World, 
         panel = panel_of(world, qtbot)
         wait(qtbot, lambda: panel.table.topLevelItemCount() == 1)
         row = panel.table.topLevelItem(0)
-        assert row is not None and [row.text(column) for column in range(1, 5)] == ["Title", "Event", "Ours", f"{shown_name(world)} — Calendar"]
+        assert row is not None and [row.text(column) for column in range(1, 5)] == ["Event", "Ours", "Title", f"{shown_name(world)} — Calendar"]
         assert row.text(5) == "" and row.data(5, Qt.ItemDataRole.UserRole + 2) == "both" and row.toolTip(5).startswith("Changed on both sides")  # Why: drawn
         assert row.icon(0).isNull()  # no triangle: every row is a conflict (the owner)
         assert not panel.use_local.isEnabled() and not panel.use_server.isEnabled()  # greyed: nothing ticked
@@ -218,7 +221,7 @@ def test_mail_rows_keep_here_only_and_the_entry_under_the_mail_folders(world: Wo
     marks.changed.emit()
     assert panel.table.topLevelItemCount() == 2
     first = panel.table.topLevelItem(0)
-    assert first is not None and (first.text(1), first.text(2)) == ("Marks", "Message")
+    assert first is not None and (first.text(3), first.text(1)) == ("Marks", "Message")
     tick(panel, 0)
     assert panel.use_server.isEnabled() and not panel.use_local.isEnabled() and not panel.keep_here.isEnabled()
     panel.invert.click()  # now only the folder that exists only here: the server's version would delete it
@@ -297,8 +300,8 @@ def test_the_window_of_its_own_with_its_legend_and_columns_that_can_be_dragged(w
     assert window._conflicts_window is conflicts  # noqa: SLF001 - one window, brought to the front
     header = conflicts.panel.table.header()
     modes = [header.sectionResizeMode(column) for column in range(header.count())]
-    assert modes == [QHeaderView.ResizeMode.Fixed] * 3 + [QHeaderView.ResizeMode.Interactive] + [QHeaderView.ResizeMode.Fixed] * 2  # only Name's line moves
-    assert [conflicts.panel.table.headerItem().text(column) for column in range(6)] == ["", "Fields", "What", "Name", "Where", "Why"]
+    assert modes == [QHeaderView.ResizeMode.Fixed] + [QHeaderView.ResizeMode.Interactive] * 4 + [QHeaderView.ResizeMode.Fixed]  # What to Where move
+    assert [conflicts.panel.table.headerItem().text(column) for column in range(6)] == ["", "What", "Name", "Fields", "Where", "Why"]
     texts = {label.text() for label in conflicts.panel.findChildren(QLabel)}
     assert {"Changed on both sides", "Refused by the server", "Deleted on the server, changed here", "Deleted here, changed on the server"} <= texts
     assert "Sync conflicts…" in [action.text() for action in window.findChildren(type(window.act_sync_conflicts))]
@@ -416,13 +419,10 @@ def test_the_table_fills_the_width_name_and_where_share_it_and_the_icons_are_in_
             total = sum(header.sectionSize(column) for column in range(header.count()))
             assert total == panel.table.viewport().width()  # always exactly the width: no scrollbar, nothing missing
             assert [header.sectionSize(column) for column in FIXED_COLUMNS] == fixed
-            free = header.sectionSize(NAME_COLUMN) + header.sectionSize(WHERE_COLUMN)
-            assert abs(header.sectionSize(NAME_COLUMN) / free - 0.6) < 0.02  # 60/40 at first
-        header.resizeSection(NAME_COLUMN, int(free * 0.3))  # the person drags the line between Name and Where
+        header.resizeSection(NAME_COLUMN, header.sectionSize(NAME_COLUMN) - 30)  # the person drags the line after Name: Where takes the room
         panel.resize(1000, 400)
         QApplication.processEvents()
-        free = header.sectionSize(NAME_COLUMN) + header.sectionSize(WHERE_COLUMN)
-        assert abs(header.sectionSize(NAME_COLUMN) / free - 0.3) < 0.02 and sum(header.sectionSize(c) for c in range(header.count())) == panel.table.viewport().width()
+        assert sum(header.sectionSize(c) for c in range(header.count())) == panel.table.viewport().width() and header.sectionSize(WHERE_COLUMN) > 40
         row = panel.table.topLevelItem(0)
         assert row is not None
         image = panel.table.viewport().grab().toImage()
@@ -449,7 +449,7 @@ def test_a_name_with_markup_is_shown_as_text_in_its_hover_text(world: World, qtb
         panel = panel_of(world, qtbot)
         wait(qtbot, lambda: panel.table.topLevelItemCount() == 1)
         row = panel.table.topLevelItem(0)
-        assert row is not None and row.text(3) == "<b>Ours</b>" and row.toolTip(3) == plain_tip("<b>Ours</b>") != "<b>Ours</b>"
+        assert row is not None and row.text(2) == "<b>Ours</b>" and row.toolTip(2) == plain_tip("<b>Ours</b>") != "<b>Ours</b>"
         conflict = world.window.sync_marks.conflicts[0]
         dialog = ConflictDialog(conflict)
         qtbot.addWidget(dialog)
@@ -896,5 +896,130 @@ def test_what_is_as_wide_as_its_widest_text(world: World, qtbot: QtBot) -> None:
     marks.conflicts = (dataclasses.replace(anna_conflict(), kind="addressbook"), dataclasses.replace(anna_conflict(), conflict="c2", kind="events"))
     panel = SyncConflictsPanel(world.backend, marks)
     qtbot.addWidget(panel)
+    panel.resize(1000, 400)  # room for every column (4.3.499: the four columns fill the table's width)
+    panel.show()
+    qtbot.waitExposed(panel)
     widest = panel.table.fontMetrics().horizontalAdvance("Address book")
     assert panel.table.header().sectionSize(WHAT_COLUMN) == max(widest, panel.table.header().fontMetrics().horizontalAdvance("What")) + 16
+
+
+def test_the_list_shows_what_name_fields_where_and_only_the_tick_box_and_why_keep_their_width(world: World, qtbot: QtBot) -> None:  # the owner
+    from PySide6.QtWidgets import QHeaderView
+
+    started(qtbot, world)
+    panel = panel_of(world, qtbot)
+    header = panel.table.header()
+    assert [panel.table.headerItem().text(column) for column in range(header.count())] == ["", "What", "Name", "Fields", "Where", "Why"]
+    fixed, dragged = QHeaderView.ResizeMode.Fixed, QHeaderView.ResizeMode.Interactive
+    assert [header.sectionResizeMode(column) for column in range(header.count())] == [fixed, dragged, dragged, dragged, dragged, fixed]
+
+
+def shown_panel(world: World, qtbot: QtBot, *conflicts: ConflictSummary) -> SyncConflictsPanel:
+    """The list with these conflicts, on screen at 1000 pixels wide."""
+    started(qtbot, world)
+    marks = world.window.sync_marks
+    marks.conflicts = conflicts
+    panel = SyncConflictsPanel(world.backend, marks)
+    qtbot.addWidget(panel)
+    panel.resize(1000, 400)
+    panel.show()
+    qtbot.waitExposed(panel)
+    return panel
+
+
+def four(panel: SyncConflictsPanel) -> list[int]:
+    from chrono_mail.ui.syncconflicts import DRAGGED_COLUMNS
+
+    return [panel.table.header().sectionSize(column) for column in DRAGGED_COLUMNS]
+
+
+def fills(panel: SyncConflictsPanel) -> bool:
+    header = panel.table.header()
+    return sum(header.sectionSize(column) for column in range(header.count())) == panel.table.viewport().width()
+
+
+def test_the_dragged_widths_come_back_when_the_window_opens_again(world: World, qtbot: QtBot) -> None:  # the owner, also after a restart
+    from chrono_mail.ui.syncconflicts import FIELDS_COLUMN, NAME_COLUMN, SyncConflictsWindow
+
+    started(qtbot, world)
+    window = world.window
+    window.open_sync_conflicts()
+    conflicts = window._conflicts_window  # noqa: SLF001
+    assert conflicts is not None
+    qtbot.waitExposed(conflicts)
+    header = conflicts.panel.table.header()
+    for column, by in ((WHAT_COLUMN, 20), (NAME_COLUMN, -30), (FIELDS_COLUMN, 10)):
+        header.resizeSection(column, header.sectionSize(column) + by)  # as a drag does
+    wanted = four(conflicts.panel)
+    conflicts.close()
+    again = SyncConflictsWindow(world.backend, window.sync_marks, window.settings, window)
+    qtbot.addWidget(again)
+    again.show()
+    qtbot.waitExposed(again)
+    wait(qtbot, lambda: fills(again.panel))
+    got = four(again.panel)  # at the width the window opens at: the same shares of it
+    assert all(abs(now / sum(got) - was / sum(wanted)) < 0.01 for now, was in zip(got, wanted, strict=True))
+
+
+def test_what_fits_its_widest_text_until_the_person_drags_it(world: World, qtbot: QtBot) -> None:  # the owner
+    marks = world.window.sync_marks
+    panel = shown_panel(world, qtbot, dataclasses.replace(anna_conflict(), kind="addressbook"))
+    header = panel.table.header()
+    fitted = header.sectionSize(WHAT_COLUMN)
+    marks.conflicts = (dataclasses.replace(anna_conflict(), kind="events"),)
+    marks.changed.emit()
+    assert header.sectionSize(WHAT_COLUMN) < fitted and fills(panel)  # "Event" is narrower than "Address book": fitted again
+    header.resizeSection(WHAT_COLUMN, 150)  # the person drags it
+    marks.conflicts = (dataclasses.replace(anna_conflict(), kind="addressbook"),)
+    marks.changed.emit()
+    assert abs(header.sectionSize(WHAT_COLUMN) - 150) <= 1 and fills(panel)
+
+
+def test_the_four_columns_always_fill_the_width_and_no_scroll_bar_shows(world: World, qtbot: QtBot) -> None:  # the owner
+    from PySide6.QtWidgets import QApplication
+
+    from chrono_mail.ui.syncconflicts import DRAGGED_COLUMNS, FIELDS_COLUMN, NAME_COLUMN, WHERE_COLUMN
+
+    panel = shown_panel(world, qtbot, anna_conflict())
+    header = panel.table.header()
+    assert panel.table.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff and fills(panel)
+    for column in DRAGGED_COLUMNS:
+        for by in (25, -25):
+            before = four(panel)
+            header.resizeSection(column, header.sectionSize(column) + by)  # as a drag of its right border does
+            after = four(panel)
+            assert fills(panel) and not panel.table.horizontalScrollBar().isVisible()
+            if column == WHERE_COLUMN:
+                assert after == before  # the border after Where moves nothing: the four fill the width
+            else:
+                place = DRAGGED_COLUMNS.index(column)
+                assert after[place] - before[place] == by == before[place + 1] - after[place + 1]  # a splitter: the right one gives it
+    name_to_fields = header.sectionSize(NAME_COLUMN) / header.sectionSize(FIELDS_COLUMN)
+    for width in (1300, 900):
+        panel.resize(width, 400)
+        QApplication.processEvents()
+        assert fills(panel) and not panel.table.horizontalScrollBar().isVisible()
+        assert abs(header.sectionSize(NAME_COLUMN) / header.sectionSize(FIELDS_COLUMN) - name_to_fields) < 0.05  # in proportion
+    header.resizeSection(NAME_COLUMN, 2)  # dragged far to the left
+    assert header.sectionSize(NAME_COLUMN) >= header.fontMetrics().horizontalAdvance("Name") and fills(panel)  # never narrower than its header
+
+
+def test_the_tick_boxes_are_in_the_middle_of_their_column(world: World, qtbot: QtBot) -> None:  # the owner
+    from PySide6.QtCore import QPoint
+
+    started(qtbot, world)
+    world.window.sync_marks.conflicts = (anna_conflict(),)
+    panel = SyncConflictsPanel(world.backend, world.window.sync_marks)
+    qtbot.addWidget(panel)
+    panel.show()
+    qtbot.waitExposed(panel)
+    row = panel.table.topLevelItem(0)
+    assert row is not None
+    rect = panel.table.visualItemRect(row)
+    header = panel.table.header()
+    left = header.sectionViewportPosition(0)
+    QTest.mouseClick(panel.table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(left + 3, rect.center().y()))
+    assert row.checkState(0) == Qt.CheckState.Unchecked  # beside the box, at the left edge: no tick
+    QTest.mouseClick(panel.table.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, QPoint(left + header.sectionSize(0) // 2, rect.center().y()))
+    assert row.checkState(0) == Qt.CheckState.Checked  # the box in the middle
+    assert panel.table.headerItem().textAlignment(0) & Qt.AlignmentFlag.AlignHCenter

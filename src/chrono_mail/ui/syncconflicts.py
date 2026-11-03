@@ -7,8 +7,8 @@ import time
 from datetime import date, datetime
 from typing import Literal, override
 
-from PySide6.QtCore import QDate, QEvent, QLocale, QModelIndex, QObject, QPersistentModelIndex, QRect, QRectF, QSettings, QSize, Qt, QTime, Signal
-from PySide6.QtGui import QCloseEvent, QHideEvent, QKeySequence, QPainter, QPalette, QShortcut, QShowEvent
+from PySide6.QtCore import QAbstractItemModel, QDate, QEvent, QLocale, QModelIndex, QObject, QPersistentModelIndex, QRect, QRectF, QSettings, QSize, Qt, QTime, Signal
+from PySide6.QtGui import QCloseEvent, QHideEvent, QKeySequence, QMouseEvent, QPainter, QPalette, QShortcut, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -52,9 +52,12 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.3.498"
+__version__ = "syncconflicts.py 4.3.499"
 
 # --- Version history ----------------------------------------------------
+# v4.3.499: The list: What, Name, Fields, Where, together always the free width, never a horizontal scrollbar; a border dragged as a
+#           splitter, a new window width in proportion, their shares kept with the window's size; What fits its widest text until dragged;
+#           the tick boxes in the middle of their column (the owner)
 # v4.3.498: Keep both (B-30, B-31, the owner): the split icon at the end of a row of a field that holds several values turns it into two rows,
 #           the server's and Chrono Mail's, both kept, without outline or circles; the person's Undo key joins the last split again; the Keep
 #           both button keeps the whole item as two, every circle and split set aside; the split icon almost as tall as a row's outline, the
@@ -97,15 +100,18 @@ KIND_WORDS: dict[str, str] = {
     "events": "Event", "tasks": "Task", "contacts": "Contact", "mail": "Message", "folder": "Folder", "calendar": "Calendar", "tasklist": "Task list", "addressbook": "Address book",
 }
 ROLE_ID: int = Qt.ItemDataRole.UserRole + 1
-COLUMNS: tuple[str, ...] = ("", "Fields", "What", "Name", "Where", "Why")  # Fields first, Why as an icon (the owner)
+COLUMNS: tuple[str, ...] = ("", "What", "Name", "Fields", "Where", "Why")  # Why as an icon (the owner)
+CHECK_COLUMN: int = 0
+WHAT_COLUMN: int = 1
+NAME_COLUMN: int = 2
+FIELDS_COLUMN: int = 3
 WHY_COLUMN: int = 5
-SHARE_KEY: str = "sync_conflicts_name_share"  # how much of the free width Name has (Where the rest), dragged and remembered
-FIRST_SHARE: float = 0.6  # names run longer than places (the owner agreed 60/40)
-FIXED_COLUMNS: tuple[int, ...] = (0, 1, 2, 5)  # the tick box, Fields, What and Why keep their width; Name and Where share the rest
-NAME_COLUMN: int = 3
-WHAT_COLUMN: int = 2
+FIXED_COLUMNS: tuple[int, ...] = (CHECK_COLUMN, WHY_COLUMN)  # the tick box and Why keep their width; the others are dragged (the owner)
+WIDTHS_KEY: str = "sync_conflicts_widths"  # the shares of What, Name, Fields and Where, and whether What was dragged; kept with the window's size
 CONFLICT_SIZE_KEY: str = "sync_conflict_size"  # the size the person gave the window of a conflict last: every conflict opens at it (the owner)
 WHERE_COLUMN: int = 4
+DRAGGED_COLUMNS: tuple[int, ...] = (WHAT_COLUMN, NAME_COLUMN, FIELDS_COLUMN, WHERE_COLUMN)  # together always the free width (the owner)
+FIRST_SHARES: dict[int, float] = {WHAT_COLUMN: 0.12, NAME_COLUMN: 0.38, FIELDS_COLUMN: 0.2, WHERE_COLUMN: 0.3}
 ROLE_KIND: int = Qt.ItemDataRole.UserRole + 2  # the Why cell: the kind of conflict it draws
 LOCAL: str = "local"
 SERVER: str = "server"
@@ -135,6 +141,50 @@ class WhyDelegate(QStyledItemDelegate):
         size = min(16, rect.height() - 2)
         area = QRectF(rect.center().x() - size / 2 + 1, rect.center().y() - size / 2 + 1, size, size)
         paint_why(painter, area, kind, palette.color(QPalette.ColorRole.Highlight if selected else QPalette.ColorRole.Base), selected)
+
+
+class CheckDelegate(QStyledItemDelegate):
+    """The tick box of a row in the middle of its column (the owner; Qt puts it at the left edge): drawn there, and ticked by a click there."""
+
+    @staticmethod
+    def box(cell: QRect, widget: QWidget | None) -> QRect:
+        """Where the tick box of a cell is: in its middle."""
+        style = widget.style() if widget is not None else QApplication.style()
+        width = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth, None, widget)
+        height = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorHeight, None, widget)
+        return QRect(cell.center().x() - width // 2 + 1, cell.center().y() - height // 2 + 1, width, height)
+
+    @override
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> None:
+        cell = QStyleOptionViewItem(option)
+        self.initStyleOption(cell, index)
+        widget = getattr(cell, "widget")  # getattr: PySide's stubs give these fields no type
+        owner = widget if isinstance(widget, QWidget) else None
+        style = owner.style() if owner is not None else QApplication.style()
+        features = getattr(cell, "features")
+        setattr(cell, "features", features & ~QStyleOptionViewItem.ViewItemFeature.HasCheckIndicator)
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, cell, painter, owner)  # background, selection: no box at the left
+        rect = getattr(option, "rect")
+        if not isinstance(rect, QRect):
+            return
+        tick = QStyleOptionViewItem(cell)
+        setattr(tick, "rect", self.box(rect, owner))
+        state = getattr(cell, "state") & ~(QStyle.StateFlag.State_On | QStyle.StateFlag.State_Off | QStyle.StateFlag.State_NoChange)
+        checked = index.data(Qt.ItemDataRole.CheckStateRole) in (Qt.CheckState.Checked, Qt.CheckState.Checked.value)
+        setattr(tick, "state", state | (QStyle.StateFlag.State_On if checked else QStyle.StateFlag.State_Off))
+        style.drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorItemViewItemCheck, tick, painter, owner)
+
+    @override
+    def editorEvent(self, event: QEvent, model: QAbstractItemModel, option: QStyleOptionViewItem, index: QModelIndex | QPersistentModelIndex) -> bool:
+        if not isinstance(event, QMouseEvent):
+            return super().editorEvent(event, model, option, index)  # Space ticks as before
+        rect, widget = getattr(option, "rect"), getattr(option, "widget")
+        if not isinstance(rect, QRect) or not self.box(rect, widget if isinstance(widget, QWidget) else None).contains(event.position().toPoint()):
+            return False  # beside the box: a click selects the row, nothing more
+        if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            checked = index.data(Qt.ItemDataRole.CheckStateRole) in (Qt.CheckState.Checked, Qt.CheckState.Checked.value)
+            return model.setData(index, Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
+        return event.type() in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick)  # on the box: no row opened by it
 
 
 def _where(conflict: ConflictSummary) -> str:
@@ -559,8 +609,10 @@ class SyncConflictsPanel(QWidget):
         self._backend: Backend = backend
         self._marks: SyncMarks = marks
         self._settings: QSettings | None = settings
-        self._share: float = self._saved_share()
+        self._shares: dict[int, float] = dict(FIRST_SHARES)  # each of the four columns' part of the free width
+        self._what_dragged: bool = False  # What fits its widest text until the person drags it (the owner)
         self._fitting: bool = False
+        self._saved_widths()
         form = forms.fill(self, "sync_conflicts_panel")  # Check all, the table, the buttons, the problems and the legend (D-276)
         self.check_all: QCheckBox = part(form, QCheckBox, "checkAll")
         self.check_all.clicked.connect(self._check_all)
@@ -574,15 +626,18 @@ class SyncConflictsPanel(QWidget):
         header.setStretchLastSection(False)
         header.setSectionsMovable(False)
         for column in range(len(COLUMNS)):
-            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive if column == NAME_COLUMN else QHeaderView.ResizeMode.Fixed)
+            header.setSectionResizeMode(column, QHeaderView.ResizeMode.Fixed if column in FIXED_COLUMNS else QHeaderView.ResizeMode.Interactive)
         metrics = self.table.fontMetrics()
-        widths = {0: 28, 1: metrics.horizontalAdvance("Location, Starts") + 16, 5: metrics.horizontalAdvance("Why") + 28}
-        for column, width in widths.items():
-            header.resizeSection(column, width)
-        header.sectionResized.connect(self._name_dragged)
-        self.table.viewport().installEventFilter(self)  # a new width of the window: Name and Where take their shares again
+        self._fitting = True
+        header.resizeSection(CHECK_COLUMN, 28)
+        header.resizeSection(WHY_COLUMN, metrics.horizontalAdvance("Why") + 28)
+        self._fitting = False
+        header.sectionResized.connect(self._resized)
+        self.table.viewport().installEventFilter(self)  # a new width of the window: the four columns keep their shares of it
         self.table.headerItem().setTextAlignment(WHY_COLUMN, Qt.AlignmentFlag.AlignCenter)  # "Why" and its icons in the middle (the owner)
+        self.table.headerItem().setTextAlignment(CHECK_COLUMN, Qt.AlignmentFlag.AlignCenter)
         self.table.setItemDelegateForColumn(WHY_COLUMN, WhyDelegate(self.table))
+        self.table.setItemDelegateForColumn(CHECK_COLUMN, CheckDelegate(self.table))  # the tick boxes in the middle (the owner)
         self.table.itemChanged.connect(self._item_changed)
         self.table.itemDoubleClicked.connect(self._open)
         self.use_local: QPushButton = part(form, QPushButton, "useLocal")
@@ -631,7 +686,7 @@ class SyncConflictsPanel(QWidget):
                 item.setCheckState(0, Qt.CheckState.Unchecked)  # no triangle: every row is a conflict (the owner)
                 self.table.addTopLevelItem(item)
             kind = why_kind(conflict.reason)
-            for column, text in enumerate(("", _fields(conflict), KIND_WORDS.get(conflict.kind, conflict.kind), conflict.name, _where(conflict), "")):
+            for column, text in enumerate(("", KIND_WORDS.get(conflict.kind, conflict.kind), conflict.name, _fields(conflict), _where(conflict), "")):
                 if column:
                     item.setText(column, text)
                     item.setToolTip(column, plain_tip(text))  # a subject or a folder name: never markup (D-259)
@@ -642,49 +697,92 @@ class SyncConflictsPanel(QWidget):
         self._buttons()
 
     def _fit_what(self) -> None:
-        """What exactly as wide as its widest text, the header's included (the owner); Name and Where take what is left."""
+        """The columns again after new rows: What exactly as wide as its widest text until the person drags it (the owner)."""
+        self.fit_columns()
+
+    def _what_width(self) -> int:
+        """What's widest text, the header's included."""
         items = (self.table.topLevelItem(number) for number in range(self.table.topLevelItemCount()))
         texts = [item.text(WHAT_COLUMN) for item in items if item is not None]
-        widest = max([self.table.fontMetrics().horizontalAdvance(text) for text in texts] + [self.table.header().fontMetrics().horizontalAdvance(COLUMNS[WHAT_COLUMN])])
-        self.table.header().resizeSection(WHAT_COLUMN, widest + 16)
+        return max([self.table.fontMetrics().horizontalAdvance(text) for text in texts] + [self._smallest(WHAT_COLUMN) - 16]) + 16
 
-    def _saved_share(self) -> float:
-        value = self._settings.value(SHARE_KEY, FIRST_SHARE) if self._settings is not None else FIRST_SHARE
-        try:
-            share = float(str(value))
-        except ValueError:
-            return FIRST_SHARE
-        return share if 0.1 <= share <= 0.9 else FIRST_SHARE
+    def _smallest(self, column: int) -> int:
+        """No column narrower than its header's text (the owner)."""
+        return self.table.header().fontMetrics().horizontalAdvance(COLUMNS[column]) + 16
 
     def _free_width(self) -> int:
-        """The width Name and Where share: the table's less the fixed columns."""
+        """The width the four columns share: the table's less the tick box and Why."""
         header = self.table.header()
         return max(0, self.table.viewport().width() - sum(header.sectionSize(column) for column in FIXED_COLUMNS))
 
+    def _saved_widths(self) -> None:
+        """The shares of the four columns and whether What was dragged, as kept with the window's size."""
+        value = self._settings.value(WIDTHS_KEY, "") if self._settings is not None else ""
+        parts = str(value).split(",")
+        if len(parts) != len(DRAGGED_COLUMNS) + 1 or parts[-1] not in ("0", "1"):  # never kept, or not ours
+            return
+        try:
+            shares = [float(part) for part in parts[:-1]]
+        except ValueError:
+            return
+        if all(0.0 < share < 1.0 for share in shares) and abs(sum(shares) - 1.0) < 0.01:
+            self._shares = dict(zip(DRAGGED_COLUMNS, shares, strict=True))
+            self._what_dragged = parts[-1] == "1"
+
+    def save_widths(self) -> None:
+        """Keep the four columns' shares with the window's size."""
+        if self._settings is not None:
+            shares = ",".join(f"{self._shares[column]:.4f}" for column in DRAGGED_COLUMNS)
+            self._settings.setValue(WIDTHS_KEY, f"{shares},{1 if self._what_dragged else 0}")
+
     def fit_columns(self) -> None:
-        """Name and Where take the free width in their shares, so the table always fills it exactly (no scrollbar, the owner)."""
+        """What, Name, Fields and Where together exactly the free width (no scrollbar, the owner), each its share of it; What its widest text
+        until it is dragged; none narrower than its header's text."""
         free = self._free_width()
-        name = max(40, round(free * self._share))
+        smallest = {column: self._smallest(column) for column in DRAGGED_COLUMNS}
+        widths: dict[int, int] = {}
+        rest = list(DRAGGED_COLUMNS)
+        if not self._what_dragged:
+            widths[WHAT_COLUMN] = max(smallest[WHAT_COLUMN], min(self._what_width(), free - sum(smallest[c] for c in DRAGGED_COLUMNS if c != WHAT_COLUMN)))
+            rest.remove(WHAT_COLUMN)
+        room = free - sum(widths.values())
+        total = sum(self._shares[column] for column in rest)
+        for column in rest:
+            widths[column] = max(smallest[column], int(room * self._shares[column] / total))
+        over = sum(widths.values()) - free  # rounding and the smallest widths: the widest gives or takes the difference
+        widest = max(rest, key=lambda column: widths[column])
+        widths[widest] = max(smallest[widest], widths[widest] - over)
         header = self.table.header()
         self._fitting = True
-        header.resizeSection(NAME_COLUMN, min(name, max(40, free - 40)))
-        header.resizeSection(WHERE_COLUMN, max(40, free - header.sectionSize(NAME_COLUMN)))
+        for column, width in widths.items():
+            header.resizeSection(column, width)
         self._fitting = False
 
-    def _name_dragged(self, column: int, old: int, new: int) -> None:
-        """The line between Name and Where was dragged: Where gives or takes the difference, and the new share is remembered."""
+    def _resized(self, column: int, old: int, new: int) -> None:
+        """A border was dragged, as a splitter: the column left of it grows by what the one right of it gives; the border after Where moves
+        nothing (the four fill the width); none narrower than its header's text. The new shares are kept."""
         if self._fitting:
             return
-        if column != NAME_COLUMN:  # a fixed column got another width (a larger font): the shared ones take what is left
+        if column not in DRAGGED_COLUMNS:  # a fixed column got another width (a larger font): the four take what is left
             self.fit_columns()
             return
-        free = self._free_width()
-        if free <= 80:
-            return
-        self._share = min(0.9, max(0.1, new / free))
-        if self._settings is not None:
-            self._settings.setValue(SHARE_KEY, self._share)
-        self.fit_columns()
+        header = self.table.header()
+        self._fitting = True
+        if column == WHERE_COLUMN:
+            header.resizeSection(WHERE_COLUMN, old)  # bound by the total
+        else:
+            right = column + 1
+            neighbour = header.sectionSize(right)
+            grown = max(self._smallest(column) - old, min(new - old, neighbour - self._smallest(right)))
+            header.resizeSection(column, old + grown)
+            header.resizeSection(right, neighbour - grown)
+            if column == WHAT_COLUMN:
+                self._what_dragged = True
+        self._fitting = False
+        widths = {each: header.sectionSize(each) for each in DRAGGED_COLUMNS}
+        total = sum(widths.values())
+        if total > 0:
+            self._shares = {each: width / total for each, width in widths.items()}
 
     @override
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
@@ -811,6 +909,7 @@ class SyncConflictsWindow(QDialog):
     def hideEvent(self, event: QHideEvent) -> None:
         if self._settings is not None:
             save_geometry(self, self._settings, "sync_conflicts_geometry")
+            self.panel.save_widths()  # the dragged columns with the size (the owner)
         super().hideEvent(event)
 
     @override
