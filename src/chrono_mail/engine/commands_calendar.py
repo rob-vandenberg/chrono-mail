@@ -11,13 +11,14 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
 from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Reminder, MAXIMUM_OCCURRENCES, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
-from chrono_mail.pim.times import day_bounds, format_moment, local_zone, parse_moment, zone_named
+from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_like_the_start, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.2.385"
+__version__ = "commands_calendar.py 4.4.506"
 
 # --- Version history ----------------------------------------------------
+# v4.4.506: moved_like_the_start lives in pim/times.py: a proposal for a whole series moves its dates the same way (D-310)
 # v4.2.385: event.import builds the text afresh as before and keeps from the text given only the time zones the event uses (VTIMEZONE), its
 #           X- properties and its CREATED (pim.ical.kept_from): a zone of its own was lost, so its times became floating after a restart
 # v3.6.351: an event with floating times keeps them floating on an edit without a zone (it got this computer's zone, its skipped dates not);
@@ -326,7 +327,7 @@ def _following_the_start(series: EventSeries, master: Event) -> EventSeries:
     fixed = set(before.rdates)
 
     def follows(moment: Moment) -> Moment:
-        return moment if moment in fixed else _moved_like_the_start(moment, before.start, master.start)
+        return moment if moment in fixed else moved_like_the_start(moment, before.start, master.start)
 
     return replace(
         series, master=replace(master, exdates=tuple(follows(moment) for moment in master.exdates)),
@@ -353,30 +354,6 @@ def _same_first_day(before: Moment, after: Moment) -> bool:
     if isinstance(before, datetime) and isinstance(after, datetime) and (before.tzinfo is None) != (after.tzinfo is None):
         return False
     return _day_of(before) == _day_of(after)
-
-
-def _wall(moment: Moment) -> datetime:
-    """The moment on its own wall clock, without a zone (a day: its midnight)."""
-    return moment.replace(tzinfo=None) if isinstance(moment, datetime) else datetime(moment.year, moment.month, moment.day)
-
-
-def _moved_like_the_start(moment: Moment, before: Moment, after: Moment) -> Moment:
-    """A skipped or changed occurrence moved on the wall clock by as much as the start: read in the series' old zone, moved, and given the
-    new zone (a day stays a day, a time a time, as the new start). One that cannot be read that way (a floating time in a zoned series,
-    the edge of year 9999) stays as it is."""
-    if isinstance(moment, datetime) != isinstance(before, datetime):
-        return moment
-    try:
-        if isinstance(moment, datetime) and isinstance(before, datetime):
-            if (moment.tzinfo is None) != (before.tzinfo is None):
-                return moment
-            moment = moment.astimezone(before.tzinfo) if before.tzinfo is not None else moment
-        moved = _wall(moment) + (_wall(after) - _wall(before))
-        if isinstance(after, datetime):
-            return moved.replace(tzinfo=after.tzinfo)
-        return moved.date()
-    except (OverflowError, ValueError):
-        return moment
 
 
 def _moved_override(override: Event, moment: Moment, before: Event, length: timedelta | None) -> Event:

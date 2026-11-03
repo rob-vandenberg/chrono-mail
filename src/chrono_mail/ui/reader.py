@@ -50,9 +50,10 @@ from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.4.505"
+__version__ = "reader.py 4.4.506"
 
 # --- Version history ----------------------------------------------------
+# v4.4.506: the card's buttons for your own meeting reach the reading pane (invitation_organize_requested)
 # v4.4.505: the card's Accept, Tentative, Decline, Delegate and apply buttons reach the reading pane (invitation_*_requested); the
 #           card on screen (invitation), D-310
 # v4.4.504: a mail that holds a calendar message shows its card above the text, and the card alone when the text shows nothing (no
@@ -1043,6 +1044,7 @@ class ReaderWidget(QWidget):
     invitation_answer_requested = Signal(str)  # Accept, Tentative, Decline or Add to calendar on the invitation card (D-310)
     invitation_apply_requested = Signal()  # Update calendar, Remove from calendar, Add to calendar, Ask for the latest version (D-310)
     invitation_delegate_requested = Signal()  # Delegate… on the invitation card
+    invitation_organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest (D-310 step 3)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1114,6 +1116,7 @@ class ReaderWidget(QWidget):
         self._card.answer_requested.connect(self.invitation_answer_requested)
         self._card.apply_requested.connect(self.invitation_apply_requested)
         self._card.delegate_requested.connect(self.invitation_delegate_requested)
+        self._card.organize_requested.connect(self.invitation_organize_requested)
         self._card_area.viewport().installEventFilter(self)  # its height follows its width (_fit_card)
         card_row.addWidget(self._card, 1)
         card_row.addStretch(0)

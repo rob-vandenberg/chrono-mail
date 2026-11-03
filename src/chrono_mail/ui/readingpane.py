@@ -13,7 +13,7 @@ from chrono_mail.engine.commands_export import MESSAGE_EXPORT, MESSAGE_SOURCE, M
 from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, MESSAGE_SHOW, MESSAGE_THREAD, AttachmentSaveParameters, MessageParameters, ShowResult
 from chrono_mail.ui import prefs, scale, theme
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_invitations import INVITATION_ANSWER, INVITATION_APPLY, INVITATION_CHOICES, INVITATION_DELEGATE, Answer, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, ChoicesResult
+from chrono_mail.engine.commands_invitations import INVITATION_ANSWER, INVITATION_APPLY, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, Answer, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, ChoicesResult
 from chrono_mail.engine.commands_attachments import MESSAGE_ATTACHMENT_CLEAN_OPENED, CleanResult
 from chrono_mail.ui.attachmentopening import open_attachment
 from chrono_mail.ui.backend import Backend
@@ -33,9 +33,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.505"
+__version__ = "readingpane.py 4.4.506"
 
 # --- Version history ----------------------------------------------------
+# v4.4.506: your own meeting: Take their answer, Accept or Decline proposal, Send the latest version (invitation.organize), D-310 step 3
 # v4.4.505: Accept, Tentative and Decline on an invitation card, in the reading pane and in every message window: the calendar window when the
 #           item is not kept yet, the answer through the engine, the answer mail opened in the composer (D-310)
 # v4.3.503: every reader knows the addresses of the person's accounts, so a mailto link to one has no warning (D-215)
@@ -101,6 +102,7 @@ class ReadingPane(QObject):
         self.reader.invitation_answer_requested.connect(self._answer_in_pane)
         self.reader.invitation_apply_requested.connect(self._apply_in_pane)
         self.reader.invitation_delegate_requested.connect(self._delegate_in_pane)
+        self.reader.invitation_organize_requested.connect(self._organize_in_pane)
         messages.view.selectionModel().currentChanged.connect(self.row_changed)
         messages.taken_away.connect(self._taken_away)
         messages.conversations_toggled.connect(self.conversation_bar.clear)
@@ -329,6 +331,11 @@ class ReadingPane(QObject):
                     self.delegate_invitation(found, place)
 
                 reader.invitation_delegate_requested.connect(delegate_in_window)
+
+                def organize_in_window(action: str) -> None:
+                    self.organize_invitation(found, place, action)
+
+                reader.invitation_organize_requested.connect(organize_in_window)
             self.message_windows.append(window)
             window.destroyed.connect(lambda: self.message_windows.remove(window) if window in self.message_windows else None)
             window.show()
@@ -339,6 +346,33 @@ class ReadingPane(QObject):
         self._backend.ask(MESSAGE_SHOW, MessageParameters(account, folder, message_id), shown, lambda error: self._status.report("Could not open the message", error), owner=self)
 
     # --- invitations (D-310) ------------------------------------------------------------------------------------------
+
+    def _organize_in_pane(self, action: str) -> None:
+        self.organize_invitation(self.reader, self.shown, action)
+
+    def organize_invitation(self, reader: ReaderWidget, place: tuple[str, str, str] | None, action: str) -> None:
+        """Your own meeting (D-310 step 3): an attendee's answer into it, a proposal accepted or declined, the latest version sent; a mail to
+        the attendees opens in the composer."""
+        if place is None or action not in ("take", "accept_proposal", "decline_proposal", "send_latest"):
+            return
+        account, folder, message_id = place
+        chosen: Organize = "take" if action == "take" else ("accept_proposal" if action == "accept_proposal" else ("decline_proposal" if action == "decline_proposal" else "send_latest"))
+
+        def organized(result: OrganizeResult) -> None:
+            words = {"taken": "Their answer is in your meeting.", "moved": "Your meeting follows the proposal.", "declined": "Your answer to the proposal",
+                     "sent": "The latest version"}
+            if result.done in ("declined", "sent"):
+                self._status.show(f"{words[result.done]} is ready to send.")
+            else:
+                mailer = " The calendar server tells the attendees." if result.server_mails and result.done == "moved" else ""
+                ready = " The change is ready to send to the attendees." if result.draft_message is not None else ""
+                self._status.show(words.get(result.done, "Done.") + mailer + ready)
+            if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
+                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message)
+            self._show_again(reader, place)
+
+        parameters = OrganizeParameters(account, folder, message_id, action=chosen, mail=self._prefs.read().send_invitation_answers)
+        self._backend.ask(INVITATION_ORGANIZE, parameters, organized, lambda error: self._status.report("Could not change your meeting", error), owner=self)
 
     def _delegate_in_pane(self) -> None:
         self.delegate_invitation(self.reader, self.shown)

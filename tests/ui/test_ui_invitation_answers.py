@@ -12,9 +12,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.505"
+__version__ = "test_ui_invitation_answers.py 4.4.506"
 
 # --- Version history ----------------------------------------------------
+# v4.4.506: your own meeting: its buttons, greyed with a reason when they cannot work (D-310 step 3)
 # v4.4.505: Initial tests: the card's buttons per kind of message, greyed when out of date; the calendar window; the Delegate window (D-310)
 
 
@@ -118,3 +119,38 @@ def test_your_own_meeting_has_no_answer_buttons(reader: ReaderWidget, qtbot: QtB
     card = reader._card  # noqa: SLF001
     qtbot.waitUntil(lambda: card.isVisible())
     assert not card.accept_button.isVisible() and not card.decline_button.isVisible() and not card.delegate_button.isVisible()
+
+
+def test_your_own_meeting_has_its_own_buttons() -> None:
+    from chrono_mail.engine.invitations import InvitationPerson
+    from chrono_mail.ui.invitationcard import organize_choices
+
+    you = InvitationPerson("me@example.com", "Me", "ACCEPTED", True)
+    assert organize_choices(replace(CARD, method="REPLY", organizer=you, stored_in="Calendar (Work)")) == [("Take their answer", "take")]
+    assert [action for _, action in organize_choices(replace(CARD, method="COUNTER", organizer=you, stored_in="Calendar (Work)"))] == ["accept_proposal", "decline_proposal"]
+    assert organize_choices(replace(CARD, method="REFRESH", organizer=you)) == [("Send the latest version", "send_latest")]
+    assert organize_choices(replace(CARD, method="REPLY", stored_in="Calendar (Work)")) == []  # not your meeting
+
+
+def test_buttons_of_your_own_meeting_are_greyed_with_a_reason_when_they_cannot_work(reader: ReaderWidget, qtbot: QtBot) -> None:
+    """Step 3 review (OR-15): Send the latest version worked on a meeting no longer kept; an answer for a date you removed."""
+    from chrono_mail.engine.invitations import InvitationPerson
+
+    you = InvitationPerson("me@example.com", "Me", "ACCEPTED", True)
+    card = reader._card  # noqa: SLF001
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, method="REFRESH", organizer=you)))
+    qtbot.waitUntil(lambda: card.organize_buttons[0].isVisible())
+    assert not card.organize_buttons[0].isEnabled() and card.answers_mark.isVisible() and "not in your calendar" in card.answers_mark.reason
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, method="REPLY", organizer=you, stored_in="Calendar (Work)", occurrence_kept=False)))
+    qtbot.waitUntil(lambda: card.organize_buttons[0].text() == "Take their answer")
+    assert not card.organize_buttons[0].isEnabled() and "This date" in card.answers_mark.reason
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, method="REFRESH", organizer=you, stored_in="Calendar (Work)", version="same")))
+    qtbot.waitUntil(lambda: card.organize_buttons[0].isEnabled())
+    assert not card.answers_mark.isVisible()
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, method="REPLY", organizer=you, stored_in="Calendar (Work)", occurrence_kept=True, organized_by_you=False)))
+    qtbot.waitUntil(lambda: card.answers_mark.isVisible())
+    assert not card.organize_buttons[0].isEnabled() and "another organizer" in card.answers_mark.reason
+    useless = replace(CARD, method="COUNTER", organizer=you, stored_in="Calendar (Work)", occurrence_kept=True, version="same", proposal_usable=False)
+    reader.show_message(replace(shown(html="<p></p>"), invitation=useless))
+    qtbot.waitUntil(lambda: card.organize_buttons[1].isEnabled())
+    assert not card.organize_buttons[0].isEnabled() and "changes nothing" in card.answers_mark.reason  # Decline proposal still answers it

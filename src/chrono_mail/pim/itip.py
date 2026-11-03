@@ -1,19 +1,23 @@
 """Calendar messages sent by mail (iTIP, RFC 5546; iMIP, RFC 6047): what a text/calendar part asks or tells. No I/O."""
 import copy
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Literal  # icalendar hands out untyped property objects
 
 import icalendar
+from dateutil.rrule import rrulestr
 
 from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: one reading of iCalendar
-    MAXIMUM_COMPONENTS, Attendee, Event, Moment, Task, _attendees, _event_from, _moment, _parse, _person, _stamp, _task_from, _text,
+    MAXIMUM_COMPONENTS, Attendee, Event, Moment, Task, _attendees, _event_from, _moment, _moments, _parse, _person, _stamp, _task_from, _text, occurrences,
 )
+from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.505"
+__version__ = "itip.py 4.4.506"
 
 # --- Version history ----------------------------------------------------
+# v4.4.506: you are the organizer: an attendee's answer into your meeting, a proposal accepted (new time, SEQUENCE + 1, attendees
+#           asked again), your meeting as a REQUEST to send, DECLINECOUNTER (D-310 step 3)
 # v4.4.505: answering (your copy with your answer, the REPLY), following the organizer (updates keeping your answers, cancellations,
 #           added dates, REFRESH), delegating (REQUEST to the delegate, REPLY DELEGATED); times compared as moments (D-310)
 # v4.4.504: Initial calendar messages: the method, the kind, the item, its version (SEQUENCE, DTSTAMP), whether a newer one replaces it
@@ -22,6 +26,14 @@ MessageKind = Literal["event", "task", "freebusy", "journal"]
 METHODS: frozenset[str] = frozenset({"PUBLISH", "REQUEST", "REPLY", "ADD", "CANCEL", "REFRESH", "COUNTER", "DECLINECOUNTER"})  # RFC 5546 section 1.4
 _START_NEEDED: frozenset[str] = frozenset({"PUBLISH", "REQUEST", "ADD", "COUNTER", ""})  # these set a time: an event without one is damaged
 _KINDS: dict[str, MessageKind] = {"VEVENT": "event", "VTODO": "task", "VFREEBUSY": "freebusy", "VJOURNAL": "journal"}
+_MOST_STEPS: int = 100_000  # how many repeats of a rule a date from a message may lie from its start (in_meeting): about a quarter of a second of work
+_ONE_DAY: int = 86400
+_LONGEST_PROPOSAL: timedelta = timedelta(days=366)  # a proposal longer than this is no meeting, and the calendar would lay it out on every day
+_MEETING_RULES: frozenset[str] = frozenset({"FREQ=DAILY", "FREQ=WEEKLY", "FREQ=MONTHLY", "FREQ=YEARLY"})
+_RULE_SECONDS: dict[str, int] = {"SECONDLY": 1, "MINUTELY": 60, "HOURLY": 3600, "DAILY": 86400, "WEEKLY": 604800, "MONTHLY": 2678400, "YEARLY": 31622400}
+_PARTSTATS: frozenset[str] = frozenset({"NEEDS-ACTION", "ACCEPTED", "DECLINED", "TENTATIVE", "DELEGATED", "COMPLETED", "IN-PROCESS"})  # RFC 5545 section 3.2.12
+_RULE_TIMES: frozenset[str] = frozenset({"BYHOUR", "BYMINUTE", "BYSECOND"})  # a rule with these sets the times itself
+_RULE_DAYS: frozenset[str] = frozenset({"BYDAY", "BYMONTHDAY", "BYYEARDAY", "BYWEEKNO", "BYMONTH", "BYSETPOS"})  # a rule with these sets the days itself
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,6 +276,11 @@ def _moment_key(value: object) -> str:
     return value.isoformat() if isinstance(value, (date, datetime)) else str(value)
 
 
+def _rule_text(component: icalendar.Component) -> str:
+    rule: Any = component.get("RRULE")
+    return rule.to_ical().decode("utf-8", "replace") if hasattr(rule, "to_ical") else ""
+
+
 def _when(component: icalendar.Component) -> tuple[str, ...]:
     """The item's time as moments, not as written: the same moment in another zone or another way of writing is the same time; the same clock
     time in another zone is another moment. Lists of dates (RDATE, EXDATE) compare as sets, however they are spread over lines."""
@@ -272,8 +289,7 @@ def _when(component: icalendar.Component) -> tuple[str, ...]:
         found.append(_moment_key(_moment(component, key)))
     duration: Any = component.get("DURATION")
     found.append(str(getattr(duration, "dt", "")) if duration is not None and not isinstance(duration, list) else "")
-    rule: Any = component.get("RRULE")
-    found.append(rule.to_ical().decode("utf-8", "replace") if hasattr(rule, "to_ical") else "")
+    found.append(_rule_text(component))
     for key in ("RDATE", "EXDATE"):
         props: Any = component.get(key)
         moments: set[str] = set()
@@ -539,7 +555,7 @@ def _keep_own_answers(kept: icalendar.Calendar, message: icalendar.Calendar, add
             if start is not None and until is not None and type(start) is type(moment):
                 try:
                     occurrence.add(key, moment + (until - start))  # type: ignore[operator]
-                except TypeError:
+                except (TypeError, OverflowError):  # also the edge of the years: it ends at its start
                     pass
         _set_answer(occurrence, address, answer)
         message.add_component(occurrence)
@@ -551,3 +567,454 @@ def occurrences_of(text: str) -> list[Moment]:
     if calendar is None:
         return []
     return [moment for each in _items_of(calendar) if (moment := _moment(each, "RECURRENCE-ID")) is not None]
+
+
+# --- you are the organizer (D-310 step 3) ------------------------------------------------------------------------------------------------
+
+
+def _about(meeting: icalendar.Calendar, message: icalendar.Calendar) -> list[icalendar.Component]:
+    """The items of a message about this meeting: another UID in the same text is another item, never this one."""
+    uids = {_first(each, "UID") for each in _items_of(meeting)}
+    return [each for each in _items_of(message) if _first(each, "UID") in uids]
+
+
+def _within_reach(main: icalendar.Component, moment: Moment) -> bool:
+    """Whether a date lies within what is looked at for this series: a date from a message is hostile input, and walking a rule to year 9999 takes
+    seconds at every display. The reach is _MOST_STEPS repeats of the rule (a daily series: over 270 years; an hourly one: 11)."""
+    start = _moment(main, "DTSTART")
+    rule = _single(main, "RRULE")
+    if start is None or rule is None:
+        return True
+    try:
+        frequency = str((rule.get("FREQ") or [""])[0]).upper()
+        interval = max(1, int((rule.get("INTERVAL") or [1])[0]))
+        distance = (wall_clock(moment) - wall_clock(start)).total_seconds()
+    except (ValueError, TypeError, OverflowError):
+        return False
+    return -_ONE_DAY <= distance <= _MOST_STEPS * _RULE_SECONDS.get(frequency, 1) * interval  # (a day before: the same moment read in another zone)
+
+
+def in_meeting(text: str, moment: Moment) -> bool:
+    """Whether this date is one of the meeting's: a changed version of it, or a date its series really has (not excluded, made by its rule or named
+    by it; the new place of a changed date is not one). A task's repeats are not worked out here: any date its main item does not exclude.
+    Never raises: a date that cannot be looked at (the edge of the years, out of reach) is not one."""
+    calendar = _parse(text)
+    if calendar is None:
+        return False
+    if any(_same_moment(_moment(each, "RECURRENCE-ID"), moment) for each in _items_of(calendar)):
+        return True
+    main = next((each for each in _items_of(calendar) if each.get("RECURRENCE-ID") is None), None)
+    if main is None or not _within_reach(main, moment):
+        return False
+    if main.name == "VTODO":
+        return holds_occurrence(text, moment, main_only=True)
+    try:
+        day = moment if isinstance(moment, datetime) else datetime(moment.year, moment.month, moment.day, tzinfo=UTC)
+        day = day if day.tzinfo is not None else day.replace(tzinfo=UTC)
+        found = occurrences([text], day - timedelta(minutes=1), day + timedelta(minutes=1), UTC)
+    except (OverflowError, ValueError):
+        return False
+    return any(_same_moment(each.start, moment) and not each.changed for each in found)
+
+
+def _partstat(person: Any) -> str:  # noqa: ANN401 - icalendar's property objects are untyped
+    """An attendee's answer from a message, when it is one (a value written twice comes as a list); "" otherwise."""
+    value: Any = person.params.get("PARTSTAT", "NEEDS-ACTION")
+    answer = value.upper() if isinstance(value, str) else ""
+    return answer if answer in _PARTSTATS else ""
+
+
+def _repeats(main: icalendar.Component) -> bool:
+    return main.get("RRULE") is not None or main.get("RDATE") is not None
+
+
+def _date_item(kept: icalendar.Calendar, main: icalendar.Component | None, stored: str, moment: Moment) -> icalendar.Component | None:
+    """The item of one date of your meeting: its changed version; the meeting itself when it does not repeat (that date is all it has); else that date
+    made an item of its own. None when it is no date of the meeting."""
+    target = next((each for each in _items_of(kept) if _same_moment(_moment(each, "RECURRENCE-ID"), moment)), None)
+    if target is not None or main is None or not in_meeting(stored, moment):
+        return target
+    if not _repeats(main):
+        return main
+    target = _occurrence_of(main, moment)
+    kept.add_component(target)
+    return target
+
+
+def _take_line(target: icalendar.Component, person: Any) -> None:  # noqa: ANN401 - icalendar's property objects are untyped
+    """An attendee's line of an answer into one item of your meeting; a line not on your list is added, as written (not every attendee is a mail address)."""
+    address = _address_of(person)
+    mine: Any = target.get("ATTENDEE")
+    lines: list[Any] = mine if isinstance(mine, list) else ([mine] if mine is not None else [])
+    line = next((each for each in lines if _address_of(each) == address), None)
+    if line is None:
+        line = icalendar.vCalAddress(str(person).strip())
+        for key in ("CN", "DELEGATED-FROM"):
+            if person.params.get(key):
+                line.params[key] = person.params[key]
+        target.add("ATTENDEE", line)
+    line.params["PARTSTAT"] = _partstat(person)
+    line.params.pop("RSVP", None)
+    line.params.pop("DELEGATED-TO", None)  # an earlier delegation does not outlive a newer answer
+    if person.params.get("DELEGATED-TO"):
+        line.params["DELEGATED-TO"] = person.params["DELEGATED-TO"]
+
+
+def with_attendee_answer(stored: str, reply: str) -> str | None:
+    """Your meeting with an attendee's answer (a REPLY, RFC 5546 section 3.2.3): per item of the answer (one occurrence, or the meeting), each of
+    its attendee lines into yours: their PARTSTAT and DELEGATED-TO; a line not on your list (a delegate, someone it was passed on to) added. An answer
+    to the series goes onto the dates that followed it too; one they answered otherwise keeps that. None when the meeting holds nothing it is about."""
+    kept = _parse(stored)
+    answer = _parse(reply)
+    if kept is None or answer is None:
+        return None
+    taken = False
+    for item in _about(kept, answer):
+        moment = _moment(item, "RECURRENCE-ID")
+        main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
+        target = _date_item(kept, main, stored, moment) if moment is not None else main
+        targets = [target] if target is not None else (_items_of(kept) if moment is None else list[icalendar.Component]())  # (a whole answer, a copy of single dates: all of them)
+        taken = taken or bool(targets)
+        props: Any = item.get("ATTENDEE")
+        for person in props if isinstance(props, list) else ([props] if props is not None else []):
+            address = _address_of(person)
+            if not address or any(character.isspace() for character in address) or not _partstat(person):
+                continue  # an empty or damaged line names nobody; an answer that is none changes nothing
+            following: list[icalendar.Component] = []
+            if moment is None and main is not None:
+                series_answer = _your_answer(main, address)
+                following = [each for each in _items_of(kept) if each.get("RECURRENCE-ID") is not None and _your_answer(each, address) in ("NEEDS-ACTION", series_answer)]
+            for each in [*targets, *following]:
+                _take_line(each, person)
+    return kept.to_ical().decode("utf-8") if taken else None
+
+
+def _occurrence_of(main: icalendar.Component, moment: Moment) -> icalendar.Component:
+    """One date of a series as a changed occurrence of its own: the series' item at that date, its length kept."""
+    occurrence = copy.deepcopy(main)
+    start, end, due = _moment(main, "DTSTART"), _moment(main, "DTEND"), _moment(main, "DUE")
+    for key in ("RRULE", "RDATE", "EXDATE", "DTSTART", "DTEND", "DUE", "RECURRENCE-ID"):
+        occurrence.pop(key, None)
+    occurrence.add("RECURRENCE-ID", moment)
+    occurrence.add("DTSTART", moment)
+    for key, until in (("DTEND", end), ("DUE", due)):
+        if start is not None and until is not None and type(start) is type(moment):
+            try:
+                occurrence.add(key, moment + (until - start))  # type: ignore[operator]
+            except (TypeError, OverflowError):  # also the edge of the years: it ends at its start
+                pass
+    return occurrence
+
+
+def _single(component: icalendar.Component, key: str) -> Any:  # noqa: ANN401 - icalendar's property objects are untyped
+    """A property written once; written twice (hostile or damaged) it counts as not written."""
+    value: Any = component.get(key)
+    return None if isinstance(value, list) else value
+
+
+def _length_of(component: icalendar.Component) -> timedelta | None:
+    """How long the item lasts; None when it does not say, or its start and end cannot be compared."""
+    start, end = _moment(component, "DTSTART"), _moment(component, "DTEND")
+    duration: Any = getattr(_single(component, "DURATION"), "dt", None)
+    if isinstance(duration, timedelta):
+        return duration
+    if start is None or end is None or isinstance(start, datetime) != isinstance(end, datetime):
+        return None
+    try:
+        return end - start  # type: ignore[operator]
+    except TypeError:  # one with a zone, one without
+        return None
+
+
+def _take_time(target: icalendar.Component, proposal: icalendar.Component) -> None:
+    """The proposed time and place into an item. A proposal that names no end keeps the item's length; a task's DUE moves like a start."""
+    start, length = _moment(target, "DTSTART"), _length_of(target)
+    place = _single(proposal, "LOCATION")
+    if place is not None:
+        target["LOCATION"] = place
+    zone = start.tzinfo if isinstance(start, datetime) else None
+
+    def take(key: str, value: Any) -> None:  # noqa: ANN401 - icalendar's property objects are untyped
+        """In the item's own zone: a series on Tuesdays stays on Tuesdays when the proposal is written in UTC."""
+        moment: Any = getattr(value, "dt", None)
+        if zone is not None and isinstance(moment, datetime) and moment.tzinfo is not None:
+            target.pop(key, None)
+            target.add(key, moment.astimezone(zone))
+        else:
+            target[key] = value
+
+    for key in ("DTSTART", "DUE"):
+        value = _single(proposal, key)
+        if value is not None:
+            take(key, value)
+    ends = [(key, value) for key in ("DTEND", "DURATION") if (value := _single(proposal, key)) is not None]
+    if ends:
+        target.pop("DTEND", None)
+        target.pop("DURATION", None)
+        for key, value in ends:
+            take(key, value)
+    elif target.get("DTEND") is not None:
+        target.pop("DTEND", None)
+        moved = _moment(target, "DTSTART")
+        if moved is not None and length is not None and isinstance(start, datetime) == isinstance(moved, datetime):
+            try:
+                target.add("DTEND", moved + length)
+            except OverflowError:  # the edge of the years: the item ends at its start
+                pass
+
+
+def _same_rule(first: str, second: str) -> bool:
+    """Whether two rules repeat alike, however they are written: the order of their parts, a written INTERVAL=1 and WKST make no difference, nor
+    their last moment (it moves with the series, _until_moved)."""
+    def meaning(rule: str) -> frozenset[tuple[str, frozenset[str]]]:
+        parts = (part.split("=", 1) for part in rule.upper().split(";") if "=" in part)
+        return frozenset((key, frozenset(value.split(","))) for key, value in parts if key not in ("WKST", "UNTIL") and (key, value) != ("INTERVAL", "1"))
+
+    return meaning(first) == meaning(second)
+
+
+def _until_moved(main: icalendar.Component, before: Moment, after: Moment) -> None:
+    """A rule's last moment moves with its series, or its last date would be lost; a time in a zone is written in UTC (RFC 5545 section 3.3.10)."""
+    rule = _single(main, "RRULE")
+    until: Any = rule.get("UNTIL") if isinstance(rule, icalendar.vRecur) else None  # (a rule the library cannot read has none to move)
+    if not until:
+        return
+    moved = until[0]
+    try:
+        if isinstance(moved, datetime) and isinstance(before, datetime) and (moved.tzinfo is None) != (before.tzinfo is None):
+            moved = moved + (wall_clock(after) - wall_clock(before))  # (not as RFC 5545 asks, but written: a floating start with a last moment in UTC)
+        elif isinstance(moved, datetime) or not isinstance(before, datetime):
+            moved = moved_like_the_start(moved, before, after)
+        else:  # a day as the last moment of a timed series (not as RFC 5545 asks, but written): it moves by whole days
+            moved = moved + (_day_of(after) - _day_of(before))
+        rule["UNTIL"] = [moved.astimezone(UTC) if isinstance(moved, datetime) and moved.tzinfo is not None else moved]
+    except OverflowError:  # the edge of the years: it stays
+        return
+
+
+def _series_moved(kept: icalendar.Calendar, main: icalendar.Component, proposal: icalendar.Component) -> None:
+    """A proposal for a whole series, the way the calendar moves one (commands_calendar._following_the_start): its skipped dates (EXDATE) and
+    changed dates (RECURRENCE-ID) and its last moment (UNTIL) move on the wall clock with the start, so a cancelled date
+    never comes back, a changed one never stays behind and the last one is never lost; a changed date with its own time keeps that time. Dates the series names itself (RDATE) never move. They stay where they are when
+    the rule sets the hours, or the day moved and the rule changed or sets the days."""
+    before, rule, length = _moment(main, "DTSTART"), _rule_text(main), _length_of(main)
+    _take_time(main, proposal)
+    new_rule = _single(proposal, "RRULE")
+    if new_rule is not None and not _same_rule(_rule_text(proposal), rule):
+        main["RRULE"] = new_rule
+    after = _moment(main, "DTSTART")
+    if before is None or after is None:
+        return
+    parts = {part.split("=", 1)[0].strip().upper() for part in rule.split(";")}
+    day_moved = _day_of(before) != _day_of(after)
+    if parts & _RULE_TIMES or (day_moved and (_rule_text(main) != rule or parts & _RULE_DAYS)):
+        return
+    _until_moved(main, before, after)
+    named = _moments(main, "RDATE")
+
+    def follows(moment: Moment) -> Moment:
+        return moment if any(_same_moment(moment, each) for each in named) else moved_like_the_start(moment, before, after)
+
+    skipped = _excluded(main)
+    main.pop("EXDATE", None)
+    for moment in skipped:
+        main.add("EXDATE", follows(moment))
+    new_length = _length_of(main)
+    for override in _items_of(kept):
+        moment = _moment(override, "RECURRENCE-ID")
+        if moment is None:
+            continue
+        moved = follows(moment)
+        series_time = _same_moment(_moment(override, "DTSTART"), moment) and _length_of(override) == length
+        override.pop("RECURRENCE-ID", None)
+        override.add("RECURRENCE-ID", moved)
+        if series_time:
+            override.pop("DTSTART", None)
+            override.add("DTSTART", moved)
+            override.pop("DTEND", None)
+            override.pop("DURATION", None)
+            if new_length is not None:
+                try:
+                    override.add("DTEND", moved + new_length)
+                except OverflowError:  # the edge of the years: it ends at its start
+                    pass
+
+
+def _day_of(moment: Moment) -> date:
+    return moment.date() if isinstance(moment, datetime) else moment
+
+
+def _sound_values(item: icalendar.Component) -> bool:
+    """Whether every time of a proposal can be read as what it should be: a proposal never puts a value into your meeting that would damage it."""
+    for key in ("DTSTART", "DTEND", "DUE"):
+        if item.get(key) is not None and _moment(item, key) is None:
+            return False
+    if item.get("DURATION") is not None:
+        duration: Any = getattr(_single(item, "DURATION"), "dt", None)
+        if item.get("DTEND") is not None or not isinstance(duration, timedelta) or duration < timedelta(0):
+            return False
+    rule = item.get("RRULE")
+    if rule is None:
+        return True
+    start = _moment(item, "DTSTART")
+    if not isinstance(_single(item, "RRULE"), icalendar.vRecur) or start is None:
+        return False
+    text = _rule_text(item)
+    if not any(part.upper() in _MEETING_RULES for part in text.split(";")):
+        return False  # an attendee never proposes a meeting every second
+    interval: Any = _single(item, "RRULE").get("INTERVAL")
+    if interval and int(interval[0]) < 1:
+        return False  # (INTERVAL=0 never gets to a next date)
+    try:
+        return next(iter(rrulestr(text, dtstart=wall_clock(start), ignoretz=True)), None) is not None  # (a rule that makes no date at all: BYHOUR=25)
+    except (ValueError, TypeError, OverflowError, AttributeError):
+        return False
+
+
+def proposal_usable(stored: str, counter: str) -> bool:
+    """Whether Accept proposal has something to do: the proposal changes the time or the place of what it is about, its times can be used (an end after
+    its start, of the same kind), and it does not move a series off the days its rule sets. Never raises: a time at the edge of the years cannot be used."""
+    try:
+        return _proposal_changes(stored, counter)
+    except (OverflowError, ValueError):
+        return False
+
+
+def _proposal_changes(stored: str, counter: str) -> bool:
+    kept = _parse(stored)
+    proposal = _parse(counter)
+    if kept is None or proposal is None:
+        return False
+    main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
+    changes = False
+    for item in _about(kept, proposal):
+        if not _sound_values(item):
+            return False
+        start, end = _moment(item, "DTSTART"), _moment(item, "DTEND")
+        try:
+            if start is not None and end is not None and (isinstance(start, datetime) != isinstance(end, datetime) or end < start):  # type: ignore[operator]
+                return False
+        except TypeError:  # one with a zone, one without
+            return False
+        moment = _moment(item, "RECURRENCE-ID")
+        target = main if moment is None else next((each for each in _items_of(kept) if _same_moment(_moment(each, "RECURRENCE-ID"), moment)), None)
+        if target is None and moment is not None and main is not None and in_meeting(stored, moment):
+            target = _occurrence_of(main, moment) if _repeats(main) else main
+        if target is None:
+            continue
+        rule = _rule_text(target)
+        if moment is None and start is not None and rule and (not _rule_text(item) or _same_rule(_rule_text(item), rule)):
+            old = _moment(target, "DTSTART")
+            parts = {part.split("=", 1)[0].strip().upper() for part in rule.split(";")}
+            in_zone = start.astimezone(old.tzinfo) if isinstance(old, datetime) and isinstance(start, datetime) and old.tzinfo is not None and start.tzinfo is not None else start
+            if old is not None and _day_of(old) != _day_of(in_zone) and parts & _RULE_DAYS:
+                return False
+        moved = copy.deepcopy(target)
+        _take_time(moved, item)
+        if (length := _length_of(moved)) is not None and not timedelta(0) <= length <= _LONGEST_PROPOSAL:
+            return False
+        changes = changes or _when(moved) != _when(target) or _length_of(moved) != _length_of(target) or _first(moved, "LOCATION") != _first(target, "LOCATION")
+        changes = changes or (moment is None and bool(_rule_text(item)) and not _same_rule(_rule_text(item), rule))
+    if not changes or main is None or not any(each.get("RECURRENCE-ID") is None for each in _about(kept, proposal)):
+        return changes
+    moved_text = _moved_meeting(stored, counter, "")  # a series moved must still have its first date: not past its end, not on a skipped date
+    first = read_calendar_message(moved_text, None) if moved_text is not None else None
+    begins = first.event.start if first is not None and first.event is not None else None
+    return moved_text is not None and (begins is None or in_meeting(moved_text, begins))
+
+
+def countered(stored: str, counter: str, organizer: str) -> str | None:
+    """Your meeting as an attendee proposed (a COUNTER accepted, RFC 5546 section 3.2.7): the time and place the card shows, of the whole series with its
+    dates, or only of the dates the proposal is about; SEQUENCE one higher, and every attendee but you asked again (NEEDS-ACTION, RSVP); who passed it
+    on stays so. None when there is nothing to take (proposal_usable)."""
+    return _moved_meeting(stored, counter, organizer) if proposal_usable(stored, counter) else None
+
+
+def _moved_meeting(stored: str, counter: str, organizer: str) -> str | None:
+    kept = _parse(stored)
+    proposal = _parse(counter)
+    if kept is None or proposal is None:
+        return None
+    items = _about(kept, proposal)
+    main = next((each for each in _items_of(kept) if each.get("RECURRENCE-ID") is None), None)
+    whole = next((each for each in items if each.get("RECURRENCE-ID") is None), None)
+    if whole is not None and main is None:
+        return None
+    targets: list[icalendar.Component] = []
+    for item in items:  # the dates first: a series moved after them takes them along, each keeping the time proposed for it
+        moment = _moment(item, "RECURRENCE-ID")
+        target = _date_item(kept, main, stored, moment) if moment is not None else None
+        if target is not None:
+            _take_time(target, item)
+            targets.append(target)
+    if whole is not None and main is not None:
+        _series_moved(kept, main, whole)
+        targets = _items_of(kept)
+    if not targets:
+        return None
+    lower = organizer.strip().lower()
+    for target in targets:
+        try:
+            sequence = max(0, int(str(target.get("SEQUENCE", 0))))
+        except (ValueError, OverflowError):
+            sequence = 0
+        target.pop("SEQUENCE", None)
+        target.add("SEQUENCE", sequence + 1)
+        props: Any = target.get("ATTENDEE")
+        for person in props if isinstance(props, list) else ([props] if props is not None else []):
+            if _address_of(person) != lower and str(person.params.get("PARTSTAT", "")).upper() != "DELEGATED":
+                person.params["PARTSTAT"] = "NEEDS-ACTION"
+                person.params["RSVP"] = "TRUE"
+    _copy_zones(proposal, kept)
+    return kept.to_ical().decode("utf-8")
+
+
+def request_of(stored: str, now: datetime, method: str = "REQUEST", occurrences: tuple[Moment, ...] = ()) -> str | None:
+    """Your meeting as a calendar message to send (REQUEST, or CANCEL), with DTSTAMP now (RFC 5546 sections 3.2.2, 3.2.5); with `occurrences`
+    only those dates, so an attendee's copy of the series is not taken for an older version of the same one."""
+    kept = _parse(stored)
+    if kept is None or not _items_of(kept):
+        return None
+    chosen = [each for each in _items_of(kept) if any(_same_moment(_moment(each, "RECURRENCE-ID"), moment) for moment in occurrences)]
+    if chosen:  # (none: a meeting that does not repeat, where that date is the meeting)
+        kept.subcomponents = [each for each in kept.subcomponents if each.name not in ("VEVENT", "VTODO") or any(each is other for other in chosen)]
+    kept.pop("METHOD", None)
+    kept.add("METHOD", method)
+    for item in _items_of(kept):
+        item.pop("DTSTAMP", None)
+        item.add("DTSTAMP", now)
+    return kept.to_ical().decode("utf-8")
+
+
+def attendee_addresses(text: str) -> list[str]:
+    """The mail addresses of every attendee of every item, in order, each once; a line that is no mail address, or a damaged one, has none to write to."""
+    calendar = _parse(text)
+    found: dict[str, None] = {}
+    for item in _items_of(calendar) if calendar is not None else []:
+        props: Any = item.get("ATTENDEE")
+        for person in props if isinstance(props, list) else ([props] if props is not None else []):
+            address = _address_of(person)
+            if address.isascii() and address.count("@") == 1 and not any(character.isspace() or character in '<>,;"' for character in address):
+                found[address] = None
+    return list(found)
+
+
+def declinecounter_text(counter: str, now: datetime) -> str | None:
+    """No to an attendee's proposal (METHOD:DECLINECOUNTER, RFC 5546 section 3.2.8): UID, SEQUENCE, organizer, the attendee who proposed, the
+    occurrence, DTSTAMP now."""
+    proposal = _parse(counter)
+    if proposal is None or not _items_of(proposal):
+        return None
+    message = icalendar.Calendar()
+    message.add("PRODID", "-//Chrono Mail//Chrono Mail//EN")
+    message.add("VERSION", "2.0")
+    message.add("METHOD", "DECLINECOUNTER")
+    for item in _items_of(proposal):
+        answer = icalendar.Event() if item.name == "VEVENT" else icalendar.Todo()
+        for key in ("UID", "SEQUENCE", "RECURRENCE-ID", "ORGANIZER", "ATTENDEE"):
+            value = item.get(key)
+            if value is not None:
+                answer[key] = value
+        answer.add("DTSTAMP", now)
+        message.add_component(answer)
+    return message.to_ical().decode("utf-8")

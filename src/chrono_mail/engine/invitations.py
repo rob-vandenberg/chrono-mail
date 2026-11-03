@@ -10,12 +10,13 @@ from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import Attachment
 from chrono_mail.pim.ical import Attendee
-from chrono_mail.pim.itip import CalendarMessage, added_already, holds_occurrence, is_newer, occurrences_of, read_calendar_message
+from chrono_mail.pim.itip import CalendarMessage, added_already, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.505"
+__version__ = "invitations.py 4.4.506"
 
 # --- Version history ----------------------------------------------------
+# v4.4.506: a request for the latest version is never out of date (it has no SEQUENCE), D-310 step 3
 # v4.4.505: occurrence_kept for Remove and Add; read-only calendars never searched, your own calendars before public ones; a copy of single
 #           occurrences only offers no Add to calendar (D-310)
 # v4.4.504: Initial invitation card: the calendar message of a mail, who you are in it, and whether its item is in one of your calendars
@@ -51,6 +52,8 @@ class InvitationInfo:
     your_answer: str  # your answer in the copy in your calendar ("" when there is none)
     text_shows_nothing: bool = False  # the mail's own text is empty (only layout): the card is all there is to show
     occurrence_kept: bool = False  # the item, or for one occurrence that occurrence, is in the copy (Remove from calendar can remove it)
+    organized_by_you: bool = True  # the copy in your calendar names one of your addresses as organizer (a message to you as organizer)
+    proposal_usable: bool = True  # a proposal changes something and its times can be used (Accept proposal)
 
 
 class _VisibleText(HTMLParser):
@@ -122,7 +125,17 @@ def your_addresses(engine: Engine) -> frozenset[str]:
     return frozenset(address for settings in engine.config().accounts if (address := settings.account.email_address.strip().lower()))
 
 
-def _stored(engine: Engine, message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> tuple[str, Version, str, bool]:
+@dataclass(frozen=True, slots=True)
+class _Kept:
+    stored_in: str = ""
+    version: Version = "new"
+    answer: str = ""
+    occurrence_kept: bool = False
+    organized_by_you: bool = True
+    proposal_usable: bool = True
+
+
+def _stored(engine: Engine, message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> _Kept:
     """Where the item of the message is kept here, the message against that copy, and your answer in it. A store that cannot be read is skipped."""
     kind = CollectionKind.EVENTS if message.kind == "event" else CollectionKind.TASKS
     for public_round in (False, True):  # your own calendars first, a public one after: where you put it yourself
@@ -143,7 +156,8 @@ def _stored(engine: Engine, message: CalendarMessage, message_text: str, address
                         main = read_calendar_message(text, None)  # None: the copy holds only changed occurrences (an invitation to one)
                         kept = read_calendar_message(text, message.occurrence) if message.occurrence is not None else main
                         base = kept or main or first  # an occurrence not changed in the copy has the version of its series (RFC 5546)
-                        newer = is_newer(message, base.sequence, None)  # the copy's DTSTAMP is this computer's, rewritten at every change here
+                        # The copy's DTSTAMP is this computer's, rewritten at every change here. A REFRESH has no SEQUENCE: it is never out of date.
+                        newer = is_newer(message, base.sequence, None) if message.method != "REFRESH" else None
                         version: Version = "same" if newer is None else ("newer" if newer else "older")
                         answer = next((person.status for person in base.attendees if person.address.strip().lower() in addresses), "")
                         if message.method == "ADD" and main is None:
@@ -152,11 +166,14 @@ def _stored(engine: Engine, message: CalendarMessage, message_text: str, address
                             kept_here = not added_already(text, message_text)  # dates still to add
                         else:
                             moments = occurrences_of(message_text)  # every occurrence the message is about (one or several)
-                            kept_here = message.occurrence is None or any(holds_occurrence(text, moment) for moment in moments)
-                        return f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here
+                            held = in_meeting if message.method in ("REPLY", "COUNTER") else holds_occurrence  # to you as organizer: only a date it really has
+                            kept_here = message.occurrence is None or any(held(text, moment) for moment in moments)
+                        yours = (main or first).organizer is not None and (main or first).organizer.address.strip().lower() in addresses  # type: ignore[union-attr]
+                        usable = message.method != "COUNTER" or proposal_usable(text, message_text)
+                        return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable)
             except (ChronoMailError, OSError, sqlite3.Error):  # an account whose calendars cannot be opened (removed meanwhile, no key, a file gone meanwhile)
                 continue
-    return "", "new", "", False
+    return _Kept()
 
 
 def invitation_of(engine: Engine, attachments: tuple[Attachment, ...] | list[Attachment]) -> InvitationInfo | None:
@@ -167,7 +184,7 @@ def invitation_of(engine: Engine, attachments: tuple[Attachment, ...] | list[Att
     position, message = found
     addresses = your_addresses(engine)
     message_text = attachments[position].data.decode("utf-8", "replace")
-    stored_in, version, answer, occurrence_kept = _stored(engine, message, message_text, addresses) if message.uid else ("", "new", "", False)
+    kept = _stored(engine, message, message_text, addresses) if message.uid else _Kept()
     event, task = message.event, message.task
     start = event.start if event is not None else (task.due if task is not None else None)
     end = event.end if event is not None else None
@@ -176,5 +193,5 @@ def invitation_of(engine: Engine, attachments: tuple[Attachment, ...] | list[Att
     return InvitationInfo(
         position, message.method, message.kind, message.uid, message.title, message.location, start, end, all_day, repeats,
         _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_person(each, addresses) for each in message.attendees),
-        stored_in, version, answer, occurrence_kept=occurrence_kept,
+        kept.stored_in, kept.version, kept.answer, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
     )

@@ -1,4 +1,5 @@
 """Answering a calendar message in a mail (D-310): Accept, Tentative and Decline, the calendar it goes into, and who mails the answer."""
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import formataddr
@@ -16,13 +17,15 @@ from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageErro
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import ParsedMessage, parse_message
 from chrono_mail.pim.itip import (
-    CalendarMessage, answered_copy, delegated_texts, holds_occurrence, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, updated_copy, with_added, without_occurrence,
+    CalendarMessage, answered_copy, attendee_addresses, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, proposal_usable, request_of, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, updated_copy, with_added, without_occurrence,
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.505"
+__version__ = "commands_invitations.py 4.4.506"
 
 # --- Version history ----------------------------------------------------
+# v4.4.506: invitation.organize: you are the organizer: an attendee's answer into your meeting, a proposal accepted (the meeting moved,
+#           the attendees asked again) or declined, the latest version sent to whoever asks (D-310 step 3)
 # v4.4.505: invitation.delegate: the invitation passed on to someone else, and the answer DELEGATED to the organizer, both as drafts
 # v4.4.505: invitation.apply: a newer version, a cancellation or an added occurrence from the organizer into your calendar, server first; an
 #           added occurrence of a series you do not have asks the organizer for the latest version (a draft)
@@ -430,10 +433,126 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     return DelegateResult(you.account, passed[0], passed[1], answered[1])
 
 
+Organize = Literal["take", "accept_proposal", "decline_proposal", "send_latest"]
+_ORGANIZE_FOR: dict[str, str] = {"take": "REPLY", "accept_proposal": "COUNTER", "decline_proposal": "COUNTER", "send_latest": "REFRESH"}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class OrganizeParameters(MessageParameters):
+    action: Organize = field(metadata=option("take (an attendee's answer), accept_proposal, decline_proposal, or send_latest (to whoever asks)"))
+    mail: bool = field(default=True, metadata=option("When Chrono Mail mails the attendees: make the mail (a draft to send); false: none"))
+
+
+@dataclass(frozen=True, slots=True)
+class OrganizeResult:
+    done: str  # taken, moved, declined, sent
+    stored_in: str
+    server_mails: bool  # the calendar's server mails the attendees itself
+    draft_account: str | None = None
+    draft_folder: str | None = None
+    draft_message: str | None = None
+
+
+def _sender(opened: _Opened, yours: Iterable[str]) -> str:
+    """The attendee who wrote the message (an answer, a proposal, a request): the mail's sender when it is on the list (a proposal may carry
+    every attendee), else the one attendee it names (a server may have sent the mail), else who sent the mail, else its first attendee line; never you."""
+    own = set(yours)
+    people = [person.address for person in opened.message.attendees if person.address and person.address.strip().lower() not in own]
+    senders = [address.address for address in opened.parsed.from_addresses if address.address.strip().lower() not in own]
+    lower = {address.strip().lower() for address in senders}
+    found = next((address for address in people if address.strip().lower() in lower), None)
+    if found is None:
+        found = people[0] if len(people) == 1 else next(iter(senders), None) or next(iter(people), None)
+    if found is None:
+        raise UsageError("This calendar message names no attendee")
+    return found
+
+
+def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> OrganizeResult:
+    """You are the organizer: an attendee's answer, proposal or request for the latest version, into your meeting or answered (D-310 step 3).
+    Everything is checked before anything is written; your meeting is written server first."""
+    opened = _opened(engine, parameters)
+    message = opened.message
+    if message.method != _ORGANIZE_FOR.get(parameters.action, ""):
+        raise UsageError("This calendar message asks for something else")
+    organizer = message.organizer
+    yours = {settings.account.email_address.strip().lower(): settings for settings in engine.config().accounts if settings.account.email_address}
+    own = yours.get(organizer.address.strip().lower()) if organizer is not None else None
+    if own is None:
+        raise UsageError("You are not the organizer of this meeting")
+    stored = _stored(engine, _kind(message), message.uid)
+    if stored is None:
+        if parameters.action != "send_latest":
+            raise UsageError("This meeting is not in your calendar")
+    elif stored.info.read_only:
+        raise UsageError("This calendar is read-only")
+    attendee = _sender(opened, yours) if parameters.action != "take" else ""  # (an answer may come from another account of yours)
+    kept = (read_calendar_message(stored.text, None) or read_calendar_message(stored.text)) if stored is not None else None
+    same = read_calendar_message(stored.text, message.occurrence) if stored is not None and message.occurrence is not None else None
+    base = same or kept  # a date is compared with its own version when it has one, else with its series (as invitation.answer and the card)
+    if base is not None and message.method in ("REPLY", "COUNTER") and is_newer(message, base.sequence, None) is False:
+        raise UsageError("This message is about an older version of the meeting: it has changed since")  # OR-4: the command checks it
+    if base is not None and message.method == "COUNTER" and is_newer(message, base.sequence, None):
+        raise UsageError("This proposal is about a version of the meeting you do not have")  # (a proposal is about the version you sent, never a later one)
+    if kept is not None and (kept.organizer is None or kept.organizer.address.strip().lower() not in yours):
+        raise UsageError("You are not the organizer of the meeting in your calendar")
+    moments = tuple(occurrences_of(opened.text)) if message.occurrence is not None else ()
+    if stored is not None and moments and message.method != "REFRESH" and not any(in_meeting(stored.text, moment) for moment in moments):
+        raise UsageError("This date is not in your meeting any more")  # OR-4: the card greys its buttons, the command checks it
+    if stored is not None and parameters.action == "accept_proposal" and not proposal_usable(stored.text, opened.text):
+        raise UsageError("This proposal changes nothing in your meeting, or its times cannot be used")
+    now = datetime.now(UTC)
+    text: str | None = None
+    calendar: str | None = None
+    to: tuple[str, ...] = ()
+    word = ""
+    if parameters.action == "take":
+        text = with_attendee_answer(stored.text, opened.text) if stored is not None else None
+        done = "taken"
+    elif parameters.action == "accept_proposal":
+        text = countered(stored.text, opened.text, organizer.address if organizer is not None else "") if stored is not None else None
+        done = "moved"
+        calendar = request_of(text, now, occurrences=moments) if text is not None else None
+        to = tuple(sorted(address for address in attendee_addresses(calendar or "") if address not in yours))
+        word = "Changed"
+    elif parameters.action == "decline_proposal":
+        calendar, to, word, done = declinecounter_text(opened.text, now), (attendee,), "Proposal declined", "declined"
+    else:  # send_latest: the meeting as it is now (RFC 5546 section 3.2.6); one no longer in your calendar has nothing to send
+        calendar = request_of(stored.text, now) if stored is not None else None
+        if calendar is None:
+            raise UsageError("This meeting is not in your calendar any more: there is no latest version to send")
+        to, word, done = (attendee,), "Invitation", "sent"
+    if parameters.action in ("take", "accept_proposal") and text is None:
+        raise UsageError("The calendar message could not be read")
+    server = stored is not None and _server_answers(engine, stored.account, stored.info, own.account.email_address.strip().lower())
+    # A refusal of a proposal and the latest version exist only as mails: always made. A moved meeting: the tick, unless the server mails it.
+    mailing = calendar is not None and (parameters.action in ("decline_proposal", "send_latest") or (parameters.mail and not server))
+    if mailing and not to:
+        raise UsageError("This meeting has no attendees to write to")
+    if stored is not None and text is not None:
+        try:
+            with open_pim(engine, stored.account) as store, item_writer(engine, stored.account, store) as writer:
+                writer.put(stored.info, text, stored.item)
+        except StorageError as error:
+            raise UsageError(str(error)) from None
+    stored_in = _label(engine, stored.account, stored.info) if stored is not None else ""
+    if not mailing or calendar is None:
+        return OrganizeResult(done, stored_in, server)
+    title = (base.title if base is not None else "") or message.title or "(no title)"  # your meeting's: a request for the latest version has none
+    body = {"Changed": "The meeting has changed.\n", "Proposal declined": "Thank you for your proposal; the meeting stays as it is.\n",
+            "Invitation": "The latest version of this meeting.\n"}[word]
+    saved = draft_save(engine, DraftSaveParameters(
+        account=own.account.account_id, to=to, subject=f"{word}: {title}", body=body, kind="reply",
+        in_reply_to=opened.parsed.message_id, references=(opened.parsed.message_id,) if opened.parsed.message_id else (), calendar=calendar,
+    ))
+    return OrganizeResult(done, stored_in, server, own.account.account_id, saved.folder, saved.message_id)
+
+
 INVITATION_CHOICES: TypedCommand[MessageParameters, ChoicesResult] = TypedCommand("invitation.choices", MessageParameters, ChoicesResult)
 INVITATION_ANSWER: TypedCommand[AnswerParameters, AnswerResult] = TypedCommand("invitation.answer", AnswerParameters, AnswerResult)
 INVITATION_APPLY: TypedCommand[MessageParameters, ApplyResult] = TypedCommand("invitation.apply", MessageParameters, ApplyResult)
 INVITATION_DELEGATE: TypedCommand[DelegateParameters, DelegateResult] = TypedCommand("invitation.delegate", DelegateParameters, DelegateResult)
+INVITATION_ORGANIZE: TypedCommand[OrganizeParameters, OrganizeResult] = TypedCommand("invitation.organize", OrganizeParameters, OrganizeResult)
 
 
 def register(registry: CommandRegistry) -> None:
@@ -443,5 +562,7 @@ def register(registry: CommandRegistry) -> None:
                       MessageParameters, invitation_apply, doing="Changing your calendar")
     registry.register(INVITATION_DELEGATE.id, "Pass an invitation on to someone who goes in your place", DelegateParameters, invitation_delegate,
                       doing="Passing the invitation on")
+    registry.register(INVITATION_ORGANIZE.id, "Your meeting: take an attendee's answer, accept or decline a proposal, send the latest version",
+                      OrganizeParameters, invitation_organize, doing="Changing your meeting")
     registry.register(INVITATION_ANSWER.id, "Accept, accept tentatively or decline an invitation", AnswerParameters, invitation_answer,
                       doing="Answering the invitation")

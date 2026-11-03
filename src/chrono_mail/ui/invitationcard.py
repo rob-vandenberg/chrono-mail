@@ -20,9 +20,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.505"
+__version__ = "invitationcard.py 4.4.506"
 
 # --- Version history ----------------------------------------------------
+# v4.4.506: your own meeting: Take their answer, Accept proposal and Decline proposal, Send the latest version (D-310 step 3)
 # v4.4.505: Accept (green), Tentative and Decline below an invitation, Add to calendar below a shared item; greyed with an (i) when a
 #           newer version is in your calendar (D-310)
 # v4.4.504: Initial card: what the message asks or tells, the title, when, the organizer, the place, the attendees with their answers, and
@@ -93,6 +94,32 @@ def status_text(info: InvitationInfo) -> str:
     return f"{answer} In {info.stored_in}.".strip() if info.version != "newer" else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
 
 
+def organize_choices(info: InvitationInfo) -> list[tuple[str, str]]:
+    """The buttons of a message about your own meeting (you are its organizer, D-310 step 3): its label and what it does."""
+    if info.organizer is None or not info.organizer.you:
+        return []
+    if info.method == "REPLY":
+        return [("Take their answer", "take")]
+    if info.method == "COUNTER":
+        return [("Accept proposal", "accept_proposal"), ("Decline proposal", "decline_proposal")]
+    if info.method == "REFRESH":
+        return [("Send the latest version", "send_latest")]
+    return []
+
+
+def organize_reason(info: InvitationInfo) -> str:
+    """Why the buttons of a message about your own meeting are greyed (OR-15); "": they work."""
+    if not info.stored_in:
+        return "This meeting is not in your calendar any more."
+    if not info.organized_by_you:
+        return "The meeting in your calendar has another organizer."
+    if info.method != "REFRESH" and not info.occurrence_kept:
+        return "This date is not in your meeting any more."
+    if info.method == "COUNTER" and info.version == "newer":
+        return "This proposal is about a version of the meeting you do not have."
+    return ""
+
+
 def apply_text(info: InvitationInfo) -> str:
     """The button that takes the organizer's change into your calendar, for this message; "" when there is none (D-310)."""
     if info.method == "CANCEL" and info.stored_in and info.occurrence_kept:
@@ -135,6 +162,7 @@ class InvitationCard(QFrame):
     answer_requested = Signal(str)  # ACCEPTED, TENTATIVE or DECLINED (Add to calendar: ACCEPTED of a shared item)
     apply_requested = Signal()  # the organizer's change into your calendar: Update calendar, Remove from calendar, Add to calendar, Ask…
     delegate_requested = Signal()  # Delegate…: someone else goes in your place
+    organize_requested = Signal(str)  # your own meeting: take, accept_proposal, decline_proposal, send_latest
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -192,6 +220,13 @@ class InvitationCard(QFrame):
         self.apply_button = QPushButton("Update calendar", answers)
         self.apply_button.clicked.connect(self.apply_requested)
         row.addWidget(self.apply_button)
+        self.organize_buttons: list[QPushButton] = []
+        for _ in range(2):  # your own meeting: at most two choices (accept or decline a proposal)
+            button = QPushButton(answers)
+            button.clicked.connect(partial(self._organize, len(self.organize_buttons)))
+            row.addWidget(button)
+            self.organize_buttons.append(button)
+        self._organize_actions: list[str] = []
         self.answers_mark = InfoMark(answers)
         row.addWidget(self.answers_mark)
         row.addStretch(1)
@@ -201,6 +236,10 @@ class InvitationCard(QFrame):
         self._theme_shown: str = ""
         if parent is not None:
             parent.installEventFilter(self)  # its palette tells of another theme (eventFilter)
+
+    def _organize(self, position: int) -> None:
+        if position < len(self._organize_actions):
+            self.organize_requested.emit(self._organize_actions[position])
 
     def _organizer_clicked(self, link: str) -> None:
         self.link_activated.emit(QUrl(link))
@@ -322,14 +361,23 @@ class InvitationCard(QFrame):
         for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button):
             button.setVisible(asks)
         self.add_button.setVisible(shared and not info.stored_in)
-        apply = apply_text(info)
+        apply = apply_text(info) if not yours else ""
         self.apply_button.setText(apply)
         self.apply_button.setVisible(bool(apply))
-        shown = asks or (shared and not info.stored_in) or bool(apply)
+        choices = organize_choices(info)
+        self._organize_actions = [action for _, action in choices]
+        for button, (label, _) in zip(self.organize_buttons, [*choices, ("", ""), ("", "")], strict=False):
+            button.setText(label)
+            button.setVisible(bool(label))
+        shown = asks or (shared and not info.stored_in) or bool(apply) or bool(choices)
         self._answers.setVisible(shown)
         self._answer_line.setVisible(shown)
         outdated = info.version == "older"
-        for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.add_button, self.apply_button):
-            button.setEnabled(not outdated)
-        self.answers_mark.explain("Answer", "A newer version of this meeting is in your calendar: this message is out of date." if outdated else "",
-                                  self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.add_button, self.apply_button)
+        reason = "A newer version of this meeting is in your calendar: this message is out of date." if outdated else (organize_reason(info) if choices else "")
+        buttons = (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button, self.add_button, self.apply_button, *self.organize_buttons)
+        for button in buttons:
+            button.setEnabled(not reason)
+        if not reason and "accept_proposal" in self._organize_actions and not info.proposal_usable:
+            reason = "This proposal changes nothing in your meeting, or its times cannot be used."
+            self.organize_buttons[self._organize_actions.index("accept_proposal")].setEnabled(False)  # Decline proposal still answers it
+        self.answers_mark.explain("Answer", reason, *buttons)

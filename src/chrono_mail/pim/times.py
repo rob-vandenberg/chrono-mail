@@ -6,9 +6,10 @@ import tzlocal
 from chrono_mail.pim.ical import Moment
 
 # --- Version ------------------------------------------------------------
-__version__ = "times.py 3.6.351"
+__version__ = "times.py 4.4.506"
 
 # --- Version history ----------------------------------------------------
+# v4.4.506: moved_like_the_start and wall_clock, from commands_calendar: a proposal for a whole series moves its dates the same way (D-310)
 # v3.6.351: parse_moment floating: a time without a zone stays one, for an item that had none
 # v3.6.349: a zone the system cannot name falls back to its offset of now, never UTC (the review of RV-201); local_time and moment_at: a moment on this computer's clock without the platform's conversion, which Windows refuses before 1970 and after 3000 (RV-201, RV-204)
 # v0.0.60: Initial time input and output for commands
@@ -109,3 +110,27 @@ def day_bounds(day: date, zone: tzinfo | None = None) -> tuple[datetime, datetim
     zone = zone or local_zone()
     start = datetime(day.year, day.month, day.day, tzinfo=zone)
     return start, datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=zone)
+
+
+def wall_clock(moment: Moment) -> datetime:
+    """The moment on its own wall clock, without a zone (a day: its midnight)."""
+    return moment.replace(tzinfo=None) if isinstance(moment, datetime) else datetime(moment.year, moment.month, moment.day)
+
+
+def moved_like_the_start(moment: Moment, before: Moment, after: Moment) -> Moment:
+    """A skipped or changed occurrence moved on the wall clock by as much as the start: read in the series' old zone, moved, and given the
+    new zone (a day stays a day, a time a time, as the new start). One that cannot be read that way (a floating time in a zoned series,
+    the edge of year 9999) stays as it is."""
+    if isinstance(moment, datetime) != isinstance(before, datetime):
+        return moment
+    try:
+        if isinstance(moment, datetime) and isinstance(before, datetime):
+            if (moment.tzinfo is None) != (before.tzinfo is None):
+                return moment
+            moment = moment.astimezone(before.tzinfo) if before.tzinfo is not None else moment
+        moved = wall_clock(moment) + (wall_clock(after) - wall_clock(before))
+        if isinstance(after, datetime):
+            return moved.replace(tzinfo=after.tzinfo)
+        return moved.date()
+    except (OverflowError, ValueError):
+        return moment
