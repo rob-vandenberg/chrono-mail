@@ -48,9 +48,11 @@ from chrono_mail.ui.syncmarks import BOTH, GONE_HERE, GONE_THERE, REFUSED, WHY_W
 from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 
 # --- Version ------------------------------------------------------------
-__version__ = "syncconflicts.py 4.2.496"
+__version__ = "syncconflicts.py 4.2.497"
 
 # --- Version history ----------------------------------------------------
+# v4.2.497: a field that has a row never gets a second, raw row (a photo is "A photo" with its choice); Retry sync and Keep here only clear
+#           the field circles, and a circle chosen after them lets the fields decide again (the owner)
 # v4.2.496: a difference that is no choice (a jar's entry, a field of an occurrence on one side only) is shown without circles
 # v4.2.494: the side is what the circles show: every field chosen by hand for one side is that side, and Apply works then (the owner)
 # v4.2.493: the table has the gap between its columns on its left and right, so the outlines never touch the scrollbar (the owner)
@@ -327,8 +329,8 @@ class ConflictDialog(QDialog):
             theirs.setEnabled(per_field)
             self.groups[key] = (ours, theirs)
             self.settles[key] = keys
-        covered = {each for keys in self.settles.values() for each in keys}
-        for field in conflict.fields:  # a clash without a field of its own above (the whole item kept or removed, mail, a collection)
+        covered = {each for *_, keys in shown for each in keys}  # a field with a row never gets a second, raw one (D-308)
+        for field in conflict.fields:  # a clash without a field of its own above (mail, a collection, an item that cannot be read)
             if field.key in covered:
                 continue
             row += 1
@@ -350,13 +352,23 @@ class ConflictDialog(QDialog):
         return area
 
     def _toggled(self, button: QAbstractButton, checked: bool) -> None:
+        if checked and self.side in (KEEP, RETRY):  # a circle chosen after Retry sync or Keep here only: the fields decide again (the owner)
+            self.side = ""
         self._ready()
 
     def _all(self, side: str) -> None:
-        self.side = side
-        if side not in (KEEP, RETRY):
-            for ours, theirs in self.groups.values():
+        for ours, theirs in self.groups.values():
+            if side in (KEEP, RETRY):  # a whole way that chooses no field: no circle shows a side (the owner)
+                group = ours.group()
+                if group is not None:
+                    group.setExclusive(False)
+                ours.setChecked(False)
+                theirs.setChecked(False)
+                if group is not None:
+                    group.setExclusive(True)
+            else:
                 (ours if side == LOCAL else theirs).setChecked(True)
+        self.side = side
         self._ready()
 
     def _ready(self) -> None:

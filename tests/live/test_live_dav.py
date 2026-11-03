@@ -1,6 +1,6 @@
 import time
 import tomllib
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -14,9 +14,11 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_live_dav.py 2.0.283"
+__version__ = "test_live_dav.py 4.2.497"
 
 # --- Version history ----------------------------------------------------
+# v4.2.497: Deleted Items is searched from the day before today: Kerio dates by UTC, so between 00:00 and 01:00 CET nothing was found;
+#           the UID check keeps it exact
 # v2.0.283: dav.local.toml is read from outside the project folder (D-230)
 # v1.10.278: One contact read with read (the multiget first): Kerio answers its GET with 404
 # v1.10.277: The server keeps a contact group in both forms and reads back its members (R-39)
@@ -52,13 +54,13 @@ def remove_from_deleted_items(uid: str, expected: int) -> None:
     if not KERIO_FILE.exists():
         return
     account = load_live_account(KERIO_FILE)
-    today = date.today()
+    since = date.today() - timedelta(days=1)  # Kerio dates by UTC: just after midnight here it is still yesterday there; the UID keeps it exact
     with connect(account, secure=True) as imap:
         ours: list[int] = []
         deadline = time.monotonic() + 20
         while len(ours) < expected and time.monotonic() < deadline:
             imap.select(account.trash_folder)
-            recent = imap.uid_search(f"SINCE {today.day}-{MONTHS[today.month - 1]}-{today.year}")
+            recent = imap.uid_search(f"SINCE {since.day}-{MONTHS[since.month - 1]}-{since.year}")
             fetched = imap.uid_fetch(",".join(str(number) for number in recent), "(UID BODY.PEEK[])") if recent else ()
             ours = [item.uid for item in fetched if uid.encode() in (item.data or b"")]
             if len(ours) < expected:

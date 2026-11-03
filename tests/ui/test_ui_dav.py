@@ -1,6 +1,8 @@
+from collections.abc import Callable
+
 import pytest
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QDialog, QFormLayout, QLabel
+from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QLineEdit
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine import commands_dav
@@ -15,9 +17,11 @@ from tests.test_sync_dav import card, event, task
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_dav.py 4.2.482"
+__version__ = "test_ui_dav.py 4.2.497"
 
 # --- Version history ----------------------------------------------------
+# v4.2.497: Link to: the fields stay greyed after a failed Add, the password always as dots; No mail account brings back what was typed;
+#           a Find answer after Link to was changed is let go (the owner, D-298)
 # v4.2.482: Link to a mail account fills its server and login in, greyed; the first entry is No mail account (the owner, D-298)
 # v4.2.451: a calendars-only account has one item in the Refresh menu, which synchronises it (D-059)
 # v4.2.449: the automatic check is check_accounts(None) (check_mail is gone, D-300)
@@ -262,6 +266,55 @@ def test_the_window_can_give_a_mail_account_its_calendar_server(world: World, qt
         dialog.add_button.click()
         wait(qtbot, lambda: dialog.result() == QDialog.DialogCode.Accepted)
         assert world.call("account.list")[0].dav_url == server.url and not any(item.kind == "dav" for item in world.call("account.list"))
+
+
+def link_window(world: World, qtbot: QtBot) -> AccountDialog:
+    """The Add window on CalDAV, a separate account's server and login typed in."""
+    dialog = AccountDialog(world.backend, mail_accounts=list(world.call("account.list")), start_kind=CALDAV)
+    qtbot.addWidget(dialog)
+    for field, text in ((dialog.calendar.url, "https://dav.example.com/"), (dialog.calendar.username, "ann"), (dialog.calendar.password, "secret")):
+        field.setText(text)
+    return dialog
+
+
+def test_a_linked_account_s_password_is_always_dots(world: World, qtbot: QtBot) -> None:  # D-298
+    fields = link_window(world, qtbot).calendar
+    fields._eye.trigger()  # noqa: SLF001 - the eye shows the typed password
+    fields.target.setCurrentIndex(1)
+    assert fields.password.echoMode() == QLineEdit.EchoMode.Password
+
+
+def test_a_linked_account_s_fields_stay_greyed_after_a_failed_add(world: World, qtbot: QtBot) -> None:  # D-298
+    fields = link_window(world, qtbot).calendar
+    fields.target.setCurrentIndex(1)
+    fields.set_adding(True)
+    fields.set_adding(False)  # what an Add that failed does
+    assert not any(field.isEnabled() for field in (fields.account_name, fields.url, fields.username, fields.password))
+
+
+def test_no_mail_account_brings_back_what_was_typed(world: World, qtbot: QtBot) -> None:
+    fields = link_window(world, qtbot).calendar
+    fields.target.setCurrentIndex(1)
+    fields.target.setCurrentIndex(0)
+    assert [field.text() for field in (fields.url, fields.username, fields.password)] == ["https://dav.example.com/", "ann", "secret"]
+
+
+def test_a_find_answer_after_link_to_was_changed_is_let_go(world: World, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    dialog = AccountDialog(world.backend, mail_accounts=list(world.call("account.list")), start_kind=CALDAV)
+    qtbot.addWidget(dialog)
+    fields = dialog.calendar
+    answers: list[Callable[[FoundServer], None]] = []
+
+    def asked(command: object, parameters: object, on_success: Callable[[FoundServer], None], *rest: object, **named: object) -> int:
+        answers.append(on_success)
+        return 0
+
+    monkeypatch.setattr(world.backend, "ask", asked)
+    fields.target.setCurrentIndex(1)
+    fields.find_button.click()
+    fields.target.setCurrentIndex(0)
+    answers[0](FoundServer("https://other.example.com/dav/", "", (FoundFolder("/c/", "Calendar", "events", False, False, True),), ""))
+    assert fields.found is None and not dialog.add_button.isEnabled() and fields.url.text() == ""  # an answer about the other choice
 
 
 def test_an_account_of_calendars_only_stays_out_of_everything_about_mail(world: World, qtbot: QtBot) -> None:

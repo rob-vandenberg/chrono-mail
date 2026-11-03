@@ -21,9 +21,11 @@ from chrono_mail.ui.serverfields import account_line
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendaraccount.py 4.2.482"
+__version__ = "calendaraccount.py 4.2.497"
 
 # --- Version history ----------------------------------------------------
+# v4.2.497: a linked account's fields stay greyed after a failed Add and its password always shows dots; back to No mail account brings
+#           back what was typed for the separate account; a Find answer that comes after Link to was changed is let go (the owner, D-298)
 # v4.2.482: For is Link to: a mail account fills in its server and login, greyed (the password as dots, never read from the wallet);
 #           its first entry is No mail account (a separate account) (the owner, D-298)
 # v4.2.447: Find always checks the certificate itself; the Find after Connect uses the answer; the tick starts as kept, and Connect without it
@@ -66,6 +68,9 @@ class CalendarFields(QWidget):
         self._finding: bool = False  # a Find runs
         self._fingerprint: str = ""  # a certificate the person accepted in this window, for a new account
         self.ticked_kinds: frozenset[str] = CALDAV_KINDS  # which folders Additional folders found starts with ticked
+        self._typed: tuple[str, str, str] = ("", "", "")  # what the person typed for a separate account (address, user name, password)
+        self._was_new: bool = True  # the choice in Link to before the last change
+        self._choices: int = 0  # how often Link to was changed: a Find's answer for an earlier choice is let go
         self.changed: Callable[[], None] = lambda: None  # what Find found changed: the window's Add follows
         form = forms.fill(self, "calendar_fields")  # D-276
         self.target: QComboBox = part(form, QComboBox, "target")
@@ -99,13 +104,24 @@ class CalendarFields(QWidget):
         """Link to a mail account: the same server and the same login, filled in from it and greyed (the password only as dots, without the
         eye); a separate account: all typed by the person (the owner, D-298)."""
         new = self._new()
+        self._choices += 1
         linked = next((account for account in self._mail_accounts if account.account_id == str(self.target.currentData())), None)
+        if self._was_new and not new:  # kept, to come back when the person goes back to a separate account
+            self._typed = (self.url.text(), self.username.text(), self.password.text())
+        if not new and self.password.echoMode() != QLineEdit.EchoMode.Password:
+            self._eye.trigger()  # only dots for a linked account, also when the eye showed what was typed before
         for field in (self.account_name, self.url, self.username, self.password):
             field.setEnabled(new)
         self._eye.setVisible(new)
-        self.url.setText(f"https://{linked.incoming_host}/" if linked is not None and linked.incoming_host else "")
-        self.username.setText(linked.incoming_username if linked is not None else "")
-        self.password.setText(STORED_PASSWORD if linked is not None else "")
+        if new:
+            url, username, password = self._typed if not self._was_new else (self.url.text(), self.username.text(), self.password.text())
+        else:
+            url = f"https://{linked.incoming_host}/" if linked is not None and linked.incoming_host else ""
+            username, password = (linked.incoming_username if linked is not None else ""), STORED_PASSWORD
+        self.url.setText(url)
+        self.username.setText(username)
+        self.password.setText(password)
+        self._was_new = new
         self._forget_found()
 
     def _login(self) -> tuple[str, str]:
@@ -140,9 +156,13 @@ class CalendarFields(QWidget):
         self._forget_found()
         self._looking(True)
         self.result_label.setText("Looking…")
+        choice = self._choices
 
         def found(result: FoundServer) -> None:
             self._looking(False)
+            if choice != self._choices:  # Link to was changed meanwhile: an answer about another account (the owner)
+                self.result_label.setText("")
+                return
             self._ask_about(result.certificate, fresh)
             if not result.folders:
                 self._show_problem(result.problem or "No calendars, contacts or tasks were found")
@@ -155,6 +175,9 @@ class CalendarFields(QWidget):
 
         def failed(error: ChronoMailError) -> None:
             self._looking(False)
+            if choice != self._choices:  # Link to was changed meanwhile: an answer about another account
+                self.result_label.setText("")
+                return
             self._show_problem(str(error))
             if isinstance(error, CertificateError):
                 self._ask_about(error.trouble, fresh)
@@ -244,5 +267,6 @@ class CalendarFields(QWidget):
         for widget in (self.find_button, self.target, self.account_name, self.url, self.username, self.password):
             widget.setEnabled(not adding)
         if not adding:
-            self.account_name.setEnabled(self._new())  # a mail account has its own name
+            for field in (self.account_name, self.url, self.username, self.password):
+                field.setEnabled(self._new())  # a linked mail account's server and login stay greyed (D-298)
             self._looking(self._finding)  # a Find still runs (started before a change of kind): Find waits for it

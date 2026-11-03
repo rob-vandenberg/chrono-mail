@@ -1,12 +1,15 @@
+import dataclasses
+
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QScreen
 from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFrame, QGridLayout, QLabel, QRadioButton, QScrollArea, QStyle, QStyleOptionButton, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_conflicts import ConflictField, ConflictSummary
 from chrono_mail.pim.merge import merge
 from chrono_mail.ui.sections import CALENDAR
-from chrono_mail.ui.syncconflicts import ConflictDialog, SyncConflictsPanel
+from chrono_mail.ui.syncconflicts import KEEP, RETRY, ConflictDialog, SyncConflictsPanel
 from chrono_mail.ui.syncmarks import CONFLICT, WAITING
 from tests.fakedav import FakeDav
 from tests.test_engine_conflicts import change_on_server, on_server
@@ -14,9 +17,11 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_sync_conflicts.py 4.2.496"
+__version__ = "test_ui_sync_conflicts.py 4.2.497"
 
 # --- Version history ----------------------------------------------------
+# v4.2.497: a field with a row never gets a second, raw row (another zone, an attendee's answer, a photo as "A photo"); Retry sync and Keep
+#           here only clear the field circles, and a circle chosen after them is what Apply settles (the owner)
 # v4.2.496: a tag put in on each side is shown without circles: both stay (the owner)
 # v4.2.495: the triangle test opens the Month view on its appointment's month: it failed in every month but October 2026
 # v4.2.494: every field chosen by hand for one side is that side: Apply works and settles it (the owner)
@@ -670,3 +675,48 @@ def test_a_tag_put_in_on_each_side_is_shown_without_a_choice(qtbot: QtBot) -> No
     qtbot.addWidget(dialog)
     assert set(dialog.groups) == {"SUMMARY"}  # Home and Club both stay: no circles for them (the owner)
     assert {"Home", "Club"} <= {label.text() for label in dialog.findChildren(QLabel)}
+
+
+def from_merge(kind: str, base: str, ours: str, theirs: str) -> ConflictSummary:
+    """A conflict as the engine keeps it: its fields are what merge finds."""
+    fields = tuple(ConflictField(clash.key, clash.label, clash.local, clash.server) for clash in merge(base, ours, theirs).clashes)
+    return ConflictSummary("c1", "a1", "Work", "k1", "Calendar", "i1", kind, "clash", "Changed here and on the server", "Ours", "", False, True, 0.0,
+                           fields, base_text=base, local_text=ours, server_text=theirs)
+
+
+def test_a_field_with_a_row_never_gets_a_second_raw_row(qtbot: QtBot) -> None:  # D-308
+    base = calendar_text("SUMMARY:Meeting", "DTSTART;TZID=Europe/Amsterdam:20261021T110000",
+                         "ATTENDEE;CN=Ann;PARTSTAT=NEEDS-ACTION:mailto:ann@example.com")
+    theirs = calendar_text("SUMMARY:Theirs", "DTSTART:20261021T090000Z", "ATTENDEE;CN=Ann;PARTSTAT=ACCEPTED:mailto:ann@example.com")
+    dialog = ConflictDialog(from_merge("events", base, base.replace("SUMMARY:Meeting", "SUMMARY:Ours"), theirs))
+    qtbot.addWidget(dialog)
+    assert set(dialog.groups) == {"SUMMARY"}  # the same moment in another zone and an answer only: no choice, and no raw row for them
+
+    def card(*body: str) -> str:
+        return "\r\n".join(["BEGIN:VCARD", "VERSION:3.0", "UID:c1", *body, "END:VCARD"]) + "\r\n"
+
+    before = card("FN:Anna", "PHOTO;ENCODING=b;TYPE=JPEG:QUFBQQ==")
+    photos = ConflictDialog(from_merge("contacts", before, before.replace("FN:Anna", "FN:Anna Smith"), before.replace("QUFBQQ==", "QkJCQg==")))
+    qtbot.addWidget(photos)
+    assert set(photos.groups) == {"FN", "PHOTO"} and [button.text() for button in photos.groups["PHOTO"]] == ["A photo", "A photo"]
+    assert not any("QkJC" in button.text() for button in photos.findChildren(QRadioButton))  # never a photo's raw text
+
+
+def test_retry_sync_and_keep_here_only_clear_the_field_circles(qtbot: QtBot) -> None:
+    dialog = ConflictDialog(dataclasses.replace(one_field_conflict(), keep_allowed=True, retry_allowed=True))
+    qtbot.addWidget(dialog)
+    for way, button in ((KEEP, dialog.keep), (RETRY, dialog.retry)):
+        dialog.all_server.click()
+        button.click()
+        assert dialog.side == way and not any(circle.isChecked() for pair in dialog.groups.values() for circle in pair)  # (the owner)
+
+
+def test_a_circle_chosen_after_retry_sync_is_what_apply_settles(qtbot: QtBot) -> None:
+    dialog = ConflictDialog(one_field_conflict())
+    qtbot.addWidget(dialog)
+    dialog.retry.setEnabled(True)
+    dialog.retry.click()
+    for ours, _ in dialog.groups.values():
+        ours.click()
+    dialog.apply_button.click()
+    assert dialog.side == "local"  # what the circles show, never the Retry sync clicked before (the owner)
