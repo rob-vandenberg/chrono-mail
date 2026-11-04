@@ -3866,3 +3866,8 @@ Open: item 11, items 16 to 19, 21 to 25.
 Built: CalendarMessage and InvitationInfo description, comment; two plain-text labels on the card, never markup.
 Tests: tests/test_engine_invitation_organizer.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.522.
 Open: items 16 to 19, 21 to 25.
+
+## 2026-11-04, 4.4.524: Add all in the main window (the owner, D-310, item 17)
+Built: the reading pane connects Add all, as the windows already did.
+Tests: tests/ui/test_ui_invitation_window.py; the new test fails on 4.4.523.
+Open: items 16, 18, 19, 21 to 25.

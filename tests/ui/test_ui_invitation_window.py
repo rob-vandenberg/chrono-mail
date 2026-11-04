@@ -27,9 +27,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.523"
+__version__ = "test_ui_invitation_window.py 4.4.524"
 
 # --- Version history ----------------------------------------------------
+# v4.4.524: Add all in the main window reaches its action (D-310)
 # v4.4.523: the card shows the meeting's text and who wrote a comment (D-310)
 # v4.4.522: Update calendar is for an answer that stands (D-310)
 # v4.4.520: an answer that waits in Drafts is said (D-310)
@@ -591,4 +592,12 @@ def test_the_card_shows_the_meetings_text_as_plain_text_and_names_who_commented(
     assert reader.card.comment.text() == "Sam wrote: I am away" == comment_text(replace(OWN, method="REPLY", comment="I am away"))
     reader.card.show_invitation(CARD)
     assert reader.card.description.isHidden() and reader.card.comment.isHidden()
+
+
+def test_add_all_in_the_main_window_reaches_its_action(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    pane = world.window.reading
+    asked: list[object] = []
+    monkeypatch.setattr(pane, "add_all_invitation", lambda reader, _place: asked.append(reader))
+    pane.reader.invitation_add_all_requested.emit()
+    assert asked == [pane.reader]
 

@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.520"
+__version__ = "readingpane.py 4.4.524"
 
 # --- Version history ----------------------------------------------------
+# v4.4.524: Add all works in the main window (D-310)
 # v4.4.520: the card is shown again when an answer that waited has been sent (D-310)
 # v4.4.518: Accept proposal asks whether the attendees are told (D-310)
 # v4.4.517: Change my answer asks nothing when no copy is in a calendar (D-310)
@@ -125,6 +126,7 @@ class ReadingPane(QObject):
         self.reader.card.blocks_wanted.connect(self._more_in_pane)
         self.reader.invitation_change_requested.connect(self._change_in_pane)
         self.reader.invitation_apply_requested.connect(self._apply_in_pane)
+        self.reader.invitation_add_all_requested.connect(self._add_all_in_pane)
         self.reader.invitation_delegate_requested.connect(self._delegate_in_pane)
         self.reader.invitation_organize_requested.connect(self._organize_in_pane)
         self.reader.invitation_busy_requested.connect(self._busy_in_pane)
@@ -711,6 +713,9 @@ class ReadingPane(QObject):
             self._show_again(reader, place)  # the card says what your calendar holds now
 
         self._backend.ask(INVITATION_ANSWER, parameters, answered, lambda error: self._status.report("Could not answer the invitation", error), owner=self)
+
+    def _add_all_in_pane(self) -> None:
+        self.add_all_invitation(self.reader, self._in_pane())
 
     def add_all_invitation(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource | None) -> None:
         """Add all: the calendar for the events and the task list for the tasks the text holds, then every item added; items that are in the

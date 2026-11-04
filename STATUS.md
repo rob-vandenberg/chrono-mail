@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.523 (The card shows the meeting's own text and what an attendee wrote)*
+*Last updated: 2026-11-04, version 4.4.524 (Add all works in the main window)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.524 done (D-310, item 17 of the changelist after the review).** To check by the owner: select a mail with several calendar items in the main window and click Add all: the items are added.
 
 **4.4.523 done (D-310, item 11 of the changelist after the review).** To check by the owner: open an invitation with an agenda: its text stands on the card. An answer with a comment shows "Sam wrote: ...".
 
