@@ -6,9 +6,10 @@ from chrono_mail.core import LOCAL_ACCOUNT_ID, LOOK_FOLLOWS, LOOK_KEPT, LOOK_WAI
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "model.py 4.4.505"
+__version__ = "model.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: answers_by: who mails the answers, none when the person wants no such mails; dav_always_answers, dav_addresses (D-310)
 # v4.4.505: invitation_answers: who mails the answers to invitations, the server or Chrono Mail (empty: what the server announces,
 #           dav_auto_schedule), D-310
 # v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
@@ -100,15 +101,25 @@ class AccountSettings:
     collection_looks: tuple[CollectionLook, ...] = ()  # the name and colour of its server's collections as Chrono Mail holds them, by their place (D-192)
     junk_filter: bool = True  # new mail goes through the junk filter: junk to the Junk folder before the rules run (D-238)
     in_send_receive: bool = True  # the account takes part in every refresh that is not its own; unticked only its own Refresh menu entry (D-059)
-    invitation_answers: str = ""  # who mails the answers to invitations in its calendars: "server", "chrono"; "": as the server announces (D-310)
+    invitation_answers: str = ""  # who mails the answers to invitations in its calendars: "server", "chrono", "none"; "": as the server announces (D-310)
     dav_auto_schedule: bool = False  # its calendar server announced at the last look that it sends those answers itself (calendar-auto-schedule)
+    dav_always_answers: bool = False  # its calendar server is one known to send those answers whatever it is told (D-310)
+    dav_addresses: tuple[str, ...] = ()  # the addresses its calendar server knows as this user, in lower case; (): it does not say (D-310)
 
     @property
     def server_answers(self) -> bool:
         """Whether the calendar server, not Chrono Mail, mails the answers to invitations for this account's calendars (D-310)."""
-        if not self.dav_url:
-            return False  # calendars of this computer only: Chrono Mail
-        return self.invitation_answers == "server" or (not self.invitation_answers and self.dav_auto_schedule)
+        return self.answers_by == "server"
+
+    @property
+    def answers_by(self) -> str:
+        """Who mails the answers to invitations for this account's calendars: "server", "chrono", or "none": the person wants no such mails
+        (D-310). A server that always sends them leaves no choice, and only a server that announces it can do this."""
+        if self.dav_url and self.dav_always_answers:
+            return "server"
+        if self.invitation_answers == "none":
+            return "none"
+        return "server" if self.dav_url and self.dav_auto_schedule and self.invitation_answers != "chrono" else "chrono"
 
     def look(self, key: str) -> CollectionLook | None:
         return next((item for item in self.collection_looks if item.key == key), None)
@@ -118,8 +129,8 @@ class AccountSettings:
             raise ConfigurationError(f"An account name has at most {MAXIMUM_ACCOUNT_NAME_CHARACTERS} characters, without spaces at its ends")
         if len(self.signature) > MAXIMUM_SIGNATURE_CHARACTERS:
             raise ConfigurationError(f"A signature may have at most {MAXIMUM_SIGNATURE_CHARACTERS} characters")
-        if self.invitation_answers not in ("", "server", "chrono"):
-            raise ConfigurationError("Who answers invitations is 'server', 'chrono' or empty (as the server announces)")
+        if self.invitation_answers not in ("", "server", "chrono", "none"):
+            raise ConfigurationError("Who answers invitations is 'server', 'chrono', 'none' or empty (as the server announces)")
         if self.storage not in ("own", "local"):
             raise ConfigurationError("The storage of an account is 'own' (its own folders) or 'local' (Local Folders)")
         if self.storage == "local" and self.account.kind is not AccountKind.POP3:

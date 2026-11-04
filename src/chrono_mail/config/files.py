@@ -18,9 +18,10 @@ from chrono_mail.core import (
 from chrono_mail.core.jsontext import load_json
 
 # --- Version ------------------------------------------------------------
-__version__ = "files.py 4.4.505"
+__version__ = "files.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: invitation_answers may be none; dav_always_answers and dav_addresses read and saved with the account (D-310)
 # v4.4.505: invitation_answers and dav_auto_schedule read and saved with the account (D-310)
 # v4.2.451: in_send_receive, the tick "Include this account in Send and Receive", replaces check_minutes, the per-account interval (D-059)
 # v4.2.438: calendar_timed_background read and saved with the account (UR-02, D-297)
@@ -130,9 +131,15 @@ def _account(data: object, position: int) -> AccountSettings:
         if not isinstance(timed_background, bool):
             raise ConfigurationError(f"Setting '{where}.calendar_timed_background' is not true or false")
         answers = data.get("invitation_answers", "")
-        if answers not in ("", "server", "chrono"):
-            raise ConfigurationError(f"Setting '{where}.invitation_answers' is not server, chrono or empty")
+        if answers not in ("", "server", "chrono", "none"):
+            raise ConfigurationError(f"Setting '{where}.invitation_answers' is not server, chrono, none or empty")
         auto_schedule = data.get("dav_auto_schedule", False)
+        always_answers = data.get("dav_always_answers", False)
+        dav_addresses = data.get("dav_addresses", [])
+        if not isinstance(always_answers, bool):
+            raise ConfigurationError(f"Setting '{where}.dav_always_answers' is not true or false")
+        if not isinstance(dav_addresses, list) or not all(isinstance(each, str) for each in dav_addresses):
+            raise ConfigurationError(f"Setting '{where}.dav_addresses' is not a list of addresses")
         if not isinstance(auto_schedule, bool):
             raise ConfigurationError(f"Setting '{where}.dav_auto_schedule' is not true or false")
         return AccountSettings(
@@ -141,7 +148,7 @@ def _account(data: object, position: int) -> AccountSettings:
             calendar_palette=_palette(data.get("calendar_palette"), where), calendar_own_colour_name=own_colour_name,
             calendar_timed_background=timed_background,
             collection_looks=_looks(data.get("collection_looks", []), where), junk_filter=junk_filter, in_send_receive=in_send_receive,
-            invitation_answers=answers, dav_auto_schedule=auto_schedule,
+            invitation_answers=answers, dav_auto_schedule=auto_schedule, dav_always_answers=always_answers, dav_addresses=tuple(dav_addresses),
         )
     except ConfigurationError as error:
         raise ConfigurationError(f"{where}: {error}") from None
@@ -220,6 +227,8 @@ def config_to_text(config: AppConfig) -> str:
                     "junk_filter": settings.junk_filter,
                     "invitation_answers": settings.invitation_answers,
                     "dav_auto_schedule": settings.dav_auto_schedule,
+                    "dav_always_answers": settings.dav_always_answers,
+                    "dav_addresses": list(settings.dav_addresses),
                 }
                 for settings in config.accounts
             ],

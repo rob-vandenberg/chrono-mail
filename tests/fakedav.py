@@ -18,9 +18,10 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 # --- Version ------------------------------------------------------------
-__version__ = "fakedav.py 4.3.498"
+__version__ = "fakedav.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: announces, product and user_addresses: what a server says about mailing invitations
 # v4.3.498: like Kerio, a contact's PUT may ignore If-Match (no_contact_match); a new item may be stored the server's own way, after
 #           answering with the version of what was sent (rewrite)
 # v1.10.278: like Kerio, a GET of an existing contact answers 404 (the multiget gives it); GET that fails for now (503)
@@ -58,6 +59,9 @@ class FakeDav:
         self, user: str = "ann", password: str = "secret", sync_tokens: bool = True, multiget: bool = True, etag_on_put: bool = True, tls: bool = False,
         read_only: tuple[str, ...] = (), public: bool = False, plain_web: bool = False, like_kerio: bool = False,
     ) -> None:
+        self.announces: str = ""  # more in the DAV header of OPTIONS ("calendar-auto-schedule")
+        self.product: str = ""  # the Server header of OPTIONS
+        self.user_addresses: tuple[str, ...] = ()  # the calendar-user-address-set of the principal
         self.like_kerio: bool = like_kerio  # the change report writes @ as %40 and lists each item twice; a multiget answers with @
         self.cut_after: int = 0  # a change report gives at most this many items and then 507 with a token to go on from (0: all)
         self.user, self.password = user, password
@@ -216,7 +220,8 @@ class FakeDav:
             self.respond(handler, 301, "", {"Location": "/dav/"})
             return
         if method == "OPTIONS":
-            self.respond(handler, 200, "", {"DAV": "1, calendar-access, addressbook" + (", sync-collection" if self.sync_tokens else "")})
+            extra = f", {self.announces}" if self.announces else ""
+            self.respond(handler, 200, "", {"DAV": "1, calendar-access, addressbook" + (", sync-collection" if self.sync_tokens else "") + extra, **({"Server": self.product} if self.product else {})})
             return
         if method == "PROPFIND":
             self.propfind(handler, path, handler.headers.get("Depth", "0"), body)
@@ -300,6 +305,8 @@ class FakeDav:
             props = '<d:current-user-principal><d:href>/dav/principals/ann/</d:href></d:current-user-principal>'
             if path.rstrip("/") == "/dav/principals/ann":
                 props = '<c:calendar-home-set><d:href>/dav/calendars/ann/</d:href></c:calendar-home-set><card:addressbook-home-set><d:href>/dav/addressbooks/ann/</d:href></card:addressbook-home-set>'
+            if path.rstrip("/") == "/dav/principals/ann" and self.user_addresses:
+                props += "<c:calendar-user-address-set>" + "".join(f"<d:href>{address}</d:href>" for address in self.user_addresses) + "</c:calendar-user-address-set>"
             self.respond_multistatus(handler, [self.entry(path, props)])
             return
         homes = ("/dav/calendars/ann", "/dav/addressbooks/ann") + (("/dav/calendars/%23public", "/dav/addressbooks/%23public") if self.public_keys else ())

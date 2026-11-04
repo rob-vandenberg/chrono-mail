@@ -14,22 +14,24 @@ from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply
 from chrono_mail.engine.commands_tasklist import ImportParameters as TaskImportParameters, task_import
 from chrono_mail.engine.invitations import InvitationInfo, calendar_part, calendar_text, card_of, your_addresses
 from chrono_mail.engine.mailbox import open_mailbox
-from chrono_mail.engine.pim_server import item_writer
+from chrono_mail.engine.pim_server import ItemWriter, item_writer
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
 from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, MAXIMUM_TEXT_CHARACTERS, Occurrence, occurrences
 from chrono_mail.pim.itip import (
-    BusyPeriod, CalendarMessage, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, items_text, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, updated_copy, with_added, without_occurrence,
+    BusyPeriod, CalendarMessage, answered_copy, attendee_addresses, busy_periods, busy_reply, countered, declinecounter_text, delegated_texts, holds_occurrence, in_meeting, items_text, proposal_usable, request_of, text_items, with_attendee_answer, is_newer, occurrences_of, published_copy, with_delegate, merged_answer, read_calendar_message, refresh_text, reply_text, told_silent, updated_copy, with_added, with_silence, without_occurrence, without_organizer,
 )
 from chrono_mail.pim.times import local_time, local_zone
 from chrono_mail.pimstore import ItemQuery
+from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.509"
+__version__ = "commands_invitations.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: who mails: the account decides, Chrono Mail sends when the server cannot, the copy tells the server whether to mail, also before a delete (D-310)
 # v4.4.509: Take their answer takes only the line of the attendee who wrote it; a calendar part in the character set the mail states (D-310)
 # v4.4.508: a text with several items: every command works on one item (`item`), of whatever kind; invitation.add: all items that ask no
 #           answer, events into the chosen calendar, tasks into the chosen task list, those already there replaced or skipped (D-310)
@@ -261,13 +263,70 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
 
 def _server_answers(engine: Engine, account: str, info: CollectionInfo, address: str) -> bool:
     """Whether the calendar's server mails the answer: its account says so (D-310), the calendar is on the server, and the answering address is
-    that account's own (a server answers only for its own user)."""
+    one the server knows as this user (a server answers only for its own user); a server that does not say: the account's own."""
     try:
         settings = engine.config().find(account)
     except ChronoMailError:
         return False
     own = settings.account.email_address.strip().lower()
-    return settings.server_answers and info.server_value("href") != "" and (not own or own == address)  # a calendar-only account has no address
+    known = address in settings.dav_addresses if settings.dav_addresses else not own or own == address  # a calendar-only account has no address
+    return settings.server_answers and info.server_value("href") != "" and known
+
+
+@dataclass(frozen=True, slots=True)
+class _Mailing:
+    """Who mails about one change of a calendar copy (D-310): the organizer gets one mail, or none only when the person chose that."""
+
+    server: bool = False  # the calendar's server mails it
+    chrono: bool = False  # Chrono Mail makes the mail
+    told: bool = False  # the calendar's server listens: the copy tells it whether to mail (SCHEDULE-AGENT)
+    bare: bool = False  # the server mails whatever it is told, and here for the wrong person: a copy goes only after its organizer was taken off
+
+
+def _settings_of(engine: Engine, account: str) -> AccountSettings | None:
+    try:
+        return engine.config().find(account) if account else None
+    except ChronoMailError:
+        return None
+
+
+def _reached_server(engine: Engine, account: str, info: CollectionInfo, item: str) -> bool:
+    """Whether the server has this item: one made while offline may be waiting here still, and then the server knows nothing to answer for."""
+    state = DavState(engine.directories.pim_directory(account) / "dav-state.json", engine.durable)
+    return any(link.item_id == item for link in state.get(info.collection_id).links.values())
+
+
+def _who_mails(engine: Engine, calendar: tuple[str, CollectionInfo] | None, account: str, address: str, gone: str = "") -> _Mailing:
+    """`calendar` holds the copy, `account` is the one you answer from (its setting counts when no calendar is involved). gone: the item that is
+    about to be deleted: only a server that has it can mail about it."""
+    settings = (_settings_of(engine, calendar[0]) if calendar is not None else None) or _settings_of(engine, account)
+    if settings is None:
+        return _Mailing(chrono=True)
+    on_server = calendar is not None and bool(settings.dav_url) and calendar[1].server_value("href") != ""
+    reached = calendar is not None and on_server and (not gone or _reached_server(engine, calendar[0], calendar[1], gone))
+    server = calendar is not None and reached and _server_answers(engine, calendar[0], calendar[1], address)
+    listens = reached and settings.dav_auto_schedule and not settings.dav_always_answers
+    return _Mailing(server, not server and settings.answers_by != "none", listens, bool(gone) and reached and settings.dav_always_answers and not server)
+
+
+def _copy_for(text: str, mails: _Mailing) -> str:
+    """The copy as the server should get it: told to stay silent when it should, and never so when it mails."""
+    return (with_silence(text, not mails.server) or text) if mails.told else text
+
+
+def _delete(writer: ItemWriter, info: CollectionInfo, item: str, text: str, mails: _Mailing) -> None:
+    """Delete a copy. A server mails about that from what it holds, so what it holds says first whether it should."""
+    changed = mails.told and told_silent(text) == mails.server
+    if changed:
+        writer.put(info, _copy_for(text, mails), item)
+    elif mails.bare:
+        writer.put(info, without_organizer(text) or text, item)
+    try:
+        writer.delete(info, item)
+    except UsageError:
+        if changed or mails.bare:
+            writer.put(info, text, item)  # refused: the meeting stays as it was, as the message says
+        raise
 
 
 def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerResult:
@@ -319,16 +378,16 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
             raise UsageError("The invitation could not be read")
         if target[1].read_only:
             raise UsageError(f"This {home} is read-only")
-    server = target is not None and _server_answers(engine, target[0], target[1], you.address)
-    mailing = not server and parameters.mail and message.method != "PUBLISH"  # a published item asks no answer
+    mails = _who_mails(engine, target, you.account, you.address, item if text is None and item is not None else "")
+    mailing = mails.chrono and parameters.mail and message.method != "PUBLISH"  # a published item asks no answer
     reply = _answer_text(opened, you, parameters.answer, text) if mailing else None
     try:
         if target is not None:
             with open_pim(engine, target[0]) as store, item_writer(engine, target[0], store) as writer:
-                if text is None and item is not None:
-                    writer.delete(target[1], item)  # declined: the copy goes; a server that answers mails the decline itself (D-310)
+                if text is None and item is not None and stored is not None:
+                    _delete(writer, target[1], item, stored.text, mails)  # declined: the copy goes; a server that answers mails the decline itself (D-310)
                 elif text is not None:
-                    writer.put(target[1], text, item)
+                    writer.put(target[1], _copy_for(text, mails), item)
     except StorageError as error:
         raise UsageError(str(error)) from None
     stored_in = _label(engine, target[0], target[1]) if target is not None and parameters.answer != "DECLINED" else ""
@@ -337,7 +396,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         draft_folder, draft_message = _save_mail(engine, opened, you.account, _SUBJECT_WORD[parameters.answer],
                                                  f"{you.name or you.address} has {_ANSWER_WORD[parameters.answer]} this invitation.\n", reply)
         draft_account = you.account
-    return AnswerResult(parameters.answer, stored_in, server, draft_folder, draft_message, draft_account)
+    return AnswerResult(parameters.answer, stored_in, mails.server, draft_folder, draft_message, draft_account)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -491,13 +550,14 @@ def invitation_apply(engine: Engine, parameters: SourceParameters) -> ApplyResul
         raise UsageError(f"This calendar message changes nothing in your {home}")
     if not remove_all and text is None:
         raise UsageError("The calendar message could not be read")
+    mails = _who_mails(engine, (stored.account, stored.info), you.account, you.address, stored.item if remove_all else "") if you.address else _Mailing()
     try:
         with open_pim(engine, stored.account) as store, item_writer(engine, stored.account, store) as writer:
             if remove_all:
-                writer.delete(stored.info, stored.item)
+                _delete(writer, stored.info, stored.item, stored.text, replace(mails, bare=False))  # the organizer cancelled: nothing to hide from them
                 return ApplyResult("removed", "")
             assert text is not None  # checked above
-            writer.put(stored.info, text, stored.item)
+            writer.put(stored.info, _copy_for(text, mails), stored.item)
             return ApplyResult(done, _label(engine, stored.account, stored.info))
     except StorageError as error:
         raise UsageError(str(error)) from None
@@ -550,18 +610,18 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     text = merged_answer(stored.text, opened.text, you.address, "DELEGATED", message.occurrence, take_message=take, name=you.name) if stored is not None else None
     moments = occurrences_of(opened.text) if message.occurrence is not None else []  # a whole series (also with changed dates): all of it
     text = with_delegate(text, you.address, delegate, moments) if text is not None else None  # a server answering itself names them
-    server = stored is not None and text is not None and _server_answers(engine, stored.account, stored.info, you.address)
+    mails = _who_mails(engine, (stored.account, stored.info) if stored is not None and text is not None else None, you.account, you.address)
     if stored is not None and text is not None:  # the calendar first: a refusal leaves no drafts behind
         try:
             with open_pim(engine, stored.account) as store, item_writer(engine, stored.account, store) as writer:
-                writer.put(stored.info, text, stored.item)
+                writer.put(stored.info, _copy_for(text, mails), stored.item)
         except StorageError as error:
             raise UsageError(str(error)) from None
     who = you.name or you.address
     task = message.kind == "task"
     asked = f"{who} asks you to do this task in their place.\n" if task else f"{who} asks you to go to this meeting in their place.\n"
     passed = _save_mail(engine, opened, you.account, "Invitation", asked, request, to=delegate)
-    if server:  # the server mails your answer DELEGATED itself (D-310)
+    if not mails.chrono:  # the server mails your answer DELEGATED itself, or you want no such mails (D-310)
         return DelegateResult(you.account, passed[0], passed[1], "")
     told = f"{who} has asked {delegate} to do this task in their place.\n" if task else f"{who} has asked {delegate} to go to this meeting in their place.\n"
     answered = _save_mail(engine, opened, you.account, "Delegated", told, answer)
@@ -672,15 +732,16 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
         to, word, done = (attendee,), "Invitation", "sent"
     if parameters.action in ("take", "accept_proposal") and text is None:
         raise UsageError("The calendar message could not be read")
-    server = stored is not None and _server_answers(engine, stored.account, stored.info, own.account.email_address.strip().lower())
-    # A refusal of a proposal and the latest version exist only as mails: always made. A moved meeting: the tick, unless the server mails it.
-    mailing = calendar is not None and (parameters.action in ("decline_proposal", "send_latest") or (parameters.mail and not server))
+    mails = _who_mails(engine, (stored.account, stored.info) if stored is not None else None, own.account.account_id, own.account.email_address.strip().lower())
+    server = mails.server
+    # A refusal of a proposal and the latest version exist only as mails: always made. A moved meeting: the account's setting (D-310).
+    mailing = calendar is not None and (parameters.action in ("decline_proposal", "send_latest") or (parameters.mail and mails.chrono))
     if mailing and not to:
         raise UsageError(f"This {item_word} has no attendees to write to")
     if stored is not None and text is not None:
         try:
             with open_pim(engine, stored.account) as store, item_writer(engine, stored.account, store) as writer:
-                writer.put(stored.info, text, stored.item)
+                writer.put(stored.info, _copy_for(text, mails), stored.item)
         except StorageError as error:
             raise UsageError(str(error)) from None
     stored_in = _label(engine, stored.account, stored.info) if stored is not None else ""

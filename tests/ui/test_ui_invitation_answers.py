@@ -6,15 +6,15 @@ from pytestqt.qtbot import QtBot
 from chrono_mail.engine.commands_invitations import CalendarChoice, ChoicesResult
 from chrono_mail.ui.invitationcalendar import InvitationCalendarDialog, InvitationDelegateDialog
 from chrono_mail.ui.invitationcard import apply_text
-from chrono_mail.ui.prefs import Preferences
 from chrono_mail.ui.reader import ReaderWidget
 from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.506"
+__version__ = "test_ui_invitation_answers.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: the tick of Settings > Calendar is gone (D-310)
 # v4.4.506: your own meeting: its buttons, greyed with a reason when they cannot work (D-310 step 3)
 # v4.4.505: Initial tests: the card's buttons per kind of message, greyed when out of date; the calendar window; the Delegate window (D-310)
 
@@ -85,10 +85,6 @@ def test_the_delegate_window_needs_an_address(qtbot: QtBot) -> None:
     assert ok is not None and not ok.isEnabled()
     dialog.address_field.setText("sam@example.net")
     assert ok.isEnabled() and dialog.address == "sam@example.net"
-
-
-def test_sending_answers_is_on_by_default() -> None:
-    assert Preferences().send_invitation_answers
 
 
 def test_the_buttons_read_and_tab_in_one_order(reader: ReaderWidget, qtbot: QtBot) -> None:

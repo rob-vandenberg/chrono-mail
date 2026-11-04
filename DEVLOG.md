@@ -3795,3 +3795,8 @@ Open: a file of several VCALENDARs one after the other is still refused; a time 
 Built: Take their answer takes only the line of the attendee who wrote the mail, else the only line there is, else it refuses; a calendar part is read in the character set the mail states, an unusable name as UTF-8.
 Tests: tests/test_engine_invitation_organizer.py, tests/test_engine_invitations.py; the new tests fail on 4.4.508; Pyrefly 0 (Linux, win32), layer check kept; review round 1 found a crash on charset=undefined, fixed.
 Open: A4 and groups 2 and 3 of the list.
+
+## 2026-11-04, 4.4.510: who mails the answer (the owner, D-310, B3, A8, A10)
+Built: Edit account > Calendars and contacts "Send confirmation emails via" Chrono Mail or Server (invitation_answers none; AccountSettings.answers_by), the tick and the page Settings > Calendar gone; the synchronisation keeps dav_always_answers (Server header, ALWAYS_ANSWERS) and dav_addresses (calendar-user-address-set); engine _who_mails, _copy_for, _delete: SCHEDULE-AGENT=CLIENT set or taken off, written before a delete, a copy written bare before a delete on Kerio for another address, Chrono Mail sends when the server cannot; reply_text carries DELEGATED-FROM.
+Tests: tests/test_engine_invitation_mailing.py, tests/ui/test_ui_confirmation_mails.py (new), tests/test_engine_invitation_answers.py, tests/ui/test_ui_invitation_answers.py changed; 15 of the first 16 fail on 4.4.509, the other pins what stays; Pyrefly 0 (Linux, win32), layer check kept; two review rounds; live Kerio runs in scratchpad/live_delete_mail.py and live_delete_plain.py.
+Open: a corrected copy that cannot reach the server (offline) before its delete; group 3 and A4; tests/test_typed_calls.py fails on syncconflicts.py (not of this work).

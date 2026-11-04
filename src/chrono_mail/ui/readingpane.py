@@ -38,9 +38,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.508"
+__version__ = "readingpane.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: the answer follows the account, no longer the tick of Settings > Calendar (D-310)
 # v4.4.508: a text with several items: every button of a block works on its own item, Add all asks for a calendar and a task list and to
 #           Replace or Skip what is there already; a card window closes when everything in it is added (D-310)
 # v4.4.507: Open attachment on an .ics file, and a calendar file given to the program, show a card in a window of its own (InvitationWindow), wired
@@ -488,7 +489,7 @@ class ReadingPane(QObject):
                 self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message)
             self._show_again(reader, place)
 
-        parameters = OrganizeParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, action=chosen, mail=self._prefs.read().send_invitation_answers)
+        parameters = OrganizeParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, action=chosen)
         self._backend.ask(INVITATION_ORGANIZE, parameters, organized, lambda error: self._status.report(f"Could not change your {item}", error), owner=self)
 
     def _delegate_in_pane(self) -> None:
@@ -580,8 +581,7 @@ class ReadingPane(QObject):
 
     def _send_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, answer: str, calendar: str) -> None:
         chosen: Answer = "DECLINED" if answer == "DECLINED" else ("TENTATIVE" if answer == "TENTATIVE" else "ACCEPTED")
-        parameters = AnswerParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, answer=chosen, calendar=calendar,
-                                      mail=self._prefs.read().send_invitation_answers)
+        parameters = AnswerParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, answer=chosen, calendar=calendar)
 
         info = self._card_of(reader, place)
         shared = info is not None and info.method == "PUBLISH"

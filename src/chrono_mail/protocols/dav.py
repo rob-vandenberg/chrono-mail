@@ -15,9 +15,10 @@ from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.505"
+__version__ = "dav.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: announced: the Server header with the DAV header; user_addresses: calendar-user-address-set (D-310)
 # v4.4.505: a header written on several lines (DAV: on three lines) is joined, as RFC 9110 reads a list header: a server's
 #           calendar-auto-schedule on its second DAV line is seen (D-310)
 # v4.2.441: DavCertificateError is a CertificateError that names the server, so the window can ask (D-299); a renewed certificate that passes
@@ -386,9 +387,22 @@ class DavClient:
 
     def options(self, path: str = "") -> set[str]:
         """What the server says it supports (the DAV header, in lower case)."""
+        return self.announced(path)[0]
+
+    def announced(self, path: str = "") -> tuple[set[str], str]:
+        """What the server says it supports (the DAV header, in lower case), and what it calls itself (the Server header)."""
         response = self.request("OPTIONS", path or self.base_path)
         self._ok(response, (200, 204))
-        return {part.strip().lower() for part in response.headers.get("dav", "").split(",") if part.strip()}
+        return {part.strip().lower() for part in response.headers.get("dav", "").split(",") if part.strip()}, response.headers.get("server", "")
+
+    def user_addresses(self) -> tuple[str, ...]:
+        """The e-mail addresses the server knows as this user (calendar-user-address-set, RFC 6638), in lower case; (): it does not say."""
+        entries = self.propfind(self.base_path, [(DAV, "current-user-principal")])
+        principal = next(iter(entries[0].hrefs(f"{{{DAV}}}current-user-principal")), "") if entries else ""
+        if not principal:
+            return ()
+        hrefs = [href for entry in self.propfind(principal, [(CALDAV, "calendar-user-address-set")]) for href in entry.hrefs(f"{{{CALDAV}}}calendar-user-address-set")]
+        return tuple(sorted({href[7:].strip().lower() for href in hrefs if href.lower().startswith("mailto:")}))
 
     def propfind(self, path: str, properties: Iterable[tuple[str, str]], depth: int = 0) -> list[DavEntry]:
         response = self.request("PROPFIND", path, {"Depth": str(depth), "Content-Type": "application/xml; charset=utf-8"}, _propfind(properties))

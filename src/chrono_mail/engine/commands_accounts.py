@@ -53,9 +53,10 @@ from chrono_mail.store import Store
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_accounts.py 4.4.505"
+__version__ = "commands_accounts.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: the summary tells whether the server always mails the answers; invitation_answers may be none (D-310)
 # v4.4.505: who mails the answers to invitations (invitation_answers) in the summary and account.edit; the summary tells what the server
 #           announced (dav_auto_schedule), D-310
 # v4.2.463: key.code-pending: whether the recovery code of this computer's key was never confirmed as stored, without asking the wallet;
@@ -381,6 +382,7 @@ class AccountSummary:
     junk_filter: bool = True  # new mail goes through the junk filter (D-238)
     invitation_answers: str = ""  # who mails the answers to invitations: "server", "chrono"; "": as the server announces (D-310)
     dav_auto_schedule: bool = False  # the calendar server announced that it mails those answers itself
+    dav_always_answers: bool = False  # the calendar server is one known to mail them whatever it is told
 
 
 def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) -> AccountSummary:
@@ -416,6 +418,7 @@ def _summary(item: AccountSettings, accounts: tuple[AccountSettings, ...] = ()) 
         item.junk_filter,
         item.invitation_answers,
         item.dav_auto_schedule,
+        item.dav_always_answers,
     )
 
 
@@ -500,7 +503,7 @@ class AccountEditParameters:
     in_send_receive: bool | None = field(default=None, metadata=option("Include this account in Send and Receive (off: only its own refresh reaches it)"))
     outgoing_same_login: bool | None = field(default=None, metadata=option("The outgoing server uses the user name and password of the incoming one"))
     junk_filter: bool | None = field(default=None, metadata=option("New mail goes through the junk filter: junk to the Junk folder before the rules run"))
-    invitation_answers: str | None = field(default=None, metadata=option("Who mails the answers to invitations: server, chrono, or empty (as the server announces)"))
+    invitation_answers: str | None = field(default=None, metadata=option("Who mails the answers to invitations: server, chrono, none, or empty (as the server announces)"))
 
 
 def account_edit(engine: Engine, parameters: AccountEditParameters) -> AccountSummary:

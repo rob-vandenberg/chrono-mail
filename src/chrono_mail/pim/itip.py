@@ -17,9 +17,10 @@ from chrono_mail.pim.ical import (  # noqa: PLC2701 - the module's own readers: 
 from chrono_mail.pim.times import moved_like_the_start, wall_clock
 
 # --- Version ------------------------------------------------------------
-__version__ = "itip.py 4.4.509"
+__version__ = "itip.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: a delegate's answer carries DELEGATED-FROM; told_silent, with_silence, without_organizer (D-310)
 # v4.4.509: with_attendee_answer takes only the line of the attendee who answered (D-310)
 # v4.4.508: text_items: a calendar text split into its items, of every kind, each a text of its own (items_text: some of them together);
 #           journal entries and damaged items counted; a shared item without a UID gets a lasting one; item_count is gone (D-310)
@@ -274,6 +275,12 @@ def merged_answer(stored: str, message_text: str, address: str, answer: str, occ
     return kept.to_ical().decode("utf-8")
 
 
+def _delegated_from(component: icalendar.Component, address: str) -> str:
+    props: Any = component.get("ATTENDEE")
+    people: list[Any] = props if isinstance(props, list) else ([props] if props is not None else [])
+    return next((str(person.params["DELEGATED-FROM"]) for person in people if _address_of(person) == address and person.params.get("DELEGATED-FROM")), "")
+
+
 def reply_text(message_text: str, address: str, answer: str, now: datetime, name: str = "", copy_text: str | None = None) -> str | None:
     """Your answer to the organizer (METHOD:REPLY, RFC 5546 section 3.2.3): per item its UID, the SEQUENCE of the request, DTSTAMP now, the
     organizer, your attendee line with your answer, the RECURRENCE-ID of one occurrence, and its title and time to read. None when the text
@@ -299,8 +306,55 @@ def reply_text(message_text: str, address: str, answer: str, now: datetime, name
         answer_item.add("DTSTAMP", now)
         own = kept_answers.get(str(_moment(item, "RECURRENCE-ID")), "")
         _set_answer(answer_item, lower, own if own and own != "NEEDS-ACTION" else answer, name)
+        replaced = _delegated_from(item, lower)
+        if replaced:
+            answer_item["ATTENDEE"].params["DELEGATED-FROM"] = replaced  # who you go in the place of (RFC 5546 section 3.2.2.3)
         reply.add_component(answer_item)
     return reply.to_ical().decode("utf-8")
+
+
+# --- a calendar server that mails by itself (D-310) ---------------------------------------------------------------------------------------
+
+def _scheduled_lines(calendar: icalendar.Calendar) -> list[Any]:
+    lines: list[Any] = []
+    for item in _items_of(calendar):
+        for key in ("ORGANIZER", "ATTENDEE"):
+            props: Any = item.get(key)
+            lines.extend(props if isinstance(props, list) else ([props] if props is not None else []))
+    return lines
+
+
+def told_silent(text: str) -> bool:
+    """Whether a copy tells a calendar server not to mail about it (SCHEDULE-AGENT=CLIENT, RFC 6638)."""
+    calendar = _parse(text)
+    return calendar is not None and any(str(line.params.get("SCHEDULE-AGENT", "")).upper() == "CLIENT" for line in _scheduled_lines(calendar))
+
+
+def with_silence(text: str, silent: bool) -> str | None:
+    """The copy with its organizer and attendee lines marked SCHEDULE-AGENT=CLIENT, so a server that mails by itself leaves them alone (the
+    organizer's line for an attendee's copy, the attendees' for an organizer's, RFC 6638), or with that mark taken off. None: not readable."""
+    calendar = _parse(text)
+    if calendar is None:
+        return None
+    for line in _scheduled_lines(calendar):
+        line.params.pop("SCHEDULE-FORCE-SEND", None)
+        if silent:
+            line.params["SCHEDULE-AGENT"] = "CLIENT"
+        else:
+            line.params.pop("SCHEDULE-AGENT", None)
+    return calendar.to_ical().decode("utf-8")
+
+
+def without_organizer(text: str) -> str | None:
+    """The copy as an item of your own, with no organizer and no attendees: a server that mails whatever it is told mails nothing when this one
+    is deleted (tested). None: not readable."""
+    calendar = _parse(text)
+    if calendar is None:
+        return None
+    for item in _items_of(calendar):
+        for key in ("ORGANIZER", "ATTENDEE"):
+            item.pop(key, None)
+    return calendar.to_ical().decode("utf-8")
 
 
 # --- following the organizer (D-310) -----------------------------------------------------------------------------------------------------

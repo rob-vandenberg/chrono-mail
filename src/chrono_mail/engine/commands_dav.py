@@ -20,9 +20,10 @@ from chrono_mail.protocols.tls import inspect_certificate
 from chrono_mail.sync.davsync import forget_collection, matching_collection, sync_dav, unsent_changes
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_dav.py 4.4.505"
+__version__ = "commands_dav.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: the synchronisation also keeps whether the server always mails the answers and the addresses it knows as this user (D-310)
 # v4.4.505: each synchronisation records whether the server announces that it mails the answers to invitations itself
 #           (calendar-auto-schedule, RFC 6638): the account's default of who answers (D-310)
 # v4.2.452: account.add-dav unchecked: an account taken over from another program is added without asking its server first (an import
@@ -51,6 +52,7 @@ __version__ = "commands_dav.py 4.4.505"
 # v0.0.66: Initial commands for the calendars, task lists and address books on a CalDAV and CardDAV server
 
 _LOCKS: dict[str, threading.Lock] = {}
+ALWAYS_ANSWERS: tuple[str, ...] = ("kerio connect",)  # servers tested to mail the answers to invitations whatever they are told, by their Server header (D-310)
 _LOCKS_GUARD = threading.Lock()
 
 
@@ -209,18 +211,27 @@ def _sync_account(engine: Engine, settings: AccountSettings, receive_only: bool 
 
 
 def _record_auto_schedule(engine: Engine, account_id: str, client: DavClient) -> None:
-    """Whether the server says it mails the answers to invitations itself (RFC 6638), kept with the account when it changed (D-310). A server
-    that does not answer the question keeps what was kept."""
+    """Whether the server says it mails the answers to invitations itself (RFC 6638), whether it is one known to do so whatever it is told, and
+    the addresses it answers for, kept with the account when they changed (D-310). A server that does not answer a question keeps what was kept."""
     try:
-        announces = "calendar-auto-schedule" in client.options()
+        supports, product = client.announced()
     except ProtocolError:
         return
+    announces = "calendar-auto-schedule" in supports
+    always = any(name in product.lower() for name in ALWAYS_ANSWERS)
     try:
-        if engine.config().find(account_id).dav_auto_schedule == announces:
+        settings = engine.config().find(account_id)
+        addresses = settings.dav_addresses
+        if announces:
+            try:
+                addresses = client.user_addresses() or addresses
+            except ProtocolError:
+                pass  # the addresses kept stay
+        if (settings.dav_auto_schedule, settings.dav_always_answers, settings.dav_addresses) == (announces, always, addresses):
             return
 
         def change(fresh: AppConfig) -> AppConfig:
-            return fresh.with_account(replace(fresh.find(account_id), dav_auto_schedule=announces))
+            return fresh.with_account(replace(fresh.find(account_id), dav_auto_schedule=announces, dav_always_answers=always, dav_addresses=addresses))
 
         engine.change_config(change)
     except ConfigurationError:  # the account was removed meanwhile: nothing to keep

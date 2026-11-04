@@ -13,9 +13,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.505"
+__version__ = "test_engine_invitation_answers.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: a server that announces nothing never counts as mailing (D-310)
 # v4.4.505: Initial tests: Accept, Tentative and Decline keep the item with your answer, server first, and make the answer to send as a
 #           draft with the calendar answer (METHOD:REPLY) when Chrono Mail mails it; the calendars to choose from (D-310)
 
@@ -108,7 +109,10 @@ def test_who_mails_the_answer_follows_the_account() -> None:
     assert not replace(base, dav_url="").server_answers
     assert replace(base, dav_url="https://dav.example.com/", dav_auto_schedule=True).server_answers
     assert not replace(base, dav_url="https://dav.example.com/", dav_auto_schedule=True, invitation_answers="chrono").server_answers
-    assert replace(base, dav_url="https://dav.example.com/", invitation_answers="server").server_answers
+    assert replace(base, dav_url="https://dav.example.com/", dav_auto_schedule=True, invitation_answers="server").server_answers
+    assert not replace(base, dav_url="https://dav.example.com/", invitation_answers="server").server_answers  # it never said it can
+    assert replace(base, dav_url="https://dav.example.com/", dav_always_answers=True, invitation_answers="none").answers_by == "server"
+    assert replace(base, invitation_answers="none").answers_by == "none"
 
 
 def test_a_newer_version_updates_the_copy_and_keeps_your_answer(setup: Setup) -> None:
@@ -247,7 +251,7 @@ def test_a_calendar_only_account_follows_its_choice(setup: Setup) -> None:
         def change(config: AppConfig) -> AppConfig:
             settings = config.find(setup.account_id)
             account = replace(settings.account, email_address=address)
-            return config.with_account(replace(settings, account=account, dav_url="https://dav.example.com/", invitation_answers=answers))
+            return config.with_account(replace(settings, account=account, dav_url="https://dav.example.com/", dav_auto_schedule=True, invitation_answers=answers))
 
         setup.engine.change_config(change)
 

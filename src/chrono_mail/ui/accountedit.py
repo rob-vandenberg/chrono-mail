@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QRadioButton,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
@@ -45,9 +44,10 @@ from chrono_mail.core.words import counted
 
 from chrono_mail.ui.infomark import InfoMark, info_marks
 # --- Version ------------------------------------------------------------
-__version__ = "accountedit.py 4.4.505"
+__version__ = "accountedit.py 4.4.510"
 
 # --- Version history ----------------------------------------------------
+# v4.4.510: Send confirmation emails via Chrono Mail or Server replaces the two radio buttons (D-310)
 # v4.4.505: Calendars and contacts: "Answers to invitations are sent by: the server / Chrono Mail", starting on what the server announces;
 #           an (i) when Chrono Mail is chosen for a server that sends them itself (D-310)
 # v4.2.451: General has the tick "Include this account in Send and Receive", for every kind of account, instead of "Check this account every" (D-059)
@@ -153,13 +153,14 @@ class AccountEditDialog(QDialog):
         self.dav_result.setTextFormat(Qt.TextFormat.RichText)
         self.dav_check_button: QPushButton = part(form, QPushButton, "findDav")
         self.dav_folders: FolderTicks = part(form, FolderTicks, "davFolders")
-        self.answers_server: QRadioButton = part(form, QRadioButton, "answersServer")
-        self.answers_chrono: QRadioButton = part(form, QRadioButton, "answersChrono")
+        self.answers_send: QCheckBox = part(form, QCheckBox, "answersSend")
+        self.answers_by: QComboBox = part(form, QComboBox, "answersBy")
         self.answers_info: InfoMark = part(form, InfoMark, "answersInfo")
-        by_server = account.invitation_answers == "server" or (not account.invitation_answers and account.dav_auto_schedule)
-        (self.answers_server if by_server else self.answers_chrono).setChecked(True)
-        self.answers_chrono.toggled.connect(self._answers_warning)
-        self.answers_server.toggled.connect(self._answers_warning)
+        self.answers_by.addItem("Chrono Mail", "chrono")
+        self.answers_by.addItem("Server", "server")
+        self.answers_send.setChecked(account.invitation_answers != "none" or account.dav_always_answers)
+        self.answers_by.setCurrentIndex(self.answers_by.findData(self._answers_way()))
+        self.answers_send.toggled.connect(self._answers_warning)
         self.dav_url.textChanged.connect(self._answers_warning)
         self._answers_warning()
         self._dav_found: FoundServer | None = None  # the folders shown, as the server gave them
@@ -288,27 +289,44 @@ class AccountEditDialog(QDialog):
 
     # --- commands -------------------------------------------------------------------------------------------
 
+    def _answers_way(self) -> str:
+        """Who sends the mails with the box ticked, as the account stands: a server that does not announce it cannot be chosen (D-310)."""
+        account = self._account
+        if not self.dav_url.text().strip():
+            return "chrono"
+        if account.dav_always_answers:
+            return "server"
+        return "server" if account.dav_auto_schedule and account.invitation_answers != "chrono" else "chrono"
+
     def _answers_warning(self) -> None:
-        """Why "the server" is greyed (no calendar server), or what the choice may cause: two answers, or none (D-310)."""
+        """What can be chosen here: a server that always sends these mails leaves no choice, and the dropdown offers the server only when it
+        announces that it sends them; each greyed part says why in its (i) (D-310)."""
         account = self._account
         has_server = bool(self.dav_url.text().strip())  # as typed in this window: a server linked just now counts
-        self.answers_server.setEnabled(has_server)  # the choice itself is left alone: without a server it has no effect anyway
-        if not has_server:
-            reason = "This account has no calendar server: Chrono Mail sends the answers."
-        elif self.answers_chrono.isChecked() and account.dav_auto_schedule:
-            reason = "This server also sends the answers itself: the organizer may get two."
-        elif self.answers_server.isChecked() and not account.dav_auto_schedule:
-            reason = "This server did not say that it sends the answers itself: the organizer may get none."
+        always = has_server and account.dav_always_answers
+        if always:
+            reason = "This server always sends these mails itself; that cannot be turned off."
+            self.answers_send.setChecked(True)
+        elif not has_server:
+            reason = "This account has no calendar server: Chrono Mail sends these mails."
+        elif not account.dav_auto_schedule:
+            reason = "This server did not say that it sends these mails itself: Chrono Mail sends them."
         else:
             reason = ""
-        self.answers_info.explain("Answers to invitations", reason, self.answers_server)
+        self.answers_send.setEnabled(not always)
+        if reason:
+            self.answers_by.setCurrentIndex(self.answers_by.findData(self._answers_way()))
+        self.answers_by.setEnabled(not reason and self.answers_send.isChecked())
+        self.answers_info.explain("Confirmation emails", reason, self.answers_by)
 
     def _answers_value(self) -> str | None:
         """Who mails the answers, when the person changed it from what the account has now (empty: as the server announces)."""
         account = self._account
-        if not self.dav_url.text().strip():
-            return None  # no calendar server: nothing to choose, the stored choice stays
-        chosen = "server" if self.answers_server.isChecked() else "chrono"
+        if account.dav_always_answers and self.dav_url.text().strip():
+            return None  # nothing to choose: the stored choice stays
+        if self.answers_send.isChecked() and not self.answers_by.isEnabled():
+            return "" if account.invitation_answers == "none" else None  # sent, and nothing to choose who by
+        chosen = str(self.answers_by.currentData()) if self.answers_send.isChecked() else "none"
         now = account.invitation_answers or ("server" if account.dav_auto_schedule else "chrono")
         return None if chosen == now else chosen
 
