@@ -48,6 +48,7 @@ See also: [[security]]
 - [[D-268]] One open connection per index
 - [[D-292]] Account column and fixed account
 - [[D-285]] Every folder is a normal folder
+- [[D-314]] A folder is an object in the index
 - [[D-071]] Items kept as iCalendar and vCard
 - [[D-072]] The calendar and contact store
 - [[D-128]] Tags live in the properties file

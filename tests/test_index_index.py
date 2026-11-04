@@ -17,9 +17,10 @@ from chrono_mail.index.model import YES_NO_SORTS, DateBounds
 from tests.mailfactory import raw_message
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_index.py 4.2.471"
+__version__ = "test_index_index.py 4.4.539"
 
 # --- Version history ----------------------------------------------------
+# v4.4.539: sort indexes by the folder's id (D-314)
 # v4.2.471: a yes/no sort with no first may be served by any covering sort index (D-306)
 # v4.2.406: a search with subfolders finds every folder inside, at any depth, and no sibling whose name starts the same (D-287)
 # v2.0.280: sent, the moment the message carries itself, kept beside Received, sorted and grouped by (the Sent column, B-16)
@@ -338,8 +339,8 @@ def test_unread_counts_seek_the_index_of_the_unread_sort(tmp_path: Path) -> None
     # Measured with 300,000 messages in one folder: 454 ms when every message of the folder is read, 0.5 ms with a partial index (D-031); schema 6 seeks the Unread sort index instead.
     index = filled(tmp_path, 50)
     plan = " | ".join(str(row[3]) for row in index._connection.execute(  # noqa: SLF001
-        "EXPLAIN QUERY PLAN SELECT count(*) FROM messages m WHERE m.folder = ? AND (m.flags & 1) = 0", ("Inbox",)))
-    assert "messages_by_unread (folder=? AND <expr>=?)" in plan, plan  # only the unread entries of the folder are visited
+        "EXPLAIN QUERY PLAN SELECT count(*) FROM messages m WHERE m.folder_id = ? AND (m.flags & 1) = 0", (index._folder_id(INBOX),)))
+    assert "messages_by_unread (folder_id=? AND <expr>=?)" in plan, plan  # only the unread entries of the folder are visited
     assert index.count(INBOX, unread_only=True) == 25
 
 
@@ -616,12 +617,12 @@ def test_folder_conversation_and_preview_sorts_and_their_groups(tmp_path: Path) 
 def test_the_new_sorts_of_a_folder_use_their_sqlite_index(tmp_path: Path, sort: SortField) -> None:
     index = filled(tmp_path, 5)
     for descending in (True, False):
-        plan = str(index._connection.execute(f"EXPLAIN QUERY PLAN SELECT m.id FROM messages m WHERE m.folder = ? ORDER BY {_order(sort, descending)} LIMIT 5", ("Inbox",)).fetchall())  # noqa: SLF001
+        plan = str(index._connection.execute(f"EXPLAIN QUERY PLAN SELECT m.id FROM messages m WHERE m.folder_id = ? ORDER BY {_order(sort, descending)} LIMIT 5", (index._folder_id(INBOX),)).fetchall())  # noqa: SLF001
         if descending:
             assert f"messages_by_{sort.value}" in plan
         else:  # no first: a sort either way; with every sort index covering (D-306) any of them may serve a folder this small
             assert "COVERING INDEX" in plan and "SCAN" not in plan, plan
-    plan = str(index._connection.execute(f"EXPLAIN QUERY PLAN SELECT m.id FROM messages m WHERE m.folder = ? ORDER BY {_order(sort, True)} LIMIT 5", ("Inbox",)).fetchall())  # noqa: SLF001
+    plan = str(index._connection.execute(f"EXPLAIN QUERY PLAN SELECT m.id FROM messages m WHERE m.folder_id = ? ORDER BY {_order(sort, True)} LIMIT 5", (index._folder_id(INBOX),)).fetchall())  # noqa: SLF001
     assert "TEMP B-TREE" not in plan  # yes first, newest first: read straight from the index
     index.close()
 

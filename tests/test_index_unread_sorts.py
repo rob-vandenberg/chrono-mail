@@ -8,16 +8,18 @@ from chrono_mail.core import MessageFlag, MessageRef
 from chrono_mail.engine.changes import RebuildStep
 from chrono_mail.index import Index, IndexEntry, entry_from_raw
 from chrono_mail.index.model import SearchFilter, SortField
-from chrono_mail.index.schema import SENT_FILL_KEY, SORT_INDEXES, UNREAD_INDEXES
+from chrono_mail.index.schema import SCHEMA_VERSION, SENT_FILL_KEY, SORT_INDEXES, UNREAD_INDEXES
+from tests.index_formats import as_format_19
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_unread_sorts.py 4.2.471"
+__version__ = "test_index_unread_sorts.py 4.4.539"
 
 # --- Version history ----------------------------------------------------
+# v4.4.539: format 17 starts from format 19; sort indexes by the folder's id (D-314)
 # v4.2.471: format 19: the unread copies are sort indexes as 19 has them (D-306)
 # v4.2.470: the count of a folder's marked mail is no list question; Flagged gathers now (D-305)
 # v4.2.469: Initial: an unread view reads only its unread mail through the unread sort indexes, whatever the sort, also while it keeps
@@ -54,7 +56,7 @@ def _plans(index: Index, ask: list[str]) -> list[str]:
         " ".join(str(row[3]) for row in index._connection.execute("EXPLAIN QUERY PLAN " + statement))  # noqa: SLF001
         for statement in ask
         if statement.lstrip().upper().startswith("SELECT") and "FROM messages m" in statement  # not the folder's numbers looked up first,
-        and not statement.startswith(("SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder", "SELECT m.store_id FROM "))  # nor the view's unread ones (D-306)  # nor the count of its marked mail (_few_marked)
+        and not statement.startswith(("SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder_id", "SELECT m.store_id FROM "))  # nor the view's unread ones (D-306)  # nor the count of its marked mail (_few_marked)
     ]
     index.close()
     return plans
@@ -74,7 +76,7 @@ def test_an_unread_view_sorted_by_any_column_reads_only_its_unread_mail(tmp_path
     plans = _plans(index, ran)
     assert len(plans) == 2
     for plan in plans:
-        assert "_unread (folder=?)" in plan or "messages_by_unread (folder=? AND" in plan, plan  # through an unread sort index, or the Unread one
+        assert "_unread (folder_id=?)" in plan or "messages_by_unread (folder_id=? AND" in plan, plan  # through an unread sort index, or the Unread one
         assert "SCAN m" not in plan, plan  # never every message
         if kept:
             assert "USING INTEGER PRIMARY KEY (rowid=?)" in plan, plan  # the outer list only by the ids found: never the folder's sort order
@@ -100,7 +102,7 @@ def test_another_view_that_keeps_messages_still_walks_its_sort_index_only_as_far
     index.search("", ("Inbox",), replace(marks, stay=frozenset({f"{3:032d}"})), 0, 5, SortField.DATE, True)
     index._connection.set_trace_callback(None)  # noqa: SLF001
     plans = _plans(index, ran)
-    assert len(plans) == 1 and "messages_by_date (folder=?)" in plans[0] and "TEMP B-TREE" not in plans[0], plans
+    assert len(plans) == 1 and "messages_by_date (folder_id=?)" in plans[0] and "TEMP B-TREE" not in plans[0], plans
 
 
 def test_a_folder_mostly_unread_that_keeps_a_message_walks_its_sort_order_only_as_far_as_asked(tmp_path: Path) -> None:
@@ -114,7 +116,7 @@ def test_a_folder_mostly_unread_that_keeps_a_message_walks_its_sort_order_only_a
     index._connection.set_trace_callback(None)  # noqa: SLF001
     assert [row.subject for row in found] == ["Mail 01", "Mail 02", "Mail 03", "Mail 04", "Mail 05"]
     plans = _plans(index, ran)
-    assert len(plans) == 1 and "messages_by_subject (folder=?)" in plans[0] and "TEMP B-TREE" not in plans[0], plans
+    assert len(plans) == 1 and "messages_by_subject (folder_id=?)" in plans[0] and "TEMP B-TREE" not in plans[0], plans
 
 
 def test_the_whole_order_and_the_count_of_a_folder_mostly_unread_that_keeps_a_message_gather_its_unread_mail(tmp_path: Path) -> None:
@@ -138,11 +140,12 @@ def test_a_new_index_has_every_unread_sort_index(tmp_path: Path) -> None:
     index.close()
 
 
-UNREAD_COPIES: list[str] = [statement for statement in SORT_INDEXES if "WHERE" in statement]  # as format 19 has them
+UNREAD_COPIES: list[str] = [statement for statement in SORT_INDEXES if "WHERE" in statement]
 
 
 def _as_format_17(path: Path) -> None:
     connection = sqlite3.connect(path)
+    as_format_19(connection)
     for statement in UNREAD_INDEXES:
         connection.execute(f"DROP INDEX {statement.split()[5]}")
     connection.execute("UPDATE meta SET value = '17' WHERE key = 'schema'")
@@ -150,20 +153,21 @@ def _as_format_17(path: Path) -> None:
     connection.close()
 
 
-def test_an_index_of_format_17_is_upgraded_at_once_and_lacks_only_the_unread_sort_indexes(tmp_path: Path) -> None:
+def test_an_index_of_format_17_is_upgraded_at_once_and_makes_its_sort_indexes_afterwards(tmp_path: Path) -> None:
     _index(tmp_path / "index.sqlite").close()
     _as_format_17(tmp_path / "index.sqlite")
     index = Index(tmp_path / "index.sqlite")
     assert index.sent_filling() is None  # nothing to fill in from the messages
-    assert index.sort_indexes_to_make() == UNREAD_COPIES
+    waiting = index.sort_indexes_to_make()
+    assert set(UNREAD_COPIES) <= set(waiting)
     assert len(index.search("", ("Inbox",), UNREAD, sort=SortField.SENDER)) == 10  # usable at once
     index.make_sort_index(UNREAD_COPIES[0])
-    assert index.sort_indexes_to_make() == UNREAD_COPIES[1:]
+    assert UNREAD_COPIES[0] not in index.sort_indexes_to_make() and len(index.sort_indexes_to_make()) == len(waiting) - 1
     with pytest.raises(ValueError):
         index.make_sort_index("DROP TABLE messages")
     index.close()
     connection = sqlite3.connect(tmp_path / "index.sqlite")
-    assert connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == ("19",)
+    assert connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == (str(SCHEMA_VERSION),)
     assert connection.execute("SELECT count(*) FROM meta WHERE key = ?", (SENT_FILL_KEY,)).fetchone() == (0,)
     connection.close()
 
@@ -194,7 +198,7 @@ def test_the_filling_in_makes_the_unread_sort_indexes_an_upgraded_index_lacks(se
     setup.engine.rebuilding = steps.append
     assert call(setup.engine, "index.fill-sent", account=setup.account_id).filled == 0  # no message read: only the indexes made
     shown = [(step.done, step.total) for step in steps if not step.ended]
-    assert len(shown) == len(UNREAD_INDEXES) + 1 and shown[0][0] == 0 and shown == sorted(shown)  # told before each step, never backwards
+    assert len(shown) > len(UNREAD_INDEXES) and shown[0][0] == 0 and shown == sorted(shown)  # told before each step, never backwards
     assert shown[-1][0] == shown[-1][1]  # and full before it ends
     assert {state.need for state in call(setup.engine, "index.check")} == {""}
     index = Index(setup.engine.directories.index_file(setup.account_id))

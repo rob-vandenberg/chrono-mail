@@ -3948,3 +3948,11 @@ Tests: tests/ui/test_ui_startup_view.py::test_a_click_on_the_arrow_of_a_folder_u
 
 Built: folder.rename tells a `working` fact "Renaming folder…" when it starts; src/chrono_mail/engine/rule_folders.py tells "Renaming folder, updating mail rules…" only when a rule names the folder, and an empty `working` fact when that step is over (src/chrono_mail/ui/mainwindow.py shows it, and clears it only if it still shows). The end message and the server rename are unchanged.
 Tests: tests/test_engine_rule_folders.py::test_renaming_a_folder_tells_its_steps_in_order_and_the_rules_step_only_when_a_rule_names_it, tests/ui/test_ui_rule_folders.py::test_the_status_line_shows_the_steps_of_a_folder_rename (both fail on 4.4.537). Pyrefly Linux and win32 and the layer check pass. Review: one Sonnet round, nothing real. The code went out in the push of the startup triangle (same 4.4.538); only these documents followed.
+
+## 2026-11-04 4.4.539 A folder is an object in the index (format 20, D-314)
+
+Cause: every message held its folder's name in the table and about 30 indexes, so a rename rewrote them all (10 s to 90 s for 49,301 messages). Built: src/chrono_mail/index/schema.py and src/chrono_mail/index/index.py: `folders` (id, parent, name), `messages.folder_id`, `folder_numbers` by id; paths made from the rows per connection; `Index.rename_folder` changes one row; the upgrade in a first step, the sort indexes and the removal of the old rows afterwards (src/chrono_mail/engine/commands_folders.py).
+Measured on a throw-away copy, 140,542 messages, file out of memory: upgrade 16 s first step, 77 s behind in 32 steps of at most 10 s; rename of the tree 18 ms (was 90 s); reads warm within about 1 ms, cold mostly several times faster (tables in decision-details/D-314-details.md).
+Tests: tests/test_index_folder_rows.py (20 new; 11 fail on 4.4.538, the 9 that guard behaviour 4.4.538 already had each fail when their line in the new code is broken); tests/index_formats.py turns an index back into format 19 for the upgrade tests. Pyrefly Linux and win32, layer check pass.
+Open: a rename on an IMAP server is not measured.
+

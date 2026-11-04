@@ -1,4 +1,4 @@
-from contextlib import AbstractContextManager, nullcontext
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 import math
 import os
 import threading
@@ -6,13 +6,13 @@ from email.utils import getaddresses
 import re
 import sqlite3
 from dataclasses import dataclass
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Generator, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import override
 
 from chrono_mail.core import MessageFlag, StorageError, shown_name
-from chrono_mail.index.database import IndexDatabase, wrote
+from chrono_mail.index.database import DATABASE_WAIT_MS, IndexDatabase, wrote
 from chrono_mail.index.model import (
     DATE_GROUPS,
     SIZE_GROUPS,
@@ -29,10 +29,19 @@ from chrono_mail.index.model import (
     flags_to_bits,
 )
 from chrono_mail.index.schema import (
+    FIRST_INDEXES,
+    FOLDER_NUMBER_TRIGGERS,
+    FOLDER_NUMBERS_TABLE,
     FOLDER_SEPARATOR,
+    FOLDERS_TABLE,
+    MESSAGE_COLUMNS,
+    MESSAGES_TABLE,
+    OLD_MESSAGES,
     SCHEMA_VERSION,
     SENT_FILL_KEY,
+    SORT_INDEX_PREFIX,
     STATEMENTS,
+    TOP_FOLDER,
     UPGRADE_FROM_11,
     UPGRADE_FROM_13,
     UPGRADE_FROM_15,
@@ -41,9 +50,12 @@ from chrono_mail.index.schema import (
 )
 
 # --- Version ------------------------------------------------------------
-__version__ = "index.py 4.4.528"
+__version__ = "index.py 4.4.539"
 
 # --- Version history ----------------------------------------------------
+# v4.4.539: format 20: a folder is a row of its own and each message holds its id: a rename or a move of a folder changes one row, whatever the
+#           size of its tree; paths are made from the rows (_FolderTree); an older index is upgraded in place in a first step, the sort indexes
+#           and the removal of the old rows follow one at a time (sort_indexes_to_make, make_sort_index) (D-314)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.2.471: format 19: the sort indexes hold each message's id and read mark, remade afterwards one at a time in an upgraded index
 #           (sort_indexes_to_make, make_sort_index) (D-306)
@@ -100,8 +112,12 @@ __version__ = "index.py 4.4.528"
 ACCOUNT_NAME: str = "COALESCE((SELECT name FROM temp.account_names a WHERE a.id = m.received_by), '')"  # the name an account is shown with (Index.account_names)
 
 
+FOLDER_PATH: str = "(SELECT path FROM temp.folder_paths p WHERE p.id = m.folder_id)"  # a message's folder as one text, from the connection's table of paths (Index._folders)
+NO_FOLDER: int = -1  # no message has it: what a folder is asked by that the index has no row for
+UPGRADE_WAIT_MS: int = 3_600_000  # how long a connection waits for another one's upgrade of the same file: as long as it takes, it is no fault of the file
+
 _COLUMNS: str = (
-    "m.store_id, m.folder, m.path, m.flags, m.date, m.size, m.subject, m.sender, m.recipients, m.message_id, m.thread_key, m.has_attachments, m.preview, m.tags, m.sent,"
+    "m.store_id, m.folder_id, m.path, m.flags, m.date, m.size, m.subject, m.sender, m.recipients, m.message_id, m.thread_key, m.has_attachments, m.preview, m.tags, m.sent,"
     f" m.sender_address, m.recipient_names, m.recipient_addresses, {ACCOUNT_NAME}, m.to_shown"
 )
 _SORT_COLUMN: dict[SortField, str] = {
@@ -115,7 +131,7 @@ _SORT_COLUMN: dict[SortField, str] = {
     SortField.FLAGGED: "((m.flags & 4) <> 0)",  # the other yes/no keys are 1 for yes: the newest-first direction puts yes on top
     SortField.REPLIED: "((m.flags & 2) <> 0)",
     SortField.ATTACHMENT: "m.has_attachments",
-    SortField.FOLDER: "m.folder COLLATE NOCASE",
+    SortField.FOLDER: f"{FOLDER_PATH} COLLATE NOCASE",
     SortField.CONVERSATION: "(SELECT count(*) FROM messages c WHERE c.thread_key = m.thread_key)",
     SortField.PREVIEW: "m.preview COLLATE NOCASE",
     SortField.SENDER_FULL: "m.sender COLLATE NOCASE",  # the columns that show people sort by what they show (D-291)
@@ -127,7 +143,7 @@ _SORT_COLUMN: dict[SortField, str] = {
 }
 _NEWEST_WITHIN: frozenset[SortField] = YES_NO_SORTS | {SortField.FOLDER, SortField.CONVERSATION, SortField.PREVIEW}  # messages with the same value: newest first, either way
 _TEXT_GROUP_COLUMN: dict[SortField, str] = {
-    SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender_name", SortField.RECIPIENTS: "m.recipients", SortField.FOLDER: "m.folder", SortField.PREVIEW: "m.preview",
+    SortField.SUBJECT: "m.subject", SortField.SENDER: "m.sender_name", SortField.RECIPIENTS: "m.recipients", SortField.FOLDER: FOLDER_PATH, SortField.PREVIEW: "m.preview",
     SortField.SENDER_FULL: "m.sender", SortField.SENDER_ADDRESS: "m.sender_address", SortField.RECIPIENT_NAMES: "m.recipient_names",
     SortField.RECIPIENT_ADDRESSES: "m.recipient_addresses", SortField.ACCOUNT: ACCOUNT_NAME, SortField.TO_SHOWN: "m.to_shown",
 }
@@ -192,12 +208,25 @@ def _moment(epoch: int | None) -> datetime | None:
         return None
 
 
-def _row(values: tuple[object, ...]) -> IndexedMessage:
-    store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, attachments, preview, tags, sent, *people = values
+@dataclass(frozen=True, slots=True)
+class _FolderTree:
+    """Every folder of the index at one moment, worked out from its rows: its path by its id and its id by its path."""
+
+    version: int  # PRAGMA data_version when read
+    paths: dict[int, tuple[str, ...]]
+    ids: dict[tuple[str, ...], int]
+
+    def inside(self, folder: tuple[str, ...]) -> list[int]:
+        """A folder and every folder inside it, however deep."""
+        return [folder_id for path, folder_id in self.ids.items() if path[: len(folder)] == folder]
+
+
+def _row(values: tuple[object, ...], folder: tuple[str, ...]) -> IndexedMessage:
+    store_id, _, path, flags, date, size, subject, sender, recipients, message_id, thread_key, attachments, preview, tags, sent, *people = values
     sender_address, recipient_names, recipient_addresses, received_by, shown = people
     return IndexedMessage(
         str(store_id),
-        _folder_path(str(folder)),
+        folder,
         str(path),
         flags_from_bits(int(str(flags))),
         _moment(None if date is None else int(str(date))),
@@ -277,6 +306,8 @@ class Index(IndexDatabase):
     _released: Callable[[], None] | None = None  # let go of when closed (when_closed)
     receiver: Receiving | None = None  # the account that received a message added without one (the engine's rule, D-292)
     _account_names: Mapping[str, str] = {}
+    _tree: _FolderTree | None = None  # the folders as last read (_folders)
+    _written: _FolderTree | None = None  # the folders the table of paths holds (_write_paths)
 
     @property
     def account_names(self) -> Mapping[str, str]:
@@ -293,20 +324,120 @@ class Index(IndexDatabase):
     def _prepare(self) -> None:
         self._connection.execute("PRAGMA temp_store = MEMORY")
         self._connection.execute("CREATE TEMP TABLE IF NOT EXISTS account_names (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+        self._connection.execute("CREATE TEMP TABLE IF NOT EXISTS folder_paths (id INTEGER PRIMARY KEY, path TEXT NOT NULL)")
         if self._format() == str(SCHEMA_VERSION):
             return  # the usual case: nothing to make, no lock taken
+        self._connection.execute(f"PRAGMA busy_timeout = {UPGRADE_WAIT_MS}")  # the upgrade of a large index outlasts the usual wait, and a lock is no damage
         with self._transaction():  # looked at again under the write lock: another connection may have made or upgraded it meanwhile (D-247)
             found = self._format()
             if found is None:
                 self._create_schema()
-            elif found in ("17", "18"):  # 18 and 19 only change the sort indexes: made afterwards (make_sort_index), nothing to fill in
-                self._connection.execute("DROP INDEX IF EXISTS messages_by_date_unread")  # 4.2.469 made it; the Unread index serves that sort
-                self._connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
+            elif found in ("17", "18", "19"):  # 18 and 19 only changed the sort indexes: nothing to fill in
+                self._give_folders_rows()
             elif found in ("11", "12", "13", "14", "15", "16"):
                 self._upgrade_in_place(found)
+                self._give_folders_rows()
             elif found != str(SCHEMA_VERSION):
                 # An older format is rebuilt from the messages (format 11 changed what date holds for every message, D-226), a newer one too
                 raise StorageError("The index has an unknown format; rebuild it")
+        self._connection.execute(f"PRAGMA busy_timeout = {DATABASE_WAIT_MS}")
+
+    def _give_folders_rows(self) -> None:
+        """Format 20 (D-314): every folder gets a row and every message its id, inside _prepare's transaction, so an interruption leaves format
+        19 as it was. The rows are copied under their own row ids (the text index goes by them) into a new table beside the old one, which keeps
+        its indexes: removing those reads every page of them (74 s on a cold disk), so that happens afterwards, in steps of its own. A message
+        of a folder the numbers do not know breaks the rule that folder_id is never empty: the index is damaged, and rebuilt."""
+        connection = self._connection
+        for name in ("folder_numbers_added", "folder_numbers_removed", "folder_numbers_changed"):
+            connection.execute(f"DROP TRIGGER {name}")
+        connection.execute(f"ALTER TABLE messages RENAME TO {OLD_MESSAGES}")
+        keys = [str(row[0]) for row in connection.execute("SELECT folder FROM folder_numbers").fetchall()]
+        connection.execute("DROP TABLE folder_numbers")
+        for statement in (FOLDERS_TABLE, MESSAGES_TABLE, FOLDER_NUMBERS_TABLE):
+            connection.execute(statement)
+        connection.execute("CREATE TEMP TABLE folder_keys (key TEXT PRIMARY KEY, id INTEGER NOT NULL)")
+        connection.executemany("INSERT INTO temp.folder_keys VALUES (?, ?)", [(key, self._folder_row(_folder_path(key))) for key in keys])
+        columns = ", ".join(MESSAGE_COLUMNS)
+        connection.execute(
+            f"INSERT INTO messages (folder_id, {columns}) SELECT (SELECT id FROM temp.folder_keys k WHERE k.key = o.folder), {columns} FROM {OLD_MESSAGES} o ORDER BY o.id"
+        )
+        connection.execute("DROP TABLE temp.folder_keys")
+        for statement in FIRST_INDEXES:
+            connection.execute(statement)
+        connection.execute("INSERT INTO folder_numbers SELECT folder_id, count(*), coalesce(sum((flags & 1) = 0), 0) FROM messages GROUP BY folder_id")
+        for statement in FOLDER_NUMBER_TRIGGERS:
+            connection.execute(statement)
+        connection.execute("UPDATE meta SET value = ? WHERE key = 'schema'", (str(SCHEMA_VERSION),))
+
+    @override
+    @contextmanager
+    def _transaction(self) -> Generator[None]:
+        try:
+            with super()._transaction():
+                yield
+        except BaseException:
+            self._tree = None  # a folder made in it is gone again
+            raise
+
+    def _folders(self) -> _FolderTree:
+        """The folders of the index as they are now: read again only when they may have changed (one lookup in SQLite: another connection committed)."""
+        version = int(self._connection.execute("PRAGMA data_version").fetchone()[0])
+        if self._tree is not None and self._tree.version == version:
+            return self._tree
+        inside: dict[int, list[tuple[int, str]]] = {}
+        for folder_id, parent, name in self._connection.execute("SELECT id, parent, name FROM folders"):
+            inside.setdefault(int(parent), []).append((int(folder_id), str(name)))
+        paths: dict[int, tuple[str, ...]] = {}
+        waiting: list[tuple[int, tuple[str, ...]]] = [(TOP_FOLDER, ())]
+        while waiting:
+            parent, path = waiting.pop()
+            for folder_id, name in inside.get(parent, ()):
+                paths[folder_id] = (*path, name)
+                waiting.append((folder_id, paths[folder_id]))
+        self._tree = _FolderTree(version, paths, {path: folder_id for folder_id, path in paths.items()})
+        return self._tree
+
+    def _sort_order(self, sort: SortField, descending: bool) -> str:
+        """The ORDER BY of a list or a search, with what it reads."""
+        if sort is SortField.FOLDER:
+            self._write_paths()
+        return _order(sort, descending)
+
+    def _write_paths(self) -> None:
+        """The paths of the folders in this connection's own table, for a sort or groups by folder: they read them in SQLite, never a call per message."""
+        tree = self._folders()
+        if self._written is not tree:
+            self._connection.execute("DELETE FROM temp.folder_paths")
+            self._connection.executemany("INSERT INTO temp.folder_paths VALUES (?, ?)", [(folder_id, _folder_key(path)) for folder_id, path in tree.paths.items()])
+            self._written = tree
+
+    def _folder_id(self, folder: tuple[str, ...]) -> int:
+        """The row of a folder to ask by; NO_FOLDER when none of its mail ever reached the index."""
+        return self._folders().ids.get(folder or ("",), NO_FOLDER)
+
+    def _path_of(self, folder_id: int) -> tuple[str, ...]:
+        """A message's folder. A folder read before its row reached this connection is read again; a row gone by then held the last of a
+        message that is gone as well."""
+        found = self._folders().paths.get(folder_id)
+        if found is None:
+            self._tree = None
+            found = self._folders().paths.get(folder_id)
+        return found or ("",)
+
+    def _folder_row(self, folder: tuple[str, ...]) -> int:
+        """The row of a folder, made with its parents when it has none yet. Inside a transaction."""
+        folder = folder or ("",)
+        tree = self._folders()
+        parent = TOP_FOLDER
+        for depth in range(1, len(folder) + 1):
+            known = tree.ids.get(folder[:depth])
+            if known is None:
+                made = self._connection.execute("INSERT INTO folders (parent, name) VALUES (?, ?)", (parent, folder[depth - 1])).lastrowid
+                assert made is not None
+                known = made
+                self._tree = None
+            parent = known
+        return parent
 
     def _upgrade_in_place(self, version: str) -> None:
         """Format 12 added the moment each message carries (sent), format 13 the attachments by what the text shows (D-235), format 14 the
@@ -326,19 +457,23 @@ class Index(IndexDatabase):
             self._connection.execute("INSERT OR REPLACE INTO meta VALUES (?, '1')", (FILL_HEADERS_KEY,))
 
     def sort_indexes_to_make(self) -> list[str]:
-        """After an upgrade in place: the statements of the sort indexes this index does not have yet as format 19 has them (D-305, D-306):
-        missing, or without each message's id."""
-        return [
-            statement for statement in SORT_INDEXES
-            if "store_id" not in {str(row[0]) for row in self._connection.execute("SELECT name FROM pragma_index_info(?)", (statement.split()[2],))}
-        ]
+        """After an upgrade in place, the steps still to take (D-305, D-306, D-314): the sort indexes this index does not have yet, each with
+        the removal of the old index it replaces; then the old indexes that are left, one by one; then the old rows."""
+        found = {str(row[0]): str(row[1]) for row in self._connection.execute("SELECT name, tbl_name FROM sqlite_master WHERE type IN ('index', 'table') AND sql IS NOT NULL")}
+        waiting = [statement for statement in SORT_INDEXES if statement.split()[2] not in found]
+        if OLD_MESSAGES in found:
+            replaced = {statement.split()[2].removeprefix(SORT_INDEX_PREFIX) for statement in waiting}
+            waiting += [f"DROP INDEX {name}" for name, table in found.items() if table == OLD_MESSAGES and name != OLD_MESSAGES and name not in replaced]
+            waiting.append(f"DROP TABLE {OLD_MESSAGES}")
+        return waiting
 
     def make_sort_index(self, statement: str) -> None:
-        """One of the sort indexes (a statement sort_indexes_to_make gave), the older one of its name replaced, in a step of its own."""
-        if statement not in SORT_INDEXES:
-            raise ValueError("Not a sort index")
+        """One step that sort_indexes_to_make gave, on its own: a sort index, the old one it replaces removed with it."""
+        if statement not in self.sort_indexes_to_make():
+            raise ValueError("Not a step of this index")
         with self._transaction():
-            self._connection.execute(f"DROP INDEX IF EXISTS {statement.split()[2]}")
+            if statement in SORT_INDEXES:
+                self._connection.execute(f"DROP INDEX IF EXISTS {statement.split()[2].removeprefix(SORT_INDEX_PREFIX)}")
             self._connection.execute(statement)
 
     def fill_from_headers(self) -> bool:
@@ -387,9 +522,9 @@ class Index(IndexDatabase):
         if filled_to is None:
             return []
         rows = self._connection.execute(
-            "SELECT id, store_id, folder, path FROM messages WHERE id > ? ORDER BY id LIMIT ?", (int(str(filled_to[0])), limit)
+            "SELECT id, store_id, folder_id, path FROM messages WHERE id > ? ORDER BY id LIMIT ?", (int(str(filled_to[0])), limit)
         ).fetchall()
-        return [(int(row_id), str(store_id), _folder_path(str(folder)), str(path)) for row_id, store_id, folder, path in rows]
+        return [(int(row_id), str(store_id), self._path_of(int(folder_id)), str(path)) for row_id, store_id, folder_id, path in rows]
 
     def fill_sent(self, moments: Sequence[tuple[int, IndexEntry | None]], filled_to: int, finished: bool) -> None:
         """The sent moments, attachments, people columns and receiving account of these rows, as read from their messages again (None: the
@@ -441,12 +576,12 @@ class Index(IndexDatabase):
         replaced = self._connection.execute("DELETE FROM messages WHERE store_id = ?", (entry.store_id,)).rowcount
         kept = str(before[0]) if before is not None and before[0] else ""  # a message written again (a draft saved, its tags) keeps who received it
         cursor = self._connection.execute(
-            "INSERT INTO messages (store_id, folder, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview, tags, sender_name, send_at, sent,"
+            "INSERT INTO messages (store_id, folder_id, path, flags, date, size, subject, sender, recipients, message_id, thread_key, has_attachments, preview, tags, sender_name, send_at, sent,"
             " sender_address, recipient_names, recipient_addresses, received_by, to_shown)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 entry.store_id,
-                _folder_key(entry.folder),
+                self._folder_row(entry.folder),
                 entry.path,
                 flags_to_bits(entry.flags),
                 _epoch(entry.date),
@@ -522,8 +657,8 @@ class Index(IndexDatabase):
     def scheduled(self) -> list[tuple[str, tuple[str, ...], int]]:
         """Every message that has a send time: (store id, folder, moment), soonest first. A message that could not be read
         has moment 0 (UNKNOWN_SEND_TIME). Only these rows are read (a partial index holds them), never the whole folder."""
-        rows = self._connection.execute("SELECT store_id, folder, send_at FROM messages WHERE send_at IS NOT NULL ORDER BY send_at, id").fetchall()
-        return [(str(store_id), _folder_path(str(folder)), int(moment)) for store_id, folder, moment in rows]
+        rows = self._connection.execute("SELECT store_id, folder_id, send_at FROM messages WHERE send_at IS NOT NULL ORDER BY send_at, id").fetchall()
+        return [(str(store_id), self._path_of(int(folder_id)), int(moment)) for store_id, folder_id, moment in rows]
 
     def remove(self, store_id: str) -> None:
         try:
@@ -538,9 +673,10 @@ class Index(IndexDatabase):
         """Forget every message of a folder (the folder itself has been removed from the store)."""
         try:
             with self._transaction():
-                self._connection.execute("DELETE FROM text WHERE rowid IN (SELECT id FROM messages WHERE folder = ?)", (_folder_key(folder),))
-                self._connection.execute("DELETE FROM message_tags WHERE store_id IN (SELECT store_id FROM messages WHERE folder = ?)", (_folder_key(folder),))
-                cursor = self._connection.execute("DELETE FROM messages WHERE folder = ?", (_folder_key(folder),))
+                folder_id = self._folder_id(folder)
+                self._connection.execute("DELETE FROM text WHERE rowid IN (SELECT id FROM messages WHERE folder_id = ?)", (folder_id,))
+                self._connection.execute("DELETE FROM message_tags WHERE store_id IN (SELECT store_id FROM messages WHERE folder_id = ?)", (folder_id,))
+                cursor = self._connection.execute("DELETE FROM messages WHERE folder_id = ?", (folder_id,))
                 return cursor.rowcount
         except sqlite3.Error as error:
             raise StorageError(f"The index could not be updated: {type(error).__name__}") from None
@@ -561,19 +697,39 @@ class Index(IndexDatabase):
         return {str(row[0]) for row in self._connection.execute("SELECT DISTINCT store_id FROM message_tags")}
 
     def move(self, store_id: str, folder: tuple[str, ...], path: str) -> None:
-        self._update("UPDATE messages SET folder = ?, path = ? WHERE store_id = ?", (_folder_key(folder), path, store_id))
-
-    def rename_folder(self, old: tuple[str, ...], new: tuple[str, ...]) -> None:
         try:
             with self._transaction():
-                for (key,) in self._connection.execute("SELECT DISTINCT folder FROM messages").fetchall():
-                    path = _folder_path(key)
-                    if path[: len(old)] == old:
-                        self._connection.execute(
-                            "UPDATE messages SET folder = ? WHERE folder = ?", (_folder_key(new + path[len(old) :]), key)
-                        )
+                self._connection.execute("UPDATE messages SET folder_id = ?, path = ? WHERE store_id = ?", (self._folder_row(folder), path, store_id))
         except sqlite3.Error as error:
             raise StorageError(f"The index could not be updated: {type(error).__name__}") from None
+
+    def rename_folder(self, old: tuple[str, ...], new: tuple[str, ...]) -> None:
+        """A folder gets another name or another parent: its one row changes, whatever the size of its tree (D-314). Only a name that holds
+        mail already, or a place inside the folder itself, takes more: then its mail joins the folders of the new name."""
+        try:
+            with self._transaction():
+                tree = self._folders()
+                moved = tree.ids.get(old)
+                if moved is None or old == new:
+                    return
+                taken = tree.inside(new)
+                marks = ", ".join("?" * len(taken))
+                if new[: len(old)] == old or self._connection.execute(f"SELECT 1 FROM folder_numbers WHERE folder_id IN ({marks}) AND messages > 0 LIMIT 1", taken).fetchone():
+                    for path, folder_id in sorted((path, folder_id) for path, folder_id in tree.ids.items() if path[: len(old)] == old):
+                        self._connection.execute("UPDATE messages SET folder_id = ? WHERE folder_id = ?", (self._folder_row(new + path[len(old):]), folder_id))
+                    return
+                self._connection.execute(f"DELETE FROM folders WHERE id IN ({marks})", taken)  # rows whose mail has left: the name is free
+                self._connection.execute(f"DELETE FROM folder_numbers WHERE folder_id IN ({marks})", taken)
+                self._tree = None
+                parent = self._folder_row(new[:-1]) if len(new) > 1 else TOP_FOLDER
+                self._connection.execute("UPDATE folders SET parent = ?, name = ? WHERE id = ?", (parent, new[-1], moved))
+                self._tree = None
+        except sqlite3.Error as error:
+            raise StorageError(f"The index could not be updated: {type(error).__name__}") from None
+
+    def _messages_of(self, rows: Iterable[tuple[object, ...]]) -> list[IndexedMessage]:
+        paths = self._folders().paths
+        return [_row(values, paths.get(int(str(values[1]))) or self._path_of(int(str(values[1])))) for values in rows]
 
     def _update(self, statement: str, parameters: tuple[object, ...]) -> None:
         try:
@@ -592,35 +748,36 @@ class Index(IndexDatabase):
 
     def snapshot(self) -> dict[str, tuple[tuple[str, ...], str]]:
         """store id -> (folder, relative path) for every message, to compare with the store."""
+        paths = self._folders().paths
         return {
-            str(store_id): (_folder_path(str(folder)), str(path))
-            for store_id, folder, path in self._connection.execute("SELECT store_id, folder, path FROM messages")
+            str(store_id): (paths.get(int(folder_id)) or self._path_of(int(folder_id)), str(path))
+            for store_id, folder_id, path in self._connection.execute("SELECT store_id, folder_id, path FROM messages")
         }
 
     def get(self, store_id: str) -> IndexedMessage | None:
         row = self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.store_id = ?", (store_id,)).fetchone()
-        return None if row is None else _row(row)
+        return None if row is None else self._messages_of([row])[0]
 
     def numbers(self, folder: tuple[str, ...]) -> tuple[int, int]:
         """A folder's messages and unread messages: one lookup in the numbers the database keeps with every change (R-10)."""
         try:
-            found = self._connection.execute("SELECT messages, unread FROM folder_numbers WHERE folder = ?", (_folder_key(folder),)).fetchone()
+            found = self._connection.execute("SELECT messages, unread FROM folder_numbers WHERE folder_id = ?", (self._folder_id(folder),)).fetchone()
         except sqlite3.Error as error:
             raise StorageError(f"The index could not be read: {error}") from None
         return (0, 0) if found is None else (max(0, int(found[0])), max(0, int(found[1])))
 
     def count(self, folder: tuple[str, ...], unread_only: bool = False) -> int:
-        sql = "SELECT count(*) FROM messages m WHERE m.folder = ?" + (" AND (m.flags & 1) = 0" if unread_only else "")
-        return int(self._connection.execute(sql, (_folder_key(folder),)).fetchone()[0])
+        sql = "SELECT count(*) FROM messages m WHERE m.folder_id = ?" + (" AND (m.flags & 1) = 0" if unread_only else "")
+        return int(self._connection.execute(sql, (self._folder_id(folder),)).fetchone()[0])
 
     def position(self, folder: tuple[str, ...], store_id: str, sort: SortField = SortField.DATE, descending: bool = True, unread_only: bool = False) -> int | None:
         """Where a message stands in a folder in the chosen order, as page() lists it (0 is the first), or None when it is not there."""
         sql = (
-            f"SELECT place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {_order(sort, descending)}) - 1 AS place FROM messages m WHERE m.folder = ?"
+            f"SELECT place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {self._sort_order(sort, descending)}) - 1 AS place FROM messages m WHERE m.folder_id = ?"
             + (" AND (m.flags & 1) = 0" if unread_only else "")
             + ") WHERE id = ?"
         )
-        found = self._connection.execute(sql, (_folder_key(folder), store_id)).fetchone()
+        found = self._connection.execute(sql, (self._folder_id(folder), store_id)).fetchone()
         return None if found is None else int(found[0])
 
     def positions(self, folder: tuple[str, ...], store_ids: Iterable[str], sort: SortField = SortField.DATE, descending: bool = True) -> dict[str, int]:
@@ -631,10 +788,10 @@ class Index(IndexDatabase):
         for start in range(0, len(wanted), 500):
             chunk = wanted[start:start + 500]
             sql = (
-                f"SELECT id, place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {_order(sort, descending)}) - 1 AS place FROM messages m WHERE m.folder = ?)"
+                f"SELECT id, place FROM (SELECT m.store_id AS id, ROW_NUMBER() OVER (ORDER BY {self._sort_order(sort, descending)}) - 1 AS place FROM messages m WHERE m.folder_id = ?)"
                 f" WHERE id IN ({', '.join('?' * len(chunk))})"
             )
-            for store_id, place in self._connection.execute(sql, (_folder_key(folder), *chunk)):
+            for store_id, place in self._connection.execute(sql, (self._folder_id(folder), *chunk)):
                 found[str(store_id)] = int(place)
         return found
 
@@ -649,22 +806,21 @@ class Index(IndexDatabase):
     ) -> list[IndexedMessage]:
         """One screenful of a folder, in the chosen order."""
         sql = (
-            f"SELECT {_COLUMNS} FROM messages m WHERE m.folder = ?"
+            f"SELECT {_COLUMNS} FROM messages m WHERE m.folder_id = ?"
             + (" AND (m.flags & 1) = 0" if unread_only else "")
-            + f" ORDER BY {_order(sort, descending)} LIMIT ? OFFSET ?"
+            + f" ORDER BY {self._sort_order(sort, descending)} LIMIT ? OFFSET ?"
         )
-        rows = self._connection.execute(sql, (_folder_key(folder), max(0, limit), max(0, offset))).fetchall()
-        return [_row(row) for row in rows]
+        return self._messages_of(self._connection.execute(sql, (self._folder_id(folder), max(0, limit), max(0, offset))).fetchall())
 
     def with_message_id(self, message_id: str) -> list[IndexedMessage]:
         rows = self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.message_id = ?", (message_id,)).fetchall()
-        return [_row(row) for row in rows]
+        return self._messages_of(rows)
 
     def thread_members(self, thread_key: str) -> list[IndexedMessage]:
         rows = self._connection.execute(
             f"SELECT {_COLUMNS} FROM messages m WHERE m.thread_key = ? ORDER BY m.date, m.id", (thread_key,)
         ).fetchall()
-        return [_row(row) for row in rows]
+        return self._messages_of(rows)
 
     def suggest(self, text: str, limit: int = 8) -> list[KnownAddress]:
         """Addresses whose name or address contains the text, the ones written to most often first (a start of a word first of all)."""
@@ -688,9 +844,9 @@ class Index(IndexDatabase):
         needle = wanted.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         try:
             rows = self._connection.execute(
-                "SELECT recipient_addresses, recipients FROM messages WHERE folder = ? AND (recipient_addresses LIKE ? ESCAPE '\\'"
+                "SELECT recipient_addresses, recipients FROM messages WHERE folder_id = ? AND (recipient_addresses LIKE ? ESCAPE '\\'"
                 " OR (recipient_addresses = '' AND recipients LIKE ? ESCAPE '\\')) LIMIT 50",
-                (_folder_key(folder), f"%{needle}%", f"%{needle}%"),
+                (self._folder_id(folder), f"%{needle}%", f"%{needle}%"),
             ).fetchall()
         except sqlite3.Error as error:
             raise StorageError(f"The index could not be read: {error}") from None
@@ -723,10 +879,10 @@ class Index(IndexDatabase):
     ) -> list[IndexedMessage]:
         """Messages matching the words and the filters, newest first unless another order is asked for. An empty query lists by filters only."""
         source, where, parameters = self._search_parts(query, folder, filters, max(0, offset) + max(0, limit))
-        sql = f"SELECT {_COLUMNS} FROM {source}{where} ORDER BY {_order(sort, descending)} LIMIT ? OFFSET ?"
+        sql = f"SELECT {_COLUMNS} FROM {source}{where} ORDER BY {self._sort_order(sort, descending)} LIMIT ? OFFSET ?"
         parameters.extend([max(0, limit), max(0, offset)])
         try:
-            return [_row(row) for row in self._connection.execute(sql, parameters).fetchall()]
+            return self._messages_of(self._connection.execute(sql, parameters).fetchall())
         except sqlite3.OperationalError as error:
             raise StorageError(f"The search could not be run: {error}") from None
 
@@ -739,7 +895,7 @@ class Index(IndexDatabase):
         shared tuple."""
         source, where, parameters = self._search_parts(query, folder, filters, None if limit is None else max(0, limit))
         unread_values = list(parameters)
-        order = _order(sort, descending)
+        order = self._sort_order(sort, descending)
         tail = " LIMIT ?" if limit is not None else ""
         if limit is not None:
             parameters.append(max(0, limit))
@@ -749,10 +905,10 @@ class Index(IndexDatabase):
                 listed = [(str(store_id), folder, rows.setdefault(str(store_id), int(row))) for store_id, row in self._connection.execute(
                     f"SELECT m.store_id, m.id FROM {source}{where} ORDER BY {order}{tail}", parameters)]
             else:
-                paths: dict[str, tuple[str, ...]] = {}
+                paths = self._folders().paths
                 listed = [
-                    (str(store_id), paths.get(key) or paths.setdefault(key, _folder_path(str(key))), rows.setdefault(str(store_id), int(row)))
-                    for store_id, row, key in self._connection.execute(f"SELECT m.store_id, m.id, m.folder FROM {source}{where} ORDER BY {order}{tail}", parameters)
+                    (str(store_id), paths.get(int(folder_id)) or self._path_of(int(folder_id)), rows.setdefault(str(store_id), int(row)))
+                    for store_id, row, folder_id in self._connection.execute(f"SELECT m.store_id, m.id, m.folder_id FROM {source}{where} ORDER BY {order}{tail}", parameters)
                 ]
             # The read mark is in no sort index (a mark change would rewrite them all): the unread ones of the view, from the Unread index.
             joined = " AND " if where else " WHERE "
@@ -774,7 +930,7 @@ class Index(IndexDatabase):
         rows: dict[str, int] = {}
         found: list[tuple[str, object, int | None]] = []
         try:
-            sql = f"SELECT m.store_id, m.id, {column}, {newest} FROM {source}{where} ORDER BY {_order(sort, descending)} LIMIT ?"
+            sql = f"SELECT m.store_id, m.id, {column}, {newest} FROM {source}{where} ORDER BY {self._sort_order(sort, descending)} LIMIT ?"
             for store_id, row, value, date in self._connection.execute(sql, parameters):
                 rows[str(store_id)] = int(row)
                 found.append((str(store_id), value, None if date is None else int(date)))
@@ -827,15 +983,13 @@ class Index(IndexDatabase):
             numbers = [known[store_id] for store_id in wanted if store_id in known]
         for start in range(0, len(numbers), 500):
             chunk = numbers[start:start + 500]
-            for values in self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.id IN ({', '.join('?' * len(chunk))})", chunk):
-                message = _row(values)
+            for message in self._messages_of(self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.id IN ({', '.join('?' * len(chunk))})", chunk).fetchall()):
                 if message.store_id in asked:  # a row that holds another message now (removed and added again) does not count
                     found[message.store_id] = message
         wanted = [store_id for store_id in wanted if store_id not in found]
         for start in range(0, len(wanted), 500):
             chunk = wanted[start:start + 500]
-            for values in self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.store_id IN ({', '.join('?' * len(chunk))})", chunk):
-                message = _row(values)
+            for message in self._messages_of(self._connection.execute(f"SELECT {_COLUMNS} FROM messages m WHERE m.store_id IN ({', '.join('?' * len(chunk))})", chunk).fetchall()):
                 found[message.store_id] = message
         return found
 
@@ -875,6 +1029,8 @@ class Index(IndexDatabase):
             except sqlite3.OperationalError as error:
                 raise StorageError(f"The search could not be run: {error}") from None
         else:
+            if sort is SortField.FOLDER:
+                self._write_paths()
             column = _TEXT_GROUP_COLUMN[sort]
             sql = (
                 f"SELECT lower({column}), {column}, count(*) FROM {source}{where}"
@@ -899,7 +1055,7 @@ class Index(IndexDatabase):
         (counted through the marks' own indexes, no further than the decision needs)."""
         enough = math.isqrt(rows * self._folder_size(folder, False))
         marks = " AND ".join(selective)
-        marked = int(self._connection.execute(f"SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder = ? AND {marks} LIMIT ?)", (_folder_key(folder or ()), enough + 1)).fetchone()[0])
+        marked = int(self._connection.execute(f"SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder_id = ? AND {marks} LIMIT ?)", (self._folder_id(folder or ()), enough + 1)).fetchone()[0])
         return marked <= enough
 
     def _tagged(self, tag: str, at_most: int) -> int:
@@ -911,13 +1067,10 @@ class Index(IndexDatabase):
         if folder is None:
             found = self._connection.execute("SELECT coalesce(sum(messages), 0) FROM folder_numbers").fetchone()
         elif subfolders:
-            key = _folder_key(folder)
-            found = self._connection.execute(
-                "SELECT coalesce(sum(messages), 0) FROM folder_numbers WHERE folder = ? OR (folder > ? AND folder < ?)",
-                (key, key + FOLDER_SEPARATOR, key + chr(ord(FOLDER_SEPARATOR) + 1)),
-            ).fetchone()
+            inside = self._folders().inside(folder)
+            found = self._connection.execute(f"SELECT coalesce(sum(messages), 0) FROM folder_numbers WHERE folder_id IN ({', '.join('?' * len(inside))})", inside).fetchone()
         else:
-            found = self._connection.execute("SELECT messages FROM folder_numbers WHERE folder = ?", (_folder_key(folder),)).fetchone()
+            found = self._connection.execute("SELECT messages FROM folder_numbers WHERE folder_id = ?", (self._folder_id(folder),)).fetchone()
         return max(0, int(found[0])) if found is not None else 0
 
     def _search_parts(self, query: str, folder: tuple[str, ...] | None, filters: SearchFilter, rows: int | None = None) -> tuple[str, str, list[object]]:
@@ -933,7 +1086,7 @@ class Index(IndexDatabase):
             source = "text t JOIN messages m ON m.id = t.rowid"
             conditions.append("t.text MATCH ?")
             parameters.append(expression)
-        # With a text query the words must be looked up first. A bare "m.folder = ?" or "m.date >= ?" lets SQLite walk
+        # With a text query the words must be looked up first. A bare "m.folder_id = ?" or "m.date >= ?" lets SQLite walk
         # the folder's date index instead and probe the full-text table once per row (measured: 4 seconds instead of
         # 0.1 second with 300,000 hits). The unary plus on a column stops SQLite from using an index for that condition.
         steer = "+" if expression else ""
@@ -979,13 +1132,12 @@ class Index(IndexDatabase):
         )
         place = ""  # the folder condition with {0} for the steer, asked again with the marks of a view that gathers
         place_values: list[object] = []
-        if folder is not None and filters.subfolders:  # the folder and those inside it: one range of the folder index ("\x1f" + 1 is "\x20")
-            key = _folder_key(folder)
-            place = "({0}m.folder = ? OR ({0}m.folder > ? AND {0}m.folder < ?))"
-            place_values = [key, key + FOLDER_SEPARATOR, key + chr(ord(FOLDER_SEPARATOR) + 1)]
+        if folder is not None and filters.subfolders:  # the folder and those inside it
+            place_values = list[object](self._folders().inside(folder))
+            place = f"{{0}}m.folder_id IN ({', '.join('?' * len(place_values))})"
         elif folder is not None:
-            place = "{0}m.folder = ?"
-            place_values = [_folder_key(folder)]
+            place = "{0}m.folder_id = ?"
+            place_values = [self._folder_id(folder)]
         if place:
             conditions.append(place.format("+" if gathering or tag_leads else steer))
             parameters.extend(place_values)
@@ -1033,7 +1185,7 @@ class Index(IndexDatabase):
             parameters.extend(named)
         if filters.newest_per_thread and not expression:
             conditions.append(
-                "NOT EXISTS (SELECT 1 FROM messages n WHERE n.thread_key = m.thread_key AND n.folder = m.folder AND n.id != m.id"
+                "NOT EXISTS (SELECT 1 FROM messages n WHERE n.thread_key = m.thread_key AND n.folder_id = m.folder_id AND n.id != m.id"
                 " AND (COALESCE(n.date, -4611686018427387904) > COALESCE(m.date, -4611686018427387904)"
                 " OR (COALESCE(n.date, -4611686018427387904) = COALESCE(m.date, -4611686018427387904) AND n.id > m.id)))"
             )

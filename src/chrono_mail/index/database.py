@@ -8,15 +8,17 @@ from pathlib import Path
 from chrono_mail.core import StorageError
 
 # --- Version ------------------------------------------------------------
-__version__ = "database.py 3.6.350"
+__version__ = "database.py 4.4.539"
 
 # --- Version history ----------------------------------------------------
+# v4.4.539: DATABASE_WAIT_MS: the wait for another writer has a name, for the index upgrade that waits longer (D-314)
 # v3.6.350: writes: how many changes this program wrote to an index file that were not told at once (a big quiet job's commit, a rebuilt
 #           file put in place); told_at_once marks the others (a single change of the mailbox: the list hears it as a fact)
 # v2.5.335: _format: the format a file holds, read again under the write lock before anything is made or upgraded (D-247)
 # v1.8.263: R-16: the one copy of opening an index file and of its transactions (was in index/index.py and pimstore/index.py)
 
 MINIMUM_SQLITE_VERSION: tuple[int, int, int] = (3, 43, 0)  # contentless FTS5 tables that allow deletes
+DATABASE_WAIT_MS: int = 30_000  # how long a change waits for another writer
 _DAMAGED: str = "The index is damaged; rebuild it"
 _WRITES: dict[str, int] = {}  # index file -> changes this program wrote to it, not told at once (one copy runs per person, D-137)
 _WRITES_LOCK = threading.Lock()
@@ -90,7 +92,7 @@ class IndexDatabase:
             raise StorageError(f"SQLite {sqlite3.sqlite_version} is too old; 3.43 or newer is needed")
         self.path: Path = path
         try:
-            self._connection: sqlite3.Connection = sqlite3.connect(path, isolation_level=None, timeout=30)  # waits for another writer
+            self._connection: sqlite3.Connection = sqlite3.connect(path, isolation_level=None, timeout=DATABASE_WAIT_MS / 1000)  # waits for another writer
         except sqlite3.DatabaseError:
             raise StorageError(_DAMAGED) from None
         try:

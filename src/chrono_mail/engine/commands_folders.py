@@ -13,14 +13,14 @@ from chrono_mail.engine.session import Engine, index_lock, rebuild_abort, talks_
 from chrono_mail.engine.receiving import Receiver
 from chrono_mail.index import Index, IndexEntry, entry_from_raw
 from chrono_mail.index.entry import header_block
-from chrono_mail.index.schema import SORT_INDEXES
 from chrono_mail.store import Store
 from chrono_mail.sync import reconcile_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_folders.py 4.4.538"
+__version__ = "commands_folders.py 4.4.539"
 
 # --- Version history ----------------------------------------------------
+# v4.4.539: the steps after an upgrade are counted from how many there were: the removal of the old rows is one of them (D-314)
 # v4.4.538: folder.rename tells that the folder is being renamed (working), for the status line
 # v4.2.471: the sort indexes of format 19 (each message's id and read mark, D-306) are remade the same way
 # v4.2.469: index.fill-sent also makes the unread sort indexes an upgraded index lacks, one at a time, stepping aside between them (D-305)
@@ -293,9 +293,10 @@ def index_fill_sent(engine: Engine, parameters: AccountParameters) -> FillResult
 
 
 def _make_sort_indexes(engine: Engine, settings: AccountSettings, store: Store, aborted: Callable[[], bool], shown: bool) -> None:
-    """The sort indexes an upgraded index does not have yet as format 19 has them (D-305, D-306), one at a time, never while the person's command runs; when
-    shown, each step is told before it starts, as the share of the index's messages its indexes make up."""
+    """The steps an upgraded index still has to take: its sort indexes and the removal of its old rows (D-305, D-306, D-314), one at a time, never while
+    the person's command runs; when shown, each step is told before it starts, as the share of the index's messages the steps made up."""
     account_id = settings.account.account_id
+    steps = 0  # how many there were at the start
     while True:
         engine.step_aside(aborted)
         if aborted() or engine.stop_event.is_set():
@@ -310,7 +311,8 @@ def _make_sort_indexes(engine: Engine, settings: AccountSettings, store: Store, 
                 return
             if shown:
                 total = index.message_count()
-                engine.rebuilding(RebuildStep(account_id, total * (len(SORT_INDEXES) - len(waiting)) // len(SORT_INDEXES), total, usable=True))
+                steps = max(steps, len(waiting))
+                engine.rebuilding(RebuildStep(account_id, total * (steps - len(waiting)) // steps, total, usable=True))
             index.make_sort_index(waiting[0])
         finally:
             index.close()

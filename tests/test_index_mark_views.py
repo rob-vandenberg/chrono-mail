@@ -10,9 +10,10 @@ from tests.mailfactory import raw_message
 from tests.test_index_unread_sorts import INDEXED_SORTS
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_mark_views.py 4.2.470"
+__version__ = "test_index_mark_views.py 4.4.539"
 
 # --- Version history ----------------------------------------------------
+# v4.4.539: sort indexes by the folder's id (D-314)
 # v4.2.470: Initial: a Flagged or Tags view sorted by any column reads only its marked mail; Unreplied is counted through its index (D-305)
 
 
@@ -39,7 +40,7 @@ def _plans(index: Index, asked: list[str]) -> list[str]:
         " ".join(str(row[3]) for row in index._connection.execute("EXPLAIN QUERY PLAN " + statement))  # noqa: SLF001
         for statement in asked
         if statement.lstrip().upper().startswith("SELECT") and "FROM messages m" in statement
-        and not statement.startswith(("SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder", "SELECT m.store_id FROM "))  # nor the view's unread ones (D-306)  # the count of its marked mail (_few_marked)
+        and not statement.startswith(("SELECT count(*) FROM (SELECT 1 FROM messages m WHERE m.folder_id", "SELECT m.store_id FROM "))  # nor the view's unread ones (D-306)  # the count of its marked mail (_few_marked)
     ]
     index.close()
     return plans
@@ -65,7 +66,7 @@ def test_a_flagged_or_tagged_view_sorted_by_any_column_reads_only_its_marked_mai
     assert len(plans) == 3
     for plan in plans:
         if view == "flagged":
-            assert "USING INTEGER PRIMARY KEY (rowid=?)" in plan and "messages_by_flagged (folder=? AND <expr>=?)" in plan, plan  # by their rows
+            assert "USING INTEGER PRIMARY KEY (rowid=?)" in plan and "messages_by_flagged (folder_id=? AND <expr>=?)" in plan, plan  # by their rows
         else:
             assert "message_tags_by_tag (tag=?)" in plan and "sqlite_autoindex_messages_1 (store_id=?)" in plan, plan  # by their ids
             assert "SEARCH m USING INDEX messages_by_" not in plan, plan  # never the folder's sort order
@@ -90,7 +91,7 @@ def test_an_unreplied_view_is_counted_through_the_replied_index(tmp_path: Path) 
     assert index.tally("", ("Inbox",), SearchFilter(replied=False)) == (40, 0)
     index._connection.set_trace_callback(None)  # noqa: SLF001
     plans = _plans(index, asked)
-    assert len(plans) == 1 and "messages_by_replied (folder=? AND <expr>=?)" in plans[0], plans
+    assert len(plans) == 1 and "messages_by_replied (folder_id=? AND <expr>=?)" in plans[0], plans
 
 
 def test_how_a_tags_mail_is_found_is_chosen_without_reading_its_messages(tmp_path: Path) -> None:

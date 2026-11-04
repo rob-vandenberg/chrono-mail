@@ -12,6 +12,7 @@ from chrono_mail.index import Index, IndexEntry, entry_from_raw
 from chrono_mail.index.entry import header_block
 from chrono_mail.index.model import SortField
 from chrono_mail.index.schema import FILL_HEADERS_KEY, SENT_FILL_KEY
+from tests.index_formats import as_format_19
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_engine_rebuilds import without_format_16
@@ -19,9 +20,10 @@ from tests.test_engine_rebuilds import without_format_16
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_index_speed.py 4.2.430"
+__version__ = "test_engine_index_speed.py 4.4.539"
 
 # --- Version history ----------------------------------------------------
+# v4.4.539: the old formats start from format 19 (tests/index_formats.py, D-314)
 # v4.2.430: names written readably (written_address); the junk filter's trust reads the addresses column; format 17: the person From / To shows comes from each message's own addresses; 15 and 16 refilled from the headers
 # v4.2.429: Initial: format 16 (From / To for mail one sent sorts by exactly what it shows), the filling in after an upgrade from format 15
 #           reads nothing (from 15) or only the headers (from 14) and steps aside while the person's command runs, the Account sort by the names in SQLite (D-295, D-229)
@@ -55,6 +57,7 @@ def _upgraded_from(setup: Setup, version: str, monkeypatch: pytest.MonkeyPatch) 
     assert call(setup.engine, "mail.send", account=setup.account_id, to="bea@example.org", subject="Sent", body="hi").sent
     connection = sqlite3.connect(setup.engine.directories.index_file(setup.account_id))
     if version == "16":
+        as_format_19(connection)
         connection.execute("UPDATE messages SET to_shown = ''")  # as 4.2.429 left it for a name that looks like an address
     else:
         without_format_16(connection)

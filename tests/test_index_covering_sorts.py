@@ -7,7 +7,8 @@ import pytest
 from chrono_mail.core import MessageFlag, MessageRef
 from chrono_mail.index import Index, IndexEntry, entry_from_raw
 from chrono_mail.index.model import SearchFilter, SortField
-from chrono_mail.index.schema import SORT_INDEXES
+from chrono_mail.index.schema import FIRST_INDEXES, SCHEMA_VERSION, SORT_INDEX_PREFIX, SORT_INDEXES
+from tests.index_formats import as_format_19
 from tests.mailfactory import raw_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_index_unread_sorts import INDEXED_SORTS
@@ -15,9 +16,10 @@ from tests.test_index_unread_sorts import INDEXED_SORTS
 __all__ = ["setup"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_index_covering_sorts.py 4.2.471"
+__version__ = "test_index_covering_sorts.py 4.4.539"
 
 # --- Version history ----------------------------------------------------
+# v4.4.539: format 18 starts from format 19; sort indexes by the folder's id (D-314)
 # v4.2.471: Initial: a sort reads only its index, several folders are ordered in one question, rows are read by the numbers an order
 #           gave and found again by their ids when those no longer hold them, format 18 is upgraded and its indexes remade (D-306)
 
@@ -105,9 +107,10 @@ def test_rows_remembered_for_an_index_file_are_never_used_for_a_rebuilt_one(tmp_
 
 def _as_format_18(path: Path) -> None:
     connection = sqlite3.connect(path)
+    as_format_19(connection)
     for statement in SORT_INDEXES:
-        connection.execute(f"DROP INDEX {statement.split()[2]}")
-        connection.execute(statement.replace(", store_id, flags)", ")").replace(", store_id)", ")"))
+        connection.execute(f"DROP INDEX {statement.split()[2].removeprefix(SORT_INDEX_PREFIX)}")
+        connection.execute(statement.replace(SORT_INDEX_PREFIX, "", 1).replace("folder_id", "folder").replace(", store_id, flags)", ")").replace(", store_id)", ")"))
     connection.execute("UPDATE meta SET value = '18' WHERE key = 'schema'")
     connection.commit()
     connection.close()
@@ -118,14 +121,16 @@ def test_an_index_of_format_18_is_upgraded_at_once_and_its_sort_indexes_remade_a
     path = setup.engine.directories.index_file(setup.account_id)
     _as_format_18(path)
     index = Index(path)
-    assert index.sort_indexes_to_make() == list(SORT_INDEXES) and index.sent_filling() is None
+    made_at_once = set(FIRST_INDEXES)
+    assert [step for step in index.sort_indexes_to_make() if step.startswith("CREATE")] == [statement for statement in SORT_INDEXES if statement not in made_at_once]
+    assert index.sent_filling() is None
     assert len(index.ordered("", ("Sent",), SearchFilter(), SortField.SENDER)) == 1  # usable at once
     index.close()
     assert {state.need for state in call(setup.engine, "index.check")} == {"fill"}
     assert call(setup.engine, "index.fill-sent", account=setup.account_id).filled == 0  # no message read: only the indexes remade
     assert {state.need for state in call(setup.engine, "index.check")} == {""}
     connection = sqlite3.connect(path)
-    assert connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == ("19",)
+    assert connection.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() == (str(SCHEMA_VERSION),)
     connection.close()
 
 

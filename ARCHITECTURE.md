@@ -64,6 +64,7 @@ Only `ui` may import PySide6.
 - Holds what the window needs fast: folder contents, sorting, groups, threads, search (sender, recipients, subject, date, size, flags, tags, full text).
 - Never the source of truth: it can be deleted at any time and rebuilt from the store. Normally updated one change at a time.
 - SQLite with FTS5, one per account, **not encrypted** (dates, senders, recipients and subjects are treated as lower sensitivity). Format history in D-031.
+- A folder is a row (`folders`: id, parent, display name) and each message holds its id: a rename or a move of a folder changes that one row, paths are made from the rows, and no id is kept outside the index (D-314).
 
 ### 4.3 Backup (D-244)
 
