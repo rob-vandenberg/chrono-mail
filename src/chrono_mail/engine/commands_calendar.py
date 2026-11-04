@@ -1,5 +1,6 @@
+from collections.abc import Collection, Iterator
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
 from email.utils import parseaddr
 from typing import Literal
 
@@ -12,14 +13,15 @@ from chrono_mail.engine.pim_server import item_writer
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine, quiet_command
 from chrono_mail.pim.edit import changed_tags
-from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Reminder, MAXIMUM_OCCURRENCES, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
+from chrono_mail.pim.ical import Attendee, Event, EventSeries, Moment, Occurrence, Reminder, MAXIMUM_OCCURRENCES, events_to_text, given_parts, kept_from, new_uid, occurrences, parse_events
 from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_like_the_start, parse_moment, zone_named
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.518"
+__version__ = "commands_calendar.py 4.4.521"
 
 # --- Version history ----------------------------------------------------
+# v4.4.521: a declined date of a series is left out as a skipped date; hidden: deleted and declined dates of a series, shown greyed when asked for (D-310)
 # v4.4.518: A meeting you make names you as organizer and invites its attendees, a change or cancellation tells them when you say so (D-310)
 # v4.4.513: a series that picks its days by position (BYSETPOS) takes its skipped and changed dates along to another hour (D-310)
 # v4.4.506: moved_like_the_start lives in pim/times.py: a proposal for a whole series moves its dates the same way (D-310)
@@ -72,6 +74,7 @@ class OccurrenceInfo:
     tags: tuple[str, ...]
     colour_id: str = ""  # the colour of its calendar's palette it has (empty: the calendar's own); `colour` is what that is now
     other_colour: str = ""  # a colour another program gave it (RFC 7986 COLOR), when it has no colour of the palette
+    hidden: bool = False  # a date of a series that was deleted or declined: shown greyed only when asked for, it can only be looked at
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +194,7 @@ class ListParameters:
     calendars: tuple[str, ...] = field(default=(), metadata=option("Only these calendars (repeat; default: all)"))
     text: str = field(default="", metadata=option("Only events with these words"))
     limit: int = field(default=0, metadata=option("How many at most (0: every one)"))
+    hidden: bool = field(default=False, metadata=option("Also the dates of a series that were deleted or declined"))
     item: str = field(default="", metadata=option("Only this event (the calendar replaces only the blocks of an event that changed)"))
 
 
@@ -198,6 +202,27 @@ class ListParameters:
 class EventList:
     events: tuple[OccurrenceInfo, ...]
     cut: bool  # a limit was reached (the limit asked for, MAXIMUM_EVENTS, or an event that happens MAXIMUM_OCCURRENCES times or more): there may be more
+
+
+def _key(moment: Moment, zone: tzinfo) -> datetime:
+    """A moment to sort and compare by: a whole day from its midnight, a floating time in `zone`."""
+    return datetime(moment.year, moment.month, moment.day, tzinfo=zone) if not isinstance(moment, datetime) else (moment if moment.tzinfo else moment.replace(tzinfo=zone))
+
+
+def _declined(event: Event, yours: Collection[str]) -> bool:
+    """A date you declined: the series stays whole and the date counts as skipped (D-310). A deleted single event simply no longer exists."""
+    return any(person.status == "DECLINED" and person.address.strip().lower() in yours for person in event.attendees)
+
+
+def _skipped(text: str) -> Iterator[tuple[Event, Moment, Moment]]:
+    """The dates a series skips (EXDATE), each at the length of the series. Dates of a kind that cannot be measured are left out."""
+    for series in parse_events(text):
+        master = series.master
+        for moment in master.exdates:
+            try:
+                yield master, moment, moment + (master.end - master.start)  # type: ignore[operator]  # (times of two kinds: the TypeError below)
+            except (OverflowError, TypeError):
+                continue
 
 
 def event_list(engine: Engine, parameters: ListParameters) -> EventList:
@@ -215,6 +240,7 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
     zone = local_zone()
     found: list[tuple[datetime, OccurrenceInfo]] = []
     cut = False
+    yours = your_addresses_lower(engine)
     for account in pim_account_ids(engine):
         with open_pim(engine, account) as store:
             names = {info.collection_id: info for info in store.collections(CollectionKind.EVENTS)}
@@ -238,18 +264,22 @@ def event_list(engine: Engine, parameters: ListParameters) -> EventList:
                 if room <= 0:
                     cut = True
                     break
-                times = occurrences([store.get(item.collection, item.item_id)], start, end, zone, limit=room)
+                text = store.get(item.collection, item.item_id)
+                times = occurrences([text], start, end, zone, limit=room)
                 cut = cut or len(times) >= room
-                for occurrence in times:
+                skipped = [Occurrence(master, moment, last) for master, moment, last in _skipped(text) if _key(moment, zone) < end and _key(last, zone) > start] if parameters.hidden and item.repeats else []
+                for occurrence in [*times, *skipped]:
                     e = occurrence.event
-                    moment = occurrence.start
-                    key = datetime(moment.year, moment.month, moment.day, tzinfo=zone) if not isinstance(moment, datetime) else (moment if moment.tzinfo else moment.replace(tzinfo=zone))
+                    key = _key(occurrence.start, zone)
+                    hidden = occurrence in skipped or (occurrence.changed and _declined(e, yours))
+                    if hidden and not parameters.hidden:
+                        continue
                     other = css_colour(e.css_colour) if not e.colour_id else ""
                     found.append((key, OccurrenceInfo(
                         item.item_id, account, item.collection, info.name, colour_of(palettes[item.collection], e.colour_id, other), e.uid, e.summary, format_moment(occurrence.start),
                         format_moment(occurrence.end), e.all_day, e.location, item.repeats, occurrence.changed,
                         (format_moment(e.recurrence_id) if e.recurrence_id is not None else format_moment(occurrence.start)) if item.repeats else "", e.status,
-                        e.transparency != "TRANSPARENT", e.categories, e.colour_id, other,
+                        e.transparency != "TRANSPARENT", e.categories, e.colour_id, other, hidden,
                     )))
     found.sort(key=lambda pair: (pair[0], pair[1].summary.casefold()))
     if parameters.limit and len(found) > parameters.limit:

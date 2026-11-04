@@ -14,9 +14,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.520"
+__version__ = "test_engine_invitation_answers.py 4.4.521"
 
 # --- Version history ----------------------------------------------------
+# v4.4.521: a declined date is hidden, the series stays whole; shown greyed when asked for (D-310)
 # v4.4.520: your answer waits in Drafts until it is sent; the Replied mark (D-310)
 # v4.4.518: who_mails moved to meetingmail.py
 # v4.4.517: A Decline or a Delegate is remembered on the mail, Change my answer takes it off (D-310)
@@ -695,3 +696,39 @@ def test_without_the_tick_nothing_is_sent_so_no_replied_mark_and_nothing_waits(s
     message = deliver(setup, invitation_mail(calendar_text()))
     answer(setup, message, "TENTATIVE", local_calendar(setup), mail=False)
     assert MessageFlag.REPLIED not in flags_of(setup, message) and not card(setup, message).answer_waiting
+
+
+def weekly() -> str:
+    """A series of three dates, you invited; the second is what is declined or deleted."""
+    lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//Example//EN", "METHOD:REQUEST", "BEGIN:VEVENT", "UID:weekly-1@example.com", "SEQUENCE:0",
+             "DTSTAMP:20261028T090000Z", "DTSTART:20261102T100000Z", "DTEND:20261102T103000Z", "RRULE:FREQ=WEEKLY;COUNT=3", "SUMMARY:Weekly",
+             "ORGANIZER;CN=Olivia:mailto:olivia@example.org", "ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:me@example.com", "END:VEVENT", "END:VCALENDAR"]
+    return "\r\n".join(lines) + "\r\n"
+
+
+def one_date() -> str:
+    return weekly().replace("RRULE:FREQ=WEEKLY;COUNT=3\r\n", "RECURRENCE-ID:20261109T100000Z\r\n").replace("DTSTART:20261102T100000Z", "DTSTART:20261109T100000Z").replace("DTEND:20261102T103000Z", "DTEND:20261109T103000Z")
+
+
+def listed(setup: Setup, hidden: bool = False) -> list[tuple[str, bool]]:
+    return [(row.start[:10], row.hidden) for row in call(setup.engine, "event.list", from_date="2026-11-01", to_date="2026-11-30", hidden=hidden).events]
+
+
+def test_a_declined_date_is_hidden_the_series_stays_and_the_option_shows_it_greyed(setup: Setup) -> None:
+    calendar = local_calendar(setup)
+    answer(setup, deliver(setup, invitation_mail(weekly())), "ACCEPTED", calendar)
+    answer(setup, deliver(setup, invitation_mail(one_date())), "DECLINED", calendar)
+    assert listed(setup) == [("2026-11-02", False), ("2026-11-16", False)]
+    assert listed(setup, hidden=True) == [("2026-11-02", False), ("2026-11-09", True), ("2026-11-16", False)]
+
+
+def test_the_option_shows_a_deleted_date_of_a_series_but_nothing_of_a_deleted_single_event(setup: Setup) -> None:
+    calendar = local_calendar(setup)
+    series = call(setup.engine, "event.add", calendar=calendar, summary="Series", start="2026-11-03T10:00", end="2026-11-03T11:00", time_zone="UTC", rrule="FREQ=WEEKLY;COUNT=2")
+    single = call(setup.engine, "event.add", calendar=calendar, summary="Single", start="2026-11-05T10:00", end="2026-11-05T11:00", time_zone="UTC")
+    occurrence = next(row.occurrence for row in call(setup.engine, "event.list", from_date="2026-11-10", to_date="2026-11-11").events)
+    call(setup.engine, "event.delete", item=series.item, occurrence=occurrence)
+    call(setup.engine, "event.delete", item=single.item)
+    assert listed(setup) == [("2026-11-03", False)]
+    assert listed(setup, hidden=True) == [("2026-11-03", False), ("2026-11-10", True)]
+

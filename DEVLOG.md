@@ -3851,3 +3851,8 @@ Open: items 8 to 19, 21 to 25.
 Built: answer_waiting in engine/invitations.py looks in Drafts for a draft that answers the mail and holds a calendar message, so a draft sent or thrown away stops counting by itself; an answer's draft names the mail as its source, so Send sets the Replied mark; a server that mails sets it at once; open_draft tells when the draft was sent and the card is shown again.
 Tests: tests/test_engine_invitation_answers.py, tests/test_engine_invitation_mailing.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.519.
 Open: items 10 to 19, 21 to 25.
+
+## 2026-11-04, 4.4.521: hidden dates of a series (the owner, D-310, item 10)
+Built: event.list leaves out a date you declined and, with `hidden`, gives declined and skipped dates marked hidden; the button Show deleted and declined dates in the top bar of the calendar (remembered as calendar_show_hidden); hidden blocks are grey (task_grey), never selected, no menu.
+Tests: tests/test_engine_invitation_answers.py, tests/ui/test_ui_calendar.py; each new test fails on 4.4.520.
+Open: items 11 to 19, 21 to 25.

@@ -30,6 +30,7 @@ from chrono_mail.engine.commands_calendar import ItemParameters as EventItem
 from chrono_mail.engine.commands_pim import TAG_LIST, TagInfo
 from chrono_mail.engine.commands_calendar import ListParameters as EventListParameters
 from chrono_mail.ui import calendarlayout as layout
+from chrono_mail.ui.colours import theme
 from chrono_mail.ui.paletteeditor import colour_from
 from chrono_mail.ui.backend import Backend
 from chrono_mail.ui.syncmarks import SyncMarks, mark_icon
@@ -45,9 +46,10 @@ from chrono_mail.core.words import counted
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "calendarview.py 4.4.518"
+__version__ = "calendarview.py 4.4.521"
 
 # --- Version history ----------------------------------------------------
+# v4.4.521: Show deleted and declined dates: dates of a series that are hidden show greyed and can only be looked at (D-310)
 # v4.4.518: Deleting your meeting asks whether the attendees are told; the mail opens through mail_ready (D-310)
 # v4.3.502: the event editor gets the settings, for the width of Event colours (the owner)
 # v4.2.438: an entry is filled when its calendar's account says so (UR-02, D-297)
@@ -180,6 +182,7 @@ class CalendarPage(PimPage):
         self.first_weekday: int = QLocale().firstDayOfWeek().value - 1
         self.zone = local_zone()  # the named zone (Europe/Amsterdam): events past a daylight-saving change keep their hour (RV-15)
         self.hide_past: bool = str(settings.value("calendar_hide_past", "false")).lower() == "true"
+        self.show_hidden: bool = str(settings.value("calendar_show_hidden", "false")).lower() == "true"
         self._generation: int = 0
         self._tags_known: list[str] = []
         self._scrolled: bool = False
@@ -211,10 +214,14 @@ class CalendarPage(PimPage):
         self.past_button = QPushButton("Hide past events", nav)
         self.past_button.setCheckable(True)
         self.past_button.setChecked(self.hide_past)
+        self.hidden_button = QPushButton("Show deleted and declined dates", nav)
+        self.hidden_button.setCheckable(True)
+        self.hidden_button.setChecked(self.show_hidden)
         nav_layout.addWidget(self.previous_button)
         nav_layout.addWidget(self.next_button)
         nav_layout.addWidget(self.title)
         nav_layout.addStretch(1)
+        nav_layout.addWidget(self.hidden_button)
         nav_layout.addWidget(self.past_button)
         nav_layout.addWidget(self.today_button)
         self.grid = TimeGridPanel()
@@ -271,6 +278,7 @@ class CalendarPage(PimPage):
         self.next_button.clicked.connect(lambda: self.step(1))
         self.today_button.clicked.connect(lambda: self.goto(date.today()))
         self.past_button.toggled.connect(self._past_toggled)
+        self.hidden_button.toggled.connect(self._hidden_toggled)
         self.mini.clicked.connect(self._mini_clicked)
         self.search.textChanged.connect(self._search_changed)
         for widget in (self.grid.header, self.grid.canvas, self.month):
@@ -321,6 +329,11 @@ class CalendarPage(PimPage):
         self.hide_past = on
         self._settings.setValue("calendar_hide_past", "true" if on else "false")
         self._show_data()
+
+    def _hidden_toggled(self, on: bool) -> None:
+        self.show_hidden = on
+        self._settings.setValue("calendar_show_hidden", "true" if on else "false")
+        self.reload()
 
     def _tick(self) -> None:
         """Every minute: the line of the present moment moves."""
@@ -386,7 +399,7 @@ class CalendarPage(PimPage):
             self.status(counted(len(self.entries), "event") + (f"; {CUT_WARNING}" if result.cut else ""))
             self._backend.ask(TAG_LIST, NoParameters(), self._tags_arrived, lambda error: None, owner=self)
 
-        parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), calendars=tuple(sorted(visible)), text=self.search.text().strip())
+        parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), calendars=tuple(sorted(visible)), text=self.search.text().strip(), hidden=self.show_hidden)
         self._backend.ask(EVENT_LIST, parameters, arrived, self._failed, owner=self)
 
     def _tags_arrived(self, result: tuple[TagInfo, ...]) -> None:
@@ -422,7 +435,7 @@ class CalendarPage(PimPage):
         return next((candidate for candidate in self.entries if candidate.row == entry.row and candidate.start == entry.start), None)
 
     def _entry_clicked(self, entry: object) -> None:
-        self.selected = entry if isinstance(entry, Entry) else None
+        self.selected = entry if isinstance(entry, Entry) and not entry.row.hidden else None  # a hidden date can only be looked at
         for widget in (self.grid.header, self.grid.canvas, self.month):
             widget.select(self.selected)
         self._selection_changed()
@@ -442,8 +455,8 @@ class CalendarPage(PimPage):
         coloured: list[Entry] = []
         for entry in entries:
             calendar = self.panel.info(entry.row.collection)
-            coloured.append(dataclasses.replace(entry, colour=colour_from(calendar, entry.row.colour_id, entry.row.other_colour),
-                                                filled=calendar is not None and calendar.timed_background))
+            colour = theme().task_grey if entry.row.hidden else colour_from(calendar, entry.row.colour_id, entry.row.other_colour)
+            coloured.append(dataclasses.replace(entry, colour=colour, filled=calendar is not None and calendar.timed_background))
         return coloured
 
     def _recolour(self) -> None:
@@ -483,7 +496,7 @@ class CalendarPage(PimPage):
         self._editor(None, self._current_calendar(), start=start.strftime("%Y-%m-%dT%H:%M"), end=(start + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"))
 
     def _entry_activated(self, entry: object) -> None:
-        if isinstance(entry, Entry):
+        if isinstance(entry, Entry) and not entry.row.hidden:
             self._entry_clicked(entry)
             self.edit_selected()
 
@@ -582,12 +595,12 @@ class CalendarPage(PimPage):
             if result.cut:
                 self.status(f"Calendar: {CUT_WARNING}")
 
-        parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), text=self.search.text().strip(), item=wanted)
+        parameters = EventListParameters(from_date=first.isoformat(), to_date=last.isoformat(), text=self.search.text().strip(), item=wanted, hidden=self.show_hidden)
         self._backend.ask(EVENT_LIST, parameters, arrived, self._failed, owner=self)
 
     def _context(self, entry: object, slot: object, position: QPoint) -> None:
         menu = QMenu(self.content)
-        if isinstance(entry, Entry):
+        if isinstance(entry, Entry) and not entry.row.hidden:
             menu.addAction("Edit", self.edit_selected)
             menu.addAction("Delete", self.delete_selected)
             menu.addSeparator()

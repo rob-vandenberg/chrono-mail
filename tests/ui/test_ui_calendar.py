@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.ui import calendarlayout as layout
+from chrono_mail.ui.colours import theme
 from chrono_mail.ui.calendarview import CalendarPage
 from chrono_mail.ui.collectionpanel import collection_items
 from chrono_mail.ui.eventeditor import EventEditor
@@ -20,9 +21,10 @@ from tests.ui.test_ui_window import started
 from tests.ui.world import World, wait
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_calendar.py 4.4.518"
+__version__ = "test_ui_calendar.py 4.4.521"
 
 # --- Version history ----------------------------------------------------
+# v4.4.521: Show deleted and declined dates (D-310)
 # v4.4.518: Your meeting asks before it is deleted (D-310)
 # v4.3.502: Event colours shows its calendar as read-only text, no longer as a greyed drop-down
 # v4.2.438: a calendar's own colour is named "Default calendar colour"
@@ -536,3 +538,20 @@ def test_a_reminder_at_a_set_time_shows_as_that_never_as_no_reminder(world: Worl
     assert editor.reminder.currentText() == "At a set time"
     editor.reminder.setCurrentIndex(editor.reminder.findData(""))  # No reminder
     assert "reminder" in editor.parameters().clear
+
+
+def test_a_deleted_date_of_a_series_shows_greyed_on_request_and_can_only_be_looked_at(world: World, qtbot: QtBot) -> None:
+    page = open_calendar(world, qtbot)
+    standup = next(entry for entry in page.entries if entry.summary == "Standup")
+    world.call("event.delete", item=standup.row.item, occurrence=standup.row.occurrence)
+    page.reload()
+    wait(qtbot, lambda: not any(entry.row.occurrence == standup.row.occurrence for entry in page.entries))
+    page.hidden_button.setChecked(True)
+    wait(qtbot, lambda: any(entry.row.hidden for entry in page.entries))
+    hidden = next(entry for entry in page.entries if entry.row.hidden)
+    assert hidden.colour == theme().task_grey and world.window.settings.value("calendar_show_hidden") == "true"
+    page._entry_clicked(hidden)  # noqa: SLF001
+    assert page.selected is None
+    page.hidden_button.setChecked(False)
+    wait(qtbot, lambda: not any(entry.row.hidden for entry in page.entries))
+
