@@ -3856,3 +3856,8 @@ Open: items 10 to 19, 21 to 25.
 Built: event.list leaves out a date you declined and, with `hidden`, gives declined and skipped dates marked hidden; the button Show deleted and declined dates in the top bar of the calendar (remembered as calendar_show_hidden); hidden blocks are grey (task_grey), never selected, no menu.
 Tests: tests/test_engine_invitation_answers.py, tests/ui/test_ui_calendar.py; each new test fails on 4.4.520.
 Open: items 11 to 19, 21 to 25.
+
+## 2026-11-04, 4.4.522: the update card (the owner, D-310, items 12 to 15)
+Built: InvitationInfo one_date, answer_again (worked out with updated_copy, so card and command cannot differ), times now also for an update; is_update, only_update; a card with the four answers never also has Update calendar.
+Tests: tests/test_engine_invitation_organizer.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.521.
+Open: item 11, items 16 to 19, 21 to 25.

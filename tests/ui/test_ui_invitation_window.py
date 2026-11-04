@@ -16,7 +16,7 @@ from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.pim.itip import BusyPeriod
 from chrono_mail.ui import app
 from chrono_mail.ui.invitationcalendar import InvitationBusyDialog, InvitationCalendarDialog
-from chrono_mail.ui.invitationcard import apply_text, busy_text, intro_text, organize_choices, organize_done, proposal_when, status_text, organize_reason, status_text
+from chrono_mail.ui.invitationcard import apply_text, busy_text, intro_text, organize_choices, only_update, organize_done, proposal_when, status_text, organize_reason, status_text
 from chrono_mail.ui.invitationwindow import CalendarSource, InvitationWindow, is_calendar_file
 from chrono_mail.ui.messagewindow import MessageWindow
 from chrono_mail.ui.reader import ReaderWidget
@@ -27,9 +27,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.520"
+__version__ = "test_ui_invitation_window.py 4.4.522"
 
 # --- Version history ----------------------------------------------------
+# v4.4.522: Update calendar is for an answer that stands (D-310)
 # v4.4.520: an answer that waits in Drafts is said (D-310)
 # v4.4.519: the two states of a message about your own meeting, its writer, a proposal with the time now (D-310)
 # v4.4.516: handled and not handled: Change my answer, your own answer on your line, a meeting you never answered (D-310)
@@ -55,7 +56,7 @@ CALENDAR_FILE = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGI
 def test_a_task_speaks_of_a_task_and_its_task_list() -> None:
     assert intro_text(TASK) == "You have been invited to this task."
     assert apply_text(replace(TASK, method="CANCEL", stored_in="Tasks (Work)", occurrence_kept=True)) == "Remove from task list"
-    assert apply_text(replace(TASK, stored_in="Tasks (Work)", version="newer")) == "Update task list"
+    assert apply_text(replace(TASK, stored_in="Tasks (Work)", version="newer", your_answer="ACCEPTED")) == "Update task list"
     yours = replace(TASK, method="REPLY", organizer=replace(TASK.organizer, you=True))  # type: ignore[arg-type]
     assert organize_reason(yours) == "This task is not in your task list any more."
 
@@ -156,8 +157,8 @@ def test_a_meeting_in_your_calendar_you_never_answered_says_so_and_can_be_answer
 
 def test_an_update_that_asks_a_new_answer_is_not_handled(reader: ReaderWidget, qtbot: QtBot) -> None:  # noqa: F811
     reader.show()
-    reader.card.show_invitation(replace(CARD, stored_in="Personal (Me)", your_answer="ACCEPTED", occurrence_kept=True, version="newer"))
-    assert not reader.card.accept_button.isHidden() and reader.card.change_button.isHidden()
+    reader.card.show_invitation(replace(CARD, stored_in="Personal (Me)", your_answer="ACCEPTED", occurrence_kept=True, version="newer", answer_again=True))
+    assert not reader.card.accept_button.isHidden() and reader.card.change_button.isHidden() and reader.card.apply_button.isHidden()
 
 
 def test_change_my_answer_asks_first_and_then_the_four_answers_return(world: World, qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -547,4 +548,37 @@ def test_a_proposal_shows_the_time_now_beside_the_time_proposed() -> None:
 def test_an_answer_not_sent_yet_is_said_beside_what_your_calendar_holds() -> None:
     accepted = replace(CARD, stored_in="Personal (Work)", occurrence_kept=True, version="same", your_answer="ACCEPTED")
     assert status_text(replace(accepted, answer_waiting=True)) == f"{status_text(accepted)} Your answer is waiting in Drafts."
+
+
+KEPT = replace(CARD, stored_in="Personal (Work)", occurrence_kept=True, version="newer", your_answer="ACCEPTED")
+
+
+def test_a_cancellation_has_no_newer_version_sentence() -> None:
+    assert status_text(replace(KEPT, method="CANCEL")) == "You accepted. In Personal (Work)."
+
+
+def test_an_update_that_keeps_your_answer_only_updates() -> None:
+    assert intro_text(KEPT) == "This meeting was changed." and only_update(KEPT) and apply_text(KEPT) == "Update calendar"
+
+
+def test_an_update_that_moved_asks_the_answer_again_with_only_the_four_answers() -> None:
+    moved = replace(KEPT, answer_again=True)
+    assert intro_text(moved) == "This meeting was changed. Please answer again." and not only_update(moved) and apply_text(moved) == ""
+
+
+def test_an_update_you_never_answered_keeps_the_four_answers() -> None:
+    assert not only_update(replace(KEPT, your_answer="")) and apply_text(replace(KEPT, your_answer="")) == ""
+
+
+def test_an_update_shows_the_old_time_and_the_new() -> None:
+    start, end = datetime(2026, 11, 1, 10, 0, tzinfo=UTC), datetime(2026, 11, 1, 11, 0, tzinfo=UTC)
+    shown = proposal_when(replace(KEPT, start=start, end=end, kept_start=start.replace(hour=9), kept_end=start), "the new time")
+    assert shown.startswith("From: ") and shown.endswith("\nTo: the new time")
+
+
+def test_a_mail_about_one_date_says_so_also_on_its_button() -> None:
+    date_of = replace(KEPT, one_date=True)
+    assert intro_text(replace(date_of, method="CANCEL")) == "This date of the series was cancelled by its organizer."
+    assert apply_text(replace(date_of, method="CANCEL")) == "Remove this date from calendar" and apply_text(date_of) == "Update this date in calendar"
+    assert intro_text(replace(date_of, version="same")) == "You have been invited to this date of the series."
 

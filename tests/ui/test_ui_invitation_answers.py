@@ -12,9 +12,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.517"
+__version__ = "test_ui_invitation_answers.py 4.4.522"
 
 # --- Version history ----------------------------------------------------
+# v4.4.522: Update calendar is for an answer that stands (D-310)
 # v4.4.517: An answer only the mail remembers shows like any other (D-310)
 # v4.4.512: a date added to a series: the four answers, or only Request; a calendar that holds the meeting is greyed; a shared one is not ticked for busy times (D-310)
 # v4.4.510: the tick of Settings > Calendar is gone (D-310)
@@ -59,7 +60,7 @@ def test_the_organizers_changes_have_their_own_button() -> None:
     assert apply_text(replace(CARD, method="CANCEL", stored_in="Calendar (Work)", occurrence_kept=True)) == "Remove from calendar"
     assert apply_text(replace(CARD, method="CANCEL", stored_in="Calendar (Work)")) == ""  # the series is kept, that occurrence is not
     assert apply_text(replace(CARD, method="CANCEL")) == ""
-    assert apply_text(replace(CARD, stored_in="Calendar (Work)", version="newer")) == "Update calendar"
+    assert apply_text(replace(CARD, stored_in="Calendar (Work)", version="newer", your_answer="ACCEPTED")) == "Update calendar"
     assert apply_text(replace(CARD, stored_in="Calendar (Work)", version="same")) == ""
     assert apply_text(replace(CARD, method="ADD")) == "Request"
     assert apply_text(replace(CARD, method="ADD", stored_in="Calendar (Work)", occurrence_kept=True)) == ""  # it has the four answers
@@ -100,10 +101,10 @@ def test_the_delegate_window_needs_an_address(qtbot: QtBot) -> None:
 
 def test_the_buttons_read_and_tab_in_one_order(reader: ReaderWidget, qtbot: QtBot) -> None:
     """Step 2 review: Delegate… and the apply button stood before Accept, and Tab went another way."""
-    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, stored_in="Calendar (Work)", version="newer")))
+    reader.show_message(replace(shown(html="<p></p>"), invitation=CARD))
     card = reader._card  # noqa: SLF001
-    qtbot.waitUntil(lambda: card.apply_button.isVisible())
-    row = [card.accept_button, card.tentative_button, card.decline_button, card.delegate_button, card.apply_button]
+    qtbot.waitUntil(lambda: card.delegate_button.isVisible())
+    row = [card.accept_button, card.tentative_button, card.decline_button, card.delegate_button]
     assert [button.x() for button in row] == sorted(button.x() for button in row)
     seen: list[QWidget] = [card.accept_button]
     current: QWidget | None = card.accept_button

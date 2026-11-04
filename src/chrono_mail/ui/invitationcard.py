@@ -21,9 +21,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.520"
+__version__ = "invitationcard.py 4.4.522"
 
 # --- Version history ----------------------------------------------------
+# v4.4.522: an update says so and what changed; Update calendar when your answer stands, the four answers when it moved; a mail about one date says so; a cancellation has no newer-version sentence (D-310)
 # v4.4.520: the card says when your answer waits in Drafts (D-310)
 # v4.4.519: a message about your own meeting has two states (organize_done); the sentence names who wrote the mail; a proposal shows the time now beside its own (D-310)
 # v4.4.517: An answer known from the mail counts as handled and says so (D-310)
@@ -129,6 +130,16 @@ def _writer(info: InvitationInfo) -> InvitationPerson | None:
     return found or next((person for person in info.attendees if not person.you), info.attendees[0] if info.attendees else None)
 
 
+def is_update(info: InvitationInfo) -> bool:
+    """A new version of an invitation you keep, from its organizer."""
+    return info.method == "REQUEST" and bool(info.stored_in) and info.version == "newer" and not (info.organizer is not None and info.organizer.you)
+
+
+def only_update(info: InvitationInfo) -> bool:
+    """An update that leaves your answer standing: Update calendar is all it needs. One that moved, or that you never answered, asks for an answer."""
+    return is_update(info) and not info.answer_again and info.your_answer in _ANSWERED
+
+
 def intro_text(info: InvitationInfo) -> str:
     if info.kind == "freebusy":
         return _busy_intro(info)
@@ -138,7 +149,9 @@ def intro_text(info: InvitationInfo) -> str:
         return "" if info.item >= 0 else "This file holds one item."  # a block of a file: the top of the card said it
     if asks_for_series(info):
         return _NOT_KEPT.format(home=home_word(info))
-    item = item_word(info)
+    item = "date of the series" if info.one_date and info.method != "ADD" else item_word(info)
+    if is_update(info):
+        return f"This {item} was changed. Please answer again." if info.answer_again else f"This {item} was changed."
     writer = _writer(info)
     who = (writer.name or writer.address) if writer is not None else "Someone"
     if info.method == "REPLY" and writer is not None and writer.answer in _PROGRESS:
@@ -199,7 +212,7 @@ def _kept_text(info: InvitationInfo) -> str:
         return f"A newer version is in {info.stored_in}."
     asks = info.method in ("REQUEST", "ADD") and not (info.organizer is not None and info.organizer.you)
     answer = _YOU.get(info.your_answer, "You have not answered yet." if asks else "")
-    return f"{answer} In {info.stored_in}.".strip() if info.version != "newer" or info.method == "ADD" else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
+    return f"{answer} In {info.stored_in}.".strip() if info.version != "newer" or info.method in ("ADD", "CANCEL") else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
 
 
 def is_handled(info: InvitationInfo) -> bool:
@@ -244,10 +257,11 @@ def organize_done(info: InvitationInfo) -> str:
 
 
 def proposal_when(info: InvitationInfo, when: str) -> str:
-    """The time a proposal asks for, beside the time the meeting has now, so the person can compare before deciding."""
-    if info.method != "COUNTER" or info.kind != "event" or not when or info.kept_start is None or (info.kept_start, info.kept_end) == (info.start, info.end):
+    """The new time of a proposal or an update, beside the time the meeting has now, so the person can compare before deciding."""
+    if info.kind != "event" or not when or info.kept_start is None or (info.kept_start, info.kept_end) == (info.start, info.end):
         return when
-    return f"Proposed: {when}\nNow: {when_text(info.kept_start, info.kept_end, not isinstance(info.kept_start, datetime))}"
+    now = when_text(info.kept_start, info.kept_end, not isinstance(info.kept_start, datetime))
+    return f"Proposed: {when}\nNow: {now}" if info.method == "COUNTER" else f"From: {now}\nTo: {when}"
 
 
 def organize_reason(info: InvitationInfo) -> str:
@@ -273,11 +287,11 @@ def apply_text(info: InvitationInfo) -> str:
     if info.kind == "freebusy":
         return ""
     if info.method == "CANCEL" and info.stored_in and info.occurrence_kept:
-        return f"Remove from {home}"
+        return f"Remove this date from {home}" if info.one_date else f"Remove from {home}"
     if asks_for_series(info):
         return "Request"
-    if info.method in ("REQUEST", "PUBLISH") and info.stored_in and info.version == "newer":
-        return f"Update {home}"
+    if only_update(info) or (info.method == "PUBLISH" and info.stored_in and info.version == "newer"):
+        return f"Update this date in {home}" if info.one_date else f"Update {home}"
     return ""
 
 
@@ -661,7 +675,7 @@ class InvitationCard(QFrame):
         handled = asks and is_handled(info)
         self.change_button.setVisible(handled)
         for button in (self.accept_button, self.tentative_button, self.decline_button, self.delegate_button):
-            button.setVisible(asks and not handled)
+            button.setVisible(asks and not handled and not only_update(info))
         self.add_button.setText(f"Add to {home_word(info)}")
         self.add_button.setVisible(shared and not info.stored_in)
         apply = apply_text(info) if not yours else ""

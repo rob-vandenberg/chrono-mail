@@ -11,9 +11,10 @@ from tests.test_engine_invitation_answers import drafts, kept
 from tests.test_engine_invitations import deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_organizer.py 4.4.519"
+__version__ = "test_engine_invitation_organizer.py 4.4.522"
 
 # --- Version history ----------------------------------------------------
+# v4.4.522: an update knows the old times and whether it asks your answer again; one date says so (D-310)
 # v4.4.519: a message about your own meeting has two states, knows who wrote it, and a proposal knows the times now (D-310)
 # v4.4.514: a delegator's answer adds the delegate as not answered yet (D-310)
 # v4.4.509: Take their answer takes only the line of the attendee who wrote it (D-310)
@@ -648,3 +649,30 @@ def test_a_proposal_for_one_date_compares_with_that_date_not_the_first_of_the_se
     proposal_text = for_date(meeting("COUNTER", start="20261105T140000Z", end="20261105T143000Z"), "20261105T100000Z")
     shown = card(setup, deliver(setup, from_sam(proposal_text)))
     assert shown.kept_start == datetime(2026, 11, 5, 10, 0, tzinfo=UTC) and shown.kept_end == datetime(2026, 11, 5, 10, 30, tzinfo=UTC)
+
+
+def invited_meeting(sequence: int = 0, start: str = "20261029T100000Z", end: str = "20261029T103000Z", where: str = "") -> str:
+    """A meeting someone else organizes, you accepted."""
+    text = meeting("", sequence, start=start, end=end).replace("ORGANIZER;CN=Me:mailto:me@example.com", "ORGANIZER;CN=Olivia:mailto:olivia@example.org")
+    return text.replace("ATTENDEE;CN=Sam;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:sam@example.net", "ATTENDEE;CN=Me;PARTSTAT=ACCEPTED:mailto:me@example.com").replace("SUMMARY:Planning", f"SUMMARY:Planning{where}")
+
+
+def update(text: str) -> str:
+    return text.replace("VERSION:2.0\r\n", "VERSION:2.0\r\nMETHOD:REQUEST\r\n").replace("PARTSTAT=ACCEPTED", "PARTSTAT=NEEDS-ACTION")
+
+
+def test_an_update_that_moved_asks_your_answer_again_and_knows_the_old_time(setup: Setup) -> None:
+    stored(setup, invited_meeting())
+    shown = card(setup, deliver(setup, invitation_mail(update(invited_meeting(1, "20261029T110000Z", "20261029T113000Z")))))
+    assert shown.answer_again and shown.kept_start == datetime(2026, 10, 29, 10, 0, tzinfo=UTC)
+
+
+def test_an_update_of_the_title_leaves_your_answer_standing(setup: Setup) -> None:
+    stored(setup, invited_meeting())
+    assert not card(setup, deliver(setup, invitation_mail(update(invited_meeting(1, where=" again"))))).answer_again
+
+
+def test_a_card_knows_it_is_about_one_date(setup: Setup) -> None:
+    stored(setup, series())
+    assert card(setup, deliver(setup, from_sam(for_date(meeting("REPLY", sam="ACCEPTED"), "20261105T100000Z")))).one_date
+

@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.521 (A declined date of a series is hidden, and the calendar can show deleted and declined dates greyed)*
+*Last updated: 2026-11-04, version 4.4.522 (An update says it changed and shows old and new time, with only the buttons it needs, and a mail about one date says so)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.522 done (D-310, items 12 to 15 of the changelist after the review).** To check by the owner: open an update of a meeting you accepted. Time unchanged: "This meeting was changed." with only Update calendar. Time moved: "Please answer again.", From and To, and only the four answers. A mail about one date says "this date of the series", also on its button. A cancellation no longer speaks of a newer version.
 
 **4.4.521 done (D-310, item 10 of the changelist after the review).** To check by the owner: decline one date of a series from its mail: the date leaves the calendar and the series stays. Press Show deleted and declined dates at the top of the calendar: it shows greyed and cannot be opened; so does a date you deleted from a series.
 

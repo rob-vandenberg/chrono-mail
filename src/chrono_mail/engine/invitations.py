@@ -14,12 +14,13 @@ from chrono_mail.engine.session import Engine
 from chrono_mail.mime import Attachment, parse_message
 from chrono_mail.pim.ical import Attendee
 from chrono_mail.pimstore import PimStore
-from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message, text_items
+from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.520"
+__version__ = "invitations.py 4.4.522"
 
 # --- Version history ----------------------------------------------------
+# v4.4.522: one_date, answer_again, the times now also for an update (D-310)
 # v4.4.520: answer_waiting: a card knows that your answer still waits in Drafts (D-310)
 # v4.4.519: the two states of an answer to your meeting: writer, kept_answers, kept_start and kept_end; a proposal or request marked as answered (D-310)
 # v4.4.517: with_mark: an answer that left no copy is read from the mark on the mail (D-310)
@@ -84,7 +85,9 @@ class InvitationInfo:
     answer_waiting: bool = False  # your answer to this mail is a draft in Drafts: nobody has it yet
     writer: str = ""  # an answer, proposal or request to you: the address of who wrote it, as the commands choose it; "": not known (a file)
     kept_answers: tuple[tuple[str, str], ...] = ()  # an answer to your meeting: each attendee in your copy (lower case) with their answer there
-    kept_start: date | datetime | None = None  # a proposal: the times your meeting has now
+    one_date: bool = False  # it is about one date of a series
+    answer_again: bool = False  # an update: taking it asks your answer again, as its time changed
+    kept_start: date | datetime | None = None  # a proposal or an update: the times your meeting has now
     kept_end: date | datetime | None = None
 
 
@@ -179,6 +182,7 @@ class _Kept:
     organized_by_you: bool = True
     proposal_usable: bool = True
     answers: tuple[tuple[str, str], ...] = ()
+    answer_again: bool = False
     start: date | datetime | None = None
     end: date | datetime | None = None
 
@@ -224,6 +228,14 @@ def _added_answer(text: str, message_text: str, addresses: frozenset[str]) -> st
     return next((person.status for date in dates if date is not None for person in date.attendees if person.address.strip().lower() in addresses), "")
 
 
+def _asks_again(text: str, message_text: str, occurrence: date | datetime | None, base: CalendarMessage, addresses: frozenset[str]) -> bool:
+    """Whether taking this update clears an answer you gave: what the copy would say after it decides, so the card and the command can never differ."""
+    you = next((person for person in base.attendees if person.address.strip().lower() in addresses and person.status != "NEEDS-ACTION"), None)
+    after = updated_copy(text, message_text, you.address) if you is not None else None
+    item = read_calendar_message(after, occurrence) if after is not None else None
+    return item is not None and any(person.address.strip().lower() in addresses and person.status == "NEEDS-ACTION" for person in item.attendees)
+
+
 def _stored(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], message: CalendarMessage, message_text: str, addresses: frozenset[str]) -> _Kept:
     """Where the item of the message is kept here, the message against that copy, and your answer in it. A store that cannot be read is skipped."""
     for account_id, store, info in places:
@@ -254,8 +266,10 @@ def _stored(engine: Engine, places: list[tuple[str, PimStore, CollectionInfo]], 
         yours = (main or first).organizer is not None and (main or first).organizer.address.strip().lower() in addresses  # type: ignore[union-attr]
         usable = message.method != "COUNTER" or proposal_usable(text, message_text)
         answers = tuple((person.address.strip().lower(), person.status) for person in base.attendees) if message.method == "REPLY" else ()
-        start, end = _times_now(kept or main, message.occurrence if kept is None else None) if message.method == "COUNTER" else (None, None)
-        return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable, answers, start, end)
+        update = message.method == "REQUEST" and version == "newer"
+        start, end = _times_now(kept or main, message.occurrence if kept is None else None) if message.method == "COUNTER" or update else (None, None)
+        again = update and _asks_again(text, message_text, message.occurrence, base, addresses)
+        return _Kept(f"{info.name} ({account_name(engine, account_id)})", version, answer, kept_here, yours, usable, answers, again, start, end)
     return _Kept()
 
 
@@ -369,5 +383,5 @@ def _card_of_item(engine: Engine, places: list[tuple[str, PimStore, CollectionIn
         position, message.method, message.kind, message.uid, message.title, message.location, start, end, all_day, repeats,
         _person(message.organizer, addresses) if message.organizer is not None else None, tuple(_yours_as_kept(_person(each, addresses), kept.answer) for each in message.attendees),
         kept.stored_in, kept.version, kept.answer, occurrence_kept=kept.occurrence_kept, organized_by_you=kept.organized_by_you, proposal_usable=kept.proposal_usable,
-        busy=message.busy, plain=plain, kept_answers=kept.answers, kept_start=kept.start, kept_end=kept.end,
+        busy=message.busy, plain=plain, kept_answers=kept.answers, kept_start=kept.start, kept_end=kept.end, one_date=message.occurrence is not None, answer_again=kept.answer_again,
     )
