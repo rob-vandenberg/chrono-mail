@@ -22,7 +22,7 @@ from chrono_mail.engine.recurring import Repeat, repeat_from_text, repeat_text
 from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER, SNOOZE_GROUPS, TOLERANCE_SECONDS, TIMED_FOLDERS, describe_when, parse_when, snooze_group
 from chrono_mail.engine.compose import ComposeKind, build_draft, message_filename, suggest_filename
 from chrono_mail.engine.imap_online import waiting_marker
-from chrono_mail.engine.invitations import InvitationInfo, invitation_of, shows_text, with_mark
+from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, invitation_of, shows_text, with_mark
 from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
 from chrono_mail.engine.mailbox import Mailbox, SentAlready, open_mailbox
 from chrono_mail.engine.receiving import own_place, receiving_account
@@ -37,9 +37,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.519"
+__version__ = "commands_mail.py 4.4.520"
 
 # --- Version history ----------------------------------------------------
+# v4.4.520: the card knows whether your answer waits in Drafts (D-310)
 # v4.4.519: the card knows who wrote the mail (D-310)
 # v4.4.517: message.show reads the answer mark of the mail (D-310)
 # v4.4.504: message.show carries the invitation card of a calendar message (invitation) and marks its part (card), D-310
@@ -910,7 +911,7 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
         parsed = parse_message(raw)
         referenced, below = _inline_images(parsed)
         invitation = invitation_of(engine, parsed.attachments)
-        invitation = with_mark(invitation, mailbox.current_flags(reference), (address.address for address in parsed.from_addresses)) if invitation is not None else None
+        invitation = with_mark(invitation, mailbox.current_flags(reference), (address.address for address in parsed.from_addresses), answer_waiting(mailbox, parsed.message_id)) if invitation is not None else None
         html_body = parsed.html_body
         if invitation is not None:
             html_shows, plain_shows = shows_text(parsed.html_body, parsed.text_body)

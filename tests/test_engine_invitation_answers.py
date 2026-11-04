@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from chrono_mail.config import AccountSettings, AppConfig
-from chrono_mail.core import ANSWER_MARKS, LOCAL_ACCOUNT_ID, CollectionKind
+from chrono_mail.core import ANSWER_MARKS, LOCAL_ACCOUNT_ID, CollectionKind, MessageFlag
 from chrono_mail.engine.invitations import InvitationInfo
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
@@ -14,9 +14,10 @@ from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup 
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_answers.py 4.4.518"
+__version__ = "test_engine_invitation_answers.py 4.4.520"
 
 # --- Version history ----------------------------------------------------
+# v4.4.520: your answer waits in Drafts until it is sent; the Replied mark (D-310)
 # v4.4.518: who_mails moved to meetingmail.py
 # v4.4.517: A Decline or a Delegate is remembered on the mail, Change my answer takes it off (D-310)
 # v4.4.516: Change my answer on a date takes only that date, and the date comes back with a new answer (D-310)
@@ -655,3 +656,42 @@ def test_a_header_on_several_lines_is_read_whole() -> None:
 
     headers = _joined_headers([("DAV", "1, 2, 3"), ("Content-Type", "text/xml"), ("DAV", "calendar-access, calendar-auto-schedule"), ("dav", "addressbook")])
     assert "calendar-auto-schedule" in headers["dav"] and headers["dav"].endswith("addressbook") and headers["content-type"] == "text/xml"
+
+
+def flags_of(setup: Setup, message: str) -> frozenset[MessageFlag]:
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        return mailbox.current_flags(mailbox.reference(mailbox.folder("Inbox"), message))
+
+
+def with_id(mail: bytes) -> bytes:
+    return b"Message-ID: <invite-1@example.org>\r\n" + mail
+
+
+def test_an_unsent_answer_waits_in_drafts_until_the_draft_is_gone(setup: Setup) -> None:
+    message = deliver(setup, with_id(invitation_mail(calendar_text())))
+    assert not card(setup, message).answer_waiting
+    result = answer(setup, message, "ACCEPTED", local_calendar(setup))
+    assert card(setup, message).answer_waiting
+    call(setup.engine, "message.delete", account=setup.account_id, folder="Drafts", message=result.draft_message)
+    assert not card(setup, message).answer_waiting
+
+
+def test_a_text_reply_in_drafts_is_no_answer_waiting(setup: Setup) -> None:
+    message = deliver(setup, with_id(invitation_mail(calendar_text())))
+    call(setup.engine, "draft.save", account=setup.account_id, to=("olivia@example.org",), subject="Re: colours", body="Which ones?", kind="reply",
+         in_reply_to="invite-1@example.org", references=("invite-1@example.org",))
+    assert not card(setup, message).answer_waiting
+
+
+def test_the_draft_of_an_answer_names_the_mail_so_sending_it_sets_the_replied_mark(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(calendar_text()))
+    result = answer(setup, message, "ACCEPTED", local_calendar(setup))
+    opened = call(setup.engine, "draft.open", account=setup.account_id, message=result.draft_message, folder=result.draft_folder)
+    assert (opened.source_folder, opened.source_message) == ("Inbox", message)
+    assert MessageFlag.REPLIED not in flags_of(setup, message)  # nothing has gone yet
+
+
+def test_without_the_tick_nothing_is_sent_so_no_replied_mark_and_nothing_waits(setup: Setup) -> None:
+    message = deliver(setup, invitation_mail(calendar_text()))
+    answer(setup, message, "TENTATIVE", local_calendar(setup), mail=False)
+    assert MessageFlag.REPLIED not in flags_of(setup, message) and not card(setup, message).answer_waiting

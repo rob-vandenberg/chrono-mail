@@ -11,7 +11,7 @@ from chrono_mail.core import ANSWER_MARKS, ChronoMailError, CollectionInfo, Coll
 from chrono_mail.engine.commands_calendar import MAXIMUM_DAYS, MAXIMUM_EVENTS
 from chrono_mail.engine.commands_drafts import DraftSaveParameters, draft_save
 from chrono_mail.engine.commands_mail import MessageParameters, _check_id, reply_account
-from chrono_mail.engine.invitations import InvitationInfo, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, with_mark, your_addresses, your_calendars
+from chrono_mail.engine.invitations import InvitationInfo, answer_waiting, answering, writing, calendar_part, calendar_text, blocks_of, card_of, is_yours, with_mark, your_addresses, your_calendars
 from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.meetingmail import Mailing, copy_for, delete_copy, quiet, settings_of, who_mails
 from chrono_mail.engine.pim_server import ItemWriter, item_writer
@@ -28,9 +28,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.519"
+__version__ = "commands_invitations.py 4.4.520"
 
 # --- Version history ----------------------------------------------------
+# v4.4.520: an answer's draft names the mail it answers, so sending it sets the Replied mark; a server that mails sets it at once; the card knows a draft waits (D-310)
 # v4.4.519: the choice of who wrote moved to invitations.py, for the card too; a declined proposal and a sent latest version are marked on the mail and not made twice (D-310)
 # v4.4.518: Who mails moved to meetingmail.py; the box of the account that got the invite decides, and it covers only answers; Accept proposal follows what the person said (D-310)
 # v4.4.517: A Decline or Delegate leaves its mark on the mail, Change my answer and a new answer take it off (D-310)
@@ -124,6 +125,8 @@ class _Opened:
     several: bool = False  # a text with several items and none chosen: only the card and Add all work on all of them
     whole: str = ""  # the whole text, also of what is left out: the card says what it holds
     marks: frozenset[MessageFlag] | None = None  # the marks of the mail this is the one invitation of; None: no mark can speak for it (a file, another attachment, several items)
+    source: tuple[str, str] | None = None  # the folder and id of the mail: an answer to it marks it as replied once it is sent; a file has none
+    waiting: bool = False  # an answer to this mail waits in Drafts
 
 
 def _file_text(path: str) -> bytes:
@@ -141,6 +144,8 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
     everything else has nothing to do with them. whole: the caller also takes a text with several items, with no item chosen."""
     message_id: str | None = None
     senders: tuple[str, ...] = ()
+    source: tuple[str, str] | None = None
+    waiting = False
     receiving: str | None = None
     own_part = False
     flags = frozenset[MessageFlag]()
@@ -162,6 +167,7 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
             flags = mailbox.current_flags(reference)
             message_id, senders = parsed.message_id, tuple(address.address for address in parsed.from_addresses)
             receiving = reply_account(engine, mailbox.settings, parsed, raw)
+            source, waiting = (parameters.folder, parameters.message), answer_waiting(mailbox, parsed.message_id)
     data = data.removeprefix(b"\xef\xbb\xbf")  # a byte order mark, as some programs write in front of a file
     text = data.decode("utf-8", "replace")
     items = text_items(text)
@@ -180,7 +186,7 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
     plain = message.method == ""
     settings = engine.config().find(receiving) if receiving else None
     marks = flags if own_part and len(items.texts) == 1 else None
-    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text, marks)
+    return _Opened(message_id, senders, replace(message, method="PUBLISH") if plain else message, text, settings, plain, several, whole_text, marks, source, waiting)
 
 
 def _kind(message: CalendarMessage) -> CollectionKind:
@@ -288,12 +294,13 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
     return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving)
 
 
-def _remember(engine: Engine, parameters: SourceParameters, opened: _Opened, mark: MessageFlag | None) -> None:
+def _remember(engine: Engine, parameters: SourceParameters, opened: _Opened, mark: MessageFlag | None, replied: bool = False) -> None:
     """Keep your answer on the mail, as a mark any computer reads (D-310): a Decline leaves no copy to tell it. An answer or Change my answer takes
-    an older mark off. The answer stands whatever happens here: a refused mark leaves the card asking, and the person can answer again."""
+    an older mark off. The answer stands whatever happens here: a refused mark leaves the card asking, and the person can answer again. `replied`: the
+    server mails the answer, so nothing is sent here to set the Replied mark."""
     if opened.marks is None or opened.message.method not in ("REQUEST", "ADD", "COUNTER", "REFRESH"):
         return
-    wanted = (opened.marks - ANSWER_MARKS) | ({mark} if mark is not None else frozenset[MessageFlag]())
+    wanted = (opened.marks - ANSWER_MARKS) | ({mark} if mark is not None else frozenset[MessageFlag]()) | ({MessageFlag.REPLIED} if replied else frozenset[MessageFlag]())
     if wanted != opened.marks:
         try:
             with open_mailbox(engine, parameters.account) as mailbox:
@@ -381,7 +388,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
         draft_folder, draft_message = _save_mail(engine, opened, you.account, _SUBJECT_WORD[parameters.answer],
                                                  f"{you.name or you.address} has {_ANSWER_WORD[parameters.answer]} this invitation.\n", reply)
         draft_account = you.account
-    _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.answer == "DECLINED" else None)
+    _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.answer == "DECLINED" else None, mails.server and message.method != "PUBLISH")
     return AnswerResult(parameters.answer, stored_in, mails.server, draft_folder, draft_message, draft_account)
 
 
@@ -467,7 +474,8 @@ def _save_mail(engine: Engine, opened: _Opened, account: str, word: str, body: s
         to = formataddr((organizer.name, organizer.address))  # quoted: "Doe, John" stays one name
     subject = word if opened.message.kind == "freebusy" else f"{word}: {opened.message.title or '(no title)'}"
     saved = draft_save(engine, DraftSaveParameters(
-        account=account, to=(to,), subject=subject, body=body, kind="reply",
+        account=account, to=(to,), subject=subject, body=body, kind="reply", source_folder=opened.source[0] if opened.source else None,
+        source_message=opened.source[1] if opened.source else None,
         in_reply_to=opened.message_id, references=(opened.message_id,) if opened.message_id else (), calendar=calendar,
     ))
     return saved.folder, saved.message_id
@@ -747,8 +755,8 @@ def invitation_organize(engine: Engine, parameters: OrganizeParameters) -> Organ
     body = {"Changed": f"The {item_word} has changed.\n", "Proposal declined": f"Thank you for your proposal; the {item_word} stays as it is.\n",
             "Invitation": f"The latest version of this {item_word}.\n"}[word]
     saved = draft_save(engine, DraftSaveParameters(
-        account=own.account.account_id, to=to, subject=f"{word}: {title}", body=body, kind="reply",
-        in_reply_to=opened.message_id, references=(opened.message_id,) if opened.message_id else (), calendar=calendar,
+        account=own.account.account_id, to=to, subject=f"{word}: {title}", body=body, kind="reply", source_folder=opened.source[0] if opened.source else None,
+        source_message=opened.source[1] if opened.source else None, in_reply_to=opened.message_id, references=(opened.message_id,) if opened.message_id else (), calendar=calendar,
     ))
     if parameters.action != "accept_proposal":  # (an accepted proposal shows in the meeting itself)
         _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.action == "decline_proposal" else MessageFlag.INVITE_SENT)
@@ -814,7 +822,7 @@ def invitation_card(engine: Engine, parameters: SourceParameters) -> InvitationI
     card = card_of(engine, parameters.part, opened.whole)
     if card is None:
         raise UsageError("This holds no calendar item that can be shown")
-    return with_mark(card, opened.marks, opened.senders) if opened.marks is not None else card
+    return with_mark(card, opened.marks, opened.senders, opened.waiting) if opened.marks is not None else card
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

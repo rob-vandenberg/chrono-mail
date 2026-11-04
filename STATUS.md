@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.519 (An answer, proposal or request about your own meeting shows when it is handled, names who wrote it, and a proposal shows the time now beside the new one)*
+*Last updated: 2026-11-04, version 4.4.520 (An unsent answer says it waits in Drafts, and an answered invitation gets the Replied mark once the answer has gone)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.520 done (D-310, items 8 and 9 of the changelist after the review).** To check by the owner: click Accept on an invitation and close the composer unsent: the card says "Your answer is waiting in Drafts." Open the draft and Send: the sentence goes and the mail gets the Replied mark. With the tick off nothing is sent: no mark, no sentence.
 
 **4.4.519 done (D-310, item 3 of the changelist after the review).** To check by the owner: open an attendee's answer to your own meeting and click Take their answer: the card says "Their answer is in your meeting." and the button greys with an (i). Open a proposal: it shows Proposed and Now. After Decline proposal or Send the latest version the buttons grey, also on a second computer.
 

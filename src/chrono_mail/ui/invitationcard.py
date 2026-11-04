@@ -21,9 +21,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.519"
+__version__ = "invitationcard.py 4.4.520"
 
 # --- Version history ----------------------------------------------------
+# v4.4.520: the card says when your answer waits in Drafts (D-310)
 # v4.4.519: a message about your own meeting has two states (organize_done); the sentence names who wrote the mail; a proposal shows the time now beside its own (D-310)
 # v4.4.517: An answer known from the mail counts as handled and says so (D-310)
 # v4.4.516: handled: Change my answer instead of the answer buttons; a meeting you never answered says so (D-310)
@@ -181,6 +182,11 @@ def busy_text(info: InvitationInfo) -> str:
 
 
 def status_text(info: InvitationInfo) -> str:
+    """What became of it, and that your answer has not gone yet while it waits in Drafts."""
+    return f"{_kept_text(info)} Your answer is waiting in Drafts.".strip() if info.answer_waiting else _kept_text(info)
+
+
+def _kept_text(info: InvitationInfo) -> str:
     """What your calendar holds of it: nothing (empty), the copy and your answer, or a newer version. An answer that left no copy: only that answer."""
     done = organize_done(info)
     if done:

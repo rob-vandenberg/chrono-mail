@@ -1,6 +1,8 @@
 import time
+from collections.abc import Callable
 
 from typing import Literal
+
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication, QWidget
@@ -23,9 +25,10 @@ from chrono_mail.ui.scheduledpanel import ScheduledPanel
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "composing.py 4.4.505"
+__version__ = "composing.py 4.4.520"
 
 # --- Version history ----------------------------------------------------
+# v4.4.520: open_draft: tells when the draft was sent (D-310)
 # v4.4.505: open_draft: a draft made by the engine (the answer to an invitation) opens in the composer (D-310)
 # v4.2.442: a message window's Send stopped by a certificate is passed on (certificate_stopped, D-299)
 # v4.2.429: save_all_and_close: after an update every message window saves to Drafts without a question and closes
@@ -175,11 +178,17 @@ class Composing(QObject):
             drafted, lambda error: self._status.report("Could not start the message", error), owner=self,
         )
 
-    def open_draft(self, account: str, folder: str, message_id: str) -> None:
-        """A draft the engine made (the answer to an invitation, D-310) opens in the composer, to be sent with Send."""
+    def open_draft(self, account: str, folder: str, message_id: str, sent: Callable[[], None] | None = None) -> None:
+        """A draft the engine made (the answer to an invitation, D-310) opens in the composer, to be sent with Send; `sent` follows when it went."""
 
         def opened(result: DraftOpenResult) -> None:
-            self.open_composer(account, result, None, resume=(result.folder, result.message_id))
+            window = self.open_composer(account, result, None, resume=(result.folder, result.message_id))
+            if sent is not None:
+
+                def went(_account: str) -> None:
+                    sent()
+
+                window.sent.connect(went)
 
         self._backend.ask(DRAFT_OPEN, DraftOpenParameters(account, message_id, folder), opened, lambda error: self._status.report("Could not open the answer", error), owner=self)
 

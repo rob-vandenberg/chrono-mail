@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.518"
+__version__ = "readingpane.py 4.4.520"
 
 # --- Version history ----------------------------------------------------
+# v4.4.520: the card is shown again when an answer that waited has been sent (D-310)
 # v4.4.518: Accept proposal asks whether the attendees are told (D-310)
 # v4.4.517: Change my answer asks nothing when no copy is in a calendar (D-310)
 # v4.4.516: Change my answer, confirmed first (D-310)
@@ -563,7 +564,7 @@ class ReadingPane(QObject):
                 ready = " The change is ready to send to the attendees." if result.draft_message is not None else ""
                 self._status.show(words.get(result.done, "Done.") + mailer + ready)
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
-                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message)
+                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
         tell = True
@@ -590,9 +591,9 @@ class ReadingPane(QObject):
 
         def delegated(result: DelegateResult) -> None:
             self._status.show("The invitation for them and your answer to the organizer are ready to send.")
-            self._composing.open_draft(result.account, result.folder, result.request_message)
+            self._composing.open_draft(result.account, result.folder, result.request_message, lambda: self._show_again(reader, place))
             if result.answer_message:  # "": the calendar's server mails your answer
-                self._composing.open_draft(result.account, result.folder, result.answer_message)
+                self._composing.open_draft(result.account, result.folder, result.answer_message, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
         self._backend.ask(INVITATION_DELEGATE, DelegateParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, to=dialog.address), delegated,
@@ -612,7 +613,7 @@ class ReadingPane(QObject):
             words = {"updated": f"Your {home} has the new version.", "removed": f"Removed from your {home}.", "asked": "Your request to resend the original invite is ready to send."}
             self._status.show(words.get(result.done, "Done."))
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
-                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message)
+                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
         self._backend.ask(INVITATION_APPLY, self._parameters(place), applied,
@@ -706,7 +707,7 @@ class ReadingPane(QObject):
             mailer = " The calendar server sends your answer." if result.server_answers else ""
             self._status.show(f"Added to your {home}.{where}" if shared else f"You {words} the invitation.{where}{mailer}")
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
-                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message)
+                self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message, lambda: self._show_again(reader, place))
             self._show_again(reader, place)  # the card says what your calendar holds now
 
         self._backend.ask(INVITATION_ANSWER, parameters, answered, lambda error: self._status.report("Could not answer the invitation", error), owner=self)

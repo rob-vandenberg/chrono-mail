@@ -27,9 +27,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.519"
+__version__ = "test_ui_invitation_window.py 4.4.520"
 
 # --- Version history ----------------------------------------------------
+# v4.4.520: an answer that waits in Drafts is said (D-310)
 # v4.4.519: the two states of a message about your own meeting, its writer, a proposal with the time now (D-310)
 # v4.4.516: handled and not handled: Change my answer, your own answer on your line, a meeting you never answered (D-310)
 # v4.4.515: every item of a big file gets its block as the person scrolls, and a click changes only its block, the place in the list stays (D-310)
@@ -541,3 +542,9 @@ def test_a_proposal_shows_the_time_now_beside_the_time_proposed() -> None:
     proposal = replace(OWN, method="COUNTER", start=start, end=end, kept_start=start.replace(hour=9), kept_end=start)
     shown = proposal_when(proposal, "the new time")
     assert shown.startswith("Proposed: the new time\nNow: ") and proposal_when(replace(proposal, kept_start=start, kept_end=end), "the new time") == "the new time"
+
+
+def test_an_answer_not_sent_yet_is_said_beside_what_your_calendar_holds() -> None:
+    accepted = replace(CARD, stored_in="Personal (Work)", occurrence_kept=True, version="same", your_answer="ACCEPTED")
+    assert status_text(replace(accepted, answer_waiting=True)) == f"{status_text(accepted)} Your answer is waiting in Drafts."
+

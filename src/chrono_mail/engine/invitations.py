@@ -7,18 +7,20 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Literal, override
 
-from chrono_mail.core import ANSWER_MARKS, ChronoMailError, CollectionInfo, CollectionKind, MessageFlag
+from chrono_mail.core import ANSWER_MARKS, ChronoMailError, CollectionInfo, CollectionKind, FolderRole, MessageFlag
+from chrono_mail.engine.mailbox import Mailbox
 from chrono_mail.engine.pimaccess import account_name, open_pim, pim_account_ids
 from chrono_mail.engine.session import Engine
-from chrono_mail.mime import Attachment
+from chrono_mail.mime import Attachment, parse_message
 from chrono_mail.pim.ical import Attendee
 from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.519"
+__version__ = "invitations.py 4.4.520"
 
 # --- Version history ----------------------------------------------------
+# v4.4.520: answer_waiting: a card knows that your answer still waits in Drafts (D-310)
 # v4.4.519: the two states of an answer to your meeting: writer, kept_answers, kept_start and kept_end; a proposal or request marked as answered (D-310)
 # v4.4.517: with_mark: an answer that left no copy is read from the mark on the mail (D-310)
 # v4.4.516: your own line shows the answer in your copy (D-310)
@@ -79,6 +81,7 @@ class InvitationInfo:
     journals: int = 0  # journal entries in the text: left out
     damaged: int = 0  # items that cannot be read: left out
     answered_on_mail: bool = False  # your answer is known from the mark on the mail: no copy of it says so (with_mark)
+    answer_waiting: bool = False  # your answer to this mail is a draft in Drafts: nobody has it yet
     writer: str = ""  # an answer, proposal or request to you: the address of who wrote it, as the commands choose it; "": not known (a file)
     kept_answers: tuple[tuple[str, str], ...] = ()  # an answer to your meeting: each attendee in your copy (lower case) with their answer there
     kept_start: date | datetime | None = None  # a proposal: the times your meeting has now
@@ -291,10 +294,29 @@ def _writer_of(card: InvitationInfo, senders: Iterable[str]) -> str:
     return (answering(lines, wrote) if card.method == "REPLY" else None) or writing(lines, wrote, own) or ""
 
 
-def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag], senders: Iterable[str] = ()) -> InvitationInfo:
+def answer_waiting(mailbox: Mailbox, message_id: str | None) -> bool:
+    """Whether an answer to this mail waits in Drafts: a draft that answers it and holds a calendar message. What is really in Drafts decides, so a draft
+    sent or thrown away, here or on another computer, stops counting by itself. A mail can always be shown: what cannot be read counts as none."""
+    if not message_id:
+        return False
+    try:
+        drafts = mailbox.role_folder(FolderRole.DRAFTS)
+        for row in mailbox.index.thread_members(message_id):
+            if row.folder == drafts:
+                reference = mailbox.reference(drafts, row.store_id)
+                draft = parse_message(mailbox.store.read(reference, hint=mailbox.hint(row.store_id)))
+                if draft.in_reply_to == message_id and calendar_part(draft.attachments) is not None:
+                    return True
+    except (ChronoMailError, OSError, sqlite3.Error):
+        return False
+    return False
+
+
+def with_mark(card: InvitationInfo, flags: frozenset[MessageFlag], senders: Iterable[str] = (), waiting: bool = False) -> InvitationInfo:
     """The card with what the mail itself tells: who wrote it, and the answer it remembers. A Decline leaves no copy, so its mark is what tells every
     computer; a copy that holds the item knows better. A text with several items has one mail for them all, so no mark can tell which one was meant.
     A proposal you declined or a request you answered also exists only as that mark: the mail you wrote is all there is."""
+    card = replace(card, answer_waiting=waiting)
     if card.method in ("REPLY", "COUNTER", "REFRESH"):
         card = replace(card, writer=_writer_of(card, senders))
     if card.method in ("COUNTER", "REFRESH"):

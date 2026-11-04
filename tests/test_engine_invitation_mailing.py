@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from chrono_mail.config import AppConfig, load_config, save_config
+from chrono_mail.core import MessageFlag
+from chrono_mail.engine.mailbox import open_mailbox
 from chrono_mail.engine.pimaccess import open_pim
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.pim.itip import reply_text, without_organizer
@@ -17,9 +19,10 @@ from tests.test_engine_invitation_answers import answer, drafts
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_mailing.py 4.4.516"
+__version__ = "test_engine_invitation_mailing.py 4.4.520"
 
 # --- Version history ----------------------------------------------------
+# v4.4.520: an answer the server mails sets the Replied mark (D-310)
 # v4.4.516: Change my answer tells nobody (D-310)
 # v4.4.515: a Decline while offline mails as chosen, a Decline refused twice keeps the meeting with a sync conflict (D-310)
 # v4.4.510: Initial tests: who mails the answer to an invitation (D-310): the server, Chrono Mail or nobody, never two and never none unless chosen
@@ -354,3 +357,11 @@ def test_a_delegates_answer_says_who_they_replace() -> None:
     reply = reply_text(text, "sam@example.net", "ACCEPTED", datetime(2026, 11, 4, tzinfo=UTC))
     assert reply is not None and 'DELEGATED-FROM="mailto:me@example.com"' in reply.replace("\r\n ", "")
     assert "DELEGATED-FROM" not in (reply_text(calendar_text(), "me@example.com", "ACCEPTED", datetime(2026, 11, 4, tzinfo=UTC)) or "")
+
+
+def test_an_answer_the_server_mails_sets_the_replied_mark_at_once(setup: Setup, server: FakeDav) -> None:  # noqa: F811
+    message = invited(setup)
+    answer(setup, message, "ACCEPTED", calendar_id(setup))
+    with open_mailbox(setup.engine, setup.account_id) as mailbox:
+        assert MessageFlag.REPLIED in mailbox.current_flags(mailbox.reference(mailbox.folder("Inbox"), message))
+

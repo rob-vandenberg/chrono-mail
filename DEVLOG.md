@@ -3846,3 +3846,8 @@ Open: item 3, items 8 to 19, 21 to 25.
 Built: invitationcard organize_done, proposal_when, _writer; InvitationInfo writer, kept_answers, kept_start, kept_end; answering and writing moved to engine/invitations.py, so card and command choose the same person; MessageFlag.INVITE_SENT; a declined proposal carries INVITE_DECLINED; invitation.organize refuses a second one.
 Tests: tests/test_engine_invitation_organizer.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.518.
 Open: items 8 to 19, 21 to 25.
+
+## 2026-11-04, 4.4.520: an unsent answer and the Replied mark (the owner, D-310, items 8, 9)
+Built: answer_waiting in engine/invitations.py looks in Drafts for a draft that answers the mail and holds a calendar message, so a draft sent or thrown away stops counting by itself; an answer's draft names the mail as its source, so Send sets the Replied mark; a server that mails sets it at once; open_draft tells when the draft was sent and the card is shown again.
+Tests: tests/test_engine_invitation_answers.py, tests/test_engine_invitation_mailing.py, tests/ui/test_ui_invitation_window.py; each new test fails on 4.4.519.
+Open: items 10 to 19, 21 to 25.
