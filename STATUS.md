@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.525 (your own sent invitation mails, invites not meant for you, Add all)*
+*Last updated: 2026-11-04, version 4.4.526 (answers in the window you clicked, the card's words, a web address as a place)*
 
 ## Where we are
 
@@ -14,6 +14,8 @@
 - GitHub: `https://github.com/rob-vandenberg/chrono-mail`, branch `main` (recreated on 2026-10-12, all tags kept).
 
 ## Next task
+
+**4.4.526 done (D-310, item 19 and the texts of item 25).** To check by the owner: click Accept in a message window or an .ics window: the result shows in that window's status bar; the card says "This meeting is in your calendar Personal (account)."; a web address as a place is a link; Delegate and an offline Accept with the server mailing say what really happens.
 
 **4.4.525 done (D-310, items 16, 18, 21 of the changelist after the review).** To check by the owner: an answer in Sent says "You sent this answer. You accepted." with no buttons; a calendar mail in Drafts says it waits there; an .ics file that does not name you has its answers greyed with an (i); a file with two items offers Add all, greyed with an (i) when fewer than two are left; items already in a calendar are skipped, the question Replace or Skip is gone.
 

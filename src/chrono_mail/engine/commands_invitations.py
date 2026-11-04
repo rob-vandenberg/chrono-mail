@@ -28,9 +28,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.525"
+__version__ = "commands_invitations.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: an answer says when it waits for the connection; a delegation says whether the server tells the organizer (D-310)
 # v4.4.525: Add all skips what any of your calendars holds, the choice to replace is gone; invitation.blocks says how many items are left (D-310)
 # v4.4.520: an answer's draft names the mail it answers, so sending it sets the Replied mark; a server that mails sets it at once; the card knows a draft waits (D-310)
 # v4.4.519: the choice of who wrote moved to invitations.py, for the card too; a declined proposal and a sent latest version are marked on the mail and not made twice (D-310)
@@ -113,6 +114,7 @@ class AnswerResult:
     draft_folder: str | None  # the answer mail to send, when Chrono Mail mails it
     draft_message: str | None
     draft_account: str | None = None  # the account the answer mail is a draft of
+    waiting: bool = False  # the server could not be reached: the change goes when the connection is back
 
 
 @dataclass(frozen=True, slots=True)
@@ -374,6 +376,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
     mails = who_mails(engine, target, you.account, you.address, item if text is None and item is not None else "")
     mailing = mails.chrono and parameters.mail and message.method != "PUBLISH"  # a published item asks no answer
     reply = _answer_text(opened, you, parameters.answer, text) if mailing else None
+    waiting = False
     try:
         if target is not None:
             with open_pim(engine, target[0]) as store, item_writer(engine, target[0], store) as writer:
@@ -381,6 +384,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
                     delete_copy(writer, target[1], item, stored.text, mails)  # declined: the copy goes; a server that answers mails the decline itself (D-310)
                 elif text is not None:
                     writer.put(target[1], copy_for(text, mails), item)
+                waiting = writer.waiting > 0
     except StorageError as error:
         raise UsageError(str(error)) from None
     stored_in = _label(engine, target[0], target[1]) if target is not None and parameters.answer != "DECLINED" else ""
@@ -390,7 +394,7 @@ def invitation_answer(engine: Engine, parameters: AnswerParameters) -> AnswerRes
                                                  f"{you.name or you.address} has {_ANSWER_WORD[parameters.answer]} this invitation.\n", reply)
         draft_account = you.account
     _remember(engine, parameters, opened, MessageFlag.INVITE_DECLINED if parameters.answer == "DECLINED" else None, mails.server and message.method != "PUBLISH")
-    return AnswerResult(parameters.answer, stored_in, mails.server, draft_folder, draft_message, draft_account)
+    return AnswerResult(parameters.answer, stored_in, mails.server, draft_folder, draft_message, draft_account, waiting)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -566,7 +570,8 @@ class DelegateResult:
     account: str  # the drafts are of this account
     folder: str
     request_message: str  # the invitation passed on to the delegate
-    answer_message: str  # the answer DELEGATED to the organizer; "": the calendar's server mails it
+    answer_message: str  # the answer DELEGATED to the organizer; "": the calendar's server mails it, or nobody does
+    server_answers: bool = False  # the calendar's server tells the organizer
 
 
 def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> DelegateResult:
@@ -621,7 +626,7 @@ def invitation_delegate(engine: Engine, parameters: DelegateParameters) -> Deleg
     passed = _save_mail(engine, opened, you.account, "Invitation", asked, request, to=delegate)
     _remember(engine, parameters, opened, MessageFlag.INVITE_DELEGATED)
     if not mails.chrono:  # the server mails your answer DELEGATED itself, or you want no such mails (D-310)
-        return DelegateResult(you.account, passed[0], passed[1], "")
+        return DelegateResult(you.account, passed[0], passed[1], "", mails.server)
     told = f"{who} has asked {delegate} to do this task in their place.\n" if task else f"{who} has asked {delegate} to go to this meeting in their place.\n"
     answered = _save_mail(engine, opened, you.account, "Delegated", told, answer)
     return DelegateResult(you.account, passed[0], passed[1], answered[1])

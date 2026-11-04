@@ -37,9 +37,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.525"
+__version__ = "commands_mail.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: message.show says the card is of a mail (D-310)
 # v4.4.525: message.show says when a card is of a mail of your own (D-310)
 # v4.4.520: the card knows whether your answer waits in Drafts (D-310)
 # v4.4.519: the card knows who wrote the mail (D-310)
@@ -915,7 +916,7 @@ def message_show(engine: Engine, parameters: MessageParameters) -> ShowResult:
         invitation = with_mark(invitation, mailbox.current_flags(reference), (address.address for address in parsed.from_addresses), answer_waiting(mailbox, parsed.message_id)) if invitation is not None else None
         html_body = parsed.html_body
         if invitation is not None:
-            invitation = replace(invitation, own_mail=own_mail(mailbox, folder))
+            invitation = replace(invitation, own_mail=own_mail(mailbox, folder), in_mail=True)
             html_shows, plain_shows = shows_text(parsed.html_body, parsed.text_body)
             html_shows = html_shows or any(part.inline for part in parsed.attachments)  # a part the HTML shows by cid:, also as a background
             if not html_shows and not plain_shows and not below:  # a picture the HTML shows counts in html_shows

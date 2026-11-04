@@ -6,7 +6,7 @@
    <item>
     <widget class="QLabel" name="intro">
      <property name="text">
-      <string>Who goes to this meeting in your place? Chrono Mail prepares the invitation for them and your answer to the organizer, ready to send.</string>
+      <string>Who goes to this meeting in your place? Chrono Mail prepares the invitation for them, ready to send.</string>
      </property>
      <property name="wordWrap">
       <bool>true</bool>

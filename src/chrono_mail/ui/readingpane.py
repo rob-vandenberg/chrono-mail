@@ -6,7 +6,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
-from PySide6.QtWidgets import QFileDialog, QMenu, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QMainWindow, QMenu, QMessageBox, QVBoxLayout, QWidget
 from shiboken6 import isValid
 
 from chrono_mail.core import ChronoMailError
@@ -39,9 +39,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.525"
+__version__ = "readingpane.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: results and errors of a card show in the window that was clicked (_tell); Delegate and offline say what really happens (D-310)
 # v4.4.525: the question Replace or Skip is gone: Add all skips what is kept (D-310)
 # v4.4.524: Add all works in the main window (D-310)
 # v4.4.520: the card is shown again when an answer that waited has been sent (D-310)
@@ -384,7 +385,7 @@ class ReadingPane(QObject):
                 reader.invitation_add_all_requested.connect(add_all_in_window)
 
             def calendar_in_window(position: int, name: str) -> None:
-                self.open_calendar_card(CalendarSource(account, folder, message_id, part=position), name)
+                self.open_calendar_card(CalendarSource(account, folder, message_id, part=position), name, where=window)
 
             window.calendar_open_requested.connect(calendar_in_window)
             self.message_windows.append(window)
@@ -397,6 +398,16 @@ class ReadingPane(QObject):
         self._backend.ask(MESSAGE_SHOW, MessageParameters(account, folder, message_id), shown, lambda error: self._status.report("Could not open the message", error), owner=self)
 
     # --- invitations (D-310) ------------------------------------------------------------------------------------------
+
+    def _tell(self, where: QWidget, text: str, error: ChronoMailError | None = None) -> None:
+        """A result or error of a card shows in the window that was clicked, not behind it; the main window's line for the reading pane, and when that window has closed meanwhile."""
+        window = where.window() if isValid(where) else None
+        if isinstance(window, QMainWindow) and window is not self._parent.window():
+            window.statusBar().showMessage(text if error is None else f"{text}: {error}", 8000)
+        elif error is None:
+            self._status.show(text)
+        else:
+            self._status.report(text, error)
 
     def _in_pane(self) -> CalendarSource | None:
         """The message in the reading pane, as the source of its card."""
@@ -416,7 +427,7 @@ class ReadingPane(QObject):
         if not info.answered_on_mail and QMessageBox.StandardButton(box.exec()) != QMessageBox.StandardButton.Ok:  # no copy: nothing leaves your calendar, so nothing to ask
             return
         parameters = SourceParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item)
-        self._backend.ask(INVITATION_REOPEN, parameters, lambda _: self._show_again(reader, place), lambda error: self._status.report("Could not change your answer", error), owner=self)
+        self._backend.ask(INVITATION_REOPEN, parameters, lambda _: self._show_again(reader, place), lambda error: self._tell(reader, "Could not change your answer", error), owner=self)
 
     def _more_in_pane(self, first: int) -> None:
         if self.shown is not None:
@@ -431,7 +442,7 @@ class ReadingPane(QObject):
                 card.add_blocks(first, result.parts)
 
         def failed(error: ChronoMailError) -> None:
-            self._status.report("Could not read the rest of the items", error)
+            self._tell(card, "Could not read the rest of the items", error)
             if isValid(card) and card.showing == showing:
                 card.blocks_failed()
 
@@ -468,7 +479,7 @@ class ReadingPane(QObject):
         """A calendar file on this computer as a card; `failed` is called when it cannot be shown."""
         self.open_calendar_card(CalendarSource(file=path), Path(path).name, failed)
 
-    def open_calendar_card(self, source: CalendarSource, title: str, failed: Callable[[], None] | None = None) -> None:
+    def open_calendar_card(self, source: CalendarSource, title: str, failed: Callable[[], None] | None = None, where: QWidget | None = None) -> None:
         """A calendar attachment or file as a card in a window of its own. What cannot be shown is said in the status line, never handed to the
         system's program: Chrono Mail may be that program (D-310 step 4)."""
 
@@ -518,7 +529,7 @@ class ReadingPane(QObject):
             window.activateWindow()
 
         def refused(error: ChronoMailError) -> None:
-            self._status.report("Could not show this calendar file", error)
+            self._tell(where or self._parent, "Could not show this calendar file", error)
             if failed is not None:
                 failed()
 
@@ -533,16 +544,16 @@ class ReadingPane(QObject):
             return
 
         def made(result: BusyResult) -> None:
-            self._status.show("Your busy times are ready to send.")
+            self._tell(reader, "Your busy times are ready to send.")
             self._composing.open_draft(result.account, result.folder, result.message)
 
         def listed(choices: ChoicesResult) -> None:
             dialog = InvitationBusyDialog(choices, self._parent)
             if dialog.exec() == InvitationBusyDialog.DialogCode.Accepted and dialog.chosen:
                 parameters = BusyParameters(source.account, source.folder, source.message, part=source.part, file=source.file, item=source.item, calendars=dialog.chosen)
-                self._backend.ask(INVITATION_BUSY, parameters, made, lambda error: self._status.report("Could not make your busy times", error), owner=self)
+                self._backend.ask(INVITATION_BUSY, parameters, made, lambda error: self._tell(reader, "Could not make your busy times", error), owner=self)
 
-        self._backend.ask(INVITATION_CHOICES, self._parameters(source), listed, lambda error: self._status.report("Could not read the request", error), owner=self)
+        self._backend.ask(INVITATION_CHOICES, self._parameters(source), listed, lambda error: self._tell(reader, "Could not read the request", error), owner=self)
 
     def _organize_in_pane(self, action: str) -> None:
         self.organize_invitation(self.reader, self._in_pane(), action)
@@ -560,11 +571,11 @@ class ReadingPane(QObject):
             words = {"taken": f"Their answer is in your {item}.", "moved": f"Your {item} follows the proposal.", "declined": "Your answer to the proposal",
                      "sent": "The latest version"}
             if result.done in ("declined", "sent"):
-                self._status.show(f"{words[result.done]} is ready to send.")
+                self._tell(reader, f"{words[result.done]} is ready to send.")
             else:
                 mailer = " The calendar server tells the attendees." if result.server_mails and result.done == "moved" else ""
                 ready = " The change is ready to send to the attendees." if result.draft_message is not None else ""
-                self._status.show(words.get(result.done, "Done.") + mailer + ready)
+                self._tell(reader, words.get(result.done, "Done.") + mailer + ready)
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
                 self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
@@ -578,7 +589,7 @@ class ReadingPane(QObject):
                 return
             tell = answer == QMessageBox.StandardButton.Yes
         parameters = OrganizeParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, action=chosen, mail=tell)
-        self._backend.ask(INVITATION_ORGANIZE, parameters, organized, lambda error: self._status.report(f"Could not change your {item}", error), owner=self)
+        self._backend.ask(INVITATION_ORGANIZE, parameters, organized, lambda error: self._tell(reader, f"Could not change your {item}", error), owner=self)
 
     def _delegate_in_pane(self) -> None:
         self.delegate_invitation(self.reader, self._in_pane())
@@ -587,19 +598,21 @@ class ReadingPane(QObject):
         """Delegate…: the address of who goes in your place, then the invitation for them and your answer to the organizer in the composer."""
         if place is None:
             return
-        dialog = InvitationDelegateDialog(self._parent)
+        info = self._card_of(reader, place)
+        dialog = InvitationDelegateDialog(self._parent, task=info is not None and info.kind == "task")
         if dialog.exec() != InvitationDelegateDialog.DialogCode.Accepted:
             return
 
         def delegated(result: DelegateResult) -> None:
-            self._status.show("The invitation for them and your answer to the organizer are ready to send.")
+            told = " The calendar server tells the organizer." if result.server_answers else " Nothing goes to the organizer: confirmation emails are off for this account."
+            self._tell(reader, "The invitation for them and your answer to the organizer are ready to send, in two mails." if result.answer_message else f"The invitation for them is ready to send.{told}")
             self._composing.open_draft(result.account, result.folder, result.request_message, lambda: self._show_again(reader, place))
             if result.answer_message:  # "": the calendar's server mails your answer
                 self._composing.open_draft(result.account, result.folder, result.answer_message, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
         self._backend.ask(INVITATION_DELEGATE, DelegateParameters(place.account, place.folder, place.message, part=place.part, file=place.file, item=place.item, to=dialog.address), delegated,
-                          lambda error: self._status.report("Could not pass the invitation on", error), owner=self)
+                          lambda error: self._tell(reader, "Could not pass the invitation on", error), owner=self)
 
     def _apply_in_pane(self) -> None:
         self.apply_invitation(self.reader, self._in_pane())
@@ -613,13 +626,13 @@ class ReadingPane(QObject):
 
         def applied(result: ApplyResult) -> None:
             words = {"updated": f"Your {home} has the new version.", "removed": f"Removed from your {home}.", "asked": "Your request to resend the original invite is ready to send."}
-            self._status.show(words.get(result.done, "Done."))
+            self._tell(reader, words.get(result.done, "Done."))
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
                 self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message, lambda: self._show_again(reader, place))
             self._show_again(reader, place)
 
         self._backend.ask(INVITATION_APPLY, self._parameters(place), applied,
-                          lambda error: self._status.report(f"Could not change your {home}", error), owner=self)
+                          lambda error: self._tell(reader, f"Could not change your {home}", error), owner=self)
 
     def _refresh_others(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource) -> None:
         """Every other open window of that mail or file says what your calendar holds now (D-310): the reading pane, message windows, card windows."""
@@ -693,7 +706,7 @@ class ReadingPane(QObject):
             if dialog.exec() == InvitationCalendarDialog.DialogCode.Accepted and dialog.chosen:
                 self._send_answer(reader, place, answer, dialog.chosen, info)
 
-        self._backend.ask(INVITATION_CHOICES, self._parameters(place), listed, lambda error: self._status.report("Could not read the invitation", error), owner=self)
+        self._backend.ask(INVITATION_CHOICES, self._parameters(place), listed, lambda error: self._tell(reader, "Could not read the invitation", error), owner=self)
 
     def _send_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, answer: str, calendar: str, card: InvitationInfo | None = None) -> None:
         chosen: Answer = "DECLINED" if answer == "DECLINED" else ("TENTATIVE" if answer == "TENTATIVE" else "ACCEPTED")
@@ -706,13 +719,13 @@ class ReadingPane(QObject):
         def answered(result: AnswerResult) -> None:
             words = {"ACCEPTED": "accepted", "TENTATIVE": "accepted tentatively", "DECLINED": "declined"}[result.answer]
             where = f" It is in {result.stored_in}." if result.stored_in else ""
-            mailer = " The calendar server sends your answer." if result.server_answers else ""
-            self._status.show(f"Added to your {home}.{where}" if shared else f"You {words} the invitation.{where}{mailer}")
+            mailer = (" The calendar server sends your answer when the connection is back." if result.waiting else " The calendar server sends your answer.") if result.server_answers else ""
+            self._tell(reader, f"Added to your {home}.{where}" if shared else f"You {words} the invitation.{where}{mailer}")
             if result.draft_message is not None and result.draft_folder is not None and result.draft_account is not None:
                 self._composing.open_draft(result.draft_account, result.draft_folder, result.draft_message, lambda: self._show_again(reader, place))
             self._show_again(reader, place)  # the card says what your calendar holds now
 
-        self._backend.ask(INVITATION_ANSWER, parameters, answered, lambda error: self._status.report("Could not answer the invitation", error), owner=self)
+        self._backend.ask(INVITATION_ANSWER, parameters, answered, lambda error: self._tell(reader, "Could not answer the invitation", error), owner=self)
 
     def _add_all_in_pane(self) -> None:
         self.add_all_invitation(self.reader, self._in_pane())
@@ -730,7 +743,7 @@ class ReadingPane(QObject):
                     then(dialog.chosen)
 
             parameters = ChoicesParameters(place.account, place.folder, place.message, part=place.part, file=place.file, kind="task" if task else "event")
-            self._backend.ask(INVITATION_CHOICES, parameters, listed, lambda error: self._status.report("Could not read the items", error), owner=self)
+            self._backend.ask(INVITATION_CHOICES, parameters, listed, lambda error: self._tell(reader, "Could not read the items", error), owner=self)
 
         def tasks_for(calendar: str) -> None:
             if info.tasks:
@@ -746,11 +759,11 @@ class ReadingPane(QObject):
     def _add_items(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, calendar: str, task_list: str) -> None:
         def added(result: AddResult) -> None:
             done = f"Added {result.added} {'item' if result.added == 1 else 'items'}."
-            self._status.show(done if not result.skipped else f"{done} Skipped {result.skipped} that {'was' if result.skipped == 1 else 'were'} there already.")
+            self._tell(reader, done if not result.skipped else f"{done} Skipped {result.skipped} that {'was' if result.skipped == 1 else 'were'} there already.")
             self._show_again(reader, place)
 
         parameters = AddParameters(place.account, place.folder, place.message, part=place.part, file=place.file, calendar=calendar, task_list=task_list)
-        self._backend.ask(INVITATION_ADD, parameters, added, lambda error: self._status.report("Could not add the items", error), owner=self)
+        self._backend.ask(INVITATION_ADD, parameters, added, lambda error: self._tell(reader, "Could not add the items", error), owner=self)
 
     def _save_attachment(self, position: int, suggested: str) -> None:
         if self.shown is None:

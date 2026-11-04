@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QLabel, QWidget
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.engine.commands_invitations import CalendarChoice, ChoicesResult
@@ -12,9 +12,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.525"
+__version__ = "test_ui_invitation_answers.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: the words on the card, the place as a link, the Delegate window of a task (D-310)
 # v4.4.525: your own mails, a file that does not name you, Add all with one item (D-310)
 # v4.4.522: Update calendar is for an answer that stands (D-310)
 # v4.4.517: An answer only the mail remembers shows like any other (D-310)
@@ -123,7 +124,7 @@ def test_a_date_added_to_your_series_has_the_four_answers_and_no_other_button(re
     qtbot.waitUntil(lambda: card.accept_button.isVisible())
     assert all(button.isVisible() and button.isEnabled() for button in (card.tentative_button, card.decline_button, card.delegate_button))
     assert not card.apply_button.isVisible() and not card.request_label.isVisible()
-    assert card.status.text() == "You accepted tentatively. In Calendar (Work)."  # never "newer": an added date always is
+    assert card.status.text() == "You accepted tentatively. This meeting is in your calendar Calendar (Work)."  # never "newer": an added date always is
 
 
 def test_a_date_of_a_series_you_do_not_have_offers_only_request(reader: ReaderWidget, qtbot: QtBot) -> None:
@@ -237,3 +238,26 @@ def test_a_block_of_your_own_mail_stays_without_buttons_when_it_is_read_again(re
     assert not card.blocks[0].add_button.isVisibleTo(card.blocks[0])
     card.update_blocks((part,), 0)
     assert not card.blocks[0].add_button.isVisibleTo(card.blocks[0])
+
+
+def test_the_words_fit_what_is_on_screen() -> None:
+    assert intro_text(replace(CARD, method="PUBLISH", attendees=(), organizer=None)) == "This event was sent to you."
+    assert intro_text(replace(CARD, method="ADD", stored_in="Work (Me)")) == "A date was added to this meeting."
+    several = replace(CARD, parts=(CARD, CARD), items=2, events=2)
+    assert intro_text(several) == "This file holds 2 events." and intro_text(replace(several, in_mail=True)) == "This mail holds 2 events."
+    assert status_text(replace(CARD, stored_in="Personal (Me)", version="same", your_answer="ACCEPTED")) == "You accepted. This meeting is in your calendar Personal (Me)."
+
+
+def test_a_web_address_in_the_place_is_a_link_with_the_hint_and_the_rest_stays_plain_text(reader: ReaderWidget, qtbot: QtBot) -> None:
+    reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, location="<b>Room</b> https://meet.example.org/a")))
+    place = reader._card.place  # noqa: SLF001
+    assert place.text() == '&lt;b&gt;Room&lt;/b&gt; <a href="https://meet.example.org/a">https://meet.example.org/a</a>'
+    with qtbot.waitSignal(reader._card.link_activated, timeout=2000) as signal:  # noqa: SLF001
+        place.linkActivated.emit("https://meet.example.org/a")
+    assert signal.args is not None and signal.args[0].toString() == "https://meet.example.org/a"
+
+
+def test_the_delegate_window_of_a_task_speaks_of_a_task_and_promises_no_answer(qtbot: QtBot) -> None:
+    dialog = InvitationDelegateDialog(None, task=True)
+    qtbot.addWidget(dialog)
+    assert all("answer" not in label.text() and "meeting" not in label.text() for label in dialog.findChildren(QLabel))

@@ -3876,3 +3876,8 @@ Open: items 16, 18, 19, 21 to 25.
 Built: a card in Sent or Drafts (own_mail, by folder role) says what you wrote and has no buttons; a file naming none of your addresses greys its answers with an (i); Add all needs more than one item, is greyed when fewer than two are left (left, one query per calendar), and skips what any of your calendars holds, so the question Replace or Skip is gone.
 Tests: tests/test_engine_invitation_files.py, tests/ui/test_ui_invitation_answers.py, tests/ui/test_ui_invitation_window.py; the new tests fail on 4.4.524. Two review rounds: the first found two real faults, fixed; the second nothing real.
 Open: items 19, 22 to 25.
+
+## 2026-11-04, 4.4.526: answers in the window clicked, the card's words, the place as a link (the owner, D-310, items 19, 25)
+Built: ReadingPane._tell shows a card's results and errors in the window clicked; whole sentences and the right words on the card; Delegate and offline say what really happens (DelegateResult.server_answers, AnswerResult.waiting); linkify moved to ui/linkhint.py for the place.
+Tests: tests/ui/test_ui_invitation_answers.py, test_ui_invitation_window.py, test_ui_invitation_card.py, tests/test_engine_invitation_mailing.py; the new tests fail on 4.4.525. One review round found nothing real.
+Open: items 22, 23, 24.

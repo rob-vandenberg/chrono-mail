@@ -17,9 +17,10 @@ from chrono_mail.pimstore import PimStore
 from chrono_mail.pim.itip import BusyPeriod, CalendarMessage, added_already, added_dates, holds_occurrence, in_meeting, is_newer, updated_copy, occurrences_of, proposal_usable, read_calendar_message, text_items
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitations.py 4.4.525"
+__version__ = "invitations.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: in_mail: the card of a mail itself (D-310)
 # v4.4.525: own_mail: a mail in Sent or Drafts is your own; left, kept_items and items_left: what Add all still has to add (D-310)
 # v4.4.523: description and comment on the card (D-310)
 # v4.4.522: one_date, answer_again, the times now also for an update (D-310)
@@ -94,6 +95,7 @@ class InvitationInfo:
     kept_start: date | datetime | None = None  # a proposal or an update: the times your meeting has now
     kept_end: date | datetime | None = None
     own_mail: str = ""  # a mail of your own: "sent" in the Sent folder, "draft" in Drafts; it says what you wrote and asks nothing
+    in_mail: bool = False  # the card of a mail itself, not of a file or an attachment
     left: int = 0  # the whole card of a text that asks nothing: how many items are in none of your calendars yet (Add all)
 
 

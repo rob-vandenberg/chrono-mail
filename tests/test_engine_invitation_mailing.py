@@ -19,9 +19,10 @@ from tests.test_engine_invitation_answers import answer, drafts
 from tests.test_engine_invitations import calendar_text, deliver, invitation_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_mailing.py 4.4.520"
+__version__ = "test_engine_invitation_mailing.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: an answer says it waits for the connection (D-310)
 # v4.4.520: an answer the server mails sets the Replied mark (D-310)
 # v4.4.516: Change my answer tells nobody (D-310)
 # v4.4.515: a Decline while offline mails as chosen, a Decline refused twice keeps the meeting with a sync conflict (D-310)
@@ -201,7 +202,8 @@ def test_offline_with_server_chosen_the_server_mails_the_decline_when_the_connec
     answer(setup, message, "ACCEPTED", calendar_id(setup))
     assert "SCHEDULE-AGENT=CLIENT" in on_server(server)[0]
     settings(setup, invitation_answers="server")
-    assert declined_offline(setup, server, message).server_answers and drafts(setup) == []  # type: ignore[attr-defined]
+    result = declined_offline(setup, server, message)
+    assert result.server_answers and result.waiting and drafts(setup) == []  # type: ignore[attr-defined]
     sent = put_texts(server, monkeypatch)
     call(setup.engine, "dav.sync", account=setup.account_id)
     assert writes(server) == ["PUT", "DELETE"] and on_server(server) == [] and drafts(setup) == []

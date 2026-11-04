@@ -44,15 +44,17 @@ from chrono_mail.mime.linkdomain import leads_elsewhere
 from chrono_mail.ui.flowlayout import FlowRow
 from chrono_mail.engine.invitations import InvitationInfo
 from chrono_mail.ui.invitationcard import InvitationCard
+from chrono_mail.ui.linkhint import linkify
 from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.formatting import display_name, file_size, initials, avatar_colour, long_date
 from chrono_mail.ui.scale import px_for
 from chrono_mail.core import displayed_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "reader.py 4.4.516"
+__version__ = "reader.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: linkify moved to linkhint.py, for the card too
 # v4.4.516: Change my answer reaches the reading pane (D-310)
 # v4.4.515: the card can be reached (card); its height follows the blocks that came (D-310)
 # v4.4.508: Add all on the card reaches the reading pane; pressed_item: which block of the card was pressed (D-310)
@@ -176,9 +178,6 @@ class MessageContent(QWebEngineUrlSchemeHandler):
         buffer.setData(QByteArray(data))
         buffer.open(QIODevice.OpenModeFlag.ReadOnly)
         job.reply(QByteArray(content_type), buffer)
-# An address that opens with an apostrophe ends at the next one; any other keeps its apostrophes (O'Brien).
-_URL_PATTERN: re.Pattern[str] = re.compile(r"(?<=')(?:https?://|mailto:)[^\s<>\"']+|(?<!')(?:https?://|mailto:)[^\s<>\"]+", re.IGNORECASE)  # a scheme in any case (RFC 3986)
-_SENTENCE_END: str = ".,;:!?'"
 _CID_PATTERN: re.Pattern[str] = re.compile(r"cid:([^\s\"'()<>]+)", re.IGNORECASE)
 
 
@@ -269,44 +268,6 @@ def make_safe_view(parent: QWidget | None = None) -> tuple[QWebEngineView, SafeP
     view.setContextMenuPolicy(view.contextMenuPolicy().NoContextMenu)
     view.winId()  # the window made now, before any page loads: a page loaded before the window is on screen was drawn for no window and stayed blank (4.3.501)
     return view, page, blocker, content
-
-
-def _sentence_end_cut(found: str) -> int:
-    """Where an address ends without the punctuation of the sentence after it, never inside its scheme; one pass, also over hostile text."""
-    stop = len(found)
-    scheme = len(found.split(":", 1)[0]) + 1 + (2 if found[:4].lower() == "http" else 0)  # "mailto:", "http://", "https://"
-    unmatched = found.count(")") - found.count("(")
-    while stop > scheme:
-        last = found[stop - 1]
-        if last in _SENTENCE_END:
-            stop -= 1
-        elif last == ")" and unmatched > 0:
-            unmatched -= 1
-            stop -= 1
-        else:
-            break
-    return stop
-
-
-def linkify(text: str) -> str:
-    """Plain text as HTML with its web and mail addresses clickable.
-
-    The addresses are found in the text as written, so one stops at its closing bracket or double quote; an
-    apostrophe belongs to the address (O'Brien) unless the address opened with one. Punctuation that ends the
-    sentence after an address (. , ; : ! ? ' and a ")" without its "(") is not part of it. The text around
-    them and each address are made safe for HTML apart (CR-19).
-    """
-    pieces: list[str] = []
-    end = 0
-    for match in _URL_PATTERN.finditer(text):
-        found = match.group(0)[:_sentence_end_cut(match.group(0))]  # what is cut is only punctuation: no other address in it
-        if found.lower() in ("http://", "https://", "mailto:"):
-            continue  # nothing but the scheme: plain text
-        address = html.escape(found)
-        pieces.append(f'{html.escape(text[end:match.start()])}<a href="{address}">{address}</a>')
-        end = match.start() + len(found)
-    pieces.append(html.escape(text[end:]))
-    return "".join(pieces)
 
 
 def embed_inline_images(document: str, addresses: dict[str, str]) -> str:

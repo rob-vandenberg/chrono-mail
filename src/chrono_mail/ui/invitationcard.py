@@ -17,13 +17,15 @@ from chrono_mail.ui.colours import css, theme
 from chrono_mail.ui.flowlayout import FlowRow
 from chrono_mail.ui.icons import bundled_icon, place_icon
 from chrono_mail.ui.infomark import InfoMark
+from chrono_mail.ui.linkhint import linkify
 from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.525"
+__version__ = "invitationcard.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: whole sentences and the right words: is in your calendar, event, mail or file, a task you are asked to do, a date; a web address in the place is a link (D-310)
 # v4.4.525: a mail of your own says what you sent, with no buttons; a file that does not name you greys its answers with an (i); Add all only with more than one item, greyed when fewer than two are left (D-310)
 # v4.4.523: the meeting's own text and an attendee's comment are shown (D-310)
 # v4.4.522: an update says so and what changed; Update calendar when your answer stands, the four answers when it moved; a mail about one date says so; a cancellation has no newer-version sentence (D-310)
@@ -48,7 +50,7 @@ __version__ = "invitationcard.py 4.4.525"
 _INTRO: dict[str, str] = {
     "REQUEST": "You have been invited to this {item}.",
     "PUBLISH": "This {item} was sent to you.",
-    "ADD": "An occurrence was added to this {item}.",
+    "ADD": "A date was added to this {item}.",
     "CANCEL": "This {item} was cancelled by its organizer.",
     "REPLY": "{who} {answered} {whose} invitation.",
     "COUNTER": "{who} proposes a change to this {item}.",
@@ -104,8 +106,8 @@ def _person_text(person: InvitationPerson) -> str:
 
 
 def item_word(info: InvitationInfo) -> str:
-    """What the person calls the item."""
-    return "task" if info.kind == "task" else "meeting"
+    """What the person calls the item: an event with nobody else in it is no meeting."""
+    return "task" if info.kind == "task" else "meeting" if info.attendees or info.organizer is not None else "event"
 
 
 def home_word(info: InvitationInfo) -> str:
@@ -160,7 +162,7 @@ def intro_text(info: InvitationInfo) -> str:
     if info.own_mail:
         return _own_text(info)
     if info.plain:
-        return "" if info.item >= 0 else "This file holds one item."  # a block of a file: the top of the card said it
+        return "" if info.item >= 0 else f"This {_holder(info)} holds one item."  # a block of a file: the top of the card said it
     if asks_for_series(info):
         return _NOT_KEPT.format(home=home_word(info))
     item = "date of the series" if info.one_date and info.method != "ADD" else item_word(info)
@@ -172,7 +174,18 @@ def intro_text(info: InvitationInfo) -> str:
         return _PROGRESS[writer.answer].format(who=who)
     answered = _ANSWERED.get(writer.answer, "answered") if writer is not None else "answered"
     whose = "your" if info.organizer is not None and info.organizer.you else "the"  # a copy of someone's answer to a meeting that is not yours
+    if info.method == "REQUEST" and info.kind == "task":
+        return "You have been asked to do this task."
     return _INTRO.get(info.method, "This {item} was sent to you.").format(item=item, who=who, answered=answered, whose=whose)
+
+
+def _holder(info: InvitationInfo) -> str:
+    return "mail" if info.in_mail else "file"
+
+
+def _kept_in(info: InvitationInfo) -> str:
+    """Where your copy is, as a sentence."""
+    return f"This {item_word(info)} is in your {home_word(info)} {info.stored_in}."
 
 
 def _counted(number: int, one: str, more: str) -> str:
@@ -185,7 +198,8 @@ def _holds_text(info: InvitationInfo) -> str:
     others = info.items - info.events - info.tasks  # busy times
     if others:
         kinds.append(_counted(others, "list of busy times", "lists of busy times"))
-    text = f"This file holds {', '.join(kinds[:-1])} and {kinds[-1]}." if len(kinds) > 1 else f"This file holds {kinds[0] if kinds else 'no items'}."
+    holder = _holder(info)
+    text = f"This {holder} holds {', '.join(kinds[:-1])} and {kinds[-1]}." if len(kinds) > 1 else f"This {holder} holds {kinds[0] if kinds else 'no items'}."
     if info.journals:
         text += f" {_counted(info.journals, 'journal entry is', 'journal entries are')} left out."
     if info.damaged:
@@ -234,7 +248,7 @@ def _kept_text(info: InvitationInfo) -> str:
     """What your calendar holds of it: nothing (empty), the copy and your answer, or a newer version. An answer that left no copy: only that answer."""
     done = organize_done(info)
     if done:
-        return f"{done} In {info.stored_in}." if info.stored_in and not info.answered_on_mail else done
+        return f"{done} {_kept_in(info)}" if info.stored_in and not info.answered_on_mail else done
     if info.answered_on_mail:
         return _YOU[info.your_answer]
     if not info.stored_in:
@@ -243,7 +257,7 @@ def _kept_text(info: InvitationInfo) -> str:
         return f"A newer version is in {info.stored_in}."
     asks = info.method in ("REQUEST", "ADD") and not (info.organizer is not None and info.organizer.you)
     answer = _YOU.get(info.your_answer, "You have not answered yet." if asks else "")
-    return f"{answer} In {info.stored_in}.".strip() if info.version != "newer" or info.method in ("ADD", "CANCEL") else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
+    return f"{answer} {_kept_in(info)}".strip() if info.version != "newer" or info.method in ("ADD", "CANCEL") else f"{answer} This version is newer than the one in {info.stored_in}.".strip()
 
 
 def is_handled(info: InvitationInfo) -> bool:
@@ -352,8 +366,8 @@ class _IconRow(QWidget):
 class InvitationCard(QFrame):
     """The card. Everything in it that comes from the message is shown as plain text, never as markup."""
 
-    link_activated = Signal(QUrl)  # the organizer's address was clicked
-    link_hovered = Signal(str)  # the pointer came on the organizer's address (its link), or left it ("")
+    link_activated = Signal(QUrl)  # the organizer's address or a web address in the place was clicked
+    link_hovered = Signal(str)  # the pointer came on such an address (its link), or left it ("")
     answer_requested = Signal(str)  # ACCEPTED, TENTATIVE or DECLINED (Add to calendar: ACCEPTED of a shared item)
     apply_requested = Signal()  # the organizer's change into your calendar: Update calendar, Remove from calendar, Add to calendar, Ask…
     delegate_requested = Signal()  # Delegate…: someone else goes in your place
@@ -390,6 +404,11 @@ class InvitationCard(QFrame):
         self.organizer.linkActivated.connect(self._organizer_clicked)
         self.organizer.linkHovered.connect(self.link_hovered)
         self.place = self._plain()
+        self.place.setTextFormat(Qt.TextFormat.RichText)  # built with linkify, which escapes the text
+        self.place.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.place.setOpenExternalLinks(False)
+        self.place.linkActivated.connect(self._organizer_clicked)
+        self.place.linkHovered.connect(self.link_hovered)
         self.people = FlowRow(self, spacing=px_for(self, 6))
         self.status = self._plain()
         self._organizer_row = _IconRow("user", self.organizer, self)
@@ -695,7 +714,7 @@ class InvitationCard(QFrame):
         self.comment.setVisible(bool(self.comment.text()))
         self.description.setText(info.description)
         self.description.setVisible(bool(info.description))
-        self.place.setText(info.location)
+        self.place.setText(linkify(info.location))
         self._place_row.setVisible(bool(info.location))
         self.people.clear()
         for person in info.attendees:

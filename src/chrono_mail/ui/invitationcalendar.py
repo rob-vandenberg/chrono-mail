@@ -6,9 +6,10 @@ from chrono_mail.ui.forms import part
 from chrono_mail.ui.infomark import InfoMark
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcalendar.py 4.4.512"
+__version__ = "invitationcalendar.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: the windows no longer speak of a meeting when it is none, Delegate says what is made (D-310)
 # v4.4.512: a calendar that holds the meeting already is greyed with its (i); a shared calendar does not start ticked for busy times (D-310)
 # v4.4.507: a read-only task list says so; InvitationBusyDialog: the calendars your busy times are made from, with tick boxes (D-310 step 4)
 # v4.4.505: Initial: the calendar an accepted invitation goes into: every calendar of every account with a radio button, grouped by account,
@@ -24,7 +25,7 @@ class InvitationCalendarDialog(QDialog):
         self.setWindowTitle("Choose a task list" if task else "Choose a calendar")
         form = forms.fill(self, "invitation_calendar")  # D-276
         if task:
-            part(form, QLabel, "intro").setText("Choose the task list for this task:")
+            part(form, QLabel, "intro").setText("Choose the task list:")
         self.buttons: QDialogButtonBox = part(form, QDialogButtonBox, "buttons")
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
@@ -127,10 +128,12 @@ class InvitationBusyDialog(QDialog):
 class InvitationDelegateDialog(QDialog):
     """The address of the person who goes in your place (Delegate…, D-310). After OK: `address`."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, task: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle("Delegate")
         form = forms.fill(self, "invitation_delegate")  # D-276
+        if task:
+            part(form, QLabel, "intro").setText("Who does this task in your place? Chrono Mail prepares the request for them, ready to send.")
         self.address_field: QLineEdit = part(form, QLineEdit, "address")
         self.buttons: QDialogButtonBox = part(form, QDialogButtonBox, "buttons")
         self.buttons.accepted.connect(self.accept)

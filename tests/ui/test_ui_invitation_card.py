@@ -12,9 +12,10 @@ from chrono_mail.ui.reader import ReaderWidget
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_card.py 4.4.519"
+__version__ = "test_ui_invitation_card.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: the card's new words (D-310)
 # v4.4.519: "your invitation" only for your own meeting (D-310)
 # v4.4.504: Initial tests: the invitation card above the text, alone when the text shows nothing, never markup, its part not a file (D-310)
 
@@ -58,8 +59,8 @@ def test_a_click_on_the_organizer_reports_the_link(reader: ReaderWidget, qtbot: 
 def test_the_card_says_what_the_message_is_and_what_your_calendar_holds() -> None:
     assert intro_text(replace(CARD, method="CANCEL")) == "This meeting was cancelled by its organizer."
     assert intro_text(replace(CARD, method="REPLY", organizer=InvitationPerson("me@example.org", "Me", "ACCEPTED", True), attendees=(InvitationPerson("sam@example.net", "Sam", "ACCEPTED", False),))) == "Sam accepted your invitation."
-    assert intro_text(replace(CARD, kind="task")) == "You have been invited to this task."
-    assert status_text(replace(CARD, stored_in="Calendar (Work)", version="same", your_answer="ACCEPTED")) == "You accepted. In Calendar (Work)."
+    assert intro_text(replace(CARD, kind="task")) == "You have been asked to do this task."
+    assert status_text(replace(CARD, stored_in="Calendar (Work)", version="same", your_answer="ACCEPTED")) == "You accepted. This meeting is in your calendar Calendar (Work)."
     assert status_text(replace(CARD, stored_in="Calendar (Work)", version="older")) == "A newer version is in Calendar (Work)."
     thursday, friday = date(2026, 10, 29).strftime("%A %d %B %Y"), date(2026, 10, 30).strftime("%A %d %B %Y")  # in the computer's language
     assert when_text(date(2026, 10, 29), date(2026, 10, 30), True) == thursday
@@ -85,7 +86,7 @@ def test_a_long_place_scrolls_sideways_and_is_never_cut_off(reader: ReaderWidget
     reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, location=link)))
     area = reader._card_area  # noqa: SLF001
     qtbot.waitUntil(lambda: area.isVisible() and area.horizontalScrollBar().maximum() > 0)
-    assert reader._card.place.text() == link  # noqa: SLF001
+    assert link in reader._card.place.text()  # noqa: SLF001
 
 
 def test_another_theme_recolours_the_card(reader: ReaderWidget, qtbot: QtBot) -> None:

@@ -27,9 +27,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.525"
+__version__ = "test_ui_invitation_window.py 4.4.526"
 
 # --- Version history ----------------------------------------------------
+# v4.4.526: results show in the window clicked (D-310)
 # v4.4.525: Add all greyed when fewer than two items are left (D-310)
 # v4.4.524: Add all in the main window reaches its action (D-310)
 # v4.4.523: the card shows the meeting's text and who wrote a comment (D-310)
@@ -57,7 +58,7 @@ CALENDAR_FILE = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nBEGI
 
 
 def test_a_task_speaks_of_a_task_and_its_task_list() -> None:
-    assert intro_text(TASK) == "You have been invited to this task."
+    assert intro_text(TASK) == "You have been asked to do this task."
     assert apply_text(replace(TASK, method="CANCEL", stored_in="Tasks (Work)", occurrence_kept=True)) == "Remove from task list"
     assert apply_text(replace(TASK, stored_in="Tasks (Work)", version="newer", your_answer="ACCEPTED")) == "Update task list"
     yours = replace(TASK, method="REPLY", organizer=replace(TASK.organizer, you=True))  # type: ignore[arg-type]
@@ -69,7 +70,7 @@ def test_an_attendees_progress_on_a_task_has_its_own_words_and_marks(reader: Rea
     info = replace(TASK, method="REPLY", attendees=people)
     assert intro_text(info) == "Sam has completed this task."
     assert intro_text(replace(info, attendees=(replace(people[0], answer="IN-PROCESS"),))) == "Sam is working on this task."
-    assert status_text(replace(TASK, stored_in="Tasks (Work)", your_answer="COMPLETED", version="same")) == "You completed it. In Tasks (Work)."
+    assert status_text(replace(TASK, stored_in="Tasks (Work)", your_answer="COMPLETED", version="same")) == "You completed it. This task is in your task list Tasks (Work)."
     reader.show_message(replace(shown(html="<p></p>"), invitation=info))
     card = reader._card  # noqa: SLF001
     qtbot.waitUntil(lambda: card.when.isVisible())
@@ -146,7 +147,7 @@ def test_an_answered_invitation_shows_change_my_answer_instead_of_the_answers(re
     reader.show()
     card.show_invitation(replace(CARD, stored_in="Personal (Me)", your_answer="ACCEPTED", occurrence_kept=True, version="same"))
     assert not card.change_button.isHidden() and all(button.isHidden() for button in (card.accept_button, card.tentative_button, card.decline_button, card.delegate_button))
-    assert status_text(card.info) == "You accepted. In Personal (Me)."  # type: ignore[arg-type]
+    assert status_text(card.info) == "You accepted. This meeting is in your calendar Personal (Me)."  # type: ignore[arg-type]
 
 
 def test_a_meeting_in_your_calendar_you_never_answered_says_so_and_can_be_answered(reader: ReaderWidget, qtbot: QtBot) -> None:  # noqa: F811
@@ -155,7 +156,7 @@ def test_a_meeting_in_your_calendar_you_never_answered_says_so_and_can_be_answer
     for answer in ("", "NEEDS-ACTION"):
         card.show_invitation(replace(CARD, stored_in="Personal (Me)", your_answer=answer, occurrence_kept=True))
         assert not card.accept_button.isHidden() and card.change_button.isHidden()
-        assert status_text(card.info) == "You have not answered yet. In Personal (Me)."  # type: ignore[arg-type]
+        assert status_text(card.info) == "You have not answered yet. This meeting is in your calendar Personal (Me)."  # type: ignore[arg-type]
 
 
 def test_an_update_that_asks_a_new_answer_is_not_handled(reader: ReaderWidget, qtbot: QtBot) -> None:  # noqa: F811
@@ -372,7 +373,7 @@ def test_a_window_that_was_opened_with_everything_kept_stays_open(world: World, 
     qtbot.waitUntil(lambda: not world.window.reading.card_windows, timeout=5000)
     again = opened_file(world, qtbot, path)
     qtbot.wait(50)
-    assert again.isVisible() and "In " in again.card.status.text()
+    assert again.isVisible() and "is in your calendar" in again.card.status.text()
     again.close()
 
 
@@ -380,7 +381,8 @@ def test_declining_keeps_the_window_open(world: World, qtbot: QtBot, tmp_path: P
     request = CALENDAR_FILE.replace("VERSION:2.0", "VERSION:2.0\r\nMETHOD:REQUEST").replace("SUMMARY:", "ORGANIZER:mailto:olivia@example.org\r\nATTENDEE:mailto:me@example.com\r\nSUMMARY:")
     window = opened_file(world, qtbot, calendar_file(tmp_path, request))
     window.card.decline_button.click()
-    qtbot.waitUntil(lambda: "declined" in world.window.reading._status.label.text(), timeout=5000)  # noqa: SLF001
+    qtbot.waitUntil(lambda: "declined" in window.statusBar().currentMessage(), timeout=5000)  # the window that was clicked
+    assert "declined" not in world.window.reading._status.label.text()  # noqa: SLF001
     qtbot.wait(100)  # the card is read again after the answer
     assert window.isVisible()
     window.close()
@@ -513,7 +515,7 @@ def test_an_answer_is_handled_when_your_copy_says_the_same() -> None:
     assert organize_done(waiting) == "" and organize_reason(waiting) == ""
     taken = replace(waiting, kept_answers=(("sam@example.net", "ACCEPTED"),))
     assert organize_reason(taken) == "Their answer is in your meeting."
-    assert status_text(taken) == "Their answer is in your meeting. In Personal (Work)."
+    assert status_text(taken) == "Their answer is in your meeting. This meeting is in your calendar Personal (Work)."
 
 
 def test_an_accepted_proposal_and_a_declined_one_are_handled() -> None:
@@ -546,7 +548,7 @@ KEPT = replace(CARD, stored_in="Personal (Work)", occurrence_kept=True, version=
 
 
 def test_a_cancellation_has_no_newer_version_sentence() -> None:
-    assert status_text(replace(KEPT, method="CANCEL")) == "You accepted. In Personal (Work)."
+    assert status_text(replace(KEPT, method="CANCEL")) == "You accepted. This meeting is in your calendar Personal (Work)."
 
 
 def test_an_update_that_keeps_your_answer_only_updates() -> None:
