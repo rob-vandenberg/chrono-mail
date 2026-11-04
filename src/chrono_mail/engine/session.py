@@ -27,6 +27,7 @@ from chrono_mail.engine.junkwords import JunkHolder
 from chrono_mail.engine.receiving import Receiver
 from chrono_mail.engine.undohistory import UndoHistory
 from chrono_mail.index import Index
+from chrono_mail.protocols.hangup import hang_up_all
 from chrono_mail.protocols.imap import ImapClient
 from chrono_mail.protocols.releases import RELEASES_ADDRESS
 from chrono_mail.protocols.tls import context_for
@@ -34,9 +35,10 @@ from chrono_mail.store import Store
 from chrono_mail.sync import RebuildReport, rebuild_index
 
 # --- Version ------------------------------------------------------------
-__version__ = "session.py 4.4.541"
+__version__ = "session.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: hang_up and sends: the end of the program waits for no server, only for a mail being sent
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
 # v4.4.538: working is told also during a quiet big job (a step of a long job)
 # v4.2.453: rules_lock: every read-change-save of the rules file; rules_changed is told also during a quiet big job (D-302)
@@ -153,6 +155,12 @@ class ImapLink:
         if client is not None:
             client.logout()
 
+    def leave(self) -> None:
+        """The program ends: as close, without waiting for the server's answer."""
+        client, self.client = self.client, None
+        if client is not None:
+            client.leave()
+
 
 
 _INDEX_LOCKS: dict[str, threading.Lock] = {}  # index file -> held while it is rebuilt
@@ -208,6 +216,22 @@ class ServerWork:
 
 class WaitStopped(ServerWorkPaused):
     """The restore was cancelled, or the program is ending, while it waited for the work that runs."""
+
+
+def sends_mail[**P, R](handler: Callable[Concatenate["Engine", P], R]) -> Callable[Concatenate["Engine", P], R]:
+    """A command that sends mail: the end of the program says that it waits for it."""
+
+    @functools.wraps(handler)
+    def run(engine: "Engine", *args: P.args, **kwargs: P.kwargs) -> R:
+        with engine.sends_lock:
+            engine.sends += 1
+        try:
+            return handler(engine, *args, **kwargs)
+        finally:
+            with engine.sends_lock:
+                engine.sends -= 1
+
+    return run
 
 
 def talks_to_servers[**P, R](handler: Callable[Concatenate["Engine", P], R]) -> Callable[Concatenate["Engine", P], R]:
@@ -365,6 +389,8 @@ class Engine:
     junk: JunkHolder = field(default_factory=JunkHolder, init=False, repr=False)  # the junk filter's words, loaded once (D-238)
     undo: UndoHistory = field(default_factory=UndoHistory, init=False, repr=False)  # what Undo and Redo can do, while the program runs (B-18)
     outbox_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)  # one message at a time is put in, taken out or sent (B-21)
+    sends: int = field(default=0, init=False, repr=False)  # the commands that send mail now
+    sends_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
     server_work: ServerWork = field(default_factory=ServerWork, init=False, repr=False)  # checks and sends against a restore (RV-60)
     sent_unfiled: set[str] = field(default_factory=set, init=False, repr=False)  # store ids the server took in this run whose move to Sent is
     # left: never sent again, also when no mark could be written on the disk (full)
@@ -474,6 +500,19 @@ class Engine:
         for link in links:
             with link.lock:
                 link.close()
+
+    def hang_up(self) -> None:
+        """The program ends: every connection that is not in use says goodbye, and then every connection is hung up, so whatever waits for a
+        server gets a lost connection at once and ends by the way it has for that. Only a mail being sent keeps its connection."""
+        with self._imap_links_lock:
+            links = list(self._imap_links.values())
+        for link in links:
+            if link.lock.acquire(blocking=False):  # one in use is in the middle of a conversation: a goodbye would break into it
+                try:
+                    link.leave()
+                finally:
+                    link.lock.release()
+        hang_up_all()
 
     def trust_for_run(self, pin: str) -> None:
         """The person accepted a certificate until Chrono Mail closes (Connect without Don't ask me again): kept in memory only (D-299)."""

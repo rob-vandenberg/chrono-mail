@@ -3968,3 +3968,11 @@ Open: a send, calendar sync or server action of the person that hangs at closing
 ## 2026-11-04 4.4.541 Back to the code of 4.4.539
 
 The owner did not accept 4.4.540: it hid the freeze after Quit anyway and did not remove its cause, and its decision D-315 was never approved. The code, tests/ui/test_ui_closing.py, D-315 and the documents are undone; only the version blocks differ from 4.4.539. The number D-315 is free again. Open: the freeze after Quit anyway; the measurements in the entry of 4.4.540 stand.
+
+## 2026-11-05 4.4.542 Closing waits for no server (D-315)
+
+Cause: a command that waits for a server could not be stopped, and closing waited for those commands on the window's thread (3.00 s, then 54.29 s on the lock a sync holds, or 60.06 s per account for the answer to LOGOUT, then 54.5 s of a process without a window).
+Built: src/chrono_mail/protocols/hangup.py: IMAP, POP3, calendar and certificate connections can be hung up from another thread, also while being made; no new one after that. Sending is left out: the mail being sent finishes, the next one stays. closeEvent runs the event loop until every command ended (Backend.run_to_the_end); after 1 second the status bar and busy bar say what it waits for. Answers no longer reach the window then.
+Measured on a copy of the ICS test profile with a silent server: closing 0.02 s (was 57 s), normal end of the process, window never hidden early. Hanging up woke a stuck read, a secure read, a secure set-up, a connect and a calendar read within 0.001 s (Linux).
+Tests: tests/test_hangup.py, tests/ui/test_ui_closing.py. On 4.4.541 the 5 closing tests that show the fault fail, 3 that guard old behaviour pass; tests/test_hangup.py cannot run there (no module).
+Open: Windows not tried; a name lookup and the update check cannot be hung up; a send on a silent server waits for its timeout, with the status line showing.

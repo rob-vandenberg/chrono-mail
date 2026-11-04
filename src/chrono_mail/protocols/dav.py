@@ -11,13 +11,15 @@ from types import TracebackType
 from dataclasses import dataclass, field
 
 from chrono_mail.core import AuthenticationError, CertificateError, ConnectionSecurity, ProtocolError
+from chrono_mail.protocols.hangup import Held, connect
 from chrono_mail.protocols.tls import context_for, failure
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "dav.py 4.4.512"
+__version__ = "dav.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: the connection can be hung up at the end of the program
 # v4.4.512: RemoteCollection.shared: a collection whose DAV:owner is not this user is someone else's (D-310)
 # v4.4.510: announced: the Server header with the DAV header; user_addresses: calendar-user-address-set (D-310)
 # v4.4.505: a header written on several lines (DAV: on three lines) is joined, as RFC 9110 reads a list header: a server's
@@ -263,6 +265,7 @@ class DavClient:
         self._context: ssl.SSLContext | None = context_for(trusted, ConnectionSecurity.TLS, "https") if parsed.scheme == "https" else None
         self.timeout: float = timeout
         self._open: http.client.HTTPConnection | None = None  # the connection kept open for the next request
+        self._held: Held | None = None  # hangs that connection up at the end of the program
         self._last_used: float = 0.0  # time.monotonic() of its last answer
         self._lock: threading.Lock = threading.Lock()  # one request at a time on the connection
         self._addresses: list[tuple[str, int]] = []  # where the server's name led, looked up once per client (empty: not yet, or forgotten)
@@ -283,6 +286,12 @@ class DavClient:
         if self._open is not None:
             self._open.close()
             self._open = None
+        self._let_go()
+
+    def _let_go(self) -> None:
+        held, self._held = self._held, None
+        if held is not None:
+            held.release()
 
     # --- the requests -------------------------------------------------------------------------
 
@@ -304,9 +313,13 @@ class DavClient:
             found = socket.getaddrinfo(address[0], address[1], type=socket.SOCK_STREAM)
             self._addresses = list(dict.fromkeys((str(item[4][0]), int(item[4][1])) for item in found))
         failure: OSError | None = None
+        self._let_go()  # http.client opens the same connection again when the server closed it
         for known in self._addresses:
             try:
-                return socket.create_connection(known, timeout, source)
+                sock, self._held = connect(known, timeout, source)
+                return sock
+            except ConnectionAbortedError:
+                raise  # the program ends: no other address is tried
             except OSError as error:
                 failure = error
         self._addresses = []

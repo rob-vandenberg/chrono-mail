@@ -9,12 +9,14 @@ from typing import override
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 
+from chrono_mail.protocols.hangup import connect
 from chrono_mail.core import CertificateError, CertificateTrouble, ConnectionSecurity, ProtocolError
 
 # --- Version ------------------------------------------------------------
-__version__ = "tls.py 4.2.441"
+__version__ = "tls.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: the look at a certificate can be hung up at the end of the program
 # v4.2.441: a server with an accepted certificate that now shows another one is connected when that other one passes the usual checks
 #           (a renewal by a known authority); otherwise CertificateChanged. failure() names the server (CertificateError, D-299);
 #           the weak choice (ConnectionSecurity.TLS_UNCHECKED) encrypts without checking: unchecked_context, client_context (OR-6)
@@ -220,7 +222,7 @@ def _start_tls(sock: socket.socket, kind: str) -> None:
 
 
 def _handshake(host: str, port: int, security: ConnectionSecurity, kind: str, context: ssl.SSLContext, timeout: float) -> ssl.SSLSocket:
-    raw = socket.create_connection((host, port), timeout=timeout)
+    raw, held = connect((host, port), timeout)
     raw.settimeout(timeout)
     try:
         if security.from_start:
@@ -232,6 +234,8 @@ def _handshake(host: str, port: int, security: ConnectionSecurity, kind: str, co
     except BaseException:
         raw.close()
         raise
+    finally:
+        held.release()
 
 
 def inspect_certificate(host: str, port: int, security: ConnectionSecurity, kind: str, timeout: float = 15.0) -> CertificateInfo:

@@ -1,4 +1,3 @@
-import socket
 import ssl
 from dataclasses import dataclass
 from types import TracebackType
@@ -9,9 +8,10 @@ from chrono_mail.protocols.lineconnection import LineConnection
 from chrono_mail.protocols.tls import client_context, failure
 
 # --- Version ------------------------------------------------------------
-__version__ = "pop3.py 4.2.441"
+__version__ = "pop3.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: the connection can be hung up at the end of the program
 # v4.2.441: a certificate that could not be verified is a CertificateError naming the server; the weak security encrypts without the check (D-299)
 # v1.8.263: R-16: sending and reading lines go through LineConnection (protocols/lineconnection.py), shared with IMAP
 # v0.0.10: Initial POP3 client
@@ -68,7 +68,7 @@ class Pop3Client:
         """Connect, secure the connection and log in."""
         settings = self._settings
         try:
-            raw = socket.create_connection((settings.host, settings.port), timeout=self._limits.connect_timeout_seconds)
+            raw = self._connection.dial(settings.host, settings.port, self._limits.connect_timeout_seconds)
             raw.settimeout(self._limits.read_timeout_seconds)
             if settings.security.from_start:
                 raw = self._context.wrap_socket(raw, server_hostname=settings.host)

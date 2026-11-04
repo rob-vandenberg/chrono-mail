@@ -12,9 +12,10 @@ from chrono_mail.ui.linkhint import StatusLine
 from chrono_mail.ui.operations import ClickableBar
 
 # --- Version ------------------------------------------------------------
-__version__ = "statusreport.py 4.2.464"
+__version__ = "statusreport.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: closing and closing_line: the end of the program has the status line and the busy bar to itself
 # v4.2.464: the busy bar hides Qt's text itself: it draws itself (D-266)
 # v4.2.392: progress_ended: the count of a command that ended (an import: done, stopped or failed) leaves the status bar at once
 # v3.6.365: the busy bar moves only for work that has run for a second; it stops as soon as nothing runs
@@ -64,6 +65,7 @@ class StatusReport(QObject):
         self._missing_timer.setSingleShot(True)
         self._missing_timer.setInterval(300)
         self._missing_timer.timeout.connect(self._show_missing_warning)
+        self._closing: bool = False  # the program ends: the status line and the bar say so, and nothing else
         self._clear_timer: QTimer = QTimer(self)
         self._clear_timer.setSingleShot(True)
         self._clear_timer.timeout.connect(self._clear)
@@ -78,6 +80,8 @@ class StatusReport(QObject):
     def show(self, text: str, error: bool = False, running: bool = False) -> None:
         """A line: an informative one goes a minute after it came, by its own clock (whatever else runs meanwhile); a warning or an error
         (red) and one about work still running (running: "Preparing to …", a count) stay until the next line."""
+        if self._closing:
+            return
         self.label.setText(text)
         self._is_error = error
         self.restyle()
@@ -152,11 +156,26 @@ class StatusReport(QObject):
     def busy_changed(self, count: int) -> None:
         """Work runs: the bar moves once it has run for a moment, and stops as soon as nothing runs. Never shown or hidden: that laid
         the whole window out again at every action (D-266)."""
+        if self._closing:
+            return
         if count <= 0:
             self._busy_timer.stop()
             self.progress_bar.set_busy(False)
         elif not self.progress_bar.busy and not self._busy_timer.isActive():
             self._busy_timer.start(BUSY_AFTER_MS)
+
+    def closing(self) -> None:
+        """The program ends: what the commands still say is no news to the person, a lost connection least of all."""
+        self._closing = True
+
+    def closing_line(self, text: str) -> None:
+        """The program takes a moment to end: this line, and the bar moves until the window closes."""
+        self.label.setText(text)
+        self._is_error = False
+        self.restyle()
+        self._clear_timer.stop()
+        self._busy_timer.stop()
+        self.progress_bar.set_busy(True)
 
     def notice(self, text: str) -> None:
         """Something the engine wants the person to know (an IMAP change waits for the server)."""

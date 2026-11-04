@@ -1,11 +1,13 @@
 import socket
 
 from chrono_mail.core import ProtocolError
+from chrono_mail.protocols.hangup import Held, connect
 
 # --- Version ------------------------------------------------------------
-__version__ = "lineconnection.py 1.8.263"
+__version__ = "lineconnection.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: dial: a connection the end of the program can hang up
 # v1.8.263: R-16: the one copy of sending to a mail server and reading its lines (was in protocols/imap.py and protocols/pop3.py)
 
 _RECEIVE_BYTES: int = 65536
@@ -26,8 +28,17 @@ class LineConnection:
         self._maximum_line_bytes: int = maximum_line_bytes
         self._read_timeout_seconds: float = read_timeout_seconds
         self._buffer: bytearray = bytearray()
+        self._held: Held | None = None
+
+    def dial(self, host: str, port: int, timeout: float) -> socket.socket:
+        """Connect; the program's end can hang this connection up, also while it is being made and secured."""
+        sock, self._held = connect((host, port), timeout)
+        return sock
 
     def close(self) -> None:
+        held, self._held = self._held, None
+        if held is not None:
+            held.release()
         sock, self.socket = self.socket, None
         if sock is not None:
             try:

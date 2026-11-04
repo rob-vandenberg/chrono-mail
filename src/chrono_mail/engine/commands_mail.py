@@ -27,7 +27,7 @@ from chrono_mail.engine.junkfilter import filter_new, learn, learn_from_move
 from chrono_mail.engine.mailbox import Mailbox, SentAlready, open_mailbox
 from chrono_mail.engine.receiving import own_place, receiving_account
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
-from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
+from chrono_mail.engine.session import Engine, OUTBOX, sends_mail, talks_to_servers
 from chrono_mail.index import IndexedMessage, SearchFilter, SortField
 from chrono_mail.index.model import DateBounds, GroupCount
 from chrono_mail.mime import REPEAT_HEADER, Address, Attachment, OutgoingMessage, ParsedMessage, build_message, delivery_addresses, parse_message
@@ -37,9 +37,10 @@ from chrono_mail.sync import ImapState, ImapSyncOptions, Pop3State, fetch_pop3, 
 from chrono_mail.core.words import digits
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_mail.py 4.4.532"
+__version__ = "commands_mail.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: mail_send counts as a send at the end of the program
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.527: a part that repeats the card leaves the file row; an attachment says whether it is a calendar text (D-310)
 # v4.4.526: message.show says the card is of a mail (D-310)
@@ -670,6 +671,7 @@ def _schedule(engine: Engine, mailbox: Mailbox, outgoing: OutgoingMessage, param
 
 
 @talks_to_servers  # a restore waits for it and holds it back meanwhile (RV-60)
+@sends_mail
 def mail_send(engine: Engine, parameters: SendParameters) -> SendResult:
     if not (parameters.to or parameters.cc or parameters.bcc):
         raise UsageError("There is no recipient")

@@ -10,7 +10,7 @@ from chrono_mail.engine.mailbox import Mailbox, open_mailbox, parse_folder
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.recurring import MAXIMUM_ATTEMPTS, Repeat, advance, describe_repeat, index_after, next_due, repeat_from_text, repeat_text
 from chrono_mail.engine.schedule import REPEAT_LOCK, SCHEDULED_FOLDER, SNOOZED_FOLDER, SNOOZED_LOCK, describe_when, parse_when
-from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
+from chrono_mail.engine.session import Engine, OUTBOX, sends_mail, talks_to_servers
 from chrono_mail.engine.undorecord import UndoRecorder
 from chrono_mail.mime import REPEAT_HEADER, SEND_AT_HEADER, Address, OutgoingMessage, ParsedMessage, build_message, parse_message, send_time, with_extra_headers
 from chrono_mail.store import MessageNotFoundError
@@ -18,9 +18,10 @@ from chrono_mail.sync import send_and_file
 from chrono_mail.core import written_address
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_schedule.py 4.2.441"
+__version__ = "commands_schedule.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: at the end of the program the mail being sent finishes and the next one waits
 # v4.2.441: mail.send-due names each server whose certificate could not be verified (certificates), so the window asks (D-299)
 # v4.2.430: a scheduled message's addresses written so the window can read them back
 # v4.2.418: the account a message is sent from is recorded with it in Sent (D-292)
@@ -340,6 +341,7 @@ def _outgoing(sender: AccountSettings, parsed: ParsedMessage) -> OutgoingMessage
 
 
 @talks_to_servers  # a restore waits for it and holds it back meanwhile (RV-60)
+@sends_mail
 def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResult:
     """Send the scheduled messages whose time has come (they wait in the Scheduled folder). The scheduled copy is removed once
     a verified copy is in the Outbox and before the server is asked, so a crash can leave a message unsent in the Outbox but
@@ -353,6 +355,8 @@ def mail_send_due(engine: Engine, parameters: SendDueParameters) -> SendDueResul
             _into_scheduled(engine, mailbox, failed)
             named = False
             for reference, listed in _scheduled(mailbox):
+                if engine.stop_event.is_set():
+                    break  # the program ends: the mail being sent has finished, the rest waits for the next start
                 if (parameters.message and parameters.message != reference.store_id) or (not parameters.message and listed > now):
                     waiting += 1  # not opened: its time (from the index) has not come
                     continue

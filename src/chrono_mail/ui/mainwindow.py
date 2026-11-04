@@ -1,3 +1,4 @@
+import time
 from collections.abc import Callable
 from dataclasses import replace as changed
 from typing import override
@@ -68,9 +69,10 @@ from chrono_mail.ui.windowstate import restore_geometry, save_geometry
 from chrono_mail.core.words import counted
 
 # --- Version ------------------------------------------------------------
-__version__ = "mainwindow.py 4.4.541"
+__version__ = "mainwindow.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: closeEvent: closing waits for no server: connections are hung up, the window stays until the commands have ended and says so after a second
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
 # v4.4.538: the status line says "Renaming folder…" and "Renaming folder, updating mail rules…" while a folder is renamed (working)
 # v4.4.536: The reminders are watched while the window runs (D-313)
@@ -318,6 +320,7 @@ __version__ = "mainwindow.py 4.4.541"
 # v0.0.14: window icon, shared icon helpers
 # v0.0.13: Initial main window
 
+CLOSING_QUIETLY_SECONDS: float = 1.0  # an end of the program shorter than this needs no words (the owner)
 MINIMUM_WIDTH: int = 768  # the window is never narrower, in every section (the owner's choice)
 NOT_JUNK: str = "Not junk (move to Inbox)"
 EMPTY_TEXTS: dict[str, str] = {"junk": "Empty Junk folder…", "trash": "Empty Trash…"}  # the Empty item says which folder it empties
@@ -362,6 +365,7 @@ class MainWindow(QMainWindow):
         self._tried_interface: float | None = None  # sizes being tried out in Settings (not saved yet)
         self._tried_windows: float | None = None
         self._quitting: bool = False
+        self._ending: bool = False  # closed for good: the commands are ending
         self._for_update: bool = False  # closing after an update: no questions (quit_for_update)
         self.out_of_sight: bool = False  # started minimized at login and not opened since (D-284): Wayland never says a window is minimized
         self.setProperty(scale.MAIN_WINDOW_PROPERTY, True)  # this window and its menus follow the Main window slider
@@ -905,6 +909,9 @@ class MainWindow(QMainWindow):
 
     @override
     def closeEvent(self, event: QCloseEvent) -> None:
+        if self._ending:  # asked again while the program ends: it is doing so already
+            event.ignore()
+            return
         if not self._quitting and self.tray.visible and self.prefs.read().close_to_tray:
             self.hide()  # the program keeps running in the notification area
             event.ignore()
@@ -925,13 +932,26 @@ class MainWindow(QMainWindow):
         view = self.mail_state.view
         self.memory.remember_view(view.account or "", view.path, view.key_kind)
         self.checking.stop()
-        self.backend.engine.stop_event.set()  # waits for new mail end now
+        self.report.closing()
+        self.backend.engine.stop_event.set()  # waits for new mail end now, and a send ends with the mail it is sending
         interrupt_downloads(self.backend.engine)  # a download of an update stops at once, never waited for
-        self.backend.wait_for_done(3000)
-        self.backend.engine.close_imap_links()  # log out of the connections kept open for the actions on the server
+        self.backend.engine.hang_up()  # what waits for a server gets a lost connection at once
+        self._ending = True
+        self.backend.run_to_the_end(self._say_what_closing_waits_for(time.monotonic()))
+        self._ending = False
+        self.backend.engine.close_imap_links()  # the connections kept open for the actions on the server: all hung up or said goodbye by now
         self.tray.set_visible(False)
         event.accept()
         self.closed_for_good.emit()
+
+    def _say_what_closing_waits_for(self, started: float) -> Callable[[], None]:
+        """After a moment the status line says what the end of the program waits for, and the busy bar moves (the owner)."""
+
+        def say() -> None:
+            if time.monotonic() - started >= CLOSING_QUIETLY_SECONDS:
+                self.report.closing_line("Waiting for messages to be sent…" if self.backend.engine.sends else "Shutting down…")
+
+        return say
 
     # --- tray, notifications, closing ---------------------------------------------------------------------
 

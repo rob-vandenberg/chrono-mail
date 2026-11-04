@@ -6,15 +6,16 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, cast, override
 
-from PySide6.QtCore import QCoreApplication, QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QRunnable, QThreadPool, QTimer, Signal, Slot
 
 from chrono_mail.core import ChronoMailError
 from chrono_mail.engine import CommandRegistry, Engine, TypedCommand, UsageError, build_registry
 
 # --- Version ------------------------------------------------------------
-__version__ = "backend.py 4.4.541"
+__version__ = "backend.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: run_to_the_end: the end of the program waits with the event loop running
 # v4.4.541: back to the code of 4.4.539: the closing of 4.4.540 was not accepted
 # v4.2.392: progress_ended: when a command ends (done, stopped or failed), each progress line it posted is told as ended, so its count leaves the status bar
 # v4.0.374: alive() is public: work a closed window started looks before it writes into that window
@@ -39,6 +40,8 @@ __version__ = "backend.py 4.4.541"
 
 Success = Callable[[object], None]
 Failure = Callable[[ChronoMailError], None]
+
+LOOK_MILLISECONDS: int = 20  # how often the end of the program looks whether the commands have ended
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,6 +131,7 @@ class Backend(QObject):
         self._done.finished.connect(self._deliver)
         self._ids = itertools.count(1)
         self._pending: dict[int, _Pending] = {}
+        self._ending: bool = False  # the program ends: answers no longer reach the window
         self._queued: dict[str, list[_Task]] = {}  # per message changed: the commands waiting for the one that runs
         self._queue_of: dict[int, str] = {}  # request -> its message
         self._jobs: dict[int, _Task] = {}  # every job started, held until its answer is delivered (the pools only borrow it)
@@ -255,7 +259,7 @@ class Backend(QObject):
         if pending is None:
             pending = self._pending.pop(request, None)
             self._tell_busy()
-        if pending is None:
+        if pending is None or self._ending:
             return
         if pending.owner is not None and not alive(pending.owner):
             return
@@ -276,6 +280,26 @@ class Backend(QObject):
             if not self._queued or not finished or time.monotonic() >= deadline:
                 break
         return finished and not self._queued and self._waiting_pool.waitForDone(max(0, int((deadline - time.monotonic()) * 1000)))
+
+    def run_to_the_end(self, look: Callable[[], None]) -> None:
+        """The program ends: back when every command has ended, however long that takes, with the event loop running, so every window keeps
+        drawing and answering; look is called all the while. Nobody is left for the answers: a lost connection is no news to the person.
+        Clicks are left out: nothing starts now."""
+        self._ending = True
+        if self.wait_for_done(0):
+            return
+        loop = QEventLoop()
+        timer = QTimer()
+
+        def again() -> None:
+            if self.wait_for_done(0):
+                loop.quit()
+            else:
+                look()
+
+        timer.timeout.connect(again)
+        timer.start(LOOK_MILLISECONDS)
+        loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
 
 
 def alive(owner: QObject) -> bool:

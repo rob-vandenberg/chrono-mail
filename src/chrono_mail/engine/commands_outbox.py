@@ -8,15 +8,16 @@ from chrono_mail.engine.commands_schedule import KIND, _due_time, _mark_replied,
 from chrono_mail.engine.junkfilter import learn
 from chrono_mail.engine.mailbox import LIST_COULD_NOT_FOLLOW, SentAlready, Mailbox, open_mailbox
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
-from chrono_mail.engine.session import Engine, OUTBOX, talks_to_servers
+from chrono_mail.engine.session import Engine, OUTBOX, sends_mail, talks_to_servers
 from chrono_mail.mime import ParsedMessage, parse_message
 from chrono_mail.store import MessageNotFoundError, Properties, StoredMessage
 from chrono_mail.sync import file_sent_again, send_stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_outbox.py 4.2.451"
+__version__ = "commands_outbox.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: at the end of the program the mail being sent finishes and the next one stays in the Outbox
 # v4.2.451: senders: only the messages sent from these accounts; the others wait (an account left out of Send and Receive, D-059)
 # v4.2.441: mail.send-outbox names each server whose certificate could not be verified (certificates), so the window asks (D-299)
 # v4.2.418: the account a message is sent from is recorded with it in Sent (D-292)
@@ -66,6 +67,7 @@ def _recipients(parsed_to: tuple[str, ...]) -> tuple[str, ...]:
 
 
 @talks_to_servers  # a restore waits for it and holds it back meanwhile (RV-60)
+@sends_mail
 def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOutboxResult:
     """Send the messages that wait in the Outbox (an earlier send failed, or a delayed send waits for it, B-21): as they are stored, to
     their To, Cc and Bcc, without the Bcc header. Scheduled and repeating messages wait for their time and are left alone, and so does a
@@ -122,6 +124,8 @@ def mail_send_outbox(engine: Engine, parameters: SendOutboxParameters) -> SendOu
                 totals[sender.account.account_id] = totals.get(sender.account.account_id, 0) + 1
             counted: dict[str, int] = {}
             for message, hint, raw, parsed, recipients, sender, password in waiting:
+                if engine.stop_event.is_set():
+                    break  # the program ends: the mail being sent has finished, the rest stays for the next start
                 account_id = sender.account.account_id
                 counted[account_id] = counted.get(account_id, 0) + 1
                 engine.activity(account_id, "send", "Sending", counted[account_id], totals[account_id])

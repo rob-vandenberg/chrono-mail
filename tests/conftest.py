@@ -14,9 +14,10 @@ os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox --disable-gpu 
 os.environ.setdefault("QTWEBENGINE_DISABLE_SANDBOX", "1")
 
 # --- Version ------------------------------------------------------------
-__version__ = "conftest.py 4.2.402"
+__version__ = "conftest.py 4.4.542"
 
 # --- Version history ----------------------------------------------------
+# v4.4.542: every test starts with connections allowed, whatever the window of the test before did
 # v4.2.402: no test touches the start at login of the computer it runs on: it goes to the test's own folder (D-284)
 # v3.6.353: the kept index connections are let go after every test (D-266)
 # v2.0.293: on Windows the run without a screen gets Windows' own fonts (the Windows computer's report of 2.0.287)
@@ -71,6 +72,15 @@ def _kept_indexes_let_go() -> Generator[None]:
     from chrono_mail.engine.session import let_go_kept_indexes
 
     let_go_kept_indexes()
+
+
+@pytest.fixture(autouse=True)
+def _connections_allowed() -> Generator[None]:
+    """A window that closed in a test hung every connection up and allowed no new one: that was the end of its own program only."""
+    yield
+    from chrono_mail.protocols.hangup import allow_connections
+
+    allow_connections()
 
 
 @pytest.fixture(autouse=True)
