@@ -4,7 +4,7 @@ from dataclasses import replace as changed
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QObject, Qt, QTimer, QUrl
+from PySide6.QtCore import QDateTime, QLocale, QModelIndex, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import QFileDialog, QMainWindow, QMenu, QMessageBox, QVBoxLayout, QWidget
 from shiboken6 import isValid
@@ -15,7 +15,7 @@ from chrono_mail.engine.commands_export import MESSAGE_EXPORT, MESSAGE_SOURCE, M
 from chrono_mail.engine.commands_mail import MESSAGE_ATTACHMENT_SAVE, MESSAGE_SHOW, MESSAGE_THREAD, AttachmentSaveParameters, MessageParameters, ShowResult
 from chrono_mail.ui import prefs, scale, theme
 from chrono_mail.engine.commands_accounts import NoParameters
-from chrono_mail.engine.commands_invitations import INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BLOCKS, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, INVITATION_REOPEN, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, BlocksParameters, BlocksResult, ChoicesResult, SourceParameters
+from chrono_mail.engine.commands_invitations import SeriesClash, INVITATION_ADD, INVITATION_ANSWER, INVITATION_APPLY, INVITATION_BLOCKS, INVITATION_BUSY, INVITATION_CARD, INVITATION_CHOICES, INVITATION_DELEGATE, INVITATION_ORGANIZE, INVITATION_REOPEN, AddParameters, AddResult, Answer, BusyParameters, BusyResult, ChoicesParameters, Organize, OrganizeParameters, OrganizeResult, AnswerParameters, ApplyResult, DelegateParameters, DelegateResult, AnswerResult, BlocksParameters, BlocksResult, ChoicesResult, SourceParameters
 from chrono_mail.engine.invitations import BLOCKS_AT_ONCE, InvitationInfo
 from chrono_mail.engine.commands_attachments import MESSAGE_ATTACHMENT_CLEAN_OPENED, CleanResult
 from chrono_mail.ui.attachmentopening import open_attachment
@@ -39,9 +39,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.528"
+__version__ = "readingpane.py 4.4.529"
 
 # --- Version history ----------------------------------------------------
+# v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: a warning before Accept or Tentative when you already have something at that time; a calendar attachment opens as a card by what it is (D-310)
 # v4.4.526: results and errors of a card show in the window that was clicked (_tell); Delegate and offline say what really happens (D-310)
@@ -75,8 +76,18 @@ __version__ = "readingpane.py 4.4.528"
 # v1.9.264: R-17: reading mail as a part of its own (out of ui/mainwindow.py): the reading pane with the conversation bar, the message
 #           it shows and marking it as read, where the pane is, the message windows, attachments, links, Save as, View source and Print
 
+SERIES_CLASHES_NAMED: int = 3  # the warning names the first few, the rest as a number
 SMALLEST_WIDTH: int = 400  # the reading pane's smallest width while it shows a message and keeps its own width (D-304), at the main window's size factor
 PANE_PLACES: tuple[tuple[str, str], ...] = (("right", "At the right"), ("bottom", "At the bottom"), ("off", "Off"))
+
+
+def series_clash_text(clashes: tuple[SeriesClash, ...]) -> str:
+    """The warning before a series goes in: how many of your appointments it meets in the coming year and when, the first few and how many more; "": none."""
+    named = [f"“{each.title}” on {QLocale().toString(QDateTime.fromString(each.start, Qt.DateFormat.ISODate).date(), QLocale.FormatType.ShortFormat)}" for each in clashes[:SERIES_CLASHES_NAMED]]
+    if not named:
+        return ""
+    more = f" and {len(clashes) - len(named)} more" if len(clashes) > len(named) else ""
+    return f"This series clashes with {len(clashes)} of your appointment{'s' if len(clashes) != 1 else ''}: {', '.join(named)}{more}. Add it anyway?"
 
 
 class ReadingPane(QObject):
@@ -710,7 +721,7 @@ class ReadingPane(QObject):
 
     def _choose_and_answer(self, reader: ReaderWidget | InvitationWindow, place: CalendarSource, answer: str, info: InvitationInfo | None) -> None:
         def listed(choices: ChoicesResult) -> None:
-            if choices.clashes and not self._add_anyway(choices.clashes, "Tentative" if answer == "TENTATIVE" else "Accept"):
+            if choices.clashes and not self._add_anyway(choices, "Tentative" if answer == "TENTATIVE" else "Accept"):
                 return
             if choices.stored or (info is not None and info.method == "ADD"):  # your calendar holds it now (asked afresh: it may have gone since the card was shown; an added date never goes elsewhere)
                 self._send_answer(reader, place, answer, "", info)
@@ -721,10 +732,11 @@ class ReadingPane(QObject):
 
         self._backend.ask(INVITATION_CHOICES, self._parameters(place), listed, lambda error: self._tell(reader, "Could not read the invitation", error), owner=self)
 
-    def _add_anyway(self, clashes: tuple[str, ...], title: str) -> bool:
+    def _add_anyway(self, choices: ChoicesResult, title: str) -> bool:
         """You already have something at that time: the person says whether it goes in all the same. No leaves the invitation as it is."""
+        clashes = choices.clashes
         have = f'"{clashes[0]}"' if len(clashes) == 1 else f"{len(clashes)} appointments"
-        box = plain_box(QMessageBox.Icon.Question, self._parent, title, f"You already have {have} at this time. Add it anyway?",
+        box = plain_box(QMessageBox.Icon.Question, self._parent, title, series_clash_text(choices.series_clashes) or f"You already have {have} at this time. Add it anyway?",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes)
         return QMessageBox.StandardButton(box.exec()) == QMessageBox.StandardButton.Yes
 

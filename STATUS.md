@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.528 (round 3: a declined invite is kept hidden on this computer, Show declined with a right-click menu)*
+*Last updated: 2026-11-04, version 4.4.529 (round 3: the clash warning on a series names the dates, invites and .ics files up to 1 MB)*
 
 ## Where we are
 
@@ -15,7 +15,9 @@
 
 ## Next task
 
-**4.4.528 done (D-310, round 3 items 1, 2, 3).** To check by the owner: Decline an invitation, turn on Show declined in the calendar and see it greyed; right-click it: Accept picks a calendar and makes it a normal appointment, Delete removes it and the mail shows the invite as new. Delete one date of your own series and right-click it: Restore. Left of round 3: items 4 to 13 (`scratchpad/HANDOVER-INVITATIONS-STEP2.md`).
+**4.4.529 done (D-310, round 3 items 7, 12).** To check by the owner: Accept a weekly invitation that meets your appointments: the question names how many and the first three with their dates. Open an .ics file over 1 MB: it says so. Left of round 3: items 4, 5, 6, 8, 9, 10, 11, 13.
+
+**4.4.528 done (D-310, round 3 items 1, 2, 3).** To check by the owner: Decline an invitation, turn on Show declined in the calendar and see it greyed; right-click it: Accept picks a calendar and makes it a normal appointment, Delete removes it and the mail shows the invite as new. Delete one date of your own series and right-click it: Restore.
 
 **4.4.527 done (D-310, items 22, 23, 24; the changelist after the review is finished).** To check by the owner: Accept an invitation at a time you already have something: the question "Add it anyway?" comes, No leaves it unanswered; a mail carrying the invitation again as invite.ics shows one card and no file; a new invitation has no paperclip in the list (mail indexed earlier keeps it until the index is rebuilt); an attachment called "invite" opens as a card; all busy times are listed.
 

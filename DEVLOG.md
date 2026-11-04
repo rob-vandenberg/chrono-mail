@@ -3891,3 +3891,8 @@ Open: nothing of the changelist after the review.
 Built: open_calendar in tests/ui/test_ui_calendar.py waits for the anchor's own event: the two failures came from the seeded event of 3 November, in the view of today, satisfying the old wait while the answer for the anchor was still to come; the program was right. Decline keeps a copy in the calendar of Local Folders (invitation.answer, declined_copy), event.list hides every declined item and gives answerable and whole, the button is Show declined, hidden events have a right-click menu, event.restore, the invitation commands take a hidden event as source (event, occurrence), deleting a declined copy takes the mark off its mail by Message-ID (index with_message_id).
 Tests: tests/test_engine_invitation_declined.py, tests/test_engine_invitation_answers.py, tests/ui/test_ui_calendar.py; the old helper fails every time when the answer for today lands first, the new one passes. One review round: nothing real; an invitation with no organizer, declined, offered Restore: fixed.
 Open: the dialog of item 4 is drafted in scratchpad/round3-dialog, not built in; items 4 to 13.
+
+## 2026-11-04, 4.4.529: the clash warning on a series, 1 MB for invites and .ics files (the owner, D-310, round 3 items 7, 12)
+Built: invitation.choices gives series_clashes, each appointment a series meets from today for a year; series_clash_text names the first three and the rest as a number. MAXIMUM_INVITATION_BYTES in engine/commands_invitations.py for a mail's calendar part and a file; the 16 MB of pim/ical.py stays for event.import.
+Tests: tests/test_engine_invitation_files.py, tests/ui/test_ui_invitation_answers.py; they need names that 4.4.528 does not have.
+Open: items 4, 5, 6, 8, 9, 10, 11, 13.

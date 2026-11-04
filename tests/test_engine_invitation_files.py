@@ -1,4 +1,5 @@
 import base64
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -6,11 +7,10 @@ import pytest
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind, FolderRole
 from chrono_mail.engine.invitations import card_copies, is_calendar_part, own_mail
 from chrono_mail.engine.mailbox import open_mailbox
-from chrono_mail.engine.commands_invitations import SourceParameters, invitation_card
+from chrono_mail.engine.commands_invitations import MAXIMUM_INVITATION_BYTES, SourceParameters, invitation_card
 from chrono_mail.engine.pimaccess import ensure_local_pim, open_pim
 from chrono_mail.engine.registry import UsageError
 from chrono_mail.mime import Attachment
-from chrono_mail.pim.ical import MAXIMUM_TEXT_CHARACTERS
 from chrono_mail.pim.itip import read_calendar_message, text_items
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_engine_invitation_answers import drafts, kept
@@ -18,9 +18,10 @@ from tests.test_engine_invitation_tasks import kept_tasks, stored_task, task_lis
 from tests.test_engine_invitations import calendar_text, deliver, stored
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_invitation_files.py 4.4.527"
+__version__ = "test_engine_invitation_files.py 4.4.529"
 
 # --- Version history ----------------------------------------------------
+# v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.527: what you have at that time, one invitation shown once (D-310)
 # v4.4.525: Add all skips what is kept in any calendar; how many are left; a mail in Sent or Drafts (D-310)
 # v4.4.515: every item of a text comes as a block, step by step, however many it holds (D-310)
@@ -226,11 +227,25 @@ def timed(uid: str, method: str = "", start: str = "20261103T100000Z", end: str 
     ("partly the same time", timed("new", "REQUEST", "20261103T103000Z", "20261103T113000Z"), "", ("Item old",)),
     ("right after it", timed("new", "REQUEST", "20261103T110000Z", "20261103T120000Z"), "", ()),
     ("a time that is not blocked", timed("new", "REQUEST"), "TRANSP:TRANSPARENT\r\n", ()),
-    ("a later date of a series", timed("new", "REQUEST", "20261027T100000Z", "20261027T110000Z", "RRULE:FREQ=WEEKLY\r\n"), "", ("Item old",)),
 ])
 def test_the_choices_say_what_you_already_have_at_that_time(setup: Setup, tmp_path: Path, name: str, invitation: str, kept_more: str, found: tuple[str, ...]) -> None:
     on_file(setup, "invitation.answer", file_with(tmp_path, timed("old", more=kept_more), "old.ics"), answer="ACCEPTED", calendar=calendar_id(setup))
     assert on_file(setup, "invitation.choices", file_with(tmp_path, invitation, "new.ics")).clashes == found
+
+
+def test_a_series_names_every_date_it_clashes_with_in_the_coming_year_and_no_past_one(setup: Setup, tmp_path: Path) -> None:
+    def stamp(moment: date, hour: int) -> str:
+        return f"{moment:%Y%m%d}T{hour:02}0000Z"
+
+    today = datetime.now(UTC).date()
+    soon, far, past = today + timedelta(days=7), today + timedelta(days=7 * 60), today - timedelta(days=7)
+    calendar = calendar_id(setup)
+    for name, day in (("soon", soon), ("far", far), ("past", past)):
+        on_file(setup, "invitation.answer", file_with(tmp_path, timed(name, start=stamp(day, 10), end=stamp(day, 11)), f"{name}.ics"), answer="ACCEPTED", calendar=calendar)
+    series = timed("new", "REQUEST", stamp(past, 10), stamp(past, 11), "RRULE:FREQ=WEEKLY\r\n")
+    choices = on_file(setup, "invitation.choices", file_with(tmp_path, series, "new.ics"))
+    assert [each.title for each in choices.series_clashes] == ["Item soon"] and choices.series_clashes[0].start.startswith(soon.isoformat())
+    assert on_file(setup, "invitation.choices", file_with(tmp_path, timed("one", "REQUEST", stamp(soon, 10), stamp(soon, 11)), "one.ics")).series_clashes == ()
 
 
 def test_one_invitation_is_one_card_also_when_the_mail_carries_it_again_as_a_file() -> None:
@@ -372,8 +387,8 @@ def test_a_file_that_is_gone_or_too_large_is_refused(setup: Setup, tmp_path: Pat
         on_file(setup, "invitation.card", str(tmp_path / "gone.ics"))
     big = tmp_path / "big.ics"
     with big.open("wb") as file:
-        file.truncate(MAXIMUM_TEXT_CHARACTERS + 1)
-    with pytest.raises(UsageError, match="too large"):
+        file.truncate(MAXIMUM_INVITATION_BYTES + 1)
+    with pytest.raises(UsageError, match="larger than 1 MB"):
         invitation_card(setup.engine, SourceParameters("", "", "", file=str(big)))
 
 

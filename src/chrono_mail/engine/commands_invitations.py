@@ -20,7 +20,7 @@ from chrono_mail.engine.pimaccess import DEFAULT_COLLECTIONS, account_name, ensu
 from chrono_mail.engine.registry import CommandRegistry, TypedCommand, UsageError, option
 from chrono_mail.engine.session import Engine
 from chrono_mail.mime import parse_message
-from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, MAXIMUM_TEXT_CHARACTERS, Occurrence, _as_aware, occurrences, parse_events
+from chrono_mail.pim.ical import MAXIMUM_OCCURRENCES, Occurrence, _as_aware, occurrences, parse_events
 from chrono_mail.pim.itip import (
     keeps_busy,
     asked_again, declined_copy, you_declined,
@@ -31,9 +31,10 @@ from chrono_mail.pimstore import ItemQuery
 from chrono_mail.sync.davsync import DavState
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_invitations.py 4.4.528"
+__version__ = "commands_invitations.py 4.4.529"
 
 # --- Version history ----------------------------------------------------
+# v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
 # v4.4.527: invitation.choices says what you have at that time (clashes); busy times with no cut in the text or the period; an attachment too large says so (D-310)
 # v4.4.526: an answer says when it waits for the connection; a delegation says whether the server tells the organizer (D-310)
@@ -62,6 +63,9 @@ __version__ = "commands_invitations.py 4.4.528"
 # v4.4.505: Initial: invitation.choices (every calendar, the one to start on) and invitation.answer (Accept, Tentative, Decline: the copy
 #           in a calendar server first, the answer mailed by the server or as a draft to send), D-310
 
+MAXIMUM_INVITATION_BYTES: int = 1024 * 1024  # an invitation or an .ics file: 1 MB, the owner's choice, as the import limit of a large calendar service (the backup copies the stores and has no limit)
+TOO_LARGE: str = "This calendar file is larger than 1 MB, so it cannot be read here"
+
 Answer = Literal["ACCEPTED", "TENTATIVE", "DECLINED"]
 _ANSWERABLE: frozenset[str] = frozenset({"REQUEST", "PUBLISH", "ADD"})  # what asks for an answer, or offers an item to keep
 _SUBJECT_WORD: dict[str, str] = {"ACCEPTED": "Accepted", "TENTATIVE": "Tentative", "DECLINED": "Declined"}
@@ -82,12 +86,19 @@ class CalendarChoice:
 
 
 @dataclass(frozen=True, slots=True)
+class SeriesClash:
+    title: str
+    start: str  # when your appointment starts
+
+
+@dataclass(frozen=True, slots=True)
 class ChoicesResult:
     calendars: tuple[CalendarChoice, ...]  # every calendar (for a task: every task list) of every account, in the sidebar's order
     chosen: str  # the one the window starts on: the first own, writable one of the account that received the mail; "": none
     stored: str  # the one that holds the item already ("": none): an answer changes the copy there
     receiving: str = ""  # the account that received the mail ("": none, a file): the busy times window starts on its own calendars
     clashes: tuple[str, ...] = ()  # an invitation not kept yet: what you have at its time, each once, by title
+    series_clashes: tuple[SeriesClash, ...] = ()  # a series not kept yet: each appointment of yours it meets in the coming year, in order of time
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -142,8 +153,8 @@ class _Opened:
 def _file_text(path: str) -> bytes:
     try:
         file = Path(path)
-        if file.stat().st_size > MAXIMUM_TEXT_CHARACTERS:
-            raise UsageError("This calendar file is too large to read")
+        if file.stat().st_size > MAXIMUM_INVITATION_BYTES:
+            raise UsageError(TOO_LARGE)
         return file.read_bytes()
     except OSError:
         raise UsageError(f"The file {path} could not be read") from None
@@ -191,8 +202,8 @@ def _opened(engine: Engine, parameters: SourceParameters, busy: bool = False, wh
                 raise UsageError("This message holds no calendar message")
             position = found[0] if found is not None and parameters.part < 0 else parameters.part
             data = calendar_text(parsed.attachments[position]).encode("utf-8")
-            if len(data) > MAXIMUM_TEXT_CHARACTERS:
-                raise UsageError("This calendar file is too large to read")
+            if len(data) > MAXIMUM_INVITATION_BYTES:
+                raise UsageError(TOO_LARGE)
             own_part = found is not None and found[0] == position
             flags = mailbox.current_flags(reference)
             message_id, senders = parsed.message_id, tuple(address.address for address in parsed.from_addresses)
@@ -319,19 +330,21 @@ def _label(engine: Engine, account: str, info: CollectionInfo) -> str:
     return f"{info.name} ({account_name(engine, account)})"
 
 
-def _clashes(engine: Engine, opened: _Opened) -> tuple[str, ...]:
-    """What you already have at the time of an invitation, in your own calendars, for the warning before Accept. A series counts for the year ahead of its
-    first date. What does not block its time is no clash, and a calendar that cannot be read is skipped: the warning never stands in the way of an answer."""
+def _clashes(engine: Engine, opened: _Opened) -> tuple[tuple[str, ...], tuple[SeriesClash, ...]]:
+    """What you already have at the time of an invitation, in your own calendars, for the warning before Accept: by title, and for a series each date too.
+    A series counts for the coming year. What does not block its time is no clash, and a calendar that cannot be read is skipped: the warning never stands in the way of an answer."""
     message, zone = opened.message, local_zone()
     event = message.event
     start = _moment_of(event.start, zone) if event is not None else None
     if event is None or start is None:
-        return ()
+        return (), ()
     end = _moment_of(event.end, zone) or start
+    start = max(start, datetime.now(zone)) if event.repeats else start
     last = start + timedelta(days=366) if event.repeats else max(end, start + timedelta(minutes=1))
     wanted = [(_as_aware(each.start, zone), _as_aware(each.end, zone)) for each in occurrences([opened.text], start, last, zone)] or [(start, end)]
     addresses = your_addresses(engine)
     found: dict[str, None] = {}
+    dated: dict[tuple[datetime, str], None] = {}
     with your_calendars(engine, CollectionKind.EVENTS) as places:
         for _, store, info in places:
             try:
@@ -342,9 +355,10 @@ def _clashes(engine: Engine, opened: _Opened) -> tuple[str, ...]:
                             begins, ends = _as_aware(each.start, zone), _as_aware(each.end, zone)
                             if keeps_busy(each.event, addresses) and any(begins < until and since < ends for since, until in wanted):
                                 found[item.title or "(no title)"] = None
+                                dated[(begins, item.title or "(no title)")] = None
             except (ChronoMailError, OSError, sqlite3.Error):
                 continue
-    return tuple(found)
+    return tuple(found), tuple(SeriesClash(title, begins.isoformat()) for begins, title in sorted(dated)) if event.repeats else ()
 
 
 def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> ChoicesResult:
@@ -370,8 +384,8 @@ def invitation_choices(engine: Engine, parameters: ChoicesParameters) -> Choices
                         chosen = info.collection_id
         except ChronoMailError:
             continue
-    clashes = _clashes(engine, opened) if not parameters.kind and opened.message.method in ("REQUEST", "ADD") and (stored is None or opened.message.method == "ADD") else ()
-    return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving, clashes)
+    clashes, series_clashes = _clashes(engine, opened) if not parameters.kind and opened.message.method in ("REQUEST", "ADD") and (stored is None or opened.message.method == "ADD") else ((), ())
+    return ChoicesResult(tuple(calendars), chosen, stored.info.collection_id if stored is not None else "", receiving, clashes, series_clashes)
 
 
 def _remember(engine: Engine, parameters: SourceParameters, opened: _Opened, mark: MessageFlag | None, replied: bool = False) -> None:

@@ -3,7 +3,8 @@ from dataclasses import replace
 from PySide6.QtWidgets import QLabel, QWidget
 from pytestqt.qtbot import QtBot
 
-from chrono_mail.engine.commands_invitations import CalendarChoice, ChoicesResult
+from chrono_mail.engine.commands_invitations import CalendarChoice, ChoicesResult, SeriesClash
+from chrono_mail.ui.readingpane import series_clash_text
 from chrono_mail.ui.infomark import InfoMark
 from chrono_mail.ui.invitationcalendar import InvitationBusyDialog, InvitationCalendarDialog, InvitationDelegateDialog
 from chrono_mail.ui.invitationcard import adds_all, apply_text, intro_text, status_text
@@ -12,9 +13,10 @@ from tests.ui.test_ui_invitation_card import CARD
 from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fixture
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_answers.py 4.4.527"
+__version__ = "test_ui_invitation_answers.py 4.4.529"
 
 # --- Version history ----------------------------------------------------
+# v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.527: attendees past those listed are counted (D-310)
 # v4.4.526: the words on the card, the place as a link, the Delegate window of a task (D-310)
 # v4.4.525: your own mails, a file that does not name you, Add all with one item (D-310)
@@ -267,3 +269,10 @@ def test_the_delegate_window_of_a_task_speaks_of_a_task_and_promises_no_answer(q
 def test_attendees_past_those_listed_are_counted(reader: ReaderWidget, qtbot: QtBot) -> None:
     reader.show_message(replace(shown(html="<p></p>"), invitation=replace(CARD, more_attendees=40)))
     assert any(label.text() == "and 40 more" for label in reader._card.people.findChildren(QLabel))  # noqa: SLF001
+
+
+def test_the_warning_on_a_series_says_how_many_and_names_the_first_few() -> None:
+    clashes = tuple(SeriesClash(f"Item {number}", f"2027-01-{number:02}T10:00:00+00:00") for number in range(1, 12))
+    text = series_clash_text(clashes)
+    assert text.startswith("This series clashes with 11 of your appointments: “Item 1” on ") and "“Item 3”" in text and "“Item 4”" not in text and text.endswith(" and 8 more. Add it anyway?")
+    assert "1 of your appointment:" in series_clash_text(clashes[:1]) and series_clash_text(()) == ""
