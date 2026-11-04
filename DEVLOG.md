@@ -3911,3 +3911,8 @@ Open: items 4, 5, 6, 8, 10, 13.
 Built: ui/calendarmail.py and forms/calendar_mail.ui; engine/commands_calendarmail.py with calendar.mail-send and event.mailing; dry on invitation.answer, apply and organize; to on invitation.answer; mail on invitation.delegate; tell on event.add; cancel_draft on event.edit. Gone: the composer for these mails, open_draft, answer_waiting.
 Tests: tests/test_engine_calendar_mail.py, tests/ui/test_ui_calendar_mail.py; they fail on the previous version (the commands and the dialog do not exist there). Review: two rounds.
 Open: items 8, 10, 13.
+
+## 2026-11-04, 4.4.533: meeting text, marks on moved mail, Try again (the owner, D-310, round 3 items 8, 10, 13)
+Built: SHORT_TEXT and LONGEST_TEXT with the dots on the card; _moved records only the marks the server has, so the next sync writes the rest; blocks_failed shows a line with Try again. Also: a Pyrefly error in tests/test_engine_calendar_mail.py that went out with 4.4.532.
+Tests: tests/ui/test_ui_invitation_window.py, tests/test_engine_imap_online.py; the move test fails without the fix. Review: one round, nothing real.
+Open: nothing of round 3.

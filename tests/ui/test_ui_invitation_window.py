@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QApplication, QMessageBox, QScrollArea
+from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QScrollArea
 from pytestqt.qtbot import QtBot
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID, CollectionKind
@@ -29,9 +29,10 @@ from tests.ui.test_ui_reader import reader, shown  # noqa: F401 - reader is a fi
 from tests.ui.world import World, answer_calendar_mail
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_ui_invitation_window.py 4.4.532"
+__version__ = "test_ui_invitation_window.py 4.4.533"
 
 # --- Version history ----------------------------------------------------
+# v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.527: every busy time is listed; the warning before Accept (D-310)
 # v4.4.526: results show in the window clicked (D-310)
@@ -287,7 +288,7 @@ def test_a_big_file_opens_with_the_first_blocks_and_every_item_comes_as_you_scro
     window.close()
 
 
-def test_blocks_that_could_not_be_read_come_when_the_file_is_back_and_you_scroll_on(world: World, qtbot: QtBot, tmp_path: Path) -> None:
+def test_blocks_that_could_not_be_read_say_so_and_come_with_try_again(world: World, qtbot: QtBot, tmp_path: Path) -> None:
     path = Path(calendar_file(tmp_path, many_items(45)))
     window = opened_file(world, qtbot, str(path))
     text = path.read_bytes()
@@ -295,8 +296,16 @@ def test_blocks_that_could_not_be_read_come_when_the_file_is_back_and_you_scroll
     window.show()
     area = window.findChild(QScrollArea)
     assert area is not None
-    qtbot.waitUntil(lambda: not window.card._asking and area.verticalScrollBar().maximum() > 0, timeout=5000)  # noqa: SLF001 - the answer that failed
+    qtbot.waitUntil(lambda: not window.card._asking and area.verticalScrollBar().maximum() > 0, timeout=5000)  # noqa: SLF001
+    area.verticalScrollBar().setValue(area.verticalScrollBar().maximum())
+    qtbot.waitUntil(lambda: window.card._try_again is not None, timeout=5000)  # noqa: SLF001 - the answer that failed
+    row = window.card._try_again  # noqa: SLF001
+    assert row is not None
     path.write_bytes(text)
+    button = row.findChild(QPushButton)
+    assert button is not None and button.text() == "Try again"
+    button.click()
+    assert window.card._try_again is None  # noqa: SLF001
     scrolled_to_the_end(window, qtbot, 45)
     assert len(window.card.blocks) == 45
     window.close()
@@ -543,6 +552,20 @@ def test_a_proposal_shows_the_time_now_beside_the_time_proposed() -> None:
     proposal = replace(OWN, method="COUNTER", start=start, end=end, kept_start=start.replace(hour=9), kept_end=start)
     shown = proposal_when(proposal, "the new time")
     assert shown.startswith("Proposed: the new time\nNow: ") and proposal_when(replace(proposal, kept_start=start, kept_end=end), "the new time") == "the new time"
+
+
+def test_a_long_meeting_text_shows_250_characters_and_the_dots_show_2048(reader: ReaderWidget) -> None:  # noqa: F811
+    text = "x" * 3000
+    card = reader.card
+    card.show_invitation(replace(OWN, description=text))
+    assert card.description.text() == text[:250] and not card.more_text.isHidden()
+    card.more_text.click()
+    assert card.description.text() == text[:2048] and card.more_text.isHidden()
+    assert card.info is not None and card.info.description == text  # the rest stays in the data
+    card.show_invitation(replace(OWN, description=text))  # read again after an answer: it stays open
+    assert card.description.text() == text[:2048] and card.more_text.isHidden()
+    card.show_invitation(replace(OWN, description="y" * 250))
+    assert card.description.text() == "y" * 250 and card.more_text.isHidden()
 
 
 KEPT = replace(CARD, stored_in="Personal (Work)", occurrence_kept=True, version="newer", your_answer="ACCEPTED")

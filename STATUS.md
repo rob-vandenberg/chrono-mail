@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.532 (round 3: one dialog for every calendar mail)*
+*Last updated: 2026-11-04, version 4.4.533 (round 3 finished: meeting text, marks on moved mail, Try again)*
 
 ## Where we are
 
@@ -15,7 +15,9 @@
 
 ## Next task
 
-**4.4.532 done (D-310, round 3 items 4, 5, 6).** To check by the owner: Accept, Decline and Delegate an invite, Save and delete a meeting with attendees: one dialog with Send, Don't send and a message, no composer; closing it changes nothing. Take an attendee off: they get a cancellation. An invite with no organizer asks the address. Left of round 3: items 8, 10, 13.
+**4.4.533 done (D-310, round 3 items 8, 10, 13); round 3 is finished.** To check by the owner: an invite with a long text shows 250 characters and a …; a click shows more. Decline offline, move the mail, go online: the mark is on the server. A card with many items whose file is gone: a calm line with Try again.
+
+**4.4.532 done (D-310, round 3 items 4, 5, 6).** To check by the owner: Accept, Decline and Delegate an invite, Save and delete a meeting with attendees: one dialog with Send, Don't send and a message, no composer; closing it changes nothing. Take an attendee off: they get a cancellation. An invite with no organizer asks the address.
 
 **4.4.531 done (D-310, round 3 item 9).** To check by the owner: open an .ics attachment of a mail in Sent or Drafts: it has no buttons. Left of round 3: items 4, 5, 6, 8, 10, 13.
 

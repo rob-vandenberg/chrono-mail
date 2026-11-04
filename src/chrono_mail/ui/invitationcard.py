@@ -22,9 +22,10 @@ from chrono_mail.ui.plainboxes import plain_tip
 from chrono_mail.ui.scale import px_for
 
 # --- Version ------------------------------------------------------------
-__version__ = "invitationcard.py 4.4.532"
+__version__ = "invitationcard.py 4.4.533"
 
 # --- Version history ----------------------------------------------------
+# v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.527: every busy time is listed; attendees past those read are counted (D-310)
 # v4.4.526: whole sentences and the right words: is in your calendar, event, mail or file, a task you are asked to do, a date; a web address in the place is a link (D-310)
@@ -59,6 +60,9 @@ _INTRO: dict[str, str] = {
     "DECLINECOUNTER": "The organizer declined your proposed change to this {item}.",
     "REFRESH": "{who} asks for the latest version of this {item}.",
 }
+SHORT_TEXT = 250  # characters of a meeting text shown at first (D-310)
+LONGEST_TEXT = 2048  # the most of it the dots show: the rest stays in the data
+
 _NOT_KEPT: str = ("This invite was part of a series that is not in your {home}, so it cannot be added or answered on its own. If you click [Request] below, Chrono Mail "
                    "will create a special email which contains a request to the organizer to resend the original invite. You can change the accompanying text "
                    "if you wish, then click [Send] to send the email. The organizer's calendar program should recognize the request, and the organizer can then "
@@ -383,6 +387,7 @@ class InvitationCard(QFrame):
         outer.setSpacing(0)
         self._next_block: int = 0  # the place of the first item without a block yet
         self._asking: bool = False  # blocks_wanted was said and add_blocks has not answered yet
+        self._try_again: QWidget | None = None  # the line under the blocks when the next ones could not be read
         self.showing: int = 0  # counts what was shown here: an answer about what was shown before goes nowhere
         self._scrolled_by: QScrollArea | None = None
         self._sections: list[QVBoxLayout] = []  # their margins follow the size factor (restyle)
@@ -432,6 +437,14 @@ class InvitationCard(QFrame):
         middle.addWidget(self.when)
         middle.addWidget(self.comment)
         middle.addWidget(self.description)
+        self.more_text = QPushButton("…", self)
+        self.more_text.setFlat(True)
+        self.more_text.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.more_text.setToolTip("Show more of this text")
+        self.more_text.clicked.connect(self._show_more_text)
+        self.more_text.hide()
+        self._whole_text: str = ""  # the meeting's text the person opened with the dots: a card shown again stays open
+        middle.addWidget(self.more_text, 0, Qt.AlignmentFlag.AlignLeft)
         middle.addWidget(self.busy_times)
         self._details_line = self._line()
         outer.addWidget(self._details_line)
@@ -510,6 +523,12 @@ class InvitationCard(QFrame):
 
     def _organizer_clicked(self, link: str) -> None:
         self.link_activated.emit(QUrl(link))
+
+    def _show_more_text(self) -> None:
+        """The dots: the meeting's text up to the longest shown; the rest stays in the data."""
+        self._whole_text = self.info.description if self.info is not None else ""
+        self.description.setText(self._whole_text[:LONGEST_TEXT])
+        self.more_text.hide()
 
     def _plain(self) -> QLabel:
         label = QLabel(self)
@@ -594,6 +613,7 @@ class InvitationCard(QFrame):
             block.deleteLater()
         self.blocks = []
         self._next_block = 0
+        self._no_try_again()
 
     def _show_blocks(self, info: InvitationInfo) -> None:
         """A text with several items: what it holds at the top, then a block per item (D-310)."""
@@ -636,7 +656,7 @@ class InvitationCard(QFrame):
 
     def _want_more(self, *_: int) -> None:
         area = self._scrolled_by
-        if self.info is None or area is None or self._asking or not self.isVisible() or self._next_block >= self.info.items or not self.info.parts:
+        if self.info is None or area is None or self._asking or self._try_again is not None or not self.isVisible() or self._next_block >= self.info.items or not self.info.parts:
             return
         bar = area.verticalScrollBar()
         if bar.maximum() - bar.value() <= area.viewport().height():
@@ -644,8 +664,31 @@ class InvitationCard(QFrame):
             self.blocks_wanted.emit(self._next_block)
 
     def blocks_failed(self) -> None:
-        """The next blocks could not be read: scrolling on tries again."""
+        """The next blocks could not be read: a calm line says so, and the person says when to try again."""
         self._asking = False
+        if self._try_again is not None:
+            return
+        row = QWidget(self._blocks)
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(QLabel("The next items could not be read just now.", row))
+        button = QPushButton("Try again", row)
+        button.clicked.connect(self._read_on)
+        layout.addWidget(button)
+        layout.addStretch(1)
+        self._block_rows.addWidget(row)
+        self._try_again = row
+
+    def _no_try_again(self) -> None:
+        if self._try_again is not None:
+            self._try_again.setParent(None)
+            self._try_again.deleteLater()
+            self._try_again = None
+
+    def _read_on(self) -> None:
+        self._no_try_again()
+        self._asking = True
+        self.blocks_wanted.emit(self._next_block)
 
     def add_blocks(self, first: int, parts: tuple[InvitationInfo, ...]) -> None:
         """The answer to blocks_wanted: the blocks go below those on screen, and the place in the list stays."""
@@ -653,7 +696,7 @@ class InvitationCard(QFrame):
         if self.info is None or first != self._next_block:
             return  # another card came meanwhile
         if not parts:
-            self._next_block = self.info.items  # the rest cannot be read
+            self.blocks_failed()
             return
         self._build_blocks(parts)
         self.info = replace(self.info, parts=self.info.parts + parts)
@@ -709,8 +752,10 @@ class InvitationCard(QFrame):
         self._organizer_row.setVisible(bool(name or address))
         self.comment.setText(comment_text(info))
         self.comment.setVisible(bool(self.comment.text()))
-        self.description.setText(info.description)
+        opened = info.description == self._whole_text
+        self.description.setText(info.description[:LONGEST_TEXT if opened else SHORT_TEXT])
         self.description.setVisible(bool(info.description))
+        self.more_text.setVisible(len(info.description) > SHORT_TEXT and not opened)
         self.place.setText(linkify(info.location))
         self._place_row.setVisible(bool(info.location))
         self.people.clear()

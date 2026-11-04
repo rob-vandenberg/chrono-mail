@@ -5,8 +5,8 @@ from typing import Any  # command results are command-specific dataclasses
 
 import pytest
 
-from chrono_mail.core import ChronoMailError, MessageRef, ProtocolError, StorageError
-from chrono_mail.engine.mailbox import Mailbox
+from chrono_mail.core import ChronoMailError, MessageFlag, MessageRef, ProtocolError, StorageError
+from chrono_mail.engine.mailbox import Mailbox, open_mailbox
 from chrono_mail.protocols.imap import ImapClient, ImapRefused
 from chrono_mail.store import Store
 from tests.enginefactory import make_engine
@@ -18,9 +18,10 @@ from tests.test_engine_imap import World, mail, world  # noqa: F401 - world is a
 __all__ = ["world"]
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_imap_online.py 3.6.350"
+__version__ = "test_engine_imap_online.py 4.4.533"
 
 # --- Version history ----------------------------------------------------
+# v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v3.6.350: a message moved into the Outbox leaves the server first; a sent message in a group moved to Drafts is never moved on the
 #           server; Undo of a move to Sent never puts the message back in the Outbox
 # v3.6.349: a message of a folder that exists only here is deleted without connecting to the server (RV-183, RV-184); after a folder
@@ -129,6 +130,28 @@ def test_offline_the_action_is_done_here_and_sent_at_the_next_check(world: World
     assert result.blocked == () and len(world.imap.uids("INBOX")) == 5  # deleted by the person: never held back
     assert any("\\Flagged" in world.imap.flags_of("INBOX", uid) for uid in world.imap.uids("INBOX"))
     in_step(world, ("Inbox", "INBOX"))
+
+
+def test_a_mark_set_offline_stays_with_a_moved_mail_and_reaches_the_server(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
+    (row,) = filled(world, 1)
+    call(world.engine, "folder.create", account=world.account, folder="Work")
+    world.engine.close_imap_links()
+
+    def unreachable(self: ImapClient) -> None:
+        raise ProtocolError("Connection failed: no route")
+
+    monkeypatch.setattr(ImapClient, "connect", unreachable)
+    with open_mailbox(world.engine, world.account) as mailbox:
+        reference = mailbox.reference(mailbox.folder("Inbox"), row.message_id)
+        mailbox.set_flags(reference, mailbox.current_flags(reference) | {MessageFlag.INVITE_DECLINED})
+    monkeypatch.undo()  # the server can be reached again, and the mail moves before the next check
+    call(world.engine, "message.move", account=world.account, folder="Inbox", message=row.message_id, target="Work")
+    world.fetch()
+    (uid,) = world.imap.uids("Work")
+    assert MessageFlag.INVITE_DECLINED.imap_name in world.imap.flags_of("Work", uid)
+    with open_mailbox(world.engine, world.account) as mailbox:
+        (moved,) = world.rows("Work")
+        assert MessageFlag.INVITE_DECLINED in mailbox.current_flags(mailbox.reference(mailbox.folder("Work"), moved.message_id))
 
 
 def test_a_crash_between_the_server_and_here_is_completed_by_the_next_check(world: World, monkeypatch: pytest.MonkeyPatch) -> None:

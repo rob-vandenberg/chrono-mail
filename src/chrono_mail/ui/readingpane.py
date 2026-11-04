@@ -40,9 +40,10 @@ from chrono_mail.ui.splitter import PaneSplitter
 from chrono_mail.ui.statusreport import StatusReport
 
 # --- Version ------------------------------------------------------------
-__version__ = "readingpane.py 4.4.532"
+__version__ = "readingpane.py 4.4.533"
 
 # --- Version history ----------------------------------------------------
+# v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: One dialog for every calendar mail in place of the composer, a cancellation for an attendee taken off, and an address asked for an invitation with no organizer (D-310)
 # v4.4.529: The clash warning on a series names how many and when; invitations and .ics files up to 1 MB (D-310)
 # v4.4.528: A declined invite is kept hidden on this computer, Show declined, the menu of a hidden event (D-310)
@@ -461,10 +462,9 @@ class ReadingPane(QObject):
             if isValid(card) and card.showing == showing:  # (another message may have come)
                 card.add_blocks(first, result.parts)
 
-        def failed(error: ChronoMailError) -> None:
-            self._tell(card, "Could not read the rest of the items", error)
+        def failed(_error: ChronoMailError) -> None:
             if isValid(card) and card.showing == showing:
-                card.blocks_failed()
+                card.blocks_failed()  # the card says so, with Try again
 
         parameters = BlocksParameters(source.account, source.folder, source.message, part=source.part, file=source.file, first=first, count=BLOCKS_AT_ONCE)
         self._backend.ask(INVITATION_BLOCKS, parameters, got, failed, owner=owner)

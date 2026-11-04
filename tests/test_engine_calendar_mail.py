@@ -1,6 +1,7 @@
 from email import message_from_bytes
 
 from chrono_mail.engine.mailbox import open_mailbox
+from chrono_mail.mime import parse_message
 from chrono_mail.pim.itip import read_calendar_message
 from tests.test_engine_commands import Setup, call, setup  # noqa: F401 - setup is a fixture
 from tests.test_engine_invitation_answers import answer, drafts, kept, local_calendar
@@ -8,9 +9,10 @@ from tests.test_engine_invitations import calendar_text, deliver, invitation_mai
 from tests.test_engine_meetings import calendar_of
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar_mail.py 4.4.532"
+__version__ = "test_engine_calendar_mail.py 4.4.533"
 
 # --- Version history ----------------------------------------------------
+# v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.532: Initial tests: a calendar mail goes without the composer, asked before anything changes, an organizer named by the person, a cancellation for an attendee taken off (D-310)
 
 
@@ -28,10 +30,9 @@ def test_a_calendar_mail_goes_with_your_message_above_it_and_keeps_its_calendar_
     call(setup.engine, "calendar.mail-send", account=setup.account_id, folder=result.draft_folder, message=result.draft_message, note="I will bring the samples", delay_seconds=900)
     assert not drafts(setup)
     (raw,) = outbox(setup)
-    parts = list(message_from_bytes(raw).walk())
-    text = next(part for part in parts if part.get_content_type() == "text/plain").get_payload(decode=True).decode()
-    assert text.replace("\r", "").startswith("I will bring the samples\n") and "has accepted this invitation" in text.replace("\r", "")
-    calendar = next(part for part in parts if part.get_content_type() == "text/calendar")
+    text = (parse_message(raw).text_body or "").replace("\r", "")
+    assert text.startswith("I will bring the samples\n") and "has accepted this invitation" in text
+    calendar = next(part for part in message_from_bytes(raw).walk() if part.get_content_type() == "text/calendar")
     assert calendar.get_param("method") == "REPLY"
     assert "olivia@example.org" in message_from_bytes(raw)["To"]
 

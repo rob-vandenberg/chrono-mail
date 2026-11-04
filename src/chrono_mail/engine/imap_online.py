@@ -13,9 +13,10 @@ from chrono_mail.sync import ImapState, plan_folders, planned_anyway
 from chrono_mail.sync.imap_sync import LOCAL_ONLY  # first parts of the local folders that never exist on a server
 
 # --- Version ------------------------------------------------------------
-__version__ = "imap_online.py 4.4.517"
+__version__ = "imap_online.py 4.4.533"
 
 # --- Version history ----------------------------------------------------
+# v4.4.533: A meeting text shows 250 characters and the dots up to 2048, a mark set here reaches the server after a move, and blocks that cannot be read offer Try again (D-310)
 # v4.4.517: A folder that keeps no keywords gets no answer marks (D-310)
 # v3.6.349: after a folder delete Inbox is opened for changes again before the next action there (RV-170); a folder that holds mail too
 #           large to download says so instead of "check for mail first" (RV-172); refuse_unseen for a folder tree (RV-176)
@@ -483,10 +484,13 @@ class ServerSession:
         return self._moved(store_id, target, flags, local, uid, result.uid, result.uid_validity)
 
     def _moved(self, store_id: str, target: tuple[str, ...], flags: frozenset[MessageFlag], local: tuple[str, ...], uid: int, new: int | None, validity: int | None) -> Commit:
+        entry = self.state.folder_entries(local).get(uid)
+        unwritten = flag_names(ANSWER_MARKS) - (entry.flags if entry is not None else frozenset[str]())  # a mark the server has not got did not move with the message: the next sync writes it
+
         def commit() -> None:
             self.state.unmap(local, uid)
             if new is not None and validity is not None and self.state.validity.get(target) == validity:
-                self.state.map(target, new, store_id, flag_names(flags))  # else the next sync finds it by its Message-ID
+                self.state.map(target, new, store_id, flag_names(flags) - unwritten)  # else the next sync finds it by its Message-ID
 
         return commit
 
