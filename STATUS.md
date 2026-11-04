@@ -1,6 +1,6 @@
 # STATUS.md
 
-*Last updated: 2026-11-04, version 4.4.512 (Only your own calendars count as holding a meeting; a date added to a series is answered with the four buttons, or asks for the original invite; before it 4.4.511: Every open window of a mail follows an answer; Choose a calendar opens on the main window when the card window is gone; before it 4.4.510: Send confirmation emails via Chrono Mail or the server, per account; Chrono Mail sends when the server cannot; a delegate's answer says who they replace; before it 4.4.509: Take their answer takes only the sender's line; a calendar part in the character set the mail states; before it 4.4.508, several items in one file).*
+*Last updated: 2026-11-04, version 4.4.513 (A series that picks its day by position takes its skipped dates to another hour; before it 4.4.512: Only your own calendars count as holding a meeting; a date added to a series is answered with the four buttons, or asks for the original invite; before it 4.4.511: Every open window of a mail follows an answer; Choose a calendar opens on the main window when the card window is gone; before it 4.4.510: Send confirmation emails via Chrono Mail or the server, per account; Chrono Mail sends when the server cannot; a delegate's answer says who they replace; before it 4.4.509: Take their answer takes only the sender's line; a calendar part in the character set the mail states; before it 4.4.508, several items in one file).*
 
 ## Where we are
 
@@ -15,7 +15,9 @@
 
 ## Next task
 
-**4.4.512 done (D-310, A2, B1).** To check by the owner: a meeting that sits only in a calendar shared with you shows as not kept, Accept asks for a calendar and that calendar is greyed with its (i); a mail adding a date to a series you have shows the four answers, a mail adding a date to a series you do not have shows the long text and only Request. Still to do: A4.
+**4.4.513 done (D-310, A4): lists A and B are complete.** To check by the owner: a monthly series on the second Tuesday with one date deleted, moved to another hour: the deleted date stays away. Still to do: C1 to C5, only after the owner says so.
+
+**4.4.512 done (D-310, A2, B1).** To check by the owner: a meeting that sits only in a calendar shared with you shows as not kept, Accept asks for a calendar and that calendar is greyed with its (i); a mail adding a date to a series you have shows the four answers, a mail adding a date to a series you do not have shows the long text and only Request.
 
 **4.4.510 done (D-310, B3, A8, A10).** To check by the owner: Edit account > Calendars and contacts shows the box and dropdown, greyed with its (i) on Kerio after a synchronisation; with the box off Accept and Decline make no mail. **4.4.511 done (A7, B4):** Accept in a message window updates the card in the reading pane too. Left of lists A and B: A2, B1, A4.
 

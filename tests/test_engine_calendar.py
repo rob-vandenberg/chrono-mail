@@ -4,14 +4,16 @@ import pytest
 
 from chrono_mail.core import LOCAL_ACCOUNT_ID
 from chrono_mail.engine import Engine, UsageError
+from chrono_mail.engine.commands_calendar import _rule_sets_the_times
 from chrono_mail.engine.pimaccess import open_pim
 from tests.enginefactory import make_engine
 from tests.test_engine_commands import call
 
 # --- Version ------------------------------------------------------------
-__version__ = "test_engine_calendar.py 4.2.460"
+__version__ = "test_engine_calendar.py 4.4.513"
 
 # --- Version history ----------------------------------------------------
+# v4.4.513: a series that picks its day by position takes its skipped date to another hour (D-310)
 # v4.2.460: removing an account with calendars tells the sections (collection_changed)
 # v4.2.438: a calendar's own colour is named "Default calendar colour"; the old default's name a calendar kept never wins (D-297)
 # v3.6.351: a change of the attendee list keeps what each attendee's line said; floating events and tasks stay floating
@@ -433,6 +435,22 @@ def test_a_series_whose_rule_sets_its_days_keeps_its_skipped_dates_when_its_firs
     call(engine, "event.edit", item=series.item, start="2027-01-11T10:00", end="2027-01-11T11:00", time_zone="UTC")
     days = [start[:10] for _, start in _listed(engine, series.item, "2027-01-01", "2027-03-31")]
     assert "2027-02-03" not in days and "2027-02-10" in days and days[0] == "2027-01-11"
+
+
+def test_a_series_that_picks_its_day_by_position_takes_its_skipped_date_to_another_hour(engine: Engine) -> None:
+    """The second Tuesday of the month moved from 10:00 to 11:00: the deleted date came back, because its skip stayed at 10:00."""
+    series = call(engine, "event.add", calendar=collection(engine, "events"), summary="Board", start="2027-01-12T10:00", end="2027-01-12T11:00",
+                  time_zone="UTC", rrule="FREQ=MONTHLY;BYDAY=TU;BYSETPOS=2;COUNT=6")
+    march = next(o.occurrence for o in call(engine, "event.list", from_date="2027-03-01", to_date="2027-03-31").events if o.item == series.item)
+    call(engine, "event.delete", item=series.item, occurrence=march)
+    call(engine, "event.edit", item=series.item, start="2027-01-12T11:00", end="2027-01-12T12:00", time_zone="UTC")
+    days = [start[:13] for _, start in _listed(engine, series.item, "2027-01-01", "2027-06-30")]
+    assert len(days) == 5 and not any(day.startswith("2027-03") for day in days) and days[0] == "2027-01-12T11"
+
+
+def test_only_hours_minutes_and_seconds_in_a_rule_set_the_times() -> None:
+    assert _rule_sets_the_times("FREQ=DAILY;BYHOUR=9,15;BYSETPOS=1")
+    assert not _rule_sets_the_times("FREQ=MONTHLY;BYDAY=TU;BYSETPOS=2")
 
 
 def test_a_changed_date_never_moved_in_time_moves_with_its_series(engine: Engine) -> None:

@@ -15,9 +15,10 @@ from chrono_mail.pim.times import day_bounds, format_moment, local_zone, moved_l
 from chrono_mail.pimstore import ItemQuery
 
 # --- Version ------------------------------------------------------------
-__version__ = "commands_calendar.py 4.4.506"
+__version__ = "commands_calendar.py 4.4.513"
 
 # --- Version history ----------------------------------------------------
+# v4.4.513: a series that picks its days by position (BYSETPOS) takes its skipped and changed dates along to another hour (D-310)
 # v4.4.506: moved_like_the_start lives in pim/times.py: a proposal for a whole series moves its dates the same way (D-310)
 # v4.2.385: event.import builds the text afresh as before and keeps from the text given only the time zones the event uses (VTIMEZONE), its
 #           X- properties and its CREATED (pim.ical.kept_from): a zone of its own was lost, so its times became floating after a restart
@@ -339,9 +340,10 @@ def _following_the_start(series: EventSeries, master: Event) -> EventSeries:
 
 
 def _rule_sets_the_times(rule: str) -> bool:
-    """A rule that names the hours, minutes or positions itself (BYHOUR=9,15): its occurrences do not move with the start's time."""
+    """A rule that names the hours or minutes itself (BYHOUR=9,15): its occurrences do not move with the start's time. BYSETPOS only picks
+    among the dates (the second Tuesday): the time stays the start's."""
     parts = {part.split("=", 1)[0].strip().upper() for part in rule.split(";")}
-    return bool(parts & {"BYHOUR", "BYMINUTE", "BYSECOND", "BYSETPOS"})
+    return bool(parts & {"BYHOUR", "BYMINUTE", "BYSECOND"})
 
 
 def _day_of(moment: Moment) -> date:
